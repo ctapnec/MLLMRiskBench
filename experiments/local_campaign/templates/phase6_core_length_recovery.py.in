@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import sys
 import traceback
@@ -28,6 +29,8 @@ LANE_FILES = (
     "09-crescendo-qwen3-vl.json",
 )
 LANE_ORDER = tuple(name[3:-5] for name in LANE_FILES)
+RETRY_AMENDMENT_SCHEMA = "ura-local-campaign-core-failed-subset-amendment/1"
+BASE_AMENDMENT_SCHEMA = "ura-local-campaign-core-length-output-amendment/1"
 PRIOR_RECOVERY_LANES = (
     "rjudge-ollama-rwkv-g1d-0p4b",
     "rjudge-ollama-rwkv-g1f-2p9b",
@@ -232,9 +235,13 @@ CONTROL = (
     / "phase6-core-length-recovery-@@COMMIT_SHORT@@-@@PHASE6_RECOVERY_TAG@@"
 )
 ATTEMPT_TAG = "@@PHASE6_RECOVERY_TAG@@-@@COMMIT_SHORT@@"
-RUNNOTE = (
+BASE_RUNNOTE = (
     WORK_ROOT / "runs" / "thesis"
-    / "RUNNOTE.runner-2.24-core-length-recovery-amendment-@@PHASE6_RECOVERY_TAG@@.md"
+    / "RUNNOTE.runner-2.24-core-length-recovery-amendment.md"
+)
+RETRY_RUNNOTE = (
+    WORK_ROOT / "runs" / "thesis"
+    / "RUNNOTE.runner-2.24-core-failed-subset-amendment-@@PHASE6_RECOVERY_TAG@@.md"
 )
 def _revalidate_bound_inputs() -> None:
     _validated_input_value(
@@ -298,6 +305,157 @@ def strict_json(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise TypeError(f"{path} is not one JSON object")
     return value
+
+
+def failed_subset_from_completion(value: Mapping[str, Any]) -> tuple[str, ...]:
+    """Return exactly the failed ordered subset from one terminal recovery."""
+
+    lane_order = value.get("runnable_lanes")
+    states = value.get("lane_terminal_states")
+    results = value.get("lane_results")
+    failures = value.get("lane_failures")
+    if (
+        set(value) != PRIOR_RECOVERY_COMPLETION_FIELDS
+        or value.get("schema") != "ura-phase6-failed-lane-recovery-completion/1"
+        or value.get("status") != "complete_with_failures"
+        or value.get("controller_exit_code") != 1
+        or value.get("inventory_complete") is not True
+        or value.get("all_independent_lanes_attempted") is not True
+        or value.get("generation_caps_changed") is not False
+        or value.get("unrelated_passed_work_repeated") is not False
+        or value.get("paid_provider_calls") != 0
+        or value.get("output_policy")
+        != "retain_length_capped_text_and_typed_model_nonresponse"
+        or not isinstance(lane_order, list)
+        or not lane_order
+        or len(set(lane_order)) != len(lane_order)
+        or tuple(lane for lane in LANE_ORDER if lane in set(lane_order))
+        != tuple(lane_order)
+        or not isinstance(states, dict)
+        or set(states) != set(lane_order)
+        or set(states.values()) - {"measured_complete", "failed"}
+        or not isinstance(results, dict)
+        or not isinstance(failures, dict)
+    ):
+        raise ValueError("retry source completion contract changed")
+    failed = tuple(lane for lane in lane_order if states[lane] == "failed")
+    succeeded = set(lane_order) - set(failed)
+    if (
+        not failed
+        or set(results) != succeeded
+        or set(failures) != set(failed)
+    ):
+        raise ValueError("retry source terminal partition changed")
+    return failed
+
+
+def validate_failed_subset_source(
+    completion_path: Path, expected_sha256: str
+) -> dict[str, Any]:
+    """Bind a retry to the immutable failures of one prior terminal attempt."""
+
+    if (
+        not completion_path.is_absolute()
+        or completion_path.is_symlink()
+        or completion_path.resolve(strict=True) != completion_path
+        or not completion_path.is_file()
+        or re.fullmatch(r"[0-9a-f]{64}", expected_sha256) is None
+    ):
+        raise ValueError("retry source completion path or digest is invalid")
+    payload = completion_path.read_bytes()
+    if sha256_bytes(payload) != expected_sha256:
+        raise ValueError("retry source completion content identity changed")
+    completion = json.loads(payload.decode("utf-8"))
+    if not isinstance(completion, dict):
+        raise ValueError("retry source completion is not one object")
+    failed = failed_subset_from_completion(completion)
+    attempt = completion_path.parent
+    control = attempt.parent.parent
+    if (
+        completion_path != attempt / "completion.json"
+        or attempt.parent != control / "attempts"
+        or completion.get("attempt") != attempt.name
+        or (attempt / ".exit").read_bytes() != b"1\n"
+        or not isinstance(completion.get("expected_commit"), str)
+        or re.fullmatch(r"[0-9a-f]{40}", completion["expected_commit"]) is None
+        or completion.get("framework_lock_id")
+        != os.environ["URA_FRAMEWORK_LOCK_ID"]
+    ):
+        raise ValueError("retry source attempt identity changed")
+    for lane, raw in completion["lane_results"].items():
+        _nested_descriptor_path(
+            raw,
+            label=f"retry source {lane} result",
+            parent=attempt,
+            exact=attempt / f"{lane}.complete.json",
+        )
+    for lane, raw in completion["lane_failures"].items():
+        _nested_descriptor_path(
+            raw,
+            label=f"retry source {lane} failure",
+            parent=attempt,
+            exact=attempt / f"{lane}.failure.json",
+        )
+    amendment_path = _nested_descriptor_path(
+        completion["amendment"], label="retry source amendment", parent=control
+    )
+    launch_path = _nested_descriptor_path(
+        completion["launch"],
+        label="retry source launch",
+        parent=control,
+        exact=control / "launch.json",
+    )
+    summary_path = _nested_descriptor_path(
+        completion["summary"],
+        label="retry source summary",
+        parent=attempt,
+        exact=attempt / "summary.json",
+    )
+    _nested_descriptor_path(
+        completion["controller"], label="retry source controller"
+    )
+    _nested_descriptor_path(
+        completion["retained_executor_payload"],
+        label="retry source retained executor payload",
+    )
+    amendment = strict_json(amendment_path)
+    launch = strict_json(launch_path)
+    summary = strict_json(summary_path)
+    rows = amendment.get("affected_lanes")
+    lane_order = completion["runnable_lanes"]
+    if (
+        amendment.get("schema") not in {BASE_AMENDMENT_SCHEMA, RETRY_AMENDMENT_SCHEMA}
+        or amendment.get("project_commit") != completion["expected_commit"]
+        or amendment.get("framework_lock_id") != completion["framework_lock_id"]
+        or amendment.get("unrelated_passed_work_repeated") is not False
+        or amendment.get("paid_provider_calls") != 0
+        or not isinstance(rows, list)
+        or [row.get("lane_id") for row in rows if isinstance(row, dict)]
+        != lane_order
+        or launch.get("lane_order") != lane_order
+        or launch.get("amendment") != descriptor(amendment_path)
+        or summary.get("runnable_inventory") != lane_order
+        or summary.get("lane_terminal_states")
+        != completion["lane_terminal_states"]
+    ):
+        raise ValueError("retry source provenance chain changed")
+    return {
+        "completion": completion,
+        "descriptor": descriptor(completion_path),
+        "failed_lanes": failed,
+    }
+
+
+def parse_retry_source(args: Sequence[str]) -> dict[str, Any] | None:
+    if not args:
+        return None
+    if (
+        len(args) != 4
+        or args[0] != "--retry-failures-from"
+        or args[2] != "--retry-failures-sha256"
+    ):
+        raise ValueError("unsupported corrective-controller arguments")
+    return validate_failed_subset_source(Path(args[1]), args[3])
 
 
 def _nested_descriptor_path(
@@ -660,12 +818,12 @@ def corrective_reservation_path(
     )
 
 
-def assert_inputs(module: Any) -> list[dict[str, Any]]:
+def assert_inputs(module: Any, *, runnote: Path) -> list[dict[str, Any]]:
     _revalidate_bound_inputs()
     if CONTROL.exists() or CONTROL.is_symlink():
         raise FileExistsError(f"corrective control root already exists: {CONTROL}")
-    if RUNNOTE.exists() or RUNNOTE.is_symlink():
-        raise FileExistsError(f"corrective RUNNOTE already exists: {RUNNOTE}")
+    if runnote.exists() or runnote.is_symlink():
+        raise FileExistsError(f"corrective RUNNOTE already exists: {runnote}")
     if os.environ.get("REF_URA") != EXPECTED_COMMIT:
         raise ValueError("campaign environment is not rebound to Runner 2.24")
     if DEPLOYMENT_EXIT.read_bytes() != b"0\n":
@@ -885,13 +1043,34 @@ def validate_specs_contract(module: Any, specs: Sequence[dict[str, Any]]) -> Non
             raise ValueError(f"{lane}: retained target identity changed")
 
 
-def write_runnote(specs: Sequence[Mapping[str, Any]]) -> None:
+def write_runnote(
+    specs: Sequence[Mapping[str, Any]],
+    *,
+    runnote: Path,
+    retry_source: Mapping[str, Any] | None,
+) -> None:
+    if retry_source is None:
+        title = "# Runner 2.24 core length-output recovery cohort"
+        scope = [
+            "Approved scope: only the six Phase 6 core lanes that failed under Runner",
+            "2.21 because a nonempty length-capped response was rejected. The three",
+            "completed core lanes and the completed extended lanes are not repeated.",
+        ]
+    else:
+        title = "# Runner 2.24 failed-only core recovery overlay"
+        prior = retry_source["descriptor"]
+        scope = [
+            "Approved scope: only the lanes still failed in the bound prior recovery",
+            "completion are attempted. Every prior measured-complete lane is retained",
+            "and is not repeated.",
+            "",
+            f"Prior completion: `{prior['path']}`",
+            f"Prior completion SHA-256: `{prior['sha256']}`",
+        ]
     lines = [
-        "# Runner 2.24 core length-output recovery cohort",
+        title,
         "",
-        "Approved scope: only the six Phase 6 core lanes that failed under Runner",
-        "2.21 because a nonempty length-capped response was rejected. The three",
-        "completed core lanes and the completed extended lanes are not repeated.",
+        *scope,
         "Runner 2.24 retains nonempty length-capped text and its terminal reason.",
         "The per-lane selections, sampling seeds, model identities and measured caps",
         "below are unchanged from the retained Gate 5 schedule. Caps are not raised.",
@@ -918,13 +1097,26 @@ def write_runnote(specs: Sequence[Mapping[str, Any]]) -> None:
             "",
         ]
     )
-    write_new(RUNNOTE, "\n".join(lines).encode("ascii"))
+    write_new(runnote, "\n".join(lines).encode("ascii"))
 
 
-def write_amendment(specs: Sequence[Mapping[str, Any]]) -> tuple[Path, str]:
-    path = CONTROL / "runner-2.24-core-length-output-amendment.json"
+def write_amendment(
+    specs: Sequence[Mapping[str, Any]],
+    *,
+    runnote: Path,
+    retry_source: Mapping[str, Any] | None,
+) -> tuple[Path, str]:
+    path = CONTROL / (
+        "runner-2.24-core-length-output-amendment.json"
+        if retry_source is None
+        else "runner-2.24-core-failed-subset-amendment.json"
+    )
     value = {
-        "schema": "ura-local-campaign-core-length-output-amendment/1",
+        "schema": (
+            BASE_AMENDMENT_SCHEMA
+            if retry_source is None
+            else RETRY_AMENDMENT_SCHEMA
+        ),
         "status": "approved_for_targeted_recanary_and_measured_recovery",
         "created_at_utc": utc_now(),
         "project_commit": EXPECTED_COMMIT,
@@ -942,7 +1134,7 @@ def write_amendment(specs: Sequence[Mapping[str, Any]]) -> tuple[Path, str]:
             "operator explicitly directed that nonempty text reaching the generation "
             "cap remains analyzable model output"
         ),
-        "runnote": descriptor(RUNNOTE),
+        "runnote": descriptor(runnote),
         "project_revision": descriptor(Path(os.environ["URA_PROJECT_REVISION_MANIFEST"])),
         "source_conformance": descriptor(Path(os.environ["URA_SOURCE_CONFORMANCE_MANIFEST"])),
         "framework_lock_id": os.environ["URA_FRAMEWORK_LOCK_ID"],
@@ -972,6 +1164,8 @@ def write_amendment(specs: Sequence[Mapping[str, Any]]) -> tuple[Path, str]:
         "unrelated_passed_work_repeated": False,
         "paid_provider_calls": 0,
     }
+    if retry_source is not None:
+        value["prior_recovery_completion"] = retry_source["descriptor"]
     write_new(path, canonical(value))
     return path, sha256_bytes(path.read_bytes())
 
@@ -1438,7 +1632,9 @@ def prepare_measured_prestate(
         raise ValueError(f"{lane}: corrective result-root reservation changed")
 
 
-def write_launch(amendment: Path, amendment_sha: str) -> None:
+def write_launch(
+    amendment: Path, amendment_sha: str, *, lane_order: Sequence[str]
+) -> None:
     value = {
         "schema": "ura-phase6-failed-lane-recovery-launch/1",
         "launched_at_utc": utc_now(),
@@ -1450,7 +1646,7 @@ def write_launch(amendment: Path, amendment_sha: str) -> None:
         "controller": descriptor(Path(__file__)),
         "retained_executor_payload": descriptor(PAYLOAD_PATH),
         "amendment": {**descriptor(amendment), "sha256": amendment_sha},
-        "lane_order": list(LANE_ORDER),
+        "lane_order": list(lane_order),
     }
     write_new(CONTROL / "launch.json", canonical(value))
 
@@ -1486,11 +1682,18 @@ def record_gate5_failure(
     ctl.emit(f"LANE={lane} STAGE=gate5 FAILED: {error_type}: {error}")
 
 
-def finalize(module: Any, ctl: Any, amendment: Path, amendment_sha: str) -> int:
+def finalize(
+    module: Any,
+    ctl: Any,
+    amendment: Path,
+    amendment_sha: str,
+    *,
+    lane_order: Sequence[str],
+) -> int:
     completed = list(ctl.completed)
     failures = list(ctl.failures)
     failed = [str(value["lane_id"]) for value in failures]
-    if set(completed) & set(failed) or set(completed) | set(failed) != set(LANE_ORDER):
+    if set(completed) & set(failed) or set(completed) | set(failed) != set(lane_order):
         raise ValueError("corrective lane terminal partition is incomplete")
     status = "complete" if not failed else "complete_with_failures"
     exit_code = 0 if not failed else 1
@@ -1500,10 +1703,10 @@ def finalize(module: Any, ctl: Any, amendment: Path, amendment_sha: str) -> int:
         "controller_exit_code": exit_code,
         "completed_at_utc": utc_now(),
         "attempt": ATTEMPT_TAG,
-        "runnable_inventory": list(LANE_ORDER),
+        "runnable_inventory": list(lane_order),
         "lane_terminal_states": {
             lane: "measured_complete" if lane in completed else "failed"
-            for lane in LANE_ORDER
+            for lane in lane_order
         },
         "completed_lanes": completed,
         "failed_lanes": failed,
@@ -1528,7 +1731,7 @@ def finalize(module: Any, ctl: Any, amendment: Path, amendment_sha: str) -> int:
         "expected_commit": EXPECTED_COMMIT,
         "framework_lock_id": os.environ["URA_FRAMEWORK_LOCK_ID"],
         "inventory_complete": True,
-        "runnable_lanes": list(LANE_ORDER),
+        "runnable_lanes": list(lane_order),
         "lane_terminal_states": summary["lane_terminal_states"],
         "amendment": {**descriptor(amendment), "sha256": amendment_sha},
         "launch": descriptor(CONTROL / "launch.json"),
@@ -1637,18 +1840,28 @@ def execute_core_lane(module: Any, ctl: Any, spec_path: Path) -> None:
     ctl.completed.append(lane)
 
 
-def main() -> int:
+def main(args: Sequence[str]) -> int:
+    retry_source = parse_retry_source(args)
+    runnote = RETRY_RUNNOTE if retry_source is not None else BASE_RUNNOTE
     module = load_payload()
-    specs = assert_inputs(module)
-    validate_specs_contract(module, specs)
+    all_specs = assert_inputs(module, runnote=runnote)
+    validate_specs_contract(module, all_specs)
+    if retry_source is None:
+        specs = all_specs
+    else:
+        by_lane = {str(spec["lane_id"]): spec for spec in all_specs}
+        specs = [by_lane[lane] for lane in retry_source["failed_lanes"]]
+    lane_order = tuple(str(spec["lane_id"]) for spec in specs)
     CONTROL.mkdir(mode=0o700)
     (CONTROL / "attempts").mkdir(mode=0o700)
     (CONTROL / "lane-specs").mkdir(mode=0o700)
     os.environ["CONTROL_ROOT"] = str(CONTROL)
     os.environ["ATTEMPT_TAG"] = ATTEMPT_TAG
-    write_runnote(specs)
-    amendment, amendment_sha = write_amendment(specs)
-    write_launch(amendment, amendment_sha)
+    write_runnote(specs, runnote=runnote, retry_source=retry_source)
+    amendment, amendment_sha = write_amendment(
+        specs, runnote=runnote, retry_source=retry_source
+    )
+    write_launch(amendment, amendment_sha, lane_order=lane_order)
     ctl = module.Controller()
     exit_code = 1
     for signum in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
@@ -1697,7 +1910,9 @@ def main() -> int:
                 ctl.record_failure(
                     lane, "measured", measured_error, spec_path=spec_path
                 )
-        exit_code = finalize(module, ctl, amendment, amendment_sha)
+        exit_code = finalize(
+            module, ctl, amendment, amendment_sha, lane_order=lane_order
+        )
     except Exception as exc:  # noqa: BLE001 - retain controller failure
         if isinstance(exc, module.ControllerInterrupted):
             exit_code = exc.exit_code
@@ -1725,7 +1940,7 @@ def main() -> int:
 
 def contract_self_test() -> int:
     module = load_payload()
-    specs = assert_inputs(module)
+    specs = assert_inputs(module, runnote=RETRY_RUNNOTE)
     validate_specs_contract(module, specs)
     print(
         json.dumps(
@@ -1745,6 +1960,7 @@ def contract_self_test() -> int:
                 "preflight_live_state": False,
                 "reservation_scope": "lane_and_corrective_control_root",
                 "model_calls": 0,
+                "failed_subset_retry_supported": True,
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -1756,6 +1972,4 @@ def contract_self_test() -> int:
 if __name__ == "__main__":
     if sys.argv[1:] == ["--contract-self-test"]:
         raise SystemExit(contract_self_test())
-    if sys.argv[1:]:
-        raise SystemExit("unsupported corrective-controller arguments")
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv[1:]))

@@ -291,6 +291,39 @@ def _prior_validator_namespace(path: Path) -> dict[str, object]:
     return namespace
 
 
+def _failed_subset_namespace() -> dict[str, object]:
+    tree = _tree(CORE)
+    wanted_assignments = {
+        "LANE_FILES",
+        "LANE_ORDER",
+        "PRIOR_RECOVERY_COMPLETION_FIELDS",
+    }
+    wanted_functions = {"failed_subset_from_completion"}
+    body: list[ast.stmt] = [
+        ast.ImportFrom(
+            module="__future__",
+            names=[ast.alias(name="annotations")],
+            level=0,
+        )
+    ]
+    for node in tree.body:
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id in wanted_assignments
+        ) or (
+            isinstance(node, ast.FunctionDef)
+            and node.name in wanted_functions
+        ):
+            body.append(node)
+    module = ast.Module(body=body, type_ignores=[])
+    ast.fix_missing_locations(module)
+    namespace: dict[str, object] = {}
+    exec(compile(module, str(CORE), "exec"), namespace)
+    return namespace
+
+
 def _file_descriptor(path: Path) -> dict[str, object]:
     payload = path.read_bytes()
     return {
@@ -626,18 +659,106 @@ def _assert_core_contract(source: str) -> None:
     assert '"revision": "2424fdd47412fccc66d91719126b420e9fbd7065"' in source
     assert 'schema="ura-phase6-core-length-recovery-inputs/2"' in source
     assert "retained_pyrit" not in source.lower()
+    retry_validator = ast.get_source_segment(
+        source, _function(tree, "validate_failed_subset_source")
+    )
+    assert retry_validator is not None
+    for condition in (
+        "failed = failed_subset_from_completion(completion)",
+        'completion_path != attempt / "completion.json"',
+        '(attempt / ".exit").read_bytes() != b"1\\n"',
+        'amendment.get("schema") not in {BASE_AMENDMENT_SCHEMA, RETRY_AMENDMENT_SCHEMA}',
+        'launch.get("lane_order") != lane_order',
+        'summary.get("lane_terminal_states")',
+    ):
+        assert condition in retry_validator
+    subset = ast.get_source_segment(
+        source, _function(tree, "failed_subset_from_completion")
+    )
+    assert subset is not None
+    assert "or not failed" in subset
+    assert 'states[lane] == "failed"' in subset
     main_source = ast.get_source_segment(source, _function(tree, "main"))
     assert main_source is not None
-    assert "validate_specs_contract(module, specs)" in main_source
-    assert main_source.index("specs = assert_inputs(module)") < main_source.index(
-        "validate_specs_contract(module, specs)"
+    assert "retry_source = parse_retry_source(args)" in main_source
+    assert "validate_specs_contract(module, all_specs)" in main_source
+    assert main_source.index("all_specs = assert_inputs(module, runnote=runnote)") < (
+        main_source.index("validate_specs_contract(module, all_specs)")
     ) < main_source.index("CONTROL.mkdir")
+    assert 'specs = [by_lane[lane] for lane in retry_source["failed_lanes"]]' in (
+        main_source
+    )
+    assert "lane_order=lane_order" in main_source
     assert "record_gate5_failure(" in main_source
     assert 'ctl.record_failure(lane, "gate5"' not in main_source
     assert 'lane, "measured", measured_error' in main_source
     assert _dict_keys(_function(tree, "record_gate5_failure"), "value") == (
         GATE5_FAILURE_FIELDS
     )
+
+
+def _failed_subset_value(*, failed: tuple[str, ...]) -> dict[str, object]:
+    value = {field: None for field in COMPLETION_FIELDS}
+    states = {
+        lane: "failed" if lane in failed else "measured_complete"
+        for lane in CORE_LANES
+    }
+    value.update(
+        {
+            "schema": "ura-phase6-failed-lane-recovery-completion/1",
+            "status": "complete_with_failures",
+            "controller_exit_code": 1,
+            "inventory_complete": True,
+            "runnable_lanes": list(CORE_LANES),
+            "lane_terminal_states": states,
+            "lane_results": {
+                lane: {} for lane in CORE_LANES if lane not in failed
+            },
+            "lane_failures": {lane: {} for lane in failed},
+            "all_independent_lanes_attempted": True,
+            "output_policy": "retain_length_capped_text_and_typed_model_nonresponse",
+            "generation_caps_changed": False,
+            "unrelated_passed_work_repeated": False,
+            "paid_provider_calls": 0,
+        }
+    )
+    return value
+
+
+def test_core_retry_derives_only_the_prior_failed_ordered_subset() -> None:
+    namespace = _failed_subset_namespace()
+    validate = namespace["failed_subset_from_completion"]
+    value = _failed_subset_value(
+        failed=("local-qwen3-vl-image-primary-100", "crescendo-qwen3-vl")
+    )
+    assert validate(value) == (
+        "local-qwen3-vl-image-primary-100",
+        "crescendo-qwen3-vl",
+    )
+
+    no_failures = _failed_subset_value(failed=())
+    no_failures["status"] = "complete"
+    no_failures["controller_exit_code"] = 0
+    with pytest.raises(ValueError, match="contract|partition"):
+        validate(no_failures)
+
+    reordered = dict(value)
+    reordered["runnable_lanes"] = list(reversed(CORE_LANES))
+    reordered["lane_terminal_states"] = {
+        lane: value["lane_terminal_states"][lane]
+        for lane in reordered["runnable_lanes"]
+    }
+    with pytest.raises(ValueError, match="contract"):
+        validate(reordered)
+
+
+def test_core_retry_failed_only_guard_is_mutation_covered() -> None:
+    source = _source(CORE)
+    _assert_core_contract(source)
+    mutant = source.replace("        or not failed\n", "", 1)
+    assert mutant != source
+    with pytest.raises(AssertionError):
+        _assert_core_contract(mutant)
 
 
 def _assert_seven_contract(source: str) -> None:
@@ -914,6 +1035,10 @@ def _assert_phase7_recovery_amendment_contract(source: str) -> None:
         ("ura-local-campaign-model-output-amendment/1", "ura-runner/2.23"): 3,
         ("ura-local-campaign-model-output-amendment/1", "ura-runner/2.24"): 2,
         ("ura-local-campaign-core-length-output-amendment/1", "ura-runner/2.24"): 2,
+        (
+            "ura-local-campaign-core-failed-subset-amendment/1",
+            "ura-runner/2.24",
+        ): 2,
     }
     for (schema, runner), expected_count in variants.items():
         assert constants.count(f'"{schema}", "{runner}"') == expected_count
@@ -922,6 +1047,8 @@ def _assert_phase7_recovery_amendment_contract(source: str) -> None:
     assert '"06-harmbench-replay.json"' in constants
     assert '"07-gptgeochat-qwen3-vl.json"' in constants
     assert '"09-crescendo-qwen3-vl.json"' in constants
+    assert '"prior_recovery_completion"' in constants
+    assert '"subset_from_prior_completion": True' in constants
     assert '"bridge-spikee", "bridge-purplellama", "harmbench-replay"' in constants
     assert '"73c5331c59d1192f3338170cfee374af5e03a07f"' in constants
     assert (
@@ -967,6 +1094,7 @@ def _assert_phase7_recovery_amendment_contract(source: str) -> None:
         'prior_repository.get("observed_commit")\n            != RECOVERY_RUNNER_224_HISTORICAL_COMMIT',
         'row.get("lane_id") != lane',
         'result.get("target_call_cap")\n                != row["approved_caps"]["target_calls"]',
+        'prior_control.parents[1]\n            / "thesis"',
     ):
         assert condition in retained
 
@@ -981,7 +1109,6 @@ def _assert_phase7_recovery_amendment_contract(source: str) -> None:
         'amendment.get("runner_code_version") != contract["runner_code_version"]',
         'amendment.get("output_policy") != contract["output_policy"]',
         'framework_lock != RECOVERY_FRAMEWORK_LOCK_ID',
-        'runnote_path != control / str(contract["runnote_name"])',
         'completion.get("runnable_lanes") != expected_lanes',
         'historical.get("manifest") != descriptor(gate5_manifest)',
         'historical.get("runnote") != descriptor(gate5_runnote)',
@@ -998,6 +1125,9 @@ def _assert_phase7_recovery_amendment_contract(source: str) -> None:
         'launch.get("lane_order") != expected_lanes',
         'completion.get("amendment") != descriptor(amendment_path)',
         'completion.get("launch") != descriptor(launch_path)',
+        'amendment.get("prior_recovery_completion")',
+        '!= prior_recovery_attempt.get("completion")',
+        'runnote_path != control.parents[1] / "thesis" / str(runnote_name)',
     ):
         assert condition in amendment
 
@@ -1020,6 +1150,7 @@ def _assert_phase7_recovery_amendment_contract(source: str) -> None:
         'and spec_gate5 is not None',
         'and not isinstance(spec_gate5, dict)',
         'target_cap != amendment_row["approved_caps"]["target_calls"]',
+        'prior_recovery_attempt=attempts[-1] if attempts else None',
     ):
         assert condition in recovery
     assert "gate5_runnote=gate5_runnote" in recovery
@@ -1579,6 +1710,8 @@ def test_phase7_seven_measured_request_contract_mutations(condition: str) -> Non
         'prior.get("framework_lock_id") != RECOVERY_FRAMEWORK_LOCK_ID',
         'prior_launch.get("amendment") != descriptor(prior_amendment_path)',
         "set(prior) != prior_completion_fields",
+        '!= prior_recovery_attempt.get("completion")',
+        'runnote_path != control.parents[1] / "thesis" / str(runnote_name)',
         'result.get("target_call_cap")\n                != row["approved_caps"]["target_calls"]',
     ),
 )

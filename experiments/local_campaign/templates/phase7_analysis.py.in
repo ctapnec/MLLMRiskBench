@@ -245,6 +245,23 @@ RECOVERY_AMENDMENT_CONTRACTS: dict[tuple[str, str], dict[str, Any]] = {
     },
 }
 RECOVERY_AMENDMENT_CONTRACTS[(
+    "ura-local-campaign-core-failed-subset-amendment/1", "ura-runner/2.24"
+)] = {
+    **RECOVERY_AMENDMENT_CONTRACTS[(
+        "ura-local-campaign-core-length-output-amendment/1", "ura-runner/2.24"
+    )],
+    "fields": {
+        *RECOVERY_AMENDMENT_CONTRACTS[(
+            "ura-local-campaign-core-length-output-amendment/1", "ura-runner/2.24"
+        )]["fields"],
+        "prior_recovery_completion",
+    },
+    "amendment_name": "runner-2.24-core-failed-subset-amendment.json",
+    "runnote_name": None,
+    "runnote_prefix": "RUNNOTE.runner-2.24-core-failed-subset-amendment-",
+    "subset_from_prior_completion": True,
+}
+RECOVERY_AMENDMENT_CONTRACTS[(
     "ura-local-campaign-model-output-amendment/1", "ura-runner/2.24"
 )] = {
     **RECOVERY_AMENDMENT_CONTRACTS[(
@@ -303,6 +320,11 @@ RECOVERY_RETAINED_SPEC_NAMES = {
         "09-crescendo-qwen3-vl.json",
     ),
 }
+RECOVERY_RETAINED_SPEC_NAMES[(
+    "ura-local-campaign-core-failed-subset-amendment/1", "ura-runner/2.24"
+)] = RECOVERY_RETAINED_SPEC_NAMES[(
+    "ura-local-campaign-core-length-output-amendment/1", "ura-runner/2.24"
+)]
 CAMPAIGN_COHORTS = (
     "canonical",
     "output_policy_amendment",
@@ -9404,9 +9426,10 @@ def _validate_recovery_retained_provenance(
         if retained != expected or len(set(retained)) != len(expected):
             raise Phase7Error("recovery retained completed-lane inventory changed")
 
-    if amendment.get("schema") == (
-        "ura-local-campaign-core-length-output-amendment/1"
-    ):
+    if amendment.get("schema") in {
+        "ura-local-campaign-core-length-output-amendment/1",
+        "ura-local-campaign-core-failed-subset-amendment/1",
+    }:
         prior_path, prior = descriptor_object(
             amendment.get("prior_extended_recovery"),
             label="core recovery prior extended completion",
@@ -9559,7 +9582,14 @@ def _validate_recovery_retained_provenance(
             prior_amendment.get("runnote"),
             label="core recovery prior amendment runnote",
         )
-        if prior_runnote != prior_control / str(prior_contract["runnote_name"]):
+        if (
+            prior_control.parent.name != "engineering"
+            or prior_control.parents[1].name != "runs"
+            or prior_runnote
+            != prior_control.parents[1]
+            / "thesis"
+            / str(prior_contract["runnote_name"])
+        ):
             raise Phase7Error("core recovery prior amendment RUNNOTE role changed")
         for field in ("focused_tests", "mutation_tests"):
             descriptor_file(
@@ -9622,14 +9652,54 @@ def _validate_phase6_recovery_amendment(
     project_and_source: Mapping[str, Any],
     expected_commit: str,
     framework_lock: str,
+    prior_recovery_attempt: Mapping[str, Any] | None,
 ) -> tuple[Mapping[str, Any], dict[str, Mapping[str, Any]], str, str]:
     schema = amendment.get("schema")
     contract_key = (str(schema), str(amendment.get("runner_code_version")))
     contract = RECOVERY_AMENDMENT_CONTRACTS.get(contract_key)
     if contract is None:
         raise Phase7Error("unsupported Phase 6 recovery amendment schema")
-    lane_caps = list(contract["lane_caps"])
-    expected_lanes = [lane for lane, _target_calls in lane_caps]
+    all_lane_caps = list(contract["lane_caps"])
+    all_retained_names = RECOVERY_RETAINED_SPEC_NAMES[contract_key]
+    if contract.get("subset_from_prior_completion") is True:
+        prior_states = (
+            prior_recovery_attempt.get("terminal_states")
+            if isinstance(prior_recovery_attempt, Mapping)
+            else None
+        )
+        prior_lanes = (
+            prior_recovery_attempt.get("lane_order")
+            if isinstance(prior_recovery_attempt, Mapping)
+            else None
+        )
+        expected_lanes = (
+            [lane for lane in prior_lanes if prior_states.get(lane) == "failed"]
+            if isinstance(prior_lanes, list) and isinstance(prior_states, Mapping)
+            else []
+        )
+        if (
+            not expected_lanes
+            or amendment.get("prior_recovery_completion")
+            != prior_recovery_attempt.get("completion")
+        ):
+            raise Phase7Error(
+                "failed-subset recovery does not bind the immediately prior failures"
+            )
+        cap_by_lane = dict(all_lane_caps)
+        name_by_lane = {
+            lane: name
+            for (lane, _target_calls), name in zip(
+                all_lane_caps, all_retained_names, strict=True
+            )
+        }
+        if any(lane not in cap_by_lane or lane not in name_by_lane for lane in expected_lanes):
+            raise Phase7Error("failed-subset recovery lane is outside the core cohort")
+        lane_caps = [(lane, cap_by_lane[lane]) for lane in expected_lanes]
+        retained_spec_names = tuple(name_by_lane[lane] for lane in expected_lanes)
+    else:
+        lane_caps = all_lane_caps
+        expected_lanes = [lane for lane, _target_calls in lane_caps]
+        retained_spec_names = all_retained_names
     rows = amendment.get("affected_lanes")
     if (
         set(amendment) != contract["fields"]
@@ -9661,7 +9731,22 @@ def _validate_phase6_recovery_amendment(
     runnote_path = descriptor_file(
         amendment.get("runnote"), label="Phase 6 recovery amendment runnote"
     )
-    if runnote_path != control / str(contract["runnote_name"]):
+    runnote_name = contract.get("runnote_name")
+    if runnote_name is None:
+        control_prefix = f"phase6-core-length-recovery-{expected_commit[:7]}-"
+        recovery_tag = (
+            control.name[len(control_prefix) :]
+            if control.name.startswith(control_prefix)
+            else ""
+        )
+        if re.fullmatch(r"20[0-9]{6}T[0-9]{6}Z", recovery_tag) is None:
+            raise Phase7Error("failed-subset recovery control identity changed")
+        runnote_name = f"{contract['runnote_prefix']}{recovery_tag}.md"
+    if (
+        control.parent.name != "engineering"
+        or control.parents[1].name != "runs"
+        or runnote_path != control.parents[1] / "thesis" / str(runnote_name)
+    ):
         raise Phase7Error("Phase 6 recovery amendment RUNNOTE role changed")
     for field in ("focused_tests", "mutation_tests"):
         descriptor_file(amendment.get(field), label=f"Phase 6 recovery {field}")
@@ -9735,7 +9820,6 @@ def _validate_phase6_recovery_amendment(
 
     amendment_rows: dict[str, Mapping[str, Any]] = {}
     retained_spec_paths: set[Path] = set()
-    retained_spec_names = RECOVERY_RETAINED_SPEC_NAMES[contract_key]
     for row, (lane, target_calls), retained_name in zip(
         rows, lane_caps, retained_spec_names, strict=True
     ):
@@ -9931,6 +10015,7 @@ def validate_phase6_recovery_completions(
             project_and_source=project_and_source,
             expected_commit=expected_commit,
             framework_lock=framework_lock,
+            prior_recovery_attempt=attempts[-1] if attempts else None,
         )
         summary_path, summary = descriptor_object(
             completion["summary"], label="Phase 6 recovery summary"
