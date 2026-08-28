@@ -1860,7 +1860,7 @@ def test_phase6_sequence_recovers_only_content_identical_sealed_lane_state() -> 
         assert 'state["runner_argv"] = [path_replacements.get(item, item) for item in runner_argv]' in stale_locators
 
 
-def test_phase6_sequence_adopts_only_an_exact_terminal_core_launch() -> None:
+def test_phase6_sequence_adopts_only_exact_terminal_measured_launches() -> None:
     source = (
         Path(__file__).parents[2]
         / "experiments"
@@ -1869,7 +1869,7 @@ def test_phase6_sequence_adopts_only_an_exact_terminal_core_launch() -> None:
         / "phase6_sequence.sh.in"
     ).read_text(encoding="utf-8")
 
-    required = (
+    core_required = (
         'if [[ -n "${PHASE6_CORE_ADOPT_LAUNCH-}" ]]; then',
         'test -z "${PHASE6_CORE_RECOVERY_ROOTS-}"',
         'test -f "$PHASE6_CORE_ADOPT_LAUNCH" && test ! -L "$PHASE6_CORE_ADOPT_LAUNCH"',
@@ -1880,16 +1880,55 @@ def test_phase6_sequence_adopts_only_an_exact_terminal_core_launch() -> None:
         'cmp -s -- "$adopted_core_launch" "$CORE_LAUNCH"',
         'wait_for_child core "$CORE" "$CORE_SHA256" "$CORE_BYTES" "$CORE_LAUNCH"',
     )
+    extended_required = (
+        'if [[ -n "${PHASE6_EXTENDED_ADOPT_LAUNCH-}" ]]; then',
+        'test -f "$PHASE6_EXTENDED_ADOPT_LAUNCH" '
+        '&& test ! -L "$PHASE6_EXTENDED_ADOPT_LAUNCH"',
+        'test "$adopted_extended_launch" = "$PHASE6_EXTENDED_ADOPT_LAUNCH"',
+        '"$URA_WORK"/runs/engineering/phase6-sequence-*/extended.launch.txt)',
+        'test "$(stat -c \'%a\' -- "$adopted_extended_launch")" = \'600\'',
+        'test "$(stat -c \'%h\' -- "$adopted_extended_launch")" = \'1\'',
+        'cmp -s -- "$adopted_extended_launch" "$EXTENDED_LAUNCH"',
+        'wait_for_child extended "$EXTENDED" "$EXTENDED_SHA256"',
+    )
 
     def assert_adoption_contract(candidate: str) -> None:
-        for item in required:
+        for item in (*core_required, *extended_required):
             assert item in candidate
 
     assert_adoption_contract(source)
-    for item in required[:-1]:
+    for item in (*core_required[:-1], *extended_required[:-1]):
         mutated = source.replace(item, "removed-adoption-check", 1)
         with pytest.raises(AssertionError):
             assert_adoption_contract(mutated)
+
+
+def test_phase6_sequence_uses_gate5_identity_for_measured_children() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase6_sequence.sh.in"
+    ).read_text(encoding="utf-8")
+    required = (
+        'gate5_code_identity = gate5.get("code_identity")',
+        'set(gate5_code_identity) != {"expected_commit", "framework_lock_id"}',
+        'gate5_code_identity.get("framework_lock_id") != lock',
+        'if kind in {"core", "extended"}:\n'
+        '    code_identity = gate5_code_identity',
+        'else:\n    code_identity = {"expected_commit": commit, "framework_lock_id": lock}',
+        '"code_identity": code_identity,',
+    )
+
+    def assert_identity_contract(candidate: str) -> None:
+        _assert_source_contract(candidate, required)
+
+    assert_identity_contract(source)
+    for item in required[:-1]:
+        mutated = source.replace(item, "False", 1)
+        with pytest.raises(AssertionError):
+            assert_identity_contract(mutated)
 
 
 def test_phase6_sequence_passes_the_validated_gate5_profile_to_core() -> None:

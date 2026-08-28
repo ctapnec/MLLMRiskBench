@@ -677,6 +677,13 @@ shown as `unknown`, not asserted as `running`.
 
 The Phase 6 sequence wait for Gate 5 is bounded by its declared 720-hour
 controller hard stop, not by a Runner lane's 86,400-second call-start window.
+When a later sequence finalizes an interrupted campaign, it adopts core or
+extended work only through an exact prior sequence launch whose child already
+has a validated terminal completion and exit marker. The adopted measured
+children retain the Gate 5 project identity under which they ran; native
+diagnostics, if not yet completed, run once under the finalizer's current
+analysis revision. This avoids repeating successful measured work while keeping
+the revision strata explicit.
 The Phase 5 and Gate 5 orchestration controllers enforce a 24-hour global
 controller deadline, and the Phase 7 watcher enforces 720 hours. At expiry, a
 controller records exit 124 and the exact wait/hours reason in task and campaign

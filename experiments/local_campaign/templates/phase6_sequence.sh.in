@@ -947,7 +947,18 @@ for failure_name in failure_names[kind]:
     failure = attempt / failure_name
     if failure.exists() or failure.is_symlink():
         raise SystemExit(f"{kind}: typed completion coexists with a failure marker")
-code_identity = {"expected_commit": commit, "framework_lock_id": lock}
+gate5 = phase7.strict_object(Path(manifest_value))
+gate5_code_identity = gate5.get("code_identity")
+if (
+    not isinstance(gate5_code_identity, dict)
+    or set(gate5_code_identity) != {"expected_commit", "framework_lock_id"}
+    or gate5_code_identity.get("framework_lock_id") != lock
+):
+    raise SystemExit(f"{kind}: Gate 5 code identity changed")
+if kind in {"core", "extended"}:
+    code_identity = gate5_code_identity
+else:
+    code_identity = {"expected_commit": commit, "framework_lock_id": lock}
 kwargs = {
     "completion_path": completion,
     "gate5_manifest": Path(manifest_value),
@@ -958,7 +969,6 @@ kwargs = {
 if kind in {"core", "extended"}:
     kwargs["runner_root"] = Path(work_value).resolve(strict=True) / "runs" / "thesis" / "runner"
 if kind == "core":
-    gate5 = phase7.strict_object(Path(manifest_value))
     kwargs["gate5_profile"] = phase7.gate5_inventory_profile(
         gate5["lanes"], label="Phase 6 sequence validated Gate 5 manifest"
     )
@@ -1129,11 +1139,28 @@ controller_task_start extended-measured
 EXTENDED_LAUNCH="$CONTROL_ROOT/extended.launch.txt"
 test ! -e "$EXTENDED_LAUNCH" && test ! -L "$EXTENDED_LAUNCH"
 verify_regular "$EXTENDED" "$EXTENDED_SHA256" "$EXTENDED_BYTES"
-bash "$EXTENDED" \
-  --gate5-manifest "$GATE5_MANIFEST" \
-  --gate5-runnote "$GATE5_RUNNOTE" \
-  --gate5-promotion-receipt "$GATE5_PROMOTION" \
-  --authorize-manifest-sha256 "$GATE5_MANIFEST_SHA" > "$EXTENDED_LAUNCH"
+if [[ -n "${PHASE6_EXTENDED_ADOPT_LAUNCH-}" ]]; then
+  test "${PHASE6_EXTENDED_ADOPT_LAUNCH#/}" != "$PHASE6_EXTENDED_ADOPT_LAUNCH"
+  test -f "$PHASE6_EXTENDED_ADOPT_LAUNCH" && test ! -L "$PHASE6_EXTENDED_ADOPT_LAUNCH"
+  adopted_extended_launch="$(readlink -e -- "$PHASE6_EXTENDED_ADOPT_LAUNCH")"
+  test "$adopted_extended_launch" = "$PHASE6_EXTENDED_ADOPT_LAUNCH"
+  case "$adopted_extended_launch" in
+    "$URA_WORK"/runs/engineering/phase6-sequence-*/extended.launch.txt) ;;
+    *) printf 'unsafe adopted extended launch\n' >&2; exit 1 ;;
+  esac
+  test "$(stat -c '%a' -- "$adopted_extended_launch")" = '600'
+  test "$(stat -c '%h' -- "$adopted_extended_launch")" = '1'
+  cp -- "$adopted_extended_launch" "$EXTENDED_LAUNCH"
+  chmod 600 -- "$EXTENDED_LAUNCH"
+  cmp -s -- "$adopted_extended_launch" "$EXTENDED_LAUNCH"
+  printf 'PHASE6_CONTROLLER_ADOPTED=extended LAUNCH=%s\n' "$adopted_extended_launch"
+else
+  bash "$EXTENDED" \
+    --gate5-manifest "$GATE5_MANIFEST" \
+    --gate5-runnote "$GATE5_RUNNOTE" \
+    --gate5-promotion-receipt "$GATE5_PROMOTION" \
+    --authorize-manifest-sha256 "$GATE5_MANIFEST_SHA" > "$EXTENDED_LAUNCH"
+fi
 wait_for_child extended "$EXTENDED" "$EXTENDED_SHA256" \
   "$EXTENDED_BYTES" "$EXTENDED_LAUNCH"
 if [ "${CHILD_RC[extended]}" = '0' ]; then
