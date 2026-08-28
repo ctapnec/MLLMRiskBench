@@ -676,7 +676,7 @@ def _assert_core_contract(source: str) -> None:
         source, _function(tree, "failed_subset_from_completion")
     )
     assert subset is not None
-    assert "or not failed" in subset
+    assert "not failed" in subset
     assert 'states[lane] == "failed"' in subset
     main_source = ast.get_source_segment(source, _function(tree, "main"))
     assert main_source is not None
@@ -755,7 +755,7 @@ def test_core_retry_derives_only_the_prior_failed_ordered_subset() -> None:
 def test_core_retry_failed_only_guard_is_mutation_covered() -> None:
     source = _source(CORE)
     _assert_core_contract(source)
-    mutant = source.replace("        or not failed\n", "", 1)
+    mutant = source.replace("        not failed\n", "", 1)
     assert mutant != source
     with pytest.raises(AssertionError):
         _assert_core_contract(mutant)
@@ -1034,7 +1034,7 @@ def _assert_phase7_recovery_amendment_contract(source: str) -> None:
         ("ura-local-campaign-length-output-amendment/1", "ura-runner/2.22"): 2,
         ("ura-local-campaign-model-output-amendment/1", "ura-runner/2.23"): 3,
         ("ura-local-campaign-model-output-amendment/1", "ura-runner/2.24"): 2,
-        ("ura-local-campaign-core-length-output-amendment/1", "ura-runner/2.24"): 2,
+        ("ura-local-campaign-core-length-output-amendment/1", "ura-runner/2.24"): 5,
         (
             "ura-local-campaign-core-failed-subset-amendment/1",
             "ura-runner/2.24",
@@ -1237,7 +1237,7 @@ def test_core_recovery_contract_and_cap_mutation() -> None:
         _assert_core_contract(policy_mutant)
 
     main_mutant = source.replace(
-        "    validate_specs_contract(module, specs)\n", "", 1
+        "    validate_specs_contract(module, all_specs)\n", "", 1
     )
     assert main_mutant != source
     with pytest.raises(AssertionError):
