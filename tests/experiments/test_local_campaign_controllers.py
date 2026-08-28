@@ -1311,7 +1311,7 @@ def test_phase7_splits_lifecycle_from_success_only_metric_views() -> None:
     suite = source[source.index("    def run_suite_summary("):source.index("    def run_level2(")]
     level2 = source[source.index("    def run_level2("):source.index("    def run_judge_sensitivity(")]
     assert "self.lifecycle_runner_view()" in level1
-    assert "self.eligibility_args(lifecycle=True)" in level1
+    assert "self.lifecycle_eligibility_args_for_roots(roots)" in level1
     assert "self.analysis_runner_view()" in suite
     assert "self.eligibility_args(lifecycle=False)" in suite
     assert "self.analysis_runner_view()" in level2
@@ -1337,6 +1337,31 @@ def test_rendered_phase7_lifecycle_partition_mutations_fail(tmp_path: Path) -> N
     assert "phase7-adaptivity-non-estimable-contrasts" in value["contracts"]
     assert "phase7-transfer-faceted-index" in value["contracts"]
     assert "phase7-runner-view-content-binding" in value["contracts"]
+
+    rendered = (output / "phase7_analysis.py").read_text(encoding="utf-8")
+    rr_prerequisite = (
+        "            ADAPTIVITY_RIGHT_LANE,\n"
+        "            LLAVA_RR_IMAGE_LANE,\n"
+    )
+    assert rr_prerequisite in rendered
+    mutant = rendered.replace(
+        rr_prerequisite,
+        "            ADAPTIVITY_RIGHT_LANE,\n",
+        1,
+    )
+    mutant_path = output / "phase7_analysis-rr-prerequisite-mutant.py"
+    mutant_path.write_text(mutant, encoding="utf-8")
+    rejected = subprocess.run(
+        [sys.executable, str(mutant_path), "contract-self-test"],
+        cwd=Path(__file__).parents[2],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert rejected.returncode != 0
+    assert "analysis prerequisite lane inventory changed" in (
+        rejected.stdout + rejected.stderr
+    )
 
 
 def test_phase7_conditional_defense_uses_runner_eligibility_binding_shape() -> None:
@@ -2029,7 +2054,7 @@ def test_phase7_rr_pair_dispatch_is_conditioned_on_current_measured_cells() -> N
     assert len(set(image_arms)) == 12
     assert "ura-phase7-non-estimable-contrast/1" in source
     assert '"paired_compare_invoked": False' in rr_contrast
-    assert '"estimate": None' in rr_contrast
+    assert "non_estimable_llava_pair_value(" in rr_contrast
     assert '"modality": "image"' in rr_contrast
     assert "for corpus in IMAGE_ARMS:" in rr_contrast
     plan = rr_contrast.index("llava_pair_prerequisite_plan(")
@@ -2608,7 +2633,7 @@ def test_phase8_accepts_current_rr_and_rejects_only_historical_terminal_rows() -
     rejection = source[rejection_start:rejection_end]
     assert "RR_TARGET_IDENTITY_MARKERS" not in rejection
     assert "RR_CURRENT_LANES" not in rejection
-    assert '"llava_rr"' in source
+    assert 'seven["rr_model_selector"]' in source
     assert 'project_root / "experiments" / "local-llava-rr.json"' in source
     assert "RR_LOCAL_CONFIG_SHA256" in source
     assert "RR_OBSERVED_PROJECT_COMMIT" in source
@@ -3891,9 +3916,47 @@ def test_phase6_rr_runtime_terminals_are_required_but_never_scheduled() -> None:
     assert native.count(
         'eligibility.get("bindings", {}).get("request_envelope")'
     ) == 2
-    assert "rr-envelope-eligibility-binding" in native
-    assert "rr-projection-byte-mutation" in native
-    assert "rr-envelope-byte-mutation" in native
+
+    def assert_rr_projection_binding(candidate: str) -> None:
+        validators = re.findall(
+            r"def validate_rr_projection_field\(.*?(?=\n\ndef )",
+            candidate,
+            re.DOTALL,
+        )
+        assert validators
+        for validator in validators:
+            assert "projection_from_bytes(" in validator
+            assert "envelope_from_bytes(" in validator
+            assert (
+                'eligibility.get("bindings", {}).get("request_envelope")'
+                in validator
+            )
+            assert "!= observed_envelope" in validator
+            assert (
+                "!= {\"path\": str(projection_path), **observed_projection}"
+                in validator
+            )
+            assert (
+                "!= {\"path\": str(envelope_path), **observed_envelope}"
+                in validator
+            )
+
+    assert_rr_projection_binding(native)
+    for original, replacement in (
+        ("!= observed_envelope", "== observed_envelope"),
+        (
+            "!= {\"path\": str(projection_path), **observed_projection}",
+            "== {\"path\": str(projection_path), **observed_projection}",
+        ),
+        (
+            "!= {\"path\": str(envelope_path), **observed_envelope}",
+            "== {\"path\": str(envelope_path), **observed_envelope}",
+        ),
+    ):
+        mutant = native.replace(original, replacement, 1)
+        assert mutant != native
+        with pytest.raises(AssertionError):
+            assert_rr_projection_binding(mutant)
     for source in semantic_sources:
         rr_projection_validators = re.findall(
             r"def validate_rr_projection_field\(.*?(?=\n\ndef )",

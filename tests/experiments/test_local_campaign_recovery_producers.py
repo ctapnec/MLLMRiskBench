@@ -1446,7 +1446,7 @@ def test_phase7_seven_policy_and_launch_chain_mutations(condition: str) -> None:
     end = source.index("\n\ndef ", start + 5)
     validator = source[start:end]
     assert condition in validator
-    mutant_validator = validator.replace(condition, condition + "_mutated", 1)
+    mutant_validator = validator.replace(condition, "__guard_removed_by_mutation__", 1)
     mutant = source[:start] + mutant_validator + source[end:]
     with pytest.raises(AssertionError):
         _assert_phase7_seven_policy_launch_chain(mutant)
@@ -1517,7 +1517,7 @@ def test_phase7_seven_policy_provenance_call_mutations(
     end = source.index(indent, start) + len(indent)
     call = source[start:end]
     assert condition in call
-    mutant_call = call.replace(condition, condition + "_mutated", 1)
+    mutant_call = call.replace(condition, "__guard_removed_by_mutation__", 1)
     mutant = source[:start] + mutant_call + source[end:]
     with pytest.raises(AssertionError):
         _assert_phase7_seven_policy_launch_chain(mutant)
@@ -1535,7 +1535,7 @@ def test_phase7_seven_policy_provenance_call_mutations(
 def test_phase7_seven_measured_request_contract_mutations(condition: str) -> None:
     source = _source(PHASE7)
     _assert_phase7_seven_measured_request_contract(source)
-    mutant = source.replace(condition, condition + "_mutated", 1)
+    mutant = source.replace(condition, "__guard_removed_by_mutation__")
     assert mutant != source
     with pytest.raises(AssertionError):
         _assert_phase7_seven_measured_request_contract(mutant)
@@ -1585,7 +1585,7 @@ def test_phase7_seven_measured_request_contract_mutations(condition: str) -> Non
 def test_phase7_recovery_amendment_exact_contract_mutations(condition: str) -> None:
     source = _source(PHASE7)
     _assert_phase7_recovery_amendment_contract(source)
-    mutant = source.replace(condition, condition + "_mutated", 1)
+    mutant = source.replace(condition, "__guard_removed_by_mutation__")
     assert mutant != source
     with pytest.raises(AssertionError):
         _assert_phase7_recovery_amendment_contract(mutant)

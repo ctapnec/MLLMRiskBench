@@ -16153,7 +16153,15 @@ def contract_self_test() -> int:
     def prerequisite_runner(
         measured: Sequence[str] = (),
     ) -> dict[str, Any]:
-        lanes = tuple(dict.fromkeys((*REPLAY_ANALYSIS_LANES, ADAPTIVITY_RIGHT_LANE)))
+        lanes = tuple(
+            dict.fromkeys(
+                (
+                    *REPLAY_ANALYSIS_LANES,
+                    ADAPTIVITY_RIGHT_LANE,
+                    LLAVA_RR_IMAGE_LANE,
+                )
+            )
+        )
         measured_set = set(measured)
         states = {
             lane: (

@@ -451,7 +451,10 @@ def test_phase8_accepts_measured_current_rr_pair_summary(phase8: ModuleType) -> 
         phase8, purplellama_complete=False
     )
     assert conditions == []
-    measured_pair_lanes = ("local-llava-base-image-primary-100",)
+    measured_pair_lanes = (
+        "local-llava-base-image-primary-100",
+        "local-llava-rr-image-primary-100",
+    )
     for lane in measured_pair_lanes:
         states[lane] = "measured_complete"
         boundary["runner_outcomes"][lane] = "measured_complete"
@@ -488,7 +491,10 @@ def test_phase8_accepts_completed_but_non_estimable_rr_pair_summary(
     boundary, states, _cascade, conditions = _analysis_boundary(
         phase8, purplellama_complete=False
     )
-    for lane in ("local-llava-base-image-primary-100",):
+    for lane in (
+        "local-llava-base-image-primary-100",
+        "local-llava-rr-image-primary-100",
+    ):
         states[lane] = "measured_complete"
         boundary["runner_outcomes"][lane] = "measured_complete"
         boundary["lifecycle_registry_states"][lane] = "complete"

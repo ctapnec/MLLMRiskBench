@@ -1198,26 +1198,42 @@ def test_builder_lists_all_arms_and_only_campaign_attackers(tmp_path: Path) -> N
         _ARM_CATALOG,
         _ATTACKER_NAMES,
         _BUILDER_OMITTED_ATTACKERS,
-        _INELIGIBLE_ARMS,
     )
     app = _app(tmp_path)
     try:
         _s, _c, body = app.handle("GET", "/build")
         text = body.decode("utf-8")
+        catalog_arms = {arm for arm, _mods, _reason in _ARM_CATALOG}
         for arm, _mods, _reason in _ARM_CATALOG:
             assert f"data-arm='{arm}'" in text, arm  # every arm visible
+        source_dispositions = app._source_conformance_arm_dispositions({})
+        blocked_arms = {
+            arm
+            for arm, (disposition, _reason) in source_dispositions.items()
+            if disposition == "blocked"
+        }
+        admitted_arms = {
+            arm
+            for arm, (disposition, _reason) in source_dispositions.items()
+            if disposition == "admitted"
+        }
+        disabled_arms = set()
+        for arm, _mods, _reason in _ARM_CATALOG:
+            marker = f"data-arm='{arm}'"
+            at = text.index(marker)
+            input_tag = text[text.rfind("<input", 0, at):text.find(">", at)]
+            if "disabled" in input_tag:
+                disabled_arms.add(arm)
+        assert disabled_arms == blocked_arms
+        assert admitted_arms <= catalog_arms
+        assert admitted_arms.isdisjoint(disabled_arms)
         for attacker in set(_ATTACKER_NAMES) - _BUILDER_OMITTED_ATTACKERS:
             assert f"data-fw='{attacker}'" in text, attacker
         for attacker in _BUILDER_OMITTED_ATTACKERS:
             assert f"data-fw='{attacker}'" not in text, attacker
-        # Ineligible arms are selectable so the server can return their exact
-        # fail-closed reason; the repeated reason is compacted into a tooltip.
-        # The two source-metric arms are selectable because they do run.
-        for arm in _INELIGIBLE_ARMS:
-            marker = f"data-arm='{arm}'"
-            at = text.index(marker)
-            input_tag = text[text.rfind("<input", 0, at):text.find(">", at)]
-            assert "disabled" not in input_tag
+        # Receipt-admitted ineligible arms remain selectable so the server can
+        # return their exact fail-closed reason; only receipt-blocked arms are
+        # disabled. The source-metric arms are selectable because they do run.
         assert "source-specific metric - approximate proxy available (evaluator not integrated)" in text
         assert "source-specific metric - runnable (replay attacker only)" in text
         assert "badge amber tip" in text and "approximate opt-in" in text

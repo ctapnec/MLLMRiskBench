@@ -422,6 +422,13 @@ def test_phase5_canary_binds_purpose_artifacts_config_seed_and_attempt_count(
         },
     }
     grid_descriptor = artifact("fixture.grid.json", grid)
+
+    def rewrite_grid() -> None:
+        raw = json.dumps(grid, sort_keys=True).encode()
+        (root / "fixture.grid.json").write_bytes(raw)
+        grid_descriptor["sha256"] = hashlib.sha256(raw).hexdigest()
+        grid_descriptor["bytes"] = len(raw)
+
     canary_id = "lane-canary-" + "6" * 24
     canary_path = root / f"{canary_id}.lane-canary.json"
     canary_path.write_text("{}", encoding="utf-8")
@@ -504,12 +511,14 @@ def test_phase5_canary_binds_purpose_artifacts_config_seed_and_attempt_count(
         )
     projection["selection"]["arms"][0]["selected_datapoint_ids_sha256"] = selected_sha256
     grid["request"]["attacker_config_artifact"]["sha256"] = "d" * 64
+    rewrite_grid()
     with pytest.raises(SystemExit):
         namespace["validate_canary_chain"](
             canary_path, canary, spec=spec, preparation=preparation,
             config_sha256=config_sha256, config_descriptor=config_descriptor, lane=lane,
         )
     grid["request"]["attacker_config_artifact"]["sha256"] = "c" * 64
+    rewrite_grid()
     canary["bindings"]["eligibility_condition_id"] = "condition-" + "9" * 24
     with pytest.raises(SystemExit):
         namespace["validate_canary_chain"](
@@ -688,7 +697,7 @@ def test_phase6_terminal_must_agree_with_failed_partial_or_complete_lifecycle() 
 
 def test_phase7_sampling_sources_exclude_failed_followon_sibling(tmp_path: Path) -> None:
     runner = tmp_path / "runner"
-    core_view = tmp_path / "core-view"
+    core_view = runner / "core-view"
     success = runner / "followon-nanogcg-qwen3-vl" / "success"
     failed = runner / "followon-nanogcg-qwen3-vl" / "failed-recovery"
     (core_view / "core-lane").mkdir(parents=True)
@@ -716,7 +725,8 @@ def test_phase7_sampling_sources_exclude_failed_followon_sibling(tmp_path: Path)
         inputs = {
             "followon": {
                 "metric_roots": {"followon-nanogcg-qwen3-vl": str(success)}
-            }
+            },
+            "seven_output_policy_amendment": {"metric_roots": {}},
         }
 
         @staticmethod
@@ -724,12 +734,24 @@ def test_phase7_sampling_sources_exclude_failed_followon_sibling(tmp_path: Path)
             return core_view
 
         @staticmethod
+        def _canonical_sampling_lanes() -> list[str]:
+            return ["core-lane"]
+
+        @staticmethod
+        def _canonical_sampling_root(_lane: str) -> Path:
+            return core_view / "core-lane"
+
+        @staticmethod
         def _followon_metric_lanes() -> list[str]:
             return ["followon-nanogcg-qwen3-vl"]
 
+        @staticmethod
+        def _seven_metric_lanes() -> list[str]:
+            return []
+
     sources = method(Fixture())
     assert set(sources) == {
-        "core-lane/core.complete.json",
+        "core-view/core-lane/core.complete.json",
         "followon-nanogcg-qwen3-vl/success/success.complete.json",
     }
     assert all("failed-recovery" not in relative for relative in sources)
@@ -738,10 +760,13 @@ def test_phase7_sampling_sources_exclude_failed_followon_sibling(tmp_path: Path)
 def test_phase7_revision_strata_retain_mixed_current_revisions(tmp_path: Path) -> None:
     lanes = ["core-a", "core-b", "followon-nanogcg-qwen3-vl"]
     grids: list[dict[str, Any]] = []
-    for lane, commit in (("core-a", "9560270"), ("core-b", "b6241be")):
+    for lane, revision in (("core-a", "9" * 64), ("core-b", "b" * 64)):
         path = tmp_path / lane / f"{lane}.grid.json"
         path.parent.mkdir()
-        path.write_text(json.dumps({"request": {"project_revision": {"commit": commit}}}), encoding="utf-8")
+        path.write_text(
+            json.dumps({"request": {"project_revision": {"sha256": revision}}}),
+            encoding="utf-8",
+        )
         grids.append({"path": str(path)})
 
     def canonical(value: object) -> bytes:
@@ -755,6 +780,7 @@ def test_phase7_revision_strata_retain_mixed_current_revisions(tmp_path: Path) -
             "checked_dir": lambda path, **_: Path(path),
             "sha256_bytes": lambda data: hashlib.sha256(data).hexdigest(),
             "canonical": canonical,
+            "HEX64": re.compile(r"[0-9a-f]{64}"),
             "Phase7Error": ValueError,
         },
     )
@@ -774,11 +800,20 @@ def test_phase7_revision_strata_retain_mixed_current_revisions(tmp_path: Path) -
                     followon_revision: ["followon-nanogcg-qwen3-vl"]
                 }
             },
+            "seven_output_policy_amendment": {"revision_strata": {}},
         }
 
         @staticmethod
         def _human_audit_lane_order() -> list[str]:
             return lanes
+
+        @staticmethod
+        def _canonical_sampling_lanes() -> list[str]:
+            return lanes[:2]
+
+        @staticmethod
+        def _canonical_sampling_root(lane: str) -> Path:
+            return tmp_path / lane
 
     strata = method(Fixture())
     assert len(strata) == 3
@@ -786,43 +821,80 @@ def test_phase7_revision_strata_retain_mixed_current_revisions(tmp_path: Path) -
 
 
 def test_phase8_sampling_keeps_four_current_revision_strata() -> None:
-    def canonical(value: object) -> bytes:
-        return (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
-
-    helper = _phase8_function(
-        "phase8_sampling_revision_strata",
-        {
-            "Sequence": list,
-            "Mapping": dict,
-            "Any": Any,
-            "canonical": canonical,
-            "sha256_bytes": lambda data: hashlib.sha256(data).hexdigest(),
-            "HEX64": re.compile(r"[0-9a-f]{64}"),
-            "Phase8Error": ValueError,
-        },
-    )
     core = ["core-956", "core-b62", "core-c62"]
     followon = "followon-nanogcg-qwen3-vl"
-    grid_values = {
-        lane: {"request": {"project_revision": {"commit": commit}}}
-        for lane, commit in zip(core, ("9560270", "b6241be", "c62e027"), strict=True)
+    revision_by_lane = {
+        lane: digit * 64
+        for lane, digit in zip(core, ("9", "b", "c"), strict=True)
     }
-    followon_revision = hashlib.sha256(canonical({"commit": "73c5331"})).hexdigest()
+    followon_revision = "7" * 64
+    revision_by_lane[followon] = followon_revision
+    source_sha = "e" * 64
+    namespace: dict[str, Any] = {
+        "Path": Path,
+        "Sequence": list,
+        "Mapping": dict,
+        "Any": Any,
+        "HEX64": re.compile(r"[0-9a-f]{64}"),
+        "Phase8Error": ValueError,
+        "SEVEN_AMENDMENT_LANES": (),
+        "SEVEN_TERMINAL_STATES": {"measured_complete", "gate5_failed", "measured_failed"},
+        "FOLLOWON_LANES": (followon,),
+        "FOLLOWON_STATES": {"measured_complete", "partial", "failed"},
+        "checked_dir": lambda path, **_: Path(path),
+        "_sampling_lane_binding": lambda *, lane, **_: (
+            revision_by_lane[lane], source_sha
+        ),
+    }
+    helper = _phase8_function("phase7_sampling_lane_contract", namespace)
     lane_order = [*core, followon]
-    strata = helper(
-        core_lanes=core,
-        grid_values=grid_values,
-        followon_strata={followon_revision: [followon]},
-        audit_lanes=lane_order,
+    runner_root = Path("/runner")
+    runner = {
+        "lifecycle_lane_order": core,
+        "terminal_states": {lane: "measured_complete" for lane in core},
+        "lifecycle_lane_roots": {
+            lane: str(runner_root / lane) for lane in core
+        },
+        "lifecycle_authorizations": {lane: {} for lane in core},
+    }
+    seven = {
+        "terminal_states": {}, "metric_lane_order": [], "metric_roots": {},
+        "metric_evidence": {}, "project_revision_receipt_sha256": "a" * 64,
+        "source_conformance_sha256": source_sha,
+    }
+    followon_value = {
+        "terminal_states": {followon: "measured_complete"},
+        "metric_lane_order": [followon],
+        "metric_roots": {followon: str(runner_root / followon)},
+        "metric_evidence": {followon: {}},
+        "project_revision_receipt_sha256": followon_revision,
+        "source_conformance_sha256": source_sha,
+    }
+    contract = helper(
+        runner_root=runner_root,
+        runner=runner,
+        recoveries={"latest": {}},
+        seven=seven,
+        followon=followon_value,
     )
+    strata = contract["revision_strata"]
     assert len(strata) == 4
     assert {lane for lanes in strata.values() for lane in lanes} == set(lane_order)
+
+    namespace["FOLLOWON_LANES"] = (core[0],)
     with pytest.raises(ValueError):
         helper(
-            core_lanes=core,
-            grid_values=grid_values,
-            followon_strata={followon_revision: [core[0]]},
-            audit_lanes=core,
+            runner_root=runner_root,
+            runner=runner,
+            recoveries={"latest": {}},
+            seven=seven,
+            followon={
+                **followon_value,
+                "terminal_states": {core[0]: "measured_complete"},
+                "metric_lane_order": [core[0]],
+                "metric_roots": {core[0]: str(runner_root / core[0])},
+                "metric_evidence": {core[0]: {}},
+            },
         )
 
 

@@ -993,9 +993,13 @@ def test_level1_retains_explicit_sampling_policy_and_rejects_audit_drift(
         "--sampling-policy", SOURCE_ORDER_CLUSTER_PREFIX,
         "--seeds", "0",
         "--attackers", "replay",
-        "--judges", "rules",
+        "--judges", "rules,llm",
+        "--judge-model", "mock",
         "--max-queries", "1",
         "--max-turns", "1",
+        "--max-total-target-calls", "2",
+        "--max-total-judge-calls", "2",
+        "--max-total-http-attempts", "2",
         "--out", str(root),
     ]) == 0
     artifact = _plan_artifact(next(root.glob("eligibility-*.eligibility.json")))

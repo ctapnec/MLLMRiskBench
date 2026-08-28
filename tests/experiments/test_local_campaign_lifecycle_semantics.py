@@ -641,7 +641,41 @@ def _analysis_controller(
     runner: dict[str, object],
 ) -> tuple[object, list[tuple[object, ...]], list[tuple[object, ...]]]:
     controller = object.__new__(phase7.AnalysisController)
-    controller.inputs = {"runner": runner}
+    runner.setdefault(
+        "model_selectors", {"llava_base": "vllm:fixture/llava-base"}
+    )
+    failure = {
+        "path": "/phase6/fixture-failure.json",
+        "sha256": "f" * 64,
+        "bytes": 1,
+    }
+    rr_states = {lane: "failed" for lane in phase7.RR_CURRENT_LANES}
+    controller.inputs = {
+        "runner": runner,
+        "canonical_recoveries": {
+            "attempts": [],
+            "latest": {
+                phase7.LLAVA_BASE_IMAGE_LANE: {
+                    "state": "failed",
+                    "evidence": {"failure": copy.deepcopy(failure)},
+                }
+            },
+        },
+        "seven_output_policy_amendment": {
+            "lane_order": [],
+            "terminal_states": rr_states,
+            "metric_roots": {},
+            "lifecycle": {
+                lane: {
+                    "state": "failed",
+                    "evidence": {"failure": copy.deepcopy(failure)},
+                }
+                for lane in phase7.RR_CURRENT_LANES
+            },
+            "rr_model_selector": "vllm:fixture/llava-rr",
+        },
+        "followon": {"lane_order": [], "lifecycle": {}},
+    }
     controller.analysis = tmp_path / "analysis"
     subprocesses: list[tuple[object, ...]] = []
     statuses: list[tuple[object, ...]] = []
@@ -1303,7 +1337,14 @@ def test_phase7_lifecycle_view_write_cannot_modify_phase6_source(
                     "level1_tool_input_status": "retained_runner_artifacts",
                 }
             },
-        }
+        },
+        "canonical_recoveries": {"attempts": []},
+        "seven_output_policy_amendment": {
+            "lane_order": [],
+            "lifecycle": {},
+            "metric_roots": {},
+        },
+        "followon": {"lane_order": [], "lifecycle": {}},
     }
     controller.lifecycle_runner_view_path = tmp_path / "lifecycle-view"
     controller.lifecycle_runner_view_receipt = (
