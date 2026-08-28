@@ -1802,6 +1802,45 @@ def test_phase6_core_attestation_probe_uses_local_guardrail_fallback() -> None:
         assert_probe_contract(stale_request_field)
 
 
+def test_phase6_recovery_attestation_probes_keep_local_guardrail_fallback() -> None:
+    templates = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+    )
+    for name in (
+        "phase6_core_length_recovery.py.in",
+        "phase6_seven_output_policy.py.in",
+    ):
+        source = (templates / name).read_text(encoding="utf-8")
+        start = source.index("def derive_core_attestation(")
+        end = source.index("\ndef ", start + 5)
+        contract = source[start:end]
+        assert '"--judges", "rules,guardrail"' in contract
+        assert '"--guardrail-model", "meta-llama/Llama-Guard-3-8B"' in contract
+        assert (
+            '"--guardrail-revision", '
+            '"7327bd9f6efbbe6101dc6cc4736302b3cbb6e425"'
+        ) in contract
+        assert '"--guardrail-device", "cuda:1"' in contract
+        assert '"target_and_guard"' in contract
+
+    extended = (templates / "phase6_extended_measured.sh.in").read_text(
+        encoding="utf-8"
+    )
+    start = extended.index("def derive_attestation(")
+    end = extended.index("\ndef ", start + 5)
+    contract = extended[start:end]
+    assert '"--judges", "rules,guardrail"' in contract
+    assert '"--guardrail-model", GUARD' in contract
+    assert '"--guardrail-revision", GUARD_REV' in contract
+    assert '"--guardrail-device", "cuda:1"' in contract
+    assert '"target_and_guard"' in contract
+    assert 'else "guard_only"' in contract
+    assert "argv.extend(acquisition_args(probe_acquisition))" in contract
+
+
 def test_phase6_core_owned_commands_preserve_here_document_stdin() -> None:
     source = (
         Path(__file__).parents[2]

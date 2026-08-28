@@ -102,6 +102,20 @@ def test_followon_payloads_compile_and_ideator_cap_is_eight() -> None:
     assert ideator["preparations"] == {"attacker_config", "seed_pair_manifest"}
 
 
+def test_followon_attestation_probe_keeps_local_guardrail_fallback() -> None:
+    source = (TEMPLATES / "followon_prepared_controller.py.in").read_text(
+        encoding="utf-8"
+    )
+    start = source.index("def derive_attestation(")
+    end = source.index("\ndef ", start + 5)
+    contract = source[start:end]
+    assert '"rules,guardrail"' in contract
+    assert '"meta-llama/Llama-Guard-3-8B"' in contract
+    assert '"7327bd9f6efbbe6101dc6cc4736302b3cbb6e425"' in contract
+    assert '"cuda:1"' in contract
+    assert '"target_and_guard"' in contract
+
+
 def test_followon_controller_authorizes_before_measured_calls_and_finalizes_outcomes() -> None:
     path = TEMPLATES / "followon_prepared_controller.py.in"
     source = path.read_text(encoding="utf-8")

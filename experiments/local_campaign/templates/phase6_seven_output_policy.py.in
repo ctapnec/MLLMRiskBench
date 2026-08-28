@@ -1280,7 +1280,10 @@ def derive_core_attestation(
         "--local-config", option_value(base, "--local-config"),
         "--local-config-sha256", option_value(base, "--local-config-sha256"),
         "--attackers", "replay",
-        "--judges", "rules",
+        "--judges", "rules,guardrail",
+        "--guardrail-model", "meta-llama/Llama-Guard-3-8B",
+        "--guardrail-revision", "7327bd9f6efbbe6101dc6cc4736302b3cbb6e425",
+        "--guardrail-device", "cuda:1",
         "--corpora", corpus,
     ]
     if modality == "image":
@@ -1313,7 +1316,7 @@ def derive_core_attestation(
         probe_args,
         lane_control / f"probe-plan-{ctl.attempt_tag}",
         lane_control / "receipts",
-        "target_only",
+        "target_and_guard",
     )
     ctl.run(
         lane,

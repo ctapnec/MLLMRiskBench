@@ -6181,23 +6181,27 @@ def derive_attestation(ctl: Controller, spec: Mapping[str, Any], lane_control: P
         "--local", spec["target"]["spec"],
         "--local-config", local_config,
         "--local-config-sha256", local_sha,
-        "--attackers", "replay", "--judges", "rules", "--corpora", "synth",
+        "--attackers", "replay", "--judges", "rules,guardrail",
+        "--guardrail-model", GUARD, "--guardrail-revision", GUARD_REV,
+        "--guardrail-device", "cuda:1", "--corpora", "synth",
         "--limit", "1", "--sample-seed", "0", "--seeds", "0",
         "--max-queries", "1", "--max-turns", "1", "--group", GROUP,
         "--max-total-target-calls", "1", "--max-total-judge-calls", "0",
         "--max-total-http-attempts", "0", "--deadline-seconds", "900",
         "--out", str(probe_root),
     ]
-    probe_acquisition: dict[str, Any] | None = None
-    if spec["target"]["spec"].startswith("vllm:"):
-        probe_acquisition = plan_acquire(
-            ctl, spec, f"{lane}.probe", probe_args,
-            lane_control / f"probe-plan-{ctl.attempt_tag}",
-            lane_control / "receipts", "target_only",
-        )
+    probe_role = (
+        "target_and_guard"
+        if spec["target"]["spec"].startswith("vllm:")
+        else "guard_only"
+    )
+    probe_acquisition = plan_acquire(
+        ctl, spec, f"{lane}.probe", probe_args,
+        lane_control / f"probe-plan-{ctl.attempt_tag}",
+        lane_control / "receipts", probe_role,
+    )
     argv = [str(ctl.python), "-m", "experiments.run_matrix", *probe_args]
-    if probe_acquisition is not None:
-        argv.extend(acquisition_args(probe_acquisition))
+    argv.extend(acquisition_args(probe_acquisition))
     ctl.run(lane, "fresh-attestation-probe", argv, f"{lane}.probe.run.log")
     ctl.run(
         lane, "fresh-attestation-derive",

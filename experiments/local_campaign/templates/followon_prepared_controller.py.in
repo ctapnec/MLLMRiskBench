@@ -552,7 +552,13 @@ def derive_attestation(
         "--attackers",
         "replay",
         "--judges",
-        "rules",
+        "rules,guardrail",
+        "--guardrail-model",
+        "meta-llama/Llama-Guard-3-8B",
+        "--guardrail-revision",
+        "7327bd9f6efbbe6101dc6cc4736302b3cbb6e425",
+        "--guardrail-device",
+        "cuda:1",
         "--corpora",
         corpus,
     ]
@@ -602,7 +608,7 @@ def derive_attestation(
         probe_args,
         lane_control / f"probe-plan-{ATTEMPT_TAG}",
         lane_control / "probe-receipts",
-        "target_only",
+        "target_and_guard",
     )
     ctl.run(
         lane,
