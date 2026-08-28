@@ -1856,8 +1856,10 @@ def test_phase6_recovery_attestation_probes_keep_local_guardrail_fallback() -> N
     assert "Ollama probe's acquisition contains the scoring guard" in documentation[
         "RUN_AND_RETURN.md"
     ]
-    assert "target_and_guard for vLLM" in documentation["local_campaign/README.md"]
-    assert "guard_only for Ollama" in documentation["local_campaign/README.md"]
+    assert "`target_and_guard` for vLLM" in documentation[
+        "local_campaign/README.md"
+    ]
+    assert "`guard_only` for Ollama" in documentation["local_campaign/README.md"]
 
 
 def test_phase6_core_owned_commands_preserve_here_document_stdin() -> None:
