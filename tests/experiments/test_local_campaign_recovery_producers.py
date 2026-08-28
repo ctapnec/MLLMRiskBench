@@ -755,7 +755,7 @@ def test_core_retry_derives_only_the_prior_failed_ordered_subset() -> None:
 def test_core_retry_failed_only_guard_is_mutation_covered() -> None:
     source = _source(CORE)
     _assert_core_contract(source)
-    mutant = source.replace("        not failed\n", "", 1)
+    mutant = source.replace("        not failed\n", "        False\n", 1)
     assert mutant != source
     with pytest.raises(AssertionError):
         _assert_core_contract(mutant)
