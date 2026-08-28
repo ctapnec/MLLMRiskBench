@@ -1323,7 +1323,7 @@ def test_phase7_lifecycle_view_write_cannot_modify_phase6_source(
     source_root = tmp_path / "lifecycle-source"
     lane_root = source_root / "lane-a"
     lane_root.mkdir(parents=True)
-    source_file = lane_root / "failure.json"
+    source_file = lane_root / "cell.grid.json"
     source_file.write_bytes(b"sealed-lifecycle-input")
     controller = object.__new__(phase7.AnalysisController)
     controller.inputs = {

@@ -2055,7 +2055,12 @@ def test_phase7_rr_pair_dispatch_is_conditioned_on_current_measured_cells() -> N
     assert "ura-phase7-non-estimable-contrast/1" in source
     assert '"paired_compare_invoked": False' in rr_contrast
     assert "non_estimable_llava_pair_value(" in rr_contrast
-    assert '"modality": "image"' in rr_contrast
+    llava_value_start = source.index("def non_estimable_llava_pair_value(")
+    llava_value_end = source.index(
+        "def validate_non_estimable_llava_pair(", llava_value_start
+    )
+    llava_value = source[llava_value_start:llava_value_end]
+    assert '"modality": "image"' in llava_value
     assert "for corpus in IMAGE_ARMS:" in rr_contrast
     plan = rr_contrast.index("llava_pair_prerequisite_plan(")
     unavailable = rr_contrast.index('if not prerequisite_plan["runnable"]:')

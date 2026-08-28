@@ -1594,8 +1594,16 @@ def test_phase7_recovery_amendment_exact_contract_mutations(condition: str) -> N
 def test_phase7_recovery_rejects_new_sampling_policy_binding() -> None:
     source = _source(PHASE7)
     _assert_phase7_recovery_amendment_contract(source)
-    mutant = source.replace('or "--sampling-policy" in argv', "or False", 1)
-    assert mutant != source
+    start = source.index("def _recovery_request_identity(")
+    end = source.index("\n\ndef ", start + 5)
+    validator = source[start:end]
+    mutant_validator = validator.replace(
+        'or "--sampling-policy" in argv',
+        'or "--sampling-policy-disabled" in argv',
+        1,
+    )
+    assert mutant_validator != validator
+    mutant = source[:start] + mutant_validator + source[end:]
     with pytest.raises(AssertionError):
         _assert_phase7_recovery_amendment_contract(mutant)
 

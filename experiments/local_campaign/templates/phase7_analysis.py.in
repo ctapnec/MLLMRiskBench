@@ -16624,6 +16624,21 @@ def contract_self_test() -> int:
         artifact_inputs["acquisition_result_log"] = descriptor(
             acquisition_result_path
         )
+        project_revision_path = Path(
+            artifact_inputs["project_revision"]["path"]
+        )
+        project_revision_path.write_bytes(
+            canonical(
+                {
+                    "repository": {
+                        "expected_commit": EXPECTED_COMMIT,
+                        "observed_commit": EXPECTED_COMMIT,
+                        "clean": True,
+                    }
+                }
+            )
+        )
+        artifact_inputs["project_revision"] = descriptor(project_revision_path)
         original_project_sha = EXPECTED_PROJECT_REVISION_SHA256
         original_source_sha = EXPECTED_SOURCE_CONFORMANCE_SHA256
         globals()["EXPECTED_PROJECT_REVISION_SHA256"] = artifact_inputs[
@@ -16700,6 +16715,38 @@ def contract_self_test() -> int:
         validate_conditional_defense_row(
             conditional_row,
             label="conditional-defense-artifact-self-test",
+        )
+        mismatched_project = copy.deepcopy(artifact)
+        mismatched_project_receipt_path = temp / "project-revision-mismatch.json"
+        mismatched_project_receipt_path.write_bytes(
+            canonical(
+                {
+                    "repository": {
+                        "expected_commit": "f" * 40,
+                        "observed_commit": "f" * 40,
+                        "clean": True,
+                    }
+                }
+            )
+        )
+        mismatched_project["artifacts"]["project_revision"] = descriptor(
+            mismatched_project_receipt_path
+        )
+        mismatched_project["bindings"]["project_revision_sha256"] = (
+            mismatched_project["artifacts"]["project_revision"]["sha256"]
+        )
+        mismatched_project_path = temp / "defense-conditional-project-mismatch.json"
+        mismatched_project_path.write_bytes(canonical(mismatched_project))
+        mismatched_project_row = copy.deepcopy(conditional_row)
+        mismatched_project_row["canary"]["conditional_na_artifact"] = descriptor(
+            mismatched_project_path
+        )
+        must_fail(
+            "gate5-conditional-defense-project-commit-mismatch",
+            lambda: validate_conditional_defense_row(
+                mismatched_project_row,
+                label="conditional-defense-artifact-self-test",
+            ),
         )
         artifact_v2 = copy.deepcopy(artifact)
         variant_v2 = DEFENSE_LOCAL_CONDITIONAL_VARIANTS[

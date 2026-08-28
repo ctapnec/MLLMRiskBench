@@ -459,6 +459,7 @@ def test_phase8_accepts_measured_current_rr_pair_summary(phase8: ModuleType) -> 
         states[lane] = "measured_complete"
         boundary["runner_outcomes"][lane] = "measured_complete"
         boundary["lifecycle_registry_states"][lane] = "complete"
+        boundary["runner_lifecycle_authorizations"][lane] = {}
     cascade = sorted(
         lane for lane, state in states.items() if state == "measured_complete"
     )
@@ -484,6 +485,21 @@ def test_phase8_accepts_measured_current_rr_pair_summary(phase8: ModuleType) -> 
         expected_proxy_conditions=conditions,
     )
 
+    missing_rr_authorization = copy.deepcopy(boundary)
+    missing_rr_authorization["runner_lifecycle_authorizations"].pop(
+        "local-llava-rr-image-primary-100"
+    )
+    with pytest.raises(
+        phase8.Phase8Error,
+        match="expected judge-cascade lane boundary differs",
+    ):
+        phase8.validate_analysis_boundaries(
+            missing_rr_authorization,
+            expected_runner_states=states,
+            expected_cascade_lanes=cascade,
+            expected_proxy_conditions=conditions,
+        )
+
 
 def test_phase8_accepts_completed_but_non_estimable_rr_pair_summary(
     phase8: ModuleType,
@@ -498,6 +514,7 @@ def test_phase8_accepts_completed_but_non_estimable_rr_pair_summary(
         states[lane] = "measured_complete"
         boundary["runner_outcomes"][lane] = "measured_complete"
         boundary["lifecycle_registry_states"][lane] = "complete"
+        boundary["runner_lifecycle_authorizations"][lane] = {}
     cascade = sorted(
         lane for lane, state in states.items() if state == "measured_complete"
     )
