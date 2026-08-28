@@ -1,0 +1,2056 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
+import hashlib
+import importlib.util
+import json
+import os
+from pathlib import Path
+import signal
+import sys
+import traceback
+from typing import Any, Mapping, Sequence
+
+
+PROJECT = Path("@@PROJECT_ROOT@@")
+WORK_ROOT = Path("@@WORK_ROOT@@")
+PYTHON = PROJECT / ".venv" / "bin" / "python"
+EXPECTED_COMMIT = "@@EXPECTED_COMMIT@@"
+INPUTS_PATH = Path("@@SEVEN_POLICY_INPUTS_PATH@@")
+INPUTS_SHA256 = "@@SEVEN_POLICY_INPUTS_SHA256@@"
+INPUTS_BYTES = int("@@SEVEN_POLICY_INPUTS_BYTES@@")
+CORE_SPEC_FILES = (
+    "03-local-llava-base-text-primary-100.json",
+    "04-local-llava-base-image-primary-100.json",
+    "06-rjudge-llava-base.json",
+    "08-gptgeochat-llava-base.json",
+)
+OLLAMA_SPEC_FILES = (
+    "01-rjudge-ollama-rwkv-g1d-0p4b.json",
+    "02-rjudge-ollama-rwkv-g1f-2p9b.json",
+    "03-rjudge-ollama-rwkv-g1g-1p5b.json",
+)
+PRIOR_RECOVERY_LANES = (
+    "rjudge-ollama-rwkv-g1d-0p4b",
+    "rjudge-ollama-rwkv-g1f-2p9b",
+    "rjudge-ollama-rwkv-g1g-1p5b",
+)
+PRIOR_RECOVERY_EXPECTED_COMMIT = "73c5331c59d1192f3338170cfee374af5e03a07f"
+PRIOR_RECOVERY_FRAMEWORK_LOCK_ID = (
+    "49581308fb249f808ed21735c6badcfa9664156cc66aa14fa1490d6b28ccd406"
+)
+PRIOR_RECOVERY_SOURCE_SPEC_FILES = (
+    "07-rjudge-ollama-rwkv-g1d-0p4b.json",
+    "08-rjudge-ollama-rwkv-g1f-2p9b.json",
+    "09-rjudge-ollama-rwkv-g1g-1p5b.json",
+)
+PRIOR_RECOVERY_COMPLETION_FIELDS = frozenset({
+    "schema", "status", "controller_exit_code", "completed_at_utc",
+    "attempt", "expected_commit", "framework_lock_id", "inventory_complete",
+    "runnable_lanes", "lane_terminal_states", "amendment", "launch",
+    "controller", "retained_executor_payload", "summary", "lane_results",
+    "lane_failures", "all_independent_lanes_attempted", "output_policy",
+    "generation_caps_changed", "unrelated_passed_work_repeated",
+    "paid_provider_calls",
+})
+PRIOR_RECOVERY_LAUNCH_FIELDS = frozenset({
+    "schema", "launched_at_utc", "expected_commit", "framework_lock_id",
+    "execution_scope_id", "control_root", "attempt", "controller",
+    "retained_executor_payload", "amendment", "lane_order",
+})
+PRIOR_RECOVERY_AMENDMENT_FIELDS = frozenset({
+    "schema", "status", "created_at_utc", "project_commit",
+    "runner_code_version", "output_policy", "operator_authorization",
+    "runnote", "project_revision", "source_conformance", "framework_lock_id",
+    "focused_tests", "mutation_tests", "historical_gate5",
+    "retained_completed_lanes", "affected_lanes",
+    "unrelated_passed_work_repeated", "paid_provider_calls",
+})
+PRIOR_RECOVERY_SUMMARY_FIELDS = frozenset({
+    "schema", "status", "controller_exit_code", "completed_at_utc", "attempt",
+    "runnable_inventory", "lane_terminal_states", "completed_lanes",
+    "failed_lanes", "failures", "all_independent_lanes_attempted",
+    "output_policy", "generation_caps_changed",
+    "unrelated_passed_work_repeated", "paid_provider_calls",
+    "hosted_judge_calls", "http_attempts", "model_downloads",
+})
+PRIOR_RECOVERY_OUTPUT_POLICY = {
+    "nonempty_length_capped_text": "retain_and_analyze",
+    "successful_empty_completion": "retain_as_typed_model_nonresponse",
+    "common_metric_denominator": "exclude_model_nonresponse",
+    "source_specific_parser": "retain_invalid_prediction",
+    "terminal_reason_retained": True,
+    "unknown_terminal_reason": "error",
+    "generation_caps_changed": False,
+}
+FILE_INPUT_FIELDS = frozenset({
+    "retained_executor_payload",
+    "historical_gate5_manifest",
+    "historical_gate5_runnote",
+    "historical_gate5_promotion",
+    "focused_tests",
+    "mutation_tests",
+    "deployment_exit",
+})
+DIRECTORY_INPUT_ARTIFACTS = {
+    "base_core_control_root": frozenset(CORE_SPEC_FILES),
+    "base_ollama_control_root": frozenset(OLLAMA_SPEC_FILES),
+    "prior_ollama_recovery_attempt": frozenset({"exit_marker", "completion"}),
+}
+
+
+def _verified_file_descriptor(
+    raw: object,
+    *,
+    label: str,
+    parent: Path | None = None,
+) -> Path:
+    if not isinstance(raw, dict) or set(raw) != {"path", "sha256", "bytes"}:
+        raise ValueError(f"{label} is not one exact file descriptor")
+    raw_path = raw.get("path")
+    raw_sha = raw.get("sha256")
+    raw_bytes = raw.get("bytes")
+    if not isinstance(raw_path, str) or not raw_path.startswith("/"):
+        raise ValueError(f"{label}.path is not one absolute POSIX path")
+    if (
+        not isinstance(raw_sha, str)
+        or len(raw_sha) != 64
+        or any(character not in "0123456789abcdef" for character in raw_sha)
+    ):
+        raise ValueError(f"{label}.sha256 is not one lowercase SHA-256")
+    if isinstance(raw_bytes, bool) or not isinstance(raw_bytes, int) or raw_bytes < 0:
+        raise ValueError(f"{label}.bytes is not one nonnegative integer")
+    candidate = Path(raw_path)
+    if candidate.as_posix() != raw_path:
+        raise ValueError(f"{label}.path is not canonical")
+    resolved = candidate.resolve(strict=True)
+    if candidate.is_symlink() or resolved != candidate or not candidate.is_file():
+        raise ValueError(f"{label}.path is not one resolved regular file")
+    if parent is not None:
+        try:
+            candidate.relative_to(parent)
+        except ValueError as exc:
+            raise ValueError(f"{label}.path escapes its bound directory") from exc
+    payload = candidate.read_bytes()
+    if len(payload) != raw_bytes or hashlib.sha256(payload).hexdigest() != raw_sha:
+        raise ValueError(f"{label} content identity changed")
+    return candidate
+
+
+def _validated_input_value(
+    value: object,
+    *,
+    schema: str,
+    file_fields: frozenset[str],
+    directory_artifacts: Mapping[str, frozenset[str]],
+) -> tuple[dict[str, Path], dict[str, dict[str, Path]]]:
+    expected_fields = {"schema", *file_fields, *directory_artifacts}
+    if (
+        not isinstance(value, dict)
+        or set(value) != expected_fields
+        or value.get("schema") != schema
+    ):
+        raise ValueError("bound recovery input manifest field set changed")
+    paths = {
+        key: _verified_file_descriptor(value[key], label=key)
+        for key in sorted(file_fields)
+    }
+    artifacts: dict[str, dict[str, Path]] = {}
+    for key, expected_roles in sorted(directory_artifacts.items()):
+        raw = value.get(key)
+        if not isinstance(raw, dict) or set(raw) != {"path", "artifacts"}:
+            raise ValueError(f"{key} is not one exact directory dependency")
+        raw_path = raw.get("path")
+        raw_artifacts = raw.get("artifacts")
+        if not isinstance(raw_path, str) or not raw_path.startswith("/"):
+            raise ValueError(f"{key}.path is not one absolute POSIX path")
+        root = Path(raw_path)
+        if root.as_posix() != raw_path:
+            raise ValueError(f"{key}.path is not canonical")
+        resolved = root.resolve(strict=True)
+        if root.is_symlink() or resolved != root or not root.is_dir():
+            raise ValueError(f"{key}.path is not one resolved directory")
+        if not isinstance(raw_artifacts, dict) or set(raw_artifacts) != expected_roles:
+            raise ValueError(f"{key}.artifacts required role set changed")
+        bound = {
+            role: _verified_file_descriptor(
+                raw_artifacts[role], label=f"{key}.artifacts.{role}", parent=root
+            )
+            for role in sorted(expected_roles)
+        }
+        if len(set(bound.values())) != len(bound):
+            raise ValueError(f"{key}.artifacts aliases two required roles")
+        paths[key] = root
+        artifacts[key] = bound
+    return paths, artifacts
+
+def _bound_inputs(
+    *,
+    source: Path,
+    expected_sha256: str,
+    expected_bytes: int,
+    schema: str,
+    file_fields: frozenset[str],
+    directory_artifacts: Mapping[str, frozenset[str]],
+) -> tuple[dict[str, Path], dict[str, dict[str, Path]], dict[str, object]]:
+    resolved_source = source.resolve(strict=True)
+    if source.is_symlink() or resolved_source != source or not source.is_file():
+        raise ValueError("bound recovery input manifest is not one resolved regular file")
+    payload = source.read_bytes()
+    if len(payload) != expected_bytes or hashlib.sha256(payload).hexdigest() != expected_sha256:
+        raise ValueError("bound recovery input manifest identity changed")
+    value = json.loads(payload.decode("utf-8"))
+    paths, artifacts = _validated_input_value(
+        value,
+        schema=schema,
+        file_fields=file_fields,
+        directory_artifacts=directory_artifacts,
+    )
+    return paths, artifacts, value
+
+INPUTS, INPUT_ARTIFACTS, INPUT_MANIFEST = _bound_inputs(
+    source=INPUTS_PATH,
+    expected_sha256=INPUTS_SHA256,
+    expected_bytes=INPUTS_BYTES,
+    schema="ura-seven-output-policy-amendment-inputs/2",
+    file_fields=FILE_INPUT_FIELDS,
+    directory_artifacts=DIRECTORY_INPUT_ARTIFACTS,
+)
+OLD_CORE_CONTROL = INPUTS["base_core_control_root"]
+OLD_CORE_SPECS = INPUT_ARTIFACTS["base_core_control_root"]
+OLD_OLLAMA_CONTROL = INPUTS["base_ollama_control_root"]
+OLD_OLLAMA_SPECS = INPUT_ARTIFACTS["base_ollama_control_root"]
+PAYLOAD_PATH = INPUTS["retained_executor_payload"]
+OLD_GATE5_MANIFEST = INPUTS["historical_gate5_manifest"]
+OLD_GATE5_RUNNOTE = INPUTS["historical_gate5_runnote"]
+OLD_GATE5_PROMOTION = INPUTS["historical_gate5_promotion"]
+FOCUSED_TESTS = INPUTS["focused_tests"]
+MUTATION_TESTS = INPUTS["mutation_tests"]
+DEPLOYMENT_EXIT = INPUTS["deployment_exit"]
+PRIOR_OLLAMA_RECOVERY_ATTEMPT = INPUTS["prior_ollama_recovery_attempt"]
+PRIOR_OLLAMA_RECOVERY_EXIT = INPUT_ARTIFACTS[
+    "prior_ollama_recovery_attempt"
+]["exit_marker"]
+PRIOR_OLLAMA_RECOVERY_COMPLETION = INPUT_ARTIFACTS[
+    "prior_ollama_recovery_attempt"
+]["completion"]
+PRIOR_CORE_RECOVERY_ATTEMPT = (
+    WORK_ROOT / "runs" / "engineering"
+    / "phase6-core-length-recovery-@@COMMIT_SHORT@@-@@PHASE6_RECOVERY_TAG@@"
+    / "attempts" / "@@PHASE6_RECOVERY_TAG@@-@@COMMIT_SHORT@@"
+)
+PRIOR_RECOVERY_POLICIES = (
+    ("core", PRIOR_CORE_RECOVERY_ATTEMPT, "optional_terminal_context"),
+    (
+        "Ollama R-Judge",
+        PRIOR_OLLAMA_RECOVERY_ATTEMPT,
+        "required_terminal_success",
+    ),
+)
+CONTROL = (
+    WORK_ROOT / "runs" / "engineering"
+    / "seven-output-policy-amendment-@@COMMIT_SHORT@@-@@SEVEN_POLICY_TAG@@"
+)
+ATTEMPT_TAG = "@@SEVEN_POLICY_TAG@@-@@COMMIT_SHORT@@"
+RUNNOTE = (
+    WORK_ROOT / "runs" / "thesis"
+    / "RUNNOTE.runner-2.24-seven-output-policy-amendment-@@SEVEN_POLICY_TAG@@.md"
+)
+RR_SPEC = "vllm:GraySwanAI/llava-v1.6-mistral-7b-hf-RR"
+RR_REPO = "GraySwanAI/llava-v1.6-mistral-7b-hf-RR"
+RR_REVISION = "d11b3d7ae2fb21e984f197a83c15bbb0deb66b7e"
+RR_CONFIG = PROJECT / "experiments" / "local-llava-rr.json"
+RR_CONFIG_SHA256 = "3a53ab82405636116e9c95850dae1e0c1e394021317707c978bc35b4178ca334"
+STATIC_CORPORA = (
+    "strongreject_official,advbench_harmful,jailbreakbench_harmful,"
+    "jailbreakbench_benign,harmbench_text,cyberseceval_mitre,"
+    "cyberseceval_interpreter,cyberseceval_insecure_coding,saladbench_base,"
+    "airbench_full,xstest_full,simplesafetytests_full,decodingtrust_stereotype"
+)
+SPEC_SOURCES = (
+    ("local-llava-rr-text-primary-100", OLD_CORE_SPECS["03-local-llava-base-text-primary-100.json"], None),
+    ("local-llava-rr-image-primary-100", OLD_CORE_SPECS["04-local-llava-base-image-primary-100.json"], None),
+    ("rjudge-llava-rr", OLD_CORE_SPECS["06-rjudge-llava-base.json"], None),
+    ("gptgeochat-llava-rr", OLD_CORE_SPECS["08-gptgeochat-llava-base.json"], None),
+    ("ollama-rwkv-g1d-0p4b-text-exploratory-50", OLD_CORE_SPECS["03-local-llava-base-text-primary-100.json"], OLD_OLLAMA_SPECS["01-rjudge-ollama-rwkv-g1d-0p4b.json"]),
+    ("ollama-rwkv-g1f-2p9b-text-exploratory-50", OLD_CORE_SPECS["03-local-llava-base-text-primary-100.json"], OLD_OLLAMA_SPECS["02-rjudge-ollama-rwkv-g1f-2p9b.json"]),
+    ("ollama-rwkv-g1g-1p5b-text-exploratory-50", OLD_CORE_SPECS["03-local-llava-base-text-primary-100.json"], OLD_OLLAMA_SPECS["03-rjudge-ollama-rwkv-g1g-1p5b.json"]),
+)
+LANE_ORDER = tuple(row[0] for row in SPEC_SOURCES)
+HISTORICAL_AFFECTED_IDS = {
+    "local-llava-rr-text-full",
+    "local-llava-rr-image-full",
+    "rjudge-llava-rr",
+    "gptgeochat-llava-rr",
+    "ollama-rwkv-g1d-0p4b-text-exploratory-50",
+    "ollama-rwkv-g1f-2p9b-text-exploratory-50",
+    "ollama-rwkv-g1g-1p5b-text-exploratory-50",
+}
+
+
+def _revalidate_bound_inputs() -> None:
+    _validated_input_value(
+        INPUT_MANIFEST,
+        schema="ura-seven-output-policy-amendment-inputs/2",
+        file_fields=FILE_INPUT_FIELDS,
+        directory_artifacts=DIRECTORY_INPUT_ARTIFACTS,
+    )
+
+
+def _revalidate_payload_before_import() -> None:
+    _verified_file_descriptor(
+        INPUT_MANIFEST["retained_executor_payload"],
+        label="retained_executor_payload",
+    )
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def canonical(value: object) -> bytes:
+    return (
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+        + "\n"
+    ).encode("utf-8")
+
+
+def sha256_bytes(value: bytes) -> str:
+    return hashlib.sha256(value).hexdigest()
+
+
+def descriptor(path: Path) -> dict[str, object]:
+    resolved = path.resolve(strict=True)
+    if path.is_symlink() or not resolved.is_file():
+        raise ValueError(f"unsafe descriptor path: {path}")
+    payload = resolved.read_bytes()
+    return {
+        "path": str(resolved),
+        "sha256": sha256_bytes(payload),
+        "bytes": len(payload),
+    }
+
+
+def optional_terminal_context(attempt: Path) -> dict[str, object]:
+    return {
+        "dependency_policy": "optional_terminal_context",
+        "required_for_launch": False,
+        "attempt_path": str(attempt),
+        "exit_marker": None,
+        "completion": None,
+    }
+
+
+def write_new(path: Path, payload: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor_fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor_fd, "wb") as handle:
+        handle.write(payload)
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def strict_json(path: Path) -> dict[str, Any]:
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise TypeError(f"{path} is not one JSON object")
+    return value
+
+
+def _nested_descriptor_path(
+    raw: object,
+    *,
+    label: str,
+    parent: Path | None = None,
+    exact: Path | None = None,
+) -> Path:
+    path = _verified_file_descriptor(raw, label=label, parent=parent)
+    if exact is not None and path != exact:
+        raise ValueError(f"{label}.path is not the required artifact")
+    return path
+
+
+def validate_prior_recovery_completion(
+    *,
+    attempt: Path,
+    exit_marker: Path,
+    completion_file: Path,
+    retained_payload: Path,
+    recovery_control: Path | None = None,
+    recovery_lane_specs: Mapping[str, Path] | None = None,
+) -> None:
+    if (
+        attempt.is_symlink()
+        or attempt.resolve(strict=True) != attempt
+        or not attempt.is_dir()
+        or attempt.parent.name != "attempts"
+        or exit_marker != attempt / ".exit"
+        or completion_file != attempt / "completion.json"
+    ):
+        raise ValueError("prior recovery attempt binding changed")
+    control = attempt.parent.parent
+    if recovery_control is not None and control != recovery_control:
+        raise ValueError("prior recovery control differs from its bound base control")
+    if exit_marker.read_bytes() != b"0\n":
+        raise ValueError("prior recovery is not terminal success")
+    if recovery_lane_specs is not None:
+        if set(recovery_lane_specs) != set(OLLAMA_SPEC_FILES):
+            raise ValueError("prior recovery lane-spec role set changed")
+        for name in OLLAMA_SPEC_FILES:
+            path = recovery_lane_specs[name]
+            if path != control / "lane-specs" / name:
+                raise ValueError("prior recovery lane spec escaped its control")
+            descriptor(path)
+
+    completion = strict_json(completion_file)
+    expected_states = {lane: "measured_complete" for lane in PRIOR_RECOVERY_LANES}
+    results = completion.get("lane_results")
+    if (
+        set(completion) != PRIOR_RECOVERY_COMPLETION_FIELDS
+        or completion.get("schema")
+        != "ura-phase6-failed-lane-recovery-completion/1"
+        or completion.get("status") != "complete"
+        or completion.get("controller_exit_code") != 0
+        or completion.get("attempt") != attempt.name
+        or completion.get("expected_commit") != PRIOR_RECOVERY_EXPECTED_COMMIT
+        or completion.get("framework_lock_id")
+        != PRIOR_RECOVERY_FRAMEWORK_LOCK_ID
+        or completion.get("inventory_complete") is not True
+        or completion.get("runnable_lanes") != list(PRIOR_RECOVERY_LANES)
+        or completion.get("lane_terminal_states") != expected_states
+        or not isinstance(results, dict)
+        or set(results) != set(PRIOR_RECOVERY_LANES)
+        or completion.get("lane_failures") != {}
+        or completion.get("all_independent_lanes_attempted") is not True
+        or completion.get("output_policy")
+        != "retain_length_capped_text_and_typed_model_nonresponse"
+        or completion.get("generation_caps_changed") is not False
+        or completion.get("unrelated_passed_work_repeated") is not False
+        or completion.get("paid_provider_calls") != 0
+    ):
+        raise ValueError("prior recovery completion contract changed")
+
+    amendment_path = _nested_descriptor_path(
+        completion["amendment"],
+        label="prior recovery amendment",
+        parent=control,
+        exact=control / "runner-2.24-source-metric-amendment.json",
+    )
+    launch_path = _nested_descriptor_path(
+        completion["launch"],
+        label="prior recovery launch",
+        parent=control,
+        exact=control / "launch.json",
+    )
+    _nested_descriptor_path(
+        completion["controller"], label="prior recovery controller"
+    )
+    _nested_descriptor_path(
+        completion["retained_executor_payload"],
+        label="prior recovery retained executor payload",
+        exact=retained_payload,
+    )
+    summary_path = _nested_descriptor_path(
+        completion["summary"],
+        label="prior recovery summary",
+        parent=attempt,
+        exact=attempt / "summary.json",
+    )
+    for lane in PRIOR_RECOVERY_LANES:
+        _nested_descriptor_path(
+            results[lane],
+            label=f"prior recovery {lane} result",
+            parent=attempt,
+            exact=attempt / f"{lane}.complete.json",
+        )
+
+    launch = strict_json(launch_path)
+    if (
+        set(launch) != PRIOR_RECOVERY_LAUNCH_FIELDS
+        or launch.get("schema") != "ura-phase6-failed-lane-recovery-launch/1"
+        or launch.get("expected_commit") != PRIOR_RECOVERY_EXPECTED_COMMIT
+        or launch.get("framework_lock_id")
+        != PRIOR_RECOVERY_FRAMEWORK_LOCK_ID
+        or launch.get("execution_scope_id")
+        != os.environ.get("URA_EXECUTION_SCOPE_ID")
+        or launch.get("control_root") != str(control)
+        or launch.get("attempt") != attempt.name
+        or launch.get("controller") != completion["controller"]
+        or launch.get("retained_executor_payload")
+        != completion["retained_executor_payload"]
+        or launch.get("amendment") != completion["amendment"]
+        or launch.get("lane_order") != list(PRIOR_RECOVERY_LANES)
+    ):
+        raise ValueError("prior recovery launch chain changed")
+
+    amendment = strict_json(amendment_path)
+    affected = amendment.get("affected_lanes")
+    if (
+        set(amendment) != PRIOR_RECOVERY_AMENDMENT_FIELDS
+        or amendment.get("schema") != "ura-local-campaign-model-output-amendment/1"
+        or amendment.get("status")
+        != "approved_for_targeted_recanary_and_measured_recovery"
+        or amendment.get("project_commit") != PRIOR_RECOVERY_EXPECTED_COMMIT
+        or amendment.get("runner_code_version") != "ura-runner/2.24"
+        or amendment.get("framework_lock_id")
+        != PRIOR_RECOVERY_FRAMEWORK_LOCK_ID
+        or amendment.get("output_policy") != PRIOR_RECOVERY_OUTPUT_POLICY
+        or amendment.get("retained_completed_lanes") != [
+            "bridge-pyrit", "bridge-deepteam", "bridge-h4rm3l",
+            "bridge-spikee", "bridge-purplellama", "harmbench-replay",
+        ]
+        or not isinstance(affected, list)
+        or len(affected) != len(PRIOR_RECOVERY_LANES)
+        or amendment.get("unrelated_passed_work_repeated") is not False
+        or amendment.get("paid_provider_calls") != 0
+    ):
+        raise ValueError("prior recovery amendment contract changed")
+    project_revision_path = _nested_descriptor_path(
+        amendment["project_revision"],
+        label="prior recovery amendment project_revision",
+    )
+    project_revision = strict_json(project_revision_path)
+    repository = project_revision.get("repository")
+    if (
+        set(project_revision) != {
+            "schema", "status", "purpose", "revision_id", "repository",
+            "source", "limitations",
+        }
+        or project_revision.get("schema") != "ura-project-revision/1"
+        or project_revision.get("status") != "complete"
+        or project_revision.get("purpose") != "immutable_clean_project_source_receipt"
+        or not isinstance(repository, dict)
+        or set(repository) != {
+            "clean", "expected_commit", "observed_commit", "head_tree",
+            "root_relationship",
+        }
+        or repository.get("clean") is not True
+        or repository.get("expected_commit") != PRIOR_RECOVERY_EXPECTED_COMMIT
+        or repository.get("observed_commit") != PRIOR_RECOVERY_EXPECTED_COMMIT
+    ):
+        raise ValueError("prior recovery project-revision chain changed")
+    for field in (
+        "runnote", "source_conformance", "focused_tests", "mutation_tests",
+    ):
+        _nested_descriptor_path(
+            amendment[field], label=f"prior recovery amendment {field}"
+        )
+    historical_gate5 = amendment.get("historical_gate5")
+    if not isinstance(historical_gate5, dict) or set(historical_gate5) != {
+        "manifest", "runnote", "promotion",
+    }:
+        raise ValueError("prior recovery historical Gate 5 chain changed")
+    for field in ("manifest", "runnote", "promotion"):
+        _nested_descriptor_path(
+            historical_gate5[field],
+            label=f"prior recovery historical Gate 5 {field}",
+        )
+    expected_caps = {
+        "deadline_seconds": 86_400,
+        "http_attempts": 0,
+        "model_judge_calls": 0,
+        "target_calls": 50,
+        "wall_time_seconds": 86_400,
+    }
+    for lane, source_name, row in zip(
+        PRIOR_RECOVERY_LANES,
+        PRIOR_RECOVERY_SOURCE_SPEC_FILES,
+        affected,
+        strict=True,
+    ):
+        if (
+            not isinstance(row, dict)
+            or set(row) != {
+                "lane_id", "retained_lane_spec", "approved_caps",
+                "selection_and_sampling_changed",
+            }
+            or row.get("lane_id") != lane
+            or row.get("approved_caps") != expected_caps
+            or row.get("selection_and_sampling_changed") is not False
+        ):
+            raise ValueError(f"{lane}: prior recovery amendment row changed")
+        _nested_descriptor_path(
+            row["retained_lane_spec"],
+            label=f"{lane} prior recovery source spec",
+            exact=retained_payload.parent / "lane-specs" / source_name,
+        )
+
+    summary = strict_json(summary_path)
+    if (
+        set(summary) != PRIOR_RECOVERY_SUMMARY_FIELDS
+        or summary.get("schema") != "ura-phase6-failed-lane-recovery-summary/1"
+        or summary.get("status") != "complete"
+        or summary.get("controller_exit_code") != 0
+        or summary.get("attempt") != attempt.name
+        or summary.get("runnable_inventory") != list(PRIOR_RECOVERY_LANES)
+        or summary.get("lane_terminal_states") != expected_states
+        or summary.get("completed_lanes") != list(PRIOR_RECOVERY_LANES)
+        or summary.get("failed_lanes") != []
+        or summary.get("failures") != []
+        or summary.get("all_independent_lanes_attempted") is not True
+        or summary.get("output_policy") != completion["output_policy"]
+        or summary.get("generation_caps_changed") is not False
+        or summary.get("unrelated_passed_work_repeated") is not False
+        or any(
+            summary.get(field) != 0
+            for field in (
+                "paid_provider_calls", "hosted_judge_calls", "http_attempts",
+                "model_downloads",
+            )
+        )
+    ):
+        raise ValueError("prior recovery summary contract changed")
+
+
+def replace_option(argv: Sequence[str], name: str, value: str) -> list[str]:
+    result = list(argv)
+    positions = [index for index, token in enumerate(result) if token == name]
+    if len(positions) != 1 or positions[0] + 1 >= len(result):
+        raise ValueError(f"expected one complete {name} option")
+    result[positions[0] + 1] = value
+    return result
+
+
+def option_value(argv: Sequence[str], name: str) -> str:
+    positions = [index for index, token in enumerate(argv) if token == name]
+    if len(positions) != 1 or positions[0] + 1 >= len(argv):
+        raise ValueError(f"expected one complete {name} option")
+    value = argv[positions[0] + 1]
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"expected a nonempty {name} value")
+    return value
+
+
+def single_arm_canary_argv(argv: Sequence[str]) -> list[str]:
+    result = replace_option(argv, "--limit", "1")
+    source_arm = option_value(result, "--corpora").split(",", 1)[0]
+    if not source_arm:
+        raise ValueError("diagnostic canary source arm is empty")
+    result = replace_option(result, "--corpora", source_arm)
+    trajectory_seed = option_value(result, "--seeds").split(",", 1)[0]
+    if not trajectory_seed:
+        raise ValueError("diagnostic canary trajectory seed is empty")
+    return replace_option(result, "--seeds", trajectory_seed)
+
+
+def no_call_preflight_argv(spec: Mapping[str, Any], out: Path) -> list[str]:
+    caps = spec["approved_caps"]
+    return [
+        *spec["base_argv"],
+        "--max-total-target-calls",
+        str(caps["target_calls"]),
+        "--max-total-judge-calls",
+        str(caps["model_judge_calls"]),
+        "--max-total-http-attempts",
+        str(caps["http_attempts"]),
+        "--deadline-seconds",
+        str(caps["deadline_seconds"]),
+        "--out",
+        str(out),
+        "--preflight-only",
+    ]
+
+
+def one_file(root: Path, pattern: str) -> Path:
+    paths = sorted(root.glob(pattern))
+    if len(paths) != 1 or paths[0].is_symlink() or not paths[0].is_file():
+        raise ValueError(f"expected one safe {pattern} under {root}, found {len(paths)}")
+    return paths[0]
+
+
+def load_payload():
+    _revalidate_payload_before_import()
+    spec = importlib.util.spec_from_file_location("ura_length_recovery_payload", PAYLOAD_PATH)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("cannot load retained Phase 6 payload")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    module.EXPECTED_COMMIT = EXPECTED_COMMIT
+    module.LANE_ORDER[:] = list(LANE_ORDER)
+    module.TERMINALS.clear()
+
+    def reservation_identity(
+        prestate_path: Path,
+        spec_path: Path,
+        spec_value: Mapping[str, Any],
+        result_root: Path,
+    ) -> tuple[Path, bytes, dict[str, Any]]:
+        lane_control = prestate_path.parent
+        control_root = lane_control.parents[1]
+        reservation_path = corrective_reservation_path(
+            prestate_path, spec_value, result_root
+        )
+        payload = module.canonical(
+            {
+                "schema": "ura-phase6-extended-result-root-reservation/1",
+                "status": "reserved",
+                "controller_root": str(control_root),
+                "lane_id": spec_value["lane_id"],
+                "lane_spec": module.frozen_descriptor(spec_path),
+                "result_root": str(result_root),
+            }
+        )
+        return reservation_path, payload, {
+            "path": str(reservation_path),
+            "sha256": sha256_bytes(payload),
+            "bytes": len(payload),
+        }
+
+    module.reservation_identity = reservation_identity
+    return module
+
+
+def corrective_reservation_path(
+    prestate_path: Path,
+    spec: Mapping[str, Any],
+    result_root: Path,
+) -> Path:
+    lane_control = prestate_path.parent
+    if lane_control.name != spec["lane_id"] or lane_control.parent.name != "lanes":
+        raise ValueError("prestate path is outside the exact lane-control namespace")
+    control_root = lane_control.parents[1]
+    return (
+        result_root.parent
+        / ".phase6-extended-reservations"
+        / f"{control_root.name}.reservation.json"
+    )
+
+
+def assert_inputs(module: Any) -> list[dict[str, Any]]:
+    _revalidate_bound_inputs()
+    if CONTROL.exists() or CONTROL.is_symlink():
+        raise FileExistsError(f"corrective control root already exists: {CONTROL}")
+    if RUNNOTE.exists() or RUNNOTE.is_symlink():
+        raise FileExistsError(f"corrective RUNNOTE already exists: {RUNNOTE}")
+    if os.environ.get("REF_URA") != EXPECTED_COMMIT:
+        raise ValueError("campaign environment is not rebound to Runner 2.24")
+    if DEPLOYMENT_EXIT.read_bytes() != b"0\n":
+        raise ValueError("Runner 2.24 targeted deployment is not terminal success")
+    validate_prior_recovery_completion(
+        attempt=PRIOR_OLLAMA_RECOVERY_ATTEMPT,
+        exit_marker=PRIOR_OLLAMA_RECOVERY_EXIT,
+        completion_file=PRIOR_OLLAMA_RECOVERY_COMPLETION,
+        retained_payload=PAYLOAD_PATH,
+        recovery_control=OLD_OLLAMA_CONTROL,
+        recovery_lane_specs=OLD_OLLAMA_SPECS,
+    )
+    for path in (
+        PAYLOAD_PATH,
+        OLD_GATE5_MANIFEST,
+        OLD_GATE5_RUNNOTE,
+        OLD_GATE5_PROMOTION,
+        FOCUSED_TESTS,
+        MUTATION_TESTS,
+        RR_CONFIG,
+        *(row[1] for row in SPEC_SOURCES),
+        *(row[2] for row in SPEC_SOURCES if row[2] is not None),
+    ):
+        descriptor(path)
+    if sha256_bytes(RR_CONFIG.read_bytes()) != RR_CONFIG_SHA256:
+        raise ValueError("GraySwan RR local configuration changed")
+    if "4 passed" not in FOCUSED_TESTS.read_text(encoding="utf-8"):
+        raise ValueError("focused Runner 2.24 verification did not pass")
+    mutation_text = MUTATION_TESTS.read_text(encoding="utf-8")
+    if "2 failed" not in mutation_text:
+        raise ValueError("model-output regressions were not mutation-tested")
+    historical = strict_json(OLD_GATE5_MANIFEST)
+    historical_rows = historical.get("lanes")
+    if not isinstance(historical_rows, list) or len(historical_rows) != 46:
+        raise ValueError("historical Gate 5 manifest is not the exact 46-row inventory")
+    dispositions: dict[str, int] = {}
+    by_lane: dict[str, Mapping[str, Any]] = {}
+    for row in historical_rows:
+        if not isinstance(row, dict) or not isinstance(row.get("lane_id"), str):
+            raise ValueError("historical Gate 5 contains an invalid row")
+        if row["lane_id"] in by_lane:
+            raise ValueError("historical Gate 5 contains a duplicate lane identity")
+        by_lane[row["lane_id"]] = row
+        disposition = str(row.get("disposition"))
+        dispositions[disposition] = dispositions.get(disposition, 0) + 1
+    target_runtime_ids = {
+        lane
+        for lane, row in by_lane.items()
+        if row.get("disposition") == "target_runtime_terminal"
+    }
+    if dispositions != {
+        "runnable": 18,
+        "unavailable": 7,
+        "conditional_na": 1,
+        "target_runtime_terminal": 7,
+        "structural_na": 13,
+    } or target_runtime_ids != HISTORICAL_AFFECTED_IDS:
+        raise ValueError("historical Gate 5 profile or affected identities changed")
+    specs = [build_spec(index, *row) for index, row in enumerate(SPEC_SOURCES, 1)]
+    if tuple(row.get("lane_id") for row in specs) != LANE_ORDER:
+        raise ValueError("seven-row amendment lane order changed")
+    module.assert_environment()
+    return specs
+
+
+def build_spec(
+    order: int,
+    lane: str,
+    base_source: Path,
+    ollama_source: Path | None,
+) -> dict[str, Any]:
+    spec = strict_json(base_source)
+    argv = spec.get("base_argv")
+    if not isinstance(argv, list) or any(not isinstance(token, str) for token in argv):
+        raise TypeError(f"{lane}: retained base argv is invalid")
+    spec["lane_id"] = lane
+    spec["order"] = order
+    spec["schema"] = "ura-seven-output-policy-amendment-lane-spec/1"
+    spec["runtime_engine"] = None
+    spec["cuda_visible_devices"] = "0,1"
+    if ollama_source is None:
+        argv = replace_option(argv, "--local", RR_SPEC)
+        argv = replace_option(argv, "--local-config", str(RR_CONFIG))
+        argv = replace_option(argv, "--local-config-sha256", RR_CONFIG_SHA256)
+        spec["target"] = {
+            "repo_id": RR_REPO,
+            "revision": RR_REVISION,
+            "spec": RR_SPEC,
+        }
+        spec["local_config"] = descriptor(RR_CONFIG)
+        spec["family"] = "core"
+        spec["acquisition_mode"] = "required_zero_download"
+    else:
+        ollama = strict_json(ollama_source)
+        ollama_argv = ollama.get("base_argv")
+        if not isinstance(ollama_argv, list) or any(
+            not isinstance(token, str) for token in ollama_argv
+        ):
+            raise TypeError(f"{lane}: retained Ollama argv is invalid")
+        argv = replace_option(argv, "--local", option_value(ollama_argv, "--local"))
+        argv = replace_option(
+            argv, "--local-config", option_value(ollama_argv, "--local-config")
+        )
+        argv = replace_option(
+            argv,
+            "--local-config-sha256",
+            option_value(ollama_argv, "--local-config-sha256"),
+        )
+        argv = replace_option(argv, "--limit", "50")
+        argv = replace_option(argv, "--corpora", STATIC_CORPORA)
+        spec["target"] = dict(ollama["target"])
+        spec["local_config"] = None
+        spec["family"] = "ollama"
+        spec["acquisition_mode"] = "required_zero_download"
+        spec["approximate_common_metrics"] = True
+        spec["classification"] = False
+        spec["modality"] = "text"
+        spec["expected_attacker"] = "replay"
+        spec["expected_corpora"] = STATIC_CORPORA.split(",")
+        spec["expected_judges"] = ["rules", "guardrail"]
+        spec["approved_caps"] = {
+            "deadline_seconds": 86400,
+            "http_attempts": 0,
+            "model_judge_calls": 0,
+            "target_calls": 1945,
+            "wall_time_seconds": 86400,
+        }
+        spec["storage"] = dict(ollama["storage"])
+    spec["base_argv"] = argv
+    return spec
+
+
+def prepare_base_argv(spec: dict[str, Any]) -> None:
+    argv = spec.get("base_argv")
+    if not isinstance(argv, list) or any(not isinstance(token, str) for token in argv):
+        raise TypeError(f"{spec.get('lane_id')}: retained base argv is invalid")
+    argv = replace_option(
+        argv,
+        "--project-revision",
+        os.environ["URA_PROJECT_REVISION_MANIFEST"],
+    )
+    argv = replace_option(
+        argv,
+        "--project-revision-sha256",
+        os.environ["URA_PROJECT_REVISION_SHA256"],
+    )
+    spec["base_argv"] = argv
+    spec.pop("gate5", None)
+
+
+def core_lane_contract(spec: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "expected_judges": list(spec["expected_judges"]),
+        "approximate": bool(spec["approximate_common_metrics"]),
+        "classification": bool(spec["classification"]),
+    }
+
+
+def validate_specs_contract(module: Any, specs: Sequence[dict[str, Any]]) -> None:
+    expected_recovery_policies = (
+        ("core", PRIOR_CORE_RECOVERY_ATTEMPT, "optional_terminal_context"),
+        (
+            "Ollama R-Judge",
+            PRIOR_OLLAMA_RECOVERY_ATTEMPT,
+            "required_terminal_success",
+        ),
+    )
+    if PRIOR_RECOVERY_POLICIES != expected_recovery_policies:
+        raise ValueError("prior recovery success-only dependency policy changed")
+    core_context = optional_terminal_context(PRIOR_CORE_RECOVERY_ATTEMPT)
+    if (
+        core_context.get("dependency_policy") != "optional_terminal_context"
+        or core_context.get("required_for_launch") is not False
+        or core_context.get("exit_marker") is not None
+        or core_context.get("completion") is not None
+    ):
+        raise ValueError("active core recovery became an unbound launch prerequisite")
+    expected_caps = {
+        "local-llava-rr-text-primary-100": 3854,
+        "local-llava-rr-image-primary-100": 1632,
+        "rjudge-llava-rr": 100,
+        "gptgeochat-llava-rr": 2020,
+        "ollama-rwkv-g1d-0p4b-text-exploratory-50": 1945,
+        "ollama-rwkv-g1f-2p9b-text-exploratory-50": 1945,
+        "ollama-rwkv-g1g-1p5b-text-exploratory-50": 1945,
+    }
+    expected_targets = {
+        "local-llava-rr-text-primary-100": {
+            "repo_id": RR_REPO, "revision": RR_REVISION, "spec": RR_SPEC,
+        },
+        "local-llava-rr-image-primary-100": {
+            "repo_id": RR_REPO, "revision": RR_REVISION, "spec": RR_SPEC,
+        },
+        "rjudge-llava-rr": {
+            "repo_id": RR_REPO, "revision": RR_REVISION, "spec": RR_SPEC,
+        },
+        "gptgeochat-llava-rr": {
+            "repo_id": RR_REPO, "revision": RR_REVISION, "spec": RR_SPEC,
+        },
+        "ollama-rwkv-g1d-0p4b-text-exploratory-50": {
+            "repo_id": None,
+            "revision": None,
+            "spec": "ollama:mollysama/rwkv-7-g1d:0.4b",
+            "digest": "78e699bd71f0cef7ed8fb38a469088310af0ab07d678661980c6b8c7f130a7f8",
+        },
+        "ollama-rwkv-g1f-2p9b-text-exploratory-50": {
+            "repo_id": None,
+            "revision": None,
+            "spec": "ollama:mollysama/rwkv-7-g1f:2.9b",
+            "digest": "7813f2283a135ef1264b8cec647b339d92fa7ecffafefeac61a2670b572f03f7",
+        },
+        "ollama-rwkv-g1g-1p5b-text-exploratory-50": {
+            "repo_id": None,
+            "revision": None,
+            "spec": "ollama:mollysama/rwkv-7-g1g:1.5b",
+            "digest": "8ff95f43952c361048310b50a5c4b16f98d8f0642a87b536452e627224a0dddc",
+        },
+    }
+    image_arms = (
+        "mmsafety_official,jailbreakv_full,harmbench_multimodal,vlsbench_release,"
+        "mossbench_official,siuo_release,figstep_full,mllmguard_privacy,"
+        "mllmguard_bias,mllmguard_toxicity,mllmguard_legality,holisafe_full"
+    )
+    expected_selection = {
+        "local-llava-rr-text-primary-100": (
+            STATIC_CORPORA, "replay", "rules,guardrail", True,
+        ),
+        "local-llava-rr-image-primary-100": (
+            image_arms, "replay", "rules,guardrail", True,
+        ),
+        "rjudge-llava-rr": ("rjudge_release", "replay", "rules", False),
+        "gptgeochat-llava-rr": (
+            "gptgeochat_release", "replay", "rules", False,
+        ),
+        "ollama-rwkv-g1d-0p4b-text-exploratory-50": (
+            STATIC_CORPORA, "replay", "rules,guardrail", True,
+        ),
+        "ollama-rwkv-g1f-2p9b-text-exploratory-50": (
+            STATIC_CORPORA, "replay", "rules,guardrail", True,
+        ),
+        "ollama-rwkv-g1g-1p5b-text-exploratory-50": (
+            STATIC_CORPORA, "replay", "rules,guardrail", True,
+        ),
+    }
+    source_conformance_raw = Path(os.environ["URA_SOURCE_CONFORMANCE_MANIFEST"])
+    source_conformance = source_conformance_raw.resolve(strict=True)
+    source_conformance_sha = os.environ["URA_SOURCE_CONFORMANCE_SHA256"]
+    source_config_raw = PROJECT / "experiments" / "source-instances.json"
+    source_config = source_config_raw.resolve(strict=True)
+    if (
+        source_conformance_raw.is_symlink()
+        or source_conformance_raw != source_conformance
+        or sha256_bytes(source_conformance.read_bytes()) != source_conformance_sha
+        or source_config_raw.is_symlink()
+        or source_config_raw != source_config
+    ):
+        raise ValueError("current source admission bindings are unsafe or changed")
+    source_config_sha = sha256_bytes(source_config.read_bytes())
+    if tuple(spec.get("lane_id") for spec in specs) != LANE_ORDER:
+        raise ValueError("seven-row amendment lane order changed")
+    for spec in specs:
+        prepare_base_argv(spec)
+        lane = spec["lane_id"]
+        argv = spec["base_argv"]
+        corpora, attacker, judges, approximate = expected_selection[lane]
+        if (
+            option_value(argv, "--sample-seed") != "0"
+            or option_value(argv, "--seeds") != "0"
+            or "--sampling-policy" in argv
+            or option_value(argv, "--corpora") != corpora
+            or option_value(argv, "--attackers") != attacker
+            or option_value(argv, "--judges") != judges
+            or argv.count("--approximate-common-metrics") != int(approximate)
+            or spec.get("expected_corpora") != corpora.split(",")
+            or spec.get("expected_attacker") != attacker
+            or spec.get("expected_judges") != judges.split(",")
+            or spec.get("approximate_common_metrics") is not approximate
+            or option_value(argv, "--source-conformance")
+            != str(source_conformance)
+            or option_value(argv, "--source-conformance-sha256")
+            != source_conformance_sha
+            or option_value(argv, "--source-config") != str(source_config)
+            or option_value(argv, "--source-config-sha256") != source_config_sha
+        ):
+            raise ValueError(f"{lane}: retained selection or source binding changed")
+        module.validate_gate5_judge_selection(
+            lane, core_lane_contract(spec), argv
+        )
+        canary_argv = single_arm_canary_argv(argv)
+        if (
+            option_value(canary_argv, "--limit") != "1"
+            or "," in option_value(canary_argv, "--corpora")
+            or "," in option_value(canary_argv, "--seeds")
+            or "," in option_value(canary_argv, "--attackers")
+        ):
+            raise ValueError(f"{lane}: canary is not one source arm")
+        preflight_argv = no_call_preflight_argv(spec, Path("/no-call-preflight"))
+        if "--preflight-only" not in preflight_argv or any(
+            flag in preflight_argv
+            for flag in (
+                "--execution-scope-id",
+                "--live-attestation",
+                "--live-attestation-sha256",
+                "--live-attestation-max-age-hours",
+                "--diagnostic-canary",
+            )
+        ):
+            raise ValueError(f"{lane}: preflight consumes live state")
+        result_root = module.expected_result_root(
+            Path(os.environ["URA_WORK"]), spec, CONTROL
+        )
+        reservation_path = corrective_reservation_path(
+            CONTROL / "lanes" / lane / "measured-prestate.json",
+            spec,
+            result_root,
+        )
+        if reservation_path.name != f"{CONTROL.name}.reservation.json":
+            raise ValueError(f"{lane}: corrective reservation can collide")
+        caps = spec.get("approved_caps")
+        if (
+            not isinstance(caps, dict)
+            or caps.get("wall_time_seconds") != 86_400
+            or caps.get("deadline_seconds") != 86_400
+            or caps.get("model_judge_calls") != 0
+            or caps.get("http_attempts") != 0
+            or caps.get("target_calls") != expected_caps[lane]
+        ):
+            raise ValueError(f"{lane}: retained caps changed")
+        expected_limit = "50" if spec["family"] == "ollama" else "100"
+        if option_value(argv, "--limit") != expected_limit:
+            raise ValueError(f"{lane}: bounded selection changed")
+        if (
+            spec.get("target") != expected_targets[lane]
+            or option_value(argv, "--local")
+            != expected_targets[lane]["spec"]
+        ):
+            raise ValueError(f"{lane}: retained target identity changed")
+        if spec["family"] == "ollama":
+            if (
+                option_value(argv, "--corpora") != STATIC_CORPORA
+                or spec["expected_judges"] != ["rules", "guardrail"]
+                or "--approximate-common-metrics" not in argv
+                or spec["acquisition_mode"] != "required_zero_download"
+            ):
+                raise ValueError(f"{lane}: static Ollama contract changed")
+        elif option_value(argv, "--local-config-sha256") != RR_CONFIG_SHA256:
+            raise ValueError(f"{lane}: GraySwan configuration identity changed")
+
+
+def write_runnote(specs: Sequence[Mapping[str, Any]]) -> None:
+    lines = [
+        "# Runner 2.24 seven-row output-policy amendment",
+        "",
+        "Approved scope: the four exact GraySwan RR identities and three RWKV static",
+        "identities whose immutable historical terminal records predate the current",
+        "Runner output policy. No completed base, Qwen, bridge, HarmBench, R-Judge",
+        "Ollama, or source-native lane is repeated. GraySwan uses the current bounded",
+        "100-per-arm selections matched to the exact LLaVA-base comparison. RWKV uses",
+        "the retained 50-per-arm selections. Sampling seed 0, generation limits, model",
+        "identities, judge choices and caps are fixed before these calls and are not",
+        "changed in response to output content.",
+        "",
+        "All seven identities are re-attested and canaried before any one of them enters",
+        "measured execution. A nonempty length-capped completion is analyzed with its",
+        "terminal reason retained. A successful empty completion is typed model_nonresponse",
+        "and does not trigger a retry or a policy-judge call.",
+        "",
+        "| Lane | Target-call cap | Model-judge cap | HTTP cap | Deadline | Wall time |",
+        "|---|---:|---:|---:|---:|---:|",
+    ]
+    for spec in specs:
+        caps = spec["approved_caps"]
+        lines.append(
+            f"| {spec['lane_id']} | {caps['target_calls']} | "
+            f"{caps['model_judge_calls']} | {caps['http_attempts']} | "
+            f"{caps['deadline_seconds']} | {caps['wall_time_seconds']} |"
+        )
+    lines.extend(
+        [
+            "",
+        "This is local campaign orchestration, not a URA-Bench product phase.",
+            "",
+        ]
+    )
+    write_new(RUNNOTE, "\n".join(lines).encode("ascii"))
+
+
+def write_amendment(specs: Sequence[Mapping[str, Any]]) -> tuple[Path, str]:
+    path = CONTROL / "runner-2.24-seven-output-policy-amendment.json"
+    value = {
+        "schema": "ura-local-campaign-seven-output-policy-amendment/1",
+        "status": "approved_for_targeted_readmission",
+        "created_at_utc": utc_now(),
+        "project_commit": EXPECTED_COMMIT,
+        "runner_code_version": "ura-runner/2.24",
+        "output_policy": {
+            "nonempty_length_capped_text": "retain_and_analyze",
+            "successful_empty_completion": "retain_as_typed_model_nonresponse",
+            "common_metric_denominator": "exclude_model_nonresponse",
+            "source_specific_parser": "retain_invalid_prediction",
+            "terminal_reason_retained": True,
+            "unknown_terminal_reason": "error",
+            "generation_caps_changed": False,
+        },
+        "operator_authorization": (
+            "operator explicitly directed that nonempty text reaching the generation "
+            "cap remains analyzable model output"
+        ),
+        "runnote": descriptor(RUNNOTE),
+        "project_revision": descriptor(Path(os.environ["URA_PROJECT_REVISION_MANIFEST"])),
+        "source_conformance": descriptor(Path(os.environ["URA_SOURCE_CONFORMANCE_MANIFEST"])),
+        "framework_lock_id": os.environ["URA_FRAMEWORK_LOCK_ID"],
+        "focused_tests": descriptor(FOCUSED_TESTS),
+        "mutation_tests": descriptor(MUTATION_TESTS),
+        "historical_gate5": {
+            "manifest": descriptor(OLD_GATE5_MANIFEST),
+            "runnote": descriptor(OLD_GATE5_RUNNOTE),
+            "promotion": descriptor(OLD_GATE5_PROMOTION),
+        },
+        "prior_core_recovery": optional_terminal_context(
+            PRIOR_CORE_RECOVERY_ATTEMPT
+        ),
+        "prior_ollama_recovery": descriptor(PRIOR_OLLAMA_RECOVERY_COMPLETION),
+        "historical_profile": {
+            "rows": 46,
+            "runnable": 18,
+            "typed_terminal": 28,
+            "unavailable": 7,
+            "conditional_na": 1,
+            "target_runtime_terminal": 7,
+            "structural_na": 13,
+        },
+        "all_pass_profile": {
+            "rows": 46,
+            "runnable": 25,
+            "typed_terminal": 21,
+            "unavailable": 7,
+            "conditional_na": 1,
+            "target_runtime_terminal": 0,
+            "structural_na": 13,
+            "conditional_na_lanes": ["defense-local"],
+        },
+        "affected_lanes": [
+            {
+                "lane_id": spec["lane_id"],
+                "bounded_selection_source": descriptor(SPEC_SOURCES[index][1]),
+                "target_identity_source": descriptor(
+                    SPEC_SOURCES[index][2] or RR_CONFIG
+                ),
+                "approved_caps": spec["approved_caps"],
+                "sample_seed": 0,
+                "limit": int(option_value(spec["base_argv"], "--limit")),
+            }
+            for index, spec in enumerate(specs)
+        ],
+        "unrelated_passed_work_repeated": False,
+        "paid_provider_calls": 0,
+    }
+    write_new(path, canonical(value))
+    return path, sha256_bytes(path.read_bytes())
+
+
+def acquisition_for(
+    module: Any,
+    ctl: Any,
+    spec: Mapping[str, Any],
+    label: str,
+    args: Sequence[str],
+    root: Path,
+) -> Mapping[str, Any] | None:
+    if spec["acquisition_mode"] != "required_zero_download":
+        return None
+    root.mkdir(parents=True, mode=0o700)
+    if spec["family"] == "ollama":
+        role_mode = "guard_only"
+    else:
+        role_mode = "target_only" if spec["classification"] else "target_and_guard"
+    return module.plan_acquire(
+        ctl,
+        spec,
+        label,
+        args,
+        root / "plan",
+        root / "receipts",
+        role_mode,
+    )
+
+
+def runner_args_with_acquisition(
+    module: Any,
+    args: Sequence[str],
+    acquisition: Mapping[str, Any] | None,
+) -> list[str]:
+    result = list(args)
+    if acquisition is not None:
+        result.extend(module.acquisition_args(acquisition))
+    return result
+
+
+def canary_id(root: Path) -> str:
+    matches: list[str] = []
+    for path in sorted(root.glob("*.json")):
+        try:
+            value = strict_json(path)
+        except (OSError, UnicodeError, ValueError, TypeError):
+            continue
+        value_id = value.get("canary_id")
+        if isinstance(value_id, str) and value_id.startswith("lane-canary-"):
+            matches.append(value_id)
+    if len(set(matches)) != 1:
+        raise ValueError(f"expected one lane-canary identity under {root}")
+    return matches[0]
+
+
+def derive_core_attestation(
+    module: Any,
+    ctl: Any,
+    spec: Mapping[str, Any],
+    lane_control: Path,
+) -> dict[str, Any]:
+    """Derive a fresh text or physical-image transport receipt for one core lane."""
+
+    lane = str(spec["lane_id"])
+    base = spec["base_argv"]
+    modality = str(spec["modality"])
+    if modality not in {"text", "image"}:
+        raise ValueError(f"{lane}: unsupported core attestation modality")
+    corpus = "synth" if modality == "text" else "figstep_full"
+    probe_parent = (
+        ctl.work
+        / "runs"
+        / "thesis"
+        / "attestation"
+        / f"phase6-core-recovery-{ctl.attempt_tag}"
+        / lane
+    )
+    if probe_parent.exists() or probe_parent.is_symlink():
+        raise ValueError(f"fresh core attestation root already exists: {probe_parent}")
+    probe_parent.mkdir(parents=True, mode=0o700)
+    probe_root = probe_parent / "probe"
+    receipt_path = probe_parent / f"{lane}.live-attestation.json"
+    probe_args = [
+        "--attestation-probe",
+        "--execution-scope-id", os.environ["URA_EXECUTION_SCOPE_ID"],
+        "--project-revision", option_value(base, "--project-revision"),
+        "--project-revision-sha256",
+        option_value(base, "--project-revision-sha256"),
+        "--local", option_value(base, "--local"),
+        "--local-config", option_value(base, "--local-config"),
+        "--local-config-sha256", option_value(base, "--local-config-sha256"),
+        "--attackers", "replay",
+        "--judges", "rules",
+        "--corpora", corpus,
+    ]
+    if modality == "image":
+        probe_args.extend([
+            "--source-config", option_value(base, "--source-config"),
+            "--source-config-sha256", option_value(base, "--source-config-sha256"),
+            "--source-conformance", option_value(base, "--source-conformance"),
+            "--source-conformance-sha256",
+            option_value(base, "--source-conformance-sha256"),
+        ])
+    probe_args.extend([
+        "--limit", "1",
+        "--sample-seed", "0",
+        "--seeds", "0",
+        "--max-queries", "1",
+        "--max-turns", "1",
+        "--group",
+        "model,source,risk,effective_modality,expected_behavior,attacker,"
+        "source_policy_id,source_policy_version",
+        "--max-total-target-calls", "1",
+        "--max-total-judge-calls", "0",
+        "--max-total-http-attempts", "0",
+        "--deadline-seconds", "900",
+        "--out", str(probe_root),
+    ])
+    acquisition = module.plan_acquire(
+        ctl,
+        spec,
+        f"{lane}.probe",
+        probe_args,
+        lane_control / f"probe-plan-{ctl.attempt_tag}",
+        lane_control / "receipts",
+        "target_only",
+    )
+    ctl.run(
+        lane,
+        "fresh-attestation-probe",
+        [
+            str(PYTHON), "-m", "experiments.run_matrix", *probe_args,
+            *module.acquisition_args(acquisition),
+        ],
+        f"{lane}.probe.run.log",
+    )
+    ctl.run(
+        lane,
+        "fresh-attestation-derive",
+        [
+            str(PYTHON), "-m", "experiments.live_attestation",
+            "--probe-root", str(probe_root),
+            "--execution-scope-id", os.environ["URA_EXECUTION_SCOPE_ID"],
+            "--out", str(receipt_path),
+        ],
+        f"{lane}.probe.derive.log",
+    )
+    receipt_sha = sha256_bytes(receipt_path.read_bytes())
+    ctl.run(
+        lane,
+        "fresh-attestation-validate",
+        [
+            str(PYTHON), "-m", "experiments.live_attestation",
+            "--validate", str(receipt_path), "--sha256", receipt_sha,
+        ],
+        f"{lane}.probe.validate.log",
+    )
+    receipt, _ = module.load_live_attestation_file(receipt_path, receipt_sha)
+    records = receipt.get("records") if isinstance(receipt, dict) else None
+    expected_modalities = ["text"] if modality == "text" else ["text", "image"]
+    expected_target = f"{spec['target']['spec']}@{spec['target']['revision']}"
+    if (
+        not isinstance(records, list)
+        or len(records) != 1
+        or records[0].get("requested_target_spec") != spec["target"]["spec"]
+        or records[0].get("exact_input_modalities") != expected_modalities
+        or records[0].get("resolved_target") != expected_target
+        or records[0].get("route_kind") != "local_runtime"
+        or records[0].get("realized_target_identity") != {
+            "target": expected_target,
+            "resolved_model": spec["target"]["repo_id"],
+            "model_revision": spec["target"]["revision"],
+        }
+    ):
+        raise ValueError(f"{lane}: fresh core attestation identity/modality changed")
+    return {
+        "path": str(receipt_path),
+        "sha256": receipt_sha,
+        "probe_root": str(probe_root),
+    }
+
+
+def prepare_harmbench_canary_argv(
+    spec: Mapping[str, Any], gate_root: Path, canary_argv: Sequence[str]
+) -> tuple[list[str], dict[str, object]]:
+    """Derive the exact one-cluster canary from the measured replay bundle."""
+
+    from experiments import run_matrix
+    from ura.adapters.harmbench import _canonical_sha256, _source_request
+
+    config_path = Path(option_value(spec["base_argv"], "--attacker-config"))
+    config_raw = config_path.resolve(strict=True).read_bytes()
+    if sha256_bytes(config_raw) != option_value(
+        spec["base_argv"], "--attacker-config-sha256"
+    ):
+        raise ValueError("HarmBench measured attacker config digest changed")
+    config = json.loads(config_raw.decode("utf-8"))
+    harmbench = config.get("harmbench") if isinstance(config, dict) else None
+    if not isinstance(harmbench, dict):
+        raise ValueError("HarmBench measured attacker config is invalid")
+    artifact_path = Path(str(harmbench.get("replay_artifact"))).resolve(strict=True)
+    artifact_raw = artifact_path.read_bytes()
+    if sha256_bytes(artifact_raw) != harmbench.get("replay_artifact_sha256"):
+        raise ValueError("HarmBench measured replay artifact digest changed")
+    bundle = json.loads(artifact_raw.decode("utf-8"))
+    if not isinstance(bundle, dict):
+        raise ValueError("HarmBench measured replay artifact is invalid")
+    unsigned = {key: value for key, value in bundle.items() if key != "content_sha256"}
+    if bundle.get("content_sha256") != _canonical_sha256(unsigned):
+        raise ValueError("HarmBench measured replay content digest changed")
+
+    arm = option_value(canary_argv, "--corpora")
+    sample_seed = int(option_value(canary_argv, "--sample-seed"))
+    source_instances, _ = run_matrix._load_source_config(
+        option_value(canary_argv, "--source-config"),
+        [arm],
+        option_value(canary_argv, "--source-config-sha256"),
+    )
+    selected, _ = run_matrix.load_corpus_with_audit(
+        arm,
+        1,
+        sample_seed,
+        source_instance=source_instances[arm],
+    )
+    expected_requests = [_source_request(datapoint) for datapoint in selected]
+    full_requests = bundle.get("source_requests")
+    full_cases = bundle.get("cases")
+    if not isinstance(full_requests, list) or not isinstance(full_cases, list):
+        raise ValueError("HarmBench measured replay request/case inventory is invalid")
+    request_by_id = {
+        request.get("datapoint_id"): request
+        for request in full_requests
+        if isinstance(request, dict)
+    }
+    if any(
+        request_by_id.get(request["datapoint_id"]) != request
+        for request in expected_requests
+    ):
+        raise ValueError(
+            "HarmBench one-cluster corpus is not an exact subset of measured replay"
+        )
+    selected_ids = {request["datapoint_id"] for request in expected_requests}
+    selected_cases = [
+        case for case in full_cases
+        if isinstance(case, dict) and case.get("datapoint_id") in selected_ids
+    ]
+    expected_case_count = (
+        len(expected_requests)
+        * len(bundle.get("methods", []))
+        * int(bundle.get("cases_per_method", 0))
+    )
+    if len(selected_cases) != expected_case_count:
+        raise ValueError("HarmBench one-cluster replay case inventory is incomplete")
+
+    selection = dict(bundle.get("selection", {}))
+    selection["corpus_name"] = arm
+    selection["limit"] = 1
+    selection["sample_seed"] = sample_seed
+    canary_unsigned = {
+        **unsigned,
+        "selection": selection,
+        "source_requests": expected_requests,
+        "cases": selected_cases,
+    }
+    canary_bundle = {
+        **canary_unsigned,
+        "content_sha256": _canonical_sha256(canary_unsigned),
+    }
+    prepared_root = gate_root / "harmbench-canary-prepared"
+    artifact_out = prepared_root / "harmbench-replay-limit1.json"
+    write_new(artifact_out, canonical(canary_bundle))
+    artifact_sha = sha256_bytes(artifact_out.read_bytes())
+    canary_config = {
+        **config,
+        "harmbench": {
+            **harmbench,
+            "replay_artifact": str(artifact_out.resolve(strict=True)),
+            "replay_artifact_sha256": artifact_sha,
+        },
+    }
+    config_out = prepared_root / "harmbench-replay-limit1-config.json"
+    write_new(config_out, canonical(canary_config))
+    config_sha = sha256_bytes(config_out.read_bytes())
+    argv = replace_option(canary_argv, "--attacker-config", str(config_out))
+    argv = replace_option(argv, "--attacker-config-sha256", config_sha)
+    return argv, {
+        "measured_replay_artifact": descriptor(artifact_path),
+        "canary_replay_artifact": descriptor(artifact_out),
+        "canary_attacker_config": descriptor(config_out),
+        "source_request_ids": sorted(selected_ids),
+        "source_request_count": len(expected_requests),
+        "case_count": len(selected_cases),
+    }
+
+
+def corrective_gate5(
+    module: Any,
+    ctl: Any,
+    spec: dict[str, Any],
+    amendment_sha: str,
+) -> Mapping[str, Any]:
+    lane = spec["lane_id"]
+    gate_root = CONTROL / "gate5" / lane
+    gate_root.mkdir(parents=True, mode=0o700)
+    caps = spec["approved_caps"]
+    if lane not in LANE_ORDER:
+        raise ValueError(f"{lane}: lane is outside the exact seven-row cohort")
+    else:
+        if spec["family"] == "ollama":
+            attestation = module.derive_attestation(ctl, spec, gate_root)
+        else:
+            attestation = derive_core_attestation(module, ctl, spec, gate_root)
+        canary_root = gate_root / "canary"
+        canary_base = single_arm_canary_argv(spec["base_argv"])
+        if lane == "harmbench-replay":
+            canary_base, canary_preparation = prepare_harmbench_canary_argv(
+                spec, gate_root, canary_base
+            )
+            ctl.event(
+                lane,
+                "harmbench-canary-preparation",
+                "complete-new",
+                str(canary_preparation["canary_replay_artifact"]["sha256"]),
+            )
+        canary_args = [
+            *canary_base,
+            "--diagnostic-canary",
+            "--execution-scope-id",
+            os.environ["URA_EXECUTION_SCOPE_ID"],
+            "--live-attestation",
+            attestation["path"],
+            "--live-attestation-sha256",
+            attestation["sha256"],
+            "--live-attestation-max-age-hours",
+            "24",
+            "--max-total-target-calls",
+            str(caps["target_calls"]),
+            "--max-total-judge-calls",
+            str(caps["model_judge_calls"]),
+            "--max-total-http-attempts",
+            str(caps["http_attempts"]),
+            "--deadline-seconds",
+            str(caps["deadline_seconds"]),
+            "--out",
+            str(canary_root),
+        ]
+        canary_acquisition = acquisition_for(
+            module, ctl, spec, f"{lane}.corrective-canary", canary_args,
+            gate_root / "canary-acquisition",
+        )
+        ctl.run(
+            lane,
+            "corrective-canary-run",
+            [
+                str(PYTHON),
+                "-m",
+                "experiments.run_matrix",
+                *runner_args_with_acquisition(module, canary_args, canary_acquisition),
+            ],
+            f"{lane}.corrective-canary.run.log",
+        )
+        eligibility = one_file(canary_root, "eligibility-*.eligibility.json")
+        ctl.run(
+            lane,
+            "corrective-lane-canary",
+            [
+                str(PYTHON),
+                "-m",
+                "experiments.lane_canary",
+                "--results",
+                str(canary_root),
+                "--eligibility",
+                str(eligibility),
+                "--out-dir",
+                str(canary_root),
+            ],
+            f"{lane}.corrective-lane-canary.log",
+        )
+        retained_canary_id = canary_id(canary_root)
+
+    if lane not in LANE_ORDER:
+        raise ValueError(f"{lane}: lane is outside the exact seven-row cohort")
+    else:
+        preflight_root = gate_root / "preflight"
+        preflight_args = no_call_preflight_argv(spec, preflight_root)
+        preflight_acquisition = acquisition_for(
+            module, ctl, spec, f"{lane}.corrective-preflight", preflight_args,
+            gate_root / "preflight-acquisition",
+        )
+        ctl.run(
+            lane,
+            "corrective-preflight-run",
+            [
+                str(PYTHON),
+                "-m",
+                "experiments.run_matrix",
+                *runner_args_with_acquisition(
+                    module, preflight_args, preflight_acquisition
+                ),
+            ],
+            f"{lane}.corrective-preflight.run.log",
+        )
+        projection = descriptor(
+            one_file(preflight_root, "lane-projection-*.lane-projection.json")
+        )
+        projection["file"] = Path(str(projection["path"])).name
+        eligibility_desc = descriptor(
+            one_file(preflight_root, "eligibility-*.eligibility.json")
+        )
+        envelope = descriptor(
+            one_file(preflight_root, "request-envelope-*.request-envelope.json")
+        )
+        envelope_value = strict_json(Path(str(envelope["path"])))
+        envelope["file"] = Path(str(envelope["path"])).name
+        envelope["envelope_id"] = envelope_value["envelope_id"]
+    spec["gate5"] = {
+        "manifest_sha256": amendment_sha,
+        "preliminary_projection": projection,
+        "final_projection": dict(projection),
+        "final_eligibility": eligibility_desc,
+        "final_request_envelope": envelope,
+        "canary_id": retained_canary_id,
+    }
+    return attestation
+
+
+def prepare_measured_prestate(
+    module: Any,
+    ctl: Any,
+    spec: Mapping[str, Any],
+    spec_path: Path,
+    attestation: Mapping[str, Any],
+) -> None:
+    lane = spec["lane_id"]
+    lane_control = CONTROL / "lanes" / lane
+    lane_control.mkdir(parents=True, mode=0o700, exist_ok=True)
+    retained_spec = lane_control / "lane-spec.json"
+    module.write_or_match(retained_spec, spec_path.read_bytes())
+    prestate_path = lane_control / "measured-prestate.json"
+    result_root = module.expected_result_root(ctl.work, spec, CONTROL)
+    if prestate_path.exists() or result_root.exists() or result_root.is_symlink():
+        raise ValueError(f"{lane}: corrective measured reservation is not fresh")
+    reservation_path, _reservation_payload, reservation = module.reservation_identity(
+        prestate_path, retained_spec, spec, result_root
+    )
+    if reservation_path.exists() or reservation_path.is_symlink():
+        raise ValueError(f"{lane}: corrective reservation path is occupied")
+    value = {
+        "schema": "ura-phase6-extended-measured-prestate/1",
+        "lane_spec": module.frozen_descriptor(retained_spec),
+        "result_root": str(result_root),
+        "result_root_reservation": reservation,
+        "live_attestation": dict(attestation),
+        "measured_args_without_acquisition": module.expected_measured_args(
+            spec, attestation, result_root
+        ),
+        "measured_plan_root": str(lane_control / f"measured-plan-{ATTEMPT_TAG}"),
+        "receipts_root": str(lane_control / "receipts"),
+        "request_ordering": (
+            "fresh_attestation_then_durable_prestate_and_root_reservation_then_"
+            "exact_measured_purpose_plan_then_run"
+        ),
+    }
+    module.write_new_atomic(prestate_path, module.canonical(value))
+    recovered = module.recover_reserved_result_root(
+        prestate_path, value, retained_spec, spec
+    )
+    if recovered != result_root:
+        raise ValueError(f"{lane}: corrective result-root reservation changed")
+
+
+def write_launch(amendment: Path, amendment_sha: str) -> None:
+    value = {
+        "schema": "ura-seven-output-policy-amendment-launch/1",
+        "launched_at_utc": utc_now(),
+        "expected_commit": EXPECTED_COMMIT,
+        "framework_lock_id": os.environ["URA_FRAMEWORK_LOCK_ID"],
+        "execution_scope_id": os.environ["URA_EXECUTION_SCOPE_ID"],
+        "control_root": str(CONTROL),
+        "attempt": ATTEMPT_TAG,
+        "controller": descriptor(Path(__file__)),
+        "retained_executor_payload": descriptor(PAYLOAD_PATH),
+        "amendment": {**descriptor(amendment), "sha256": amendment_sha},
+        "lane_order": list(LANE_ORDER),
+    }
+    write_new(CONTROL / "launch.json", canonical(value))
+
+
+def write_gate5_inventory(
+    policy_amendment: Path,
+    policy_sha: str,
+    specs: Sequence[Mapping[str, Any]],
+    ready: Sequence[str],
+) -> tuple[Path, str]:
+    ready_set = set(ready)
+    value = {
+        "schema": "ura-gate5-seven-output-policy-amendment/1",
+        "status": "complete" if len(ready) == 7 else "complete_with_retained_terminals",
+        "completed_at_utc": utc_now(),
+        "project_commit": EXPECTED_COMMIT,
+        "runner_code_version": "ura-runner/2.24",
+        "base_manifest": descriptor(OLD_GATE5_MANIFEST),
+        "policy_amendment": {**descriptor(policy_amendment), "sha256": policy_sha},
+        "profile": {
+            "rows": 46,
+            "runnable": 18 + len(ready),
+            "typed_terminal": 28 - len(ready),
+            "target_runtime_terminal": 7 - len(ready),
+            "conditional_na_lanes": ["defense-local"],
+        },
+        "rows": [
+            {
+                "lane_id": spec["lane_id"],
+                "disposition": (
+                    "runnable" if spec["lane_id"] in ready_set
+                    else "historical_terminal_retained"
+                ),
+                "approved_caps": spec["approved_caps"],
+                "gate5": spec.get("gate5"),
+            }
+            for spec in specs
+        ],
+        "all_seven_evaluated_before_measured_execution": True,
+        "generation_caps_changed": False,
+        "paid_provider_calls": 0,
+    }
+    path = CONTROL / "gate5-seven-output-policy-amendment.json"
+    write_new(path, canonical(value))
+    return path, sha256_bytes(path.read_bytes())
+
+
+def record_gate5_failure(
+    ctl: Any,
+    lane: str,
+    exc: BaseException,
+    *,
+    spec_path: Path,
+) -> None:
+    spec = strict_json(spec_path)
+    if spec.get("lane_id") != lane or spec.get("gate5") is not None:
+        raise ValueError(f"{lane}: failed Gate 5 spec is not a truthful pre-Gate spec")
+    error_type = type(exc).__name__
+    error = str(exc).strip()[:4000] or error_type
+    value = {
+        "schema": "ura-phase6-gate5-lane-failure/1",
+        "status": "failed",
+        "failed_at_utc": utc_now(),
+        "attempt": ctl.attempt.name,
+        "lane_id": lane,
+        "stage": "gate5",
+        "reason_code": "corrective_gate5_failed",
+        "error_type": error_type,
+        "error": error,
+        "lane_spec": descriptor(spec_path),
+        "evidence_eligible": False,
+    }
+    ctl.failures.append(value)
+    write_new(ctl.attempt / f"{lane}.failure.json", canonical(value))
+    ctl.event(lane, "gate5", "failed", f"{error_type}: {error}")
+    ctl.emit(f"LANE={lane} STAGE=gate5 FAILED: {error_type}: {error}")
+
+
+def finalize(module: Any, ctl: Any, amendment: Path, amendment_sha: str) -> int:
+    completed = list(ctl.completed)
+    failures = list(ctl.failures)
+    failed = [str(value["lane_id"]) for value in failures]
+    if set(completed) & set(failed) or set(completed) | set(failed) != set(LANE_ORDER):
+        raise ValueError("corrective lane terminal partition is incomplete")
+    status = "complete" if not failed else "complete_with_failures"
+    exit_code = 0 if not failed else 1
+    gate5_value = strict_json(amendment)
+    runnable = [
+        row["lane_id"]
+        for row in gate5_value["rows"]
+        if row["disposition"] == "runnable"
+    ]
+    failure_stage = {str(row["lane_id"]): str(row["stage"]) for row in failures}
+    summary = {
+        "schema": "ura-seven-output-policy-amendment-summary/1",
+        "status": status,
+        "controller_exit_code": exit_code,
+        "completed_at_utc": utc_now(),
+        "attempt": ATTEMPT_TAG,
+        "runnable_inventory": runnable,
+        "lane_terminal_states": {
+            lane: (
+                "measured_complete" if lane in completed
+                else "gate5_failed" if failure_stage.get(lane) == "gate5"
+                else "measured_failed"
+            )
+            for lane in LANE_ORDER
+        },
+        "completed_lanes": completed,
+        "failed_lanes": failed,
+        "failures": failures,
+        "all_independent_lanes_attempted": True,
+        "output_policy": "retain_length_capped_text_and_typed_model_nonresponse",
+        "generation_caps_changed": False,
+        "unrelated_passed_work_repeated": False,
+        "paid_provider_calls": 0,
+        "hosted_judge_calls": 0,
+        "http_attempts": 0,
+        "model_downloads": 0,
+    }
+    summary_path = ctl.attempt / "summary.json"
+    module.write_new(summary_path, module.canonical(summary))
+    completion = {
+        "schema": "ura-seven-output-policy-amendment-completion/1",
+        "status": status,
+        "controller_exit_code": exit_code,
+        "completed_at_utc": utc_now(),
+        "attempt": ATTEMPT_TAG,
+        "expected_commit": EXPECTED_COMMIT,
+        "framework_lock_id": os.environ["URA_FRAMEWORK_LOCK_ID"],
+        "inventory_complete": True,
+        "runnable_lanes": runnable,
+        "lane_terminal_states": summary["lane_terminal_states"],
+        "amendment": {**descriptor(amendment), "sha256": amendment_sha},
+        "launch": descriptor(CONTROL / "launch.json"),
+        "controller": descriptor(Path(__file__)),
+        "retained_executor_payload": descriptor(PAYLOAD_PATH),
+        "summary": descriptor(summary_path),
+        "lane_results": {
+            lane: descriptor(ctl.attempt / f"{lane}.complete.json")
+            for lane in completed
+        },
+        "lane_failures": {
+            lane: descriptor(ctl.attempt / f"{lane}.failure.json")
+            for lane in failed
+        },
+        "all_independent_lanes_attempted": True,
+        "output_policy": "retain_length_capped_text_and_typed_model_nonresponse",
+        "generation_caps_changed": False,
+        "unrelated_passed_work_repeated": False,
+        "paid_provider_calls": 0,
+    }
+    module.write_new(ctl.attempt / "completion.json", module.canonical(completion))
+    return exit_code
+
+
+def execute_core_lane(module: Any, ctl: Any, spec_path: Path) -> None:
+    """Execute one augmented core spec through the retained measured machinery."""
+
+    spec = module.strict_object(spec_path)
+    lane = spec["lane_id"]
+    module.assert_environment()
+    if module.shutil.disk_usage(ctl.work).free < spec["storage"][
+        "free_space_floor_bytes"
+    ]:
+        raise ValueError("resolved filesystem is below the Gate 5 free-space floor")
+    lane_control = ctl.control / "lanes" / lane
+    lane_control.mkdir(mode=0o700, exist_ok=True)
+    retained_spec = lane_control / "lane-spec.json"
+    module.write_or_match(retained_spec, spec_path.read_bytes())
+    state_path = lane_control / "exact-measured-argv.json"
+    prestate_path = lane_control / "measured-prestate.json"
+    result_root = module.expected_result_root(ctl.work, spec, ctl.control)
+    if state_path.exists():
+        try:
+            result = module.validate_completed_lane(
+                ctl, spec, retained_spec, state_path, "existing"
+            )
+        except Exception as validation_error:
+            ctl.event(
+                lane, "existing-revalidation", "incomplete", str(validation_error)
+            )
+            _state, runner_argv = module.validate_state(
+                state_path, spec, retained_spec
+            )
+            ctl.run_measured(
+                lane,
+                "runner-resume",
+                runner_argv,
+                f"{lane}.runner-resume.log",
+                spec=spec,
+                result_root=result_root,
+            )
+            result = module.validate_completed_lane(
+                ctl, spec, retained_spec, state_path, "resumed"
+            )
+    else:
+        prestate = module.validate_prestate(prestate_path, spec, retained_spec)
+        recovered_root = module.recover_reserved_result_root(
+            prestate_path, prestate, retained_spec, spec
+        )
+        if recovered_root != result_root:
+            raise ValueError(
+                "recovered measured result root differs from the exact lane root"
+            )
+        measured_args = list(prestate["measured_args_without_acquisition"])
+        if spec["family"] == "ollama":
+            role_mode = "guard_only"
+        else:
+            role_mode = "target_only" if spec["classification"] else "target_and_guard"
+        acquisition = module.plan_acquire(
+            ctl,
+            spec,
+            f"{lane}.measured",
+            measured_args,
+            Path(prestate["measured_plan_root"]),
+            Path(prestate["receipts_root"]),
+            role_mode,
+        )
+        runner_argv = [*measured_args, *module.acquisition_args(acquisition)]
+        module.write_state(
+            state_path, retained_spec, prestate, acquisition, runner_argv
+        )
+        module.validate_state(state_path, spec, retained_spec)
+        ctl.run_measured(
+            lane,
+            "measured-run",
+            runner_argv,
+            f"{lane}.measured.run.log",
+            spec=spec,
+            result_root=result_root,
+        )
+        result = module.validate_completed_lane(
+            ctl, spec, retained_spec, state_path, "complete"
+        )
+    ctl.event(lane, "measured", "complete", result["grid_id"])
+    ctl.emit(f"LANE={lane} MEASURED COMPLETE")
+    if spec["family"] == "ollama":
+        module.write_new(
+            ctl.attempt / f"{lane}.ollama-roster-after.json",
+            module.canonical(module.verify_ollama(spec)),
+        )
+    module.write_new(
+        ctl.attempt / f"{lane}.complete.json", module.canonical(result)
+    )
+    ctl.completed.append(lane)
+
+
+def main() -> int:
+    module = load_payload()
+    specs = assert_inputs(module)
+    validate_specs_contract(module, specs)
+    CONTROL.mkdir(mode=0o700)
+    (CONTROL / "attempts").mkdir(mode=0o700)
+    (CONTROL / "lane-specs").mkdir(mode=0o700)
+    os.environ["CONTROL_ROOT"] = str(CONTROL)
+    os.environ["ATTEMPT_TAG"] = ATTEMPT_TAG
+    write_runnote(specs)
+    policy_amendment, policy_sha = write_amendment(specs)
+    write_launch(policy_amendment, policy_sha)
+    ctl = module.Controller()
+    exit_code = 1
+    for signum in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
+        signal.signal(signum, module.abort_signal)
+    try:
+        ready: list[str] = []
+        attestations: dict[str, Mapping[str, Any]] = {}
+        for index, spec in enumerate(specs, start=1):
+            lane = spec["lane_id"]
+            spec_path = CONTROL / "lane-specs" / f"{index:02d}-{lane}.json"
+            ctl.begin_lane(lane, spec["approved_caps"]["wall_time_seconds"])
+            gate5_error: Exception | None = None
+            try:
+                signal.setitimer(
+                    signal.ITIMER_REAL, spec["approved_caps"]["wall_time_seconds"]
+                )
+                attestations[lane] = corrective_gate5(
+                    module, ctl, spec, policy_sha
+                )
+                ready.append(lane)
+            except module.ControllerInterrupted:
+                raise
+            except Exception as exc:  # noqa: BLE001 - retain every lane failure
+                gate5_error = exc
+            finally:
+                signal.setitimer(signal.ITIMER_REAL, 0)
+                ctl.end_lane(lane)
+            if gate5_error is not None:
+                write_new(spec_path, canonical(spec))
+                record_gate5_failure(
+                    ctl, lane, gate5_error, spec_path=spec_path
+                )
+
+        gate5_inventory, gate5_sha = write_gate5_inventory(
+            policy_amendment, policy_sha, specs, ready
+        )
+        for index, spec in enumerate(specs, start=1):
+            lane = spec["lane_id"]
+            if lane not in ready:
+                continue
+            spec["gate5"]["manifest_sha256"] = gate5_sha
+            spec_path = CONTROL / "lane-specs" / f"{index:02d}-{lane}.json"
+            write_new(spec_path, canonical(spec))
+            ctl.begin_lane(lane, spec["approved_caps"]["wall_time_seconds"])
+            lane_error: Exception | None = None
+            try:
+                signal.setitimer(
+                    signal.ITIMER_REAL, spec["approved_caps"]["wall_time_seconds"]
+                )
+                prepare_measured_prestate(
+                    module, ctl, spec, spec_path, attestations[lane]
+                )
+                execute_core_lane(module, ctl, spec_path)
+            except module.ControllerInterrupted:
+                raise
+            except Exception as exc:  # noqa: BLE001 - retain every lane failure
+                lane_error = exc
+            finally:
+                signal.setitimer(signal.ITIMER_REAL, 0)
+                ctl.end_lane(lane)
+            if lane_error is not None:
+                ctl.record_failure(lane, "measured", lane_error, spec_path=spec_path)
+        exit_code = finalize(module, ctl, gate5_inventory, gate5_sha)
+    except Exception as exc:  # noqa: BLE001 - retain controller failure
+        if isinstance(exc, module.ControllerInterrupted):
+            exit_code = exc.exit_code
+        ctl.record_failure("controller", "controller", exc)
+        ctl.log.write(traceback.format_exc() + "\n")
+        module.write_new(
+            ctl.attempt / "controller-failure.json",
+            module.canonical(
+                {
+                    "schema": "ura-seven-output-policy-amendment-failure/1",
+                    "status": "failed",
+                    "failed_at_utc": utc_now(),
+                    "error_type": type(exc).__name__,
+                    "error": str(exc)[:4000],
+                }
+            ),
+        )
+    finally:
+        ctl.log.flush()
+        os.fsync(ctl.log.fileno())
+        ctl.log.close()
+        module.write_new(ctl.attempt / ".exit", f"{exit_code}\n".encode("ascii"))
+    return exit_code
+
+
+def contract_self_test() -> int:
+    module = load_payload()
+    specs = assert_inputs(module)
+    validate_specs_contract(module, specs)
+    print(
+        json.dumps(
+            {
+                "schema": "ura-seven-output-policy-amendment-contract-self-test/1",
+                "status": "passed",
+                "project_commit": EXPECTED_COMMIT,
+                "lane_order": list(LANE_ORDER),
+                "runner_code_version": "ura-runner/2.24",
+                "generation_caps_changed": False,
+                "unrelated_passed_work_repeated": False,
+                "canary_selection": "one_source_arm_one_attacker_one_seed",
+                "all_gate5_before_any_measured": True,
+                "active_core_dependency": "optional_terminal_context",
+                "preflight_live_state": False,
+                "reservation_scope": "lane_and_corrective_control_root",
+                "model_calls": 0,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    if sys.argv[1:] == ["--contract-self-test"]:
+        raise SystemExit(contract_self_test())
+    if sys.argv[1:]:
+        raise SystemExit("unsupported corrective-controller arguments")
+    raise SystemExit(main())

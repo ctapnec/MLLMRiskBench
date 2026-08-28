@@ -586,9 +586,8 @@ done
 P5_SESSION='ura-phase5-sequence-@@COMMIT_SHORT@@'
 G5_SESSION='ura-gate5-after-phase5-@@COMMIT_SHORT@@'
 P6_SESSION='ura-phase6-sequence-@@COMMIT_SHORT@@'
-P7_SESSION='ura-phase7-after-phase6-@@COMMIT_SHORT@@'
 
-for session in "$P5_SESSION" "$G5_SESSION" "$P6_SESSION" "$P7_SESSION"; do
+for session in "$P5_SESSION" "$G5_SESSION" "$P6_SESSION"; do
   if tmux -L "$session" has-session -t "$session" 2>/dev/null; then
     printf 'session already exists: %s\n' "$session" >&2
     exit 1
@@ -598,13 +597,12 @@ done
 for root in \
   "$URA_WORK/runs/engineering/phase5-sequence-@@PHASE5_SEQUENCE_TAG@@" \
   "$URA_WORK/runs/engineering/gate5-after-phase5-@@GATE5_SEQUENCE_TAG@@" \
-  "$URA_WORK/runs/engineering/phase6-sequence-@@PHASE6_SEQUENCE_TAG@@" \
-  "$URA_WORK/runs/engineering/phase7-after-phase6-@@PHASE7_WATCHER_TAG@@"; do
+  "$URA_WORK/runs/engineering/phase6-sequence-@@PHASE6_SEQUENCE_TAG@@"; do
   test ! -e "$root" && test ! -L "$root"
 done
 
 if [[ "${URA_LAUNCH_CHAIN_VALIDATE_ONLY:-0}" == '1' ]]; then
-  printf 'campaign launch chain validation passed; no sessions launched\n'
+  printf 'campaign launch chain through Phase 6 validated; no sessions launched\n'
   exit 0
 fi
 
@@ -614,10 +612,8 @@ tmux -L "$G5_SESSION" new-session -d -s "$G5_SESSION" \
   "bash $URA_CONTROLLER_GENERATION_ROOT/launch_gate5_sequence.sh"
 tmux -L "$P6_SESSION" new-session -d -s "$P6_SESSION" \
   "bash $URA_CONTROLLER_GENERATION_ROOT/launch_phase6_sequence.sh"
-tmux -L "$P7_SESSION" new-session -d -s "$P7_SESSION" \
-  "bash $URA_CONTROLLER_GENERATION_ROOT/launch_phase7_watcher.sh"
 
-for session in "$P5_SESSION" "$G5_SESSION" "$P6_SESSION" "$P7_SESSION"; do
+for session in "$P5_SESSION" "$G5_SESSION" "$P6_SESSION"; do
   tmux -L "$session" has-session -t "$session"
   printf 'SESSION=%s\n' "$session"
 done

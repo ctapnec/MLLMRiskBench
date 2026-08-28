@@ -108,6 +108,10 @@ EXTERNAL_BINDINGS = frozenset(
         "PROJECT_ROOT",
         "PROMPT_OBSERVATION_TAG",
         "PROMPT_SUMMARY_SHA256",
+        "PHASE6_RECOVERY_INPUTS_BYTES",
+        "PHASE6_RECOVERY_INPUTS_PATH",
+        "PHASE6_RECOVERY_INPUTS_SHA256",
+        "PHASE6_RECOVERY_TAG",
         "QWEN_CONFIG_SHA256",
         "RR_IMAGE_EVIDENCE_ROOT",
         "RR_TEXT_EVIDENCE_ROOT",
@@ -117,6 +121,10 @@ EXTERNAL_BINDINGS = frozenset(
         "SOURCE_RECEIPT_PATH",
         "SOURCE_RECEIPT_RETAINED_NAME",
         "SOURCE_RECEIPT_SHA256",
+        "SEVEN_POLICY_INPUTS_BYTES",
+        "SEVEN_POLICY_INPUTS_PATH",
+        "SEVEN_POLICY_INPUTS_SHA256",
+        "SEVEN_POLICY_TAG",
         "WORK_ROOT",
     }
 )
@@ -153,8 +161,23 @@ RR_EVIDENCE_BINDINGS_ADDED_AFTER_5719 = frozenset(
         "RR_VLLM_TAIL_EVIDENCE_ROOT",
     }
 )
+RECOVERY_BINDINGS_ADDED_AFTER_73C5331 = frozenset(
+    {
+        "PHASE6_RECOVERY_INPUTS_BYTES",
+        "PHASE6_RECOVERY_INPUTS_PATH",
+        "PHASE6_RECOVERY_INPUTS_SHA256",
+        "PHASE6_RECOVERY_TAG",
+        "SEVEN_POLICY_INPUTS_BYTES",
+        "SEVEN_POLICY_INPUTS_PATH",
+        "SEVEN_POLICY_INPUTS_SHA256",
+        "SEVEN_POLICY_TAG",
+    }
+)
+PRE_RECOVERY_EXTERNAL_BINDINGS = frozenset(
+    EXTERNAL_BINDINGS - RECOVERY_BINDINGS_ADDED_AFTER_73C5331
+)
 PRE_RR_EXTERNAL_BINDINGS = frozenset(
-    EXTERNAL_BINDINGS - RR_EVIDENCE_BINDINGS_ADDED_AFTER_5719
+    PRE_RECOVERY_EXTERNAL_BINDINGS - RR_EVIDENCE_BINDINGS_ADDED_AFTER_5719
 )
 LEGACY_A05_EXTERNAL_BINDINGS = frozenset(
     (PRE_RR_EXTERNAL_BINDINGS - PHASE3_BINDINGS_ADDED_AFTER_A05)
@@ -182,14 +205,23 @@ CONTROLLERS: tuple[Controller, ...] = (
     Controller("phase5_sequence_after_core.sh.in", "phase5_sequence_after_core.sh"),
     Controller("phase5_finalize_gate5.sh.in", "phase5_finalize_gate5.sh", "gate5-inventory"),
     Controller("phase5_promote_gate5.sh.in", "phase5_promote_gate5.sh", "gate5-promotion"),
+    Controller("phase5_followon_prepared.sh.in", "phase5_followon_prepared.sh"),
     Controller("gate5_after_phase5_sequence.sh.in", "gate5_after_phase5_sequence.sh"),
     Controller("launch_phase5_sequence.sh.in", "launch_phase5_sequence.sh"),
     Controller("launch_gate5_sequence.sh.in", "launch_gate5_sequence.sh"),
     Controller("phase6_core_measured.sh.in", "phase6_core_measured.sh"),
     Controller("phase6_extended_measured.sh.in", "phase6_extended_measured.sh"),
+    Controller("phase6_followon_prepared.sh.in", "phase6_followon_prepared.sh"),
     Controller("phase6_native_diagnostics.sh.in", "phase6_native_diagnostics.sh"),
     Controller("phase6_sequence.sh.in", "phase6_sequence.sh"),
     Controller("launch_phase6_sequence.sh.in", "launch_phase6_sequence.sh"),
+    Controller("phase6_core_length_recovery.py.in", "phase6_core_length_recovery.py"),
+    Controller("phase6_seven_output_policy.py.in", "phase6_seven_output_policy.py"),
+    Controller(
+        "launch_phase6_recovery_and_seven.sh.in",
+        "launch_phase6_recovery_and_seven.sh",
+        "recovery-sequence",
+    ),
     Controller("phase7_analysis.py.in", "phase7_analysis.py", "phase7-contract"),
     Controller("phase7_analysis.sh.in", "phase7_analysis.sh"),
     Controller("phase7_after_phase6_sequence.sh.in", "phase7_after_phase6_sequence.sh"),
@@ -333,6 +365,7 @@ def validate_binding_document(
     external_binding_keys_from_templates()
     if expected_keys not in {
         EXTERNAL_BINDINGS,
+        PRE_RECOVERY_EXTERNAL_BINDINGS,
         PRE_RR_EXTERNAL_BINDINGS,
         LEGACY_A05_EXTERNAL_BINDINGS,
     }:

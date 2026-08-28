@@ -66,6 +66,10 @@ from ura.model_acquisition import (
     build_upstream_manifest,
     write_document_create_only,
 )
+from ura.sampling import (
+    DEFAULT_SAMPLING_POLICY,
+    SOURCE_ORDER_CLUSTER_PREFIX,
+)
 from ura.targets.api import MockTarget
 from ura.targets.base import BaseTarget
 from ura.adapters import _engine_runtime as engine_runtime
@@ -231,6 +235,11 @@ def test_command_construction_is_typed_and_allowlisted() -> None:
         build_argv("level1_evidence", {"--exec": "evil"})
     with pytest.raises(ValueError):
         build_argv("run_matrix", {"--limit": "12; rm -rf /"})
+    assert build_argv("run_matrix", {
+        "--sampling-policy": SOURCE_ORDER_CLUSTER_PREFIX,
+    })[-2:] == ["--sampling-policy", SOURCE_ORDER_CLUSTER_PREFIX]
+    with pytest.raises(ValueError, match="must be one of"):
+        build_argv("run_matrix", {"--sampling-policy": "ignored-policy-mutant"})
 
 
 def test_run_matrix_can_launch_only_through_validated_builder(
@@ -1120,7 +1129,8 @@ def test_builder_page_renders_full_surface(tmp_path: Path) -> None:
         "name='att_sha1'", "name='seeds'", "name='max_queries'",
         "name='max_turns'", "name='cap_target'", "name='cap_judge'",
         "name='cap_http'", "name='local_budget_hours'", "name='deadline'",
-        "name='limit'", "name='sample_seed'", "name='dtype'",
+        "name='limit'", "name='sample_seed'", "name='sampling_policy'",
+        "name='dtype'",
         "name='quantization'", "name='judge_model'", "name='defense_guard'",
         "name='canary_dry'", "name='approximate_common_metrics'",
         # Scoring and defense guardrail inputs (model/revision/device each).
@@ -1220,6 +1230,82 @@ def test_builder_lists_all_arms_and_only_campaign_attackers(tmp_path: Path) -> N
         assert "native-only" in text  # native-artifact attackers badged
         for attacker in _NATIVE_ONLY_ATTACKERS:
             assert f"data-fw='{attacker}'" in text  # still visible, disabled
+    finally:
+        app.close()
+
+
+def test_builder_disables_and_rejects_source_receipt_blocked_arm(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    receipt = tmp_path / "source-conformance.json"
+    receipt.write_text(
+        json.dumps({
+            "schema": "ura-source-conformance/1",
+            "claim_scope": "acquisition_and_conversion_traceability_only",
+            "arms": [{
+                "arm_id": "bipia_test_qa",
+                "converter": "bipia",
+                "path_env": "URA_BIPIA_TEST_QA_PATH",
+                "source_label": "BIPIA test QA",
+                "split": "official-test",
+                "disposition": "blocked",
+                "reason": "licensed NewsQA base is unavailable",
+                "upstream_uri": None,
+                "requested_revision": None,
+                "observed_revision": None,
+                "consumed_input": None,
+                "components": [],
+                "operator_decision": None,
+                "raw_records": None,
+                "semantic_review": None,
+            }],
+        }) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("URA_SOURCE_CONFORMANCE_MANIFEST", str(receipt))
+    monkeypatch.setenv(
+        "URA_SOURCE_CONFORMANCE_SHA256",
+        hashlib.sha256(receipt.read_bytes()).hexdigest(),
+    )
+    app = _operator_registry_app(tmp_path)
+    started = len(app.jobs)
+    params = {
+        "mode": "dry_run",
+        "corpora": "bipia_test_qa",
+        "attackers": "replay",
+        "judges": "rules",
+        "out": "runs/blocked-bipia",
+        "seeds": "0",
+        "approximate_common_metrics": "on",
+    }
+    try:
+        page = app.handle("GET", "/build")[2].decode("utf-8")
+        marker = "data-arm='bipia_test_qa'"
+        at = page.index(marker)
+        input_tag = page[page.rfind("<input", 0, at):page.find(">", at)]
+        row = page[page.rfind("<label", 0, at):page.find("</label>", at)]
+        assert "disabled" in input_tag
+        assert "blocked by source receipt" in row
+        assert "licensed NewsQA base is unavailable" in row
+
+        errors = app._validate_builder(params)
+        assert "blocked by the bound source receipt" in errors["corpora"]
+        status, _headers, body = app.handle("POST", "/build", params)
+        assert status == 200
+        assert b"blocked by the bound source receipt" in body
+        assert len(app.jobs) == started
+
+        # Reverse proof: this is receipt-driven, not a hard-coded BIPIA ban.
+        monkeypatch.delenv("URA_SOURCE_CONFORMANCE_MANIFEST")
+        monkeypatch.delenv("URA_SOURCE_CONFORMANCE_SHA256")
+        unbound_page = app.handle("GET", "/build")[2].decode("utf-8")
+        at = unbound_page.index(marker)
+        unbound_input = unbound_page[
+            unbound_page.rfind("<input", 0, at):unbound_page.find(">", at)
+        ]
+        assert "disabled" not in unbound_input
+        assert "corpora" not in app._validate_builder(params)
     finally:
         app.close()
 
@@ -4863,6 +4949,8 @@ def test_run_forms_use_select_and_datalist_without_weakening_argv(
     assert "<select name='--defense'>" in page
     assert "<option value='none'>none</option>" in page
     assert "<option value='both'>both</option>" in page
+    assert "<select name='--sampling-policy'>" in page
+    assert f"<option value='{DEFAULT_SAMPLING_POLICY}'>" in page
     assert "list='dl-attackers'" in page
     assert "<datalist id='dl-attackers'>" in page
     assert "<option value='crescendo'></option>" in page
@@ -6416,6 +6504,83 @@ def test_stats_page_survives_malformed_level1_count(tmp_path: Path) -> None:
     app.close()
 
 
+def test_stats_terminal_inventory_is_generic_and_data_driven(
+    tmp_path: Path,
+) -> None:
+    keys = ["batch alpha:item-1", "batch beta:item-2"]
+    document = {
+        "schema": "example-campaign-terminal-inventory/3",
+        "status": "complete_with_failures",
+        "cohort_order": ["batch alpha", "batch beta"],
+        "cohort_counts": {"batch alpha": 1, "batch beta": 1},
+        "row_order": keys,
+        "rows": [
+            {
+                "key": keys[0],
+                "cohort": "batch alpha",
+                "logical_id": "item-1",
+                "terminal_state": "finished",
+                "failure": False,
+                "project_revision_stratum": "release-a",
+                "source_conformance_stratum": "source-a",
+                "evidence": {"artifact": "one"},
+            },
+            {
+                "key": keys[1],
+                "cohort": "batch beta",
+                "logical_id": "item-2",
+                "terminal_state": "ended with issue",
+                "failure": True,
+                "project_revision_stratum": "release-b",
+                "source_conformance_stratum": "source-b",
+                "evidence": {"artifact": "two"},
+            },
+        ],
+        "failure_rows": [keys[1]],
+        "project_revision_strata": {
+            "release-a": [keys[0]],
+            "release-b": [keys[1]],
+        },
+        "source_conformance_strata": {
+            "source-a": [keys[0]],
+            "source-b": [keys[1]],
+        },
+        "all_rows_terminal": True,
+        "cross_revision_pooling_permitted": True,
+        "cross_source_pooling_permitted": False,
+        "accounting": {"target_calls": 2},
+    }
+    _validate_report_document("terminal_inventory", document)
+
+    app = _app(tmp_path)
+    report = app.results_root / "analysis" / "generic-terminal.json"
+    report.parent.mkdir()
+    report.write_text(json.dumps(document) + "\n", encoding="utf-8")
+    try:
+        card = app._stats_report_card(
+            {
+                "path": "analysis/generic-terminal.json",
+                "display_name": "generic-terminal.json",
+                "kind": "terminal_inventory",
+            }
+        )
+    finally:
+        app.close()
+    assert "Campaign terminal rows" in card
+    assert "batch alpha" in card and "batch beta" in card
+    assert "finished" in card and "ended with issue" in card
+    assert "release-a" in card and "source-b" in card
+    assert "cross-revision pooling as <strong>permitted</strong>" in card
+    assert "cross-source pooling as <strong>not permitted</strong>" in card
+    assert card.count("class='barchart'") == 3
+    assert "href='/artifacts?path=analysis/generic-terminal.json'" in card
+
+    invalid = copy.deepcopy(document)
+    invalid["cohort_counts"]["batch alpha"] = 2
+    with pytest.raises(ValueError, match="cohort counts"):
+        _validate_report_document("terminal_inventory", invalid)
+
+
 def test_stats_never_indexes_last_wins_duplicate_report_authority(
     tmp_path: Path,
 ) -> None:
@@ -6742,6 +6907,8 @@ def test_stats_renders_real_level2_report(
         ({"ci_low": 0.6, "ci_high": 0.7}, "outside its CI"),
         ({"n_records": True}, "n_records is not a nonnegative count"),
         ({"n_clusters": -1}, "n_clusters is not a nonnegative count"),
+        ({"sampling_policy": None}, "sampling policy is unsupported"),
+        ({"sampling_policy": "unknown-policy"}, "sampling policy is unsupported"),
     ],
 )
 def test_level2_validation_rejects_malformed_ci_and_sample_sizes(
@@ -6781,6 +6948,8 @@ def test_level2_validation_rejects_malformed_ci_and_sample_sizes(
         return result
 
     _validate_report_document("level2", document(dict(row)))
+    explicit_policy = {**row, "sampling_policy": SOURCE_ORDER_CLUSTER_PREFIX}
+    _validate_report_document("level2", document(explicit_policy))
     row.update(mutation)
     with pytest.raises(ValueError, match=message):
         _validate_report_document("level2", document(row))
@@ -7469,6 +7638,7 @@ def test_level2_incompatible_populations_charted_separately(tmp_path: Path) -> N
         ("ordered_judges", ["rules"], ["rules", "llm"]),
         ("sample_seed", 0, 1),
         ("limit", 8, 16),
+        ("sampling_policy", "seeded", "source-order"),
         ("horizon_turns", 1, 4),
     ],
 )

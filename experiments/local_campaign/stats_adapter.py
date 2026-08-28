@@ -17,6 +17,7 @@ from experiments.rig_web_app.external_analysis import (
     ExternalAnalysisReportSpec,
     publish_external_analysis_registration,
 )
+from experiments.rig_web_app.reports import _validate_report_document
 
 
 class EngineeringCampaignRecord(Protocol):
@@ -62,6 +63,8 @@ _PREPARE_RESULT_FIELDS = {
     "runner_lanes",
     "metric_runner_lanes",
     "native_outcomes",
+    "campaign_terminal_rows",
+    "campaign_terminal_status",
     "authorization_required_before_launch",
 }
 _PHASE7_LAUNCH_FIELDS = {
@@ -112,6 +115,37 @@ _PHASE6_COMPLETION_FIELDS = {
     "provider_http_attempts",
     "downloads_observed_bytes",
 }
+_PHASE6_LAUNCH_FIELDS = {
+    "schema",
+    "status",
+    "started_at_utc",
+    "expected_commit",
+    "framework_lock_id",
+    "control_root",
+    "authorized_sequence_sha256",
+    "sequence_script",
+    "phase7_validator",
+    "phase7_contract_self_test",
+    "controller_wrappers",
+    "gate5_wait",
+    "controller_order",
+    "long_running_children_use_tmux",
+    "local_only",
+}
+_PHASE6_GATE5_FIELDS = {
+    "sequence_completion",
+    "sequence_exit",
+    "initial_validation",
+    "final_validation",
+    "covered_manifest",
+    "canonical_runnote",
+    "promotion_receipt",
+    "runnable_lanes",
+    "typed_terminal_lanes",
+    "target_runtime_terminal",
+    "conditional_na_lanes",
+}
+_STRATUM_ID = re.compile(r"[0-9a-f]{12}-[0-9a-f]{12}\Z")
 
 _WATCHER_FIELDS = {
     "schema",
@@ -134,7 +168,10 @@ _WATCHER_FIELDS = {
     "phase7_completion",
     "phase7_exit",
     "artifact_inventory",
+    "campaign_terminal_inventory",
     "runner_input_view",
+    "human_audit_runner_input_view",
+    "human_audit_sampling_index",
     "analysis_statuses",
     "explicit_limitations",
     "target_calls",
@@ -154,10 +191,17 @@ _CONTROLLER_FIELDS = {
     "payload",
     "analysis_root",
     "artifact_inventory",
+    "campaign_terminal_inventory",
     "runner_input_view",
+    "human_audit_runner_input_view",
+    "human_audit_sampling_index",
     "analysis_statuses",
     "explicit_limitations",
     "phase6_terminal_states",
+    "followon_terminal_states",
+    "followon_metric_revision_strata",
+    "seven_output_policy_terminal_states",
+    "seven_output_policy_metric_revision_strata",
     "target_calls",
     "judge_calls",
     "provider_http_attempts",
@@ -178,11 +222,127 @@ _INVENTORY_FIELDS = {
     "input_manifest_sha256",
     "payload_sha256",
     "runner_input_view",
+    "campaign_terminal_inventory",
+    "human_audit_runner_input_view",
+    "human_audit_sampling_index",
     "target_calls",
     "judge_calls",
     "provider_http_attempts",
     "human_labels_consumed",
 }
+
+_LOCAL_TERMINAL_INVENTORY_SCHEMA = "ura-phase6-campaign-terminal-inventory/1"
+_LOCAL_TERMINAL_INVENTORY_COHORTS = (
+    "canonical",
+    "output_policy_amendment",
+    "followon_prepared",
+    "native",
+)
+_LOCAL_TERMINAL_INVENTORY_COHORT_COUNTS = {
+    "canonical": 46,
+    "output_policy_amendment": 7,
+    "followon_prepared": 3,
+    "native": 9,
+}
+_LOCAL_TERMINAL_INVENTORY_STATES = {
+    "canonical": {
+        "measured_complete",
+        "partial",
+        "failed",
+        "unavailable",
+        "structural_na",
+        "conditional_na",
+        "target_runtime_terminal",
+    },
+    "output_policy_amendment": {
+        "measured_complete",
+        "gate5_failed",
+        "measured_failed",
+    },
+    "followon_prepared": {"measured_complete", "partial", "failed"},
+    "native": {"run", "failed", "unavailable", "not-selected"},
+}
+_LOCAL_TERMINAL_INVENTORY_ACCOUNTING_FIELDS = {
+    "hosted_target_calls",
+    "hosted_judge_calls",
+    "provider_http_attempts",
+    "paid_provider_calls",
+    "model_downloads",
+}
+
+
+def _validate_local_campaign_terminal_inventory(
+    document: Mapping[str, Any],
+) -> None:
+    """Retain the exact plan-owned terminal union before Stats registration."""
+
+    _validate_report_document("terminal_inventory", document)
+    rows = document["rows"]
+    accounting = document["accounting"]
+    if (
+        document.get("schema") != _LOCAL_TERMINAL_INVENTORY_SCHEMA
+        or document.get("cohort_order")
+        != list(_LOCAL_TERMINAL_INVENTORY_COHORTS)
+        or document.get("cohort_counts")
+        != _LOCAL_TERMINAL_INVENTORY_COHORT_COUNTS
+        or len(rows) != 65
+        or len(document["row_order"]) != 65
+        or document.get("cross_revision_pooling_permitted") is not False
+        or document.get("cross_source_pooling_permitted") is not False
+    ):
+        raise ValueError("local campaign terminal inventory size or policy differs")
+    if (
+        set(accounting) != _LOCAL_TERMINAL_INVENTORY_ACCOUNTING_FIELDS
+        or any(
+            type(accounting.get(field)) is not int or accounting[field] != 0
+            for field in _LOCAL_TERMINAL_INVENTORY_ACCOUNTING_FIELDS
+        )
+    ):
+        raise ValueError("local campaign terminal inventory is not local-only")
+
+    failures: list[str] = []
+    cohort_rows = {
+        cohort: [] for cohort in _LOCAL_TERMINAL_INVENTORY_COHORTS
+    }
+    for row in rows:
+        cohort = row["cohort"]
+        state = row["terminal_state"]
+        source = row["source_conformance_stratum"]
+        expected_failure = (
+            state in {"partial", "failed"}
+            or cohort == "output_policy_amendment"
+            and state != "measured_complete"
+            or cohort == "followon_prepared"
+            and state != "measured_complete"
+        )
+        if (
+            cohort not in _LOCAL_TERMINAL_INVENTORY_STATES
+            or state not in _LOCAL_TERMINAL_INVENTORY_STATES[cohort]
+            or row["failure"] is not expected_failure
+            or _HEX64.fullmatch(row["project_revision_stratum"]) is None
+            or (
+                source != "not_applicable"
+                and _HEX64.fullmatch(source) is None
+            )
+            or (cohort == "native") != (source == "not_applicable")
+        ):
+            raise ValueError(
+                "local campaign terminal row state or stratum differs"
+            )
+        cohort_rows[cohort].append(row["key"])
+        if expected_failure:
+            failures.append(row["key"])
+    if (
+        any(
+            len(cohort_rows[cohort])
+            != _LOCAL_TERMINAL_INVENTORY_COHORT_COUNTS[cohort]
+            for cohort in _LOCAL_TERMINAL_INVENTORY_COHORTS
+        )
+        or document["failure_rows"] != failures
+        or document["status"]
+        != ("complete_with_failures" if failures else "complete")
+    ):
+        raise ValueError("local campaign terminal inventory partition differs")
 
 
 @dataclass(frozen=True)
@@ -340,6 +500,106 @@ def _phase7_launch_rows(payload: bytes) -> dict[str, str]:
     return rows
 
 
+def _campaign_report_strata(
+    campaign_inventory: Mapping[str, Any],
+) -> tuple[dict[str, tuple[str, str]], set[str]]:
+    """Return exact non-native strata and the metric-eligible stratum IDs."""
+
+    rows = campaign_inventory.get("rows")
+    if not isinstance(rows, list):
+        raise ValueError("campaign terminal rows are absent")
+    strata: dict[str, tuple[str, str]] = {}
+    measured: set[str] = set()
+    for row in rows:
+        if not isinstance(row, Mapping):
+            raise ValueError("campaign terminal row is malformed")
+        revision = row.get("project_revision_stratum")
+        source = row.get("source_conformance_stratum")
+        if source == "not_applicable":
+            continue
+        if (
+            not isinstance(revision, str)
+            or _HEX64.fullmatch(revision) is None
+            or not isinstance(source, str)
+            or _HEX64.fullmatch(source) is None
+        ):
+            raise ValueError("campaign report stratum identity is malformed")
+        stratum_id = f"{revision[:12]}-{source[:12]}"
+        pair = (revision, source)
+        if stratum_id in strata and strata[stratum_id] != pair:
+            raise ValueError("campaign report stratum prefix is ambiguous")
+        strata[stratum_id] = pair
+        if row.get("terminal_state") == "measured_complete":
+            measured.add(stratum_id)
+    if not strata or not measured:
+        raise ValueError("campaign report strata are empty")
+    return strata, measured
+
+
+def _report_scope_matches(
+    kind: str,
+    document: Mapping[str, Any],
+    *,
+    revision: str,
+    source: str,
+) -> bool:
+    """Bind producer report content to its exact path-level stratum."""
+
+    if kind == "level1":
+        requests = document.get("requests")
+        envelopes = document.get("request_envelopes")
+        if not isinstance(requests, list) or not isinstance(envelopes, list):
+            return False
+        if not requests:
+            # A lifecycle stratum can contain only a pre-materialization request
+            # envelope. Its Level-1 format intentionally retains no project/source
+            # fields in the envelope projection, so the exact validated path is
+            # the only available scope carrier.
+            return bool(envelopes)
+        for request in requests:
+            bindings = request.get("bindings") if isinstance(request, Mapping) else None
+            project = (
+                bindings.get("project_revision")
+                if isinstance(bindings, Mapping)
+                else None
+            )
+            selected = (
+                bindings.get("selected_config_identities")
+                if isinstance(bindings, Mapping)
+                else None
+            )
+            source_identity = (
+                selected.get("source_conformance")
+                if isinstance(selected, Mapping)
+                else None
+            )
+            if (
+                not isinstance(project, Mapping)
+                or project.get("sha256") != revision
+                or not isinstance(source_identity, Mapping)
+                or source_identity.get("sha256") != source
+            ):
+                return False
+        return True
+
+    if kind == "level2":
+        inputs = document.get("inputs")
+        cells = inputs.get("cells") if isinstance(inputs, Mapping) else None
+        if (
+            not isinstance(cells, list)
+            or not cells
+            or inputs.get("n_completed_cells") != len(cells)
+        ):
+            return False
+        return all(
+            isinstance(cell, Mapping)
+            and isinstance(cell.get("project_revision"), Mapping)
+            and cell["project_revision"].get("sha256") == revision
+            for cell in cells
+        )
+    return False
+
+
 def load_local_campaign_stats_bundle(
     results_root: Path,
     campaign: EngineeringCampaignRecord,
@@ -440,7 +700,8 @@ def load_local_campaign_stats_bundle(
             or watcher_launch.get("phase7_payload") != watcher.get("phase7_payload")
             or not isinstance(phase6_wait, Mapping)
             or set(phase6_wait) != {"control_root", "session", "socket"}
-            or phase6_wait.get("session") != f"ura-phase6-sequence-{expected_commit[:7]}"
+            or phase6_wait.get("session")
+            != f"ura-phase6-sequence-{expected_commit[:7]}"
             or phase6_wait.get("socket") != phase6_wait.get("session")
             or not _zeros(
                 watcher_launch,
@@ -482,11 +743,25 @@ def load_local_campaign_stats_bundle(
             allowed_root=phase6_root,
             maximum=_MAX_CONTROL_BYTES,
         )
+        _phase6_launch_path, phase6_launch_bytes = _exact_descriptor(
+            phase6.get("sequence_launch"),
+            expected=phase6_root / "sequence-launch.json",
+            allowed_root=phase6_root,
+            maximum=_MAX_CONTROL_BYTES,
+        )
+        phase6_launch = _object(phase6_launch_bytes)
+        launch_validator_path, launch_validator_bytes = _descriptor_file(
+            phase6_launch.get("phase7_validator"),
+            allowed_root=phase6_root,
+            maximum=_MAX_CONTROL_BYTES,
+        )
+        phase6_gate5 = phase6.get("gate5")
+        phase6_commit = str(phase6.get("expected_commit"))
         if (
             set(phase6) != _PHASE6_COMPLETION_FIELDS
             or phase6.get("schema") != "ura-phase6-sequence-completion/2"
             or phase6_status not in {"complete", "complete_with_failures"}
-            or phase6.get("expected_commit") != expected_commit
+            or _HEX40.fullmatch(phase6_commit) is None
             or phase6.get("framework_lock_id") != framework_lock
             or phase6.get("control_root") != str(phase6_root)
             or phase6.get("controller_order") != ["core", "extended", "native"]
@@ -497,6 +772,21 @@ def load_local_campaign_stats_bundle(
             or phase6.get("failed_controller_receipts_are_evidence") is not False
             or not isinstance(phase6.get("conditional_na_lanes"), list)
             or phase6_exit_bytes != expected_phase6_exit
+            or set(phase6_launch) != _PHASE6_LAUNCH_FIELDS
+            or phase6_launch.get("schema") != "ura-phase6-sequence-launch/1"
+            or phase6_launch.get("status") != "running"
+            or phase6_launch.get("expected_commit") != phase6_commit
+            or phase6_launch.get("framework_lock_id") != framework_lock
+            or phase6_launch.get("control_root") != str(phase6_root)
+            or phase6_launch.get("controller_order") != ["core", "extended", "native"]
+            or phase6_launch.get("long_running_children_use_tmux") is not True
+            or phase6_launch.get("local_only") is not True
+            or phase6_launch.get("phase7_validator")
+            != phase6.get("phase7_validator")
+            or launch_validator_path != _phase6_validator_path
+            or launch_validator_bytes != phase6_validator_bytes
+            or not isinstance(phase6_gate5, Mapping)
+            or set(phase6_gate5) != _PHASE6_GATE5_FIELDS
             or not _zeros(
                 phase6,
                 (
@@ -506,7 +796,6 @@ def load_local_campaign_stats_bundle(
                     "downloads_observed_bytes",
                 ),
             )
-            or phase6_validator_bytes != sealed_payload_bytes
         ):
             return None
         if any(
@@ -538,6 +827,9 @@ def load_local_campaign_stats_bundle(
             or type(prepare.get("metric_runner_lanes")) is not int
             or not 0 <= prepare["metric_runner_lanes"] <= prepare["runner_lanes"]
             or not isinstance(prepare.get("native_outcomes"), Mapping)
+            or prepare.get("campaign_terminal_rows") != 65
+            or prepare.get("campaign_terminal_status")
+            not in {"complete", "complete_with_failures"}
             or prepare.get("authorization_required_before_launch") is not True
         ):
             return None
@@ -647,16 +939,68 @@ def load_local_campaign_stats_bundle(
             return None
         runner_view_path, runner_view_bytes = _descriptor_file(
             controller.get("runner_input_view"),
-            allowed_root=analysis,
+            allowed_root=control,
             maximum=_MAX_CONTROL_BYTES,
         )
         watcher_runner_path, watcher_runner_bytes = _descriptor_file(
             watcher.get("runner_input_view"),
+            allowed_root=control,
+            maximum=_MAX_CONTROL_BYTES,
+        )
+        if (
+            runner_view_path != control / "read-only-runner-view.json"
+            or watcher_runner_path != runner_view_path
+            or watcher_runner_bytes != runner_view_bytes
+        ):
+            return None
+        human_view_path, human_view_payload = _descriptor_file(
+            controller.get("human_audit_runner_input_view"),
+            allowed_root=control,
+            maximum=_MAX_CONTROL_BYTES,
+        )
+        watcher_human_view_path, watcher_human_view_payload = _descriptor_file(
+            watcher.get("human_audit_runner_input_view"),
+            allowed_root=control,
+            maximum=_MAX_CONTROL_BYTES,
+        )
+        human_index_path, human_index_payload = _descriptor_file(
+            controller.get("human_audit_sampling_index"),
+            allowed_root=control,
+            maximum=_MAX_CONTROL_BYTES,
+        )
+        watcher_human_index_path, watcher_human_index_payload = _descriptor_file(
+            watcher.get("human_audit_sampling_index"),
+            allowed_root=control,
+            maximum=_MAX_CONTROL_BYTES,
+        )
+        if (
+            human_view_path != control / "read-only-human-audit-runner-view.json"
+            or human_index_path
+            != control / "read-only-human-audit-runner-view.index.json"
+            or watcher_human_view_path != human_view_path
+            or watcher_human_view_payload != human_view_payload
+            or watcher_human_index_path != human_index_path
+            or watcher_human_index_payload != human_index_payload
+        ):
+            return None
+        campaign_path, campaign_payload = _descriptor_file(
+            controller.get("campaign_terminal_inventory"),
             allowed_root=analysis,
             maximum=_MAX_CONTROL_BYTES,
         )
-        if watcher_runner_path != runner_view_path or watcher_runner_bytes != runner_view_bytes:
+        watcher_campaign_path, watcher_campaign_payload = _descriptor_file(
+            watcher.get("campaign_terminal_inventory"),
+            allowed_root=analysis,
+            maximum=_MAX_CONTROL_BYTES,
+        )
+        if (
+            campaign_path != analysis / "campaign-terminal-inventory.json"
+            or watcher_campaign_path != campaign_path
+            or watcher_campaign_payload != campaign_payload
+        ):
             return None
+        campaign_inventory = _object(campaign_payload)
+        _validate_local_campaign_terminal_inventory(campaign_inventory)
 
         _input_path, input_payload = _exact_descriptor(
             controller.get("input_manifest"),
@@ -680,9 +1024,38 @@ def load_local_campaign_stats_bundle(
         inputs = _object(input_payload)
         code_identity = inputs.get("code_identity")
         gate5 = inputs.get("gate5")
+        gate5_identity = gate5.get("code_identity") if isinstance(gate5, Mapping) else None
+        project_and_source = inputs.get("project_and_source")
+        project_revision = (
+            project_and_source.get("project_revision")
+            if isinstance(project_and_source, Mapping)
+            else None
+        )
+        project_artifact = (
+            project_revision.get("artifact")
+            if isinstance(project_revision, Mapping)
+            else None
+        )
+        project_binding = (
+            project_revision.get("experiment_binding")
+            if isinstance(project_revision, Mapping)
+            else None
+        )
         phase6_inputs = inputs.get("phase6")
         native_outcomes = inputs.get("native_outcomes")
         runner_inputs = inputs.get("runner")
+        followon_inputs = inputs.get("followon")
+        seven_inputs = inputs.get("seven_output_policy_amendment")
+        followon_states = (
+            followon_inputs.get("terminal_states")
+            if isinstance(followon_inputs, Mapping)
+            else None
+        )
+        followon_strata = (
+            followon_inputs.get("revision_strata")
+            if isinstance(followon_inputs, Mapping)
+            else None
+        )
         expected_phase6_states = (
             {
                 "core": phase6_inputs.get("core", {}).get("lane_terminal_states"),
@@ -699,6 +1072,20 @@ def load_local_campaign_stats_bundle(
             or code_identity
             != {"expected_commit": expected_commit, "framework_lock_id": framework_lock}
             or not isinstance(gate5, Mapping)
+            or gate5_identity
+            != {"expected_commit": phase6_commit, "framework_lock_id": framework_lock}
+            or phase6_gate5.get("covered_manifest") != gate5.get("manifest")
+            or not isinstance(project_and_source, Mapping)
+            or not isinstance(project_revision, Mapping)
+            or not isinstance(project_artifact, Mapping)
+            or _HEX64.fullmatch(str(project_artifact.get("sha256"))) is None
+            or not isinstance(project_binding, Mapping)
+            or project_binding.get("sha256") != project_artifact.get("sha256")
+            or project_binding.get("expected_commit") != phase6_commit
+            or project_binding.get("observed_commit") != phase6_commit
+            or project_artifact.get("sha256")
+            not in campaign_inventory.get("project_revision_strata", {})
+            or inputs.get("campaign_terminal_inventory") != campaign_inventory
             or not isinstance(runner_inputs, Mapping)
             or not isinstance(runner_inputs.get("lifecycle_lane_order"), list)
             or not isinstance(runner_inputs.get("metric_lane_order"), list)
@@ -707,6 +1094,16 @@ def load_local_campaign_stats_bundle(
             or not isinstance(native_outcomes, Mapping)
             or native_outcomes.get("states") != prepare.get("native_outcomes")
             or controller.get("phase6_terminal_states") != expected_phase6_states
+            or not isinstance(followon_inputs, Mapping)
+            or not isinstance(followon_states, Mapping)
+            or not isinstance(followon_strata, Mapping)
+            or controller.get("followon_terminal_states") != followon_states
+            or controller.get("followon_metric_revision_strata") != followon_strata
+            or not isinstance(seven_inputs, Mapping)
+            or controller.get("seven_output_policy_terminal_states")
+            != seven_inputs.get("terminal_states")
+            or controller.get("seven_output_policy_metric_revision_strata")
+            != seven_inputs.get("revision_strata")
         ):
             return None
         gate5_path, gate5_payload = _descriptor_file(
@@ -718,7 +1115,7 @@ def load_local_campaign_stats_bundle(
         if (
             gate5_document.get("schema") != "ura-gate5-covered-manifest/1"
             or gate5_document.get("inventory_complete") is not True
-            or gate5_document.get("code_identity") != code_identity
+            or gate5_document.get("code_identity") != gate5.get("code_identity")
         ):
             return None
 
@@ -751,6 +1148,12 @@ def load_local_campaign_stats_bundle(
             or inventory.get("input_manifest_sha256") != input_sha
             or inventory.get("payload_sha256") != hashlib.sha256(payload_bytes).hexdigest()
             or inventory.get("runner_input_view") != controller.get("runner_input_view")
+            or inventory.get("campaign_terminal_inventory")
+            != controller.get("campaign_terminal_inventory")
+            or inventory.get("human_audit_runner_input_view")
+            != controller.get("human_audit_runner_input_view")
+            or inventory.get("human_audit_sampling_index")
+            != controller.get("human_audit_sampling_index")
             or inventory.get("status_inventory") != controller.get("analysis_statuses")
             or not _zeros(
                 inventory,
@@ -760,10 +1163,6 @@ def load_local_campaign_stats_bundle(
         ):
             return None
 
-        selected = {
-            (analysis / "level1" / "level1-evidence.json").resolve(): "level1",
-            (analysis / "level2" / "level2-report.json").resolve(): "level2",
-        }
         descriptors: dict[Path, object] = {}
         for raw in artifacts:
             if not isinstance(raw, Mapping) or set(raw) != {"path", "sha256", "bytes"}:
@@ -775,15 +1174,62 @@ def load_local_campaign_stats_bundle(
             if not _beneath(resolved, analysis) or resolved in descriptors:
                 return None
             descriptors[resolved] = raw
-        if not set(selected).issubset(descriptors):
+        lifecycle_strata_root = (analysis / "lifecycle-strata").resolve()
+        metric_strata_root = (analysis / "metric-strata").resolve()
+        lifecycle_reports = sorted(
+            path
+            for path in descriptors
+            if path.name == "level1-evidence.json"
+            and path.parent.parent == lifecycle_strata_root
+        )
+        stratum_reports = sorted(
+            path
+            for path in descriptors
+            if path.name == "level2-report.json"
+            and path.parent.parent == metric_strata_root
+        )
+        strata, expected_metric_strata = _campaign_report_strata(campaign_inventory)
+        lifecycle_ids = [path.parent.name for path in lifecycle_reports]
+        metric_ids = [path.parent.name for path in stratum_reports]
+        if (
+            not lifecycle_reports
+            or not stratum_reports
+            or len(set(lifecycle_ids)) != len(lifecycle_ids)
+            or len(set(metric_ids)) != len(metric_ids)
+            or any(_STRATUM_ID.fullmatch(item) is None for item in lifecycle_ids)
+            or any(_STRATUM_ID.fullmatch(item) is None for item in metric_ids)
+            or any(item not in strata for item in lifecycle_ids)
+            or set(metric_ids) != expected_metric_strata
+            or not set(metric_ids) <= set(lifecycle_ids)
+        ):
             return None
+        selected = [
+            (campaign_path, "terminal_inventory"),
+        ] + [
+            (path, "level1") for path in lifecycle_reports
+        ] + [
+            (path, "level2") for path in stratum_reports
+        ]
         reports = []
-        for path, kind in selected.items():
-            verified, _payload = _descriptor_file(
+        for path, kind in selected:
+            verified, report_payload = _descriptor_file(
                 descriptors[path],
                 allowed_root=analysis,
                 maximum=_MAX_REPORT_BYTES,
             )
+            report_document = _object(report_payload)
+            if kind == "terminal_inventory":
+                _validate_local_campaign_terminal_inventory(report_document)
+            else:
+                _validate_report_document(kind, report_document)
+                revision, source = strata[path.parent.name]
+                if not _report_scope_matches(
+                    kind,
+                    report_document,
+                    revision=revision,
+                    source=source,
+                ):
+                    return None
             reports.append(
                 LocalCampaignReport(
                     path=verified,

@@ -97,6 +97,11 @@ For one unchanged converted-corpus digest and `sample_seed`, bounded real-source
 cluster selection uses a deterministic shuffled ordering and nested prefixes;
 `--limit 1` is therefore contained in a later `--limit N` selection. Every row
 belonging to a selected cluster is retained.
+An explicit `--sampling-policy` may retain that seeded pseudorandom ordering or
+select the first N whole clusters in source-appearance order. Omission preserves
+the historical seeded behavior and artifact shape. Explicit policy choice is
+bound into request, acquisition, eligibility, projection and run identity;
+`--limit 0` remains the complete arm under either choice.
 Local media is digest-checked beneath ordered approved roots and persisted as
 `@media-root/<index>/<relative-path>` so artifacts do not retain an author's
 absolute path.
@@ -551,8 +556,10 @@ receipt locators; dry lanes launch with them scrubbed.
 Once at least one source arm is selected, Build exposes one synchronized range
 and numeric `--limit` control plus the sampling seed. The limit is applied
 independently to every selected arm: `0` selects the complete release for each
-arm, while a positive value caps whole source clusters per arm. A measured
-bounded selection requires an explicit `--sample-seed`. The optional local
+arm, while a positive value caps whole source clusters per arm. The same panel
+has one sampling-policy selector for the seeded pseudorandom or source-order
+whole-cluster prefix. A measured bounded selection requires an explicit
+`--sample-seed`. The optional local
 budget in hours is only a human-scale spelling of the exact Runner
 `--deadline-seconds` call-start window for a measured local-target lane. Expiry
 blocks new model acquisition and model calls; it neither interrupts an admitted

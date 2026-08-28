@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
+from ura.sampling import SAMPLING_POLICIES
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _MAX_RENDER_BYTES = 4 * 1024 * 1024
 _LOG_TAIL_BYTES = 64 * 1024
@@ -89,6 +91,9 @@ _PARAM_HELP: dict[str, str] = {
     "the identical subset (comparable, never pooled across arms or tiers).",
     "--seeds": "Comma list of trajectory seeds (attack stochasticity), distinct "
     "from --sample-seed.",
+    "--sampling-policy": "Whole-cluster prefix policy. The seeded pseudorandom "
+    "policy is the unchanged CLI default; source order takes the first source "
+    "clusters. An explicit value is retained in request and projection identity.",
     "--max-queries": "Max target queries per trajectory (turn budget upper bound).",
     "--max-turns": "Max conversation turns per trajectory.",
     "--max-total-target-calls": "Hard circuit-breaker: abort the lane after "
@@ -638,6 +643,9 @@ _MATRIX_PARAMS = (
     CommandParam("--dtype", "str"),
     CommandParam("--limit", "int"),
     CommandParam("--sample-seed", "int"),
+    CommandParam(
+        "--sampling-policy", "str", choices=tuple(sorted(SAMPLING_POLICIES))
+    ),
     CommandParam("--seeds", "str", suggest="seeds"),
     CommandParam("--max-queries", "int"),
     CommandParam("--max-turns", "int"),

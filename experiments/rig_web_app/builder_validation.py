@@ -20,7 +20,9 @@ from ura.targets.api import (
     normalize_api_target_config,
 )
 from ura.targets.local import canonical_local_model_identity
+from ura.source_conformance import validate_source_conformance_manifest
 from ura.strict_json import strict_json_loads
+from ura.sampling import SAMPLING_POLICIES
 from ura.adapters._engine_runtime import (
     ENGINE_RUNTIME_CONFIG_SCHEMA,
     RUNTIME_REQUIRED_ATTACKERS,
@@ -563,6 +565,41 @@ class BuilderValidationMixin:
             label="source conformance",
             max_bytes=4 * 1024 * 1024,
         )
+
+    def _source_conformance_arm_dispositions(
+        self,
+        params: Mapping[str, str],
+    ) -> dict[str, tuple[str, str]]:
+        """Return validated arm dispositions from the exact bound receipt."""
+
+        bound = {key: str(value) for key, value in params.items()}
+        for field, env_name in (
+            ("source_conformance", "URA_SOURCE_CONFORMANCE_MANIFEST"),
+            ("source_conformance_sha", "URA_SOURCE_CONFORMANCE_SHA256"),
+        ):
+            if not bound.get(field, "").strip():
+                bound[field] = os.environ.get(env_name, "")
+        snapshot = self._source_conformance_snapshot(bound)
+        if snapshot is None:
+            return {}
+        try:
+            document = strict_json_loads(
+                snapshot[0],
+                max_nodes=100_000,
+                max_depth=16,
+            )
+            receipt = validate_source_conformance_manifest(document)
+        except (UnicodeError, ValueError) as exc:
+            raise ValueError(
+                "source conformance is not a valid receipt"
+            ) from exc
+        return {
+            str(arm["arm_id"]): (
+                str(arm["disposition"]),
+                str(arm["reason"]),
+            )
+            for arm in receipt["arms"]
+        }
 
     def _project_revision_snapshot(
         self,
@@ -1848,6 +1885,11 @@ class BuilderValidationMixin:
             )
         require_int("lock_stale_seconds", positive=True)
         sample_seed_value = require_int("sample_seed")
+        sampling_policy = params.get("sampling_policy", "")
+        if sampling_policy and sampling_policy not in SAMPLING_POLICIES:
+            errors["sampling_policy"] = (
+                "must be one of the supported sampling policies"
+            )
         max_queries_value = require_int("max_queries", positive=True)
         max_turns_value = require_int("max_turns", positive=True)
         if ideator_requirements is not None:
@@ -2005,7 +2047,20 @@ class BuilderValidationMixin:
             )
         arm_mods = {arm: set(mods) for arm, mods, _r in _ARM_CATALOG}
         fw_mods = {fw: set(mods) for fw, _d, mods in _FRAMEWORKS}
+        try:
+            source_dispositions = self._source_conformance_arm_dispositions(params)
+        except ValueError:
+            # The Runner remains the authority for an invalid receipt. Do not
+            # infer a disposition from bytes that failed exact validation.
+            source_dispositions = {}
         for arm in real_corpora:
+            disposition = source_dispositions.get(arm)
+            if disposition is not None and disposition[0] == "blocked":
+                errors["corpora"] = (
+                    f"arm {arm} is blocked by the bound source receipt: "
+                    f"{disposition[1]}"
+                )
+                continue
             if arm in _INELIGIBLE_ARMS:
                 if not approximate_common_metrics_enabled:
                     errors["approximate_common_metrics"] = (

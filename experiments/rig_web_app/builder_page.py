@@ -11,6 +11,11 @@ import re
 from typing import Mapping
 
 from ura.targets.api import canonical_api_target_identity
+from ura.sampling import (
+    DEFAULT_SAMPLING_POLICY,
+    SEEDED_PSEUDORANDOM_CLUSTER_PREFIX,
+    SOURCE_ORDER_CLUSTER_PREFIX,
+)
 
 from .catalog import (
     _MODALITIES,
@@ -532,6 +537,13 @@ class BuilderPageMixin:
         registry_arms = set(
             self._registry_keys("source-instances.json", "rig/source-instances.example.json")
         )
+        try:
+            source_dispositions = self._source_conformance_arm_dispositions(prefill)
+        except ValueError:
+            # Admission reports invalid receipt bytes. Rendering must never
+            # trust an unvalidated disposition or turn a stale binding into a
+            # server error.
+            source_dispositions = {}
 
         # Group EVERY _ARM_CATALOG arm for a readable layout: common lanes first
         # (by modality signature), then the source-metric scored lanes, then the
@@ -570,6 +582,24 @@ class BuilderPageMixin:
             boxes = []
             for arm, mods, reason in signatures[signature]:
                 known = arm in registry_arms
+                source_disposition = source_dispositions.get(arm)
+                if (
+                    source_disposition is not None
+                    and source_disposition[0] == "blocked"
+                ):
+                    boxes.append(
+                        "<label class='check'>"
+                        "<input type='checkbox' class='armbox' disabled "
+                        f"data-mods='{html.escape(','.join(mods))}' "
+                        f"data-arm='{html.escape(arm)}'>"
+                        f"<span>{_arm_head(html.escape(arm), mods)}"
+                        "<span class='badge red tip' tabindex='0'>"
+                        "blocked by source receipt"
+                        "<span class='tiptext'>"
+                        + html.escape(source_disposition[1])
+                        + "</span></span></span></label>"
+                    )
+                    continue
                 if reason:
                     tool_unavailable = "tool" in mods
                     boxes.append(
@@ -1973,6 +2003,35 @@ class BuilderPageMixin:
             )
         )
         sample_seed = prefill.get("sample_seed", "0")
+        sampling_policy = prefill.get(
+            "sampling_policy", DEFAULT_SAMPLING_POLICY
+        )
+        sampling_policy_options = "".join(
+            "<option value='"
+            + html.escape(value)
+            + "'"
+            + (" selected" if sampling_policy == value else "")
+            + ">"
+            + html.escape(label)
+            + "</option>"
+            for value, label in (
+                (
+                    SEEDED_PSEUDORANDOM_CLUSTER_PREFIX,
+                    "Seeded pseudorandom cluster prefix (default)",
+                ),
+                (SOURCE_ORDER_CLUSTER_PREFIX, "Source-order cluster prefix"),
+            )
+        )
+        if sampling_policy not in {
+            SEEDED_PSEUDORANDOM_CLUSTER_PREFIX,
+            SOURCE_ORDER_CLUSTER_PREFIX,
+        }:
+            sampling_policy_options = (
+                "<option value='"
+                + html.escape(sampling_policy)
+                + "' selected>Unsupported submitted policy</option>"
+                + sampling_policy_options
+            )
         sampling_fields = (
             "<section class='sample-size-control' id='sample-size-control'"
             + sampling_hidden
@@ -1984,8 +2043,9 @@ class BuilderPageMixin:
             "<p class='note'>The same value applies independently to every selected "
             "arm. <strong>0 = full selected release</strong>; a positive value is "
             "the maximum source-cluster count per selected arm, with all sibling "
-            "rows retained. A fixed seed gives nested pseudorandom prefixes without "
-            "replacement; selected rows keep source order.</p></div>"
+            "rows retained. Choose whether the cluster prefix comes from the "
+            "seeded pseudorandom ordering or source order; selected rows keep source "
+            "order.</p></div>"
             "<span class='badge blue' id='sample-arm-count'>"
             + html.escape(sampling_arm_label)
             + "</span></div>"
@@ -2009,7 +2069,7 @@ class BuilderPageMixin:
             + err("limit")
             + "</div><div class='fieldcell'>"
             "<label class='fieldlabel' for='sample-seed-input'>--sample-seed "
-            "<span class='fieldhint'>reproducible cluster subset within each arm"
+            "<span class='fieldhint'>randomized-policy seed; request-bound for both"
             "</span></label><input class='wide' id='sample-seed-input' type='number' "
             "step='1' name='sample_seed' value='"
             + html.escape(sample_seed)
@@ -2017,6 +2077,15 @@ class BuilderPageMixin:
             + sampling_disabled
             + ">"
             + err("sample_seed")
+            + "</div><div class='fieldcell'>"
+            "<label class='fieldlabel' for='sampling-policy-select'>--sampling-policy "
+            "<span class='fieldhint'>whole-cluster prefix ordering</span></label>"
+            "<select class='wide' id='sampling-policy-select' name='sampling_policy'"
+            + sampling_disabled
+            + ">"
+            + sampling_policy_options
+            + "</select>"
+            + err("sampling_policy")
             + "</div></div><p class='fieldhint' id='sample-limit-status' "
             "aria-live='polite'>"
             + html.escape(sampling_status)

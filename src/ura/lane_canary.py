@@ -18,6 +18,7 @@ from typing import Any, Mapping
 
 from .eligibility import canonical_json_sha256
 from .project_revision import validate_project_revision_binding
+from .sampling import effective_sampling_policy
 
 
 LANE_CANARY_SCHEMA = "ura-lane-canary/1"
@@ -53,6 +54,10 @@ _CONDITION_FIELDS = frozenset({
     "execution_purpose", "dry_run", "requested_model_spec", "resolved_target",
     "logical_source_arm", "attacker", "defense", "judges", "seeds",
     "realized_identities", "source_identity",
+})
+_CONDITION_FIELDS_WITH_SAMPLING_POLICY = frozenset({
+    *_CONDITION_FIELDS,
+    "sampling_policy",
 })
 _WORKLOAD_FIELDS = frozenset({
     "selected_clusters", "selected_cluster_ids", "selected_cluster_ids_sha256",
@@ -595,6 +600,23 @@ def build_lane_canary_summary(
         source_identity["driver_source"] or {}
     ).get("sha256"):
         raise ValueError("canary project-revision/driver-source mismatch")
+    condition_body: dict[str, Any] = {
+        "execution_purpose": "diagnostic_canary",
+        "dry_run": dry_run,
+        "requested_model_spec": run.get("model_spec"),
+        "resolved_target": cell.get("model"),
+        "logical_source_arm": run.get("corpus"),
+        "attacker": run.get("attacker"),
+        "defense": run.get("defense"),
+        "judges": manifest.get("judges"),
+        "seeds": manifest.get("seeds"),
+        "realized_identities": cell.get("realized_identities"),
+        "source_identity": source_identity,
+    }
+    if "sampling_policy" in run:
+        condition_body["sampling_policy"] = effective_sampling_policy(
+            run["sampling_policy"]
+        )
     body: dict[str, Any] = {
         "schema": LANE_CANARY_SCHEMA,
         "status": "complete",
@@ -612,19 +634,7 @@ def build_lane_canary_summary(
             "lane_projection_id": lane_projection.get("projection_id"),
             "lane_projection_artifact": dict(lane_projection_descriptor),
         },
-        "condition": {
-            "execution_purpose": "diagnostic_canary",
-            "dry_run": dry_run,
-            "requested_model_spec": run.get("model_spec"),
-            "resolved_target": cell.get("model"),
-            "logical_source_arm": run.get("corpus"),
-            "attacker": run.get("attacker"),
-            "defense": run.get("defense"),
-            "judges": manifest.get("judges"),
-            "seeds": manifest.get("seeds"),
-            "realized_identities": cell.get("realized_identities"),
-            "source_identity": source_identity,
-        },
+        "condition": condition_body,
         "workload": {
             "selected_clusters": 1,
             "selected_cluster_ids": sorted(cluster_ids),
@@ -730,9 +740,18 @@ def validate_lane_canary_summary(value: object) -> dict[str, Any]:
         )
     ]
 
+    raw_condition = artifact.get("condition")
     condition = _strict_object(
-        artifact.get("condition"), _CONDITION_FIELDS, "lane canary condition"
+        raw_condition,
+        (
+            _CONDITION_FIELDS_WITH_SAMPLING_POLICY
+            if isinstance(raw_condition, dict) and "sampling_policy" in raw_condition
+            else _CONDITION_FIELDS
+        ),
+        "lane canary condition",
     )
+    if "sampling_policy" in condition:
+        effective_sampling_policy(condition["sampling_policy"])
     if condition.get("execution_purpose") != "diagnostic_canary":
         raise ValueError("lane canary condition execution purpose is invalid")
     if not isinstance(condition.get("dry_run"), bool):

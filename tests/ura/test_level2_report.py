@@ -686,6 +686,27 @@ def test_classification_rows_export_with_source_evaluator_status() -> None:
     assert rows[0]["endpoint_status"] == "source_specific_evaluator"
 
 
+def test_level2_retains_explicit_sampling_policy() -> None:
+    from experiments.level2_report import _csv_text, _estimate_rows
+    from ura.sampling import SOURCE_ORDER_CLUSTER_PREFIX
+
+    cell = _classification_cell(official=True)
+    legacy_rows = _estimate_rows(cell)
+    cell["manifest"]["config"]["run"]["sampling_policy"] = (
+        SOURCE_ORDER_CLUSTER_PREFIX
+    )
+    explicit_rows = _estimate_rows(cell)
+
+    assert "sampling_policy" not in legacy_rows[0]
+    assert explicit_rows[0]["sampling_policy"] == SOURCE_ORDER_CLUSTER_PREFIX
+    assert "sampling_policy" not in _csv_text(legacy_rows).splitlines()[0]
+    assert "sampling_policy" in _csv_text(explicit_rows).splitlines()[0]
+    mixed_csv = _csv_text([*legacy_rows, *explicit_rows]).splitlines()
+    assert "sampling_policy" in mixed_csv[0]
+    assert SOURCE_ORDER_CLUSTER_PREFIX not in mixed_csv[1]
+    assert SOURCE_ORDER_CLUSTER_PREFIX in mixed_csv[2]
+
+
 def test_phantom_aggregate_bucket_fails_closed() -> None:
     from experiments.level2_report import _estimate_rows
 

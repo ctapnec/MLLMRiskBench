@@ -14,17 +14,25 @@ from ura.lane_canary import (
     validate_lane_canary_summary,
 )
 from ura.eligibility import canonical_json_sha256
+from ura.sampling import DEFAULT_SAMPLING_POLICY, SOURCE_ORDER_CLUSTER_PREFIX
 
 
-def _produce_synthetic_canary(tmp_path: Path) -> tuple[Path, Path]:
+def _produce_synthetic_canary(
+    tmp_path: Path,
+    *,
+    sampling_policy: str | None = None,
+) -> tuple[Path, Path]:
     results = tmp_path / "diagnostic"
-    assert run_matrix.main([
+    arguments = [
         "--diagnostic-canary", "--dry-run",
         "--attackers", "replay", "--judges", "rules",
         "--corpora", "synth", "--limit", "1", "--seeds", "17",
         "--max-queries", "1", "--max-turns", "1",
         "--out", str(results),
-    ]) == 0
+    ]
+    if sampling_policy is not None:
+        arguments.extend(["--sampling-policy", sampling_policy])
+    assert run_matrix.main(arguments) == 0
     return results, next(results.glob("*.eligibility.json"))
 
 
@@ -316,6 +324,64 @@ def test_lane_canary_rejects_cell_grid_condition_drift(
     monkeypatch.setattr(lane_canary, "_load_cells", lambda *_a, **_kw: cells)
 
     with pytest.raises(ValueError, match="exact run-condition mismatch"):
+        lane_canary.summarize_canary(
+            results=results,
+            eligibility_path=eligibility,
+            out_dir=tmp_path / "summaries",
+        )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ("drop", "substitute"),
+)
+def test_lane_canary_rejects_explicit_sampling_policy_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    results, eligibility = _produce_synthetic_canary(
+        tmp_path,
+        sampling_policy=SOURCE_ORDER_CLUSTER_PREFIX,
+    )
+    summary, _ = lane_canary.summarize_canary(
+        results=results,
+        eligibility_path=eligibility,
+        out_dir=tmp_path / "exact-summary",
+    )
+    assert (
+        summary["condition"]["sampling_policy"]
+        == SOURCE_ORDER_CLUSTER_PREFIX
+    )
+    cells = lane_canary._load_cells(results, _allow_diagnostic_canary=True)
+    run = cells[0]["manifest"]["config"]["run"]
+    assert run["sampling_policy"] == SOURCE_ORDER_CLUSTER_PREFIX
+    if mutation == "drop":
+        run.pop("sampling_policy")
+    else:
+        run["sampling_policy"] = DEFAULT_SAMPLING_POLICY
+    monkeypatch.setattr(lane_canary, "_load_cells", lambda *_a, **_kw: cells)
+
+    with pytest.raises(ValueError, match="sampling policy|exact run-condition"):
+        lane_canary.summarize_canary(
+            results=results,
+            eligibility_path=eligibility,
+            out_dir=tmp_path / "summaries",
+        )
+
+
+def test_lane_canary_rejects_spurious_policy_on_legacy_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    results, eligibility = _produce_synthetic_canary(tmp_path)
+    cells = lane_canary._load_cells(results, _allow_diagnostic_canary=True)
+    run = cells[0]["manifest"]["config"]["run"]
+    assert "sampling_policy" not in run
+    run["sampling_policy"] = SOURCE_ORDER_CLUSTER_PREFIX
+    monkeypatch.setattr(lane_canary, "_load_cells", lambda *_a, **_kw: cells)
+
+    with pytest.raises(ValueError, match="sampling policy presence mismatch"):
         lane_canary.summarize_canary(
             results=results,
             eligibility_path=eligibility,

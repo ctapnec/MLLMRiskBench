@@ -18,6 +18,7 @@ from experiments.level1_evidence import (
     _load_live_attestation_artifact,
     _load_results,
     _plan_artifact,
+    _validate_envelope_plan_binding,
     _validate_grid_model_acquisition,
     _validate_grid_plan_bindings,
     build_level1_evidence,
@@ -55,6 +56,7 @@ from ura.request_envelope import (
     request_envelope_descriptor,
     write_request_envelope,
 )
+from ura.sampling import DEFAULT_SAMPLING_POLICY, SOURCE_ORDER_CLUSTER_PREFIX
 from ura.targets.api import MockTarget
 
 
@@ -963,6 +965,82 @@ def test_completed_synthetic_grid_joins_exact_strata_and_decisions(
     assert all(row["final_disposition"] == "completed" for row in report[
         "planning_strata"
     ])
+    assert "sampling_policy" not in report["requests"][0]["condition"]
+    legacy_grid = grids[artifact[0]["plan_id"]]
+    legacy_cell = next(iter(legacy_grid["cells"].values()))
+    legacy_run = legacy_cell["validated_cell"]["manifest"]["config"]["run"]
+    assert "sampling_policy" not in legacy_run
+    assert "sampling_policy" not in legacy_run["sampling_audit"]
+    legacy_run["sampling_policy"] = SOURCE_ORDER_CLUSTER_PREFIX
+    with pytest.raises(ValueError, match="policy mismatch"):
+        build_level1_evidence([artifact], grids, errors)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ("audit_drop", "audit_substitute", "run_drop", "run_substitute"),
+)
+def test_level1_retains_explicit_sampling_policy_and_rejects_audit_drift(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    root = tmp_path / mutation
+    assert run_matrix.main([
+        "--dry-run",
+        "--corpora", "synth",
+        "--limit", "2",
+        "--sample-seed", "19",
+        "--sampling-policy", SOURCE_ORDER_CLUSTER_PREFIX,
+        "--seeds", "0",
+        "--attackers", "replay",
+        "--judges", "rules",
+        "--max-queries", "1",
+        "--max-turns", "1",
+        "--out", str(root),
+    ]) == 0
+    artifact = _plan_artifact(next(root.glob("eligibility-*.eligibility.json")))
+    grids, errors = _load_results([root], {artifact[0]["plan_id"]: artifact})
+    report = build_level1_evidence([artifact], grids, errors)
+
+    assert (
+        report["requests"][0]["condition"]["sampling_policy"]
+        == SOURCE_ORDER_CLUSTER_PREFIX
+    )
+    grid = grids[artifact[0]["plan_id"]]
+    cell = next(iter(grid["cells"].values()))
+    run = cell["validated_cell"]["manifest"]["config"]["run"]
+    audit = run["sampling_audit"]
+    assert run["sampling_policy"] == SOURCE_ORDER_CLUSTER_PREFIX
+    assert audit["sampling_policy"] == SOURCE_ORDER_CLUSTER_PREFIX
+    if mutation == "audit_drop":
+        audit.pop("sampling_policy")
+    elif mutation == "audit_substitute":
+        audit["sampling_policy"] = DEFAULT_SAMPLING_POLICY
+    elif mutation == "run_drop":
+        run.pop("sampling_policy")
+    else:
+        run["sampling_policy"] = DEFAULT_SAMPLING_POLICY
+
+    with pytest.raises(ValueError, match="policy mismatch"):
+        build_level1_evidence([artifact], grids, errors)
+
+
+def test_level1_envelope_rejects_spurious_policy_on_legacy_condition(
+    tmp_path: Path,
+) -> None:
+    plan_path = tmp_path / "legacy-plan.json"
+    plan = _write_plan(plan_path)
+    descriptor = plan["bindings"]["request_envelope"]
+    envelope_path = plan_path.parent / descriptor["file"]
+    envelope = json.loads(envelope_path.read_text(encoding="utf-8"))
+    condition = plan["bindings"]["experiment_conditions"]
+    condition["values"]["sampling_policy"] = SOURCE_ORDER_CLUSTER_PREFIX
+    condition["condition_id"] = (
+        "condition-" + canonical_json_sha256(condition["values"])[:24]
+    )
+
+    with pytest.raises(ValueError, match="sampling policy presence mismatch"):
+        _validate_envelope_plan_binding(envelope, descriptor, plan)
 
 
 @pytest.mark.parametrize("rehash_inner", [False, True])

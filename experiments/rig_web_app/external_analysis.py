@@ -1,8 +1,9 @@
 """Operational registrations for externally produced analysis reports.
 
-Rig Web uses this generic, create-only boundary to render exact Level-1 and
-Level-2 reports produced outside the console.  A registration conveys display
-ownership only.  It cannot grant thesis-evidence authority.
+Rig Web uses this generic, create-only boundary to render exact Level-1,
+Level-2, and campaign-terminal reports produced outside the console. A
+registration conveys display ownership only. It cannot grant thesis-evidence
+authority.
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ _SAFE_JOB_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 _MAX_REGISTRATION_BYTES = 256 * 1024
 _MAX_REPORT_BYTES = 64 * 1024 * 1024
-_MAX_REPORTS = 16
+_MAX_REPORTS = 128
 _MAX_LABEL = 256
 _FIELDS = {
     "schema",
@@ -215,7 +216,7 @@ def _validated_report(
     if set(raw) != _REPORT_FIELDS:
         raise ValueError("external analysis report fields differ")
     kind = raw.get("kind")
-    if kind not in {"level1", "level2"}:
+    if kind not in {"level1", "level2", "terminal_inventory"}:
         raise ValueError("unsupported external analysis report kind")
     path, relative = _resolved_relative(
         results_root,
@@ -348,9 +349,10 @@ def load_external_analysis_registration(
         ):
             return None
         reports = tuple(_validated_report(results, analysis_root, report) for report in raw_reports)
-        if len({report.path for report in reports}) != len(reports) or len(
-            {report.kind for report in reports}
-        ) != len(reports):
+        if (
+            len({report.path for report in reports}) != len(reports)
+            or sum(report.kind == "terminal_inventory" for report in reports) > 1
+        ):
             return None
         return ExternalAnalysisRegistration(
             job_id=job_id,
@@ -389,17 +391,19 @@ def publish_external_analysis_registration(
         raise ValueError("invalid external analysis report count")
     rows = []
     seen: set[Path] = set()
-    seen_kinds: set[str] = set()
+    terminal_inventory_seen = False
     for report in reports:
         path = Path(report.path).resolve(strict=True)
         if (
             path in seen
-            or report.kind in seen_kinds
+            or (report.kind == "terminal_inventory" and terminal_inventory_seen)
             or not _beneath(path, analysis)
         ):
             raise ValueError("external analysis report ownership differs")
         seen.add(path)
-        seen_kinds.add(report.kind)
+        terminal_inventory_seen = (
+            terminal_inventory_seen or report.kind == "terminal_inventory"
+        )
         payload = _regular_bytes(path, maximum=_MAX_REPORT_BYTES)
         relative = path.relative_to(results).as_posix()
         row: dict[str, object] = {

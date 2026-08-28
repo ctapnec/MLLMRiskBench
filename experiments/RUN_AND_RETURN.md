@@ -252,10 +252,12 @@ cannot become shell or Python fragments.
 
 After repin has deployed the new commit and created its project-revision receipt,
 derive a create-only provisional binding from the last validated binding. The
-exact migration from the immediately preceding pre-RR key inventory requires
-the four RR evidence roots below as explicit `--set` values. The older legacy
-a05 migration additionally requires every Phase 3 and installer binding shown
-below; any other prior subset or extra key is rejected. Use validated prior Phase 3 values for the provisional
+exact migration from the immediately preceding pre-recovery-controller key
+inventory requires both recovery input manifests, their byte identities, and
+two fresh UTC tags below. A still older pre-RR inventory also requires the four
+RR evidence roots. The legacy a05 migration additionally requires every Phase 3
+and installer binding shown below; any other prior subset or extra key is
+rejected. Use validated prior Phase 3 values for the provisional
 artifact fields, but bind the new project receipt's exact byte count. Render the set and
 run only the generated `phase3_guard1b_acquire_fit.sh` at this stage:
 
@@ -272,6 +274,14 @@ python -m experiments.local_campaign.rebind \
   --set RR_IMAGE_EVIDENCE_ROOT=/mnt/stor/data/ura-work/runs/engineering/rr-image-probe-20260824T053641Z \
   --set RR_VLLM_TAIL_EVIDENCE_ROOT=/mnt/stor/data/ura-work/runs/engineering/rr-token-tail-probe-5719b \
   --set RR_TRANSFORMERS_EVIDENCE_ROOT=/mnt/stor/data/ura-work/runs/engineering/rr-transformers-reference-probe-5719 \
+  --set PHASE6_RECOVERY_TAG=<fresh-UTC-tag> \
+  --set PHASE6_RECOVERY_INPUTS_PATH=<resolved-absolute-input-manifest> \
+  --set PHASE6_RECOVERY_INPUTS_SHA256=<sha256> \
+  --set PHASE6_RECOVERY_INPUTS_BYTES=<positive-wc-c> \
+  --set SEVEN_POLICY_TAG=<later-fresh-UTC-tag> \
+  --set SEVEN_POLICY_INPUTS_PATH=<resolved-absolute-input-manifest> \
+  --set SEVEN_POLICY_INPUTS_SHA256=<sha256> \
+  --set SEVEN_POLICY_INPUTS_BYTES=<positive-wc-c> \
   --set PROJECT_RECEIPT_BYTES=<positive-wc-c> \
   --set PHASE3_REQUEST_BYTES=<prior-positive-wc-c> \
   --set PHASE3_ACQUISITION_BYTES=<prior-positive-wc-c> \
@@ -386,8 +396,8 @@ bash ~/.ura-controller-active/launch_chain_<new7>.sh
 The final archive has a different digest from the provisional archive even
 though both names use the same commit short. The second installer run publishes
 and activates that final immutable generation before the launch chain starts.
-The archive contains 24 executable controllers plus the read-only rendered
-`phase8_human_audit.README.md`. Read that guide through
+The archive contains every allow-listed executable controller plus the read-only
+rendered `phase8_human_audit.README.md`. Read that guide through
 `~/.ura-controller-active` before preparing Phase 8 input; a sibling
 `.campaign` copy is disposable and must not be treated as source authority.
 
@@ -419,9 +429,10 @@ events. It terminates and confirms absence of only an exact tmux session it
 launched and owns; a controller that times out while awaiting upstream Phase 5
 or Phase 6 never terminates that upstream session.
 
-The rendered Gate 5-8 chain enforces an exact 46-row partition. Its baseline is
-22 runnable and 24 typed-terminal rows, or 21/25 for the exact `defense-local`
-conditional N/A. GPTGeoChat x each of the three RWKV Ollama targets is a typed unavailable
+The rendered Gate 5-8 chain enforces an exact 46-row partition. Its retained
+baseline is 18 runnable and 28 typed-terminal rows, including seven
+target-runtime-terminal rows; `defense-local` remains conditional N/A. GPTGeoChat
+x each of the three RWKV Ollama targets is a typed unavailable
 row because the retained GPTGeoChat source requires images while the exact
 Ollama transport is text-only; those rows never enter projection, canary, or
 measured loops. The core cohort records `bridge-nanogcg`, `bridge-ideator`, and
@@ -459,11 +470,17 @@ GraySwan identities use the limit-100, sample-seed-0 selections and caps from
 their matching LLaVA-base rows; the three RWKV static identities keep their
 limit-50, sample-seed-0 selections. The older GraySwan `-full` terminal names
 remain only in immutable historical provenance. On successful
-amendment, the expected Gate 5 profile is 26 runnable and 20 typed-terminal
-rows, with zero target-runtime-terminal rows, before the optional
-`defense-local` shift. The historical terminal artifacts remain diagnostic
+amendment, the expected Gate 5 profile is 25 runnable and 21 typed-terminal
+rows, with zero target-runtime-terminal rows. Only a separate successful
+`defense-local` admission shifts that profile to 26 runnable and 20
+typed-terminal rows. The historical terminal artifacts remain diagnostic
 provenance and are never rewritten. Malformed protocol, transport, identity,
 provenance, residency, timeout, and backend failures remain hard failures.
+The tracked, opt-in `launch_phase6_recovery_and_seven.sh` serializes the exact
+core recovery and seven-row producers in one named tmux session. It is not part
+of `launch_chain`, does not rerun successful lanes, and does not raise caps. Its
+two content-bound input-manifest schemas and fresh-tag binding procedure are
+specified in `experiments/local_campaign/README.md`.
 Phase 7's authoritative lifecycle registry covers complete,
 partial, failed-after-request, and genuine pre-Runner-no-request states. Each
 lane binds its controller failure, optional exact measured argv, and retained
@@ -1320,6 +1337,15 @@ each arm an independently scoped ordering. A source with fewer than N clusters
 is complete but precision-limited, and limit 0 returns the exact full arm.
 Fanout rows, repeated model conditions and turns do not increase the independent
 cluster count.
+
+`run_matrix` and Build also expose two explicit whole-cluster prefix policies:
+`seeded_pseudorandom_whole_cluster_prefix_v1` (the unchanged default above) and
+`source_order_whole_cluster_prefix_v1` (the first N cluster keys in
+source-appearance order). Omit `--sampling-policy` when reproducing an existing
+legacy campaign command. Supplying either value records it in request,
+acquisition, projection and run identity, so changing it requires a new exact
+plan, receipt, projection, caps, output root and analysis stratum. Both policies
+retain every sibling row and interpret `--limit 0` as the exact full arm.
 
 The current measured population cohort uses `--sample-seed 0` only.
 `--sample-seed 1` is a separately projected future cohort that requires its own
@@ -3836,6 +3862,14 @@ plan from the same success-only view. This does not pre-approve coverage
 feasibility: both selectors separately fail closed unless their requested counts
 cover all achieved cells.
 
+Before that machine preparation, supply the operator-authored ethics/consent
+determination described by the generated guide and authorize its exact bytes.
+The record uses required structured consent, compensation, withdrawal,
+harmful-content welfare, and escalation controls rather than a free-form details
+object. It may authorize preparation while withholding human labeling. It does
+not create raters, qualification gold, labels, adjudication, reports, or Gate 8
+acceptance; those remain human-only inputs.
+
 The machine controller's only successful terminal is `human_only_blocked` with
 `gate8_met: false`. Its zero exit means that blinded forms and guidance were
 prepared, not that a rater exists, a qualification was passed, a label was
@@ -3855,11 +3889,17 @@ that exact selection against the bound Phase 7 Runner view. The
 controls and are rejected by either preparation mode.
 
 ```bash
+PHASE7_HUMAN_AUDIT_VIEW=/absolute/path/to/phase7-control/read-only-human-audit-runner-view
 python -m experiments.human_audit \
-  --results "$URA_WORK/runs/thesis/runner" --prepare 400 \
+  --results "$PHASE7_HUMAN_AUDIT_VIEW" --prepare 400 \
   --output "$URA_WORK/runs/thesis/human-audit-sample.csv" \
   --acknowledge-sensitive-content
 ```
+
+For the sealed campaign this is the invocation performed by the generated
+Phase 8 controller after it revalidates the Phase 7 view receipt. Do not replace
+the view with the mixed canonical Runner root. The sample size remains an
+operator example and must satisfy the controller's exact capacity plan.
 
 Before main labelling, create
 `$URA_WORK/runs/thesis/human-rater-qualification.md` with
@@ -3941,7 +3981,7 @@ flag, and the source reference, and includes whole clusters:
 
 ```bash
 python -m experiments.human_audit \
-  --results "$URA_WORK/runs/thesis/runner" --prepare-source-task 50 \
+  --results "$PHASE7_HUMAN_AUDIT_VIEW" --prepare-source-task 50 \
   --acknowledge-sensitive-content \
   --output "$URA_WORK/runs/thesis/source-task-audit-sample.csv"
 ```

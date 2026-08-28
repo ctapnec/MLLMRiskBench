@@ -70,6 +70,10 @@ from ura.runner import (
     _harness_source_identity,
 )
 from ura.request_envelope import load_request_error_file
+from ura.sampling import (
+    DEFAULT_SAMPLING_POLICY,
+    SOURCE_ORDER_CLUSTER_PREFIX,
+)
 from ura.source_conformance import (
     observed_arm_conformance,
 )
@@ -514,6 +518,60 @@ def test_cluster_selection_sha256_prng_known_vector() -> None:
     ]
     assert indices == [0, 1, 4, 6, 7]
     assert selected == [records[index] for index in indices]
+
+
+def test_source_order_policy_ignored_mutant_hits_forbidden_shuffle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    records = [
+        _datapoint(f"{cluster}-{row}").model_copy(update={
+            "meta": {"source_cluster_id": cluster}
+        })
+        for cluster in ("intent-a", "intent-b", "intent-c")
+        for row in range(2)
+    ]
+
+    def reject_shuffle(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("source-order sampling must not invoke the PRNG")
+
+    monkeypatch.setattr(run_matrix.random.Random, "shuffle", reject_shuffle)
+    selected, indices, selected_ids, inventory = run_matrix._select_corpus(
+        "source-order-arm",
+        records,
+        2,
+        99,
+        SOURCE_ORDER_CLUSTER_PREFIX,
+    )
+    full, full_indices, full_ids, _ = run_matrix._select_corpus(
+        "source-order-arm",
+        records,
+        0,
+        99,
+        SOURCE_ORDER_CLUSTER_PREFIX,
+    )
+
+    assert selected == records[:4]
+    assert indices == [0, 1, 2, 3]
+    assert selected_ids == ["intent-a", "intent-b"]
+    assert inventory == ["intent-a", "intent-b", "intent-c"]
+    assert full == records and full_indices == list(range(6))
+    assert full_ids == inventory
+
+
+def test_explicit_seeded_policy_preserves_the_legacy_known_vector() -> None:
+    records = [
+        _datapoint(f"row-{index}").model_copy(update={
+            "meta": {"source_cluster_id": f"intent-{index:02d}"}
+        })
+        for index in range(12)
+    ]
+
+    omitted = run_matrix._select_corpus("known-vector-arm", records, 5, 23)
+    explicit = run_matrix._select_corpus(
+        "known-vector-arm", records, 5, 23, DEFAULT_SAMPLING_POLICY
+    )
+
+    assert explicit == omitted
 
 
 def test_cluster_selection_retains_interleaved_siblings_in_source_order() -> None:

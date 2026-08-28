@@ -132,6 +132,11 @@ _CSV_FIELDS = (
     "judgments_non_evaluable",
     "cross_stratum_pooling_permitted",
 )
+_CSV_FIELDS_WITH_SAMPLING_POLICY = (
+    *_CSV_FIELDS[:_CSV_FIELDS.index("source_policy_id")],
+    "sampling_policy",
+    *_CSV_FIELDS[_CSV_FIELDS.index("source_policy_id"):],
+)
 
 
 def _polarity(metric: str) -> str:
@@ -409,6 +414,11 @@ def _estimate_rows(cell: dict[str, Any]) -> list[dict[str, Any]]:
             "seeds": list(manifest["seeds"]),
             "sample_seed": run.get("sample_seed"),
             "limit": run.get("limit"),
+            **(
+                {"sampling_policy": run["sampling_policy"]}
+                if "sampling_policy" in run
+                else {}
+            ),
             "source_policy_id": group_by["source_policy_id"],
             "source_policy_version": group_by["source_policy_version"],
             "source_policy_sha256": (
@@ -550,14 +560,19 @@ def build_level2_report(
 
 def _csv_text(estimates: list[dict[str, Any]]) -> str:
     buffer = io.StringIO()
+    fields = (
+        _CSV_FIELDS_WITH_SAMPLING_POLICY
+        if any("sampling_policy" in row for row in estimates)
+        else _CSV_FIELDS
+    )
     writer = csv.DictWriter(
-        buffer, fieldnames=list(_CSV_FIELDS), lineterminator="\n"
+        buffer, fieldnames=list(fields), lineterminator="\n"
     )
     writer.writeheader()
     for row in estimates:
         record: dict[str, Any] = {}
-        for field in _CSV_FIELDS:
-            value = row[field]
+        for field in fields:
+            value = row.get(field) if field == "sampling_policy" else row[field]
             if isinstance(value, list):
                 record[field] = "|".join(str(item) for item in value)
             elif isinstance(value, dict):

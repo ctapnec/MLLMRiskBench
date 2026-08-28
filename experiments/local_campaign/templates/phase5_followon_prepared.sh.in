@@ -1,0 +1,929 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+usage() {
+  echo 'usage: phase5_followon_prepared.sh --inputs JSON --out JSON' >&2
+  exit 2
+}
+
+INPUTS=''
+OUT=''
+while (( "$#" )); do
+  case "$1" in
+    --inputs) INPUTS="$2"; shift 2 ;;
+    --out) OUT="$2"; shift 2 ;;
+    *) usage ;;
+  esac
+done
+[[ -n "$INPUTS" && -n "$OUT" ]] || usage
+source ~/.ura_campaign_env
+cd '@@PROJECT_ROOT@@'
+test "$(git rev-parse HEAD)" = '@@EXPECTED_COMMIT@@'
+test -z "$(git status --porcelain)"
+
+"$PWD/.venv/bin/python" - "$INPUTS" "$OUT" '@@EXPECTED_COMMIT@@' '@@FRAMEWORK_LOCK_SHA256@@' <<'PY'
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import sys
+from typing import Any, Callable, Mapping
+
+from experiments import nanogcg_capture
+from experiments.ideator_vlbreakbench_prepare import (
+    validate_manifest as validate_campaign_ideator_manifest,
+)
+from experiments.run_matrix import (
+    _load_attacker_config,
+    _portable_attacker_configs,
+    _sha256_json,
+    build_parser,
+)
+from ura.adapters.ideator_manifest import materialize_runner_attacker_config
+from ura.adapters.t3mp3st import T3MP3STAttacker
+from ura.eligibility import canonical_json_sha256, validate_eligibility_plan
+from ura.lane_canary import validate_lane_canary_summary
+from ura.lane_projection import validate_lane_projection_binding
+from ura.request_envelope import validate_request_envelope
+from ura.strict_json import strict_json_loads
+
+
+LANE_ORDER = (
+    "followon-nanogcg-qwen3-vl",
+    "followon-ideator-v2-qwen3-vl",
+    "followon-t3mp3st-qwen3-vl",
+)
+LANES: dict[str, dict[str, Any]] = {
+    "followon-nanogcg-qwen3-vl": {
+        "attacker": "nanogcg", "corpus": "advbench_harmful", "limit": 1,
+        "sample_seed": 105, "max_queries": 1, "max_turns": 1,
+        "modality": "text", "target_calls": 1, "canary_target_calls": 1,
+        "preparations": {"attacker_config", "capture"},
+    },
+    "followon-ideator-v2-qwen3-vl": {
+        "attacker": "ideator", "corpus": "advbench_harmful", "limit": 1,
+        "sample_seed": 105, "max_queries": 8, "max_turns": 8,
+        "modality": "image", "target_calls": 8, "canary_target_calls": 8,
+        "preparations": {"attacker_config", "seed_pair_manifest"},
+    },
+    "followon-t3mp3st-qwen3-vl": {
+        "attacker": "t3mp3st", "corpus": "strongreject_official", "limit": 50,
+        "sample_seed": 0, "max_queries": 1, "max_turns": 1,
+        "modality": "text", "target_calls": 50, "canary_target_calls": 1,
+        "preparations": {
+            "canary_attacker_config", "canary_bundle",
+            "measured_attacker_config", "measured_bundle",
+        },
+    },
+}
+QWEN = "vllm:Qwen/Qwen3-VL-8B-Instruct"
+QWEN_REVISION = "60595ebc30ec8e3b1d3b9e65d4943ca011c0006a"
+QWEN_RUNTIME = f"{QWEN}@{QWEN_REVISION}"
+QWEN_CONFIG = {
+    QWEN: {
+        "revision": QWEN_REVISION,
+        "modalities": ["text", "image"],
+        "tensor_parallel_size": 1,
+        "gpu_memory_utilization": 0.90,
+        "max_model_len": 12288,
+        "max_tokens": 4096,
+    }
+}
+GUARD = "meta-llama/Llama-Guard-3-8B"
+GUARD_REVISION = "7327bd9f6efbbe6101dc6cc4736302b3cbb6e425"
+GROUP = (
+    "model,source,risk,effective_modality,expected_behavior,attacker,"
+    "source_policy_id,source_policy_version"
+)
+DEADLINE_SECONDS = 86_400
+WALL_TIME_SECONDS = 86_400
+FREE_SPACE_FLOOR_BYTES = 1_099_511_627_776
+HEX64 = re.compile(r"[0-9a-f]{64}")
+ROW_FIELDS = {
+    "lane_id", "selection", "canary_selection", "preparations", "projection",
+    "eligibility", "request_envelope", "canary_summary", "measured_argv", "caps",
+}
+INPUT_FIELDS = {
+    "schema", "expected_commit", "framework_lock_id", "parent_gate5_promotion",
+    "lanes", "runnote",
+}
+PAIR_OPTIONS = {
+    "--local", "--local-config", "--local-config-sha256", "--attackers",
+    "--attacker-config", "--attacker-config-sha256", "--judges",
+    "--guardrail-model", "--guardrail-revision", "--guardrail-device",
+    "--corpora", "--source-config", "--source-config-sha256",
+    "--source-conformance", "--source-conformance-sha256", "--limit",
+    "--sample-seed", "--seeds", "--max-queries", "--max-turns", "--group",
+    "--project-revision", "--project-revision-sha256",
+    "--max-total-target-calls", "--max-total-judge-calls",
+    "--max-total-http-attempts", "--deadline-seconds", "--out",
+    "--execution-scope-id", "--live-attestation", "--live-attestation-sha256",
+    "--live-attestation-max-age-hours", "--model-acquisition-plan",
+    "--model-acquisition-plan-sha256", "--model-acquisition-receipt",
+    "--model-acquisition-receipt-sha256", "--model-acquisition-store",
+}
+FLAG_OPTIONS = {"--approximate-common-metrics"}
+
+
+def canonical(value: object) -> bytes:
+    return (json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        allow_nan=False,
+    ) + "\n").encode("utf-8")
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def load_object(path: Path, *, label: str) -> dict[str, Any]:
+    if path.stat().st_size > 512 * 1024 * 1024:
+        raise SystemExit(f"{label} is unexpectedly large")
+    try:
+        value = strict_json_loads(path.read_bytes())
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise SystemExit(f"{label} is not strict JSON: {exc}") from exc
+    if not isinstance(value, dict):
+        raise SystemExit(f"{label} is not a JSON object")
+    return value
+
+
+def descriptor(path: Path) -> dict[str, Any]:
+    return {"path": str(path), "sha256": sha256_file(path), "bytes": path.stat().st_size}
+
+
+def checked(
+    raw: object,
+    label: str,
+    *,
+    validator: Callable[[object], Mapping[str, Any]] | None = None,
+) -> tuple[Path, dict[str, Any]]:
+    if not isinstance(raw, dict) or set(raw) != {"path", "sha256", "bytes"}:
+        raise SystemExit(f"{label} descriptor changed")
+    path = Path(str(raw.get("path", "")))
+    if (
+        not path.is_absolute() or path.is_symlink() or not path.is_file()
+        or path.resolve(strict=True) != path
+        or HEX64.fullmatch(str(raw.get("sha256", ""))) is None
+        or isinstance(raw.get("bytes"), bool) or not isinstance(raw.get("bytes"), int)
+        or raw["bytes"] <= 0 or descriptor(path) != raw
+    ):
+        raise SystemExit(f"{label} identity changed")
+    value = load_object(path, label=label)
+    if validator is not None:
+        try:
+            validated = validator(value)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise SystemExit(f"{label} schema validation failed: {exc}") from exc
+        value = dict(validated)
+    return path, value
+
+
+def load_runner_attacker_config(
+    raw: object, *, attacker: str, label: str,
+) -> tuple[Path, dict[str, Any], str]:
+    path, value = checked(raw, label)
+    try:
+        configs, artifact = _load_attacker_config(
+            str(path), [attacker], sha256_file(path)
+        )
+        portable = _portable_attacker_configs(configs)
+        portable_sha256 = _sha256_json(portable)
+    except (OSError, TypeError, ValueError) as exc:
+        raise SystemExit(f"{label} is not an exact Runner attacker config: {exc}") from exc
+    if (
+        configs != value
+        or set(configs) != {attacker}
+        or not isinstance(configs.get(attacker), dict)
+        or not isinstance(artifact, dict)
+        or artifact.get("sha256") != sha256_file(path)
+        or artifact.get("bytes") != path.stat().st_size
+        or artifact.get("normalized_selected_sha256") != portable_sha256
+    ):
+        raise SystemExit(f"{label} normalized identity changed")
+    return path, dict(configs[attacker]), portable_sha256
+
+
+def validate_t3mp3st_bundle(
+    config: Mapping[str, Any], bundle_path: Path, bundle_descriptor: Mapping[str, Any],
+    *, expected_records: int, label: str,
+) -> dict[str, Any]:
+    expected_fields = {
+        "upstream_revision", "source_provider", "source_model",
+        "response_artifact", "response_artifact_sha256",
+    }
+    if (
+        set(config) != expected_fields
+        or config.get("response_artifact") != str(bundle_path)
+        or config.get("response_artifact_sha256") != bundle_descriptor.get("sha256")
+    ):
+        raise SystemExit(f"{label} config/bundle binding changed")
+    try:
+        attacker = T3MP3STAttacker(**dict(config))
+        _wrapper, source = attacker._load_artifact(attacker._pin())
+    except (OSError, TypeError, ValueError, RuntimeError) as exc:
+        raise SystemExit(f"{label} fails the existing T3MP3ST bundle validator: {exc}") from exc
+    if (
+        source.get("format_version") != "ura-t3mp3st-plan-bundle/1"
+        or source.get("sha256") != bundle_descriptor.get("sha256")
+        or source.get("bytes") != bundle_descriptor.get("bytes")
+        or source.get("records") != expected_records
+        or not isinstance(source.get("corpus_sha256"), str)
+        or HEX64.fullmatch(str(source["corpus_sha256"])) is None
+        or not isinstance(source.get("capture_runtime"), dict)
+    ):
+        raise SystemExit(f"{label} strict bundle identity or record count changed")
+    return dict(source)
+
+
+def validate_preparations(
+    preparations: Mapping[str, object], spec: Mapping[str, Any], lane: str,
+) -> dict[str, Any]:
+    attacker = str(spec["attacker"])
+    prepared: dict[str, tuple[Path, dict[str, Any], dict[str, Any]]] = {}
+    for name, raw in preparations.items():
+        path, value = checked(raw, f"{lane} {name}")
+        assert isinstance(raw, dict)
+        prepared[name] = (path, value, dict(raw))
+
+    if attacker == "nanogcg":
+        config_path, config, config_sha256 = load_runner_attacker_config(
+            preparations["attacker_config"], attacker=attacker,
+            label=f"{lane} attacker_config",
+        )
+        del config_path
+        capture_path, capture_value, capture_descriptor = prepared["capture"]
+        del capture_path
+        try:
+            capture = nanogcg_capture.validate_capture(capture_value)
+            expected_config = nanogcg_capture._replay_config(
+                capture["result"]["best_string"],
+                str(capture_descriptor["sha256"]),
+                captured_source_id=capture["source"]["source_row"]["datapoint_id"],
+                captured_target=capture["source"]["source_row"]["target"],
+            )["nanogcg"]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise SystemExit(
+                f"{lane} capture fails the existing NanoGCG validator: {exc}"
+            ) from exc
+        if config != expected_config:
+            raise SystemExit(f"{lane} NanoGCG capture/config binding changed")
+        selection = {
+            "selected_datapoint_ids_sha256": canonical_json_sha256([
+                capture["source"]["source_row"]["datapoint_id"]
+            ])
+        }
+        return {
+            "config_sha256": {"canary": config_sha256, "measured": config_sha256},
+            "selection": {"canary": selection, "measured": selection},
+        }
+
+    if attacker == "ideator":
+        _config_path, config, config_sha256 = load_runner_attacker_config(
+            preparations["attacker_config"], attacker=attacker,
+            label=f"{lane} attacker_config",
+        )
+        _manifest_path, manifest_value, manifest_descriptor = prepared[
+            "seed_pair_manifest"
+        ]
+        try:
+            manifest = validate_campaign_ideator_manifest(manifest_value)
+            expected = materialize_runner_attacker_config(
+                manifest,
+                manifest_sha256=str(manifest_descriptor["sha256"]),
+                pair_limit=0,
+            )["ideator"]
+        except (KeyError, OSError, TypeError, ValueError) as exc:
+            raise SystemExit(
+                f"{lane} manifest fails the existing strict IDEATOR validator: {exc}"
+            ) from exc
+        if config != expected:
+            raise SystemExit(f"{lane} IDEATOR manifest/config binding changed")
+        selected_ids = sorted({str(pair["source_id"]) for pair in manifest["seed_pairs"]})
+        if selected_ids != ["advbench:245"]:
+            raise SystemExit(f"{lane} IDEATOR source-mapped selection changed")
+        selection = {
+            "selected_datapoint_ids_sha256": canonical_json_sha256(selected_ids)
+        }
+        return {
+            "config_sha256": {"canary": config_sha256, "measured": config_sha256},
+            "selection": {"canary": selection, "measured": selection},
+        }
+
+    if attacker == "t3mp3st":
+        purpose_rows: dict[str, dict[str, Any]] = {}
+        for purpose, expected_records in (("canary", 1), ("measured", spec["limit"])):
+            config_name = f"{purpose}_attacker_config"
+            bundle_name = f"{purpose}_bundle"
+            _config_path, config, config_sha256 = load_runner_attacker_config(
+                preparations[config_name], attacker=attacker,
+                label=f"{lane} {config_name}",
+            )
+            bundle_path, _bundle_value, bundle_descriptor = prepared[bundle_name]
+            source = validate_t3mp3st_bundle(
+                config, bundle_path, bundle_descriptor,
+                expected_records=int(expected_records), label=f"{lane} {purpose}",
+            )
+            purpose_rows[purpose] = {
+                "config_sha256": config_sha256,
+                "selected_converted_corpus_sha256": source["corpus_sha256"],
+            }
+        return {
+            "config_sha256": {
+                purpose: row["config_sha256"] for purpose, row in purpose_rows.items()
+            },
+            "selection": {
+                purpose: {
+                    "selected_converted_corpus_sha256": row[
+                        "selected_converted_corpus_sha256"
+                    ]
+                }
+                for purpose, row in purpose_rows.items()
+            },
+        }
+
+    raise SystemExit(f"{lane} has no strict prepared-artifact validator")
+
+
+def require_zero(value: object, fields: tuple[str, ...], label: str) -> None:
+    if not isinstance(value, dict) or any(type(value.get(field)) is not int or value[field] != 0 for field in fields):
+        raise SystemExit(f"{label} does not prove zero hosted/network accounting")
+
+
+def expected_selection(spec: Mapping[str, Any], *, canary: bool) -> dict[str, Any]:
+    return {
+        "attacker": spec["attacker"],
+        "corpus": spec["corpus"],
+        "limit": 1 if canary else spec["limit"],
+        "sample_seed": spec["sample_seed"],
+        "max_queries": spec["max_queries"],
+        "max_turns": spec["max_turns"],
+        "modality": spec["modality"],
+        "judges": ["rules", "guardrail"],
+        "approximate_common_metrics": True,
+    }
+
+
+def parse_argv(argv: object, lane: str) -> dict[str, str | bool]:
+    if not isinstance(argv, list) or not argv or any(not isinstance(item, str) or not item for item in argv):
+        raise SystemExit(f"{lane} exact measured argv changed")
+    parsed: dict[str, str | bool] = {}
+    index = 0
+    while index < len(argv):
+        option = argv[index]
+        if option in FLAG_OPTIONS:
+            if option in parsed:
+                raise SystemExit(f"{lane} duplicates {option}")
+            parsed[option] = True
+            index += 1
+            continue
+        if option not in PAIR_OPTIONS or index + 1 >= len(argv):
+            raise SystemExit(f"{lane} contains an unapproved measured option: {option}")
+        if option in parsed or argv[index + 1].startswith("--"):
+            raise SystemExit(f"{lane} duplicates or omits the value for {option}")
+        parsed[option] = argv[index + 1]
+        index += 2
+    if set(parsed) != PAIR_OPTIONS | FLAG_OPTIONS:
+        raise SystemExit(f"{lane} measured option inventory changed")
+    try:
+        build_parser().parse_args(argv)
+    except SystemExit as exc:
+        raise SystemExit(f"{lane} measured argv is not accepted by run_matrix") from exc
+    return parsed
+
+
+def argv_path(
+    options: Mapping[str, str | bool], path_flag: str, sha_flag: str, label: str,
+) -> Path:
+    path = Path(str(options[path_flag]))
+    expected_sha = str(options[sha_flag])
+    if (
+        not path.is_absolute() or path.is_symlink() or not path.is_file()
+        or path.resolve(strict=True) != path or HEX64.fullmatch(expected_sha) is None
+        or sha256_file(path) != expected_sha
+    ):
+        raise SystemExit(f"{label} path/digest pair changed")
+    return path
+
+
+def validate_parent_chain(value: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    runnote_path, runnote = checked(value.get("runnote"), "follow-on RUNNOTE")
+    promotion_path, promotion = checked(
+        value.get("parent_gate5_promotion"), "parent Gate 5 promotion"
+    )
+    if (
+        promotion.get("schema") != "ura-gate5-runnote-promotion/1"
+        or promotion.get("status") != "complete"
+        or promotion.get("measured_run_launched") is not False
+        or not isinstance(promotion.get("inventory_counts"), dict)
+        or promotion["inventory_counts"].get("total") != 46
+        or promotion.get("canonical_runnote") != descriptor(runnote_path)
+    ):
+        raise SystemExit("parent Gate 5 promotion contract changed")
+    require_zero(
+        promotion.get("local_only"),
+        ("hosted_provider_calls", "hosted_judge_calls", "http_attempts", "paid_provider_calls", "model_downloads"),
+        "parent Gate 5 promotion",
+    )
+    routes = runnote.get("routes")
+    if (
+        runnote.get("schema") != "ura-gate5-runnote/1"
+        or runnote.get("status") != "complete"
+        or runnote.get("candidate_only") is not False
+        or not isinstance(routes, dict)
+        or routes.get("target") != "local_only"
+        or runnote.get("future_measured_run")
+        != {
+            "authorized": False,
+            "requires_distinct_measured_purpose_plan_and_receipt": True,
+            "diagnostic_canaries_are_empirical_benchmark_evidence": False,
+        }
+    ):
+        raise SystemExit("parent Gate 5 RUNNOTE contract changed")
+    require_zero(
+        routes, ("hosted_target_calls", "hosted_judge_calls", "http_attempts"),
+        "parent Gate 5 RUNNOTE",
+    )
+    return descriptor(promotion_path), descriptor(runnote_path)
+
+
+def validate_config_binding(
+    eligibility: Mapping[str, Any], *, expected_sha256: str,
+    execution_purpose: str, spec: Mapping[str, Any], limit: int, lane: str,
+) -> None:
+    bindings = eligibility.get("bindings")
+    condition = bindings.get("experiment_conditions") if isinstance(bindings, dict) else None
+    values = condition.get("values") if isinstance(condition, dict) else None
+    selected = bindings.get("selected_config_identities") if isinstance(bindings, dict) else None
+    condition_selected = (
+        values.get("selected_config_identities") if isinstance(values, dict) else None
+    )
+    expected_identity = {"normalized_selected_sha256": expected_sha256}
+    expected_values = {
+        "execution_purpose": execution_purpose,
+        "seeds": [0],
+        "sample_seed": spec["sample_seed"],
+        "limit": limit,
+        "max_queries": spec["max_queries"],
+        "max_turns": spec["max_turns"],
+        "dry_run": False,
+    }
+    if (
+        not isinstance(bindings, dict)
+        or bindings.get("attacker_configs_sha256") != expected_sha256
+        or not isinstance(selected, dict)
+        or selected.get("attacker_config") != expected_identity
+        or not isinstance(condition_selected, dict)
+        or condition_selected.get("attacker_config") != expected_identity
+        or not isinstance(values, dict)
+        or any(values.get(field) != expected for field, expected in expected_values.items())
+    ):
+        raise SystemExit(f"{lane} {execution_purpose} prepared-config/condition binding changed")
+
+
+def validate_projection_semantics(
+    projection: Mapping[str, Any], *, spec: Mapping[str, Any], purpose: str,
+    preparation: Mapping[str, Any], lane: str,
+) -> None:
+    arms = projection.get("selection", {}).get("arms")
+    calls = projection.get("call_projection")
+    expected_limit = 1 if purpose == "canary" else spec["limit"]
+    expected_calls = (
+        spec["canary_target_calls"] if purpose == "canary" else spec["target_calls"]
+    )
+    if not isinstance(arms, list) or len(arms) != 1 or not isinstance(calls, dict):
+        raise SystemExit(f"{lane} {purpose} projection inventory changed")
+    arm = arms[0]
+    if (
+        arm.get("logical_source_arm") != spec["corpus"]
+        or arm.get("limit") != expected_limit
+        or arm.get("sample_seed") != spec["sample_seed"]
+        or arm.get("selected_records") != expected_limit
+        or arm.get("selected_clusters") != expected_limit
+        or calls.get("target_calls") != expected_calls
+        or calls.get("judge_calls") != 0
+        or calls.get("http_attempts") != 0
+        or any(arm.get(field) != value for field, value in preparation.items())
+    ):
+        raise SystemExit(f"{lane} {purpose} projection/preparation relationship changed")
+
+
+def bound_canary_file(
+    root: Path, raw: object, *, label: str,
+) -> tuple[Path, dict[str, Any]]:
+    if not isinstance(raw, dict) or set(raw) != {"file", "sha256", "bytes", "records"}:
+        raise SystemExit(f"{label} descriptor changed")
+    filename = raw.get("file")
+    if (
+        not isinstance(filename, str) or not filename or Path(filename).name != filename
+        or HEX64.fullmatch(str(raw.get("sha256", ""))) is None
+        or type(raw.get("bytes")) is not int or raw["bytes"] <= 0
+        or type(raw.get("records")) is not int or raw["records"] <= 0
+    ):
+        raise SystemExit(f"{label} descriptor values changed")
+    matches = sorted(path for path in root.rglob("*") if path.name == filename)
+    if len(matches) != 1:
+        raise SystemExit(f"{label} must resolve to exactly one retained file")
+    path = matches[0]
+    try:
+        path.resolve(strict=True).relative_to(root)
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"{label} escapes its canary root") from exc
+    current = path.parent
+    while current != root:
+        if current.is_symlink():
+            raise SystemExit(f"{label} traverses a symlinked directory")
+        current = current.parent
+    if (
+        path.is_symlink() or not path.is_file() or path.resolve(strict=True) != path
+        or sha256_file(path) != raw["sha256"]
+        or path.stat().st_size != raw["bytes"]
+    ):
+        raise SystemExit(f"{label} file identity changed")
+    return path, load_object(path, label=label)
+
+
+def validate_canary_chain(
+    canary_path: Path, canary: Mapping[str, Any], *, spec: Mapping[str, Any],
+    preparation: Mapping[str, Any], config_sha256: str,
+    config_descriptor: Mapping[str, Any], lane: str,
+) -> None:
+    root = canary_path.parent
+    bindings = canary.get("bindings")
+    if (
+        not isinstance(bindings, dict)
+        or canary_path.name != f"{canary.get('canary_id')}.lane-canary.json"
+    ):
+        raise SystemExit(f"{lane} diagnostic-canary identity/path changed")
+    eligibility_path, eligibility_raw = bound_canary_file(
+        root, bindings.get("eligibility_artifact"),
+        label=f"{lane} canary eligibility",
+    )
+    projection_path, projection_raw = bound_canary_file(
+        root, bindings.get("lane_projection_artifact"),
+        label=f"{lane} canary projection",
+    )
+    grid_path, grid = bound_canary_file(
+        root, bindings.get("grid_artifact"), label=f"{lane} canary grid",
+    )
+    bound_canary_file(
+        root, bindings.get("completion_artifact"),
+        label=f"{lane} canary completion",
+    )
+    try:
+        eligibility = validate_eligibility_plan(eligibility_raw)
+        projection = validate_lane_projection_binding(
+            projection_raw,
+            eligibility_plan=eligibility,
+            eligibility_artifact={
+                "file": eligibility_path.name,
+                "sha256": sha256_file(eligibility_path),
+                "bytes": eligibility_path.stat().st_size,
+                "records": bindings["eligibility_artifact"]["records"],
+            },
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise SystemExit(f"{lane} canary eligibility/projection binding changed: {exc}") from exc
+    validate_config_binding(
+        eligibility, expected_sha256=config_sha256,
+        execution_purpose="diagnostic_canary", spec=spec, limit=1, lane=lane,
+    )
+    validate_projection_semantics(
+        projection, spec=spec, purpose="canary", preparation=preparation, lane=lane,
+    )
+    condition = canary.get("condition")
+    workload = canary.get("workload")
+    request = grid.get("request")
+    eligibility_condition = eligibility.get("bindings", {}).get(
+        "experiment_conditions"
+    )
+    grid_eligibility = request.get("eligibility_plan") if isinstance(request, dict) else None
+    grid_projection = request.get("lane_projection") if isinstance(request, dict) else None
+    eligibility_descriptor = bindings["eligibility_artifact"]
+    projection_descriptor = bindings["lane_projection_artifact"]
+    expected_calls = spec["canary_target_calls"]
+    if (
+        bindings.get("grid_id") != grid.get("grid_id")
+        or bindings.get("eligibility_plan_id") != eligibility.get("plan_id")
+        or bindings.get("eligibility_request_id") != eligibility.get("request_id")
+        or not isinstance(eligibility_condition, dict)
+        or bindings.get("eligibility_condition_id")
+        != eligibility_condition.get("condition_id")
+        or bindings.get("lane_projection_id") != projection.get("projection_id")
+        or not isinstance(grid_eligibility, dict)
+        or grid_eligibility.get("plan_id") != eligibility.get("plan_id")
+        or any(grid_eligibility.get(field) != eligibility_descriptor[field]
+               for field in eligibility_descriptor)
+        or not isinstance(grid_projection, dict)
+        or grid_projection.get("projection_id") != projection.get("projection_id")
+        or any(grid_projection.get(field) != projection_descriptor[field]
+               for field in projection_descriptor)
+        or request.get("execution_purpose") != "diagnostic_canary"
+        or request.get("dry_run") is not False
+        or request.get("models") != [QWEN_RUNTIME]
+        or request.get("corpora") != [spec["corpus"]]
+        or request.get("attackers") != [spec["attacker"]]
+        or request.get("seeds") != [0]
+        or request.get("sample_seed") != spec["sample_seed"]
+        or request.get("limit") != 1
+        or request.get("max_queries") != spec["max_queries"]
+        or request.get("max_turns") != spec["max_turns"]
+        or request.get("attacker_config_artifact")
+        != {
+            "file": Path(str(config_descriptor["path"])).name,
+            "sha256": config_descriptor["sha256"],
+            "bytes": config_descriptor["bytes"],
+            "normalized_selected_sha256": config_sha256,
+        }
+        or not isinstance(condition, dict)
+        or condition.get("execution_purpose") != "diagnostic_canary"
+        or condition.get("dry_run") is not False
+        or condition.get("requested_model_spec") != QWEN_RUNTIME
+        or condition.get("resolved_target") != QWEN_RUNTIME
+        or condition.get("logical_source_arm") != spec["corpus"]
+        or condition.get("attacker") != spec["attacker"]
+        or condition.get("defense") != "none"
+        or condition.get("judges") != ["rules", "guardrail"]
+        or condition.get("seeds") != [0]
+        or not isinstance(workload, dict)
+        or workload.get("selected_clusters") != 1
+        or workload.get("selected_rows") != 1
+        or workload.get("completed_attempts") != expected_calls
+        or workload.get("completed_responses") != expected_calls
+        or workload.get("completed_judgments") != expected_calls
+        or grid_path.name != bindings["grid_artifact"]["file"]
+    ):
+        raise SystemExit(f"{lane} purpose-specific diagnostic-canary relation changed")
+
+
+def validate_artifact_chain(
+    row: Mapping[str, Any], spec: Mapping[str, Any], lane: str,
+    preparation: Mapping[str, Any],
+) -> None:
+    eligibility_path, eligibility = checked(
+        row.get("eligibility"), f"{lane} eligibility", validator=validate_eligibility_plan,
+    )
+    request_path, request = checked(
+        row.get("request_envelope"), f"{lane} request envelope",
+        validator=validate_request_envelope,
+    )
+    _, projection_raw = checked(row.get("projection"), f"{lane} projection")
+    try:
+        projection = validate_lane_projection_binding(
+            projection_raw,
+            eligibility_plan=eligibility,
+            eligibility_artifact={
+                "file": eligibility_path.name,
+                "sha256": sha256_file(eligibility_path),
+                "bytes": eligibility_path.stat().st_size,
+                "records": 1,
+            },
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise SystemExit(f"{lane} projection/eligibility binding changed: {exc}") from exc
+    envelope_binding = eligibility.get("bindings", {}).get("request_envelope")
+    if envelope_binding != {
+        "envelope_id": request["envelope_id"], "file": request_path.name,
+        "sha256": sha256_file(request_path), "bytes": request_path.stat().st_size,
+    }:
+        raise SystemExit(f"{lane} eligibility/request-envelope binding changed")
+    request_value = request["request"]
+    expected_request = {
+        "requested_target_keys": [QWEN], "logical_source_arms": [spec["corpus"]],
+        "selected_attackers": [spec["attacker"]], "judges": ["rules", "guardrail"],
+        "judge_model": None, "seeds": [0], "sample_seed": spec["sample_seed"],
+        "limit": spec["limit"], "max_queries": spec["max_queries"],
+        "max_turns": spec["max_turns"], "defense": "none", "defense_guard": "rules",
+        "group_keys": GROUP.split(","), "quantization": "", "dtype": "auto",
+        "dry_run": False, "approximate_common_metrics": True,
+        "hosted_judge_data_transfer_acknowledged": False,
+        "call_caps": {
+            "target": spec["target_calls"], "judge": None, "http_attempts": None,
+            "deadline_seconds": DEADLINE_SECONDS,
+        },
+    }
+    if request_value.get("execution_purpose") != "preflight_only" or {
+        key: request_value.get(key) for key in expected_request
+    } != expected_request:
+        raise SystemExit(f"{lane} final-preflight request semantics changed")
+    validate_config_binding(
+        eligibility,
+        expected_sha256=str(preparation["config_sha256"]["measured"]),
+        execution_purpose="preflight_only", spec=spec, limit=int(spec["limit"]),
+        lane=lane,
+    )
+    validate_projection_semantics(
+        projection, spec=spec, purpose="measured",
+        preparation=preparation["selection"]["measured"], lane=lane,
+    )
+    canary_path, canary = checked(
+        row.get("canary_summary"), f"{lane} canary summary",
+        validator=validate_lane_canary_summary,
+    )
+    condition = canary["condition"]
+    if (
+        canary.get("evidence_class") != "live_diagnostic"
+        or condition.get("requested_model_spec") != QWEN_RUNTIME
+        or condition.get("resolved_target") != QWEN_RUNTIME
+        or condition.get("logical_source_arm") != spec["corpus"]
+        or condition.get("attacker") != spec["attacker"]
+        or condition.get("judges") != ["rules", "guardrail"]
+        or canary["workload"].get("selected_clusters") != 1
+        or canary["limitations"].get("campaign_authorized") is not False
+        or canary["limitations"].get("empirical_benchmark_evidence") is not False
+    ):
+        raise SystemExit(f"{lane} diagnostic-canary contract changed")
+    validate_canary_chain(
+        canary_path, canary, spec=spec,
+        preparation=preparation["selection"]["canary"],
+        config_sha256=str(preparation["config_sha256"]["canary"]),
+        config_descriptor=row["preparations"][
+            "canary_attacker_config"
+            if spec["attacker"] == "t3mp3st"
+            else "attacker_config"
+        ],
+        lane=lane,
+    )
+
+
+def validate_measured_argv(
+    row: Mapping[str, Any], spec: Mapping[str, Any], lane: str,
+) -> tuple[list[str], dict[str, Any]]:
+    argv = row.get("measured_argv")
+    options = validate_argv_policy(argv, spec, lane)
+    local_config = argv_path(options, "--local-config", "--local-config-sha256", f"{lane} local config")
+    if local_config != (Path.cwd() / "experiments" / "local-qwen3-vl.json").resolve(strict=True) or load_object(local_config, label=f"{lane} local config") != QWEN_CONFIG:
+        raise SystemExit(f"{lane} exact Qwen target configuration changed")
+    source_config = argv_path(options, "--source-config", "--source-config-sha256", f"{lane} source config")
+    if source_config != (Path.cwd() / "experiments" / "source-instances.json").resolve(strict=True):
+        raise SystemExit(f"{lane} source registry path changed")
+    project_receipt = argv_path(options, "--project-revision", "--project-revision-sha256", f"{lane} project receipt")
+    source_receipt = argv_path(options, "--source-conformance", "--source-conformance-sha256", f"{lane} source receipt")
+    if (
+        project_receipt != Path(os.environ["URA_PROJECT_REVISION_MANIFEST"]).resolve(strict=True)
+        or options["--project-revision-sha256"] != os.environ["URA_PROJECT_REVISION_SHA256"].lower()
+        or source_receipt != Path(os.environ["URA_SOURCE_CONFORMANCE_MANIFEST"]).resolve(strict=True)
+        or options["--source-conformance-sha256"] != os.environ["URA_SOURCE_CONFORMANCE_SHA256"].lower()
+    ):
+        raise SystemExit(f"{lane} project/source receipt binding changed")
+    attacker_config = argv_path(options, "--attacker-config", "--attacker-config-sha256", f"{lane} attacker config")
+    preparation_name = "measured_attacker_config" if spec["attacker"] == "t3mp3st" else "attacker_config"
+    expected_attacker = row["preparations"][preparation_name]
+    if descriptor(attacker_config) != expected_attacker:
+        raise SystemExit(f"{lane} measured attacker config differs from preparation")
+    attacker_value = load_object(attacker_config, label=f"{lane} attacker config")
+    if set(attacker_value) != {spec["attacker"]} or not isinstance(attacker_value[spec["attacker"]], dict):
+        raise SystemExit(f"{lane} attacker config inventory changed")
+    for path_flag, sha_flag, label in (
+        ("--live-attestation", "--live-attestation-sha256", "live attestation"),
+        ("--model-acquisition-plan", "--model-acquisition-plan-sha256", "acquisition plan"),
+        ("--model-acquisition-receipt", "--model-acquisition-receipt-sha256", "acquisition receipt"),
+    ):
+        argv_path(options, path_flag, sha_flag, f"{lane} {label}")
+    store = Path(str(options["--model-acquisition-store"]))
+    if (
+        not store.is_absolute() or store.is_symlink() or not store.is_dir()
+        or store.resolve(strict=True) != store
+    ):
+        raise SystemExit(f"{lane} managed acquisition store changed")
+    output = Path(str(options["--out"]))
+    validate_result_root(output, lane)
+    caps = {
+        "max_total_target_calls": spec["target_calls"],
+        "max_total_model_judge_calls": 0,
+        "max_total_http_attempts": 0,
+        "call_start_deadline_seconds": DEADLINE_SECONDS,
+        "wall_time_seconds": WALL_TIME_SECONDS,
+        "free_space_floor_bytes": FREE_SPACE_FLOOR_BYTES,
+    }
+    if row.get("caps") != caps:
+        raise SystemExit(f"{lane} approved cap inventory changed")
+    return list(argv), {"result_root": str(output), "caps": caps}
+
+
+def validate_result_root(output: Path, lane: str) -> None:
+    expected_parent = Path(os.environ["URA_WORK"]).resolve(strict=True) / "runs" / "thesis" / "runner" / lane
+    if (
+        not expected_parent.is_dir() or expected_parent.is_symlink()
+        or expected_parent.resolve(strict=True) != expected_parent
+        or not output.is_absolute() or output.is_symlink()
+        or output.exists() or output.parent != expected_parent
+    ):
+        raise SystemExit(f"{lane} measured output is outside its exact Runner lane root")
+
+
+def validate_argv_policy(
+    argv: object, spec: Mapping[str, Any], lane: str,
+) -> dict[str, str | bool]:
+    """Validate the complete scientific and route policy before touching artifacts."""
+
+    options = parse_argv(argv, lane)
+    exact_values = {
+        "--local": QWEN, "--attackers": spec["attacker"],
+        "--judges": "rules,guardrail", "--guardrail-model": GUARD,
+        "--guardrail-revision": GUARD_REVISION, "--guardrail-device": "cuda:1",
+        "--corpora": spec["corpus"], "--limit": str(spec["limit"]),
+        "--sample-seed": str(spec["sample_seed"]), "--seeds": "0",
+        "--max-queries": str(spec["max_queries"]), "--max-turns": str(spec["max_turns"]),
+        "--group": GROUP, "--max-total-target-calls": str(spec["target_calls"]),
+        "--max-total-judge-calls": "0", "--max-total-http-attempts": "0",
+        "--deadline-seconds": str(DEADLINE_SECONDS),
+        "--live-attestation-max-age-hours": "24",
+    }
+    if any(options.get(key) != expected for key, expected in exact_values.items()):
+        raise SystemExit(f"{lane} measured scientific or call-cap argument changed")
+    if options.get("--approximate-common-metrics") is not True:
+        raise SystemExit(f"{lane} approximate common-metrics opt-in changed")
+    return options
+
+
+src_arg = Path(sys.argv[1])
+if (
+    not src_arg.is_absolute() or src_arg.is_symlink() or not src_arg.is_file()
+    or src_arg.resolve(strict=True) != src_arg
+):
+    raise SystemExit("follow-on Gate 5 inputs must be one canonical regular file")
+src = src_arg
+out = Path(sys.argv[2])
+value = load_object(src, label="follow-on Gate 5 inputs")
+if (
+    set(value) != INPUT_FIELDS
+    or value.get("schema") != "ura-followon-gate5-inputs/1"
+    or value.get("expected_commit") != sys.argv[3]
+    or value.get("framework_lock_id") != sys.argv[4]
+):
+    raise SystemExit("unsupported follow-on Gate 5 input contract")
+parent_promotion, runnote = validate_parent_chain(value)
+rows = value.get("lanes")
+if (
+    not isinstance(rows, list) or len(rows) != len(LANE_ORDER)
+    or [row.get("lane_id") for row in rows if isinstance(row, dict)] != list(LANE_ORDER)
+):
+    raise SystemExit("follow-on lane inventory or order changed")
+
+authorized_rows: list[dict[str, Any]] = []
+for row in rows:
+    lane = row["lane_id"]
+    spec = LANES[lane]
+    if set(row) != ROW_FIELDS:
+        raise SystemExit(f"{lane} Gate 5 field inventory changed")
+    if row.get("selection") != expected_selection(spec, canary=False):
+        raise SystemExit(f"{lane} scientific selection changed")
+    if row.get("canary_selection") != expected_selection(spec, canary=True):
+        raise SystemExit(f"{lane} canary selection changed")
+    preparations = row.get("preparations")
+    if not isinstance(preparations, dict) or set(preparations) != spec["preparations"]:
+        raise SystemExit(f"{lane} preparation inventory changed")
+    preparation = validate_preparations(preparations, spec, lane)
+    validate_artifact_chain(row, spec, lane, preparation)
+    argv, execution = validate_measured_argv(row, spec, lane)
+    authorized_rows.append({
+        "lane_id": lane,
+        "selection": row["selection"],
+        "canary_selection": row["canary_selection"],
+        "preparations": row["preparations"],
+        "projection": row["projection"],
+        "eligibility": row["eligibility"],
+        "request_envelope": row["request_envelope"],
+        "canary_summary": row["canary_summary"],
+        "measured_argv": argv,
+        **execution,
+    })
+
+payload = {
+    "schema": "ura-followon-gate5-amendment/2",
+    "status": "authorized",
+    "expected_commit": sys.argv[3],
+    "framework_lock_id": sys.argv[4],
+    "parent_gate5_promotion": parent_promotion,
+    "lane_order": list(LANE_ORDER),
+    "lanes": authorized_rows,
+    "runnote": runnote,
+    "policy": {
+        "hosted_calls": False,
+        "provider_http_attempts": 0,
+        "model_judge_calls": 0,
+        "revision_pooling": False,
+        "core_gate5_mutated": False,
+        "metric_admission": "successful_runner_lifecycle_only",
+    },
+}
+if not out.is_absolute() or out.exists() or out.is_symlink():
+    raise SystemExit("follow-on amendment is an absent absolute create-only path")
+out.parent.mkdir(parents=True, exist_ok=True)
+if out.parent.is_symlink() or out.parent.resolve(strict=True) != out.parent:
+    raise SystemExit("follow-on amendment parent is not canonical")
+data = canonical(payload)
+with out.open("xb") as handle:
+    handle.write(data)
+    handle.flush()
+    os.fsync(handle.fileno())
+PY

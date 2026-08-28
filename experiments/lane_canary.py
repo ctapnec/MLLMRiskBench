@@ -167,6 +167,10 @@ def summarize_canary(
         "driver_source": request.get("driver_source"),
         "global_call_budget": request.get("global_call_budget"),
     }
+    if "sampling_policy" in request:
+        exact_run_fields["sampling_policy"] = request["sampling_policy"]
+    if ("sampling_policy" in run) != ("sampling_policy" in request):
+        raise ValueError("canary cell/grid sampling policy presence mismatch")
     if any(run.get(field) != expected for field, expected in exact_run_fields.items()):
         raise ValueError("canary cell/grid exact run-condition mismatch")
     expected_budget = {
@@ -184,6 +188,11 @@ def summarize_canary(
     audit = run.get("sampling_audit")
     if not isinstance(audit, dict):
         raise ValueError("canary cell lacks sampling audit")
+    if (
+        ("sampling_policy" in audit) != ("sampling_policy" in request)
+        or audit.get("sampling_policy") != request.get("sampling_policy")
+    ):
+        raise ValueError("canary sampling audit/request policy mismatch")
     expected_arm_evidence = {
         "selected_records": audit.get("selected_records"),
         "selected_clusters": audit.get("selected_clusters"),

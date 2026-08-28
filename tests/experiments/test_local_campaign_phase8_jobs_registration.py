@@ -983,7 +983,11 @@ def test_phase8_operator_guide_documents_non_fabricated_ethics_contract() -> Non
         "sensitive_content_acknowledged",
         "preparation_authorized",
         "human_labeling_authorized",
-        "details",
+        "consent_controls",
+        "compensation_controls",
+        "withdrawal_controls",
+        "harmful_content_welfare_controls",
+        "escalation_controls",
     )
     assert tuple(template["scope"]) == (
         "expected_commit",
@@ -992,14 +996,36 @@ def test_phase8_operator_guide_documents_non_fabricated_ethics_contract() -> Non
         "common_frame",
         "source_task_frame",
     )
-    assert template["schema"] == "ura-human-audit-ethics-determination/1"
+    assert template["schema"] == "ura-human-audit-ethics-determination/2"
     assert template["status"] == "OPERATOR_MUST_CHOOSE_ALLOWED_STATUS"
     assert template["scope"]["expected_commit"] == "@@EXPECTED_COMMIT@@"
     assert (
         template["scope"]["framework_lock_id"]
         == "@@FRAMEWORK_LOCK_SHA256@@"
     )
-    assert template["details"] == {}
+    assert tuple(template["consent_controls"]) == (
+        "document_version",
+        "informed_consent_before_exposure",
+        "minors_excluded",
+    )
+    assert tuple(template["compensation_controls"]) == (
+        "basis",
+        "agreement_contingent",
+    )
+    assert tuple(template["withdrawal_controls"]) == (
+        "process",
+        "without_penalty",
+    )
+    assert tuple(template["harmful_content_welfare_controls"]) == (
+        "advance_category_warnings",
+        "category_opt_out_without_penalty",
+        "continuous_exposure_limit",
+        "scheduled_breaks",
+    )
+    assert tuple(template["escalation_controls"]) == (
+        "stop_contact",
+        "adverse_event_process",
+    )
     for value in (
         *(
             template[field]
@@ -1016,6 +1042,11 @@ def test_phase8_operator_guide_documents_non_fabricated_ethics_contract() -> Non
         template["scope"]["runner_root"],
         template["scope"]["common_frame"],
         template["scope"]["source_task_frame"],
+        *template["consent_controls"].values(),
+        *template["compensation_controls"].values(),
+        *template["withdrawal_controls"].values(),
+        *template["harmful_content_welfare_controls"].values(),
+        *template["escalation_controls"].values(),
     ):
         assert isinstance(value, str) and value.startswith("OPERATOR_MUST_")
     normalized = " ".join(guide.split())
@@ -1026,5 +1057,7 @@ def test_phase8_operator_guide_documents_non_fabricated_ethics_contract() -> Non
         "acknowledgement and preparation-authorization fields must also be "
         "JSON boolean `true`",
         "`human_labeling_authorized` must be a JSON boolean",
+        "absolute path, SHA-256, and byte count from that same validated snapshot",
+        "five control objects are required exact structures, not free-form notes",
     ):
         assert fragment in normalized

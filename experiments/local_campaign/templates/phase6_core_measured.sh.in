@@ -708,7 +708,7 @@ from typing import Any, Mapping
 from experiments.local_campaign.ollama_static_terminal import (
     DISPOSITION as OLLAMA_STATIC_TERMINAL_DISPOSITION,
     OLLAMA_STATIC_TERMINAL_LANES,
-    inventory_counts as ollama_static_inventory_counts,
+    historical_inventory_counts as ollama_static_inventory_counts,
     validate_gate5_terminal_rows as validate_ollama_static_gate5_rows,
 )
 from experiments.run_matrix import build_parser

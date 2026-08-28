@@ -279,7 +279,7 @@ from experiments.framework_runtime_installer import load_lock
 from experiments.local_campaign.ollama_static_terminal import (
     DISPOSITION as OLLAMA_STATIC_TERMINAL_DISPOSITION,
     OLLAMA_STATIC_TERMINAL_LANES,
-    inventory_counts as ollama_static_inventory_counts,
+    historical_inventory_counts as ollama_static_inventory_counts,
     validate_gate5_terminal_rows as validate_ollama_static_gate5_rows,
 )
 from experiments.local_targets import _models_map, load_roster

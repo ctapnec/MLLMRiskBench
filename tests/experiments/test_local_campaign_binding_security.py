@@ -13,7 +13,9 @@ from experiments.local_campaign.generate import (
     LEGACY_A05_EXTERNAL_BINDINGS,
     MAX_PHASE3_DOWNLOAD_BYTES,
     PHASE3_BINDINGS_ADDED_AFTER_A05,
+    PRE_RECOVERY_EXTERNAL_BINDINGS,
     PRE_RR_EXTERNAL_BINDINGS,
+    RECOVERY_BINDINGS_ADDED_AFTER_73C5331,
     RR_EVIDENCE_BINDINGS_ADDED_AFTER_5719,
     ControllerGenerationError,
     external_binding_keys_from_templates,
@@ -69,7 +71,8 @@ def _write_document(path: Path, values: dict[str, str]) -> Path:
 
 def test_external_binding_inventory_is_exact_and_reviewed() -> None:
     assert external_binding_keys_from_templates() == EXTERNAL_BINDINGS
-    assert len(EXTERNAL_BINDINGS) == 58
+    assert len(EXTERNAL_BINDINGS) == 66
+    assert len(PRE_RECOVERY_EXTERNAL_BINDINGS) == 58
     assert len(PRE_RR_EXTERNAL_BINDINGS) == 54
 
     missing = _valid_values()
@@ -300,6 +303,7 @@ def test_rebind_performs_only_the_exact_controlled_a05_migration(
         if key not in (
             PHASE3_BINDINGS_ADDED_AFTER_A05
             | RR_EVIDENCE_BINDINGS_ADDED_AFTER_5719
+            | RECOVERY_BINDINGS_ADDED_AFTER_73C5331
         )
     }
     legacy["CONTROLLER_INSTALL_ROOT"] = "/home/ura"
@@ -330,6 +334,8 @@ def test_rebind_performs_only_the_exact_controlled_a05_migration(
         args.extend(("--set", f"{key}={current[key]}"))
     for key in sorted(RR_EVIDENCE_BINDINGS_ADDED_AFTER_5719):
         args.extend(("--set", f"{key}={current[key]}"))
+    for key in sorted(RECOVERY_BINDINGS_ADDED_AFTER_73C5331):
+        args.extend(("--set", f"{key}={current[key]}"))
     for key in sorted(MIGRATION_REVISION_BINDINGS - PHASE3_BINDINGS_ADDED_AFTER_A05):
         args.extend(("--set", f"{key}={current[key]}"))
     assert rebind_main(args) == 0
@@ -359,7 +365,10 @@ def test_rebind_requires_rr_roots_and_current_project_identity_for_pre_rr_migrat
     current = _valid_values()
     pre_rr = {
         key: value for key, value in current.items()
-        if key not in RR_EVIDENCE_BINDINGS_ADDED_AFTER_5719
+        if key not in (
+            RR_EVIDENCE_BINDINGS_ADDED_AFTER_5719
+            | RECOVERY_BINDINGS_ADDED_AFTER_73C5331
+        )
     }
     assert frozenset(pre_rr) == PRE_RR_EXTERNAL_BINDINGS
     base = _write_document(tmp_path / "pre-rr.json", pre_rr)
@@ -369,7 +378,11 @@ def test_rebind_requires_rr_roots_and_current_project_identity_for_pre_rr_migrat
         "PROJECT_RECEIPT_SHA256": "5" * 64,
         "PROJECT_RECEIPT_BYTES": "4242",
     })
-    required = RR_EVIDENCE_BINDINGS_ADDED_AFTER_5719 | MIGRATION_REVISION_BINDINGS
+    required = (
+        RR_EVIDENCE_BINDINGS_ADDED_AFTER_5719
+        | RECOVERY_BINDINGS_ADDED_AFTER_73C5331
+        | MIGRATION_REVISION_BINDINGS
+    )
 
     for omitted in sorted(required):
         args = [
@@ -384,6 +397,46 @@ def test_rebind_requires_rr_roots_and_current_project_identity_for_pre_rr_migrat
             rebind_main(args)
 
     output = tmp_path / "current.json"
+    args = ["--base", str(base), "--out", str(output)]
+    for key in sorted(required):
+        args.extend(("--set", f"{key}={current[key]}"))
+    assert rebind_main(args) == 0
+    migrated = json.loads(output.read_text(encoding="utf-8"))
+    assert validate_binding_document(migrated) == current
+
+
+def test_rebind_requires_exact_recovery_inputs_for_pre_recovery_migration(
+    tmp_path: Path,
+) -> None:
+    current = _valid_values()
+    pre_recovery = {
+        key: value
+        for key, value in current.items()
+        if key not in RECOVERY_BINDINGS_ADDED_AFTER_73C5331
+    }
+    assert frozenset(pre_recovery) == PRE_RECOVERY_EXTERNAL_BINDINGS
+    base = _write_document(tmp_path / "pre-recovery.json", pre_recovery)
+    current.update({
+        "EXPECTED_COMMIT": "6" * 40,
+        "PROJECT_RECEIPT_PATH": "/bound/current-project-receipt.json",
+        "PROJECT_RECEIPT_SHA256": "7" * 64,
+        "PROJECT_RECEIPT_BYTES": "4343",
+    })
+    required = RECOVERY_BINDINGS_ADDED_AFTER_73C5331 | MIGRATION_REVISION_BINDINGS
+
+    incomplete = [
+        "--base", str(base),
+        "--out", str(tmp_path / "incomplete-recovery.json"),
+    ]
+    for key in sorted(required - {"SEVEN_POLICY_INPUTS_SHA256"}):
+        incomplete.extend(("--set", f"{key}={current[key]}"))
+    with pytest.raises(
+        SystemExit,
+        match="requires an explicit replacement.*SEVEN_POLICY_INPUTS_SHA256",
+    ):
+        rebind_main(incomplete)
+
+    output = tmp_path / "recovery-current.json"
     args = ["--base", str(base), "--out", str(output)]
     for key in sorted(required):
         args.extend(("--set", f"{key}={current[key]}"))

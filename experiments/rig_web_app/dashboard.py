@@ -254,6 +254,35 @@ class DashboardMixin:
         parts.append("</svg>")
         return "<div class='scroll'>" + "".join(parts) + "</div>"
 
+    @staticmethod
+    def _count_bar_chart(rows: list[tuple[str, int]], *, label: str) -> str:
+        """A compact count chart that never presents counts as percentages."""
+
+        if not rows:
+            return ""
+        maximum = max(1, max(value for _name, value in rows))
+        bar_h, gap, pad_l, width = 22, 10, 220, 640
+        height = len(rows) * (bar_h + gap) + gap
+        parts = [
+            f"<svg class='barchart' viewBox='0 0 {width} {height}' "
+            f"role='img' aria-label='{html.escape(label, quote=True)}'>"
+        ]
+        for index, (name, value) in enumerate(rows):
+            y = gap + index * (bar_h + gap)
+            bar_w = (width - pad_l - 60) * value / maximum
+            parts.append(
+                f"<text class='bl' x='{pad_l - 8}' y='{y + bar_h - 6}' "
+                f"text-anchor='end'>{html.escape(name[:34])}</text>"
+                f"<rect class='bt' x='{pad_l}' y='{y}' "
+                f"width='{width - pad_l - 60}' height='{bar_h}' rx='4'/>"
+                f"<rect class='bv' x='{pad_l}' y='{y}' width='{bar_w:.1f}' "
+                f"height='{bar_h}' rx='4'/>"
+                f"<text class='bn' x='{pad_l + bar_w + 6}' y='{y + bar_h - 6}'>"
+                f"{value:,}</text>"
+            )
+        parts.append("</svg>")
+        return "<div class='scroll'>" + "".join(parts) + "</div>"
+
     def _health_banner(self) -> str:
         """A visible banner when the database is unhealthy - never silent."""
 
@@ -1245,8 +1274,10 @@ class DashboardMixin:
             "unreadable_artifacts": 0,
             "failed_cells": 0,
         }
-        reports = [
-            {
+        reports = []
+        terminal_inventory: dict[str, object] | None = None
+        for report in registration.reports:
+            reports.append({
                 "owner_job_id": campaign.route_id,
                 "path": report.artifact_relative,
                 "source_path": report.path,
@@ -1254,9 +1285,27 @@ class DashboardMixin:
                 "kind": report.kind,
                 "producer_job_id": campaign.route_id,
                 "_external_analysis_report": report,
-            }
-            for report in registration.reports
-        ]
+            })
+            if report.kind == "terminal_inventory":
+                document = load_external_analysis_report(report)
+                if isinstance(document, dict):
+                    terminal_inventory = document
+        terminal_rows = (
+            terminal_inventory.get("rows")
+            if isinstance(terminal_inventory, Mapping)
+            else None
+        )
+        failure_rows = (
+            terminal_inventory.get("failure_rows")
+            if isinstance(terminal_inventory, Mapping)
+            else None
+        )
+        coverage_text = (
+            f"{len(terminal_rows):,} terminal campaign rows; "
+            f"{len(failure_rows):,} failure rows"
+            if isinstance(terminal_rows, list) and isinstance(failure_rows, list)
+            else "validated external analysis reports"
+        )
         return {
             "job_id": campaign.route_id,
             "command": "external_analysis",
@@ -1283,6 +1332,8 @@ class DashboardMixin:
             "cost_rows": [],
             "cost_text": "not reported by analysis registration",
             "evidence": evidence,
+            "coverage_text": coverage_text,
+            "terminal_inventory": terminal_inventory,
             "authority": "external-analysis",
             "authority_label": "registered external analysis / non-thesis",
             "authority_tone": "blue",
@@ -1652,6 +1703,10 @@ class DashboardMixin:
             for report in campaign["reports"]
         )
         detail_label = "Statistics &amp; diagrams" if has_chart else "Statistics details"
+        coverage_text = str(
+            campaign.get("coverage_text")
+            or self._stats_coverage_text(campaign["evidence"])
+        )
         return (
             "<article class='stats-campaign-card' "
             f"data-job-id='{html.escape(str(campaign['job_id']))}' "
@@ -1673,7 +1728,7 @@ class DashboardMixin:
             f"<dt>Calls</dt><dd>{html.escape(calls)}</dd>"
             f"<dt>Tokens</dt><dd>{html.escape(tokens)}</dd>"
             f"<dt>Cost</dt><dd>{html.escape(str(campaign['cost_text']))}</dd>"
-            f"<dt>Results</dt><dd>{html.escape(self._stats_coverage_text(campaign['evidence']))}</dd>"
+            f"<dt>Results</dt><dd>{html.escape(coverage_text)}</dd>"
             "</dl><div class='stats-campaign-actions'>"
             f"<a class='button ghost stats-detail-trigger' href='/stats/job/"
             f"{quote(str(campaign['job_id']))}' data-stats-job='"
@@ -1710,12 +1765,14 @@ class DashboardMixin:
                 f"<div class='card'><h3>{html.escape(display_name)} "
                 "<span class='badge red'>invalid</span></h3></div>"
             )
-        expected = (
-            {"ura-level1-evidence/3", "ura-level1-evidence/2"}
-            if kind == "level1"
-            else {"ura-level2-report/1"}
-        )
-        if str(doc.get("schema_version")) not in expected:
+        expected = {
+            "level1": {"ura-level1-evidence/3", "ura-level1-evidence/2"},
+            "level2": {"ura-level2-report/1"},
+        }.get(kind)
+        if kind not in {"level1", "level2", "terminal_inventory"} or (
+            expected is not None
+            and str(doc.get("schema_version")) not in expected
+        ):
             return (
                 "<div class='card'><h3>"
                 + _icon("file")
@@ -1734,11 +1791,13 @@ class DashboardMixin:
                 "is produced.</p></div>"
             )
         try:
-            return (
-                self._render_level2(display_name, doc, artifact_relative=rel)
-                if kind == "level2"
-                else self._render_level1(display_name, doc, artifact_relative=rel)
-            )
+            if kind == "terminal_inventory":
+                return self._render_terminal_inventory(
+                    display_name, doc, artifact_relative=rel
+                )
+            if kind == "level2":
+                return self._render_level2(display_name, doc, artifact_relative=rel)
+            return self._render_level1(display_name, doc, artifact_relative=rel)
         except (KeyError, TypeError, ValueError):
             return (
                 f"<div class='card'><h3>{html.escape(display_name)} "
@@ -1834,12 +1893,16 @@ class DashboardMixin:
             else ""
         )
         runner_results = self._stats_runner_results_card(campaign)
+        coverage_text = str(
+            campaign.get("coverage_text")
+            or self._stats_coverage_text(evidence)
+        )
         return (
             "<p class='stats-detail-state'>Campaign status: "
             f"<span class='badge {state_tone}'>{html.escape(state_label)}</span></p>"
             f"<div class='notice {evidence_tone}'><strong>Evidence {evidence_label}."
             "</strong><p class='note'>"
-            f"{html.escape(self._stats_coverage_text(evidence))}. "
+            f"{html.escape(coverage_text)}. "
             "Charts below are rendered only from completion-bound Runner "
             "aggregates or producer-contract-validated reports attached to "
             f"this job.{artifact_link}</p></div>"
@@ -2118,6 +2181,109 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
     #: so nothing is silently dropped.
     _LEVEL2_CHART_CAP = 40
 
+    def _render_terminal_inventory(
+        self,
+        rel: str,
+        doc: Mapping[str, Any],
+        *,
+        artifact_relative: str | None = None,
+    ) -> str:
+        """Render generic terminal rows without relabelling them as cells."""
+
+        rows = doc["rows"]
+        cohort_order = doc["cohort_order"]
+        cohort_counts = doc["cohort_counts"]
+        failure_rows = doc["failure_rows"]
+        revision_pooling = bool(doc["cross_revision_pooling_permitted"])
+        source_pooling = bool(doc["cross_source_pooling_permitted"])
+        state_counts: dict[str, int] = {}
+        for row in rows:
+            state = str(row["terminal_state"])
+            state_counts[state] = state_counts.get(state, 0) + 1
+
+        cohort_chart = self._count_bar_chart(
+            [
+                (str(cohort).replace("_", " "), int(cohort_counts[cohort]))
+                for cohort in cohort_order
+            ],
+            label="Campaign terminal rows by cohort",
+        )
+        state_chart = self._count_bar_chart(
+            [
+                (state.replace("_", " "), count)
+                for state, count in sorted(state_counts.items())
+            ],
+            label="Campaign terminal rows by terminal state",
+        )
+        failure_chart = self._count_bar_chart(
+            [
+                ("failure rows", len(failure_rows)),
+                ("other terminal rows", len(rows) - len(failure_rows)),
+            ],
+            label="Campaign failure-row accounting",
+        )
+
+        def stratum_table(title: str, field: str) -> str:
+            strata = doc[field]
+            body = "".join(
+                "<tr><td><code>"
+                + html.escape(str(identity))
+                + "</code></td><td>"
+                + f"{len(keys):,}"
+                + "</td></tr>"
+                for identity, keys in strata.items()
+            )
+            return (
+                f"<h3>{html.escape(title)}</h3><div class='scroll'><table>"
+                "<tr><th>Exact identity</th><th>Terminal rows</th></tr>"
+                + body
+                + "</table></div>"
+            )
+
+        failure_detail = (
+            "<h3>Failure rows</h3><div class='scroll'><table>"
+            "<tr><th>Namespaced row key</th></tr>"
+            + "".join(
+                f"<tr><td><code>{html.escape(str(key))}</code></td></tr>"
+                for key in failure_rows
+            )
+            + "</table></div>"
+            if failure_rows
+            else "<h3>Failure rows</h3><p class='note'>None recorded.</p>"
+        )
+        if artifact_relative is None:
+            artifact_relative = rel
+        artifact_note = (
+            f"<p class='note'><a href='/artifacts?path={quote(artifact_relative)}'>open "
+            "the full validated terminal inventory &rarr;</a></p>"
+            if artifact_relative
+            else ""
+        )
+        return (
+            "<div class='card'><h2>"
+            + _icon("chart")
+            + "Campaign terminal rows <span class='badge blue'>validated inventory</span>"
+            + "</h2><p class='note'>Terminal lifecycle rows are not relabelled as "
+            "Runner cells. The report records cross-revision pooling as "
+            f"<strong>{'permitted' if revision_pooling else 'not permitted'}</strong> "
+            "and cross-source pooling as "
+            f"<strong>{'permitted' if source_pooling else 'not permitted'}</strong>. "
+            "The inventory contains "
+            f"<strong>{len(rows):,}</strong> terminal rows across "
+            f"<strong>{len(cohort_order):,}</strong> cohorts.</p>"
+            + "<h3>Rows by cohort</h3>"
+            + cohort_chart
+            + "<h3>Rows by terminal state</h3>"
+            + state_chart
+            + "<h3>Failure accounting</h3>"
+            + failure_chart
+            + failure_detail
+            + stratum_table("Project-revision strata", "project_revision_strata")
+            + stratum_table("Source-conformance strata", "source_conformance_strata")
+            + artifact_note
+            + "</div>"
+        )
+
     def _render_level2(
         self,
         rel: str,
@@ -2132,12 +2298,23 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
         common = doc.get("common")
         estimates = common.get("estimates") if isinstance(common, Mapping) else None
         if not isinstance(estimates, list) or not estimates:
+            if artifact_relative is None:
+                artifact_relative = rel
+            artifact_note = (
+                f"<p class='note'><a href='/artifacts?path={quote(artifact_relative)}'>open "
+                "the full validated artifact &rarr;</a></p>"
+                if artifact_relative
+                else "<p class='note'>This report is retained outside the configured "
+                "artifact root, so no artifact-browser link is offered.</p>"
+            )
             return (
                 "<div class='card'><h2>"
                 + _icon("chart")
                 + f"{html.escape(rel)}</h2><p class='note'>Validated Level-2 "
                 "report with no common estimate rows (native-only or empty)."
-                "</p></div>"
+                "</p>"
+                + artifact_note
+                + "</div>"
             )
         contains_approximate = any(
             isinstance(row, Mapping)

@@ -183,7 +183,9 @@ if [[ "$MODE" == 'plan' ]]; then
   test "$(sha256sum -- "$GATE5_MANIFEST" | awk '{print $1}')" = "$GATE5_AUTHORIZED_SHA"
 
   "$PY" - "$EXPECTED_COMMIT" "$OUT" "$LOCK_ID" "$GATE5_MANIFEST" \
-    "$GATE5_RUNNOTE" "$GATE5_PROMOTION" "$GATE5_AUTHORIZED_SHA" <<'PY'
+    "$GATE5_RUNNOTE" "$GATE5_PROMOTION" "$GATE5_AUTHORIZED_SHA" \
+    "$EXPECTED_PROJECT_REVISION_MANIFEST" \
+    "$EXPECTED_PROJECT_REVISION_SHA256" <<'PY'
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -201,7 +203,7 @@ from experiments.framework_runtime_installer import load_lock
 from experiments.local_campaign.ollama_static_terminal import (
     DISPOSITION as OLLAMA_STATIC_TERMINAL_DISPOSITION,
     OLLAMA_STATIC_TERMINAL_LANES,
-    inventory_counts as ollama_static_inventory_counts,
+    historical_inventory_counts as ollama_static_inventory_counts,
     validate_gate5_terminal_rows as validate_ollama_static_gate5_rows,
 )
 from ura.eligibility import validate_eligibility_plan
@@ -211,6 +213,7 @@ from ura.lane_projection import (
     validate_lane_projection_binding,
 )
 from ura.ollama_security import DEFAULT_OLLAMA_URL, OllamaProcessLock
+from ura.project_revision import load_project_revision_file, project_revision_binding
 from ura.request_envelope import request_envelope_bytes, validate_request_envelope
 from ura.strict_json import strict_json_loads
 
@@ -227,6 +230,8 @@ EXPECTED_REVISIONS = {
     "agentdojo": "a75aba7631d3ca5fb7ab938965c97ead2f9ff84b",
 }
 EXPECTED_PROJECT_COMMIT = "@@EXPECTED_COMMIT@@"
+EXPECTED_PROJECT_REVISION_MANIFEST = "@@PROJECT_RECEIPT_PATH@@"
+EXPECTED_PROJECT_REVISION_SHA256 = "@@PROJECT_RECEIPT_SHA256@@"
 EXPECTED_MODELS = {
     "primary": {
         "tag": "mollysama/rwkv-7-g1f:2.9b",
@@ -1135,10 +1140,38 @@ def envelope_from_bytes(
 
 (
     expected_commit, out_value, lock_id, gate5_value, runnote_value,
-    promotion_value, gate5_authorized_sha,
-) = sys.argv[1:8]
+    promotion_value, gate5_authorized_sha, project_revision_value,
+    project_revision_sha256,
+) = sys.argv[1:10]
 if expected_commit != EXPECTED_PROJECT_COMMIT:
     raise SystemExit("native canary plan must bind the exact lifecycle commit")
+project_revision_path = Path(project_revision_value)
+if (
+    project_revision_value != EXPECTED_PROJECT_REVISION_MANIFEST
+    or project_revision_sha256 != EXPECTED_PROJECT_REVISION_SHA256
+):
+    raise SystemExit("native canary plan project-revision locator changed")
+project_receipt, project_binding = load_project_revision_file(
+    project_revision_path,
+    project_revision_sha256,
+    Path.cwd() / "experiments" / "run_matrix.py",
+    recheck_checkout=True,
+)
+project_repository = project_receipt.get("repository")
+if (
+    not isinstance(project_repository, dict)
+    or project_repository.get("expected_commit") != expected_commit
+    or project_repository.get("observed_commit") != expected_commit
+    or project_repository.get("clean") is not True
+):
+    raise SystemExit("native canary plan project-revision receipt changed")
+project_revision = descriptor(project_revision_path)
+if project_revision != {
+    "path": str(project_revision_path.resolve(strict=True)),
+    "sha256": project_binding["sha256"],
+    "bytes": project_binding["bytes"],
+}:
+    raise SystemExit("native canary plan project-revision bytes changed")
 gate5_path = Path(gate5_value)
 gate5_raw = gate5_path.read_bytes()
 if hashlib.sha256(gate5_raw).hexdigest() != gate5_authorized_sha:
@@ -1150,11 +1183,19 @@ if (
     or gate5.get("inventory_complete") is not True
 ):
     raise SystemExit("Gate 5 covered manifest is incomplete or unsupported")
-if gate5.get("code_identity") != {
-    "expected_commit": expected_commit,
-    "framework_lock_id": lock_id,
-}:
-    raise SystemExit("Gate 5 code identity differs from the native canary plan")
+gate5_code_identity = gate5.get("code_identity")
+if (
+    not isinstance(gate5_code_identity, dict)
+    or set(gate5_code_identity) != {"expected_commit", "framework_lock_id"}
+    or re.fullmatch(r"[0-9a-f]{40}", str(gate5_code_identity.get("expected_commit")))
+    is None
+    or re.fullmatch(
+        r"[0-9a-f]{64}", str(gate5_code_identity.get("framework_lock_id"))
+    )
+    is None
+):
+    raise SystemExit("Gate 5 historical code identity is invalid")
+gate5_expected_commit = gate5_code_identity["expected_commit"]
 policy = gate5.get("policy")
 if (
     not isinstance(policy, dict)
@@ -1274,6 +1315,31 @@ for key, row in inputs.items():
     checked_descriptor(row, f"Gate 5 promotion input {key}")
 if inputs["covered_manifest"] != descriptor(gate5_path):
     raise SystemExit("Gate 5 promotion binds another covered manifest")
+historical_project_path = checked_descriptor(
+    inputs["project_revision"], "Gate 5 historical project revision"
+)
+historical_receipt, historical_binding = load_project_revision_file(
+    historical_project_path,
+    inputs["project_revision"]["sha256"],
+    Path.cwd() / "experiments" / "run_matrix.py",
+    recheck_checkout=False,
+)
+historical_repository = historical_receipt.get("repository")
+historical_project = note.get("project_revision")
+if (
+    not isinstance(historical_repository, dict)
+    or historical_repository.get("expected_commit") != gate5_expected_commit
+    or historical_repository.get("observed_commit") != gate5_expected_commit
+    or historical_repository.get("clean") is not True
+    or historical_project != {
+        "artifact": inputs["project_revision"],
+        "revision_id": historical_receipt["revision_id"],
+        "binding": project_revision_binding(
+            historical_receipt, historical_binding
+        ),
+    }
+):
+    raise SystemExit("Gate 5 historical project-revision chain changed")
 basis = note.get("promotion_basis")
 if (
     not isinstance(basis, dict)
@@ -1299,9 +1365,7 @@ if (
     not isinstance(promotion_plan, dict)
     or promotion_plan.get("schema") != "ura-gate5-runnote-promotion-plan/1"
     or promotion_plan.get("status") != "candidate_only"
-    or promotion_plan.get("code_identity") != {
-        "expected_commit": expected_commit, "framework_lock_id": lock_id,
-    }
+    or promotion_plan.get("code_identity") != gate5_code_identity
     or promotion_plan.get("inputs") != inputs
     or promotion_plan.get("inventory_counts") != gate5_counts
     or promotion_plan.get("local_only") != local_only
@@ -1436,6 +1500,7 @@ plan = {
         "expected_commit": expected_commit,
         "framework_lock_id": lock_id,
         "framework_lock": descriptor(lock_path),
+        "project_revision": project_revision,
     },
     "gate5_inputs": {
         "manifest": descriptor(gate5_path),
@@ -1502,13 +1567,19 @@ if [[ "$MODE" == 'resume' ]]; then
   esac
   PAYLOAD_PATH="$(checked_regular "$CONTROL_ROOT/payload.py")"
   LAUNCH_PATH="$(checked_regular "$CONTROL_ROOT/launch.json")"
-  "$PY" - "$LAUNCH_PATH" "$CONTROL_ROOT" "$PAYLOAD_PATH" "$LOCK_ID" "$PROJECT_COMMIT" <<'PY'
+  "$PY" - "$LAUNCH_PATH" "$CONTROL_ROOT" "$PAYLOAD_PATH" "$LOCK_ID" \
+    "$PROJECT_COMMIT" "$EXPECTED_PROJECT_REVISION_MANIFEST" \
+    "$EXPECTED_PROJECT_REVISION_SHA256" <<'PY'
 import hashlib
 from pathlib import Path
 import sys
+from ura.project_revision import load_project_revision_file
 from ura.strict_json import strict_json_loads
 
-launch_path, control_value, payload_value, lock_id, expected_commit = sys.argv[1:6]
+(
+    launch_path, control_value, payload_value, lock_id, expected_commit,
+    project_revision_value, project_revision_sha256,
+) = sys.argv[1:8]
 launch = strict_json_loads(Path(launch_path).read_bytes())
 required = {
     "schema", "control_root", "plan", "payload", "authorized_plan_sha256",
@@ -1539,6 +1610,40 @@ for key, expected_path in (
         raise SystemExit(f"stored {key} bytes changed")
 if launch["authorized_plan_sha256"] != launch["plan"]["sha256"]:
     raise SystemExit("native plan authorization changed")
+plan = strict_json_loads(Path(launch["plan"]["path"]).read_bytes())
+plan_code = plan.get("code_identity")
+project_revision = (
+    plan_code.get("project_revision") if isinstance(plan_code, dict) else None
+)
+project_revision_path = Path(project_revision_value)
+if (
+    not isinstance(plan_code, dict)
+    or not isinstance(project_revision, dict)
+    or set(project_revision) != {"path", "sha256", "bytes"}
+    or project_revision.get("path") != str(project_revision_path)
+    or project_revision.get("sha256") != project_revision_sha256
+):
+    raise SystemExit("native authorized plan project-revision binding changed")
+project_receipt, project_binding = load_project_revision_file(
+    project_revision_path,
+    project_revision_sha256,
+    Path.cwd() / "experiments" / "run_matrix.py",
+    recheck_checkout=True,
+)
+if project_revision != {
+    "path": str(project_revision_path.resolve(strict=True)),
+    "sha256": project_binding["sha256"],
+    "bytes": project_binding["bytes"],
+}:
+    raise SystemExit("native launch project-revision bytes changed")
+repository = project_receipt.get("repository")
+if (
+    not isinstance(repository, dict)
+    or repository.get("expected_commit") != expected_commit
+    or repository.get("observed_commit") != expected_commit
+    or repository.get("clean") is not True
+):
+    raise SystemExit("native launch project-revision commit changed")
 gate5 = launch["gate5_inputs"]
 if not isinstance(gate5, dict) or set(gate5) != {"manifest", "canonical_runnote", "promotion_receipt"}:
     raise SystemExit("Gate 5 launch input inventory changed")
@@ -1565,10 +1670,13 @@ else
   [[ -z "$GATE5_AUTHORIZED_SHA" ]] || usage
   PLAN="$(checked_regular "$PLAN")"
   test "$(sha256sum -- "$PLAN" | awk '{print $1}')" = "$AUTHORIZED_SHA"
-  EXPECTED_COMMIT="$($PY - "$PLAN" "$LOCK_ID" <<'PY'
+  EXPECTED_COMMIT="$($PY - "$PLAN" "$LOCK_ID" \
+    "$EXPECTED_PROJECT_REVISION_MANIFEST" \
+    "$EXPECTED_PROJECT_REVISION_SHA256" <<'PY'
 import hashlib
 from pathlib import Path
 import sys
+from ura.project_revision import load_project_revision_file
 from ura.strict_json import strict_json_loads
 
 plan = strict_json_loads(Path(sys.argv[1]).read_bytes())
@@ -1577,11 +1685,47 @@ if not isinstance(plan, dict) or plan.get("schema") != "ura-phase6-native-canary
 if plan.get("conditional_na_lanes") not in ([], ["defense-local"]):
     raise SystemExit("native canary plan has an invalid conditional Gate 5 profile")
 code = plan.get("code_identity")
-if not isinstance(code, dict) or code.get("framework_lock_id") != sys.argv[2]:
+if (
+    not isinstance(code, dict)
+    or set(code) != {
+        "expected_commit", "framework_lock_id", "framework_lock",
+        "project_revision",
+    }
+    or code.get("framework_lock_id") != sys.argv[2]
+):
     raise SystemExit("native canary plan lock identity changed")
 commit = code.get("expected_commit")
 if not isinstance(commit, str) or len(commit) != 40 or any(c not in "0123456789abcdef" for c in commit):
     raise SystemExit("invalid native canary plan commit")
+project_revision = code.get("project_revision")
+project_revision_path = Path(sys.argv[3])
+if (
+    not isinstance(project_revision, dict)
+    or set(project_revision) != {"path", "sha256", "bytes"}
+    or project_revision.get("path") != str(project_revision_path)
+    or project_revision.get("sha256") != sys.argv[4]
+):
+    raise SystemExit("native canary plan project-revision descriptor changed")
+project_receipt, project_binding = load_project_revision_file(
+    project_revision_path,
+    sys.argv[4],
+    Path.cwd() / "experiments" / "run_matrix.py",
+    recheck_checkout=True,
+)
+if project_revision != {
+    "path": str(project_revision_path.resolve(strict=True)),
+    "sha256": project_binding["sha256"],
+    "bytes": project_binding["bytes"],
+}:
+    raise SystemExit("native canary plan project-revision bytes changed")
+repository = project_receipt.get("repository")
+if (
+    not isinstance(repository, dict)
+    or repository.get("expected_commit") != commit
+    or repository.get("observed_commit") != commit
+    or repository.get("clean") is not True
+):
+    raise SystemExit("native canary plan project-revision commit changed")
 gate5 = plan.get("gate5_inputs")
 if not isinstance(gate5, dict) or set(gate5) != {"manifest", "canonical_runnote", "promotion_receipt"}:
     raise SystemExit("native canary plan lacks the exact Gate 5 input inventory")
@@ -1700,7 +1844,7 @@ sys.path.insert(0, str(PROJECT))
 from experiments.local_campaign.ollama_static_terminal import (  # noqa: E402
     DISPOSITION as OLLAMA_STATIC_TERMINAL_DISPOSITION,
     OLLAMA_STATIC_TERMINAL_LANES,
-    inventory_counts as ollama_static_inventory_counts,
+    historical_inventory_counts as ollama_static_inventory_counts,
     validate_gate5_terminal_rows as validate_ollama_static_gate5_rows,
 )
 from experiments.native_import import canonical_native_engine_ids  # noqa: E402
@@ -1714,6 +1858,10 @@ from ura.ollama_security import (  # noqa: E402
     DEFAULT_OLLAMA_URL,
     OllamaProcessLock,
 )
+from ura.project_revision import (  # noqa: E402
+    load_project_revision_file,
+    project_revision_binding,
+)
 from ura.request_envelope import (  # noqa: E402
     request_envelope_bytes,
     validate_request_envelope,
@@ -1723,6 +1871,8 @@ from ura.strict_json import strict_json_loads  # noqa: E402
 
 LOCK_ID = "@@FRAMEWORK_LOCK_SHA256@@"
 EXPECTED_COMMIT = "@@EXPECTED_COMMIT@@"
+EXPECTED_PROJECT_REVISION_MANIFEST = "@@PROJECT_RECEIPT_PATH@@"
+EXPECTED_PROJECT_REVISION_SHA256 = "@@PROJECT_RECEIPT_SHA256@@"
 ORDER = [
     "fuzzyai", "garak", "promptfoo", "petri", "easyjailbreak",
     "autodan_turbo", "giskard", "asb", "agentdojo",
@@ -2078,6 +2228,40 @@ def strict_object(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"JSON root is not an object: {path}")
     return value
+
+
+def validate_current_project_revision(
+    row: object, *, expected_commit: str, label: str,
+) -> Path:
+    path = validate_descriptor_row(row, label)
+    expected_path = Path(EXPECTED_PROJECT_REVISION_MANIFEST).resolve(strict=True)
+    if (
+        path != expected_path
+        or not isinstance(row, dict)
+        or row.get("sha256") != EXPECTED_PROJECT_REVISION_SHA256
+    ):
+        raise ValueError(f"{label} locator or digest changed")
+    receipt, binding = load_project_revision_file(
+        path,
+        EXPECTED_PROJECT_REVISION_SHA256,
+        PROJECT / "experiments" / "run_matrix.py",
+        recheck_checkout=True,
+    )
+    if row != {
+        "path": str(path),
+        "sha256": binding["sha256"],
+        "bytes": binding["bytes"],
+    }:
+        raise ValueError(f"{label} content identity changed")
+    repository = receipt.get("repository")
+    if (
+        not isinstance(repository, dict)
+        or repository.get("expected_commit") != expected_commit
+        or repository.get("observed_commit") != expected_commit
+        or repository.get("clean") is not True
+    ):
+        raise ValueError(f"{label} commit binding changed")
+    return path
 
 
 def safe_engine(value: str) -> str:
@@ -2790,6 +2974,7 @@ def validate_gate5_contract(
 ) -> dict[str, Any]:
     manifest_raw = manifest_path.read_bytes()
     manifest = strict_object(manifest_path)
+    historical_code_identity = manifest.get("code_identity")
     if (
         set(manifest) != {
             "schema", "inventory_scope", "inventory_complete", "code_identity",
@@ -2798,11 +2983,22 @@ def validate_gate5_contract(
         or manifest.get("schema") != "ura-gate5-covered-manifest/1"
         or manifest.get("inventory_scope") != "all_local_phase5_runner_gate5_plus_typed_portfolio_boundaries"
         or manifest.get("inventory_complete") is not True
-        or manifest.get("code_identity") != {
-            "expected_commit": EXPECTED_COMMIT, "framework_lock_id": LOCK_ID,
-        }
+        or not isinstance(historical_code_identity, dict)
+        or set(historical_code_identity)
+        != {"expected_commit", "framework_lock_id"}
+        or re.fullmatch(
+            r"[0-9a-f]{40}",
+            str(historical_code_identity.get("expected_commit")),
+        )
+        is None
+        or re.fullmatch(
+            r"[0-9a-f]{64}",
+            str(historical_code_identity.get("framework_lock_id")),
+        )
+        is None
     ):
         raise ValueError("sealed Gate 5 manifest identity changed")
+    historical_commit = historical_code_identity["expected_commit"]
     manifest_rows = validate_gate5_inventory(manifest.get("lanes"), "covered manifest")
     expected_counts = gate5_inventory_counts(manifest_rows)
     policy = validate_gate5_policy(manifest.get("policy"))
@@ -2874,14 +3070,36 @@ def validate_gate5_contract(
         validate_descriptor_row(row, f"Gate 5 promotion input {key}")
     if validate_descriptor_row(inputs["covered_manifest"], "promoted covered manifest").read_bytes() != manifest_raw:
         raise ValueError("Gate 5 promotion binds another covered manifest")
+    historical_project_path = validate_descriptor_row(
+        inputs["project_revision"], "Gate 5 historical project revision"
+    )
+    historical_receipt, historical_binding = load_project_revision_file(
+        historical_project_path,
+        inputs["project_revision"]["sha256"],
+        PROJECT / "experiments" / "run_matrix.py",
+        recheck_checkout=False,
+    )
+    historical_repository = historical_receipt.get("repository")
+    if (
+        not isinstance(historical_repository, dict)
+        or historical_repository.get("expected_commit") != historical_commit
+        or historical_repository.get("observed_commit") != historical_commit
+        or historical_repository.get("clean") is not True
+        or note.get("project_revision") != {
+            "artifact": inputs["project_revision"],
+            "revision_id": historical_receipt["revision_id"],
+            "binding": project_revision_binding(
+                historical_receipt, historical_binding
+            ),
+        }
+    ):
+        raise ValueError("Gate 5 historical project-revision chain changed")
     validate_promotion_basis(note.get("promotion_basis"), inputs)
     promotion_plan = strict_object(plan_path)
     if (
         promotion_plan.get("schema") != "ura-gate5-runnote-promotion-plan/1"
         or promotion_plan.get("status") != "candidate_only"
-        or promotion_plan.get("code_identity") != {
-            "expected_commit": EXPECTED_COMMIT, "framework_lock_id": LOCK_ID,
-        }
+        or promotion_plan.get("code_identity") != historical_code_identity
         or promotion_plan.get("inputs") != inputs
         or promotion_plan.get("inventory_counts") != expected_counts
         or promotion_plan.get("local_only") != EXPECTED_GATE5_LOCAL_ONLY
@@ -2914,90 +3132,18 @@ def gate5_contract_self_test(contract: Mapping[str, Any]) -> dict[str, Any]:
     wrong_family = copy.deepcopy(rows)
     next(row for row in wrong_family if row["lane_id"] == "local-qwen3-vl-text-primary-100")["family"] = "bridge"
     must_fail("runnable-family", lambda: validate_gate5_inventory(wrong_family, "mutated manifest"))
-    wrong_native = copy.deepcopy(rows)
-    next(row for row in wrong_native if row["lane_id"] == "structural-native-giskard")["reason_code"] = "forged"
-    must_fail("native-terminal", lambda: validate_gate5_inventory(wrong_native, "mutated manifest"))
-    wrong_rr = copy.deepcopy(rows)
+    wrong_rr_disposition = copy.deepcopy(rows)
     next(
-        row for row in wrong_rr
-        if row["lane_id"] == RR_TERMINAL_LANES[0]
-    )["reason_code"] = "generic_unavailable"
-    must_fail("rr-terminal", lambda: validate_gate5_inventory(wrong_rr, "mutated manifest"))
-    divergent_rr = copy.deepcopy(rows)
-    next(
-        row for row in divergent_rr
-        if row["lane_id"] == RR_TERMINAL_LANES[-1]
-    )["canary"]["target_runtime_terminal_artifact"]["sha256"] = "0" * 64
-    must_fail(
-        "rr-shared-artifact",
-        lambda: validate_gate5_inventory(divergent_rr, "mutated manifest"),
-    )
-    runnable_rr = copy.deepcopy(rows)
-    next(
-        row for row in runnable_rr
+        row for row in wrong_rr_disposition
         if row["lane_id"] == RR_TERMINAL_LANES[0]
     )["disposition"] = "runnable"
     must_fail(
-        "rr-runnable",
-        lambda: validate_gate5_inventory(runnable_rr, "mutated manifest"),
+        "rr-current-runnable",
+        lambda: validate_gate5_inventory(wrong_rr_disposition, "mutated manifest"),
     )
-    rr_envelope_binding = copy.deepcopy(rows)
-    rr_binding_rows = [
-        row for row in rr_envelope_binding
-        if row["lane_id"] in RR_TERMINAL_LANE_SET
-    ]
-    target_projection = rr_binding_rows[0]["projection"]["value"]
-    other_projection = rr_binding_rows[1]["projection"]["value"]
-    target_projection["request_envelope_id"] = other_projection[
-        "request_envelope_id"
-    ]
-    target_projection["request_envelope_artifact"] = copy.deepcopy(
-        other_projection["request_envelope_artifact"]
-    )
-    must_fail(
-        "rr-envelope-eligibility-binding",
-        lambda: validate_gate5_inventory(
-            rr_envelope_binding, "mutated manifest"
-        ),
-    )
-    observed_rr = next(
-        row for row in rows if row["lane_id"] == RR_TERMINAL_LANES[0]
-    )["projection"]["value"]
-    observed_projection_descriptor = observed_rr["projection_artifact"]
-    observed_projection_path, observed_projection_payload = (
-        validate_descriptor_row_bytes(
-            {
-                key: observed_projection_descriptor[key]
-                for key in ("path", "sha256", "bytes")
-            },
-            "self-test RR projection",
-        )
-    )
-    must_fail(
-        "rr-projection-byte-mutation",
-        lambda: projection_from_bytes(
-            observed_projection_path,
-            observed_projection_payload + b" ",
-            observed_projection_descriptor["sha256"],
-            "mutated RR projection",
-        ),
-    )
-    observed_envelope_descriptor = observed_rr["request_envelope_artifact"]
-    observed_envelope_path, observed_envelope_payload = validate_descriptor_row_bytes(
-        {
-            key: observed_envelope_descriptor[key]
-            for key in ("path", "sha256", "bytes")
-        },
-        "self-test RR request envelope",
-    )
-    must_fail(
-        "rr-envelope-byte-mutation",
-        lambda: envelope_from_bytes(
-            observed_envelope_path,
-            observed_envelope_payload + b" ",
-            "mutated RR request envelope",
-        ),
-    )
+    wrong_native = copy.deepcopy(rows)
+    next(row for row in wrong_native if row["lane_id"] == "structural-native-giskard")["reason_code"] = "forged"
+    must_fail("native-terminal", lambda: validate_gate5_inventory(wrong_native, "mutated manifest"))
     alternate_rows = copy.deepcopy(rows)
     defense = next(row for row in alternate_rows if row["lane_id"] == "defense-local")
     if is_defense_na_row(defense):
@@ -3025,7 +3171,16 @@ def gate5_contract_self_test(contract: Mapping[str, Any]) -> dict[str, Any]:
         }
     alternate_by_id = validate_gate5_inventory(alternate_rows, "alternate valid manifest")
     alternate_counts = gate5_inventory_counts(alternate_by_id)
-    if alternate_counts not in (SUCCESS_GATE5_COUNTS, DEFENSE_NA_GATE5_COUNTS):
+    alternate_static_terminals = [
+        lane
+        for lane in OLLAMA_STATIC_TERMINAL_LANES
+        if alternate_by_id[lane].get("disposition")
+        == OLLAMA_STATIC_TERMINAL_DISPOSITION
+    ]
+    if alternate_counts not in (
+        complete_gate5_counts(alternate_static_terminals, []),
+        complete_gate5_counts(alternate_static_terminals, ["defense-local"]),
+    ):
         raise AssertionError("alternate Gate 5 defense profile did not validate")
     v2_rows = copy.deepcopy(rows)
     v2_defense = next(row for row in v2_rows if row["lane_id"] == "defense-local")
@@ -3189,7 +3344,10 @@ def validate_plan(plan_path: Path, launch_path: Path, control: Path) -> dict[str
     code = plan["code_identity"]
     if (
         not isinstance(code, dict)
-        or set(code) != {"expected_commit", "framework_lock_id", "framework_lock"}
+        or set(code) != {
+            "expected_commit", "framework_lock_id", "framework_lock",
+            "project_revision",
+        }
         or code.get("expected_commit") != launch["expected_commit"]
         or code.get("framework_lock_id") != LOCK_ID
     ):
@@ -3197,6 +3355,11 @@ def validate_plan(plan_path: Path, launch_path: Path, control: Path) -> dict[str
     framework_lock_path = validate_descriptor_row(code["framework_lock"], "framework runtime lock")
     if framework_lock_path != PROJECT / "experiments" / "framework_runtime_lock.json":
         raise ValueError("native plan framework lock path changed")
+    validate_current_project_revision(
+        code["project_revision"],
+        expected_commit=launch["expected_commit"],
+        label="native plan project revision",
+    )
     gate5_plan = plan["gate5_inputs"]
     gate5_launch = launch["gate5_inputs"]
     expected_gate5_keys = {"manifest", "canonical_runnote", "promotion_receipt"}
@@ -4949,6 +5112,11 @@ def validate_controller_completion(
         ))
     ):
         raise ValueError("native controller completion contract changed")
+    validate_current_project_revision(
+        plan["code_identity"]["project_revision"],
+        expected_commit=value["expected_commit"],
+        label="native completion project revision",
+    )
     states = value.get("terminal_states")
     if not isinstance(states, dict) or set(states) != set(ORDER):
         raise ValueError("native completion terminal-state inventory changed")
@@ -5140,6 +5308,11 @@ def controller_main(control: Path, attempt_tag: str) -> int:
             "canonical_runnote": launch["gate5_inputs"]["canonical_runnote"],
             "promotion_receipt": launch["gate5_inputs"]["promotion_receipt"],
         }
+        validate_current_project_revision(
+            plan["code_identity"]["project_revision"],
+            expected_commit=launch["expected_commit"],
+            label="native summary project revision",
+        )
         summary = {
             "schema": "ura-phase6-native-controller-summary/1",
             "status": "complete" if not failures else "complete_with_failures",
@@ -5239,7 +5412,9 @@ PHASE6_NATIVE_PAYLOAD
 
   "$PY" - "$CONTROL_ROOT/launch.json" "$CONTROL_ROOT" "$PLAN" "$PAYLOAD_PATH" \
     "$AUTHORIZED_SHA" "$EXPECTED_COMMIT" "$LOCK_ID" "$GATE5_MANIFEST" \
-    "$GATE5_RUNNOTE" "$GATE5_PROMOTION" <<'PY'
+    "$GATE5_RUNNOTE" "$GATE5_PROMOTION" \
+    "$EXPECTED_PROJECT_REVISION_MANIFEST" \
+    "$EXPECTED_PROJECT_REVISION_SHA256" <<'PY'
 import hashlib
 import json
 import os
@@ -5248,8 +5423,9 @@ import sys
 
 (
     out, control_value, plan_value, payload_value, authorized, commit, lock_id,
-    gate5_value, runnote_value, promotion_value,
-) = sys.argv[1:11]
+    gate5_value, runnote_value, promotion_value, project_revision_value,
+    project_revision_sha256,
+) = sys.argv[1:13]
 
 def desc(value):
     path = Path(value)
@@ -5259,6 +5435,15 @@ def desc(value):
 plan = desc(plan_value)
 if plan["sha256"] != authorized:
     raise SystemExit("native plan authorization no longer matches")
+plan_content = json.loads(Path(plan_value).read_bytes())
+project_revision = desc(project_revision_value)
+if (
+    project_revision.get("sha256") != project_revision_sha256
+    or not isinstance(plan_content, dict)
+    or plan_content.get("code_identity", {}).get("project_revision")
+    != project_revision
+):
+    raise SystemExit("native launch project-revision authorization changed")
 value = {
     "schema": "ura-phase6-native-controller-launch/1", "control_root": control_value,
     "plan": plan, "payload": desc(payload_value), "authorized_plan_sha256": authorized,

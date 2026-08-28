@@ -14,7 +14,9 @@ from .generate import (
     EXTERNAL_BINDINGS,
     LEGACY_A05_EXTERNAL_BINDINGS,
     PHASE3_BINDINGS_ADDED_AFTER_A05,
+    PRE_RECOVERY_EXTERNAL_BINDINGS,
     PRE_RR_EXTERNAL_BINDINGS,
+    RECOVERY_BINDINGS_ADDED_AFTER_73C5331,
     RR_EVIDENCE_BINDINGS_ADDED_AFTER_5719,
     ControllerGenerationError,
     validate_binding_document,
@@ -30,9 +32,16 @@ MIGRATION_REVISION_BINDINGS = frozenset({
 })
 LEGACY_A05_REQUIRED_REPLACEMENTS = PHASE3_BINDINGS_ADDED_AFTER_A05 | {
     "CONTROLLER_INSTALL_ROOT"
-} | RR_EVIDENCE_BINDINGS_ADDED_AFTER_5719 | MIGRATION_REVISION_BINDINGS
+} | RR_EVIDENCE_BINDINGS_ADDED_AFTER_5719 | (
+    RECOVERY_BINDINGS_ADDED_AFTER_73C5331
+) | MIGRATION_REVISION_BINDINGS
+PRE_RECOVERY_REQUIRED_REPLACEMENTS = (
+    RECOVERY_BINDINGS_ADDED_AFTER_73C5331 | MIGRATION_REVISION_BINDINGS
+)
 PRE_RR_REQUIRED_REPLACEMENTS = (
-    RR_EVIDENCE_BINDINGS_ADDED_AFTER_5719 | MIGRATION_REVISION_BINDINGS
+    RR_EVIDENCE_BINDINGS_ADDED_AFTER_5719
+    | RECOVERY_BINDINGS_ADDED_AFTER_73C5331
+    | MIGRATION_REVISION_BINDINGS
 )
 
 
@@ -79,6 +88,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             values = validate_binding_document(raw)
             required_migration_replacements: frozenset[str] = frozenset()
             migration_label = ""
+        elif base_keys == PRE_RECOVERY_EXTERNAL_BINDINGS:
+            values = validate_binding_document(
+                raw,
+                expected_keys=PRE_RECOVERY_EXTERNAL_BINDINGS,
+            )
+            required_migration_replacements = PRE_RECOVERY_REQUIRED_REPLACEMENTS
+            migration_label = "pre-recovery-controller migration"
         elif base_keys == PRE_RR_EXTERNAL_BINDINGS:
             values = validate_binding_document(
                 raw,
@@ -100,7 +116,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             missing_current = sorted(EXTERNAL_BINDINGS - base_keys)
             raise ControllerGenerationError(
                 "base binding key inventory is neither current nor the exact "
-                "pre-RR or legacy a05 inventory: "
+                "pre-recovery, pre-RR, or legacy a05 inventory: "
                 f"missing_current={missing_current}, unknown={unknown}"
             )
     except (OSError, UnicodeError, json.JSONDecodeError, ControllerGenerationError) as exc:

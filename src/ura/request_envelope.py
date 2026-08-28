@@ -15,6 +15,7 @@ from typing import Any, Mapping
 
 from .eligibility import canonical_json_sha256
 from .project_revision import validate_project_revision_binding
+from .sampling import effective_sampling_policy
 
 
 REQUEST_ENVELOPE_SCHEMA = "ura-request-envelope/2"
@@ -41,6 +42,13 @@ _REQUEST_FIELDS = frozenset({
     "approximate_common_metrics",
     "hosted_judge_data_transfer_acknowledged",
 })
+_REQUEST_FIELDS_WITH_SAMPLING_POLICY = frozenset({
+    *_REQUEST_FIELDS,
+    "sampling_policy",
+})
+# Omitted CLI policy must keep already-retained /2 envelopes byte-compatible.
+# The validator therefore admits exactly the deployed inventory or this one
+# explicit, content-addressed extension - never an arbitrary optional object.
 _BINDING_FIELDS = frozenset({
     "project_revision", "harness_source", "driver_source",
 })
@@ -200,7 +208,14 @@ def build_request_envelope(
     # already-retained v1 artifacts are validated unchanged below.
     request_value.setdefault("approximate_common_metrics", False)
     request_value.setdefault("hosted_judge_data_transfer_acknowledged", False)
-    _strict_object(request_value, _REQUEST_FIELDS, "request-envelope request")
+    request_fields = (
+        _REQUEST_FIELDS_WITH_SAMPLING_POLICY
+        if "sampling_policy" in request_value
+        else _REQUEST_FIELDS
+    )
+    _strict_object(request_value, request_fields, "request-envelope request")
+    if "sampling_policy" in request_value:
+        effective_sampling_policy(request_value["sampling_policy"])
     targets = _unique_strings(
         request_value["requested_target_keys"], "requested target keys"
     )
@@ -260,14 +275,19 @@ def validate_request_envelope(value: object) -> dict[str, Any]:
     ):
         raise ValueError("request envelope ID/content mismatch")
 
-    request_fields = (
-        _REQUEST_FIELDS
-        if schema == REQUEST_ENVELOPE_SCHEMA
-        else _REQUEST_FIELDS_V1
-    )
+    request_value = envelope["request"]
+    request_fields = _REQUEST_FIELDS_V1
+    if schema == REQUEST_ENVELOPE_SCHEMA:
+        request_fields = (
+            _REQUEST_FIELDS_WITH_SAMPLING_POLICY
+            if isinstance(request_value, dict) and "sampling_policy" in request_value
+            else _REQUEST_FIELDS
+        )
     request = _strict_object(
-        envelope["request"], request_fields, "request-envelope request"
+        request_value, request_fields, "request-envelope request"
     )
+    if "sampling_policy" in request:
+        effective_sampling_policy(request["sampling_policy"])
     targets = _unique_strings(request["requested_target_keys"], "requested target keys")
     arms = _unique_strings(request["logical_source_arms"], "logical source arms")
     attackers = _unique_strings(request["selected_attackers"], "selected attackers")

@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+core_terminal_allows_seven() {
+  : "${1-}"
+  return 0
+}
+
+contract_self_test() {
+  local observed
+  for observed in 0 1 125 missing; do
+    core_terminal_allows_seven "$observed" || {
+      printf 'core terminal %s incorrectly blocks the seven-row controller\n' \
+        "$observed" >&2
+      return 1
+    }
+  done
+  printf '%s\n' \
+    '{"active_core_dependency":"exact_sequence_terminal_only","core_exit_gates_seven":false,"model_calls":0,"schema":"ura-phase6-recovery-seven-sequence-contract/1","status":"passed"}'
+}
+
+if [[ ${1:-} == '--contract-self-test' ]]; then
+  test "$#" -eq 1
+  contract_self_test
+  exit 0
+fi
+
+pin_controller_generation() {
+  local script_fd="/proc/$$/fd/255" script_path root generations marker archive_sha
+  test -e "$script_fd" || {
+    printf 'controller script descriptor is unavailable\n' >&2
+    return 1
+  }
+  script_path="$(readlink -f -- "$script_fd")"
+  test -f "$script_path" && test ! -L "$script_path"
+  root="${script_path%/*}"
+  generations="${root%/*}"
+  test "${generations##*/}" = '.ura-controller-generations'
+  test -d "$root" && test ! -L "$root"
+  marker="$root/.ura-controller-generation.tsv"
+  test -f "$marker" && test ! -L "$marker"
+  test "$(grep -Fxc -- $'schema\tura-controller-generation/1' "$marker")" = 1
+  test "$(grep -Fxc -- $'expected_commit\t@@EXPECTED_COMMIT@@' "$marker")" = 1
+  archive_sha="${root##*-}"
+  [[ "$archive_sha" =~ ^[0-9a-f]{64}$ ]]
+  test "${root##*/}" = "@@COMMIT_SHORT@@-$archive_sha"
+  test "$(grep -Fxc -- $'archive_sha256\t'"$archive_sha" "$marker")" = 1
+  if [[ -n ${URA_CONTROLLER_GENERATION_ROOT-} ]]; then
+    test "$URA_CONTROLLER_GENERATION_ROOT" = "$root"
+  fi
+  URA_CONTROLLER_GENERATION_ROOT="$root"
+  export URA_CONTROLLER_GENERATION_ROOT
+}
+
+pin_controller_generation
+readonly URA_CONTROLLER_GENERATION_ROOT
+
+PROJECT='@@PROJECT_ROOT@@'
+WORK_ROOT='@@WORK_ROOT@@'
+EXPECTED_COMMIT='@@EXPECTED_COMMIT@@'
+CORE="$URA_CONTROLLER_GENERATION_ROOT/phase6_core_length_recovery.py"
+CORE_SHA256='@@SHA:phase6_core_length_recovery.py@@'
+SEVEN="$URA_CONTROLLER_GENERATION_ROOT/phase6_seven_output_policy.py"
+SEVEN_SHA256='@@SHA:phase6_seven_output_policy.py@@'
+CORE_INPUTS='@@PHASE6_RECOVERY_INPUTS_PATH@@'
+CORE_INPUTS_SHA256='@@PHASE6_RECOVERY_INPUTS_SHA256@@'
+CORE_INPUTS_BYTES='@@PHASE6_RECOVERY_INPUTS_BYTES@@'
+SEVEN_INPUTS='@@SEVEN_POLICY_INPUTS_PATH@@'
+SEVEN_INPUTS_SHA256='@@SEVEN_POLICY_INPUTS_SHA256@@'
+SEVEN_INPUTS_BYTES='@@SEVEN_POLICY_INPUTS_BYTES@@'
+SEQUENCE_CONTROL="$WORK_ROOT/runs/engineering/phase6-recovery-seven-sequence-@@COMMIT_SHORT@@-@@SEVEN_POLICY_TAG@@"
+SOCKET='ura-phase6-recovery-seven-@@COMMIT_SHORT@@-@@SEVEN_POLICY_TAG@@'
+SESSION="$SOCKET"
+
+require_regular() {
+  local path="$1" sha="$2" bytes="$3" label="$4"
+  test -f "$path" && test ! -L "$path" || {
+    printf '%s is not one regular non-symlink file: %s\n' "$label" "$path" >&2
+    return 1
+  }
+  test "$(readlink -f -- "$path")" = "$path"
+  test "$(stat -c %s -- "$path")" = "$bytes"
+  test "$(sha256sum -- "$path" | awk '{print $1}')" = "$sha"
+}
+
+require_regular "$CORE" "$CORE_SHA256" "$(stat -c %s -- "$CORE")" \
+  'core recovery controller'
+require_regular "$SEVEN" "$SEVEN_SHA256" "$(stat -c %s -- "$SEVEN")" \
+  'seven-row controller'
+require_regular "$CORE_INPUTS" "$CORE_INPUTS_SHA256" "$CORE_INPUTS_BYTES" \
+  'core recovery input manifest'
+require_regular "$SEVEN_INPUTS" "$SEVEN_INPUTS_SHA256" "$SEVEN_INPUTS_BYTES" \
+  'seven-row input manifest'
+
+# shellcheck disable=SC1091
+source "$HOME/.ura_campaign_env"
+test "${REF_URA-}" = "$EXPECTED_COMMIT"
+test "$(git -C "$PROJECT" rev-parse HEAD)" = "$EXPECTED_COMMIT"
+test -z "$(git -C "$PROJECT" status --porcelain)"
+PY="$PROJECT/.venv/bin/python"
+test -x "$PY"
+"$PY" - "$CORE" "$SEVEN" <<'PY'
+from pathlib import Path
+import sys
+
+for raw in sys.argv[1:]:
+    path = Path(raw)
+    compile(path.read_bytes(), str(path), "exec")
+PY
+
+if [[ ${1:-} == '--worker' ]]; then
+  test "$#" -eq 2
+  test "${URA_RECOVERY_SEQUENCE_WORKER-}" = 1
+  test "$2" = "$SEQUENCE_CONTROL"
+  test -d "$SEQUENCE_CONTROL" && test ! -L "$SEQUENCE_CONTROL"
+  exec >>"$SEQUENCE_CONTROL/controller.log" 2>&1
+  printf 'running-core-recovery\n' >"$SEQUENCE_CONTROL/status.txt"
+  set +e
+  "$PY" "$CORE"
+  core_rc=$?
+  set -e
+  printf '%s\n' "$core_rc" >"$SEQUENCE_CONTROL/core.exit"
+  core_terminal_allows_seven "$core_rc"
+  printf 'running-seven-row-amendment\n' >"$SEQUENCE_CONTROL/status.txt"
+  set +e
+  "$PY" "$SEVEN"
+  seven_rc=$?
+  set -e
+  printf '%s\n' "$seven_rc" >"$SEQUENCE_CONTROL/seven.exit"
+  if test "$seven_rc" = 0; then
+    printf 'complete-core-exit-%s\n' "$core_rc" >"$SEQUENCE_CONTROL/status.txt"
+    printf '0\n' >"$SEQUENCE_CONTROL/.exit"
+    exit 0
+  fi
+  printf 'complete-with-seven-row-failures-core-exit-%s\n' "$core_rc" \
+    >"$SEQUENCE_CONTROL/status.txt"
+  printf '1\n' >"$SEQUENCE_CONTROL/.exit"
+  exit 1
+fi
+
+if (( $# != 0 )); then
+  printf 'unsupported arguments\n' >&2
+  exit 2
+fi
+test ! -e "$SEQUENCE_CONTROL" && test ! -L "$SEQUENCE_CONTROL"
+set +e
+tmux -L "$SOCKET" has-session -t "$SESSION" 2>/dev/null
+tmux_rc=$?
+set -e
+test "$tmux_rc" = 1
+mkdir -m 700 "$SEQUENCE_CONTROL"
+printf '%s\n' \
+  '{"evidence_eligible":false,"reason":"campaign-only exact terminal serialization; not a product phase","schema":"ura-engineering-boundary/1"}' \
+  >"$SEQUENCE_CONTROL/ENGINEERING_ONLY.json"
+: >"$SEQUENCE_CONTROL/controller.log"
+chmod 600 "$SEQUENCE_CONTROL/controller.log"
+printf 'launching\n' >"$SEQUENCE_CONTROL/status.txt"
+printf -v worker_command \
+  'exec env URA_RECOVERY_SEQUENCE_WORKER=1 bash %q --worker %q' \
+  "$URA_CONTROLLER_GENERATION_ROOT/launch_phase6_recovery_and_seven.sh" \
+  "$SEQUENCE_CONTROL"
+tmux -L "$SOCKET" new-session -d -s "$SESSION" "$worker_command"
+printf 'TMUX_SOCKET=%s\nTMUX_SESSION=%s\nCONTROL_ROOT=%s\n' \
+  "$SOCKET" "$SESSION" "$SEQUENCE_CONTROL"

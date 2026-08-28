@@ -120,6 +120,14 @@ identity. Every execution unit has exactly `request_unit_id`,
 `requested_target_key`, `logical_source_arm`, and `attacker`; the list is the
 complete exact cross-product of those three selected axes.
 
+For byte compatibility with deployed version-2 requests, omission keeps the
+historical request inventory and seeded pseudorandom behavior. When the operator
+supplies `--sampling-policy`, the request has exactly one additional
+`sampling_policy` field whose value is
+`seeded_pseudorandom_whole_cluster_prefix_v1` or
+`source_order_whole_cluster_prefix_v1`. That field contributes to envelope
+content identity and, through the envelope digest, model-acquisition identity.
+
 In version 2, `request.hosted_judge_data_transfer_acknowledged` is a required
 Boolean. It is `true` only when the operator supplied
 `--ack-hosted-judge-data-transfer` for a live non-local LLM judge. The flag
@@ -203,8 +211,8 @@ plan/request/condition and artifact descriptor, then records per logical source
 arm:
 
 - converter and selected-corpus/datapoint/cluster digests;
-- pre-limit and selected row/cluster counts, sample seed, limit, and exact
-  source-policy cluster counts;
+- pre-limit and selected row/cluster counts, sample seed, limit, optional
+  explicit sampling policy, and exact source-policy cluster counts;
 - verified selected physical input-media references and unique bytes by
   modality, or an explicit no-physical-media state; and
 - reconciled selected-arm totals.
@@ -303,6 +311,9 @@ cluster. For an unchanged real converted-corpus digest and sample seed,
 selection is `seeded_nested_source_cluster_prefix_v1`: a `--limit 1` cluster is
 contained in a later `--limit N` sample, with all sibling rows retained. The
 fully offline form additionally requires `--dry-run --corpora synth`.
+An explicit source-order policy instead uses the first source cluster; the
+policy remains part of request and projection identity. `--limit 0` is the full
+arm for either policy.
 
 `python -m experiments.lane_canary` makes no external call. It accepts exactly
 one strictly completion-validated canary cell plus its eligibility plan and

@@ -9,7 +9,11 @@ from pathlib import Path
 
 import pytest
 
-from experiments.rig_web import RigWebApp, _LEVEL2_ROW_FIELDS
+from experiments.rig_web import (
+    RigWebApp,
+    _LEVEL2_ROW_FIELDS,
+    _validate_report_document,
+)
 from experiments.local_campaign import stats_adapter as phase7_module
 from experiments.local_campaign.stats_adapter import (
     load_local_campaign_stats_bundle,
@@ -18,11 +22,14 @@ from experiments.local_campaign.stats_adapter import (
 from experiments.rig_web_app import external_measured as external_measured_module
 from experiments.rig_web_app.campaigns import EngineeringCampaign
 from experiments.rig_web_app.external_analysis import (
+    ExternalAnalysisReportSpec,
     load_external_analysis_registration,
+    publish_external_analysis_registration,
 )
 
 
 COMMIT = "a" * 40
+PHASE6_COMMIT = "e" * 40
 LOCK = "b" * 64
 
 
@@ -52,7 +59,12 @@ def _descriptor(path: Path) -> dict[str, object]:
     }
 
 
-def _level1(path: Path) -> None:
+def _level1(
+    path: Path,
+    *,
+    revision: str = "1" * 64,
+    source: str = "a" * 64,
+) -> None:
     counts = {
         name: {"unit": name.replace("_", " "), "completed": 0}
         for name in (
@@ -71,6 +83,17 @@ def _level1(path: Path) -> None:
             "contains_diagnostic_dry_run": False,
         },
         "counts": counts,
+        "requests": [
+            {
+                "bindings": {
+                    "project_revision": {"sha256": revision},
+                    "selected_config_identities": {
+                        "source_conformance": {"bytes": 1, "sha256": source}
+                    },
+                }
+            }
+        ],
+        "request_envelopes": [],
     }
     material = json.dumps(
         body,
@@ -83,7 +106,12 @@ def _level1(path: Path) -> None:
     _write(path, body)
 
 
-def _level2(path: Path) -> None:
+def _level2(
+    path: Path,
+    *,
+    revision: str = "1" * 64,
+    empty: bool = False,
+) -> None:
     row = {field: None for field in _LEVEL2_ROW_FIELDS}
     row.update(
         {
@@ -122,7 +150,15 @@ def _level2(path: Path) -> None:
             "cross_stratum_pooling_permitted": False,
             "native_scale_pooling_permitted": False,
         },
-        "common": {"n_estimate_rows": 1, "estimates": [row]},
+        "inputs": {
+            "n_completed_cells": 0 if empty else 1,
+            "cells": [] if empty else [{"project_revision": {"sha256": revision}}],
+        },
+        "common": {
+            "n_estimate_rows": 0 if empty else 1,
+            "estimates": [] if empty else [row],
+        },
+        "native": {"n_native_runs": 1 if empty else 0},
     }
     material = json.dumps(
         body,
@@ -133,6 +169,113 @@ def _level2(path: Path) -> None:
     ).encode("utf-8")
     body["report_id"] = "level2-" + hashlib.sha256(material).hexdigest()[:24]
     _write(path, body)
+
+
+def _terminal_inventory() -> dict[str, object]:
+    cohorts = (
+        ("canonical", 46, "measured_complete", "1" * 64, "a" * 64),
+        (
+            "output_policy_amendment",
+            7,
+            "measured_complete",
+            "2" * 64,
+            "b" * 64,
+        ),
+        ("followon_prepared", 3, "measured_complete", "3" * 64, "c" * 64),
+        ("native", 9, "run", "4" * 64, "not_applicable"),
+    )
+    rows: list[dict[str, object]] = []
+    project_strata: dict[str, list[str]] = {}
+    source_strata: dict[str, list[str]] = {}
+    for cohort, count, state, revision, source in cohorts:
+        for index in range(count):
+            logical_id = f"{cohort}-{index:02d}"
+            key = f"{cohort}:{logical_id}"
+            rows.append(
+                {
+                    "key": key,
+                    "cohort": cohort,
+                    "logical_id": logical_id,
+                    "terminal_state": state,
+                    "failure": False,
+                    "project_revision_stratum": revision,
+                    "source_conformance_stratum": source,
+                    "evidence": {"fixture": True},
+                }
+            )
+            project_strata.setdefault(revision, []).append(key)
+            source_strata.setdefault(source, []).append(key)
+    return {
+        "schema": "ura-phase6-campaign-terminal-inventory/1",
+        "status": "complete",
+        "cohort_order": [row[0] for row in cohorts],
+        "cohort_counts": {row[0]: row[1] for row in cohorts},
+        "row_order": [str(row["key"]) for row in rows],
+        "rows": rows,
+        "failure_rows": [],
+        "project_revision_strata": project_strata,
+        "source_conformance_strata": source_strata,
+        "all_rows_terminal": True,
+        "cross_revision_pooling_permitted": False,
+        "cross_source_pooling_permitted": False,
+        "accounting": {
+            "hosted_target_calls": 0,
+            "hosted_judge_calls": 0,
+            "provider_http_attempts": 0,
+            "paid_provider_calls": 0,
+            "model_downloads": 0,
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "schema",
+        "terminal_state",
+        "nonzero_accounting",
+        "cross_revision_pooling",
+        "revision_label",
+        "native_source_label",
+    ),
+)
+def test_local_terminal_inventory_policy_stays_in_the_plan_adapter(
+    mutation: str,
+) -> None:
+    document = json.loads(json.dumps(_terminal_inventory()))
+    rows = document["rows"]
+    assert isinstance(rows, list)
+    if mutation == "schema":
+        document["schema"] = "example-campaign-terminal-inventory/3"
+    elif mutation == "terminal_state":
+        rows[0]["terminal_state"] = "finished"
+    elif mutation == "nonzero_accounting":
+        document["accounting"]["target_calls"] = 1
+    elif mutation == "cross_revision_pooling":
+        document["cross_revision_pooling_permitted"] = True
+    elif mutation == "revision_label":
+        rows[0]["project_revision_stratum"] = "release-a"
+        project_strata: dict[str, list[str]] = {}
+        for row in rows:
+            project_strata.setdefault(row["project_revision_stratum"], []).append(
+                row["key"]
+            )
+        document["project_revision_strata"] = project_strata
+    else:
+        native = next(row for row in rows if row["cohort"] == "native")
+        native["source_conformance_stratum"] = "source-free"
+        source_strata: dict[str, list[str]] = {}
+        for row in rows:
+            source_strata.setdefault(row["source_conformance_stratum"], []).append(
+                row["key"]
+            )
+        document["source_conformance_strata"] = source_strata
+
+    # Rig Web accepts the self-reconciling generic report. Only the plan-owned
+    # adapter knows this campaign's schema, states, identities, and zero-call cap.
+    _validate_report_document("terminal_inventory", document)
+    with pytest.raises(ValueError, match="local campaign terminal"):
+        phase7_module._validate_local_campaign_terminal_inventory(document)
 
 
 def _campaign(watcher: Path) -> EngineeringCampaign:
@@ -202,17 +345,82 @@ def _sealed_chain(
     sealed_payload = sealed / "phase7_analysis.py"
     sealed_payload.write_text("# sealed phase 7 payload\n", encoding="ascii")
 
+    input_lock = "c" * 64 if mutation == "framework_lock_input" else LOCK
+    gate5_lock = "d" * 64 if mutation == "gate5_code_identity" else input_lock
+    gate5 = _write(
+        results / "thesis" / "gate5" / "covered.json",
+        {
+            "schema": "ura-gate5-covered-manifest/1",
+            "inventory_complete": True,
+            "code_identity": {
+                "expected_commit": PHASE6_COMMIT,
+                "framework_lock_id": gate5_lock,
+            },
+        },
+    )
     phase6 = results / "engineering" / "phase6-sequence-test"
     phase6_sealed = phase6 / "sealed"
     phase6_sealed.mkdir(parents=True)
     phase6_validator = phase6_sealed / "phase7_analysis.py"
     phase6_validator.write_bytes(sealed_payload.read_bytes())
+    launch_validator = phase6_validator
+    if mutation == "phase6_launch_validator":
+        launch_validator = phase6_sealed / "phase7_analysis_other.py"
+        launch_validator.write_text("# wrong historical validator\n", encoding="ascii")
+    phase6_sequence = phase6_sealed / "phase6_sequence.sh"
+    phase6_sequence.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="ascii")
+    phase6_wrappers = {}
+    for name in ("core", "extended", "native"):
+        path = phase6_sealed / f"phase6_{name}.sh"
+        path.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="ascii")
+        phase6_wrappers[name] = _descriptor(path)
+    phase6_self_test = _write(
+        phase6 / "phase7-contract-self-test.json",
+        {"schema": "ura-phase7-contract-self-test/1", "status": "passed"},
+    )
+    phase6_claimed_commit = (
+        "f" * 40 if mutation == "phase6_gate5_identity" else PHASE6_COMMIT
+    )
+    phase6_launch = _write(
+        phase6 / "sequence-launch.json",
+        {
+            "schema": "ura-phase6-sequence-launch/1",
+            "status": "running",
+            "started_at_utc": "2026-08-22T00:00:00Z",
+            "expected_commit": phase6_claimed_commit,
+            "framework_lock_id": LOCK,
+            "control_root": str(phase6.resolve()),
+            "authorized_sequence_sha256": _descriptor(phase6_sequence)["sha256"],
+            "sequence_script": _descriptor(phase6_sequence),
+            "phase7_validator": _descriptor(launch_validator),
+            "phase7_contract_self_test": _descriptor(phase6_self_test),
+            "controller_wrappers": phase6_wrappers,
+            "gate5_wait": {
+                "control_root": str(gate5.parent.resolve()),
+                "session": "ura-gate5-sequence-historical",
+                "socket": "ura-gate5-sequence-historical",
+            },
+            "controller_order": ["core", "extended", "native"],
+            "long_running_children_use_tmux": True,
+            "local_only": True,
+        },
+    )
+    phase6_gate5 = {field: None for field in phase7_module._PHASE6_GATE5_FIELDS}
+    phase6_gate5.update(
+        {
+            "covered_manifest": _descriptor(gate5),
+            "runnable_lanes": ["core-lane", "extended-lane"],
+            "typed_terminal_lanes": [],
+            "target_runtime_terminal": {},
+            "conditional_na_lanes": [],
+        }
+    )
     phase6_doc = {field: None for field in phase7_module._PHASE6_COMPLETION_FIELDS}
     phase6_doc.update(
         {
             "schema": "ura-phase6-sequence-completion/2",
             "status": "complete",
-            "expected_commit": COMMIT,
+            "expected_commit": phase6_claimed_commit,
             "framework_lock_id": LOCK,
             "control_root": str(phase6.resolve()),
             "controller_order": ["core", "extended", "native"],
@@ -224,7 +432,12 @@ def _sealed_chain(
             },
             "failed_controller_receipts_are_evidence": False,
             "conditional_na_lanes": [],
+            "sequence_launch": _descriptor(phase6_launch),
+            "sequence_script": _descriptor(phase6_sequence),
             "phase7_validator": _descriptor(phase6_validator),
+            "phase7_contract_self_test": _descriptor(phase6_self_test),
+            "controller_wrappers": phase6_wrappers,
+            "gate5": phase6_gate5,
             "hosted_target_calls": 0,
             "hosted_judge_calls": 0,
             "provider_http_attempts": 0,
@@ -237,30 +450,58 @@ def _sealed_chain(
     phase6_exit = phase6 / ".exit"
     phase6_exit.write_bytes(b"1\n" if mutation == "phase6_exit" else b"0\n")
 
-    input_lock = "c" * 64 if mutation == "framework_lock_input" else LOCK
-    gate5_lock = "d" * 64 if mutation == "gate5_code_identity" else input_lock
-    gate5 = _write(
-        results / "thesis" / "gate5" / "covered.json",
-        {
-            "schema": "ura-gate5-covered-manifest/1",
-            "inventory_complete": True,
-            "code_identity": {
-                "expected_commit": COMMIT,
-                "framework_lock_id": gate5_lock,
-            },
-        },
+    followon_lanes = (
+        "followon-nanogcg-qwen3-vl",
+        "followon-ideator-v2-qwen3-vl",
+        "followon-t3mp3st-qwen3-vl",
     )
+    followon_states = {lane: "measured_complete" for lane in followon_lanes}
+    followon_strata = {"3" * 64: list(followon_lanes)}
+    input_followon_states = (
+        None if mutation == "followon_terminal_states_null" else followon_states
+    )
+    input_followon_strata = (
+        None if mutation == "followon_revision_strata_null" else followon_strata
+    )
+    campaign_inventory_value = _terminal_inventory()
     inputs = {
         "schema": "ura-phase7-analysis-inputs/1",
         "inventory_complete": True,
         "scope": "all_local_phase7_read_only_analysis_over_phase6_lifecycle",
         "code_identity": {"expected_commit": COMMIT, "framework_lock_id": input_lock},
-        "gate5": {"manifest": _descriptor(gate5)},
+        "gate5": {
+            "manifest": _descriptor(gate5),
+            "code_identity": {
+                "expected_commit": PHASE6_COMMIT,
+                "framework_lock_id": gate5_lock,
+            },
+        },
+        "project_and_source": {
+            "project_revision": {
+                "artifact": {"sha256": "1" * 64},
+                "experiment_binding": {
+                    "sha256": "1" * 64,
+                    "expected_commit": PHASE6_COMMIT,
+                    "observed_commit": PHASE6_COMMIT,
+                },
+            }
+        },
         "phase6": {
             "core": {"lane_terminal_states": {"core-lane": "measured_complete"}},
             "extended": {"lane_terminal_states": {"extended-lane": "measured_complete"}},
         },
         "native_outcomes": {"states": {"native-lane": "run"}},
+        "followon": {
+            "terminal_states": input_followon_states,
+            "revision_strata": input_followon_strata,
+            "source_conformance_sha256": "c" * 64,
+        },
+        "seven_output_policy_amendment": {
+            "terminal_states": {"seven-lane": "measured_complete"},
+            "revision_strata": {"2" * 64: ["seven-lane"]},
+            "source_conformance_sha256": "b" * 64,
+        },
+        "campaign_terminal_inventory": campaign_inventory_value,
         "runner": {
             "lifecycle_lane_order": ["core-lane", "extended-lane"],
             "metric_lane_order": ["core-lane", "extended-lane"],
@@ -302,6 +543,8 @@ def _sealed_chain(
         "runner_lanes": 2,
         "metric_runner_lanes": 2,
         "native_outcomes": {"native-lane": "run"},
+        "campaign_terminal_rows": 65,
+        "campaign_terminal_status": "complete",
         "authorization_required_before_launch": True,
     }
     prepare_path = _write(watcher / "prepare-result.json", prepare_result)
@@ -328,6 +571,11 @@ def _sealed_chain(
         ).encode("ascii")
     )
 
+    phase6_wait_session = (
+        "ura-phase6-sequence-substituted"
+        if mutation == "watcher_phase6_wait_identity"
+        else f"ura-phase6-sequence-{COMMIT[:7]}"
+    )
     watcher_launch = {
         "schema": (
             "ura-phase7-after-phase6-launch/0"
@@ -345,19 +593,66 @@ def _sealed_chain(
         "phase7_payload": _descriptor(sealed_payload),
         "phase6_wait": {
             "control_root": str(phase6.resolve()),
-            "session": f"ura-phase6-sequence-{COMMIT[:7]}",
-            "socket": f"ura-phase6-sequence-{COMMIT[:7]}",
+            "session": phase6_wait_session,
+            "socket": phase6_wait_session,
         },
         "target_calls_permitted": 0,
         "judge_calls_permitted": 0,
         "provider_http_attempts_permitted": 0,
     }
     watcher_launch_path = _write(watcher / "watcher-launch.json", watcher_launch)
-    runner_view = _write(analysis / "runner-view.json", {"schema": "runner-view"})
-    level1 = analysis / "level1" / "level1-evidence.json"
-    level2 = analysis / "level2" / "level2-report.json"
-    _level1(level1)
-    _level2(level2)
+    runner_view = _write(
+        control / "read-only-runner-view.json", {"schema": "runner-view"}
+    )
+    human_view = _write(
+        control / "read-only-human-audit-runner-view.json", {"schema": "human-view"}
+    )
+    human_index = _write(
+        control / "read-only-human-audit-runner-view.index.json",
+        {"schema": "human-index"},
+    )
+    campaign_rows = campaign_inventory_value["rows"]
+    assert isinstance(campaign_rows, list)
+    if mutation == "campaign_inventory_terminal_state":
+        campaign_rows[0]["terminal_state"] = "running"
+    if mutation == "campaign_inventory_revision_stratum":
+        campaign_rows[0]["project_revision_stratum"] = "short"
+    campaign_inventory = _write(
+        analysis / "campaign-terminal-inventory.json",
+        campaign_inventory_value,
+    )
+    first_stratum_id = f"{'1' * 12}-{'a' * 12}"
+    if mutation == "report_stratum_directory":
+        first_stratum_id = f"{'9' * 12}-{'a' * 12}"
+    if mutation == "report_stratum_source_directory":
+        first_stratum_id = f"{'1' * 12}-{'9' * 12}"
+    level1 = analysis / "lifecycle-strata" / first_stratum_id / "level1-evidence.json"
+    level1_second = (
+        analysis / "lifecycle-strata" / f"{'2' * 12}-{'b' * 12}" / "level1-evidence.json"
+    )
+    level1_third = (
+        analysis / "lifecycle-strata" / f"{'3' * 12}-{'c' * 12}" / "level1-evidence.json"
+    )
+    level2 = analysis / "metric-strata" / f"{'1' * 12}-{'a' * 12}" / "level2-report.json"
+    level2_second = (
+        analysis / "metric-strata" / f"{'2' * 12}-{'b' * 12}" / "level2-report.json"
+    )
+    level2_third = (
+        analysis / "metric-strata" / f"{'3' * 12}-{'c' * 12}" / "level2-report.json"
+    )
+    _level1(
+        level1,
+        revision="9" * 64 if mutation == "report_scope_revision" else "1" * 64,
+        source="9" * 64 if mutation == "report_scope_source" else "a" * 64,
+    )
+    _level1(level1_second, revision="2" * 64, source="b" * 64)
+    _level1(level1_third, revision="3" * 64, source="c" * 64)
+    _level2(
+        level2,
+        revision="9" * 64 if mutation == "level2_scope_revision" else "1" * 64,
+    )
+    _level2(level2_second, revision="2" * 64)
+    _level2(level2_third, revision="3" * 64)
     statuses = {
         "level1-evidence": "complete",
         "level2-report": "complete_with_limitations" if limited else "complete",
@@ -366,7 +661,18 @@ def _sealed_chain(
         name: status for name, status in statuses.items() if status != "complete"
     }
     completion_status = "complete_with_explicit_limitations" if explicit_limitations else "complete"
-    artifacts = [_descriptor(path) for path in (level1, level2, runner_view)]
+    artifacts = [
+        _descriptor(path)
+        for path in (
+            level1,
+            level1_second,
+            level1_third,
+            level2,
+            level2_second,
+            level2_third,
+            campaign_inventory,
+        )
+    ]
     inventory = _write(
         analysis / "artifact-inventory.json",
         {
@@ -381,6 +687,9 @@ def _sealed_chain(
             ),
             "payload_sha256": hashlib.sha256(payload.read_bytes()).hexdigest(),
             "runner_input_view": _descriptor(runner_view),
+            "campaign_terminal_inventory": _descriptor(campaign_inventory),
+            "human_audit_runner_input_view": _descriptor(human_view),
+            "human_audit_sampling_index": _descriptor(human_index),
             "target_calls": 0,
             "judge_calls": 0,
             "provider_http_attempts": 0,
@@ -410,6 +719,9 @@ def _sealed_chain(
             "analysis_root": str(analysis.resolve()),
             "artifact_inventory": _descriptor(inventory),
             "runner_input_view": _descriptor(runner_view),
+            "campaign_terminal_inventory": _descriptor(campaign_inventory),
+            "human_audit_runner_input_view": _descriptor(human_view),
+            "human_audit_sampling_index": _descriptor(human_index),
             "analysis_statuses": statuses,
             "explicit_limitations": explicit_limitations,
             "phase6_terminal_states": {
@@ -417,6 +729,14 @@ def _sealed_chain(
                 "extended": {"extended-lane": "measured_complete"},
                 "native": {"native-lane": "run"},
             },
+            "followon_terminal_states": input_followon_states,
+            "followon_metric_revision_strata": input_followon_strata,
+            "seven_output_policy_terminal_states": (
+                {"seven-lane": "failed"}
+                if mutation == "controller_seven_states"
+                else {"seven-lane": "measured_complete"}
+            ),
+            "seven_output_policy_metric_revision_strata": {"2" * 64: ["seven-lane"]},
             "target_calls": 0,
             "judge_calls": 0,
             "provider_http_attempts": 0,
@@ -463,7 +783,10 @@ def _sealed_chain(
             "phase7_completion": _descriptor(controller_path),
             "phase7_exit": _descriptor(exit_path),
             "artifact_inventory": _descriptor(inventory),
+            "campaign_terminal_inventory": _descriptor(campaign_inventory),
             "runner_input_view": _descriptor(runner_view),
+            "human_audit_runner_input_view": _descriptor(human_view),
+            "human_audit_sampling_index": _descriptor(human_index),
             "analysis_statuses": statuses,
             "explicit_limitations": explicit_limitations,
             "target_calls": 0,
@@ -487,8 +810,27 @@ def test_phase7_watcher_chain_binds_reports_and_rejects_mutated_output(
     results, campaign, level2 = _sealed_chain(tmp_path)
     bundle = load_local_campaign_stats_bundle(results, campaign)
     assert bundle is not None
-    assert [report.kind for report in bundle.reports] == ["level1", "level2"]
+    assert [report.kind for report in bundle.reports] == [
+        "terminal_inventory",
+        "level1", "level1", "level1",
+        "level2", "level2", "level2",
+    ]
+    assert [report.display_name for report in bundle.reports] == [
+        "campaign-terminal-inventory.json",
+        "lifecycle-strata/111111111111-aaaaaaaaaaaa/level1-evidence.json",
+        "lifecycle-strata/222222222222-bbbbbbbbbbbb/level1-evidence.json",
+        "lifecycle-strata/333333333333-cccccccccccc/level1-evidence.json",
+        "metric-strata/111111111111-aaaaaaaaaaaa/level2-report.json",
+        "metric-strata/222222222222-bbbbbbbbbbbb/level2-report.json",
+        "metric-strata/333333333333-cccccccccccc/level2-report.json",
+    ]
     assert bundle.expected_commit == COMMIT
+    phase6_completion = json.loads(
+        (results / "engineering" / "phase6-sequence-test" / "completion.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert phase6_completion["expected_commit"] == PHASE6_COMMIT != bundle.expected_commit
     assert bundle.framework_lock_id == LOCK
     assert (
         bundle.gate5_sha256
@@ -508,6 +850,7 @@ def test_phase7_watcher_chain_binds_reports_and_rejects_mutated_output(
         "framework_lock_input",
         "gate5_code_identity",
         "controller_input_digest",
+        "controller_seven_states",
         "inventory_input_digest",
         "watcher_controller_status",
         "inventory_descriptor_mismatch",
@@ -516,15 +859,27 @@ def test_phase7_watcher_chain_binds_reports_and_rejects_mutated_output(
         "wrapper_descriptor_path",
         "payload_descriptor_path",
         "phase6_completion_schema",
+        "phase6_gate5_identity",
+        "phase6_launch_validator",
         "phase6_exit",
         "prepare_result_output",
         "phase7_launch_output_session",
+        "watcher_phase6_wait_identity",
         "control_launch_authorization",
         "controller_boundary_human_labels_consumed",
         "controller_boundary_human_validity_claimed",
         "controller_boundary_universal_safety_score_defined",
         "controller_boundary_native_scales_pooled",
         "controller_boundary_evaluator_modes_pooled",
+        "followon_terminal_states_null",
+        "followon_revision_strata_null",
+        "report_stratum_directory",
+        "report_stratum_source_directory",
+        "report_scope_revision",
+        "report_scope_source",
+        "level2_scope_revision",
+        "campaign_inventory_terminal_state",
+        "campaign_inventory_revision_stratum",
     ),
 )
 def test_phase7_chain_identity_and_boundary_mutations_never_link_stats(
@@ -557,7 +912,11 @@ def test_stats_links_sealed_phase7_reports_to_watcher_campaign(
     publish_local_campaign_stats_registration(results, campaign)
     registration = load_external_analysis_registration(results, campaign.route_id)
     assert registration is not None
-    assert [report.kind for report in registration.reports] == ["level1", "level2"]
+    assert [report.kind for report in registration.reports] == [
+        "terminal_inventory",
+        "level1", "level1", "level1",
+        "level2", "level2", "level2",
+    ]
     app = RigWebApp(
         results_root=results,
         state_dir=tmp_path / "state",
@@ -583,8 +942,22 @@ def test_stats_links_sealed_phase7_reports_to_watcher_campaign(
     detail_text = detail.decode("utf-8")
     assert "Registered external analysis" in detail_text
     assert "does not grant thesis-evidence authority" in detail_text
-    assert "level1/level1-evidence.json" in detail_text
-    assert "level2/level2-report.json" in detail_text
+    assert "Campaign terminal rows" in detail_text
+    assert "65 terminal campaign rows; 0 failure rows" in detail_text
+    assert "Rows by cohort" in detail_text
+    assert "Rows by terminal state" in detail_text
+    assert "Failure accounting" in detail_text
+    assert "canonical" in detail_text and ">46<" in detail_text
+    assert "output policy amendment" in detail_text and ">7<" in detail_text
+    assert "followon prepared" in detail_text and ">3<" in detail_text
+    assert "native" in detail_text and ">9<" in detail_text
+    assert "1" * 64 in detail_text
+    assert "a" * 64 in detail_text
+    assert "0 complete cells" not in detail_text
+    assert "lifecycle-strata/111111111111-aaaaaaaaaaaa/level1-evidence.json" in detail_text
+    assert "lifecycle-strata/333333333333-cccccccccccc/level1-evidence.json" in detail_text
+    assert "metric-strata/111111111111-aaaaaaaaaaaa/level2-report.json" in detail_text
+    assert "metric-strata/333333333333-cccccccccccc/level2-report.json" in detail_text
     assert "refusal_rate" in detail_text
     assert "class='barchart'" in detail_text
     assert "Open full job record" in detail_text
@@ -687,23 +1060,111 @@ def test_render_revalidates_registered_report_bytes(
     assert "The exact report output is missing or malformed" in detail
 
 
-def test_generic_registration_rejects_duplicate_report_kind(tmp_path: Path) -> None:
+def test_valid_empty_level2_retains_artifact_link(tmp_path: Path) -> None:
+    results = tmp_path / "runs"
+    report = results / "analysis" / "native-only-level2.json"
+    _level2(report, empty=True)
+    app = RigWebApp(
+        results_root=results,
+        state_dir=tmp_path / "state",
+        repo_root=tmp_path,
+        gpu_hardware={"devices": []},
+        system_hardware={},
+    )
+    try:
+        card = app._stats_report_card(
+            {
+                "path": "analysis/native-only-level2.json",
+                "source_path": report,
+                "display_name": "native-only-level2.json",
+                "kind": "level2",
+            }
+        )
+    finally:
+        app.close()
+
+    assert "no common estimate rows (native-only or empty)" in card
+    assert "href='/artifacts?path=analysis/native-only-level2.json'" in card
+
+
+def test_generic_registration_rejects_duplicate_report_path(tmp_path: Path) -> None:
     results, campaign, _level2_path = _sealed_chain(tmp_path)
     registration_path = publish_local_campaign_stats_registration(results, campaign)
     registration = json.loads(registration_path.read_text(encoding="utf-8"))
-    level1_path = results / registration["reports"][0]["path"]
-    duplicate_path = level1_path.with_name("level1-evidence-copy.json")
-    duplicate_path.write_bytes(level1_path.read_bytes())
-    payload = duplicate_path.read_bytes()
-    registration["reports"][1] = {
-        "path": duplicate_path.relative_to(results).as_posix(),
-        "sha256": hashlib.sha256(payload).hexdigest(),
-        "bytes": len(payload),
-        "kind": "level1",
-        "display_name": "level1/level1-evidence-copy.json",
-    }
+    registration["reports"][1] = dict(registration["reports"][0])
     _write(registration_path, registration)
     assert load_external_analysis_registration(results, campaign.route_id) is None
+
+
+def test_generic_registration_rejects_invalid_terminal_inventory(tmp_path: Path) -> None:
+    results, _campaign, level2 = _sealed_chain(tmp_path)
+    analysis = level2.parents[2]
+    inventory = analysis / "campaign-terminal-inventory.json"
+    document = json.loads(inventory.read_text(encoding="utf-8"))
+    document["cohort_counts"]["canonical"] = 45
+    _write(inventory, document)
+
+    with pytest.raises(ValueError, match="cohort counts"):
+        publish_external_analysis_registration(
+            results,
+            job_id="phase7-invalid-terminal-inventory",
+            analysis_root=analysis,
+            work_label="invalid terminal inventory fixture",
+            completion_status="complete",
+            explicit_limitations={},
+            reports=(
+                ExternalAnalysisReportSpec(
+                    path=inventory,
+                    kind="terminal_inventory",
+                    display_name="campaign-terminal-inventory.json",
+                ),
+            ),
+        )
+
+
+def test_generic_registration_retains_more_than_eight_analysis_strata(
+    tmp_path: Path,
+) -> None:
+    results, _campaign, level2 = _sealed_chain(tmp_path)
+    analysis = level2.parents[2]
+    level1 = next((analysis / "lifecycle-strata").glob("*/level1-evidence.json"))
+    reports: list[ExternalAnalysisReportSpec] = []
+    for index in range(9):
+        for kind, source in (("level1", level1), ("level2", level2)):
+            destination = analysis / "registration-scale" / f"{index:02d}-{kind}.json"
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(source.read_bytes())
+            reports.append(
+                ExternalAnalysisReportSpec(
+                    path=destination,
+                    kind=kind,
+                    display_name=f"registration-scale/{destination.name}",
+                )
+            )
+    registration_path = publish_external_analysis_registration(
+        results,
+        job_id="phase7-many-strata",
+        analysis_root=analysis,
+        work_label="Phase 7 many-stratum fixture",
+        completion_status="complete",
+        explicit_limitations={},
+        reports=reports,
+    )
+    assert registration_path.is_file()
+    registration = load_external_analysis_registration(results, "phase7-many-strata")
+    assert registration is not None
+    assert len(registration.reports) == 18
+
+    with pytest.raises(ValueError, match="report count"):
+        publish_external_analysis_registration(
+            results,
+            job_id="phase7-over-report-cap",
+            analysis_root=analysis,
+            work_label="Phase 7 over-cap fixture",
+            completion_status="complete",
+            explicit_limitations={},
+            reports=[reports[0]] * 129,
+        )
 
 
 def test_generic_registration_rejects_symlinked_registry_identity(

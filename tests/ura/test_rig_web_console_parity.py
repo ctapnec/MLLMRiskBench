@@ -39,6 +39,10 @@ from experiments.rig_web_app.catalog import (
     _SUGGEST_STATIC,
 )
 from experiments.rig_web_app.ui import _BUILDER_SCRIPT
+from ura.sampling import (
+    DEFAULT_SAMPLING_POLICY,
+    SOURCE_ORDER_CLUSTER_PREFIX,
+)
 
 
 def _app(tmp_path: Path) -> RigWebApp:
@@ -233,6 +237,11 @@ def test_build_page_exposes_group_exclusion_and_resume_controls(tmp_path: Path) 
     assert "0 = full selected release" in execution
     assert "maximum source-cluster count per selected arm" in execution
     assert "id='sample-seed-input'" in execution
+    policy_select = _opening_tag(execution, "id='sampling-policy-select'")
+    assert "name='sampling_policy'" in policy_select
+    assert execution.count("name='sampling_policy'") == 1
+    assert f"value='{DEFAULT_SAMPLING_POLICY}' selected" in execution
+    assert f"value='{SOURCE_ORDER_CLUSTER_PREFIX}'" in execution
     # The live preview mirrors the new controls.
     for field in ("group", "exclude_tool_conditioned", "reset_open_circuits", "lock_stale_seconds"):
         assert f"'{field}'" in _BUILDER_SCRIPT
@@ -394,6 +403,8 @@ def test_non_dry_lane_always_carries_an_explicit_limit(
         assert values["--limit"] == "1"
         _cmd, values, params = app._compose_from_builder(dict(_DRY_BASE))
         assert "--limit" not in values and "limit" not in params
+        assert "--sampling-policy" not in values
+        assert "sampling_policy" not in params
     finally:
         app.close()
     assert "50" in _PARAM_HELP["--limit"] and "0 means the complete" in _PARAM_HELP["--limit"]
@@ -407,7 +418,12 @@ def test_builder_sampling_control_and_local_wall_time_keep_cli_semantics(
     try:
         fresh = app.handle("GET", "/build")[2].decode("utf-8")
         selected = app._build_page(
-            prefill={**_DRY_BASE, "limit": "0", "sample_seed": "17"}
+            prefill={
+                **_DRY_BASE,
+                "limit": "0",
+                "sample_seed": "17",
+                "sampling_policy": SOURCE_ORDER_CLUSTER_PREFIX,
+            }
         ).decode("utf-8")
         fresh_panel = _opening_tag(fresh, "id='sample-size-control'")
         selected_panel = _opening_tag(selected, "id='sample-size-control'")
@@ -415,6 +431,7 @@ def test_builder_sampling_control_and_local_wall_time_keep_cli_semantics(
         assert " hidden" not in selected_panel and "aria-hidden='false'" in selected_panel
         assert "name='limit' value='0'" in selected
         assert "name='sample_seed' value='17'" in selected
+        assert f"value='{SOURCE_ORDER_CLUSTER_PREFIX}' selected" in selected
         assert "syncSampleSizeControl" in _BUILDER_SCRIPT
         assert "matching no-call preflight" in _BUILDER_SCRIPT
         assert "Effective selection: " in _BUILDER_SCRIPT
@@ -480,6 +497,26 @@ def test_builder_sampling_control_and_local_wall_time_keep_cli_semantics(
             "sample_seed": "",
         })
         assert "within each selected arm" in no_seed["sample_seed"]
+        invalid_policy = app._validate_builder({
+            **measured_local,
+            "sampling_policy": "ignore-the-policy-mutant",
+        })
+        assert "supported sampling policies" in invalid_policy["sampling_policy"]
+        _command, values, params = app._compose_from_builder({
+            **_DRY_BASE,
+            "limit": "2",
+            "sample_seed": "17",
+            "sampling_policy": SOURCE_ORDER_CLUSTER_PREFIX,
+        })
+        assert values["--sampling-policy"] == SOURCE_ORDER_CLUSTER_PREFIX
+        assert params["sampling_policy"] == SOURCE_ORDER_CLUSTER_PREFIX
+        assert app._projection_params({
+            **_DRY_BASE,
+            "sampling_policy": DEFAULT_SAMPLING_POLICY,
+        }) != app._projection_params({
+            **_DRY_BASE,
+            "sampling_policy": SOURCE_ORDER_CLUSTER_PREFIX,
+        })
     finally:
         app.close()
 

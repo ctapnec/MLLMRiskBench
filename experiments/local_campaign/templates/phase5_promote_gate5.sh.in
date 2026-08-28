@@ -57,7 +57,7 @@ from experiments.local_campaign.ollama_static_terminal import (
     OLLAMA_STATIC_TERMINAL_REASON,
     OLLAMA_STATIC_TERMINAL_REASON_CODE,
     OLLAMA_STATIC_TERMINAL_VALUE,
-    inventory_counts as ollama_inventory_counts,
+    historical_inventory_counts as ollama_inventory_counts,
     validate_gate5_terminal_rows,
 )
 from ura.eligibility import validate_eligibility_plan

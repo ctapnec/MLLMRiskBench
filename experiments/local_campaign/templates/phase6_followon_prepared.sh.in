@@ -1,0 +1,500 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+usage() {
+  echo 'usage: phase6_followon_prepared.sh --amendment JSON --outcomes JSON --out JSON --authorize-amendment-sha256 HEX' >&2
+  exit 2
+}
+
+AMENDMENT=''
+OUTCOMES=''
+OUT=''
+AUTH=''
+while (( "$#" )); do
+  case "$1" in
+    --amendment) AMENDMENT="$2"; shift 2 ;;
+    --outcomes) OUTCOMES="$2"; shift 2 ;;
+    --out) OUT="$2"; shift 2 ;;
+    --authorize-amendment-sha256) AUTH="$2"; shift 2 ;;
+    *) usage ;;
+  esac
+done
+[[ -n "$AMENDMENT" && -n "$OUTCOMES" && -n "$OUT" && "$AUTH" =~ ^[0-9a-f]{64}$ ]] || usage
+source ~/.ura_campaign_env
+cd '@@PROJECT_ROOT@@'
+test "$(git rev-parse HEAD)" = '@@EXPECTED_COMMIT@@'
+test -z "$(git status --porcelain)"
+
+"$PWD/.venv/bin/python" - "$AMENDMENT" "$OUTCOMES" "$OUT" "$AUTH" '@@EXPECTED_COMMIT@@' '@@FRAMEWORK_LOCK_SHA256@@' <<'PY'
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import sys
+from typing import Any, Mapping
+
+from experiments.figure_results import _load_cells
+from experiments.rig_web_app.external_measured import load_external_measured_job
+from ura.eligibility import validate_eligibility_plan
+from ura.request_envelope import validate_request_envelope
+from ura.strict_json import strict_json_loads
+
+
+LANE_ORDER = (
+    "followon-nanogcg-qwen3-vl",
+    "followon-ideator-v2-qwen3-vl",
+    "followon-t3mp3st-qwen3-vl",
+)
+LANES = {
+    "followon-nanogcg-qwen3-vl": {
+        "attacker": "nanogcg", "corpus": "advbench_harmful", "limit": 1,
+        "sample_seed": 105, "max_queries": 1, "max_turns": 1, "target_calls": 1,
+    },
+    "followon-ideator-v2-qwen3-vl": {
+        "attacker": "ideator", "corpus": "advbench_harmful", "limit": 1,
+        "sample_seed": 105, "max_queries": 8, "max_turns": 8, "target_calls": 8,
+    },
+    "followon-t3mp3st-qwen3-vl": {
+        "attacker": "t3mp3st", "corpus": "strongreject_official", "limit": 50,
+        "sample_seed": 0, "max_queries": 1, "max_turns": 1, "target_calls": 50,
+    },
+}
+QWEN = "vllm:Qwen/Qwen3-VL-8B-Instruct"
+QWEN_REVISION = "60595ebc30ec8e3b1d3b9e65d4943ca011c0006a"
+QWEN_RUNTIME = f"{QWEN}@{QWEN_REVISION}"
+GUARD = "meta-llama/Llama-Guard-3-8B"
+GUARD_REVISION = "7327bd9f6efbbe6101dc6cc4736302b3cbb6e425"
+GROUP_KEYS = [
+    "model", "source", "risk", "effective_modality", "expected_behavior",
+    "attacker", "source_policy_id", "source_policy_version",
+]
+HEX64 = re.compile(r"[0-9a-f]{64}")
+OUTCOME_FIELDS = {
+    "lane_id", "state", "result_root", "measured_argv", "controller_exit_code",
+    "terminal_reason", "lifecycle_artifacts", "external_job_id", "accounting",
+}
+ZERO_FIELDS = (
+    "hosted_target_calls", "hosted_judge_calls", "provider_http_attempts",
+    "paid_provider_calls", "model_downloads",
+)
+CRITICAL_PATTERNS = (
+    "*.grid.json", "*.request-envelope.json", "*.eligibility.json",
+    "*.error.json", "*.complete.json", "*.manifest.json",
+)
+
+
+def canonical(value: object) -> bytes:
+    return (json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        allow_nan=False,
+    ) + "\n").encode("utf-8")
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def descriptor(path: Path) -> dict[str, Any]:
+    return {"path": str(path), "sha256": sha256_file(path), "bytes": path.stat().st_size}
+
+
+def load_object(path: Path, label: str) -> dict[str, Any]:
+    if not path.is_file() or path.is_symlink() or path.stat().st_size > 512 * 1024 * 1024:
+        raise SystemExit(f"{label} is not a bounded regular file")
+    try:
+        value = strict_json_loads(path.read_bytes())
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise SystemExit(f"{label} is not strict JSON: {exc}") from exc
+    if not isinstance(value, dict):
+        raise SystemExit(f"{label} is not a JSON object")
+    return value
+
+
+def checked(raw: object, label: str) -> tuple[Path, dict[str, Any]]:
+    if not isinstance(raw, dict) or set(raw) != {"path", "sha256", "bytes"}:
+        raise SystemExit(f"{label} descriptor changed")
+    path = Path(str(raw.get("path", "")))
+    if (
+        not path.is_absolute() or path.is_symlink() or not path.is_file()
+        or path.resolve(strict=True) != path
+        or HEX64.fullmatch(str(raw.get("sha256", ""))) is None
+        or type(raw.get("bytes")) is not int or raw["bytes"] <= 0
+        or descriptor(path) != raw
+    ):
+        raise SystemExit(f"{label} identity changed")
+    return path, load_object(path, label)
+
+
+def require_zero(value: object, label: str) -> dict[str, int]:
+    if (
+        not isinstance(value, dict) or set(value) != set(ZERO_FIELDS)
+        or any(type(value.get(field)) is not int or value[field] != 0 for field in ZERO_FIELDS)
+    ):
+        raise SystemExit(f"{label} does not prove zero hosted/network accounting")
+    return dict(value)
+
+
+def option(argv: list[str], name: str) -> str:
+    if argv.count(name) != 1:
+        raise SystemExit(f"measured argv does not contain exactly one {name}")
+    index = argv.index(name)
+    if index + 1 >= len(argv):
+        raise SystemExit(f"measured argv omits the value for {name}")
+    return argv[index + 1]
+
+
+def validate_external_terminal(
+    raw: Mapping[str, Any], *, result_root: Path, expected_argv: list[str],
+    expected_commit: str, expected_lock: str, admission_sha256: str, lane: str,
+) -> dict[str, Any]:
+    job_id = raw.get("external_job_id")
+    results_root = Path(os.environ["URA_WORK"]).resolve(strict=True) / "runs"
+    if (
+        not isinstance(job_id, str) or not job_id.startswith("external-")
+        or not results_root.is_dir() or results_root.is_symlink()
+        or results_root.resolve(strict=True) != results_root
+    ):
+        raise SystemExit(f"{lane} external measured job identity changed")
+    try:
+        job = load_external_measured_job(results_root, job_id, probe_session=False)
+    except (OSError, TypeError, ValueError) as exc:
+        raise SystemExit(f"{lane} external measured terminal cannot be validated: {exc}") from exc
+    if job is None or job.state not in {"complete", "failed"} or job.exit_code is None:
+        raise SystemExit(f"{lane} lacks one valid external measured terminal record")
+    registration = job.registration_dir / "registration.json"
+    terminal = job.registration_dir / "terminal.json"
+    registration_value = load_object(registration, f"{lane} external registration")
+    terminal_value = load_object(terminal, f"{lane} external terminal")
+    if (
+        registration_value.get("schema") != "ura-external-measured-job/2"
+        or terminal_value.get("schema") != "ura-external-measured-job-terminal/1"
+        or job.command != "run_matrix" or job.run_kind != "measured"
+        or list(job.argv) != expected_argv or job.out_dir != result_root
+        or job.expected_commit != expected_commit
+        or job.framework_lock_id != expected_lock
+        or job.admission_sha256 != admission_sha256
+        or job.exit_code != raw.get("controller_exit_code")
+        or job.state != ("complete" if job.exit_code == 0 else "failed")
+    ):
+        raise SystemExit(f"{lane} external measured start/terminal binding changed")
+    return {
+        "job_id": job.job_id,
+        "state": job.state,
+        "exit_code": job.exit_code,
+        "registration": descriptor(registration),
+        "terminal": descriptor(terminal),
+    }
+
+
+def validate_terminal_state_agreement(
+    declared: str, external: Mapping[str, Any], inventory: list[dict[str, Any]],
+    *, lane: str,
+) -> None:
+    expected = "complete" if declared == "measured_complete" else "failed"
+    if external.get("state") != expected:
+        raise SystemExit(f"{lane} Runner lifecycle disagrees with its external terminal")
+    exit_code = external.get("exit_code")
+    if (
+        type(exit_code) is not int
+        or (expected == "complete" and exit_code != 0)
+        or (expected == "failed" and exit_code == 0)
+        or (declared == "failed" and not inventory and exit_code == 0)
+    ):
+        raise SystemExit(f"{lane} external terminal exit disagrees with its lifecycle")
+
+
+def critical_inventory(root: Path) -> list[dict[str, Any]]:
+    paths = sorted({path for pattern in CRITICAL_PATTERNS for path in root.rglob(pattern)})
+    if any(path.is_symlink() or not path.is_file() or path.resolve(strict=True) != path for path in paths):
+        raise SystemExit("follow-on Runner lifecycle contains an unsafe artifact")
+    return [descriptor(path) for path in paths]
+
+
+def validate_grid_request(grid: Mapping[str, Any], spec: Mapping[str, Any], lane: str) -> None:
+    request = grid.get("request")
+    if not isinstance(request, dict):
+        raise SystemExit(f"{lane} Runner grid has no request")
+    exact = {
+        "execution_purpose": "measured_run", "dry_run": False,
+        "attestation_probe": False, "models": [QWEN_RUNTIME], "corpora": [spec["corpus"]],
+        "attackers": [spec["attacker"]], "judges": ["rules", "guardrail"],
+        "judge_model": None, "guardrail_model": GUARD,
+        "guardrail_revision": GUARD_REVISION, "guardrail_device": "cuda:1",
+        "limit": spec["limit"], "sample_seed": spec["sample_seed"], "seeds": [0],
+        "max_queries": spec["max_queries"], "max_turns": spec["max_turns"],
+        "group_keys": GROUP_KEYS, "defense": "none", "defense_guard": "rules",
+        "approximate_common_metrics": True,
+        "global_call_budget": {
+            "max_target_calls": spec["target_calls"], "max_judge_calls": None,
+            "max_http_attempts": None,
+            "call_start_deadline_seconds_from_first_invocation": 86_400,
+            "accounting_semantics": "durable_pre_call_logical_reservation_v1",
+        },
+    }
+    for field, expected in exact.items():
+        if request.get(field) != expected:
+            raise SystemExit(f"{lane} measured grid request changed at {field}")
+    if request.get("live_attestation", {}).get("mode") != "measured":
+        raise SystemExit(f"{lane} measured grid lacks a measured live attestation")
+    if not isinstance(request.get("project_revision"), dict):
+        raise SystemExit(f"{lane} measured grid lacks project-revision provenance")
+    if not isinstance(request.get("source_conformance_artifact"), dict):
+        raise SystemExit(f"{lane} measured grid lacks source-conformance provenance")
+
+
+def validate_success(root: Path, spec: Mapping[str, Any], lane: str) -> dict[str, Any]:
+    try:
+        cells = _load_cells(root)
+    except (KeyError, OSError, TypeError, ValueError) as exc:
+        raise SystemExit(f"{lane} is not independently validated Runner evidence: {exc}") from exc
+    grids = sorted(root.rglob("*.grid.json"))
+    if len(grids) != 1:
+        raise SystemExit(f"{lane} measured completion must contain exactly one grid")
+    grid = load_object(grids[0], f"{lane} grid")
+    validate_grid_request(grid, spec, lane)
+    if (
+        grid.get("status") != "complete" or grid.get("n_errors") != 0
+        or grid.get("requested_cells") != 1 or grid.get("accounted_cells") != 1
+    ):
+        raise SystemExit(f"{lane} Runner grid is not complete and fully accounted")
+    completed_records = sum(len(cell["attempts"]) for cell in cells)
+    if len(cells) != 1 or completed_records != spec["target_calls"]:
+        raise SystemExit(f"{lane} completed Runner workload differs from its approved target cap")
+    run = cells[0]["manifest"].get("config", {}).get("run")
+    if not isinstance(run, dict):
+        raise SystemExit(f"{lane} completed Runner manifest lacks run conditions")
+    exact_run = {
+        "execution_purpose": "measured_run", "dry_run": False,
+        "model_spec": QWEN_RUNTIME, "corpus": spec["corpus"], "attacker": spec["attacker"],
+        "judge_names": ["rules", "guardrail"], "guardrail_model": GUARD,
+        "guardrail_revision": GUARD_REVISION, "guardrail_device": "cuda:1",
+        "limit": spec["limit"], "sample_seed": spec["sample_seed"],
+        "approximate_common_metrics": True,
+    }
+    for field, expected in exact_run.items():
+        if run.get(field) != expected:
+            raise SystemExit(f"{lane} completed Runner manifest changed at {field}")
+    if cells[0]["manifest"].get("config", {}).get("budget") != {
+        "max_queries": spec["max_queries"],
+        "max_turns": spec["max_turns"],
+        "seed": 0,
+    }:
+        raise SystemExit(f"{lane} completed Runner attack budget changed")
+    return {
+        "grid": descriptor(grids[0]),
+        "completion_markers": [descriptor(Path(cell["complete_path"])) for cell in cells],
+        "eligibility_plans": [
+            descriptor(path) for path in sorted(root.rglob("*.eligibility.json"))
+        ],
+        "request_envelopes": [
+            descriptor(path) for path in sorted(root.rglob("*.request-envelope.json"))
+        ],
+        "completed_records": completed_records,
+        "project_revision": dict(grid["request"]["project_revision"]),
+    }
+
+
+def observed_terminal_state(root: Path, spec: Mapping[str, Any], lane: str) -> tuple[str, dict[str, Any] | None]:
+    if sorted([*root.rglob("*.grid.lock"), *root.rglob("*.cell.lock")]):
+        raise SystemExit(f"{lane} Runner lifecycle is still locked/running")
+    errors = sorted(root.rglob("*.error.json"))
+    grids = sorted(root.rglob("*.grid.json"))
+    if grids and not errors:
+        try:
+            return "measured_complete", validate_success(root, spec, lane)
+        except SystemExit:
+            pass
+    if grids:
+        if not errors:
+            raise SystemExit(f"{lane} non-complete grid has no Runner error artifact")
+        for error_path in errors:
+            error = load_object(error_path, f"{lane} Runner error")
+            if (
+                error.get("status") != "error"
+                or not isinstance(error.get("message"), str)
+                or not error["message"].strip()
+            ):
+                raise SystemExit(f"{lane} Runner error artifact is not typed")
+        states: list[str] = []
+        for grid_path in grids:
+            grid = load_object(grid_path, f"{lane} partial grid")
+            if grid_path.name != f"{grid.get('grid_id')}.grid.json":
+                raise SystemExit(f"{lane} grid filename/identity changed")
+            validate_grid_request(grid, spec, lane)
+            state = grid.get("status")
+            if (
+                state not in {"partial", "running"}
+                or type(grid.get("n_errors")) is not int
+                or grid["n_errors"] < 0
+                or (state == "partial" and grid["n_errors"] < 1)
+            ):
+                raise SystemExit(f"{lane} non-complete grid has no typed Runner failure")
+            states.append(str(state))
+        return "partial", None
+    return "failed", None
+
+
+amendment_arg = Path(sys.argv[1])
+if (
+    not amendment_arg.is_absolute() or amendment_arg.is_symlink()
+    or not amendment_arg.is_file()
+    or amendment_arg.resolve(strict=True) != amendment_arg
+):
+    raise SystemExit("follow-on authorization must be one canonical regular file")
+amendment = amendment_arg
+if sha256_file(amendment) != sys.argv[4]:
+    raise SystemExit("follow-on authorization digest differs")
+gate = load_object(amendment, "follow-on Gate 5 amendment")
+if (
+    set(gate) != {
+        "schema", "status", "expected_commit", "framework_lock_id",
+        "parent_gate5_promotion", "lane_order", "lanes", "runnote", "policy",
+    }
+    or gate.get("schema") != "ura-followon-gate5-amendment/2"
+    or gate.get("status") != "authorized"
+    or gate.get("expected_commit") != sys.argv[5]
+    or gate.get("framework_lock_id") != sys.argv[6]
+    or gate.get("lane_order") != list(LANE_ORDER)
+    or gate.get("policy")
+    != {
+        "hosted_calls": False, "provider_http_attempts": 0,
+        "model_judge_calls": 0, "revision_pooling": False,
+        "core_gate5_mutated": False,
+        "metric_admission": "successful_runner_lifecycle_only",
+    }
+):
+    raise SystemExit("follow-on Gate 5 amendment changed")
+gate_rows = gate.get("lanes")
+if not isinstance(gate_rows, list) or [row.get("lane_id") for row in gate_rows if isinstance(row, dict)] != list(LANE_ORDER):
+    raise SystemExit("follow-on Gate 5 lane inventory changed")
+gate_by_lane = {row["lane_id"]: row for row in gate_rows}
+
+outcomes_arg = Path(sys.argv[2])
+if (
+    not outcomes_arg.is_absolute() or outcomes_arg.is_symlink()
+    or not outcomes_arg.is_file()
+    or outcomes_arg.resolve(strict=True) != outcomes_arg
+):
+    raise SystemExit("follow-on outcomes must be one canonical regular file")
+outcomes_path = outcomes_arg
+outcomes = load_object(outcomes_path, "follow-on Phase 6 outcomes")
+if (
+    set(outcomes) != {
+        "schema", "expected_commit", "framework_lock_id", "gate5_amendment",
+        "lane_order", "lanes", "accounting",
+    }
+    or outcomes.get("schema") != "ura-followon-phase6-outcomes/2"
+    or outcomes.get("expected_commit") != sys.argv[5]
+    or outcomes.get("framework_lock_id") != sys.argv[6]
+    or outcomes.get("gate5_amendment") != descriptor(amendment)
+    or outcomes.get("lane_order") != list(LANE_ORDER)
+):
+    raise SystemExit("follow-on outcome inventory or binding changed")
+require_zero(outcomes.get("accounting"), "follow-on Phase 6 outcomes")
+rows = outcomes.get("lanes")
+if not isinstance(rows, dict) or set(rows) != set(LANE_ORDER):
+    raise SystemExit("all follow-on lanes were not independently attempted")
+
+success: dict[str, Any] = {}
+failures: dict[str, Any] = {}
+lifecycle: dict[str, Any] = {}
+for lane in LANE_ORDER:
+    raw = rows[lane]
+    if not isinstance(raw, dict) or set(raw) != OUTCOME_FIELDS or raw.get("lane_id") != lane:
+        raise SystemExit(f"{lane} outcome schema changed")
+    declared = raw.get("state")
+    if declared not in {"measured_complete", "partial", "failed"}:
+        raise SystemExit(f"{lane} has no typed terminal state")
+    require_zero(raw.get("accounting"), f"{lane} outcome")
+    gate_row = gate_by_lane[lane]
+    if raw.get("measured_argv") != gate_row.get("measured_argv"):
+        raise SystemExit(f"{lane} measured argv differs from Gate 5 authorization")
+    result_root = Path(str(raw.get("result_root", "")))
+    expected_root = Path(str(gate_row.get("result_root", "")))
+    expected_parent = Path(os.environ["URA_WORK"]).resolve(strict=True) / "runs" / "thesis" / "runner" / lane
+    if (
+        not result_root.is_absolute() or result_root != expected_root
+        or result_root.parent != expected_parent or result_root.is_symlink()
+        or not result_root.is_dir() or result_root.resolve(strict=True) != result_root
+        or option(raw["measured_argv"], "--out") != str(result_root)
+    ):
+        raise SystemExit(f"{lane} result root differs from its exact measured argv")
+    observed, metric_evidence = observed_terminal_state(result_root, LANES[lane], lane)
+    if declared != observed:
+        raise SystemExit(f"{lane} declared terminal state differs from Runner lifecycle")
+    inventory = critical_inventory(result_root)
+    if raw.get("lifecycle_artifacts") != inventory:
+        raise SystemExit(f"{lane} lifecycle artifact inventory changed")
+    exit_code = raw.get("controller_exit_code")
+    reason = raw.get("terminal_reason")
+    if (
+        type(exit_code) is not int
+        or (declared == "measured_complete" and (exit_code != 0 or reason is not None))
+        or (
+            declared != "measured_complete"
+            and (exit_code == 0 or not isinstance(reason, str) or not reason.strip() or reason != reason.strip())
+        )
+    ):
+        raise SystemExit(f"{lane} controller terminal record changed")
+    external = validate_external_terminal(
+        raw, result_root=result_root, expected_argv=list(raw["measured_argv"]),
+        expected_commit=sys.argv[5], expected_lock=sys.argv[6],
+        admission_sha256=sys.argv[4], lane=lane,
+    )
+    validate_terminal_state_agreement(declared, external, inventory, lane=lane)
+    record = {
+        "state": declared,
+        "result_root": str(result_root),
+        "measured_argv": list(raw["measured_argv"]),
+        "controller_exit_code": exit_code,
+        "terminal_reason": reason,
+        "runner_lifecycle_present": bool(inventory),
+        "lifecycle_artifacts": inventory,
+        "external_measured_job": external,
+        "metric_evidence": metric_evidence,
+        "accounting": dict(raw["accounting"]),
+    }
+    lifecycle[lane] = record
+    (success if declared == "measured_complete" else failures)[lane] = record
+
+payload = {
+    "schema": "ura-followon-phase6-completion/2",
+    "status": "complete" if not failures else "complete_with_failures",
+    "expected_commit": sys.argv[5],
+    "framework_lock_id": sys.argv[6],
+    "gate5_amendment": descriptor(amendment),
+    "admission_sha256": sys.argv[4],
+    "outcomes": descriptor(outcomes_path),
+    "lane_order": list(LANE_ORDER),
+    "all_lanes_attempted": True,
+    "lane_terminal_states": {lane: lifecycle[lane]["state"] for lane in LANE_ORDER},
+    "lane_results": success,
+    "lane_failures": failures,
+    "lifecycle": lifecycle,
+    "metric_lane_order": [lane for lane in LANE_ORDER if lane in success],
+    "metric_policy": {
+        "successful_runner_lifecycle_only": True,
+        "cross_revision_pooling_permitted": False,
+    },
+    "accounting": dict(outcomes["accounting"]),
+}
+out = Path(sys.argv[3])
+if not out.is_absolute() or out.exists() or out.is_symlink():
+    raise SystemExit("follow-on completion is an absent absolute create-only path")
+out.parent.mkdir(parents=True, exist_ok=True)
+if out.parent.is_symlink() or out.parent.resolve(strict=True) != out.parent:
+    raise SystemExit("follow-on completion parent is not canonical")
+data = canonical(payload)
+with out.open("xb") as handle:
+    handle.write(data)
+    handle.flush()
+    os.fsync(handle.fileno())
+PY

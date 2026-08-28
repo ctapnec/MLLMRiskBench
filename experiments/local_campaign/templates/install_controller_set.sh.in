@@ -120,7 +120,7 @@ validate_payload() {
       fail "controller SHA-256 differs: $path"
     count=$((count + 1))
   done < "$inventory"
-  [[ "$count" == '25' ]] || fail 'controller inventory count differs'
+  [[ "$count" == '30' ]] || fail 'controller inventory count differs'
   [[ -z "$(find -P "$directory" -mindepth 1 -maxdepth 1 ! -type f -print -quit)" ]] || \
     fail "controller generation contains a non-regular entry: $directory"
   [[ "$(find -P "$directory" -mindepth 1 -maxdepth 1 -type f -printf . | wc -c)" == "$expected_file_count" ]] || \
@@ -129,7 +129,7 @@ validate_payload() {
 
 validate_generation() {
   local directory="$1"
-  validate_payload "$directory" 28
+  validate_payload "$directory" 33
   marker_matches "$directory/$MARKER_NAME" || \
     fail "controller generation marker differs: $directory/$MARKER_NAME"
 }
@@ -187,7 +187,7 @@ else
   stage="$(mktemp -d -- "$GENERATIONS/.stage-$GENERATION_NAME.XXXXXXXX")"
   [[ -d "$stage" && ! -L "$stage" ]] || fail 'could not create a safe controller stage'
   tar --no-same-owner --no-same-permissions -xf "$ARCHIVE" -C "$stage"
-  validate_payload "$stage" 27
+  validate_payload "$stage" 32
   write_marker "$stage/$MARKER_NAME"
   while IFS=$'\t' read -r name bytes expected_sha self_test; do
     case "$name" in
@@ -224,4 +224,4 @@ validate_generation "$GENERATION"
 
 printf 'CONTROLLER_GENERATION_INSTALLED=%s\n' "$GENERATION_NAME"
 printf 'CONTROLLER_ACTIVE=%s\n' "$ACTIVE"
-printf 'CONTROLLER_COUNT=25\n'
+printf 'CONTROLLER_COUNT=30\n'

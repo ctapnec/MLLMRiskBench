@@ -1,4 +1,11 @@
-"""Campaign-only typed outcomes for unusable Ollama static-canary output."""
+"""Validate historical Ollama static-canary terminals and current inventory.
+
+Runner 2.24 retains a successful empty Ollama completion as a typed
+``model_nonresponse`` and retains nonempty length-capped text.  The classifier
+below remains only for validating immutable diagnostics
+created by the superseded policy.  A current campaign must not create or count
+one of those diagnostics as a Gate 5 terminal.
+"""
 from __future__ import annotations
 
 import argparse
@@ -53,13 +60,42 @@ def inventory_counts(static_terminal_lanes: Iterable[str],
     static, conditional = set(static_values), set(conditional_values)
     if len(static) != len(static_values) or not static <= set(STATIC_LANE_MODELS):
         raise ValueError("invalid or duplicate Ollama static terminal lane")
+    if static:
+        raise ValueError(
+            "historical Ollama output terminals are not a current Runner disposition"
+        )
     if (len(conditional) != len(conditional_values)
             or conditional not in (set(), {"defense-local"})):
         raise ValueError("invalid or duplicate conditional-N/A lane")
-    return {"runnable": 22 - len(static) - len(conditional),
-            "typed_terminal": 24 + len(static) + len(conditional),
-            "target_runtime_terminal": 4 + len(static),
+    return {"runnable": 26 - len(conditional),
+            "typed_terminal": 20 + len(conditional),
+            "target_runtime_terminal": 0,
             "conditional_na_lanes": sorted(conditional)}
+
+
+def historical_inventory_counts(
+    static_terminal_lanes: Iterable[str],
+    conditional_na_lanes: Iterable[str],
+) -> dict[str, object]:
+    """Count the immutable pre-Runner-2.24 canonical Gate 5 cohort."""
+
+    static_values = list(static_terminal_lanes)
+    conditional_values = list(conditional_na_lanes)
+    static = set(static_values)
+    conditional = set(conditional_values)
+    if len(static) != len(static_values) or not static <= set(STATIC_LANE_MODELS):
+        raise ValueError("invalid or duplicate historical Ollama terminal lane")
+    if (
+        len(conditional) != len(conditional_values)
+        or conditional not in (set(), {"defense-local"})
+    ):
+        raise ValueError("invalid or duplicate conditional-N/A lane")
+    return {
+        "runnable": 22 - len(static) - len(conditional),
+        "typed_terminal": 24 + len(static) + len(conditional),
+        "target_runtime_terminal": 4 + len(static),
+        "conditional_na_lanes": sorted(conditional),
+    }
 
 
 def _read(path: Path, *, label: str, max_bytes: int = 8 * 1024 * 1024) -> bytes:

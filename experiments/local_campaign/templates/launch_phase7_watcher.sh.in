@@ -35,4 +35,4 @@ test "$(sha256sum -- "$SCRIPT" | awk '{print $1}')" = "$EXPECTED_SHA256"
 bash -n "$SCRIPT"
 export AUTHORIZED_WATCHER_SHA256="$EXPECTED_SHA256"
 export PHASE7_WATCHER_TAG='@@PHASE7_WATCHER_TAG@@'
-exec bash "$SCRIPT"
+exec bash "$SCRIPT" "$@"

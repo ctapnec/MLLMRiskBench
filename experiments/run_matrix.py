@@ -168,6 +168,11 @@ from ura.request_envelope import (                     # noqa: E402
     write_request_envelope,
     write_request_error,
 )
+from ura.sampling import (                            # noqa: E402
+    DEFAULT_SAMPLING_POLICY,
+    SAMPLING_POLICIES,
+    effective_sampling_policy,
+)
 from ura.runner import (                              # noqa: E402
     BudgetExhausted,
     CODE_VERSION,
@@ -3350,24 +3355,28 @@ def _select_corpus(
     dps: list[DataPoint],
     limit: int,
     sample_seed: int,
+    sampling_policy: str | None = None,
 ) -> tuple[list[DataPoint], list[int], list[str], list[str]]:
     """Select exactly ``limit`` prompt/intent clusters, retaining every row."""
+    policy = effective_sampling_policy(sampling_policy)
     clusters: dict[str, list[int]] = {}
     for index, record in enumerate(dps):
         clusters.setdefault(_cluster_key(index, record), []).append(index)
     keys = list(clusters)
     if not limit or limit >= len(keys):
         return dps, list(range(len(dps))), keys, keys
-    seed_material = f"ura-corpus-cluster-order-v1\0{name}\0{sample_seed}".encode(
-        "utf-8"
-    )
-    scoped_seed = int.from_bytes(hashlib.sha256(seed_material).digest()[:8], "big")
-    # One deterministic permutation supplies every bounded sample for this
-    # source/seed. Taking prefixes makes a one-cluster diagnostic canary a true
-    # subset of a later N-cluster campaign instead of drawing an unrelated
-    # ``random.sample(..., k=N)`` population for every value of N.
     ordered_positions = list(range(len(keys)))
-    random.Random(scoped_seed).shuffle(ordered_positions)
+    if policy == DEFAULT_SAMPLING_POLICY:
+        seed_material = f"ura-corpus-cluster-order-v1\0{name}\0{sample_seed}".encode(
+            "utf-8"
+        )
+        scoped_seed = int.from_bytes(
+            hashlib.sha256(seed_material).digest()[:8], "big"
+        )
+        # One deterministic permutation supplies every bounded sample for this
+        # source/seed. Taking prefixes makes a one-cluster diagnostic canary a
+        # true subset of a later N-cluster campaign.
+        random.Random(scoped_seed).shuffle(ordered_positions)
     positions = set(ordered_positions[:limit])
     selected_cluster_ids = [key for index, key in enumerate(keys) if index in positions]
     indices = sorted(
@@ -3470,22 +3479,30 @@ def _stable_source_locator(
     }
 
 
-def load_corpus(name: str, limit: int, sample_seed: int = 0) -> list[DataPoint]:
-    """Load a corpus and take a deterministic seeded subset when limited.
+def load_corpus(
+    name: str,
+    limit: int,
+    sample_seed: int = 0,
+    sampling_policy: str | None = None,
+) -> list[DataPoint]:
+    """Load a corpus and take a deterministic whole-cluster prefix when limited.
 
-    The seed is scoped by corpus name so independent corpora do not reuse the same
-    pseudo-random index pattern. Selected records retain source order, which makes
-    artifacts easy to compare while avoiding the bias of first-N slicing.
+    Omission preserves the historical arm-scoped seeded pseudorandom ordering.
+    The explicit source-order policy instead takes the first source clusters.
+    Selected records retain source order under both policies.
     """
     if limit < 0:
         raise ValueError("limit must be non-negative")
+    effective_sampling_policy(sampling_policy)
     if name == "synth":
         return synth_corpus(12 if limit == 0 else limit)
     conv = get_converter(name)
     # expects data under datasets/<name>.jsonl by default; override via env
     path = _corpus_path(name)
     dps = conv.parse(path)
-    selected, _, _, _ = _select_corpus(name, dps, limit, sample_seed)
+    selected, _, _, _ = _select_corpus(
+        name, dps, limit, sample_seed, sampling_policy
+    )
     return selected
 
 
@@ -3519,6 +3536,7 @@ def load_corpus_with_audit(
     limit: int,
     sample_seed: int = 0,
     *,
+    sampling_policy: str | None = None,
     source_instance: dict[str, object] | None = None,
     exclude_tool_conditioned: bool = False,
 ) -> tuple[list[DataPoint], dict[str, object]]:
@@ -3533,6 +3551,7 @@ def load_corpus_with_audit(
     """
     if limit < 0:
         raise ValueError("limit must be non-negative")
+    policy = effective_sampling_policy(sampling_policy)
     instance = dict(source_instance or _default_source_instance(name))
     converter = instance.get("converter")
     if not isinstance(converter, str) or not converter:
@@ -3557,7 +3576,7 @@ def load_corpus_with_audit(
                     full_selected, list(range(len(full_selected))), cluster_ids
                 )
             )
-        return selected, {
+        audit: dict[str, object] = {
             "corpus": name,
             "converter": converter,
             "source_instance": instance,
@@ -3582,6 +3601,9 @@ def load_corpus_with_audit(
             "sample_seed": sample_seed,
             "limit": limit,
         }
+        if sampling_policy is not None:
+            audit["sampling_policy"] = policy
+        return selected, audit
     if converter == "synth":
         raise ValueError(
             f"source arm {name!r} uses converter='synth' without synth=true"
@@ -3593,6 +3615,7 @@ def load_corpus_with_audit(
         full,
         limit,
         sample_seed,
+        sampling_policy,
     )
     resolved = path.expanduser().resolve(strict=True)
     full_digest = canonical_converted_corpus_sha256(full)
@@ -3610,7 +3633,7 @@ def load_corpus_with_audit(
         surviving = set(kept_row_clusters)
         # preserve the selection order of distinct clusters that still run
         selected_clusters = [key for key in selected_clusters if key in surviving]
-    return selected, {
+    audit = {
         "corpus": name,
         "converter": converter,
         "source_instance": instance,
@@ -3635,8 +3658,15 @@ def load_corpus_with_audit(
         "excluded_tool_conditioned_count": len(excluded_ids),
         "sample_seed": sample_seed,
         "limit": limit,
-        "selection_method": "seeded_nested_source_cluster_prefix_v1",
+        "selection_method": (
+            "seeded_nested_source_cluster_prefix_v1"
+            if policy == DEFAULT_SAMPLING_POLICY
+            else "source_order_source_cluster_prefix_v1"
+        ),
     }
+    if sampling_policy is not None:
+        audit["sampling_policy"] = policy
+    return selected, audit
 
 
 def _resolve_model_selection(
@@ -3988,6 +4018,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--sample-seed", type=int, default=0,
         help="seed for deterministic corpus subsampling (real corpora only)",
     )
+    ap.add_argument(
+        "--sampling-policy",
+        choices=sorted(SAMPLING_POLICIES),
+        default=None,
+        help=(
+            "whole-cluster prefix policy; omission preserves the seeded "
+            "pseudorandom legacy default, while an explicit value is bound into "
+            "request, acquisition, projection, and run identity"
+        ),
+    )
     ap.add_argument("--seeds", default="0")
     ap.add_argument("--max-queries", type=int, default=4,
                     help="maximum target calls per datapoint and seed")
@@ -4136,6 +4176,11 @@ def _main(argv=None) -> int:
         for token in raw_argv
     )
     args = ap.parse_args(raw_argv)
+    sampling_policy_binding = (
+        {"sampling_policy": effective_sampling_policy(args.sampling_policy)}
+        if args.sampling_policy is not None
+        else {}
+    )
     # Only the explicit model-acquisition controller may receive Hub tokens.
     # Planned and measured children use sealed local snapshots exclusively.
     os.environ.pop("HF_TOKEN", None)
@@ -4545,6 +4590,7 @@ def _main(argv=None) -> int:
             "seeds": seeds,
             "sample_seed": args.sample_seed,
             "limit": args.limit,
+            **sampling_policy_binding,
             "max_queries": args.max_queries,
             "max_turns": args.max_turns,
             "defense": args.defense,
@@ -5256,6 +5302,7 @@ def _main(argv=None) -> int:
                 corpus_name,
                 args.limit,
                 args.sample_seed,
+                sampling_policy=args.sampling_policy,
                 source_instance=source_instances[corpus_name],
                 exclude_tool_conditioned=args.exclude_tool_conditioned,
             )
@@ -5523,6 +5570,7 @@ def _main(argv=None) -> int:
                 "selected_records": len(loaded_corpora[arm]),
                 "sample_seed": args.sample_seed,
                 "limit": args.limit,
+                **sampling_policy_binding,
             }
             for arm in sorted(loaded_corpora)
         }
@@ -5581,6 +5629,7 @@ def _main(argv=None) -> int:
             "seeds": seeds,
             "sample_seed": args.sample_seed,
             "limit": args.limit,
+            **sampling_policy_binding,
             "max_queries": args.max_queries,
             "max_turns": args.max_turns,
             "call_caps": {
@@ -6181,6 +6230,7 @@ def _main(argv=None) -> int:
         "seeds": seeds,
         "sample_seed": args.sample_seed,
         "limit": args.limit,
+        **sampling_policy_binding,
         "max_queries": args.max_queries,
         "max_turns": args.max_turns,
         "global_call_budget": {
@@ -6607,6 +6657,7 @@ def _main(argv=None) -> int:
                         "corpus": corpus_name,
                         "limit": args.limit,
                         "sample_seed": args.sample_seed,
+                        **sampling_policy_binding,
                         "sampling_audit": sampling_audit,
                         "source_conformance_artifact": (
                             _content_artifact_identity(

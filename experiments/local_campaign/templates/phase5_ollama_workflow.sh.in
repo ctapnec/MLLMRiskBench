@@ -1378,8 +1378,7 @@ run_canary_lane() {
   local projection_id target_cap judge_cap guard_evals http_cap clusters records eligibility
   local canary_id stages target_status attacker_status source_status decided coverage
   local target_attempts successful_target_generations
-  local runner_rc terminal_artifact terminal_returned terminal_disposition terminal_reason_code terminal_reason
-  local terminal_attempts terminal_successes
+  local runner_rc
   config_sha="$(sha256sum -- "$config" | awk '{print $1}')"
   rehearsal_base="$PREFLIGHT_ROOT/${lane}-rehearsal-${TAG}"
   rehearsal_plan="$rehearsal_base/plan"
@@ -1469,26 +1468,11 @@ run_canary_lane() {
   runner_rc=$?
   set -e
   if (( runner_rc != 0 )); then
-    [[ "$mode" == 'static' ]] || return "$runner_rc"
-    terminal_artifact="$CONTROL_ROOT/${lane}.target-runtime-terminal.json"
-    IFS=$'\t' read -r terminal_disposition terminal_reason_code terminal_reason \
-      terminal_returned terminal_attempts terminal_successes < <(
-      "$PY" -m experiments.local_campaign.ollama_static_terminal classify \
-        --output "$terminal_artifact" \
-        --runner-log "$CONTROL_ROOT/${lane}.canary.log" \
-        --diagnostic-root "$diagnostic_run" \
-        --lane "$lane" --runner-returncode "$runner_rc"
-    )
-    test "$terminal_returned" = "$terminal_artifact"
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-      "$lane" "$label" "$spec" "$digest" "$mode" "$projection_id" \
-      "$target_cap" "$judge_cap" "$guard_evals" "$http_cap" '' '' '' '' '' \
-      '' '' "$diagnostic_run" "$terminal_disposition" "$terminal_reason_code" \
-      "$terminal_reason" "$terminal_artifact" "$terminal_attempts" \
-      "$terminal_successes" | tee -a "$CANARY_STATUS"
-    safe_marker "${lane}.target-runtime-terminal"
-    printf 'CANARY_TARGET_RUNTIME_TERMINAL=%s TIME=%s\n' "$lane" "$(date -Is)"
-    return 0
+    # Runner 2.24 retains nonempty length-capped text and represents a
+    # successful empty completion as model_nonresponse.  A nonzero process is
+    # therefore a real protocol, transport, identity, timeout, or backend
+    # failure and must not be converted into a current Gate 5 disposition.
+    return "$runner_rc"
   fi
 
   mapfile -t eligibility_files < <(find "$diagnostic_run" -maxdepth 1 -type f \
@@ -1579,7 +1563,6 @@ import sys
 from experiments.local_campaign.ollama_static_terminal import (
     OLLAMA_STATIC_TERMINAL_LANES,
     STATIC_LANE_MODELS,
-    validate_terminal_rows,
 )
 from experiments.local_campaign.target_execution import aggregate_target_execution
 
@@ -1609,23 +1592,11 @@ expected_attestations = {
 }
 if {row["model_label"] for row in attestations} != set(expected_attestations):
     raise SystemExit("Ollama target attestation inventory changed")
-terminal_lanes = set(validate_terminal_rows(
-    (row for row in canaries if row["lane"] in static_lanes),
-    label="Phase 5 Ollama static canaries",
-    error_type=SystemExit,
-))
 for row in projections:
     if int(row["target_cap"]) <= 0 or int(row["judge_cap"]) != 0 or int(row["http_cap"]) != 0:
         raise SystemExit(f"invalid exact cap row: {row['lane']}")
 for row in canaries:
     lane = row["lane"]
-    if lane in terminal_lanes:
-        if any(row[field] for field in (
-            "canary_id", "all_configured_stages_represented", "target_status",
-            "attacker_status", "source_evaluator_status", "decided", "decision_coverage",
-        )):
-            raise SystemExit(f"terminal static lane retained completed-canary fields: {lane}")
-        continue
     if (
         row["disposition"] != "runnable"
         or row["target_status"] != "exercised"

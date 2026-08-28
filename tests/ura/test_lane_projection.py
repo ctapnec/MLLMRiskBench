@@ -15,6 +15,7 @@ from ura.lane_projection import (
     validate_lane_projection_binding,
 )
 from ura.targets.base import BaseTarget
+from ura.sampling import DEFAULT_SAMPLING_POLICY, SOURCE_ORDER_CLUSTER_PREFIX
 
 
 class _NeverGeneratedTarget(BaseTarget):
@@ -30,11 +31,15 @@ class _NeverGeneratedTarget(BaseTarget):
 
 
 def _produce_projection(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, limit: int = 2,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    limit: int = 2,
+    sampling_policy: str | None = None,
 ) -> tuple[_NeverGeneratedTarget, Path, Path]:
     target = _NeverGeneratedTarget()
     monkeypatch.setattr(run_matrix, "build_target", lambda *_a, **_kw: target)
-    assert rig_check.main([
+    arguments = [
         "--dry-run",
         "--attackers", "replay,crescendo",
         "--judges", "rules",
@@ -44,7 +49,10 @@ def _produce_projection(
         "--max-queries", "4",
         "--max-turns", "4",
         "--out", str(tmp_path),
-    ]) == 0
+    ]
+    if sampling_policy is not None:
+        arguments.extend(["--sampling-policy", sampling_policy])
+    assert rig_check.main(arguments) == 0
     projections = list(tmp_path.glob("lane-projection-*.lane-projection.json"))
     eligibility = list(tmp_path.glob("eligibility-*.eligibility.json"))
     assert len(projections) == 1
@@ -103,6 +111,41 @@ def test_text_only_selection_has_explicit_empty_media_inventory(
         "unique_bytes_by_modality": {},
         "total_unique_bytes": 0,
     }
+
+
+def test_explicit_sampling_policy_is_bound_into_lane_projection_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, legacy_path, _ = _produce_projection(tmp_path / "legacy", monkeypatch)
+    _, explicit_path, _ = _produce_projection(
+        tmp_path / "explicit",
+        monkeypatch,
+        sampling_policy=SOURCE_ORDER_CLUSTER_PREFIX,
+    )
+    legacy = json.loads(legacy_path.read_text(encoding="utf-8"))
+    explicit = json.loads(explicit_path.read_text(encoding="utf-8"))
+
+    assert "sampling_policy" not in legacy["selection"]["arms"][0]
+    assert (
+        explicit["selection"]["arms"][0]["sampling_policy"]
+        == SOURCE_ORDER_CLUSTER_PREFIX
+    )
+    assert explicit["projection_id"] != legacy["projection_id"]
+
+    ignored_policy_mutant = json.loads(json.dumps(explicit))
+    ignored_policy_mutant["selection"]["arms"][0]["sampling_policy"] = (
+        DEFAULT_SAMPLING_POLICY
+    )
+    mutant_body = {
+        key: value
+        for key, value in ignored_policy_mutant.items()
+        if key != "projection_id"
+    }
+    ignored_policy_mutant["projection_id"] = (
+        "lane-projection-" + canonical_json_sha256(mutant_body)[:24]
+    )
+    with pytest.raises(ValueError, match="differs from its condition"):
+        validate_lane_projection(ignored_policy_mutant)
 
 
 def test_lane_projection_rejects_byte_and_internal_content_tampering(

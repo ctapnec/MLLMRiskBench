@@ -188,6 +188,17 @@ is contained in limit 100. Logical-arm identity contributes to seed derivation
 and gives each arm an independently scoped ordering. `--limit 0` returns the
 exact full arm.
 
+The CLI additionally permits explicit
+`--sampling-policy seeded_pseudorandom_whole_cluster_prefix_v1` or
+`--sampling-policy source_order_whole_cluster_prefix_v1`. The former is the
+unchanged default described above. The latter takes the first N cluster keys in
+source-appearance order and still retains all sibling rows. Omission preserves
+legacy request and artifact shapes. An explicit policy is bound into the
+request envelope, acquisition selection, eligibility condition, lane
+projection and run identity. A policy change therefore requires its own
+projection and analysis stratum. Under either policy, `--limit 0` is the exact
+full arm.
+
 Population tiers. A prospective amendment dated 24 August 2026, fixed after
 source inventory and diagnostic feasibility work but before any measured Phase
 6 call, replaces the earlier assumption that every all-local lane must exhaust

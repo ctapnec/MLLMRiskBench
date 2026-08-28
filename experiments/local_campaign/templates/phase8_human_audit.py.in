@@ -33,7 +33,6 @@ sys.path.insert(0, str(Path.cwd()))
 from experiments.local_campaign.ollama_static_terminal import (
     OLLAMA_STATIC_TERMINAL_DISPOSITION,
     OLLAMA_STATIC_TERMINAL_LANES,
-    inventory_counts as ollama_static_inventory_counts,
     validate_gate5_terminal_rows,
 )
 
@@ -102,7 +101,7 @@ WORKLOAD_SCHEMA = "ura-phase8-human-audit-workload/1"
 CAPACITY_SCHEMA = "ura-phase8-human-audit-capacity/1"
 BLOCKER_SCHEMA = "ura-phase8-human-only-blocker/1"
 TERMINAL_SCHEMA = "ura-phase8-human-audit-controller-terminal/1"
-ETHICS_SCHEMA = "ura-human-audit-ethics-determination/1"
+ETHICS_SCHEMA = "ura-human-audit-ethics-determination/2"
 PROMOTION_SCHEMA = "ura-gate5-runnote-promotion/1"
 JOBS_ARTIFACT_LINKS_SCHEMA = "ura-engineering-campaign-artifact-links/1"
 JOBS_ARTIFACT_LINKS_FILE = "artifact-links.json"
@@ -177,6 +176,12 @@ CORE_LANES = (
     "crescendo-qwen3-vl",
     "defense-local",
 )
+RR_CURRENT_LANES = (
+    "local-llava-rr-text-primary-100",
+    "local-llava-rr-image-primary-100",
+    "rjudge-llava-rr",
+    "gptgeochat-llava-rr",
+)
 RR_RUNTIME_TERMINAL_LANES = (
     "local-llava-rr-text-full",
     "local-llava-rr-image-full",
@@ -184,6 +189,13 @@ RR_RUNTIME_TERMINAL_LANES = (
     "gptgeochat-llava-rr",
 )
 RR_RUNTIME_TERMINAL_LANE_SET = set(RR_RUNTIME_TERMINAL_LANES)
+HISTORICAL_RR_RUNTIME_TERMINAL_LANES = (
+    "local-llava-rr-text-full",
+    "local-llava-rr-image-full",
+)
+HISTORICAL_RR_RUNTIME_TERMINAL_ARTIFACT_LANES = (
+    *HISTORICAL_RR_RUNTIME_TERMINAL_LANES, "rjudge-llava-rr", "gptgeochat-llava-rr",
+)
 RR_RUNTIME_TERMINAL_SCHEMA = "ura-phase5-target-runtime-terminal/1"
 RR_RUNTIME_TERMINAL_REASON_CODE = (
     "target_baseline_nontermination_at_generation_cap"
@@ -222,6 +234,25 @@ EXTENDED_LANES = (
     "rjudge-ollama-rwkv-g1g-1p5b",
 )
 RUNNABLE_LANES = CORE_LANES + EXTENDED_LANES
+FOLLOWON_LANES = (
+    "followon-nanogcg-qwen3-vl",
+    "followon-ideator-v2-qwen3-vl",
+    "followon-t3mp3st-qwen3-vl",
+)
+FOLLOWON_STATES = {"measured_complete", "partial", "failed"}
+SEVEN_AMENDMENT_LANES = (
+    "local-llava-rr-text-primary-100",
+    "local-llava-rr-image-primary-100",
+    "rjudge-llava-rr",
+    "gptgeochat-llava-rr",
+    "ollama-rwkv-g1d-0p4b-text-exploratory-50",
+    "ollama-rwkv-g1f-2p9b-text-exploratory-50",
+    "ollama-rwkv-g1g-1p5b-text-exploratory-50",
+)
+SEVEN_TERMINAL_STATES = {"measured_complete", "gate5_failed", "measured_failed"}
+HISTORICAL_GATE5_RUNNABLE = 18
+HISTORICAL_GATE5_TYPED_TERMINAL = 28
+HISTORICAL_GATE5_TARGET_RUNTIME_TERMINAL = 7
 DEFENSE_LOCAL_LANE = "defense-local"
 DEFENSE_LOCAL_CONDITIONAL_SCHEMA = "ura-phase5-defense-canary-na/1"
 DEFENSE_LOCAL_CONDITIONAL_REASON_CODE = "co_resident_cuda_oom_before_calls"
@@ -1362,11 +1393,13 @@ def _validate_rr_projection_artifact_binding(
 
 
 def _validate_rr_runtime_project_continuity(
-    terminal_descriptor: Mapping[str, Any],
+    terminal_descriptor: Mapping[str, Any] | None,
     *,
     project_root: Path,
     label: str,
 ) -> None:
+    if terminal_descriptor is None:
+        return
     _artifact_path, artifact_payload = descriptor_bytes(
         terminal_descriptor,
         label=f"{label} shared RR runtime terminal artifact",
@@ -1538,7 +1571,14 @@ def _validate_rr_runtime_terminal_rows(
     *,
     label: str,
     validate_artifact: bool,
-) -> dict[str, Any]:
+    expected_code_identity: Mapping[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    if not RR_RUNTIME_TERMINAL_LANES:
+        if set(HISTORICAL_RR_RUNTIME_TERMINAL_LANES) & set(rows):
+            raise Phase8Error(
+                f"{label} contains obsolete GraySwan runtime-terminal evidence"
+            )
+        return None
     unavailable = {"status": "UNAVAILABLE", "value": None}
     expected_row_fields = {
         "lane_id", "family", "disposition", "reason_code", "reason",
@@ -1664,7 +1704,8 @@ def _validate_rr_runtime_terminal_rows(
         or artifact.get("reason_code") != RR_RUNTIME_TERMINAL_REASON_CODE
         or artifact.get("reason") != RR_RUNTIME_TERMINAL_REASON
         or UTC_RE.fullmatch(str(artifact.get("classified_at_utc", ""))) is None
-        or artifact.get("applies_to_lanes") != list(RR_RUNTIME_TERMINAL_LANES)
+        or artifact.get("applies_to_lanes")
+        != list(HISTORICAL_RR_RUNTIME_TERMINAL_ARTIFACT_LANES)
         or artifact.get("evidence_eligible") is not False
         or not isinstance(target, dict)
         or set(target)
@@ -1688,15 +1729,48 @@ def _validate_rr_runtime_terminal_rows(
             "classification_project_commit", "framework_lock_sha256",
             "project_revision", "semantic_source_continuity", "evidence_roots",
         }
-        or bindings.get("classification_project_commit") != EXPECTED_COMMIT
-        or bindings.get("framework_lock_sha256") != EXPECTED_FRAMEWORK_LOCK
+        or re.fullmatch(
+            r"[0-9a-f]{40}",
+            str(bindings.get("classification_project_commit", "")),
+        )
+        is None
+        or HEX64.fullmatch(str(bindings.get("framework_lock_sha256", "")))
+        is None
         or not isinstance(observations, dict)
         or set(observations) != evidence_keys
     ):
         raise Phase8Error(f"{label} RR runtime terminal artifact changed")
+    artifact_code_identity = {
+        "expected_commit": bindings["classification_project_commit"],
+        "framework_lock_id": bindings["framework_lock_sha256"],
+    }
+    if expected_code_identity is not None and artifact_code_identity != (
+        _require_code_identity(expected_code_identity, label=label)
+    ):
+        raise Phase8Error(f"{label} RR runtime terminal code identity differs")
     for raw in (target.get("local_config"), bindings.get("project_revision")):
         _runtime_terminal_descriptor_shape(raw, label=f"{label} RR binding")
         descriptor_file(raw, label=f"{label} RR binding")
+    _project_path, project_payload = descriptor_bytes(
+        bindings["project_revision"], label=f"{label} RR project revision"
+    )
+    project_receipt = strict_loads(
+        project_payload, label=f"{label} RR project revision"
+    )
+    project_repository = (
+        project_receipt.get("repository")
+        if isinstance(project_receipt, dict)
+        else None
+    )
+    if (
+        not isinstance(project_repository, dict)
+        or project_repository.get("expected_commit")
+        != artifact_code_identity["expected_commit"]
+        or project_repository.get("observed_commit")
+        != artifact_code_identity["expected_commit"]
+        or project_repository.get("clean") is not True
+    ):
+        raise Phase8Error(f"{label} RR project-revision binding changed")
     continuity = bindings.get("semantic_source_continuity")
     roots = bindings.get("evidence_roots")
     if (
@@ -1878,8 +1952,27 @@ def exact_json_contract(left: object, right: object) -> bool:
     return left == right
 
 
+def _require_code_identity(value: object, *, label: str) -> dict[str, str]:
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"expected_commit", "framework_lock_id"}
+        or re.fullmatch(r"[0-9a-f]{40}", str(value.get("expected_commit", "")))
+        is None
+        or HEX64.fullmatch(str(value.get("framework_lock_id", ""))) is None
+    ):
+        raise Phase8Error(f"{label} code identity is invalid")
+    return {
+        "expected_commit": value["expected_commit"],
+        "framework_lock_id": value["framework_lock_id"],
+    }
+
+
 def _validate_conditional_defense_row(
-    row: object, *, label: str, validate_artifact: bool = True
+    row: object,
+    *,
+    label: str,
+    validate_artifact: bool = True,
+    expected_code_identity: Mapping[str, Any] | None = None,
 ) -> None:
     typed_na = {"status": "N/A", "value": None}
     if not isinstance(row, dict) or set(row) != {
@@ -1982,13 +2075,24 @@ def _validate_conditional_defense_row(
     }:
         raise Phase8Error(f"{label} conditional defense bindings changed")
     target = bindings.get("target")
+    artifact_code_identity = {
+        "expected_commit": bindings.get("expected_commit"),
+        "framework_lock_id": bindings.get("framework_lock_id"),
+    }
     if (
-        bindings.get("expected_commit") != EXPECTED_COMMIT
-        or bindings.get("framework_lock_id") != EXPECTED_FRAMEWORK_LOCK
-        or bindings.get("project_revision_sha256")
-        != EXPECTED_PROJECT_REVISION_SHA256
-        or bindings.get("source_conformance_sha256")
-        != EXPECTED_SOURCE_CONFORMANCE_SHA256
+        re.fullmatch(
+            r"[0-9a-f]{40}", str(bindings.get("expected_commit", ""))
+        )
+        is None
+        or HEX64.fullmatch(str(bindings.get("framework_lock_id", ""))) is None
+        or HEX64.fullmatch(
+            str(bindings.get("project_revision_sha256", ""))
+        )
+        is None
+        or HEX64.fullmatch(
+            str(bindings.get("source_conformance_sha256", ""))
+        )
+        is None
         or HEX64.fullmatch(str(bindings.get("source_config_sha256"))) is None
         or bindings.get("cuda_visible_devices") != "0,1"
         or not isinstance(target, dict)
@@ -2000,6 +2104,10 @@ def _validate_conditional_defense_row(
         or bindings.get("defense_guard") != EXPECTED_DEFENSE_GUARDRAIL
     ):
         raise Phase8Error(f"{label} conditional defense binding values changed")
+    if expected_code_identity is not None and artifact_code_identity != (
+        _require_code_identity(expected_code_identity, label=label)
+    ):
+        raise Phase8Error(f"{label} conditional defense code identity differs")
     artifacts = artifact.get("artifacts")
     expected_artifacts = variant["artifacts"]
     if not isinstance(artifacts, dict) or set(artifacts) != expected_artifacts:
@@ -2010,8 +2118,23 @@ def _validate_conditional_defense_row(
         )
         for name, raw in artifacts.items()
     }
+    project_receipt = strict_loads(
+        artifact_observations["project_revision"][1],
+        label=f"{label} conditional defense project revision",
+    )
+    project_repository = (
+        project_receipt.get("repository")
+        if isinstance(project_receipt, dict)
+        else None
+    )
     if (
-        artifacts["project_revision"]["sha256"]
+        not isinstance(project_repository, dict)
+        or project_repository.get("expected_commit")
+        != artifact_code_identity["expected_commit"]
+        or project_repository.get("observed_commit")
+        != artifact_code_identity["expected_commit"]
+        or project_repository.get("clean") is not True
+        or artifacts["project_revision"]["sha256"]
         != bindings["project_revision_sha256"]
         or artifacts["source_conformance"]["sha256"]
         != bindings["source_conformance_sha256"]
@@ -2213,7 +2336,10 @@ def _validate_conditional_defense_row(
 
 
 def _exact_inventory(
-    rows: object, *, validate_artifact: bool = True
+    rows: object,
+    *,
+    validate_artifact: bool = True,
+    code_identity: Mapping[str, Any] | None = None,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
     if not isinstance(rows, list) or len(rows) != 46:
         raise Phase8Error("Gate 5 must contain exactly 46 lane rows")
@@ -2240,10 +2366,12 @@ def _exact_inventory(
         isinstance(defense, dict)
         and defense.get("disposition") == "conditional_na"
     )
-    dynamic_counts = ollama_static_inventory_counts(
-        ollama_static_terminals,
-        [DEFENSE_LOCAL_LANE] if conditional else [],
-    )
+    dynamic_counts = {
+        "runnable": 22 - len(ollama_static_terminals) - int(conditional),
+        "typed_terminal": 24 + len(ollama_static_terminals) + int(conditional),
+        "target_runtime_terminal": len(RR_RUNTIME_TERMINAL_LANES)
+        + len(ollama_static_terminals),
+    }
     expected_runnable = (
         set(RUNNABLE_LANES)
         - RR_RUNTIME_TERMINAL_LANE_SET
@@ -2283,12 +2411,14 @@ def _exact_inventory(
         terminal,
         label="Gate 5",
         validate_artifact=validate_artifact,
+        expected_code_identity=code_identity,
     )
     if conditional:
         _validate_conditional_defense_row(
             terminal[DEFENSE_LOCAL_LANE],
             label="Gate 5",
             validate_artifact=validate_artifact,
+            expected_code_identity=code_identity,
         )
     return runnable, terminal
 
@@ -2300,6 +2430,17 @@ def _gate5_profile(
     ollama_static_terminals = tuple(
         lane for lane in OLLAMA_STATIC_TERMINAL_LANES if lane in terminal
     )
+    target_runtime_terminals = len(RR_RUNTIME_TERMINAL_LANES) + len(
+        ollama_static_terminals
+    )
+    if (
+        not conditional
+        or ollama_static_terminals != tuple(OLLAMA_STATIC_TERMINAL_LANES)
+        or len(runnable) != HISTORICAL_GATE5_RUNNABLE
+        or len(terminal) != HISTORICAL_GATE5_TYPED_TERMINAL
+        or target_runtime_terminals != HISTORICAL_GATE5_TARGET_RUNTIME_TERMINAL
+    ):
+        raise Phase8Error("Gate 5 is not the retained historical c926 profile")
     return {
         "conditional_na_lanes": [DEFENSE_LOCAL_LANE] if conditional else [],
         "ollama_static_terminal_lanes": ollama_static_terminals,
@@ -2316,14 +2457,18 @@ def _gate5_profile(
         ],
         "runnable_lane_count": len(runnable),
         "terminal_lane_count": len(terminal),
+        "target_runtime_terminal": target_runtime_terminals,
+        "target_runtime_terminal_artifact": _validate_rr_runtime_terminal_rows(
+            terminal, label="Gate 5", validate_artifact=False
+        ),
     }
 
 
 def _count_inventory(value: object, *, profile: Mapping[str, Any]) -> None:
-    dynamic_counts = ollama_static_inventory_counts(
-        profile["ollama_static_terminal_lanes"],
-        profile["conditional_na_lanes"],
-    )
+    dynamic_counts = {
+        "target_runtime_terminal": len(RR_RUNTIME_TERMINAL_LANES)
+        + len(profile["ollama_static_terminal_lanes"]),
+    }
     expected = {
         "total": 46,
         "runnable": profile["runnable_lane_count"],
@@ -2369,21 +2514,23 @@ def validate_gate5(
     manifest = strict_loads(manifest_payload, label="Gate 5 covered manifest")
     if not isinstance(manifest, dict):
         raise Phase8Error("Gate 5 covered manifest must contain one JSON object")
+    code_identity = _require_code_identity(
+        manifest.get("code_identity"), label="Gate 5 manifest"
+    )
     if (
         manifest.get("schema") != "ura-gate5-covered-manifest/1"
         or manifest.get("inventory_complete") is not True
-        or manifest.get("code_identity")
-        != {
-            "expected_commit": EXPECTED_COMMIT,
-            "framework_lock_id": EXPECTED_FRAMEWORK_LOCK,
-        }
     ):
         raise Phase8Error("Gate 5 manifest identity or completeness differs")
-    runnable, terminal = _exact_inventory(manifest.get("lanes"))
+    runnable, terminal = _exact_inventory(
+        manifest.get("lanes"), code_identity=code_identity
+    )
     _validate_rr_runtime_project_continuity(
-        terminal[RR_RUNTIME_TERMINAL_LANES[0]]["canary"][
-            "target_runtime_terminal_artifact"
-        ],
+        _validate_rr_runtime_terminal_rows(
+            terminal,
+            label="Gate 5",
+            validate_artifact=False,
+        ),
         project_root=project_root,
         label="Gate 5",
     )
@@ -2445,7 +2592,9 @@ def validate_gate5(
         or not UTC_RE.fullmatch(str(note.get("created_at_utc", "")))
     ):
         raise Phase8Error("canonical Gate 5 RUNNOTE contract differs")
-    note_runnable, note_terminal = _exact_inventory(note.get("lanes"))
+    note_runnable, note_terminal = _exact_inventory(
+        note.get("lanes"), code_identity=code_identity
+    )
     if (
         set(note_runnable) != set(runnable)
         or set(note_terminal) != set(terminal)
@@ -2592,11 +2741,7 @@ def validate_gate5(
         set(plan) != expected_plan_fields
         or plan.get("schema") != "ura-gate5-runnote-promotion-plan/1"
         or plan.get("status") != "candidate_only"
-        or plan.get("code_identity")
-        != {
-            "expected_commit": EXPECTED_COMMIT,
-            "framework_lock_id": EXPECTED_FRAMEWORK_LOCK,
-        }
+        or plan.get("code_identity") != code_identity
     ):
         raise Phase8Error("Gate 5 promotion plan identity differs")
     prior = promotion.get("prior_canonical")
@@ -2798,6 +2943,7 @@ def validate_gate5(
         "runnable": runnable,
         "terminal": terminal,
         "profile": profile,
+        "code_identity": code_identity,
     }
 
 
@@ -2833,12 +2979,21 @@ def validate_ethics(
         "sensitive_content_acknowledged",
         "preparation_authorized",
         "human_labeling_authorized",
-        "details",
+        "consent_controls",
+        "compensation_controls",
+        "withdrawal_controls",
+        "harmful_content_welfare_controls",
+        "escalation_controls",
     }
     if set(value) != required:
         raise Phase8Error(
             "ethics determination fields differ from the required template"
         )
+    consent = value.get("consent_controls")
+    compensation = value.get("compensation_controls")
+    withdrawal = value.get("withdrawal_controls")
+    welfare = value.get("harmful_content_welfare_controls")
+    escalation = value.get("escalation_controls")
     if (
         value.get("schema") != ETHICS_SCHEMA
         or value.get("status")
@@ -2851,10 +3006,54 @@ def validate_ethics(
         or value.get("sensitive_content_acknowledged") is not True
         or value.get("preparation_authorized") is not True
         or not isinstance(value.get("human_labeling_authorized"), bool)
-        or not isinstance(value.get("details"), dict)
     ):
         raise Phase8Error(
             "ethics determination does not authorize sensitive preparation"
+        )
+    if (
+        not isinstance(consent, dict)
+        or set(consent)
+        != {
+            "document_version",
+            "informed_consent_before_exposure",
+            "minors_excluded",
+        }
+        or not isinstance(consent.get("document_version"), str)
+        or not consent["document_version"].strip()
+        or consent.get("informed_consent_before_exposure") is not True
+        or consent.get("minors_excluded") is not True
+        or not isinstance(compensation, dict)
+        or set(compensation) != {"basis", "agreement_contingent"}
+        or not isinstance(compensation.get("basis"), str)
+        or not compensation["basis"].strip()
+        or compensation.get("agreement_contingent") is not False
+        or not isinstance(withdrawal, dict)
+        or set(withdrawal) != {"process", "without_penalty"}
+        or not isinstance(withdrawal.get("process"), str)
+        or not withdrawal["process"].strip()
+        or withdrawal.get("without_penalty") is not True
+        or not isinstance(welfare, dict)
+        or set(welfare)
+        != {
+            "advance_category_warnings",
+            "category_opt_out_without_penalty",
+            "continuous_exposure_limit",
+            "scheduled_breaks",
+        }
+        or welfare.get("advance_category_warnings") is not True
+        or welfare.get("category_opt_out_without_penalty") is not True
+        or not isinstance(welfare.get("continuous_exposure_limit"), str)
+        or not welfare["continuous_exposure_limit"].strip()
+        or welfare.get("scheduled_breaks") is not True
+        or not isinstance(escalation, dict)
+        or set(escalation) != {"stop_contact", "adverse_event_process"}
+        or not isinstance(escalation.get("stop_contact"), str)
+        or not escalation["stop_contact"].strip()
+        or not isinstance(escalation.get("adverse_event_process"), str)
+        or not escalation["adverse_event_process"].strip()
+    ):
+        raise Phase8Error(
+            "ethics determination rater-protection controls differ"
         )
     if value.get("scope") != {
         "expected_commit": EXPECTED_COMMIT,
@@ -3330,6 +3529,7 @@ def _lane_inventory(value: Mapping[str, Any]) -> set[str]:
 def validate_core_completion(
     path: Path,
     *,
+    code_identity: Mapping[str, Any],
     manifest_sha: str,
     runnote_sha: str,
     promotion_sha: str,
@@ -3339,6 +3539,9 @@ def validate_core_completion(
     gate5_profile: Mapping[str, Any],
     payload: bytes | None = None,
 ) -> dict[str, Any]:
+    historical_identity = _require_code_identity(
+        code_identity, label="Phase 6 core"
+    )
     scheduled_lanes = list(gate5_profile["scheduled_core_lanes"])
     conditional_na_lanes = list(gate5_profile["conditional_na_lanes"])
     path = checked_file(path, label="Phase 6 core completion")
@@ -3383,8 +3586,9 @@ def validate_core_completion(
         or value.get("schema") != "ura-phase6-core-controller-completion/1"
         or value.get("status") not in {"complete", "complete_with_failures"}
         or not UTC_RE.fullmatch(str(value.get("completed_at_utc", "")))
-        or value.get("expected_commit") != EXPECTED_COMMIT
-        or value.get("framework_lock_id") != EXPECTED_FRAMEWORK_LOCK
+        or value.get("expected_commit") != historical_identity["expected_commit"]
+        or value.get("framework_lock_id")
+        != historical_identity["framework_lock_id"]
         or value.get("inventory_complete") is not True
         or value.get("all_independent_lanes_attempted") is not True
         or value.get("lane_order") != scheduled_lanes
@@ -3434,13 +3638,6 @@ def validate_core_completion(
         or set(results) | set(failures) != set(scheduled_lanes)
     ):
         raise Phase8Error("Phase 6 core result/failure partition differs")
-    if (
-        not conditional_na_lanes
-        and states.get(DEFENSE_LOCAL_LANE) != "measured_complete"
-    ):
-        raise Phase8Error(
-            "runnable defense-local lacks complete measured and defense-audit evidence"
-        )
     expected_status = "complete_with_failures" if failed_lanes else "complete"
     expected_exit = 1 if failed_lanes else 0
     if (
@@ -3484,8 +3681,21 @@ def validate_core_completion(
         expected=FROZEN_PHASE6_PAYLOADS["core"],
         label="Phase 6 core payload",
     )
+    copied_gate5 = strict_loads(
+        descriptor_observations["gate5_manifest"][1],
+        label="Phase 6 core Gate 5 manifest",
+    )
+    copied_gate5_identity = (
+        _require_code_identity(
+            copied_gate5.get("code_identity"),
+            label="Phase 6 core Gate 5 manifest",
+        )
+        if isinstance(copied_gate5, dict)
+        else None
+    )
     if (
-        sha256_bytes(descriptor_observations["gate5_manifest"][1]) != manifest_sha
+        copied_gate5_identity != historical_identity
+        or sha256_bytes(descriptor_observations["gate5_manifest"][1]) != manifest_sha
         or sha256_bytes(descriptor_observations["gate5_runnote"][1]) != runnote_sha
         or sha256_bytes(descriptor_observations["gate5_promotion_receipt"][1])
         != promotion_sha
@@ -3522,8 +3732,9 @@ def validate_core_completion(
     if (
         set(launch) != launch_fields
         or launch.get("schema") != "ura-phase6-core-controller-launch/1"
-        or launch.get("expected_commit") != EXPECTED_COMMIT
-        or launch.get("framework_lock_id") != EXPECTED_FRAMEWORK_LOCK
+        or launch.get("expected_commit") != historical_identity["expected_commit"]
+        or launch.get("framework_lock_id")
+        != historical_identity["framework_lock_id"]
         or launch.get("manifest_sha256") != manifest_sha
         or launch.get("authorized_manifest_sha256") != manifest_sha
         or launch.get("control_root") != str(control)
@@ -3582,8 +3793,9 @@ def validate_core_completion(
         or summary.get("status") != expected_status
         or not UTC_RE.fullmatch(str(summary.get("completed_at_utc", "")))
         or summary.get("attempt") != attempt.name
-        or summary.get("expected_commit") != EXPECTED_COMMIT
-        or summary.get("framework_lock_id") != EXPECTED_FRAMEWORK_LOCK
+        or summary.get("expected_commit") != historical_identity["expected_commit"]
+        or summary.get("framework_lock_id")
+        != historical_identity["framework_lock_id"]
         or summary.get("lane_order") != scheduled_lanes
         or summary.get("conditional_na_lanes") != conditional_na_lanes
         or summary.get("lane_terminal_states") != states
@@ -4025,6 +4237,7 @@ def validate_core_completion(
 def validate_extended_completion(
     path: Path,
     *,
+    code_identity: Mapping[str, Any],
     manifest_sha: str,
     runnote_sha: str,
     promotion_sha: str,
@@ -4032,6 +4245,9 @@ def validate_extended_completion(
     validate_gate5_artifacts: bool = True,
     payload: bytes | None = None,
 ) -> dict[str, Any]:
+    historical_identity = _require_code_identity(
+        code_identity, label="Phase 6 extended"
+    )
     path = checked_file(path, label="Phase 6 extended completion")
     if payload is None:
         _path, payload = _stable_regular_bytes(
@@ -4078,8 +4294,9 @@ def validate_extended_completion(
         or not isinstance(attempt, str)
         or not attempt
         or Path(attempt).name != attempt
-        or value.get("expected_commit") != EXPECTED_COMMIT
-        or value.get("framework_lock_id") != EXPECTED_FRAMEWORK_LOCK
+        or value.get("expected_commit") != historical_identity["expected_commit"]
+        or value.get("framework_lock_id")
+        != historical_identity["framework_lock_id"]
         or value.get("inventory_complete") is not True
         or value.get("all_independent_lanes_attempted") is not True
         or value.get("conditional_na_lanes")
@@ -4174,8 +4391,15 @@ def validate_extended_completion(
     gate5 = strict_loads(manifest_payload, label="Phase 6 extended Gate 5 manifest")
     if not isinstance(gate5, dict):
         raise Phase8Error("Phase 6 extended Gate 5 manifest is not one object")
+    copied_gate5_identity = _require_code_identity(
+        gate5.get("code_identity"), label="Phase 6 extended Gate 5 manifest"
+    )
+    if copied_gate5_identity != historical_identity:
+        raise Phase8Error("Phase 6 extended Gate 5 code identity differs")
     gate5_runnable, gate5_terminals = _exact_inventory(
-        gate5.get("lanes"), validate_artifact=validate_gate5_artifacts
+        gate5.get("lanes"),
+        validate_artifact=validate_gate5_artifacts,
+        code_identity=copied_gate5_identity,
     )
     gate5_profile = _gate5_profile(gate5_runnable, gate5_terminals)
     conditional_na_lanes = list(gate5_profile["conditional_na_lanes"])
@@ -4261,8 +4485,9 @@ def validate_extended_completion(
     if (
         set(launch) != launch_fields
         or launch.get("schema") != "ura-phase6-extended-controller-launch/1"
-        or launch.get("expected_commit") != EXPECTED_COMMIT
-        or launch.get("framework_lock_id") != EXPECTED_FRAMEWORK_LOCK
+        or launch.get("expected_commit") != historical_identity["expected_commit"]
+        or launch.get("framework_lock_id")
+        != historical_identity["framework_lock_id"]
         or launch.get("manifest_sha256") != manifest_sha
         or launch.get("authorized_manifest_sha256") != manifest_sha
         or launch.get("control_root") != str(control_root.resolve(strict=True))
@@ -4594,7 +4819,12 @@ def validate_native_completion(
     )
     if not isinstance(gate5, dict):
         raise Phase8Error("Phase 6 native Gate 5 manifest is not one object")
-    gate5_runnable, gate5_terminals = _exact_inventory(gate5.get("lanes"))
+    native_gate5_identity = _require_code_identity(
+        gate5.get("code_identity"), label="Phase 6 native Gate 5 manifest"
+    )
+    gate5_runnable, gate5_terminals = _exact_inventory(
+        gate5.get("lanes"), code_identity=native_gate5_identity
+    )
     gate5_profile = _gate5_profile(gate5_runnable, gate5_terminals)
     conditional_na_lanes = list(gate5_profile["conditional_na_lanes"])
     if value.get("conditional_na_lanes") != conditional_na_lanes:
@@ -4698,7 +4928,13 @@ def validate_native_completion(
         or plan.get("schema") != "ura-phase6-native-canary-plan/1"
         or not UTC_RE.fullmatch(str(plan.get("created_at_utc", "")))
         or not isinstance(plan_code, dict)
-        or set(plan_code) != {"expected_commit", "framework_lock_id", "framework_lock"}
+        or set(plan_code)
+        != {
+            "expected_commit",
+            "framework_lock_id",
+            "framework_lock",
+            "project_revision",
+        }
         or plan_code.get("expected_commit") != EXPECTED_COMMIT
         or plan_code.get("framework_lock_id") != EXPECTED_FRAMEWORK_LOCK
         or plan.get("gate5_inputs") != gate5_inputs
@@ -4731,7 +4967,7 @@ def validate_native_completion(
         or plan_execution.get("no_downloads") is not True
         or plan_execution.get("no_hosted_calls") is not True
         or plan_execution.get("call_gate")
-        != "per-engine literal-loopback proxy with exact model allow-list and hard request cap"
+        != "per-engine literal-loopback proxy under one production exclusive inference lease with protected pre/post exact-roster checks, exact model allow-list, and hard request cap"
         or not isinstance(plan_models, dict)
         or set(plan_models) != set(NATIVE_OLLAMA_MODELS)
     ):
@@ -4755,6 +4991,20 @@ def validate_native_completion(
         or any(not isinstance(row, dict) for row in framework_rows)
     ):
         raise Phase8Error("deployed framework runtime lock differs")
+    _native_project_path, native_project_receipt = descriptor_object(
+        plan_code["project_revision"],
+        label="Phase 6 native project-revision receipt",
+    )
+    native_repository = native_project_receipt.get("repository")
+    if (
+        plan_code["project_revision"].get("sha256")
+        != EXPECTED_PROJECT_REVISION_SHA256
+        or not isinstance(native_repository, dict)
+        or native_repository.get("expected_commit") != EXPECTED_COMMIT
+        or native_repository.get("observed_commit") != EXPECTED_COMMIT
+        or native_repository.get("clean") is not True
+    ):
+        raise Phase8Error("Phase 6 native project-revision receipt differs")
     framework_by_name = {
         row.get("name"): row
         for row in framework_rows
@@ -5396,14 +5646,17 @@ def validate_native_completion(
         }
         or contract_test.get("schema") != "ura-phase6-native-contract-self-test/1"
         or contract_test.get("status") != "passed"
-        or contract_test.get("mutations_rejected") != 10
+        or contract_test.get("mutations_rejected") != 13
         or not isinstance(contract_test.get("rejected_cases"), list)
         or contract_test.get("rejected_cases")
         != [
             "missing-lane",
             "duplicate-lane",
             "runnable-family",
+            "rr-current-runnable",
             "native-terminal",
+            "defense-na-v2-cross-mix",
+            "defense-na-shape",
             "hosted-http-policy",
             "promotion-inventory",
             "promotion-download",
@@ -5871,7 +6124,6 @@ def validate_analysis_boundaries(
     llava_status = paired_status.get("llava_base_vs_rr")
     if not isinstance(llava_status, dict) or set(llava_status) != set(IMAGE_ARMS):
         raise Phase8Error("Phase 7 missing planned LLaVA contrast facets")
-    shared_rr_descriptor: dict[str, Any] | None = None
     for corpus in IMAGE_ARMS:
         row = llava_status[corpus]
         if (
@@ -5883,43 +6135,99 @@ def validate_analysis_boundaries(
                 "estimate_available",
                 "planned_contrast_missing",
                 "reason_code",
+                "missing_roles",
+                "prerequisite_roles",
                 "modality",
                 "facet",
                 "paired_compare_invoked",
-                "target_runtime_terminal_artifact",
             }
-            or row.get("status") != "unavailable"
-            or row.get("analysis_ready_real_run") is not False
-            or row.get("estimate_available") is not False
-            or row.get("planned_contrast_missing") is not True
-            or row.get("reason_code") != RR_RUNTIME_TERMINAL_REASON_CODE
             or row.get("modality") != "image"
             or row.get("facet") != corpus
-            or row.get("paired_compare_invoked") is not False
+            or type(row.get("analysis_ready_real_run")) is not bool
+            or type(row.get("estimate_available")) is not bool
+            or type(row.get("planned_contrast_missing")) is not bool
+            or type(row.get("paired_compare_invoked")) is not bool
+        ):
+            raise Phase8Error(f"Phase 7 LLaVA contrast boundary changed: {corpus}")
+        if row["paired_compare_invoked"]:
+            if row["reason_code"] in {
+                "paired_compare_validation_failed",
+                "paired_compare_readiness_failed",
+            }:
+                if (
+                    row["status"] != "unavailable"
+                    or row["analysis_ready_real_run"] is not False
+                    or row["estimate_available"] is not False
+                    or row["planned_contrast_missing"] is not True
+                    or row["missing_roles"] != []
+                    or not isinstance(row["prerequisite_roles"], dict)
+                    or set(row["prerequisite_roles"])
+                    != {"left_base", "right_rr"}
+                ):
+                    raise Phase8Error(
+                        f"Phase 7 completed non-estimable LLaVA boundary changed: {corpus}"
+                    )
+            elif (
+                row["status"] != "complete"
+                or row["analysis_ready_real_run"] is not True
+                or row["estimate_available"] is not True
+                or row["planned_contrast_missing"] is not False
+                or row["reason_code"] is not None
+                or row["missing_roles"] != []
+                or row["prerequisite_roles"] != {}
+            ):
+                raise Phase8Error(
+                    f"Phase 7 measured LLaVA contrast boundary changed: {corpus}"
+                )
+        elif (
+            row["status"] != "unavailable"
+            or row["analysis_ready_real_run"] is not False
+            or row["estimate_available"] is not False
+            or row["planned_contrast_missing"] is not True
+            or row["reason_code"]
+            not in {
+                "left_base_lane_failed",
+                "right_rr_lane_failed",
+                "left_base_and_right_rr_lanes_failed",
+            }
+            or not isinstance(row["missing_roles"], list)
+            or not row["missing_roles"]
+            or not isinstance(row["prerequisite_roles"], dict)
+            or set(row["prerequisite_roles"]) != {"left_base", "right_rr"}
+            or not set(row["missing_roles"]) <= set(row["prerequisite_roles"])
         ):
             raise Phase8Error(
-                f"Phase 7 LLaVA contrast was not explicitly non-estimable: {corpus}"
+                f"Phase 7 non-estimable LLaVA contrast boundary changed: {corpus}"
             )
-        terminal_descriptor = row.get("target_runtime_terminal_artifact")
+        expected_state_missing = (
+            [
+                role
+                for role, lane in (
+                    ("left_base", "local-llava-base-image-primary-100"),
+                    ("right_rr", "local-llava-rr-image-primary-100"),
+                )
+                if expected_runner_states.get(lane) != "measured_complete"
+            ]
+            if expected_runner_states is not None
+            else None
+        )
         if (
-            not isinstance(terminal_descriptor, dict)
-            or set(terminal_descriptor) != {"path", "sha256", "bytes"}
-            or not isinstance(terminal_descriptor.get("path"), str)
-            or not Path(terminal_descriptor["path"]).is_absolute()
-            or HEX64.fullmatch(str(terminal_descriptor.get("sha256", ""))) is None
-            or type(terminal_descriptor.get("bytes")) is not int
-            or terminal_descriptor["bytes"] <= 0
+            expected_state_missing is not None
+            and row["paired_compare_invoked"] is bool(expected_state_missing)
         ):
-            raise Phase8Error("Phase 7 LLaVA contrast terminal descriptor changed")
-        if shared_rr_descriptor is None:
-            shared_rr_descriptor = dict(terminal_descriptor)
-        elif terminal_descriptor != shared_rr_descriptor:
-            raise Phase8Error("Phase 7 LLaVA facets bind different RR terminals")
-    if (
-        expected_rr_terminal_artifact is not None
-        and shared_rr_descriptor != dict(expected_rr_terminal_artifact)
-    ):
-        raise Phase8Error("Phase 7 LLaVA contrast binds the wrong RR terminal")
+            raise Phase8Error(
+                f"Phase 7 LLaVA pair availability differs from Runner state: {corpus}"
+            )
+        if (
+            expected_state_missing is not None
+            and not row["paired_compare_invoked"]
+            and row["missing_roles"] != expected_state_missing
+        ):
+            raise Phase8Error(
+                f"Phase 7 LLaVA prerequisite availability changed: {corpus}"
+            )
+    if expected_rr_terminal_artifact is not None:
+        raise Phase8Error("current Phase 7 cannot bind historical RR terminal evidence")
     adaptivity_status = paired_status.get("qwen_replay_vs_crescendo")
     if (
         not isinstance(adaptivity_status, dict)
@@ -5964,16 +6272,12 @@ def validate_analysis_boundaries(
         expected_lanes = (
             set(RUNNABLE_LANES)
             - RR_RUNTIME_TERMINAL_LANE_SET
+            - set(OLLAMA_STATIC_TERMINAL_LANES)
             - set(conditional_na_lanes)
         )
         if (
             set(expected_runner_states) != expected_lanes
             or value.get("runner_outcomes") != dict(expected_runner_states)
-            or (
-                not conditional_na_lanes
-                and expected_runner_states.get(DEFENSE_LOCAL_LANE)
-                != "measured_complete"
-            )
         ):
             raise Phase8Error("Phase 7 boundary Runner outcomes differ")
         measured = {
@@ -6057,6 +6361,40 @@ def validate_frozen_phase7_oracle_api(oracle: Any) -> None:
             ("code_identity", keyword_only),
             ("project_and_source", keyword_only),
             ("gate5_profile", keyword_only),
+        ),
+        "validate_followon_inventory": (
+            ("amendment_path", keyword_only),
+            ("completion_path", keyword_only),
+            ("gate5_promotion", keyword_only),
+            ("code_identity", keyword_only),
+        ),
+        "validate_seven_output_policy_inventory": (
+            ("amendment_path", keyword_only),
+            ("completion_path", keyword_only),
+            ("gate5_manifest", keyword_only),
+            ("gate5_runnote", keyword_only),
+            ("gate5_promotion", keyword_only),
+            ("project_and_source", keyword_only),
+        ),
+        "validate_phase6_recovery_completions": (
+            ("paths", positional),
+            ("gate5_manifest", keyword_only),
+            ("gate5_runnote", keyword_only),
+            ("gate5_promotion", keyword_only),
+            ("project_and_source", keyword_only),
+        ),
+        "validate_phase6_campaign_terminal_inventory": (
+            ("value", positional),
+        ),
+        "build_phase6_campaign_terminal_inventory": (
+            ("gate5_rows", keyword_only),
+            ("gate5_manifest", keyword_only),
+            ("project_and_source", keyword_only),
+            ("runner", keyword_only),
+            ("native", keyword_only),
+            ("recoveries", keyword_only),
+            ("seven", keyword_only),
+            ("followon", keyword_only),
         ),
     }
     for name, expected_parameters in expected_api.items():
@@ -6144,7 +6482,7 @@ def replay_frozen_phase7_oracle(
             runnote_payload=gate5_runnote_payload,
             promotion_payload=gate5_promotion_payload,
         )
-        if oracle_code_identity != inputs["code_identity"]:
+        if oracle_code_identity != gate5.get("code_identity"):
             raise Phase8Error("Phase 7 oracle code identity differs")
         oracle_profile = oracle.gate5_inventory_profile(
             oracle_manifest["lanes"], label="Phase 7 oracle Gate 5 manifest"
@@ -6184,7 +6522,7 @@ def replay_frozen_phase7_oracle(
             gate5_manifest=gate5_manifest_path,
             gate5_runnote=gate5_runnote_path,
             gate5_promotion=gate5_promotion_path,
-            code_identity=oracle_code_identity,
+            code_identity=inputs["code_identity"],
         )
         oracle_runner = oracle.validate_runner_inventory(
             runner_root=runner_root,
@@ -6193,6 +6531,55 @@ def replay_frozen_phase7_oracle(
             code_identity=oracle_code_identity,
             project_and_source=oracle_project,
             gate5_profile=oracle_profile,
+        )
+        oracle_recoveries = oracle.validate_phase6_recovery_completions(
+            [
+                descriptor_file(
+                    item,
+                    label="Phase 7 oracle recovery completion",
+                )
+                for item in inputs["canonical_recoveries"]["completion_order"]
+            ],
+            gate5_manifest=gate5_manifest_path,
+            gate5_runnote=gate5_runnote_path,
+            gate5_promotion=gate5_promotion_path,
+            project_and_source=oracle_project,
+        )
+        oracle_followon = oracle.validate_followon_inventory(
+            amendment_path=descriptor_file(
+                inputs["followon"]["amendment"],
+                label="Phase 7 oracle follow-on amendment",
+            ),
+            completion_path=descriptor_file(
+                inputs["followon"]["completion"],
+                label="Phase 7 oracle follow-on completion",
+            ),
+            gate5_promotion=gate5_promotion_path,
+            code_identity=inputs["code_identity"],
+        )
+        oracle_seven = oracle.validate_seven_output_policy_inventory(
+            amendment_path=descriptor_file(
+                inputs["seven_output_policy_amendment"]["amendment"],
+                label="Phase 7 oracle seven-row amendment",
+            ),
+            completion_path=descriptor_file(
+                inputs["seven_output_policy_amendment"]["completion"],
+                label="Phase 7 oracle seven-row completion",
+            ),
+            gate5_manifest=gate5_manifest_path,
+            gate5_runnote=gate5_runnote_path,
+            gate5_promotion=gate5_promotion_path,
+            project_and_source=oracle_project,
+        )
+        oracle_campaign = oracle.build_phase6_campaign_terminal_inventory(
+            gate5_rows=oracle_manifest["lanes"],
+            gate5_manifest=gate5_manifest_path,
+            project_and_source=oracle_project,
+            runner=oracle_runner,
+            native=oracle_native,
+            recoveries=oracle_recoveries,
+            seven=oracle_seven,
+            followon=oracle_followon,
         )
     except Phase8Error:
         raise
@@ -6208,6 +6595,10 @@ def replay_frozen_phase7_oracle(
         or oracle_extended != extended
         or oracle_native != native
         or oracle_runner != runner
+        or oracle_recoveries != inputs.get("canonical_recoveries")
+        or oracle_followon != inputs.get("followon")
+        or oracle_seven != inputs.get("seven_output_policy_amendment")
+        or oracle_campaign != inputs.get("campaign_terminal_inventory")
     ):
         raise Phase8Error("Phase 7 frozen semantic replay differs from its input")
 
@@ -6281,37 +6672,224 @@ def validate_defense_response_audit(root: Path, *, label: str) -> None:
         raise Phase8Error(f"{label}: no target/output-defense observation")
 
 
-def validate_rr_non_estimable_contrast(
+def validate_llava_pair_artifact(
     path: Path,
     *,
     corpus: str,
-    terminal_descriptor: Mapping[str, Any],
+    paired_invoked: bool,
+    prerequisite_roles: Mapping[str, Any],
+    left_model: str,
+    right_model: str,
 ) -> None:
     value = strict_object(path, label=f"LLaVA base-vs-RR {corpus}")
-    expected = {
-        "schema": RR_NON_ESTIMABLE_CONTRAST_SCHEMA,
-        "status": "unavailable",
-        "contrast_id": "llava-base-vs-rr",
-        "modality": "image",
-        "facet": corpus,
-        "comparison_type": "cross_target_endpoint_noncausal",
-        "planned_estimand": (
-            "paired static-image endpoint by datapoint_id x requested_seed"
-        ),
-        "planned_contrast_missing": True,
-        "reason_code": RR_RUNTIME_TERMINAL_REASON_CODE,
-        "reason": RR_RUNTIME_TERMINAL_REASON,
-        "terminal_lanes": list(RR_RUNTIME_TERMINAL_LANES),
-        "target_runtime_terminal_artifact": dict(terminal_descriptor),
-        "analysis_ready_real_run": False,
-        "estimate": None,
-        "paired_compare_invoked": False,
-        "rr_responses_admitted": 0,
-        "human_audit_eligible": False,
+    if value.get("schema") != RR_NON_ESTIMABLE_CONTRAST_SCHEMA:
+        if not paired_invoked:
+            raise Phase8Error(
+                f"Phase 7 LLaVA paired artifact lacks its invocation: {corpus}"
+            )
+        facets = value.get("facets") if isinstance(value, dict) else None
+        facet = facets.get(corpus) if isinstance(facets, dict) else None
+        metrics = facet.get("metrics") if isinstance(facet, dict) else None
+        if (
+            value.get("schema_version") != "1.0-faceted"
+            or value.get("attacker") != "replay"
+            or value.get("requested_mode") != "auto"
+            or value.get("left_selector")
+            != {"model_spec": left_model, "defense": "none"}
+            or value.get("right_selector")
+            != {"model_spec": right_model, "defense": "none"}
+            or set(facets or {}) != {corpus}
+            or value.get("unavailable_facets") != {}
+            or value.get("unexplained_exclusions") != 0
+            or not isinstance(facet, dict)
+            or facet.get("comparison_type") != "cross_target_endpoint_noncausal"
+            or facet.get("causal_effect_established") is not False
+            or type(facet.get("analysis_ready_real_run")) is not bool
+            or facet.get("pairing_unit") != "datapoint_id x requested_seed"
+            or facet.get("inference_cluster")
+            != "source_cluster_id (fallback datapoint_id)"
+            or facet.get("unexplained_exclusions") != 0
+            or facet.get("static_exact_input_required") is not True
+            or not isinstance(metrics, dict)
+            or not metrics
+            or prerequisite_roles != {}
+        ):
+            raise Phase8Error(
+                f"Phase 7 measured LLaVA paired artifact changed: {corpus}"
+            )
+        estimated = [
+            metric for metric in metrics.values()
+            if isinstance(metric, dict) and metric.get("status") == "estimated"
+        ]
+        if facet["analysis_ready_real_run"] is not True or not estimated:
+            raise Phase8Error(
+                f"Phase 7 LLaVA measured pair is not analysis-ready: {corpus}"
+            )
+        return
+
+    expected_fields = {
+        "schema", "status", "contrast_id", "modality", "facet",
+        "comparison_type", "planned_estimand", "planned_contrast_missing",
+        "reason_code", "reason", "missing_roles", "prerequisite_roles",
+        "analysis_ready_real_run", "estimate", "paired_compare_invoked",
+        "failed_lane_metric_evidence_admitted", "human_audit_eligible", "facets",
+        "target_calls", "judge_calls", "provider_http_attempts",
+        "human_labels_consumed",
     }
-    if value != expected:
+    expected_planned_estimand = (
+        "paired static-image endpoint by datapoint_id x requested_seed"
+    )
+    facet = value.get("facets", {}).get(corpus) if isinstance(
+        value.get("facets"), dict
+    ) else None
+    evidence = (
+        facet.get("paired_compare_evidence")
+        if isinstance(facet, dict)
+        else None
+    )
+    if (
+        not isinstance(value, dict)
+        or set(value) != expected_fields
+        or value.get("schema") != RR_NON_ESTIMABLE_CONTRAST_SCHEMA
+        or value.get("status") != "unavailable"
+        or value.get("contrast_id") != "llava-base-vs-rr"
+        or value.get("modality") != "image"
+        or value.get("facet") != corpus
+        or value.get("comparison_type") != "cross_target_endpoint_noncausal"
+        or value.get("planned_estimand") != expected_planned_estimand
+        or value.get("planned_contrast_missing") is not True
+        or value.get("paired_compare_invoked") is not paired_invoked
+        or not isinstance(value.get("missing_roles"), list)
+        or value.get("prerequisite_roles") != dict(prerequisite_roles)
+        or set(prerequisite_roles) != {"left_base", "right_rr"}
+        or not set(value.get("missing_roles", [])) <= set(prerequisite_roles)
+        or value.get("analysis_ready_real_run") is not False
+        or value.get("estimate") is not None
+        or value.get("failed_lane_metric_evidence_admitted") is not False
+        or value.get("human_audit_eligible") is not False
+        or value.get("facets")
+        != {corpus: {
+            "analysis_ready_real_run": False,
+            "inference_cluster": "source_cluster_id (fallback datapoint_id)",
+            "paired_compare_evidence": evidence,
+        }}
+        or any(value.get(field) != 0 for field in (
+            "target_calls", "judge_calls", "provider_http_attempts"
+        ))
+        or value.get("human_labels_consumed") is not False
+    ):
         raise Phase8Error(
-            f"Phase 7 LLaVA base-vs-RR artifact is not typed non-estimable: {corpus}"
+            f"Phase 7 LLaVA base-vs-RR artifact is not failure-bound: {corpus}"
+        )
+    if not paired_invoked:
+        expected_reason_code = {
+            ("left_base",): "left_base_lane_failed",
+            ("right_rr",): "right_rr_lane_failed",
+            ("left_base", "right_rr"):
+                "left_base_and_right_rr_lanes_failed",
+        }.get(tuple(value["missing_roles"]))
+        expected_reason = {
+            "left_base_lane_failed": (
+                "The bounded LLaVA base image lane failed, so the planned base-vs-RR "
+                "endpoint contrast has no left arm."
+            ),
+            "right_rr_lane_failed": (
+                "The bounded GraySwan RR image lane failed, so the planned base-vs-RR "
+                "endpoint contrast has no right arm."
+            ),
+            "left_base_and_right_rr_lanes_failed": (
+                "Both bounded LLaVA image lanes failed, so neither arm of the planned "
+                "base-vs-RR endpoint contrast is available."
+            ),
+        }.get(value.get("reason_code"))
+        if (
+            value.get("reason_code") != expected_reason_code
+            or expected_reason is None
+            or value.get("reason") != expected_reason
+            or not value["missing_roles"]
+            or evidence is not None
+        ):
+            raise Phase8Error(
+                f"Phase 7 LLaVA failed-lane contrast changed: {corpus}"
+            )
+        return
+    expected_reason = {
+        "paired_compare_validation_failed": (
+            "The completed base and RR lanes did not satisfy the exact paired "
+            "comparison validation contract for this facet."
+        ),
+        "paired_compare_readiness_failed": (
+            "The completed base and RR facet failed one or more exact paired "
+            "analysis-readiness checks, so no estimate is admitted."
+        ),
+    }.get(value.get("reason_code"))
+    if (
+        expected_reason is None
+        or value.get("reason") != expected_reason
+        or value["missing_roles"] != []
+        or not isinstance(evidence, dict)
+    ):
+        raise Phase8Error(
+            f"Phase 7 completed-lane non-estimable contrast changed: {corpus}"
+        )
+    evidence_path = descriptor_file(
+        evidence.get("artifact"),
+        label=f"Phase 7 LLaVA paired evidence {corpus}",
+    )
+    if evidence.get("kind") == "validation_failure":
+        lines = evidence_path.read_text(encoding="utf-8").splitlines()
+        if (
+            set(evidence) != {"kind", "artifact"}
+            or not lines
+            or not lines[-1].startswith("paired comparison validation failed: ")
+        ):
+            raise Phase8Error(
+                f"Phase 7 LLaVA validation-failure evidence changed: {corpus}"
+            )
+        return
+    if evidence.get("kind") != "readiness_failure" or set(evidence) != {
+        "kind", "artifact", "failed_checks",
+    }:
+        raise Phase8Error(
+            f"Phase 7 LLaVA readiness-failure evidence changed: {corpus}"
+        )
+    paired = strict_object(
+        evidence_path, label=f"Phase 7 LLaVA paired raw result {corpus}"
+    )
+    raw_facets = paired.get("facets") if isinstance(paired, dict) else None
+    raw_facet = raw_facets.get(corpus) if isinstance(raw_facets, dict) else None
+    checks = raw_facet.get("analysis_readiness_checks") if isinstance(
+        raw_facet, dict
+    ) else None
+    failed_checks = sorted(
+        key for key, passed in checks.items() if passed is False
+    ) if isinstance(checks, dict) else []
+    if (
+        paired.get("schema_version") != "1.0-faceted"
+        or paired.get("attacker") != "replay"
+        or paired.get("requested_mode") != "auto"
+        or paired.get("left_selector")
+        != {"model_spec": left_model, "defense": "none"}
+        or paired.get("right_selector")
+        != {"model_spec": right_model, "defense": "none"}
+        or set(raw_facets or {}) != {corpus}
+        or paired.get("unavailable_facets") != {}
+        or paired.get("unexplained_exclusions") != 0
+        or not isinstance(raw_facet, dict)
+        or raw_facet.get("comparison_type")
+        != "cross_target_endpoint_noncausal"
+        or raw_facet.get("causal_effect_established") is not False
+        or raw_facet.get("pairing_unit") != "datapoint_id x requested_seed"
+        or raw_facet.get("inference_cluster")
+        != "source_cluster_id (fallback datapoint_id)"
+        or raw_facet.get("unexplained_exclusions") != 0
+        or raw_facet.get("static_exact_input_required") is not True
+        or raw_facet.get("analysis_ready_real_run") is not False
+        or not failed_checks
+        or evidence.get("failed_checks") != failed_checks
+    ):
+        raise Phase8Error(
+            f"Phase 7 LLaVA raw readiness evidence changed: {corpus}"
         )
 
 
@@ -6512,6 +7090,379 @@ def validate_phase7_runner_view(
     return view_root
 
 
+def validate_phase7_human_sampling_view(
+    value: object,
+    *,
+    core_view_receipt: Mapping[str, Any],
+    runner_root: Path,
+    expected_view_root: Path,
+    runner: Mapping[str, Any],
+    recoveries: Mapping[str, Any],
+    seven: Mapping[str, Any],
+    followon: Mapping[str, Any],
+) -> tuple[Path, dict[str, Any]]:
+    """Revalidate the sampling-only union without reading failed sibling roots."""
+
+    fields = {
+        "schema", "status", "core_view_receipt", "source_runner_root",
+        "view_root", "included_core_lanes", "included_amendment_lanes",
+        "amendment_result_roots", "included_followon_lanes",
+        "followon_result_roots", "regular_files_copied", "logical_bytes",
+        "source_files_modified", "permitted_view_outputs", "file_inventory",
+        "file_inventory_sha256",
+    }
+    contract = phase7_sampling_lane_contract(
+        runner_root=runner_root,
+        runner=runner,
+        recoveries=recoveries,
+        seven=seven,
+        followon=followon,
+    )
+    inventory = value.get("file_inventory") if isinstance(value, dict) else None
+    view_root = checked_dir(expected_view_root, label="Phase 7 human sampling view")
+    runner_root = checked_dir(runner_root, label="Phase 7 human sampling source root")
+    if (
+        not isinstance(value, dict)
+        or set(value) != fields
+        or value.get("schema") != "ura-phase7-human-audit-sampling-view/2"
+        or value.get("status") != "complete"
+        or value.get("core_view_receipt") != dict(core_view_receipt)
+        or value.get("source_runner_root") != str(runner_root)
+        or value.get("view_root") != str(view_root)
+        or value.get("included_core_lanes") != contract["canonical_lanes"]
+        or value.get("included_amendment_lanes") != contract["seven_lanes"]
+        or value.get("amendment_result_roots") != contract["seven_roots"]
+        or value.get("included_followon_lanes") != contract["followon_lanes"]
+        or value.get("followon_result_roots") != contract["followon_roots"]
+        or value.get("source_files_modified") is not False
+        or value.get("permitted_view_outputs") != []
+        or not isinstance(inventory, list)
+        or value.get("file_inventory_sha256")
+        != sha256_bytes(canonical(inventory))
+    ):
+        raise Phase8Error("Phase 7 human sampling view contract differs")
+
+    expected_sources: dict[str, Path] = {}
+    for lane in contract["lane_order"]:
+        root = checked_dir(
+            contract["lane_roots"][lane], label=f"{lane} successful sampling root"
+        )
+        try:
+            prefix = root.relative_to(runner_root).as_posix()
+        except ValueError as exc:
+            raise Phase8Error(f"{lane} sampling root escaped Runner storage") from exc
+        for path in sorted(root.rglob("*")):
+            if path.is_symlink() or (not path.is_dir() and not path.is_file()):
+                raise Phase8Error(f"{lane} successful root contains an unsafe entry")
+            if path.is_file():
+                relative = f"{prefix}/{path.relative_to(root).as_posix()}"
+                if relative in expected_sources:
+                    raise Phase8Error("Phase 7 human sampling source path collides")
+                expected_sources[relative] = path
+
+    recorded: dict[str, Path] = {}
+    logical_bytes = 0
+    entry_fields = {
+        "relative_path", "source", "view", "source_file_identity",
+        "view_file_identity", "independent_copy", "source_view_samefile",
+        "view_mode", "view_link_count",
+    }
+    for row in inventory:
+        if not isinstance(row, dict) or set(row) != entry_fields:
+            raise Phase8Error("Phase 7 human sampling file binding differs")
+        relative = _canonical_view_relative_path(row.get("relative_path"))
+        if relative not in expected_sources or relative in recorded:
+            raise Phase8Error("Phase 7 human sampling source inventory differs")
+        source_path, source_payload = descriptor_bytes(
+            row["source"], label=f"Phase 7 human sampling source {relative}"
+        )
+        view_path, view_payload = descriptor_bytes(
+            row["view"], label=f"Phase 7 human sampling copy {relative}"
+        )
+        expected_source = expected_sources[relative].resolve(strict=True)
+        expected_view = view_root.joinpath(*relative.split("/")).resolve(strict=True)
+        source_stat = source_path.stat()
+        view_stat = view_path.stat()
+        source_identity = {"device": source_stat.st_dev, "inode": source_stat.st_ino}
+        view_identity = {"device": view_stat.st_dev, "inode": view_stat.st_ino}
+        if (
+            source_path != expected_source
+            or view_path != expected_view
+            or source_payload != view_payload
+            or row.get("source_file_identity") != source_identity
+            or row.get("view_file_identity") != view_identity
+            or source_identity == view_identity
+            or row.get("independent_copy") is not True
+            or row.get("source_view_samefile") is not False
+            or source_path.samefile(view_path)
+            or row.get("view_mode") != stat.S_IMODE(view_stat.st_mode)
+            or row["view_mode"] & (stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH)
+            or row.get("view_link_count") != 1
+            or view_stat.st_nlink != 1
+        ):
+            raise Phase8Error("Phase 7 human sampling copy identity differs")
+        recorded[relative] = view_path
+        logical_bytes += len(view_payload)
+    actual_files: set[str] = set()
+    for path in view_root.rglob("*"):
+        if path.is_symlink() or (not path.is_dir() and not path.is_file()):
+            raise Phase8Error("Phase 7 human sampling view contains an unsafe entry")
+        if path.is_file():
+            actual_files.add(path.relative_to(view_root).as_posix())
+    if (
+        list(recorded) != sorted(recorded)
+        or set(recorded) != set(expected_sources)
+        or actual_files != set(expected_sources)
+        or value.get("regular_files_copied") != len(recorded)
+        or value.get("logical_bytes") != logical_bytes
+    ):
+        raise Phase8Error("Phase 7 human sampling exact inventory differs")
+    return view_root, contract
+
+
+def _sampling_lane_binding(
+    *,
+    lane: str,
+    root: Path,
+    evidence: Mapping[str, Any],
+    expected_revision: str | None,
+    expected_source: str | None,
+) -> tuple[str, str]:
+    """Bind one successful sampling root to its own sealed request artifacts."""
+
+    root = checked_dir(root, label=f"{lane} successful sampling root")
+    grids = sorted(root.glob("*.grid.json"))
+    envelopes = sorted(root.glob("*.request-envelope.json"))
+    eligibility = sorted(root.glob("*.eligibility.json"))
+    if (
+        len(grids) != 1
+        or len(envelopes) != 1
+        or len(eligibility) != 1
+        or list(root.glob("*.grid.lock"))
+        or list(root.glob("*.cell.lock"))
+        or list(root.glob("*.error.json"))
+    ):
+        raise Phase8Error(f"{lane}: successful sampling root is ambiguous")
+    bound = collect_descriptors(evidence)
+    for path, label in (
+        (grids[0], "grid"),
+        (envelopes[0], "request envelope"),
+        (eligibility[0], "eligibility plan"),
+    ):
+        if descriptor(path) not in bound:
+            raise Phase8Error(f"{lane}: sampling {label} lacks lifecycle authorization")
+    grid = strict_object(grids[0], label=f"{lane} sampling grid")
+    request = grid.get("request") if isinstance(grid, dict) else None
+    project = request.get("project_revision") if isinstance(request, dict) else None
+    source = (
+        request.get("source_conformance_artifact")
+        if isinstance(request, dict)
+        else None
+    )
+    revision_sha = project.get("sha256") if isinstance(project, dict) else None
+    source_sha = source.get("sha256") if isinstance(source, dict) else None
+    if (
+        grid.get("status") != "complete"
+        or grid.get("n_errors") != 0
+        or not isinstance(request, dict)
+        or request.get("execution_purpose") != "measured_run"
+        or request.get("dry_run") is not False
+        or request.get("attestation_probe") is not False
+        or HEX64.fullmatch(str(revision_sha or "")) is None
+        or HEX64.fullmatch(str(source_sha or "")) is None
+        or (expected_revision is not None and revision_sha != expected_revision)
+        or (expected_source is not None and source_sha != expected_source)
+    ):
+        raise Phase8Error(f"{lane}: sampling request stratum changed")
+    envelope_path, envelope_payload = _stable_regular_bytes(
+        envelopes[0], label=f"{lane} sampling request envelope", max_bytes=4 * 1024 * 1024
+    )
+    envelope, envelope_descriptor = _request_envelope_from_bytes(
+        envelope_path, envelope_payload, label=f"{lane} sampling request envelope"
+    )
+    envelope_project = envelope.get("bindings", {}).get("project_revision")
+    envelope_request = envelope.get("request")
+    try:
+        from ura.eligibility import validate_eligibility_plan
+        from ura.request_envelope import validate_request_envelope_descriptor
+
+        eligibility_value = validate_eligibility_plan(
+            strict_object(eligibility[0], label=f"{lane} sampling eligibility")
+        )
+        grid_envelope_descriptor = validate_request_envelope_descriptor(
+            request.get("request_envelope")
+        )
+    except Exception as exc:  # noqa: BLE001 - sealed sampling boundary
+        raise Phase8Error(f"{lane}: sampling request artifacts are invalid") from exc
+    if (
+        grid_envelope_descriptor != envelope_descriptor
+        or envelope_project != project
+        or not isinstance(envelope_request, dict)
+        or envelope_request.get("source_conformance_artifact", {}).get("sha256")
+        != source_sha
+        or eligibility_value.get("bindings", {}).get("request_envelope")
+        != envelope_descriptor
+    ):
+        raise Phase8Error(f"{lane}: sampling grid/envelope/eligibility binding changed")
+    return str(revision_sha), str(source_sha)
+
+
+def phase7_sampling_lane_contract(
+    *,
+    runner_root: Path,
+    runner: Mapping[str, Any],
+    recoveries: Mapping[str, Any],
+    seven: Mapping[str, Any],
+    followon: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Return the exact successful Phase 7 sampling union and its strata."""
+
+    runner_order = runner.get("lifecycle_lane_order")
+    runner_states = runner.get("terminal_states")
+    runner_roots = runner.get("lifecycle_lane_roots")
+    authorizations = runner.get("lifecycle_authorizations")
+    latest = recoveries.get("latest") if isinstance(recoveries, Mapping) else None
+    if (
+        not isinstance(runner_order, list)
+        or not isinstance(runner_states, dict)
+        or not isinstance(runner_roots, dict)
+        or not isinstance(authorizations, dict)
+        or not isinstance(latest, dict)
+    ):
+        raise Phase8Error("Phase 7 canonical sampling lifecycle is invalid")
+    lane_order: list[str] = []
+    lane_roots: dict[str, str] = {}
+    revision_by_lane: dict[str, str] = {}
+    source_by_lane: dict[str, str] = {}
+    canonical_lanes: list[str] = []
+
+    def add(
+        lane: str,
+        root_value: object,
+        evidence: object,
+        expected_revision: str | None,
+        expected_source: str | None,
+    ) -> None:
+        if (
+            lane in lane_roots
+            or not isinstance(root_value, str)
+            or not isinstance(evidence, Mapping)
+        ):
+            raise Phase8Error("Phase 7 sampling lane/root authorization is invalid")
+        root = checked_dir(root_value, label=f"{lane} successful sampling root")
+        try:
+            root.relative_to(runner_root)
+        except ValueError as exc:
+            raise Phase8Error(f"{lane}: sampling root escaped Runner storage") from exc
+        revision, source = _sampling_lane_binding(
+            lane=lane,
+            root=root,
+            evidence=evidence,
+            expected_revision=expected_revision,
+            expected_source=expected_source,
+        )
+        lane_order.append(lane)
+        lane_roots[lane] = str(root)
+        revision_by_lane[lane] = revision
+        source_by_lane[lane] = source
+
+    for lane in runner_order:
+        recovery = latest.get(lane)
+        state = recovery.get("state") if isinstance(recovery, dict) else runner_states.get(lane)
+        if state != "measured_complete":
+            continue
+        canonical_lanes.append(lane)
+        if isinstance(recovery, dict):
+            add(
+                lane,
+                recovery.get("result_root"),
+                recovery.get("evidence"),
+                recovery.get("project_revision_stratum"),
+                recovery.get("source_conformance_stratum"),
+            )
+        else:
+            add(lane, runner_roots.get(lane), authorizations.get(lane), None, None)
+
+    def amendment_lanes(
+        value: Mapping[str, Any],
+        *,
+        expected_lanes: Sequence[str],
+        states: set[str],
+        label: str,
+    ) -> list[str]:
+        terminal_states = value.get("terminal_states")
+        metric_lanes = value.get("metric_lane_order")
+        metric_roots = value.get("metric_roots")
+        metric_evidence = value.get("metric_evidence")
+        if (
+            not isinstance(terminal_states, dict)
+            or set(terminal_states) != set(expected_lanes)
+            or set(terminal_states.values()) - states
+            or not isinstance(metric_lanes, list)
+            or metric_lanes
+            != [lane for lane in expected_lanes if terminal_states[lane] == "measured_complete"]
+            or not isinstance(metric_roots, dict)
+            or set(metric_roots) != set(metric_lanes)
+            or not isinstance(metric_evidence, dict)
+            or set(metric_evidence) != set(metric_lanes)
+            or HEX64.fullmatch(str(value.get("project_revision_receipt_sha256", ""))) is None
+            or HEX64.fullmatch(str(value.get("source_conformance_sha256", ""))) is None
+        ):
+            raise Phase8Error(f"Phase 7 {label} sampling partition changed")
+        for lane in metric_lanes:
+            add(
+                lane,
+                metric_roots[lane],
+                metric_evidence[lane],
+                value["project_revision_receipt_sha256"],
+                value["source_conformance_sha256"],
+            )
+        return list(metric_lanes)
+
+    seven_lanes = amendment_lanes(
+        seven,
+        expected_lanes=SEVEN_AMENDMENT_LANES,
+        states=SEVEN_TERMINAL_STATES,
+        label="seven-row amendment",
+    )
+    followon_lanes = amendment_lanes(
+        followon,
+        expected_lanes=FOLLOWON_LANES,
+        states=FOLLOWON_STATES,
+        label="follow-on",
+    )
+    if not lane_order or len(set(lane_order)) != len(lane_order):
+        raise Phase8Error("Phase 7 successful sampling lane inventory is invalid")
+    revision_strata = {
+        revision: [lane for lane in lane_order if revision_by_lane[lane] == revision]
+        for revision in sorted(set(revision_by_lane.values()))
+    }
+    source_strata = {
+        source: [lane for lane in lane_order if source_by_lane[lane] == source]
+        for source in sorted(set(source_by_lane.values()))
+    }
+    return {
+        "lane_order": lane_order,
+        "lane_roots": lane_roots,
+        "canonical_lanes": canonical_lanes,
+        "seven_lanes": seven_lanes,
+        "seven_roots": {lane: seven["metric_roots"][lane] for lane in seven_lanes},
+        "followon_lanes": followon_lanes,
+        "followon_roots": {
+            lane: followon["metric_roots"][lane] for lane in followon_lanes
+        },
+        "revision_strata": revision_strata,
+        "source_conformance_strata": source_strata,
+        "lane_strata": {
+            lane: {
+                "project_revision_receipt_sha256": revision_by_lane[lane],
+                "source_conformance_sha256": source_by_lane[lane],
+            }
+            for lane in lane_order
+        },
+    }
+
+
 def validate_phase7_completion(
     path: Path,
     *,
@@ -6546,6 +7497,7 @@ def validate_phase7_completion(
         "payload",
         "analysis_root",
         "artifact_inventory",
+        "campaign_terminal_inventory",
         "runner_input_view",
         "analysis_statuses",
         "explicit_limitations",
@@ -6559,6 +7511,12 @@ def validate_phase7_completion(
         "universal_safety_score_defined",
         "native_scales_pooled",
         "evaluator_modes_pooled",
+        "human_audit_runner_input_view",
+        "human_audit_sampling_index",
+        "followon_terminal_states",
+        "followon_metric_revision_strata",
+        "seven_output_policy_terminal_states",
+        "seven_output_policy_metric_revision_strata",
     }
     if (
         set(value) != expected_fields
@@ -6620,8 +7578,12 @@ def validate_phase7_completion(
         "project_and_source",
         "phase6",
         "runner",
+        "canonical_recoveries",
         "native_runs",
         "native_outcomes",
+        "seven_output_policy_amendment",
+        "followon",
+        "campaign_terminal_inventory",
         "analysis_contract",
         "bound_artifacts",
         "bound_artifact_inventory",
@@ -6639,6 +7601,15 @@ def validate_phase7_completion(
         }
     ):
         raise Phase8Error("Phase 7 input identity differs")
+    recoveries = inputs.get("canonical_recoveries")
+    seven = inputs.get("seven_output_policy_amendment")
+    followon = inputs.get("followon")
+    campaign_inventory = inputs.get("campaign_terminal_inventory")
+    if not all(
+        isinstance(item, dict)
+        for item in (recoveries, seven, followon, campaign_inventory)
+    ):
+        raise Phase8Error("Phase 7 current campaign snapshots are absent")
     bound = inputs.get("bound_artifacts")
     bound_inventory = inputs.get("bound_artifact_inventory")
     if not isinstance(bound, list) or not isinstance(bound_inventory, dict):
@@ -6677,6 +7648,7 @@ def validate_phase7_completion(
         "manifest",
         "canonical_runnote",
         "promotion_receipt",
+        "code_identity",
         "terminal_inventory",
         "lane_count",
         "runnable_lane_count",
@@ -6703,6 +7675,7 @@ def validate_phase7_completion(
             )
         )
         or gate5.get("lane_count") != 46
+        or not isinstance(gate5.get("code_identity"), dict)
     ):
         raise Phase8Error("Phase 7 Gate 5 inventory differs")
     gate5_observations = {
@@ -6724,9 +7697,17 @@ def validate_phase7_completion(
     )
     if not isinstance(gate5_manifest, dict):
         raise Phase8Error("Phase 7 Gate 5 manifest must be one JSON object")
+    phase7_gate5_identity = _require_code_identity(
+        gate5.get("code_identity"), label="Phase 7 Gate 5 snapshot"
+    )
+    if phase7_gate5_identity != _require_code_identity(
+        gate5_manifest.get("code_identity"), label="Phase 7 Gate 5 manifest"
+    ):
+        raise Phase8Error("Phase 7 Gate 5 code identity differs")
     _gate5_runnable, gate5_terminals = _exact_inventory(
         gate5_manifest.get("lanes"),
         validate_artifact=validate_gate5_artifacts,
+        code_identity=phase7_gate5_identity,
     )
     manifest_profile = _gate5_profile(_gate5_runnable, gate5_terminals)
     scheduled_core_lanes = manifest_profile["scheduled_core_lanes"]
@@ -6741,11 +7722,9 @@ def validate_phase7_completion(
         or gate5.get("runnable_lane_count") != len(scheduled_runner_lanes)
         or gate5.get("terminal_lane_count") != len(gate5_terminals)
         or gate5.get("target_runtime_terminal")
-        != 4 + len(ollama_static_terminals)
+        != manifest_profile["target_runtime_terminal"]
         or gate5.get("target_runtime_terminal_artifact")
-        != gate5_terminals[RR_RUNTIME_TERMINAL_LANES[0]]["canary"][
-            "target_runtime_terminal_artifact"
-        ]
+        != manifest_profile["target_runtime_terminal_artifact"]
     ):
         raise Phase8Error("Phase 7 Gate 5 terminal snapshot differs")
 
@@ -6985,6 +7964,7 @@ def validate_phase7_completion(
         "completion",
         "exit_marker",
         "plan",
+        "project_revision",
         "payload",
         "launch",
         "summary",
@@ -7059,6 +8039,33 @@ def validate_phase7_completion(
     )
     if not isinstance(authoritative_native, dict):
         raise Phase8Error("Phase 7 authoritative native completion is not one object")
+    _native_plan_path, native_plan = descriptor_object(
+        native["plan"], label="Phase 7 native plan"
+    )
+    _native_project_path, native_project_receipt = descriptor_object(
+        native["project_revision"], label="Phase 7 native project-revision receipt"
+    )
+    native_plan_code = native_plan.get("code_identity")
+    native_repository = native_project_receipt.get("repository")
+    if (
+        not isinstance(native_plan_code, dict)
+        or native_plan_code.get("project_revision") != native["project_revision"]
+        or native["project_revision"].get("sha256")
+        != EXPECTED_PROJECT_REVISION_SHA256
+        or not isinstance(native_repository, dict)
+        or native_repository.get("clean") is not True
+        or authoritative_native.get("expected_commit")
+        != inputs["code_identity"]["expected_commit"]
+        or native_plan_code.get("expected_commit")
+        != authoritative_native.get("expected_commit")
+        or native_repository.get("expected_commit")
+        != authoritative_native.get("expected_commit")
+        or native_repository.get("observed_commit")
+        != authoritative_native.get("expected_commit")
+    ):
+        raise Phase8Error(
+            "Phase 7 native snapshot is not bound to its current project revision"
+        )
     if authoritative_native.get(
         "terminal_states"
     ) != native_states or authoritative_native.get(
@@ -7151,7 +8158,8 @@ def validate_phase7_completion(
         or not isinstance(runner.get("lifecycle_live_attestations"), list)
         or not runner["lifecycle_live_attestations"]
         or not isinstance(runner.get("model_selectors"), dict)
-        or set(runner["model_selectors"]) != {"qwen3_vl", "llava_base"}
+        or set(runner["model_selectors"])
+        != {"qwen3_vl", "llava_base"}
         or any(
             not isinstance(selector, str) or not selector.strip()
             for selector in runner.get("model_selectors", {}).values()
@@ -7251,10 +8259,6 @@ def validate_phase7_completion(
     if set(specs) != set(scheduled_runner_lanes):
         raise Phase8Error("Phase 7 Runner lane-spec inventory differs")
 
-    expected_project_binding = project_revision["experiment_binding"]
-    expected_source_sha = source_conformance["artifact"]["sha256"]
-    expected_source_config_sha = project_and_source["source_config"]["sha256"]
-
     def retained_descriptor(root: Path, raw: object, *, label: str) -> dict[str, Any]:
         if not isinstance(raw, dict) or set(raw) != {"file", "sha256", "bytes"}:
             raise Phase8Error(f"{label} retained descriptor differs")
@@ -7321,13 +8325,18 @@ def validate_phase7_completion(
             or request.get("group_keys") != list(GROUP_KEYS)
             or request.get("models") != [target["spec"]]
             or grid.get("requested_cells") != len(expected_corpora)
-            or request.get("project_revision") != expected_project_binding
+            or not isinstance(request.get("project_revision"), dict)
+            or HEX64.fullmatch(
+                str(request["project_revision"].get("sha256", ""))
+            ) is None
             or not isinstance(request.get("source_conformance_artifact"), dict)
-            or request["source_conformance_artifact"].get("sha256")
-            != expected_source_sha
+            or HEX64.fullmatch(
+                str(request["source_conformance_artifact"].get("sha256", ""))
+            ) is None
             or not isinstance(request.get("source_config_artifact"), dict)
-            or request["source_config_artifact"].get("sha256")
-            != expected_source_config_sha
+            or HEX64.fullmatch(
+                str(request["source_config_artifact"].get("sha256", ""))
+            ) is None
         ):
             raise Phase8Error(
                 f"{lane}: Phase 7 measured request differs from lane spec"
@@ -7752,21 +8761,15 @@ def validate_phase7_completion(
     }
     model_selectors = runner["model_selectors"]
     if (
+        set(model_selectors) != {"qwen3_vl", "llava_base"}
+        or
         {specs[lane]["target"]["spec"] for lane in qwen_lanes}
         != {model_selectors["qwen3_vl"]}
         or {specs[lane]["target"]["spec"] for lane in llava_base_lanes}
         != {model_selectors["llava_base"]}
-        or RR_RUNTIME_TERMINAL_LANE_SET & set(specs)
-        or any(
-            marker in str(specs[lane]["target"].get("spec", ""))
-            for lane in specs
-            for marker in RR_TARGET_IDENTITY_MARKERS
-        )
-        or any(
-            marker in str(selector)
-            for selector in model_selectors.values()
-            for marker in RR_TARGET_IDENTITY_MARKERS
-        )
+        or not isinstance(seven.get("rr_model_selector"), str)
+        or not seven["rr_model_selector"]
+        or seven["rr_model_selector"] == model_selectors["llava_base"]
     ):
         raise Phase8Error("Phase 7 exact target-selector families differ")
     classification_lanes = {
@@ -7808,6 +8811,8 @@ def validate_phase7_completion(
         "missingness_and_decision_coverage_required",
         "source_parser_classification_kept_out_of_common_metrics",
         "failed_phase6_lanes_excluded_from_metric_and_level2_views",
+        "missing_prerequisites_emit_typed_unavailable_artifacts",
+        "analysis_subprocesses_require_successful_prerequisite_lanes",
         "human_labels_consumed",
         "target_calls_permitted",
         "judge_calls_permitted",
@@ -7828,6 +8833,8 @@ def validate_phase7_completion(
                 "missingness_and_decision_coverage_required",
                 "source_parser_classification_kept_out_of_common_metrics",
                 "failed_phase6_lanes_excluded_from_metric_and_level2_views",
+                "missing_prerequisites_emit_typed_unavailable_artifacts",
+                "analysis_subprocesses_require_successful_prerequisite_lanes",
             )
         )
         or analysis_contract.get("transfer_attacker") != "replay"
@@ -7902,17 +8909,110 @@ def validate_phase7_completion(
         "input_manifest_sha256",
         "payload_sha256",
         "runner_input_view",
+        "campaign_terminal_inventory",
+        "human_audit_runner_input_view",
+        "human_audit_sampling_index",
         "target_calls",
         "judge_calls",
         "provider_http_attempts",
         "human_labels_consumed",
     }
+    followon_status_names: set[str] = set()
+    followon_metric_lanes: list[str] = []
+    followon_states = followon.get("terminal_states")
+    followon_strata = followon.get("revision_strata")
+    followon_metric_lanes = followon.get("metric_lane_order")
+    if (
+        not isinstance(followon_states, dict)
+        or set(followon_states) != set(FOLLOWON_LANES)
+        or set(followon_states.values()) - FOLLOWON_STATES
+        or not isinstance(followon_strata, dict)
+        or not isinstance(followon_metric_lanes, list)
+        or followon_metric_lanes
+        != [
+            lane
+            for lane in FOLLOWON_LANES
+            if followon_states[lane] == "measured_complete"
+        ]
+        or value.get("followon_terminal_states") != followon_states
+        or value.get("followon_metric_revision_strata") != followon_strata
+    ):
+        raise Phase8Error("Phase 7 follow-on lifecycle partition differs")
+    flattened = [lane for lanes in followon_strata.values() for lane in lanes]
+    if (
+        sorted(flattened) != sorted(followon_metric_lanes)
+        or len(flattened) != len(set(flattened))
+        or any(HEX64.fullmatch(str(revision)) is None for revision in followon_strata)
+    ):
+        raise Phase8Error("Phase 7 follow-on revision strata differ")
+    followon_status_names = {
+        "followon-lifecycle",
+        *{
+            f"followon-metric-inputs-{revision[:12]}"
+            for revision in followon_strata
+        },
+    }
+    seven_states = seven.get("terminal_states")
+    seven_strata = seven.get("revision_strata")
+    seven_metric_lanes = seven.get("metric_lane_order")
+    if (
+        not isinstance(seven_states, dict)
+        or set(seven_states) != set(SEVEN_AMENDMENT_LANES)
+        or set(seven_states.values()) - SEVEN_TERMINAL_STATES
+        or not isinstance(seven_strata, dict)
+        or not isinstance(seven_metric_lanes, list)
+        or seven_metric_lanes
+        != [
+            lane
+            for lane in SEVEN_AMENDMENT_LANES
+            if seven_states[lane] == "measured_complete"
+        ]
+        or value.get("seven_output_policy_terminal_states") != seven_states
+        or value.get("seven_output_policy_metric_revision_strata") != seven_strata
+    ):
+        raise Phase8Error("Phase 7 seven-row lifecycle partition differs")
+    seven_flattened = [lane for lanes in seven_strata.values() for lane in lanes]
+    if (
+        set(seven_flattened) != set(seven_metric_lanes)
+        or len(seven_flattened) != len(set(seven_flattened))
+        or any(HEX64.fullmatch(str(revision)) is None for revision in seven_strata)
+        or any(
+            lanes != [lane for lane in seven_metric_lanes if lane in lanes]
+            for lanes in seven_strata.values()
+        )
+    ):
+        raise Phase8Error("Phase 7 seven-row revision strata differ")
+    seven_status_names = {
+        "seven-output-policy-lifecycle",
+        "seven-output-policy-rr-comparison-inputs",
+        *{
+            f"seven-output-policy-metric-inputs-{revision[:12]}"
+            for revision in seven_strata
+        },
+    }
+    sampling_contract = phase7_sampling_lane_contract(
+        runner_root=runner_root,
+        runner=runner,
+        recoveries=recoveries,
+        seven=seven,
+        followon=followon,
+    )
+    stratum_status_names = {
+        "metric-stratum-"
+        f"{row['project_revision_receipt_sha256'][:12]}-"
+        f"{row['source_conformance_sha256'][:12]}"
+        for row in sampling_contract["lane_strata"].values()
+    }
     statuses = value.get("analysis_statuses")
     limitations = value.get("explicit_limitations")
     failed_runner_lanes = {
-        lane for lane in scheduled_runner_lanes if runner_states[lane] == "failed"
+        lane
+        for lane in scheduled_runner_lanes
+        if recoveries["latest"].get(lane, {"state": runner_states[lane]})["state"]
+        == "failed"
     }
     expected_status_names = {
+        "campaign-terminal-inventory",
         "level1-evidence",
         "suite-summary",
         "level2-report",
@@ -7928,12 +9028,22 @@ def validate_phase7_completion(
             for lane in gate5_terminals
         },
         *{f"runner-{lane}" for lane in failed_runner_lanes},
+        *followon_status_names,
+        *seven_status_names,
+        *stratum_status_names,
     }
     if (
         not isinstance(statuses, dict)
         or set(statuses) != expected_status_names
         or len(statuses)
-        != 35 + len(gate5_terminals) + len(failed_runner_lanes)
+        != (
+            36
+            + len(gate5_terminals)
+            + len(failed_runner_lanes)
+            + len(followon_status_names)
+            + len(seven_status_names)
+            + len(stratum_status_names)
+        )
         or any(
             not isinstance(name, str)
             or not isinstance(status, str)
@@ -7970,6 +9080,12 @@ def validate_phase7_completion(
         != sha256_bytes(input_manifest_payload)
         or inventory.get("payload_sha256") != sha256_bytes(completion_payload_bytes)
         or inventory.get("runner_input_view") != value.get("runner_input_view")
+        or inventory.get("human_audit_runner_input_view")
+        != value.get("human_audit_runner_input_view")
+        or inventory.get("human_audit_sampling_index")
+        != value.get("human_audit_sampling_index")
+        or inventory.get("campaign_terminal_inventory")
+        != value.get("campaign_terminal_inventory")
         or inventory.get("human_labels_consumed") is not False
     ):
         raise Phase8Error("Phase 7 artifact inventory differs")
@@ -7978,6 +9094,15 @@ def validate_phase7_completion(
         ("target_calls", "judge_calls", "provider_http_attempts"),
         label="Phase 7 artifact inventory",
     )
+    campaign_inventory_path, campaign_inventory_output = descriptor_object(
+        value.get("campaign_terminal_inventory"),
+        label="Phase 7 campaign terminal inventory",
+    )
+    if (
+        campaign_inventory_path != analysis_root / "campaign-terminal-inventory.json"
+        or campaign_inventory_output != campaign_inventory
+    ):
+        raise Phase8Error("Phase 7 campaign terminal inventory differs")
     if runner_view_path != control / "read-only-runner-view.json":
         raise Phase8Error("Phase 7 runner input view receipt moved")
     runner_view_root = validate_phase7_runner_view(
@@ -7986,6 +9111,58 @@ def validate_phase7_completion(
         expected_view_root=control / "read-only-runner-view",
         expected_measured_lanes=measured_lanes,
     )
+    audit_runner_view_root = runner_view_root
+    audit_runner_view_receipt = value["runner_input_view"]
+    audit_runner_view_value = runner_view
+    audit_runner_view_lanes = list(measured_lanes)
+    audit_view_path, audit_view = descriptor_object(
+        value.get("human_audit_runner_input_view"),
+        label="Phase 7 human-audit Runner input view receipt",
+    )
+    if audit_view_path != control / "read-only-human-audit-runner-view.json":
+        raise Phase8Error("Phase 7 human-audit Runner view receipt moved")
+    audit_runner_view_root, observed_sampling_contract = (
+        validate_phase7_human_sampling_view(
+            audit_view,
+            core_view_receipt=value["runner_input_view"],
+            runner_root=runner_root,
+            expected_view_root=control / "read-only-human-audit-runner-view",
+            runner=runner,
+            recoveries=recoveries,
+            seven=seven,
+            followon=followon,
+        )
+    )
+    if observed_sampling_contract != sampling_contract:
+        raise Phase8Error("Phase 7 human sampling contract changed during replay")
+    audit_runner_view_lanes = sampling_contract["lane_order"]
+    audit_runner_view_receipt = value["human_audit_runner_input_view"]
+    audit_runner_view_value = audit_view
+    sampling_index_path, sampling_index = descriptor_object(
+        value.get("human_audit_sampling_index"),
+        label="Phase 7 human-audit sampling-view index",
+    )
+    expected_sampling_index = {
+        "schema": "ura-phase7-human-audit-sampling-view-index/1",
+        "status": "complete",
+        "view_receipt": value["human_audit_runner_input_view"],
+        "lane_order": audit_runner_view_lanes,
+        "revision_strata": sampling_contract["revision_strata"],
+        "source_conformance_strata": sampling_contract[
+            "source_conformance_strata"
+        ],
+        "sampling_only": True,
+        "metric_pooling_permitted": False,
+        "cross_revision_pooling_permitted": False,
+        "cross_source_pooling_permitted": False,
+        "all_successful_lanes_retained": True,
+    }
+    if (
+        sampling_index_path
+        != control / "read-only-human-audit-runner-view.index.json"
+        or sampling_index != expected_sampling_index
+    ):
+        raise Phase8Error("Phase 7 human-audit sampling-view index differs")
     artifact_paths: set[Path] = set()
     for row in artifacts:
         artifact_path = descriptor_file(row, label="Phase 7 analysis artifact")
@@ -8005,6 +9182,10 @@ def validate_phase7_completion(
         "analysis-boundaries",
         *{f"llava-base-vs-rr-{arm}" for arm in IMAGE_ARMS},
         *{f"qwen-replay-vs-crescendo-{arm}" for arm in ADAPTIVE_ARMS},
+        *followon_status_names,
+        *seven_status_names,
+        *stratum_status_names,
+        "campaign-terminal-inventory",
     }
     status_root = checked_dir(analysis_root / "status", label="Phase 7 status root")
     expected_status_paths = {status_root / f"{name}.json" for name in statuses}
@@ -8048,6 +9229,152 @@ def validate_phase7_completion(
             ("target_calls", "judge_calls", "provider_http_attempts"),
             label=f"Phase 7 status {name}",
         )
+        if name == "followon-lifecycle":
+            if len(status_outputs) != 1:
+                raise Phase8Error("Phase 7 follow-on lifecycle output differs")
+            lifecycle_path, lifecycle_value = descriptor_object(
+                status_outputs[0], label="Phase 7 follow-on lifecycle"
+            )
+            expected_lifecycle = {
+                "schema": "ura-phase7-followon-input-view/1",
+                "status": "validated",
+                "lane_order": list(FOLLOWON_LANES),
+                "terminal_states": followon["terminal_states"],
+                "lifecycle": followon["lifecycle"],
+                "metric_lane_order": followon["metric_lane_order"],
+                "excluded_from_metrics": followon["excluded_from_metrics"],
+                "revision_strata": followon["revision_strata"],
+                "cross_revision_pooling_permitted": False,
+                "cross_source_pooling_permitted": False,
+                "human_sampling_eligible_lanes": followon["metric_lane_order"],
+            }
+            excluded = followon["excluded_from_metrics"]
+            if (
+                lifecycle_path != analysis_root / "followon" / "lifecycle.json"
+                or lifecycle_value != expected_lifecycle
+                or status_receipt.get("status")
+                != ("complete" if not excluded else "complete_with_limitations")
+                or status_receipt.get("limitations")
+                != ({"excluded_from_metrics": excluded} if excluded else None)
+            ):
+                raise Phase8Error("Phase 7 follow-on lifecycle retention differs")
+        elif name.startswith("followon-metric-inputs-"):
+            if len(status_outputs) != 1:
+                raise Phase8Error("Phase 7 follow-on metric-input output differs")
+            prefix = name.removeprefix("followon-metric-inputs-")
+            matches = [
+                revision
+                for revision in followon["revision_strata"]
+                if revision.startswith(prefix)
+            ]
+            if len(matches) != 1:
+                raise Phase8Error("Phase 7 follow-on revision status is ambiguous")
+            revision = matches[0]
+            metric_path, metric_value = descriptor_object(
+                status_outputs[0], label="Phase 7 follow-on metric inputs"
+            )
+            lanes = followon["revision_strata"][revision]
+            if (
+                metric_path
+                != analysis_root / "followon" / "metric-inputs" / f"{revision}.json"
+                or metric_value
+                != {
+                    "schema": "ura-phase7-followon-metric-inputs/1",
+                    "status": "validated",
+                    "project_revision_sha256": revision,
+                    "lane_order": lanes,
+                    "result_roots": {
+                        lane: followon["metric_roots"][lane] for lane in lanes
+                    },
+                    "metric_evidence": {
+                        lane: followon["metric_evidence"][lane] for lane in lanes
+                    },
+                    "cross_revision_pooling_permitted": False,
+                    "cross_source_pooling_permitted": False,
+                }
+                or status_receipt.get("status") != "complete"
+                or status_receipt.get("limitations") is not None
+            ):
+                raise Phase8Error("Phase 7 follow-on metric input partition differs")
+        elif name == "seven-output-policy-lifecycle":
+            if len(status_outputs) != 1:
+                raise Phase8Error("Phase 7 seven-row lifecycle output differs")
+            lifecycle_path, lifecycle_value = descriptor_object(
+                status_outputs[0], label="Phase 7 seven-row lifecycle"
+            )
+            excluded = seven["excluded_from_metrics"]
+            expected_lifecycle = {
+                "schema": "ura-phase7-seven-output-policy-input-view/1",
+                "status": "validated",
+                "lane_order": list(SEVEN_AMENDMENT_LANES),
+                "terminal_states": seven["terminal_states"],
+                "lifecycle": seven["lifecycle"],
+                "metric_lane_order": seven["metric_lane_order"],
+                "excluded_from_metrics": excluded,
+                "revision_strata": seven["revision_strata"],
+                "cross_revision_pooling_permitted": False,
+                "cross_source_pooling_permitted": False,
+                "human_sampling_eligible_lanes": seven["metric_lane_order"],
+            }
+            if (
+                lifecycle_path
+                != analysis_root / "output-policy-amendment" / "lifecycle.json"
+                or lifecycle_value != expected_lifecycle
+                or status_receipt.get("status")
+                != ("complete" if not excluded else "complete_with_limitations")
+                or status_receipt.get("limitations")
+                != ({"excluded_from_metrics": excluded} if excluded else None)
+            ):
+                raise Phase8Error("Phase 7 seven-row lifecycle retention differs")
+        elif name.startswith("seven-output-policy-metric-inputs-"):
+            if len(status_outputs) != 1:
+                raise Phase8Error("Phase 7 seven-row metric-input output differs")
+            prefix = name.removeprefix("seven-output-policy-metric-inputs-")
+            matches = [
+                revision for revision in seven["revision_strata"]
+                if revision.startswith(prefix)
+            ]
+            if len(matches) != 1:
+                raise Phase8Error("Phase 7 seven-row revision status is ambiguous")
+            revision = matches[0]
+            lanes = seven["revision_strata"][revision]
+            metric_path, metric_value = descriptor_object(
+                status_outputs[0], label="Phase 7 seven-row metric inputs"
+            )
+            if (
+                metric_path
+                != analysis_root / "output-policy-amendment" / "metric-inputs"
+                / f"{revision}.json"
+                or metric_value
+                != {
+                    "schema": "ura-phase7-seven-output-policy-metric-inputs/1",
+                    "status": "validated",
+                    "project_revision_sha256": revision,
+                    "lane_order": lanes,
+                    "result_roots": {
+                        lane: seven["metric_roots"][lane] for lane in lanes
+                    },
+                    "metric_evidence": {
+                        lane: seven["metric_evidence"][lane] for lane in lanes
+                    },
+                    "cross_revision_pooling_permitted": False,
+                    "cross_source_pooling_permitted": False,
+                }
+                or status_receipt.get("status") != "complete"
+                or status_receipt.get("limitations") is not None
+            ):
+                raise Phase8Error("Phase 7 seven-row metric input partition differs")
+        elif name == "campaign-terminal-inventory":
+            if (
+                status_outputs != [value["campaign_terminal_inventory"]]
+                or status_receipt.get("status") != campaign_inventory["status"]
+                or status_receipt.get("limitations")
+                != (
+                    {"failure_rows": campaign_inventory["failure_rows"]}
+                    if campaign_inventory["failure_rows"] else None
+                )
+            ):
+                raise Phase8Error("Phase 7 campaign terminal status differs")
         if name == f"gate5-{DEFENSE_LOCAL_LANE}":
             defense_row = gate5_terminals[DEFENSE_LOCAL_LANE]
             if (
@@ -8099,23 +9426,46 @@ def validate_phase7_completion(
         llava_prefix = "llava-base-vs-rr-"
         if name.startswith(llava_prefix):
             corpus = name.removeprefix(llava_prefix)
-            expected_terminal_descriptor = gate5[
-                "target_runtime_terminal_artifact"
-            ]
+            limitations = status_receipt.get("limitations")
+            failed_prerequisite = (
+                isinstance(limitations, dict)
+                and limitations.get("paired_compare_invoked") is False
+            )
+            expected_missing_roles: list[str] = []
+            for role, lane in (
+                ("left_base", "local-llava-base-image-primary-100"),
+                ("right_rr", "local-llava-rr-image-primary-100"),
+            ):
+                if runner_states[lane] != "measured_complete":
+                    expected_missing_roles.append(role)
+            expected_reason_code = {
+                ("left_base",): "left_base_lane_failed",
+                ("right_rr",): "right_rr_lane_failed",
+                ("left_base", "right_rr"):
+                    "left_base_and_right_rr_lanes_failed",
+            }.get(tuple(expected_missing_roles))
             if (
                 corpus not in IMAGE_ARMS
-                or status_receipt.get("status") != "unavailable"
-                or status_receipt.get("detail") != RR_RUNTIME_TERMINAL_REASON
                 or len(status_outputs) != 1
-                or status_receipt.get("limitations")
-                != {
-                    "reason_code": RR_RUNTIME_TERMINAL_REASON_CODE,
-                    "planned_contrast_missing": True,
-                    "modality": "image",
-                    "facet": corpus,
-                    "paired_compare_invoked": False,
-                    "target_runtime_terminal_artifact": expected_terminal_descriptor,
-                }
+                or status_receipt.get("status")
+                not in {"complete", "complete_with_limitations", "unavailable"}
+                or (
+                    failed_prerequisite
+                    and (
+                        status_receipt.get("status") != "unavailable"
+                        or limitations.get("reason_code")
+                        != expected_reason_code
+                        or not isinstance(limitations.get("missing_roles"), list)
+                        or not limitations["missing_roles"]
+                        or not isinstance(
+                            limitations.get("prerequisite_roles"), dict
+                        )
+                        or set(limitations["prerequisite_roles"])
+                        != {"left_base", "right_rr"}
+                        or limitations["missing_roles"] != expected_missing_roles
+                    )
+                )
+                or failed_prerequisite is not bool(expected_missing_roles)
             ):
                 raise Phase8Error(
                     f"Phase 7 planned LLaVA contrast disclosure changed: {corpus}"
@@ -8134,12 +9484,22 @@ def validate_phase7_completion(
             ):
                 raise Phase8Error(f"Phase 7 status output differs: {name}")
             if name.startswith(llava_prefix):
-                validate_rr_non_estimable_contrast(
+                limitations = status_receipt.get("limitations")
+                failed_prerequisite = (
+                    isinstance(limitations, dict)
+                    and limitations.get("paired_compare_invoked") is False
+                )
+                validate_llava_pair_artifact(
                     output_path,
                     corpus=name.removeprefix(llava_prefix),
-                    terminal_descriptor=gate5[
-                        "target_runtime_terminal_artifact"
-                    ],
+                    paired_invoked=not failed_prerequisite,
+                    prerequisite_roles=(
+                        limitations.get("prerequisite_roles", {})
+                        if isinstance(limitations, dict)
+                        else {}
+                    ),
+                    left_model=runner["model_selectors"]["llava_base"],
+                    right_model=seven["rr_model_selector"],
                 )
             claimed_artifacts.add(output_path)
     if claimed_artifacts != artifact_paths:
@@ -8181,16 +9541,27 @@ def validate_phase7_completion(
         work_root=work_root,
         runner_root=runner_root,
     )
-    return value, {
+    support = {
         "path": boundary_path,
         "value": boundaries,
         "descriptor": boundary_descriptor,
         "inputs": inputs,
-        "runner_view": runner_view_root,
-        "runner_view_receipt": value["runner_input_view"],
-        "runner_view_value": runner_view,
-        "runner_view_lanes": measured_lanes,
+        "runner_view": audit_runner_view_root,
+        "runner_view_receipt": audit_runner_view_receipt,
+        "runner_view_value": audit_runner_view_value,
+        "runner_view_lanes": audit_runner_view_lanes,
+        "core_runner_view": runner_view_root,
+        "core_runner_view_receipt": value["runner_input_view"],
+        "core_runner_view_value": runner_view,
+        "core_runner_view_lanes": measured_lanes,
+        "runner": runner,
+        "canonical_recoveries": recoveries,
+        "seven": seven,
+        "followon": followon,
     }
+    support["sampling_index_receipt"] = value["human_audit_sampling_index"]
+    support["sampling_index_value"] = sampling_index
+    return value, support
 
 
 def required_env(name: str) -> str:
@@ -8323,7 +9694,7 @@ def observed_audit_frame_cluster_counts(runner_root: Path) -> tuple[int, int]:
                     f"validated {frame} human-audit frame eligibility differs"
                 )
             raw = judgment.get("raw") or {}
-            _reject_rr_human_row(
+            _reject_historical_rr_terminal_human_row(
                 {
                     "model": raw.get("model", ""),
                     "model_spec": meta.get("model_spec", ""),
@@ -8354,7 +9725,36 @@ def revalidate_bound_audit_runner_view(
     source_root: Path,
     view_root: Path,
     measured_lanes: Sequence[str],
+    core_view_receipt: Mapping[str, Any] | None = None,
+    runner: Mapping[str, Any] | None = None,
+    recoveries: Mapping[str, Any] | None = None,
+    seven: Mapping[str, Any] | None = None,
+    followon: Mapping[str, Any] | None = None,
 ) -> Path:
+    if isinstance(receipt, dict) and receipt.get("schema") == (
+        "ura-phase7-human-audit-sampling-view/2"
+    ):
+        if (
+            core_view_receipt is None
+            or runner is None
+            or recoveries is None
+            or seven is None
+            or followon is None
+        ):
+            raise Phase8Error("human sampling view revalidation inputs are absent")
+        view, contract = validate_phase7_human_sampling_view(
+            receipt,
+            core_view_receipt=core_view_receipt,
+            runner_root=source_root,
+            expected_view_root=view_root,
+            runner=runner,
+            recoveries=recoveries,
+            seven=seven,
+            followon=followon,
+        )
+        if list(measured_lanes) != contract["lane_order"]:
+            raise Phase8Error("human sampling view lane partition changed")
+        return view
     return validate_phase7_runner_view(
         receipt,
         expected_source_root=source_root,
@@ -8401,6 +9801,7 @@ def build_input_manifest(args: argparse.Namespace) -> dict[str, Any]:
     )
     core = validate_core_completion(
         core_path,
+        code_identity=gate5["code_identity"],
         manifest_sha=manifest_sha,
         runnote_sha=runnote_sha,
         promotion_sha=promotion_sha,
@@ -8411,6 +9812,7 @@ def build_input_manifest(args: argparse.Namespace) -> dict[str, Any]:
     )
     extended = validate_extended_completion(
         extended_path,
+        code_identity=gate5["code_identity"],
         manifest_sha=manifest_sha,
         runnote_sha=runnote_sha,
         promotion_sha=promotion_sha,
@@ -8439,10 +9841,16 @@ def build_input_manifest(args: argparse.Namespace) -> dict[str, Any]:
     ethics_path = checked_file(
         args.ethics_determination, label="ethics/consent determination"
     )
+    ethics_path, ethics_payload = _stable_regular_bytes(
+        ethics_path,
+        label="ethics/consent determination",
+        max_bytes=MAX_JSON_BYTES,
+    )
     ethics = validate_ethics(
         ethics_path,
         args.authorize_ethics_sha256.lower(),
         runner_root=runner_root,
+        payload=ethics_payload,
     )
     audit_runner_root = phase7_support["runner_view"]
     common_available, source_task_available = observed_audit_frame_cluster_counts(
@@ -8453,6 +9861,11 @@ def build_input_manifest(args: argparse.Namespace) -> dict[str, Any]:
         source_root=runner_root,
         view_root=audit_runner_root,
         measured_lanes=phase7_support["runner_view_lanes"],
+        core_view_receipt=phase7_support["core_runner_view_receipt"],
+        runner=phase7_support["runner"],
+        recoveries=phase7_support["canonical_recoveries"],
+        seven=phase7_support["seven"],
+        followon=phase7_support["followon"],
     )
     capacity = plan_phase8_capacity(
         common_available_unique_clusters=common_available,
@@ -8523,7 +9936,7 @@ def build_input_manifest(args: argparse.Namespace) -> dict[str, Any]:
             "human_validity_claimed": False,
         },
         "ethics_determination": {
-            "artifact": descriptor(ethics_path),
+            "artifact": descriptor_from_bytes(ethics_path, ethics_payload),
             "authorized_sha256": args.authorize_ethics_sha256.lower(),
             "determination_id": ethics["determination_id"],
             "status": ethics["status"],
@@ -8603,6 +10016,16 @@ def build_input_manifest(args: argparse.Namespace) -> dict[str, Any]:
         or len(gate5["terminal"]) != gate5_profile["terminal_lane_count"]
     ):
         raise Phase8Error("Gate 5 inventory changed during preparation")
+    if "sampling_index_receipt" in phase7_support:
+        value["phase7"]["sampling_view_index"] = phase7_support[
+            "sampling_index_receipt"
+        ]
+        value["phase7"]["sampling_revision_strata"] = phase7_support[
+            "sampling_index_value"
+        ]["revision_strata"]
+        value["phase7"]["sampling_source_conformance_strata"] = phase7_support[
+            "sampling_index_value"
+        ]["source_conformance_strata"]
     value["bound_artifacts"] = collect_descriptors(value)
     material = canonical(value["bound_artifacts"])
     value["bound_artifact_inventory"] = {
@@ -8751,8 +10174,8 @@ def validate_input_manifest(
         or type(scope.get("gate5_lane_count")) is not int
         or type(scope.get("gate5_runnable_lane_count")) is not int
         or type(scope.get("gate5_terminal_lane_count")) is not int
-        or scope.get("conditional_na_lanes")
-        not in ([], [DEFENSE_LOCAL_LANE])
+        or scope.get("conditional_na_lanes") != [DEFENSE_LOCAL_LANE]
+        or ollama_static_terminals != tuple(OLLAMA_STATIC_TERMINAL_LANES)
         or (
             scope.get("gate5_lane_count"),
             scope.get("gate5_runnable_lane_count"),
@@ -8760,12 +10183,8 @@ def validate_input_manifest(
         )
         != (
             46,
-            22
-            - len(scope.get("conditional_na_lanes", []))
-            - len(ollama_static_terminals),
-            24
-            + len(scope.get("conditional_na_lanes", []))
-            + len(ollama_static_terminals),
+            HISTORICAL_GATE5_RUNNABLE,
+            HISTORICAL_GATE5_TYPED_TERMINAL,
         )
     ):
         raise Phase8Error("Phase 8 input does not retain an accepted Gate 5 profile")
@@ -8886,30 +10305,24 @@ def validate_input_manifest(
         or phase6["native_status"] != expected_native_status
     ):
         raise Phase8Error("Phase 8 Phase 6 statuses disagree with terminal states")
-    if (
-        not conditional_na_lanes
-        and phase6["core_terminal_states"].get(DEFENSE_LOCAL_LANE)
-        != "measured_complete"
-    ):
-        raise Phase8Error("Phase 8 runnable defense lacks measured evidence")
     phase7 = value.get("phase7")
+    phase7_fields = {
+        "completion", "input_manifest", "artifact_inventory", "runner_input_view",
+        "analysis_boundaries", "status", "human_labels_consumed",
+        "human_validity_claimed", "sampling_view_index",
+        "sampling_revision_strata", "sampling_source_conformance_strata",
+    }
     if (
         not isinstance(phase7, dict)
-        or set(phase7)
-        != {
-            "completion",
-            "input_manifest",
-            "artifact_inventory",
-            "runner_input_view",
-            "analysis_boundaries",
-            "status",
-            "human_labels_consumed",
-            "human_validity_claimed",
-        }
+        or set(phase7) != phase7_fields
         or phase7.get("status")
         not in {"complete", "complete_with_explicit_limitations"}
         or phase7.get("human_labels_consumed") is not False
         or phase7.get("human_validity_claimed") is not False
+        or not isinstance(phase7.get("sampling_revision_strata"), dict)
+        or not phase7["sampling_revision_strata"]
+        or not isinstance(phase7.get("sampling_source_conformance_strata"), dict)
+        or not phase7["sampling_source_conformance_strata"]
     ):
         raise Phase8Error("Phase 8 sealed Phase 7 inventory differs")
     ethics = value.get("ethics_determination")
@@ -9092,14 +10505,16 @@ def read_csv(path: Path, *, label: str) -> tuple[list[str], list[dict[str, str]]
     return fields, rows
 
 
-def _reject_rr_human_row(row: Mapping[str, Any], *, label: str) -> None:
+def _reject_historical_rr_terminal_human_row(
+    row: Mapping[str, Any], *, label: str
+) -> None:
     if any(
         marker in str(row.get(field, ""))
         for field in ("model", "model_spec", "run_id", "attempt_id", "sample_key")
-        for marker in (*RR_TARGET_IDENTITY_MARKERS, *RR_RUNTIME_TERMINAL_LANES)
+        for marker in HISTORICAL_RR_RUNTIME_TERMINAL_LANES
     ):
         raise Phase8Error(
-            f"{label} contains an RR runtime-terminal response or sample"
+            f"{label} contains an obsolete RR runtime-terminal response or sample"
         )
 
 
@@ -9114,7 +10529,7 @@ def validate_common_sample(
     keys: set[str] = set()
     clusters: set[str] = set()
     for row in rows:
-        _reject_rr_human_row(row, label="common sample")
+        _reject_historical_rr_terminal_human_row(row, label="common sample")
         key = row.get("sample_key", "")
         cluster = row.get("cluster_key", "")
         if not key or key in keys or not cluster:
@@ -9155,7 +10570,7 @@ def validate_source_sample(
         "gptgeochat_binary_moderation": "yes|no",
     }
     for row in rows:
-        _reject_rr_human_row(row, label="source-task sample")
+        _reject_historical_rr_terminal_human_row(row, label="source-task sample")
         key = row.get("sample_key", "")
         cluster = row.get("cluster_key", "")
         if not key or key in keys or key in common_keys or not cluster:
@@ -9265,7 +10680,7 @@ def _qualification_candidates(
     rows: list[dict[str, Any]] = []
     for key, judgment in sorted(judgments.items()):
         meta = joined_meta[key]
-        _reject_rr_human_row(
+        _reject_historical_rr_terminal_human_row(
             {
                 "model": (judgment.get("raw") or {}).get("model", ""),
                 "model_spec": meta.get("model_spec", ""),
@@ -9466,8 +10881,8 @@ def semantic_revalidate(inputs: Mapping[str, Any]) -> dict[str, Any]:
         not isinstance(scope, dict)
         or not isinstance(scope.get("audit_runner_root"), str)
         or not scope["audit_runner_root"]
-        or scope.get("conditional_na_lanes")
-        not in ([], [DEFENSE_LOCAL_LANE])
+        or scope.get("conditional_na_lanes") != [DEFENSE_LOCAL_LANE]
+        or ollama_static_terminals != tuple(OLLAMA_STATIC_TERMINAL_LANES)
     ):
         raise Phase8Error("authorized Phase 8 conditional N/A scope differs")
     conditional_na_lanes = scope["conditional_na_lanes"]
@@ -9477,12 +10892,8 @@ def semantic_revalidate(inputs: Mapping[str, Any]) -> dict[str, Any]:
         "audit_runner_root": scope["audit_runner_root"],
         "thesis_root": str(thesis_root),
         "gate5_lane_count": 46,
-        "gate5_runnable_lane_count": (
-            22 - len(conditional_na_lanes) - len(ollama_static_terminals)
-        ),
-        "gate5_terminal_lane_count": (
-            24 + len(conditional_na_lanes) + len(ollama_static_terminals)
-        ),
+        "gate5_runnable_lane_count": HISTORICAL_GATE5_RUNNABLE,
+        "gate5_terminal_lane_count": HISTORICAL_GATE5_TYPED_TERMINAL,
         "conditional_na_lanes": conditional_na_lanes,
     }:
         raise Phase8Error("authorized Phase 8 scope differs from canonical roots")
@@ -9521,6 +10932,7 @@ def semantic_revalidate(inputs: Mapping[str, Any]) -> dict[str, Any]:
     )
     core = validate_core_completion(
         core_path,
+        code_identity=gate5["code_identity"],
         manifest_sha=manifest_sha,
         runnote_sha=runnote_sha,
         promotion_sha=promotion_sha,
@@ -9532,6 +10944,7 @@ def semantic_revalidate(inputs: Mapping[str, Any]) -> dict[str, Any]:
     )
     extended = validate_extended_completion(
         extended_path,
+        code_identity=gate5["code_identity"],
         manifest_sha=manifest_sha,
         runnote_sha=runnote_sha,
         promotion_sha=promotion_sha,
@@ -9574,7 +10987,7 @@ def semantic_revalidate(inputs: Mapping[str, Any]) -> dict[str, Any]:
         work_root=work,
         payload=phase7_payload,
     )
-    if inputs.get("phase7") != {
+    expected_phase7_snapshot = {
         "completion": descriptor_from_bytes(phase7_path, phase7_payload),
         "input_manifest": phase7["input_manifest"],
         "artifact_inventory": phase7["artifact_inventory"],
@@ -9583,7 +10996,18 @@ def semantic_revalidate(inputs: Mapping[str, Any]) -> dict[str, Any]:
         "status": phase7["status"],
         "human_labels_consumed": False,
         "human_validity_claimed": False,
-    }:
+    }
+    if "sampling_index_receipt" in support:
+        expected_phase7_snapshot["sampling_view_index"] = support[
+            "sampling_index_receipt"
+        ]
+        expected_phase7_snapshot["sampling_revision_strata"] = support[
+            "sampling_index_value"
+        ]["revision_strata"]
+        expected_phase7_snapshot["sampling_source_conformance_strata"] = support[
+            "sampling_index_value"
+        ]["source_conformance_strata"]
+    if inputs.get("phase7") != expected_phase7_snapshot:
         raise Phase8Error("authorized Phase 7 snapshot differs from its receipt")
     audit_runner_root = support["runner_view"]
     if scope["audit_runner_root"] != str(audit_runner_root):
@@ -9601,6 +11025,11 @@ def semantic_revalidate(inputs: Mapping[str, Any]) -> dict[str, Any]:
         source_root=runner_root,
         view_root=audit_runner_root,
         measured_lanes=support["runner_view_lanes"],
+        core_view_receipt=support["core_runner_view_receipt"],
+        runner=support["runner"],
+        recoveries=support["canonical_recoveries"],
+        seven=support["seven"],
+        followon=support["followon"],
     )
     capacity = plan_phase8_capacity(
         common_available_unique_clusters=common_available,
@@ -9645,6 +11074,10 @@ def semantic_revalidate(inputs: Mapping[str, Any]) -> dict[str, Any]:
         "audit_runner_root": audit_runner_root,
         "audit_runner_view_receipt": support["runner_view_value"],
         "audit_runner_view_lanes": support["runner_view_lanes"],
+        "core_runner_view_receipt": support["core_runner_view_receipt"],
+        "core_runner_view": support["core_runner_view"],
+        "core_runner_view_lanes": support["core_runner_view_lanes"],
+        "followon": support["followon"],
         "gate5": gate5,
         "core": core,
         "extended": extended,
@@ -9992,8 +11425,8 @@ def _valid_phase8_gate5_counts(value: object) -> bool:
         and all(type(item) is int for item in value.values())
         and value["total"] == 46
         and value["native"] == 9
-        and 18 <= value["runnable"] <= 22
-        and value["terminal"] == 46 - value["runnable"]
+        and value["runnable"] == HISTORICAL_GATE5_RUNNABLE
+        and value["terminal"] == HISTORICAL_GATE5_TYPED_TERMINAL
     )
 
 
@@ -10092,35 +11525,17 @@ def _validate_prepared_rating_form(
 
 
 def _bound_qualification_runner_view(inputs: Mapping[str, Any]) -> Path:
-    scope = inputs.get("scope")
-    phase7 = inputs.get("phase7")
-    if not isinstance(scope, dict) or not isinstance(phase7, dict):
-        raise Phase8Error("Phase 8 qualification Runner-view binding is absent")
-    source_value = scope.get("runner_root")
-    view_value = scope.get("audit_runner_root")
-    if (
-        not isinstance(source_value, str)
-        or not source_value
-        or not isinstance(view_value, str)
-        or not view_value
-    ):
-        raise Phase8Error("Phase 8 qualification Runner-view roots differ")
-    _receipt_path, receipt = descriptor_object(
-        phase7.get("runner_input_view"),
-        label="Phase 8 authorized Runner-view receipt",
-    )
-    measured_lanes = receipt.get("included_measured_lanes")
-    if (
-        not isinstance(measured_lanes, list)
-        or not measured_lanes
-        or any(not isinstance(lane, str) or not lane for lane in measured_lanes)
-    ):
-        raise Phase8Error("Phase 8 qualification Runner-view lanes differ")
+    support = semantic_revalidate(inputs)
     return revalidate_bound_audit_runner_view(
-        receipt=receipt,
-        source_root=Path(source_value),
-        view_root=Path(view_value),
-        measured_lanes=measured_lanes,
+        receipt=support["audit_runner_view_receipt"],
+        source_root=support["runner_root"],
+        view_root=support["audit_runner_root"],
+        measured_lanes=support["audit_runner_view_lanes"],
+        core_view_receipt=support["core_runner_view_receipt"],
+        runner=support["runner"],
+        recoveries=support["canonical_recoveries"],
+        seven=support["seven"],
+        followon=support["followon"],
     )
 
 
@@ -10828,6 +12243,11 @@ def execute_preparation(control_root: Path, attempt_root: Path) -> int:
             source_root=support["runner_root"],
             view_root=runner_root,
             measured_lanes=support["audit_runner_view_lanes"],
+            core_view_receipt=support["core_runner_view_receipt"],
+            runner=support["runner"],
+            recoveries=support["canonical_recoveries"],
+            seven=support["seven"],
+            followon=support["followon"],
         )
 
     common_argv = [
@@ -12018,7 +13438,7 @@ def self_test() -> int:
         "undersized source-task frame",
     )
 
-    _reject_rr_human_row(
+    _reject_historical_rr_terminal_human_row(
         {"model": "Qwen/Qwen3-VL-8B-Instruct", "model_spec": "vllm:qwen"},
         label="RR sample self-test",
     )
@@ -12026,16 +13446,21 @@ def self_test() -> int:
     for field, marker in (
         ("model", RR_TARGET_MODEL),
         ("model_spec", RR_TARGET_SPEC),
-        ("run_id", RR_RUNTIME_TERMINAL_LANES[0]),
         ("attempt_id", RR_TARGET_IDENTITY_MARKERS[1]),
         ("sample_key", RR_TARGET_IDENTITY_MARKERS[2]),
     ):
+        _reject_historical_rr_terminal_human_row(
+            {field: f"prefix-{marker}-suffix"},
+            label="current RR sample self-test",
+        )
+        passed()
+    for marker in HISTORICAL_RR_RUNTIME_TERMINAL_LANES:
         rejected(
-            lambda field=field, marker=marker: _reject_rr_human_row(
-                {field: f"prefix-{marker}-suffix"},
+            lambda marker=marker: _reject_historical_rr_terminal_human_row(
+                {"run_id": f"prefix-{marker}-suffix"},
                 label="RR sample self-test",
             ),
-            f"RR sample identity mutation in {field}",
+            "obsolete RR terminal sample identity",
         )
 
     rr_fixture_tmp = tempfile.TemporaryDirectory(
@@ -12111,7 +13536,15 @@ def self_test() -> int:
         raise AssertionError("RR local-config self-test bytes changed")
     project_revision = rr_fixture_file(
         rr_fixture_root / "project-revision.json",
-        canonical({"commit": EXPECTED_COMMIT}),
+        canonical(
+            {
+                "repository": {
+                    "expected_commit": EXPECTED_COMMIT,
+                    "observed_commit": EXPECTED_COMMIT,
+                    "clean": True,
+                }
+            }
+        ),
     )
     rr_terminal_artifact = {
         "schema": RR_RUNTIME_TERMINAL_SCHEMA,
@@ -12230,7 +13663,9 @@ def self_test() -> int:
             "hosted_judge_calls": 0,
             "http_attempts": 0,
         },
-        "applies_to_lanes": list(RR_RUNTIME_TERMINAL_LANES),
+        "applies_to_lanes": list(
+            HISTORICAL_RR_RUNTIME_TERMINAL_ARTIFACT_LANES
+        ),
         "evidence_eligible": False,
     }
     rr_terminal_path = rr_fixture_root / "target-runtime-terminal.json"
@@ -12364,6 +13799,26 @@ def self_test() -> int:
         lane: rr_terminal_fixture(lane, index)
         for index, lane in enumerate(RR_RUNTIME_TERMINAL_LANES)
     }
+    conditional_row = {
+        "lane_id": DEFENSE_LOCAL_LANE,
+        "family": "core",
+        "disposition": "conditional_na",
+        "reason_code": DEFENSE_LOCAL_CONDITIONAL_REASON_CODE,
+        "reason": DEFENSE_LOCAL_CONDITIONAL_REASON,
+        "projection": {"status": "N/A", "value": None},
+        "canary": {
+            "status": "N/A",
+            "value": None,
+            "conditional_na_artifact": {
+                "path": "/fixture/defense-conditional-na.json",
+                "sha256": "a" * 64,
+                "bytes": 1,
+            },
+            "call_accounting": dict(DEFENSE_LOCAL_CONDITIONAL_ACCOUNTING),
+        },
+        "final_preflight": {"status": "N/A", "value": None},
+        "approved_caps": {"status": "N/A", "value": None},
+    }
     rows = [
         {
             "lane_id": lane,
@@ -12382,6 +13837,40 @@ def self_test() -> int:
         json.loads(json.dumps(rr_terminal_rows[lane]))
         for lane in RR_RUNTIME_TERMINAL_LANES
     )
+    rows[next(
+        index for index, row in enumerate(rows)
+        if row["lane_id"] == DEFENSE_LOCAL_LANE
+    )] = conditional_row
+    for lane in OLLAMA_STATIC_TERMINAL_LANES:
+        artifact_path = rr_fixture_root / f"{lane}.target-runtime-terminal.json"
+        artifact_descriptor = rr_fixture_file(
+            artifact_path, canonical({"lane_id": lane, "fixture": True})
+        )
+        rows[next(
+            index for index, row in enumerate(rows) if row["lane_id"] == lane
+        )] = {
+            "lane_id": lane,
+            "family": "ollama",
+            "disposition": OLLAMA_STATIC_TERMINAL_DISPOSITION,
+            "reason_code": "local_target_output_unusable",
+            "reason": (
+                "The exact RWKV Ollama target reached the sealed generation cap during the "
+                "selected static diagnostic canary. Runner rejected that incomplete attempt, so "
+                "this campaign cohort does not schedule the static lane for measured execution. "
+                "Earlier completed canary attempts remain diagnostic observations, and this is not "
+                "a claim that the model or runtime is generally unusable. Its separate R-Judge lane "
+                "remains runnable."
+            ),
+            "projection": {"status": "passed", "value": {}},
+            "canary": {
+                "status": "TARGET_RUNTIME_TERMINAL",
+                "value": None,
+                "target_runtime_terminal_artifact": artifact_descriptor,
+                "call_accounting": {"target_calls": 1},
+            },
+            "final_preflight": {"status": "TARGET_RUNTIME_TERMINAL", "value": None},
+            "approved_caps": {"status": "TARGET_RUNTIME_TERMINAL", "value": None},
+        }
     runnable_rows, terminal_rows = _exact_inventory(
         rows, validate_artifact=False
     )
@@ -12411,92 +13900,17 @@ def self_test() -> int:
         lambda: _exact_inventory(changed_terminal, validate_artifact=False),
         "changed typed terminal marker",
     )
-    rr_projection_unavailable = json.loads(json.dumps(rows))
-    next(
+    obsolete_rr_rows = json.loads(json.dumps(rows))
+    current_rr_row = next(
         row
-        for row in rr_projection_unavailable
-        if row["lane_id"] == RR_RUNTIME_TERMINAL_LANES[0]
-    )["projection"] = {"status": "UNAVAILABLE", "value": None}
+        for row in obsolete_rr_rows
+        if row["lane_id"] == "local-llava-rr-image-full"
+    )
+    current_rr_row["lane_id"] = "local-llava-rr-image-primary-100"
     rejected(
-        lambda: _exact_inventory(
-            rr_projection_unavailable, validate_artifact=False
-        ),
-        "RR completed projection erased",
+        lambda: _exact_inventory(obsolete_rr_rows, validate_artifact=False),
+        "obsolete RR runtime-terminal reverse mutation",
     )
-    rr_descriptor_divergence = json.loads(json.dumps(rows))
-    next(
-        row
-        for row in rr_descriptor_divergence
-        if row["lane_id"] == RR_RUNTIME_TERMINAL_LANES[-1]
-    )["canary"]["target_runtime_terminal_artifact"]["sha256"] = "e" * 64
-    rejected(
-        lambda: _exact_inventory(
-            rr_descriptor_divergence, validate_artifact=False
-        ),
-        "RR terminal descriptor divergence",
-    )
-    rr_projection_file_mismatch = json.loads(json.dumps(rows))
-    next(
-        row
-        for row in rr_projection_file_mismatch
-        if row["lane_id"] == RR_RUNTIME_TERMINAL_LANES[0]
-    )["projection"]["value"]["projection_artifact"]["file"] = (
-        "forged.lane-projection.json"
-    )
-    rejected(
-        lambda: _exact_inventory(
-            rr_projection_file_mismatch, validate_artifact=False
-        ),
-        "RR projection descriptor filename mismatch",
-    )
-    rr_envelope_id_mismatch = json.loads(json.dumps(rows))
-    next(
-        row
-        for row in rr_envelope_id_mismatch
-        if row["lane_id"] == RR_RUNTIME_TERMINAL_LANES[-1]
-    )["projection"]["value"]["request_envelope_artifact"]["envelope_id"] = (
-        "request-envelope-forged"
-    )
-    rejected(
-        lambda: _exact_inventory(
-            rr_envelope_id_mismatch, validate_artifact=False
-        ),
-        "RR request-envelope descriptor identity mismatch",
-    )
-    rr_eligibility_rich_descriptor = json.loads(json.dumps(rows))
-    next(
-        row
-        for row in rr_eligibility_rich_descriptor
-        if row["lane_id"] == RR_RUNTIME_TERMINAL_LANES[0]
-    )["projection"]["value"]["eligibility_artifact"]["file"] = (
-        "forged.eligibility.json"
-    )
-    rejected(
-        lambda: _exact_inventory(
-            rr_eligibility_rich_descriptor, validate_artifact=False
-        ),
-        "RR eligibility descriptor field injection",
-    )
-    conditional_row = {
-        "lane_id": DEFENSE_LOCAL_LANE,
-        "family": "core",
-        "disposition": "conditional_na",
-        "reason_code": DEFENSE_LOCAL_CONDITIONAL_REASON_CODE,
-        "reason": DEFENSE_LOCAL_CONDITIONAL_REASON,
-        "projection": {"status": "N/A", "value": None},
-        "canary": {
-            "status": "N/A",
-            "value": None,
-            "conditional_na_artifact": {
-                "path": "/fixture/defense-conditional-na.json",
-                "sha256": "a" * 64,
-                "bytes": 1,
-            },
-            "call_accounting": dict(DEFENSE_LOCAL_CONDITIONAL_ACCOUNTING),
-        },
-        "final_preflight": {"status": "N/A", "value": None},
-        "approved_caps": {"status": "N/A", "value": None},
-    }
     conditional_rows = json.loads(json.dumps(rows))
     conditional_rows[next(
         index
@@ -12511,7 +13925,7 @@ def self_test() -> int:
     )
     if conditional_gate5_profile != {
         "conditional_na_lanes": [DEFENSE_LOCAL_LANE],
-        "ollama_static_terminal_lanes": (),
+        "ollama_static_terminal_lanes": tuple(OLLAMA_STATIC_TERMINAL_LANES),
         "scheduled_core_lanes": [
             lane
             for lane in CORE_LANES
@@ -12522,11 +13936,19 @@ def self_test() -> int:
             lane
             for lane in RUNNABLE_LANES
             if lane not in RR_RUNTIME_TERMINAL_LANE_SET
+            and lane not in OLLAMA_STATIC_TERMINAL_LANES
             and lane != DEFENSE_LOCAL_LANE
         ],
-        "scheduled_extended_lanes": list(EXTENDED_LANES),
-        "runnable_lane_count": 21,
-        "terminal_lane_count": 25,
+        "scheduled_extended_lanes": [
+            lane
+            for lane in EXTENDED_LANES
+            if lane not in RR_RUNTIME_TERMINAL_LANE_SET
+            and lane not in OLLAMA_STATIC_TERMINAL_LANES
+        ],
+        "runnable_lane_count": HISTORICAL_GATE5_RUNNABLE,
+        "terminal_lane_count": HISTORICAL_GATE5_TYPED_TERMINAL,
+        "target_runtime_terminal": HISTORICAL_GATE5_TARGET_RUNTIME_TERMINAL,
+        "target_runtime_terminal_artifact": dict(rr_terminal_descriptor),
     }:
         raise AssertionError("conditional Gate 5 profile self-test differs")
     passed()
@@ -12568,14 +13990,14 @@ def self_test() -> int:
         lambda: _count_inventory(
             {
                 "total": True,
-                "runnable": 22,
-                "typed_terminal": 24,
-                "conditional_na_lanes": [],
+                "runnable": HISTORICAL_GATE5_RUNNABLE,
+                "typed_terminal": HISTORICAL_GATE5_TYPED_TERMINAL,
+                "conditional_na_lanes": [DEFENSE_LOCAL_LANE],
                 "bridge_terminal": 3,
                 "ollama_transport_terminal": 3,
                 "portfolio_terminal": 5,
                 "native_terminal": 9,
-                "target_runtime_terminal": 4,
+                "target_runtime_terminal": HISTORICAL_GATE5_TARGET_RUNTIME_TERMINAL,
             },
             profile=success_gate5_profile,
         ),
@@ -12730,13 +14152,15 @@ def self_test() -> int:
                     "analysis_ready_real_run": False,
                     "estimate_available": False,
                     "planned_contrast_missing": True,
-                    "reason_code": RR_RUNTIME_TERMINAL_REASON_CODE,
+                    "reason_code": "left_base_and_right_rr_lanes_failed",
+                    "missing_roles": ["left_base", "right_rr"],
+                    "prerequisite_roles": {
+                        "left_base": {},
+                        "right_rr": {},
+                    },
                     "modality": "image",
                     "facet": corpus,
                     "paired_compare_invoked": False,
-                    "target_runtime_terminal_artifact": dict(
-                        rr_terminal_descriptor
-                    ),
                 }
                 for corpus in IMAGE_ARMS
             },
@@ -13174,7 +14598,17 @@ def self_test() -> int:
         project_receipt_path = root / "project-revision.json"
         source_receipt_path = root / "source-conformance.json"
         write_new(
-            project_receipt_path, canonical({"revision_id": "self-test-revision"})
+            project_receipt_path,
+            canonical(
+                {
+                    "revision_id": "self-test-revision",
+                    "repository": {
+                        "expected_commit": EXPECTED_COMMIT,
+                        "observed_commit": EXPECTED_COMMIT,
+                        "clean": True,
+                    },
+                }
+            ),
         )
         write_new(source_receipt_path, canonical({"receipt_id": "self-test-source"}))
         project_binding = {"binding": "self-test-project"}
@@ -13201,6 +14635,23 @@ def self_test() -> int:
             artifact_path = conditional_artifact_root / f"{name}.json"
             write_new(artifact_path, canonical({"fixture": name}))
             conditional_artifacts[name] = descriptor(artifact_path)
+        conditional_project_path = Path(
+            conditional_artifacts["project_revision"]["path"]
+        )
+        conditional_project_path.write_bytes(
+            canonical(
+                {
+                    "repository": {
+                        "expected_commit": EXPECTED_COMMIT,
+                        "observed_commit": EXPECTED_COMMIT,
+                        "clean": True,
+                    }
+                }
+            )
+        )
+        conditional_artifacts["project_revision"] = descriptor(
+            conditional_project_path
+        )
         attestation_id = "live-attestation-" + "a" * 24
         live_attestation_path = Path(
             conditional_artifacts["live_attestation"]["path"]
@@ -13628,16 +15079,17 @@ def self_test() -> int:
         gate_manifest = root / "covered-manifest.json"
         gate_runnote = root / "RUNNOTE.md"
         gate_promotion = root / "promotion.json"
+        self_test_gate5_identity = {
+            "expected_commit": EXPECTED_COMMIT,
+            "framework_lock_id": EXPECTED_FRAMEWORK_LOCK,
+        }
         write_new(
             gate_manifest,
             canonical(
                 {
                     "schema": "ura-gate5-covered-manifest/1",
                     "inventory_complete": True,
-                    "code_identity": {
-                        "expected_commit": EXPECTED_COMMIT,
-                        "framework_lock_id": EXPECTED_FRAMEWORK_LOCK,
-                    },
+                    "code_identity": self_test_gate5_identity,
                     "lanes": rows,
                 }
             ),
@@ -13649,10 +15101,7 @@ def self_test() -> int:
                 {
                     "schema": "ura-gate5-covered-manifest/1",
                     "inventory_complete": True,
-                    "code_identity": {
-                        "expected_commit": EXPECTED_COMMIT,
-                        "framework_lock_id": EXPECTED_FRAMEWORK_LOCK,
-                    },
+                    "code_identity": self_test_gate5_identity,
                     "lanes": retained_conditional_rows,
                 }
             ),
@@ -14108,6 +15557,7 @@ def self_test() -> int:
         core_path, core = build_core("valid")
         validate_core_completion(
             core_path,
+            code_identity=self_test_gate5_identity,
             manifest_sha=sha256_file(gate_manifest),
             runnote_sha=sha256_file(gate_runnote),
             promotion_sha=sha256_file(gate_promotion),
@@ -14123,6 +15573,7 @@ def self_test() -> int:
             rejected(
                 lambda: validate_core_completion(
                     candidate,
+                    code_identity=self_test_gate5_identity,
                     manifest_sha=sha256_file(gate_manifest),
                     runnote_sha=sha256_file(gate_runnote),
                     promotion_sha=sha256_file(gate_promotion),
@@ -14167,6 +15618,7 @@ def self_test() -> int:
         )
         validate_core_completion(
             conditional_core_path,
+            code_identity=self_test_gate5_identity,
             manifest_sha=sha256_file(conditional_gate_manifest),
             runnote_sha=sha256_file(gate_runnote),
             promotion_sha=sha256_file(gate_promotion),
@@ -14179,6 +15631,7 @@ def self_test() -> int:
         rejected(
             lambda: validate_core_completion(
                 conditional_core_path,
+                code_identity=self_test_gate5_identity,
                 manifest_sha=sha256_file(conditional_gate_manifest),
                 runnote_sha=sha256_file(gate_runnote),
                 promotion_sha=sha256_file(gate_promotion),
@@ -14201,6 +15654,7 @@ def self_test() -> int:
         rejected(
             lambda: validate_core_completion(
                 conditional_core_path,
+                code_identity=self_test_gate5_identity,
                 manifest_sha=sha256_file(conditional_gate_manifest),
                 runnote_sha=sha256_file(gate_runnote),
                 promotion_sha=sha256_file(gate_promotion),
@@ -14408,6 +15862,7 @@ def self_test() -> int:
         extended_path, extended = build_extended("valid")
         validate_extended_completion(
             extended_path,
+            code_identity=self_test_gate5_identity,
             manifest_sha=sha256_file(gate_manifest),
             runnote_sha=sha256_file(gate_runnote),
             promotion_sha=sha256_file(gate_promotion),
@@ -14427,6 +15882,7 @@ def self_test() -> int:
         try:
             validate_extended_completion(
                 conditional_extended_path,
+                code_identity=self_test_gate5_identity,
                 manifest_sha=sha256_file(conditional_gate_manifest),
                 runnote_sha=sha256_file(gate_runnote),
                 promotion_sha=sha256_file(gate_promotion),
@@ -14443,6 +15899,7 @@ def self_test() -> int:
             rejected(
                 lambda: validate_extended_completion(
                     candidate,
+                    code_identity=self_test_gate5_identity,
                     manifest_sha=sha256_file(gate_manifest),
                     runnote_sha=sha256_file(gate_runnote),
                     promotion_sha=sha256_file(gate_promotion),
@@ -14570,6 +16027,19 @@ def self_test() -> int:
             engine: (planned if planned != "run" else "failed")
             for engine, planned in NATIVE_PLANNED_TERMINALS.items()
         }
+        native_plan_path = native_control / "native-plan.json"
+        write_new(
+            native_plan_path,
+            canonical(
+                {
+                    "code_identity": {
+                        "expected_commit": EXPECTED_COMMIT,
+                        "framework_lock_id": EXPECTED_FRAMEWORK_LOCK,
+                        "project_revision": descriptor(project_receipt_path),
+                    }
+                }
+            ),
+        )
         native_completion_path = native_attempt / "completion.json"
         write_new(
             native_completion_path,
@@ -14577,6 +16047,7 @@ def self_test() -> int:
                 {
                     "schema": "ura-phase6-native-controller-completion/1",
                     "status": "complete_with_failures",
+                    "expected_commit": EXPECTED_COMMIT,
                     "terminal_states": native_states,
                     "conditional_na_lanes": [],
                 }
@@ -14614,7 +16085,7 @@ def self_test() -> int:
             ],
             "lane_evidence": core["lane_results"],
             "lane_failures": core["lane_failures"],
-            "conditional_na_lanes": [],
+            "conditional_na_lanes": [DEFENSE_LOCAL_LANE],
             "result_roots": {lane: str(runner_root / lane) for lane in core_success},
             "status": core["status"],
         }
@@ -14726,7 +16197,8 @@ def self_test() -> int:
             "attempt_root": str(native_attempt),
             "completion": descriptor(native_completion_path),
             "exit_marker": descriptor(native_attempt / ".exit"),
-            "plan": descriptor(phase7_generic),
+            "plan": descriptor(native_plan_path),
+            "project_revision": descriptor(project_receipt_path),
             "payload": descriptor(phase7_generic),
             "launch": descriptor(phase7_generic),
             "summary": descriptor(phase7_generic),
@@ -14996,9 +16468,17 @@ def self_test() -> int:
         boundary["runner_lifecycle_authorizations"] = (
             phase7_lifecycle_authorizations
         )
+        boundary["conditional_na_lanes"] = [DEFENSE_LOCAL_LANE]
         boundary["native_outcomes"] = native_states
         boundary["classification"]["estimate_rows"] = 0
-        boundary["defense_local_evidence"]["measured_evidence_admitted"] = True
+        boundary["defense_local_evidence"] = {
+            "status": "N/A",
+            "value": None,
+            "disposition": "conditional_na",
+            "reason_code": DEFENSE_LOCAL_CONDITIONAL_REASON_CODE,
+            "reason": DEFENSE_LOCAL_CONDITIONAL_REASON,
+            "measured_evidence_admitted": False,
+        }
         phase7_input: dict[str, Any] = {
             "schema": "ura-phase7-analysis-inputs/1",
             "inventory_complete": True,
@@ -15012,19 +16492,21 @@ def self_test() -> int:
                 "manifest": descriptor(gate_manifest),
                 "canonical_runnote": descriptor(gate_runnote),
                 "promotion_receipt": descriptor(gate_promotion),
+                "code_identity": {
+                    "expected_commit": EXPECTED_COMMIT,
+                    "framework_lock_id": EXPECTED_FRAMEWORK_LOCK,
+                },
                 "terminal_inventory": {
                     row["lane_id"]: row
                     for row in rows
                     if row["disposition"] != "runnable"
                 },
                 "lane_count": 46,
-                "runnable_lane_count": 22,
-                "terminal_lane_count": 24,
-                "target_runtime_terminal": 4,
-                "target_runtime_terminal_artifact": dict(
-                    rr_terminal_descriptor
-                ),
-                "conditional_na_lanes": [],
+                "runnable_lane_count": HISTORICAL_GATE5_RUNNABLE,
+                "terminal_lane_count": HISTORICAL_GATE5_TYPED_TERMINAL,
+                "target_runtime_terminal": HISTORICAL_GATE5_TARGET_RUNTIME_TERMINAL,
+                "target_runtime_terminal_artifact": dict(rr_terminal_descriptor),
+                "conditional_na_lanes": [DEFENSE_LOCAL_LANE],
             },
             "project_and_source": {
                 "project_revision": {
@@ -15043,7 +16525,7 @@ def self_test() -> int:
                 "core": core_snapshot,
                 "extended": extended_snapshot,
                 "native": native_snapshot,
-                "runner_lane_count": 22,
+                "runner_lane_count": HISTORICAL_GATE5_RUNNABLE,
                 "native_engine_count": 9,
                 "all_machine_inventories_complete": True,
             },
@@ -15057,7 +16539,7 @@ def self_test() -> int:
                 "terminal_states": runner_states,
                 "lifecycle_states": phase7_lifecycle_states,
                 "lifecycle_authorizations": phase7_lifecycle_authorizations,
-                "conditional_na_lanes": [],
+                "conditional_na_lanes": [DEFENSE_LOCAL_LANE],
                 "metric_grids": phase7_grids,
                 "metric_completion_markers": phase7_markers,
                 "metric_eligibility_plans": phase7_eligibility,
@@ -15295,6 +16777,29 @@ def self_test() -> int:
             elif name.startswith("llava-base-vs-rr-"):
                 corpus = name.removeprefix("llava-base-vs-rr-")
                 output = output_root / f"{name}.json"
+                prerequisite_roles = {}
+                for role, lane in (
+                    ("left_base", "local-llava-base-image-primary-100"),
+                    ("right_rr", "local-llava-rr-image-primary-100"),
+                ):
+                    authorization = phase7_inputs["runner"][
+                        "lifecycle_authorizations"
+                    ][lane]
+                    prerequisite_roles[role] = {
+                        "lane_id": lane,
+                        "terminal_state": phase7_inputs["runner"][
+                            "terminal_states"
+                        ][lane],
+                        "lifecycle_state": phase7_inputs["runner"][
+                            "lifecycle_states"
+                        ][lane],
+                        "lifecycle_registry_status": authorization[
+                            "lifecycle_registry_status"
+                        ],
+                        "controller_failure": authorization[
+                            "controller_failure"
+                        ],
+                    }
                 write_new(
                     output,
                     canonical(
@@ -15309,31 +16814,45 @@ def self_test() -> int:
                                 "paired static-image endpoint by datapoint_id x requested_seed"
                             ),
                             "planned_contrast_missing": True,
-                            "reason_code": RR_RUNTIME_TERMINAL_REASON_CODE,
-                            "reason": RR_RUNTIME_TERMINAL_REASON,
-                            "terminal_lanes": list(RR_RUNTIME_TERMINAL_LANES),
-                            "target_runtime_terminal_artifact": dict(
-                                rr_terminal_descriptor
+                            "reason_code": "left_base_and_right_rr_lanes_failed",
+                            "reason": (
+                                "Both bounded LLaVA image lanes failed, so neither "
+                                "arm of the planned base-vs-RR endpoint contrast is "
+                                "available."
                             ),
+                            "missing_roles": ["left_base", "right_rr"],
+                            "prerequisite_roles": prerequisite_roles,
                             "analysis_ready_real_run": False,
                             "estimate": None,
                             "paired_compare_invoked": False,
-                            "rr_responses_admitted": 0,
+                            "failed_lane_metric_evidence_admitted": False,
                             "human_audit_eligible": False,
+                            "facets": {
+                                corpus: {
+                                    "analysis_ready_real_run": False,
+                                    "inference_cluster": (
+                                        "source_cluster_id (fallback datapoint_id)"
+                                    ),
+                                    "paired_compare_evidence": None,
+                                }
+                            },
+                            "target_calls": 0,
+                            "judge_calls": 0,
+                            "provider_http_attempts": 0,
+                            "human_labels_consumed": False,
                         }
                     ),
                 )
                 outputs = [output]
-                detail = RR_RUNTIME_TERMINAL_REASON
+                detail = (
+                    "Both bounded LLaVA image lanes failed, so the planned "
+                    "base-vs-RR endpoint contrast is unavailable."
+                )
                 receipt_limitations = {
-                    "reason_code": RR_RUNTIME_TERMINAL_REASON_CODE,
-                    "planned_contrast_missing": True,
-                    "modality": "image",
-                    "facet": corpus,
+                    "reason_code": "left_base_and_right_rr_lanes_failed",
+                    "missing_roles": ["left_base", "right_rr"],
+                    "prerequisite_roles": prerequisite_roles,
                     "paired_compare_invoked": False,
-                    "target_runtime_terminal_artifact": dict(
-                        rr_terminal_descriptor
-                    ),
                 }
             elif name in output_required:
                 output = output_root / f"{name}.json"
@@ -15625,6 +17144,15 @@ def self_test() -> int:
             oracle_calls.append("runner")
             return phase7_input["runner"]
 
+        def recording_followon(
+            *,
+            amendment_path: Path,
+            completion_path: Path,
+            gate5_promotion: Path,
+            code_identity: Mapping[str, Any],
+        ) -> Mapping[str, Any]:
+            raise AssertionError("follow-on oracle was called without follow-on input")
+
         recording_oracle = types.SimpleNamespace(
             gate5_inventory_profile=recording_profile,
             validate_gate5=recording_gate5,
@@ -15633,6 +17161,7 @@ def self_test() -> int:
             validate_extended_controller=recording_extended,
             validate_native_controller=recording_native,
             validate_runner_inventory=recording_runner,
+            validate_followon_inventory=recording_followon,
         )
         loader_calls: list[Path] = []
 
@@ -15742,6 +17271,7 @@ def self_test() -> int:
                 validate_extended_controller=mismatched_extended,
                 validate_native_controller=mismatched_native,
                 validate_runner_inventory=mismatched_runner,
+                validate_followon_inventory=recording_followon,
             )
 
         for mismatch_kind in (
@@ -16054,8 +17584,8 @@ def self_test() -> int:
                 "status": "validated_for_blinded_preparation",
                 "gate5_inventory": {
                     "total": 46,
-                    "runnable": 22,
-                    "terminal": 24,
+                    "runnable": HISTORICAL_GATE5_RUNNABLE,
+                    "terminal": HISTORICAL_GATE5_TYPED_TERMINAL,
                     "native": 9,
                 },
                 "common_frame": {
@@ -16172,8 +17702,8 @@ def self_test() -> int:
                 "authorized_input_manifest_sha256": authorized_sha,
                 "gate5_inventory": {
                     "total": 46,
-                    "runnable": 22,
-                    "terminal": 24,
+                    "runnable": HISTORICAL_GATE5_RUNNABLE,
+                    "terminal": HISTORICAL_GATE5_TYPED_TERMINAL,
                     "native": 9,
                 },
                 "phase6_terminal_statuses": statuses,
@@ -16430,8 +17960,12 @@ def self_test() -> int:
                 "status": "passed",
                 "mutation_checks": tests,
                 "gate5_inventory_profiles": [
-                    "46/22/24 with four RR runtime terminals and defense-local runnable",
-                    "46/21/25 with four RR runtime terminals and defense-local conditional N/A",
+                    {
+                        "runnable": HISTORICAL_GATE5_RUNNABLE,
+                        "typed_terminal": HISTORICAL_GATE5_TYPED_TERMINAL,
+                        "target_runtime_terminal": HISTORICAL_GATE5_TARGET_RUNTIME_TERMINAL,
+                        "conditional_na_lanes": [DEFENSE_LOCAL_LANE],
+                    },
                 ],
                 "human_claims_created": False,
             },

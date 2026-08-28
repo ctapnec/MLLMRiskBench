@@ -351,11 +351,77 @@ def _request_fixture(
             "http_attempts": 0,
             "deadline_seconds": 60,
         },
+        "base_argv": [
+            "--local-config-sha256",
+            "4" * 64,
+            "--max-queries",
+            "1",
+            "--max-turns",
+            "1",
+        ],
         "gate5": {"final_request_envelope": _artifact_descriptor(gate5_path)},
     }
     return project, spec, measured_path, measured, request_envelope_descriptor(
         measured_path, measured
     )
+
+
+def _grid_request_fixture(
+    phase7: ModuleType,
+    *,
+    project: dict[str, object],
+    envelope_descriptor: dict[str, object],
+    source_sha: str,
+    source_config_sha: str,
+    approximate: bool = False,
+) -> dict[str, object]:
+    return {
+        "execution_purpose": "measured_run",
+        "project_revision": project,
+        "request_envelope": envelope_descriptor,
+        "models": ["vllm:model-a"],
+        "corpora": ["arm-a"],
+        "source_conformance_artifact": {"sha256": source_sha},
+        "source_config_artifact": {"sha256": source_config_sha},
+        "local_config_artifact": {"sha256": "4" * 64},
+        "attackers": ["replay"],
+        "judges": ["rules", "guardrail"] if approximate else ["rules"],
+        "judge_model": None,
+        "guardrail_model": (
+            phase7.EXPECTED_GUARDRAIL_MODEL if approximate else None
+        ),
+        "guardrail_revision": (
+            phase7.EXPECTED_GUARDRAIL_REVISION if approximate else None
+        ),
+        "guardrail_device": (
+            phase7.EXPECTED_GUARDRAIL_DEVICE if approximate else None
+        ),
+        "hosted_judge_data_transfer_acknowledged": False,
+        "seeds": [0],
+        "sample_seed": 0,
+        "limit": 100,
+        "max_queries": 1,
+        "max_turns": 1,
+        "group_keys": list(phase7.GROUP_KEYS),
+        "defense": "none",
+        "defense_guard": "rules",
+        "quantization": "",
+        "dtype": "auto",
+        "dry_run": False,
+        "approximate_common_metrics": approximate,
+        "attestation_probe": False,
+        "global_call_budget": {
+            "max_target_calls": 1,
+            "max_judge_calls": None,
+            "max_http_attempts": None,
+            "call_start_deadline_seconds_from_first_invocation": 60,
+            "accounting_semantics": "durable_pre_call_logical_reservation_v1",
+        },
+        "live_attestation": {
+            "mode": "measured",
+            "artifacts": [{"file": "live.json", "sha256": "3" * 64, "bytes": 1}],
+        },
+    }
 
 
 def test_measured_envelope_and_grid_requests_are_semantically_bound(
@@ -373,41 +439,13 @@ def test_measured_envelope_and_grid_requests_are_semantically_bound(
 
     source_sha = "1" * 64
     source_config_sha = "2" * 64
-    grid_request = {
-        "execution_purpose": "measured_run",
-        "project_revision": project,
-        "request_envelope": envelope_descriptor,
-        "models": ["vllm:model-a"],
-        "corpora": ["arm-a"],
-        "source_conformance_artifact": {"sha256": source_sha},
-        "source_config_artifact": {"sha256": source_config_sha},
-        "attackers": ["replay"],
-        "judges": ["rules"],
-        "judge_model": None,
-        "hosted_judge_data_transfer_acknowledged": False,
-        "seeds": [0],
-        "sample_seed": 0,
-        "limit": 100,
-        "group_keys": list(phase7.GROUP_KEYS),
-        "defense": "none",
-        "defense_guard": "rules",
-        "quantization": "",
-        "dtype": "auto",
-        "dry_run": False,
-        "approximate_common_metrics": False,
-        "attestation_probe": False,
-        "global_call_budget": {
-            "max_target_calls": 1,
-            "max_judge_calls": None,
-            "max_http_attempts": None,
-            "call_start_deadline_seconds_from_first_invocation": 60,
-            "accounting_semantics": "durable_pre_call_logical_reservation_v1",
-        },
-        "live_attestation": {
-            "mode": "measured",
-            "artifacts": [{"file": "live.json", "sha256": "3" * 64, "bytes": 1}],
-        },
-    }
+    grid_request = _grid_request_fixture(
+        phase7,
+        project=project,
+        envelope_descriptor=envelope_descriptor,
+        source_sha=source_sha,
+        source_config_sha=source_config_sha,
+    )
     assert phase7.validate_measured_grid_request(
         grid_request,
         lane="local-qwen3-vl-text-primary-100",
@@ -424,6 +462,7 @@ def test_measured_envelope_and_grid_requests_are_semantically_bound(
         ("corpora", ["arm-b"]),
         ("limit", 0),
         ("sample_seed", 1),
+        ("sampling_policy", "seeded_pseudorandom_whole_cluster_prefix_v1"),
         ("source_conformance_artifact", {"sha256": "4" * 64}),
     ):
         mutated = copy.deepcopy(grid_request)
@@ -458,6 +497,96 @@ def test_measured_envelope_and_grid_requests_are_semantically_bound(
         )
 
     assert measured["request"]["execution_purpose"] == "measured_run"
+
+
+def test_approximate_grid_request_binds_the_exact_selected_guardrail(
+    phase7: ModuleType, tmp_path: Path
+) -> None:
+    project, spec, _measured_path, _measured, envelope_descriptor = _request_fixture(
+        phase7, tmp_path
+    )
+    source_sha = "1" * 64
+    source_config_sha = "2" * 64
+    spec["expected_judges"] = ["rules", "guardrail"]
+    spec["approximate_common_metrics"] = True
+    spec["base_argv"].extend(
+        [
+            "--guardrail-model",
+            phase7.EXPECTED_GUARDRAIL_MODEL,
+            "--guardrail-revision",
+            phase7.EXPECTED_GUARDRAIL_REVISION,
+            "--guardrail-device",
+            phase7.EXPECTED_GUARDRAIL_DEVICE,
+        ]
+    )
+    grid_request = _grid_request_fixture(
+        phase7,
+        project=project,
+        envelope_descriptor=envelope_descriptor,
+        source_sha=source_sha,
+        source_config_sha=source_config_sha,
+        approximate=True,
+    )
+    assert phase7.validate_measured_grid_request(
+        grid_request,
+        lane="local-qwen3-vl-text-primary-100",
+        spec=spec,
+        model_selector="vllm:model-a",
+        expected_project_binding=project,
+        expected_source_sha=source_sha,
+        expected_source_config_sha=source_config_sha,
+    ) == envelope_descriptor
+
+    wrong_request = copy.deepcopy(grid_request)
+    wrong_request["guardrail_model"] = "example/other-judge"
+    with pytest.raises(phase7.Phase7Error, match="sealed measured lane"):
+        phase7.validate_measured_grid_request(
+            wrong_request,
+            lane="local-qwen3-vl-text-primary-100",
+            spec=spec,
+            model_selector="vllm:model-a",
+            expected_project_binding=project,
+            expected_source_sha=source_sha,
+            expected_source_config_sha=source_config_sha,
+        )
+
+    self_referential_spec = copy.deepcopy(spec)
+    model_index = self_referential_spec["base_argv"].index("--guardrail-model") + 1
+    self_referential_spec["base_argv"][model_index] = "example/other-judge"
+    with pytest.raises(phase7.Phase7Error, match="selected common-metric guardrail"):
+        phase7.validate_measured_grid_request(
+            wrong_request,
+            lane="local-qwen3-vl-text-primary-100",
+            spec=self_referential_spec,
+            model_selector="vllm:model-a",
+            expected_project_binding=project,
+            expected_source_sha=source_sha,
+            expected_source_config_sha=source_config_sha,
+        )
+
+    non_guard_spec = copy.deepcopy(spec)
+    non_guard_spec["expected_judges"] = ["rules"]
+    non_guard_spec["approximate_common_metrics"] = False
+    for option in (
+        "--guardrail-model",
+        "--guardrail-revision",
+        "--guardrail-device",
+    ):
+        option_index = non_guard_spec["base_argv"].index(option)
+        del non_guard_spec["base_argv"][option_index : option_index + 2]
+    unexpected_guard = copy.deepcopy(grid_request)
+    unexpected_guard["judges"] = ["rules"]
+    unexpected_guard["approximate_common_metrics"] = False
+    with pytest.raises(phase7.Phase7Error, match="sealed measured lane"):
+        phase7.validate_measured_grid_request(
+            unexpected_guard,
+            lane="local-qwen3-vl-text-primary-100",
+            spec=non_guard_spec,
+            model_selector="vllm:model-a",
+            expected_project_binding=project,
+            expected_source_sha=source_sha,
+            expected_source_config_sha=source_config_sha,
+        )
 
 
 def _analysis_prerequisite_runner(

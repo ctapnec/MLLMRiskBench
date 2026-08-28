@@ -41,11 +41,12 @@ installer templates. Every value has a field-specific validator: hashes,
 canonical absolute POSIX paths, safe basenames, real UTC datetimes, and byte
 counts cannot become shell or Python fragments. Rebind output is create-only.
 
-Rebinding the immediately preceding pre-RR key shape is a controlled migration.
-It accepts only that exact prior inventory and requires explicit values for all
-four RR evidence roots. The older legacy a05 migration also discards its
-obsolete shared GPU hash and requires an explicit `--set` for every new or
-changed Phase 3 and installer binding below.
+Rebinding the immediately preceding pre-recovery-controller key shape is a
+controlled migration. It requires two fresh UTC tags and exact path, SHA-256,
+and byte bindings for the core-recovery and seven-row input manifests. A still
+older pre-RR binding additionally requires all four RR evidence roots. The
+legacy a05 migration also discards its obsolete shared GPU hash and requires an
+explicit `--set` for every new or changed binding below.
 Use the validated prior Phase 3 artifact identities for this provisional render,
 except that the project-receipt byte count describes the new receipt. Do not run
 the launch chain from this provisional binding; run only the generated Phase 3
@@ -64,6 +65,14 @@ python -m experiments.local_campaign.rebind \
   --set RR_IMAGE_EVIDENCE_ROOT=/mnt/stor/data/ura-work/runs/engineering/rr-image-probe-20260824T053641Z \
   --set RR_VLLM_TAIL_EVIDENCE_ROOT=/mnt/stor/data/ura-work/runs/engineering/rr-token-tail-probe-5719b \
   --set RR_TRANSFORMERS_EVIDENCE_ROOT=/mnt/stor/data/ura-work/runs/engineering/rr-transformers-reference-probe-5719 \
+  --set PHASE6_RECOVERY_TAG=<fresh-UTC-tag> \
+  --set PHASE6_RECOVERY_INPUTS_PATH=<resolved-absolute-input-manifest> \
+  --set PHASE6_RECOVERY_INPUTS_SHA256=<sha256> \
+  --set PHASE6_RECOVERY_INPUTS_BYTES=<positive-wc-c> \
+  --set SEVEN_POLICY_TAG=<later-fresh-UTC-tag> \
+  --set SEVEN_POLICY_INPUTS_PATH=<resolved-absolute-input-manifest> \
+  --set SEVEN_POLICY_INPUTS_SHA256=<sha256> \
+  --set SEVEN_POLICY_INPUTS_BYTES=<positive-wc-c> \
   --set PROJECT_RECEIPT_BYTES=<positive-wc-c> \
   --set PHASE3_REQUEST_BYTES=<prior-positive-wc-c> \
   --set PHASE3_ACQUISITION_BYTES=<prior-positive-wc-c> \
@@ -192,6 +201,96 @@ bash ~/.ura-controller-active/verify_controllers_<new-commit7>.sh
 bash ~/.ura-controller-active/launch_chain_<new-commit7>.sh
 ```
 
+The launch chain stops after Phase 6. Phase 7 cannot be launched honestly at
+the beginning of the campaign because its exact recovery, seven-row amendment,
+and follow-on completion artifacts do not exist yet. After those controllers
+terminate, launch the read-only watcher with their absolute artifact paths:
+
+```text
+bash ~/.ura-controller-active/launch_phase7_watcher.sh \
+  --phase6-sequence-completion <absolute-phase6-completion.json> \
+  --phase6-recovery-completion <absolute-recovery-completion.json> \
+  --seven-output-policy-amendment <absolute-seven-row-amendment.json> \
+  --phase6-seven-output-policy-completion <absolute-seven-row-completion.json> \
+  --followon-gate5-amendment <absolute-follow-on-amendment.json> \
+  --phase6-followon-completion <absolute-follow-on-completion.json>
+```
+
+Repeat `--phase6-recovery-completion` for every retained recovery stratum.
+
+Targeted Runner-output recovery is deliberately outside `launch_chain`. It is
+available only through the generated
+`launch_phase6_recovery_and_seven.sh`. The launcher starts one named tmux
+session, executes `phase6_core_length_recovery.py`, and starts
+`phase6_seven_output_policy.py` only after the core process is terminal. The
+core exit code does not gate the seven-row launch. Both producers preserve the
+retained limits, sample seeds, call caps, 24-hour lane deadlines, zero-download
+admission, one-arm canaries, and create-only output roots. They do not repeat
+already successful lanes.
+
+The core input manifest has schema
+`ura-phase6-core-length-recovery-inputs/2`. Its exact file-descriptor fields
+are:
+
+```text
+retained_executor_payload
+historical_gate5_manifest
+historical_gate5_runnote
+historical_gate5_promotion
+focused_tests
+mutation_tests
+deployment_exit
+```
+
+Its directory dependencies are `base_core_control_root`, with one artifact role
+for each of the six named retained lane-spec files, and
+`prior_recovery_attempt`, with exact `exit_marker` and `completion` artifact
+roles. Before any corrective call, the producer requires that prior completion
+to be the exact successful three-lane Runner 2.24 R-Judge recovery, validates
+its completion, launch, amendment, summary and result descriptor chain, and
+cross-links its retained payload and source lane specs to the bound inputs.
+
+The seven-row input manifest has schema
+`ura-seven-output-policy-amendment-inputs/2`. Its exact file-descriptor fields
+are:
+
+```text
+retained_executor_payload
+historical_gate5_manifest
+historical_gate5_runnote
+historical_gate5_promotion
+focused_tests
+mutation_tests
+deployment_exit
+```
+
+Its directory dependencies are `base_core_control_root`, with the four exact
+LLaVA-base lane-spec artifact roles; `base_ollama_control_root`, with the three
+exact R-Judge Ollama lane-spec roles; and `prior_ollama_recovery_attempt`, with
+exact `exit_marker` and `completion` roles. The prior attempt's control root
+must be the same `base_ollama_control_root`, its three generated lane specs must
+occupy the exact named paths in that control, and its exact successful
+completion chain is validated before any corrective call. Neither corrective
+cohort includes a PyRIT lane, so no unrelated PyRIT evidence is an input.
+
+Every file descriptor has the exact field set `{path,sha256,bytes}`. Every
+directory dependency has the exact field set `{path,artifacts}`, and each
+artifact value is a file descriptor whose resolved path must remain below that
+directory. Both the outer manifest and every referenced file are content-
+verified before payload import or use. The optional prior-core attempt is
+derived from the bound recovery tag, is recorded only as an uninspected path
+with null artifact fields, and is never a launch prerequisite. Create the bound
+manifests and tags for a fresh cohort, render and install the generation, then
+invoke explicitly:
+
+```bash
+bash ~/.ura-controller-active/launch_phase6_recovery_and_seven.sh
+```
+
+An occupied sequence, recovery, seven-row, RUNNOTE, reservation, or result path
+fails closed. The controller is not a mechanism for rerunning a completed
+cohort or raising its caps.
+
 The Phase 5 and Gate 5 orchestration controllers enforce a 24-hour global
 controller deadline, and the Phase 7 watcher enforces 720 hours. At expiry, a
 controller records exit 124 and the exact wait/hours reason in task and campaign
@@ -199,9 +298,9 @@ events. It terminates and confirms absence of only an exact tmux session it
 launched and owns; a controller that times out while awaiting upstream Phase 5
 or Phase 6 never terminates that upstream session.
 
-The archive contains 24 executable generated controllers, the generated
-read-only Phase 8 operator guide, their generated inventory, and the generated
-verifier. The installer remains outside the archive. Both
+The archive contains every allow-listed executable generated controller, the
+generated read-only Phase 8 operator guide, their generated inventory, and the
+generated verifier. The installer remains outside the archive. Both
 support programs come from the tracked `verify_controller_set.sh.in` and
 `install_controller_set.sh.in` sources; only their hashes and locators are
 workspace bindings.
@@ -234,15 +333,16 @@ are unavailable because that exact target transport is text-only; the Ollama
 projection and canary controller self-test proves they cannot enter a runnable
 loop. Four GraySwan RR and three RWKV static identities retain immutable
 historical target-runtime-terminal artifacts from the older output policy.
-Runner 2.22 and later retains nonempty length-capped text with its terminal
-reason, while Runner 2.23 and later retains a successful empty Ollama completion
-as typed `model_nonresponse`. Vague, repetitive or nonsensical text is ordinary
+The current Runner 2.24 contract retains nonempty length-capped text with its
+terminal reason and retains a successful empty Ollama completion as typed
+`model_nonresponse`. Vague, repetitive or nonsensical text is ordinary
 observed output and reaches the selected evaluator; a typed nonresponse bypasses
 the judge and remains visible in response and decision coverage.
 
 A targeted amendment re-attests and canaries only those seven identities. If it
-passes, Gate 5 requires 26 runnable, 20 typed-terminal and zero
-target-runtime-terminal rows before the optional defense shift. The older
+passes, Gate 5 requires 25 runnable, 21 typed-terminal and zero
+target-runtime-terminal rows. Only a separate successful optional defense shift
+changes that profile to 26 runnable and 20 typed-terminal rows. The older
 GraySwan `-full` terminal identities are not rewritten; the current GraySwan
 rows instead use limit 100 and sample seed 0 matched to the LLaVA-base rows.
 The RWKV static rows retain limit 50 and sample seed 0. Malformed protocol,
@@ -264,7 +364,17 @@ positive outer limit or a separately projected `--limit 0` transfer cohort.
 IDEATOR v2 is instead
 fixed to `advbench_harmful --limit 1 --sample-seed 105`;
 `pair_limit=0` means all eight verified pairs mapped to `advbench:245`,
-not all 520 AdvBench rows.
+not all 520 AdvBench rows. Accordingly, the exact measured target-call caps are
+one for NanoGCG, eight for IDEATOR v2, and 50 for T3MP3ST. The generated
+`phase5_followon_prepared.sh` converts only a fully validated three-lane input
+into the separate Gate 5 amendment, and `phase6_followon_prepared.sh` derives
+the typed `measured_complete`, `partial`, or `failed` lifecycle from the exact
+Runner roots. The 65-row Phase 7 campaign union requires the amendment and
+completion as one exact pair. It retains all three terminal states, emits
+metric inputs only for
+independently validated successful Runner roots and partitions those inputs by
+project revision. Zero successful follow-on lanes is an explicit limitation,
+not a controller failure.
 The exact NanoGCG plan/acquire/capture/replay and IDEATOR v2 prepare/Build
 procedures are the named subsections of `experiments/RUN_AND_RETURN.md`;
 this controller README does not redefine them.
@@ -318,14 +428,23 @@ keeps an honestly failed or partial Runner lifecycle in the canonical lifecycle
 tree without letting `human_audit` mistake it for a completed sample input. The
 view receipt content-binds every relative source/copy file, distinct identity,
 digest, byte count, and read-only mode; the completed view permits no analysis
-output or other extra file. Phase 7's separate lifecycle copy uses the same
+output or other extra file. When the follow-on amendment is present, Phase 8
+uses a sampling-only union of that core success view and each exact successful
+follow-on result root. Failed, partial, and sibling recovery roots remain
+excluded, while every successful lane is retained in an explicit project-
+revision stratum and cross-revision metric pooling remains forbidden. Phase 7's separate lifecycle copy uses the same
 source-preserving boundary for Level 1. The
 create-only Phase 8 input manifest records an exact cardinality plan: the common
 population must cover the requested common sample plus 20 disjoint
 qualification clusters, and the source-task population must cover its exact
 requested sample. Cardinality is recomputed from the same view before any
 sample write, while both selectors retain their independent achieved-cell
-coverage checks. A successful machine controller remains `human_only_blocked` with
+coverage checks. Before machine preparation, the controller requires an exact
+byte-bound operator ethics/consent record with structured consent,
+compensation, withdrawal, harmful-content welfare, and escalation controls;
+free-form details do not satisfy that contract. This authorization creates no
+rater, qualification, label, adjudication, report, or Gate 8 acceptance. A
+successful machine controller remains `human_only_blocked` with
 `gate8_met: false`; only real qualified raters, independent labels,
 adjudication, validated reports, and a human acceptance or limitation record
 can satisfy the later Gate 8 conditions. The generated

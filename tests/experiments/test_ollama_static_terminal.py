@@ -16,6 +16,7 @@ from experiments.local_campaign.ollama_static_terminal import (
     STATIC_LANE_MODELS,
     classify,
     descriptor_for,
+    historical_inventory_counts,
     inventory_counts,
     main,
     validate_gate5_terminal_rows,
@@ -82,7 +83,7 @@ def _runner_case(
         ("Ollama returned an empty completion", "empty_completion", "stop"),
     ),
 )
-def test_exact_nonjudgeable_model_outputs_become_typed_lane_outcomes(
+def test_historical_nonjudgeable_model_outputs_remain_validatable(
     tmp_path: Path, message: str, kind: str, finish_reason: str
 ) -> None:
     lane, diagnostic, log, output = _runner_case(
@@ -109,7 +110,7 @@ def test_exact_nonjudgeable_model_outputs_become_typed_lane_outcomes(
     ) == value
 
 
-def test_classifier_cli_reports_attempted_and_successful_target_counts(
+def test_historical_classifier_cli_reports_attempted_and_successful_target_counts(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -163,21 +164,25 @@ def test_protocol_and_provenance_failures_are_not_model_output_outcomes(
     assert not output.exists()
 
 
-def test_static_terminal_profiles_are_per_lane_and_defense_orthogonal() -> None:
+def test_current_inventory_has_no_ollama_output_terminals() -> None:
     lanes = list(OLLAMA_STATIC_TERMINAL_LANES)
-    for count in range(4):
-        assert inventory_counts(lanes[:count], []) == {
-            "runnable": 22 - count,
-            "typed_terminal": 24 + count,
-            "target_runtime_terminal": 4 + count,
-            "conditional_na_lanes": [],
-        }
-        assert inventory_counts(lanes[:count], ["defense-local"]) == {
-            "runnable": 21 - count,
-            "typed_terminal": 25 + count,
-            "target_runtime_terminal": 4 + count,
-            "conditional_na_lanes": ["defense-local"],
-        }
+    assert inventory_counts([], []) == {
+        "runnable": 26,
+        "typed_terminal": 20,
+        "target_runtime_terminal": 0,
+        "conditional_na_lanes": [],
+    }
+    assert inventory_counts([], ["defense-local"]) == {
+        "runnable": 25,
+        "typed_terminal": 21,
+        "target_runtime_terminal": 0,
+        "conditional_na_lanes": ["defense-local"],
+    }
+
+    # Reverse mutation: restoring even one pre-Runner-2.24 output terminal must
+    # not silently recreate the obsolete 22/24/4 inventory.
+    with pytest.raises(ValueError, match="historical Ollama output terminals"):
+        inventory_counts(lanes[:1], [])
 
     with pytest.raises(ValueError, match="duplicate"):
         inventory_counts([lanes[0], lanes[0]], [])
@@ -185,7 +190,28 @@ def test_static_terminal_profiles_are_per_lane_and_defense_orthogonal() -> None:
         inventory_counts([], ["forged"])
 
 
-def test_status_and_gate5_consumers_accept_only_the_exact_terminal_subset(
+def test_historical_c926_inventory_keeps_four_rr_and_three_ollama_terminals() -> None:
+    lanes = list(OLLAMA_STATIC_TERMINAL_LANES)
+    assert historical_inventory_counts(lanes, []) == {
+        "runnable": 19,
+        "typed_terminal": 27,
+        "target_runtime_terminal": 7,
+        "conditional_na_lanes": [],
+    }
+    assert historical_inventory_counts(lanes, ["defense-local"]) == {
+        "runnable": 18,
+        "typed_terminal": 28,
+        "target_runtime_terminal": 7,
+        "conditional_na_lanes": ["defense-local"],
+    }
+
+    with pytest.raises(ValueError, match="duplicate"):
+        historical_inventory_counts([lanes[0], lanes[0]], [])
+    with pytest.raises(ValueError, match="conditional"):
+        historical_inventory_counts(lanes, ["forged"])
+
+
+def test_historical_status_and_gate5_consumers_validate_exact_terminal_subset(
     tmp_path: Path,
 ) -> None:
     terminal_lane, diagnostic, log, output = _runner_case(

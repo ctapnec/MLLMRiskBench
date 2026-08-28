@@ -483,6 +483,7 @@ body.model-picker-open { overflow:hidden; }
   repeat(2,minmax(10rem,1fr)); gap:.75rem; align-items:end; min-width:0; }
 .sample-size-grid input[type=range] { width:100%; min-width:0;
   accent-color:var(--accent); }
+.sample-size-grid select { width:100%; min-width:0; max-width:100%; }
 @media (max-width:400px) {
   .workflow-grid, .workflow-panel .cols { grid-template-columns:minmax(0,1fr); }
   .prepared-workflows, .workflow-panel, .workflow-step {
@@ -720,6 +721,7 @@ var samplePanel=document.getElementById('sample-size-control');
 var sampleRange=document.getElementById('sample-limit-range');
 var sampleNumber=document.getElementById('sample-limit-number');
 var sampleSeed=document.getElementById('sample-seed-input');
+var samplePolicy=document.getElementById('sampling-policy-select');
 function sampleArmCardinalities(){
  if(!samplePanel){return {};}try{
  var parsed=JSON.parse(samplePanel.getAttribute('data-arm-cardinalities')||'{}');
@@ -736,6 +738,7 @@ countKeys.length===selectedKeys.length&&countKeys.every(function(key,index){retu
 if(samplePanel){samplePanel.hidden=!enabled;
 samplePanel.setAttribute('aria-hidden',enabled?'false':'true');}
 if(sampleNumber){sampleNumber.disabled=!enabled;}if(sampleSeed){sampleSeed.disabled=!enabled;}
+if(samplePolicy){samplePolicy.disabled=!enabled;}
 var rangeField=sampleRange&&sampleRange.closest('.sample-range-field');
 if(sampleRange){sampleRange.disabled=!exact;}if(rangeField){rangeField.hidden=!exact;}
 var inventory=document.getElementById('sample-arm-inventory');
@@ -924,6 +927,9 @@ function(b){return (b.getAttribute('data-model')||'')===judgeModelValue;});
 var localOnlyMeasured=mode==='measured'&&!api.length&&!hostedJudge;
 if(lim){parts.push('--limit '+lim);}
 else if(localOnlyMeasured){parts.push('--limit 0');}
+var samplingPolicy=namedValue('sampling_policy','');
+if(samplingPolicy&&(arms.length||drySynthetic)){
+parts.push('--sampling-policy '+samplingPolicy);}
 var grp=namedValue('group','');if(grp){parts.push('--group '+grp);}
 if(checkedName('exclude_tool_conditioned')){parts.push('--exclude-tool-conditioned');}
 if(checkedName('reset_open_circuits')&&mode==='measured'){parts.push('--reset-open-circuits');}
@@ -954,6 +960,7 @@ completeAtt+' complete'+(incompleteAtt?(', '+incompleteAtt+' incomplete'):'')+
 '; scope: '+namedValue('scope','not set')+'; max age: '+namedValue('max_age','not set'));
 setBuildSummary('build-summary-trajectory','per-arm limit: '+namedValue('limit',
 localOnlyMeasured?'0 (complete release)':'not set')+
+ '; sampling policy: '+namedValue('sampling_policy','legacy seeded default')+
  '; sample seed: '+namedValue('sample_seed','not set')+'; seeds: '+
  namedValue('seeds','not set')+'; queries: '+namedValue('max_queries','not set')+
  '; turns: '+namedValue('max_turns','not set')+'; group: '+namedValue('group','CLI default')+

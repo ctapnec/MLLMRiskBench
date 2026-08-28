@@ -389,6 +389,16 @@ gives each arm an independently scoped ordering. A source with fewer clusters
 is retained in full and reported as precision-limited; `--limit 0` returns the
 exact full arm without sampling.
 
+Runner also exposes the explicit policies
+`seeded_pseudorandom_whole_cluster_prefix_v1` and
+`source_order_whole_cluster_prefix_v1`. The second takes the first N cluster
+keys in source-appearance order, still retaining every sibling row. The current
+local campaign omits `--sampling-policy`, which deliberately preserves the
+deployed seeded pseudorandom behavior and its existing request shapes. Any
+future explicit policy is a separate request, acquisition, projection and
+analysis identity; changing policy cannot reuse the current cohort's Gate 5
+record. Both policies treat `--limit 0` as the exact full arm.
+
 The earlier `--limit 0` projections remain useful as full-universe capacity
 records but cannot authorize a bounded measured request. Every bounded lane
 therefore receives a new exact no-call projection, acquisition plan and receipt,

@@ -10,7 +10,12 @@ usage() {
     '    --gate5-promotion-receipt ABSOLUTE_PATH \' \
     '    --phase6-core-completion ABSOLUTE_PATH \' \
     '    --phase6-extended-completion ABSOLUTE_PATH \' \
-    '    --phase6-native-completion ABSOLUTE_PATH' \
+    '    --phase6-native-completion ABSOLUTE_PATH \' \
+    '    [--phase6-recovery-completion ABSOLUTE_PATH ...] \' \
+    '    --seven-output-policy-amendment ABSOLUTE_PATH \' \
+    '    --phase6-seven-output-policy-completion ABSOLUTE_PATH \' \
+    '    --followon-gate5-amendment ABSOLUTE_PATH \' \
+    '    --phase6-followon-completion ABSOLUTE_PATH' \
     '' \
     'Launch only the exact operator-authorized input manifest:' \
     '  phase7_analysis.sh --input-manifest ABSOLUTE_PATH \' \
@@ -48,6 +53,11 @@ gate5_promotion=''
 core_completion=''
 extended_completion=''
 native_completion=''
+recovery_completions=()
+seven_amendment=''
+seven_completion=''
+followon_amendment=''
+followon_completion=''
 input_manifest=''
 authorized_sha=''
 
@@ -94,6 +104,31 @@ while (( $# )); do
       native_completion="$2"
       shift 2
       ;;
+    --phase6-recovery-completion)
+      [[ $# -ge 2 ]] || usage
+      recovery_completions+=("$2")
+      shift 2
+      ;;
+    --seven-output-policy-amendment)
+      [[ $# -ge 2 ]] || usage
+      seven_amendment="$2"
+      shift 2
+      ;;
+    --phase6-seven-output-policy-completion)
+      [[ $# -ge 2 ]] || usage
+      seven_completion="$2"
+      shift 2
+      ;;
+    --followon-gate5-amendment)
+      [[ $# -ge 2 ]] || usage
+      followon_amendment="$2"
+      shift 2
+      ;;
+    --phase6-followon-completion)
+      [[ $# -ge 2 ]] || usage
+      followon_completion="$2"
+      shift 2
+      ;;
     --input-manifest)
       [[ $# -ge 2 && -z "$mode" ]] || usage
       mode='launch'
@@ -112,6 +147,9 @@ done
 if [[ "$mode" == 'self-test' ]]; then
   [[ -z "$prepare_out" && -z "$gate5_manifest" && -z "$gate5_runnote" && -z "$gate5_promotion" ]] || usage
   [[ -z "$core_completion" && -z "$extended_completion" && -z "$native_completion" ]] || usage
+  [[ ${#recovery_completions[@]} -eq 0 ]] || usage
+  [[ -z "$seven_amendment" && -z "$seven_completion" ]] || usage
+  [[ -z "$followon_amendment" && -z "$followon_completion" ]] || usage
   [[ -z "$input_manifest" && -z "$authorized_sha" ]] || usage
   exec "$PY" "$PAYLOAD_SOURCE" contract-self-test
 fi
@@ -119,7 +157,13 @@ fi
 if [[ "$mode" == 'prepare' ]]; then
   [[ -n "$prepare_out" && -n "$gate5_manifest" && -n "$gate5_runnote" && -n "$gate5_promotion" ]] || usage
   [[ -n "$core_completion" && -n "$extended_completion" && -n "$native_completion" ]] || usage
+  [[ -n "$seven_amendment" && -n "$seven_completion" ]] || usage
+  [[ -n "$followon_amendment" && -n "$followon_completion" ]] || usage
   [[ -z "$input_manifest" && -z "$authorized_sha" ]] || usage
+  recovery_args=()
+  for recovery_completion in "${recovery_completions[@]}"; do
+    recovery_args+=(--phase6-recovery-completion "$recovery_completion")
+  done
   exec "$PY" "$PAYLOAD_SOURCE" prepare \
     --out "$prepare_out" \
     --gate5-manifest "$gate5_manifest" \
@@ -127,12 +171,20 @@ if [[ "$mode" == 'prepare' ]]; then
     --gate5-promotion-receipt "$gate5_promotion" \
     --phase6-core-completion "$core_completion" \
     --phase6-extended-completion "$extended_completion" \
-    --phase6-native-completion "$native_completion"
+    --phase6-native-completion "$native_completion" \
+    "${recovery_args[@]}" \
+    --seven-output-policy-amendment "$seven_amendment" \
+    --phase6-seven-output-policy-completion "$seven_completion" \
+    --followon-gate5-amendment "$followon_amendment" \
+    --phase6-followon-completion "$followon_completion"
 fi
 
 [[ "$mode" == 'launch' && -n "$input_manifest" && -n "$authorized_sha" ]] || usage
 [[ -z "$prepare_out" && -z "$gate5_manifest" && -z "$gate5_runnote" && -z "$gate5_promotion" ]] || usage
 [[ -z "$core_completion" && -z "$extended_completion" && -z "$native_completion" ]] || usage
+[[ ${#recovery_completions[@]} -eq 0 ]] || usage
+[[ -z "$seven_amendment" && -z "$seven_completion" ]] || usage
+[[ -z "$followon_amendment" && -z "$followon_completion" ]] || usage
 [[ "$authorized_sha" =~ ^[0-9a-f]{64}$ ]] || usage
 
 INPUT_MANIFEST="$($PY - "$input_manifest" "$authorized_sha" "$PAYLOAD_SOURCE" <<'PY'

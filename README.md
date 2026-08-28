@@ -603,6 +603,11 @@ exact achieved support and row fanout. Explicit `--limit 0` returns the exact
 full arm. The framework supports full-set execution for local and hosted targets
 through a separately projected cohort; hosted full mode still requires caps that
 cover its full no-call projection, deadline, attestation and approval.
+The optional `--sampling-policy` is either
+`seeded_pseudorandom_whole_cluster_prefix_v1` (the unchanged omitted-argument
+default) or `source_order_whole_cluster_prefix_v1` (the first N cluster keys in
+source-appearance order). Explicit policy selection is identity-bound, and both
+policies make `--limit 0` the full arm.
 Current-campaign policy authorizes full mode only for all-local replication.
 The current source-mapped IDEATOR v2 artifact is narrower: its outer Runner
 selection is `advbench_harmful --limit 1 --sample-seed 105`, and

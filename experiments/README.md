@@ -357,6 +357,11 @@ response artifacts remain authoritative.
   the current hosted campaign lanes retain their positive prospective limits
   (runbook section 5.2). The source-mapped IDEATOR v2 artifact is not a
   full-corpus configuration: it is fixed to the one-cluster selection above.
+  The optional `--sampling-policy` choice is either
+  `seeded_pseudorandom_whole_cluster_prefix_v1` (the unchanged omitted-argument
+  default) or `source_order_whole_cluster_prefix_v1` (the first N cluster keys
+  in source-appearance order). An explicit value is identity-bound; both
+  policies retain sibling rows and make `--limit 0` the complete arm.
 - `--exclude-tool-conditioned` is not a sampling mode. It is admitted only for
   the standalone offline dry-run smoke and records its diagnostic row
   exclusions. Preflight, acquisition, attestation, canary, and measured routes

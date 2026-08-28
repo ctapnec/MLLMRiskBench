@@ -280,7 +280,7 @@ import re
 import sys
 from experiments.local_campaign.ollama_static_terminal import (
     OLLAMA_STATIC_TERMINAL_LANES,
-    inventory_counts,
+    historical_inventory_counts as inventory_counts,
 )
 from ura.strict_json import strict_json_loads
 
@@ -361,7 +361,7 @@ from pathlib import Path
 import sys
 from experiments.local_campaign.ollama_static_terminal import (
     OLLAMA_STATIC_TERMINAL_LANES,
-    inventory_counts,
+    historical_inventory_counts as inventory_counts,
 )
 from ura.strict_json import strict_json_loads
 
@@ -465,7 +465,7 @@ from pathlib import Path
 import sys
 from experiments.local_campaign.ollama_static_terminal import (
     OLLAMA_STATIC_TERMINAL_LANES,
-    inventory_counts,
+    historical_inventory_counts as inventory_counts,
 )
 from ura.strict_json import strict_json_loads
 

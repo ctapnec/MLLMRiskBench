@@ -15,6 +15,7 @@ import re
 from typing import Any, Mapping
 
 from .eligibility import canonical_json_sha256, validate_eligibility_plan
+from .sampling import effective_sampling_policy
 
 
 LANE_PROJECTION_SCHEMA = "ura-lane-projection/1"
@@ -51,6 +52,12 @@ _ARM_FIELDS = frozenset({
     "source_policy_cluster_counts",
     "selected_input_media",
 })
+_ARM_FIELDS_WITH_SAMPLING_POLICY = frozenset({
+    *_ARM_FIELDS,
+    "sampling_policy",
+})
+# Preserve deployed /1 projections for omitted-policy invocations while making
+# an explicit policy part of both the arm content identity and its condition.
 _MEDIA_FIELDS = frozenset({
     "status",
     "verification_basis",
@@ -244,7 +251,10 @@ def validate_lane_projection(value: object) -> dict[str, Any]:
         ) is None:
             raise ValueError(f"lane projection eligibility {field} is invalid")
     _validate_descriptor(binding.get("artifact"))
-    _validate_condition(binding.get("experiment_conditions"))
+    experiment_conditions = binding.get("experiment_conditions")
+    _validate_condition(experiment_conditions)
+    condition_values = experiment_conditions["values"]
+    condition_has_sampling_policy = "sampling_policy" in condition_values
 
     selection = _strict_object(
         artifact.get("selection"), _SELECTION_FIELDS, "lane projection selection"
@@ -255,7 +265,12 @@ def validate_lane_projection(value: object) -> dict[str, Any]:
     arm_ids: list[str] = []
     sums: Counter[str] = Counter()
     for index, raw in enumerate(arms):
-        arm = _strict_object(raw, _ARM_FIELDS, f"lane projection arm {index}")
+        arm_fields = (
+            _ARM_FIELDS_WITH_SAMPLING_POLICY
+            if isinstance(raw, dict) and "sampling_policy" in raw
+            else _ARM_FIELDS
+        )
+        arm = _strict_object(raw, arm_fields, f"lane projection arm {index}")
         arm_id = arm.get("logical_source_arm")
         converter = arm.get("converter")
         if not isinstance(arm_id, str) or not arm_id.strip() or arm_id != arm_id.strip():
@@ -277,6 +292,15 @@ def validate_lane_projection(value: object) -> dict[str, Any]:
             )
         }
         _integer(arm.get("sample_seed"), f"lane projection arm {arm_id} sample_seed")
+        if "sampling_policy" in arm:
+            effective_sampling_policy(arm["sampling_policy"])
+        if ("sampling_policy" in arm) != condition_has_sampling_policy or (
+            condition_has_sampling_policy
+            and arm.get("sampling_policy") != condition_values["sampling_policy"]
+        ):
+            raise ValueError(
+                "lane projection arm sampling policy differs from its condition"
+            )
         if integers["selected_records"] > integers["total_records"]:
             raise ValueError("lane projection selected records exceed total records")
         if integers["selected_clusters"] > integers["total_clusters"]:
@@ -399,6 +423,12 @@ def build_lane_projection(
             sorted(selected_ids)
         ):
             raise ValueError(f"sampling/eligibility datapoint binding mismatch for {arm_id!r}")
+        audit_has_policy = "sampling_policy" in audit
+        if audit_has_policy != ("sampling_policy" in binding) or (
+            audit_has_policy
+            and audit.get("sampling_policy") != binding.get("sampling_policy")
+        ):
+            raise ValueError(f"sampling/eligibility policy binding mismatch for {arm_id!r}")
         media_raw = selected_media_inventories[arm_id]
         if media_raw.get("result") not in {"passed", "not_applicable"}:
             raise ValueError(f"selected media inventory failed for {arm_id!r}")
@@ -415,7 +445,7 @@ def build_lane_projection(
             "unique_bytes_by_modality": unique_bytes,
             "total_unique_bytes": sum(unique_bytes.values()),
         }
-        arms.append({
+        arm = {
             "logical_source_arm": arm_id,
             "converter": audit.get("converter"),
             "selected_converted_corpus_sha256": binding.get(
@@ -435,7 +465,12 @@ def build_lane_projection(
                 source_policy_cluster_counts[arm_id]
             ),
             "selected_input_media": media,
-        })
+        }
+        if audit_has_policy:
+            arm["sampling_policy"] = effective_sampling_policy(
+                audit.get("sampling_policy")
+            )
+        arms.append(arm)
     totals = {
         "logical_source_arms": len(arms),
         "selected_records": sum(item["selected_records"] for item in arms),

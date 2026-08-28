@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 from pathlib import Path
 
@@ -23,6 +24,10 @@ from ura.request_envelope import (
     validate_request_error,
     write_request_envelope,
     write_request_error,
+)
+from ura.sampling import (
+    DEFAULT_SAMPLING_POLICY,
+    SOURCE_ORDER_CLUSTER_PREFIX,
 )
 
 
@@ -132,6 +137,40 @@ def test_request_envelope_rejects_unbound_row_exclusion_switch() -> None:
     with pytest.raises(ValueError, match="invalid field inventory"):
         build_request_envelope(
             request=request,
+            project_revision=project,
+            harness_source=harness,
+            driver_source=driver,
+        )
+
+
+def test_explicit_sampling_policy_is_validated_and_changes_request_identity() -> None:
+    project, harness, driver = _source_bindings()
+    legacy = _envelope()
+    seeded = build_request_envelope(
+        request={**_request(), "sampling_policy": DEFAULT_SAMPLING_POLICY},
+        project_revision=project,
+        harness_source=harness,
+        driver_source=driver,
+    )
+    source_order = build_request_envelope(
+        request={**_request(), "sampling_policy": SOURCE_ORDER_CLUSTER_PREFIX},
+        project_revision=project,
+        harness_source=harness,
+        driver_source=driver,
+    )
+
+    assert "sampling_policy" not in legacy["request"]
+    assert len({
+        legacy["envelope_id"], seeded["envelope_id"], source_order["envelope_id"]
+    }) == 3
+    # run_matrix binds this exact byte digest into model-acquisition selection.
+    assert len({
+        hashlib.sha256(request_envelope_bytes(item)).hexdigest()
+        for item in (legacy, seeded, source_order)
+    }) == 3
+    with pytest.raises(ValueError, match="sampling policy is unsupported"):
+        build_request_envelope(
+            request={**_request(), "sampling_policy": "ignored-policy-mutant"},
             project_revision=project,
             harness_source=harness,
             driver_source=driver,

@@ -118,6 +118,10 @@ _CONDITION_FIELDS = frozenset({
     "model_acquisition",
     "live_attestation",
 })
+_CONDITION_FIELDS_WITH_SAMPLING_POLICY = frozenset({
+    *_CONDITION_FIELDS,
+    "sampling_policy",
+})
 _CSV_FIELDS = (
     "lifecycle_stratum_id",
     "request_id",
@@ -319,8 +323,17 @@ def _live_attestation_projection(value: object) -> dict[str, Any] | None:
 def _condition_values(value: object) -> dict[str, Any]:
     """Validate the compact experiment-condition projection used by Level 1."""
 
-    if not isinstance(value, dict) or set(value) != _CONDITION_FIELDS:
+    expected_fields = (
+        _CONDITION_FIELDS_WITH_SAMPLING_POLICY
+        if isinstance(value, dict) and "sampling_policy" in value
+        else _CONDITION_FIELDS
+    )
+    if not isinstance(value, dict) or set(value) != expected_fields:
         raise ValueError("eligibility experiment-condition fields are incomplete")
+    if "sampling_policy" in value:
+        from ura.sampling import effective_sampling_policy  # noqa: PLC0415
+
+        effective_sampling_policy(value["sampling_policy"])
     if value["execution_purpose"] not in {
         "diagnostic_dry_run",
         "preflight_only",
@@ -597,6 +610,8 @@ def _grid_condition(
             request.get("live_attestation")
         ),
     }
+    if "sampling_policy" in request:
+        values["sampling_policy"] = request["sampling_policy"]
     if legacy:
         legacy_values = dict(values)
         legacy_selected = dict(selected)
@@ -1618,6 +1633,17 @@ def _item_support(
     ):
         if audit.get(field) != selected_corpus_binding.get(field):
             raise ValueError(f"completed cell/eligibility sampling {field} mismatch")
+    if ("sampling_policy" in audit) != (
+        "sampling_policy" in selected_corpus_binding
+    ) or audit.get("sampling_policy") != selected_corpus_binding.get(
+        "sampling_policy"
+    ):
+        raise ValueError("completed cell/eligibility sampling policy mismatch")
+    if (
+        ("sampling_policy" in run_config) != ("sampling_policy" in audit)
+        or run_config.get("sampling_policy") != audit.get("sampling_policy")
+    ):
+        raise ValueError("completed cell run/sampling-audit policy mismatch")
     selected_ids = audit.get("selected_ids")
     if (
         not isinstance(selected_ids, list)
@@ -1701,6 +1727,10 @@ def _validate_envelope_plan_binding(
     if bindings["driver_source"] != plan["bindings"].get("driver_source"):
         raise ValueError("eligibility plan/request-envelope driver source mismatch")
     condition = _condition_from_plan(dict(plan))["values"]
+    if ("sampling_policy" in request) != ("sampling_policy" in condition):
+        raise ValueError(
+            "eligibility condition/request-envelope sampling policy presence mismatch"
+        )
     projected = {
         field: request[field]
         for field in (
@@ -1709,6 +1739,8 @@ def _validate_envelope_plan_binding(
             "group_keys", "quantization", "dtype", "dry_run", "call_caps",
         )
     }
+    if "sampling_policy" in request:
+        projected["sampling_policy"] = request["sampling_policy"]
     if any(condition[field] != value for field, value in projected.items()):
         raise ValueError("eligibility condition/request-envelope scalar mismatch")
 

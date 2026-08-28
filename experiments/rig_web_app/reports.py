@@ -14,6 +14,7 @@ from typing import Any, Mapping
 from ura.model_identity import canonical_provider_name
 
 from ura.approximate_metrics import validate_approximate_metric_provenance
+from ura.sampling import effective_sampling_policy
 from ura.strict_json import strict_json_loads
 
 from .catalog import _REPO_ROOT, _MAX_RENDER_BYTES, _INVENTORY_MAX_ENTRIES
@@ -61,6 +62,7 @@ _LEVEL2_STRATUM_FIELDS = (
     "seeds",
     "sample_seed",
     "limit",
+    "sampling_policy",
     "semantic_family",
     "metric",
     "endpoint_status",
@@ -98,7 +100,148 @@ _LEVEL2_ROW_FIELDS = frozenset(
         "approximate_model_query_count",
         "approximate_source_reference_use_count",
     }
+) - {"sampling_policy"}
+# Historical Level-2 rows predate the explicit policy switch. They remain
+# renderable; new rows carry the field and therefore form distinct strata.
+
+_TERMINAL_INVENTORY_FIELDS = {
+    "schema",
+    "status",
+    "cohort_order",
+    "cohort_counts",
+    "row_order",
+    "rows",
+    "failure_rows",
+    "project_revision_strata",
+    "source_conformance_strata",
+    "all_rows_terminal",
+    "cross_revision_pooling_permitted",
+    "cross_source_pooling_permitted",
+    "accounting",
+}
+_TERMINAL_INVENTORY_SCHEMA = re.compile(
+    r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}terminal-inventory/[1-9][0-9]{0,8}\Z"
 )
+_TERMINAL_INVENTORY_MAX_GROUPS = 128
+
+
+def _terminal_inventory_label(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and 1 <= len(value) <= 256
+        and all(ord(character) >= 32 for character in value)
+    )
+
+
+_TERMINAL_INVENTORY_ROW_FIELDS = {
+    "key",
+    "cohort",
+    "logical_id",
+    "terminal_state",
+    "failure",
+    "project_revision_stratum",
+    "source_conformance_stratum",
+    "evidence",
+}
+
+
+def _validate_terminal_inventory(document: Mapping[str, Any]) -> None:
+    """Validate a generic, self-reconciling terminal-inventory report."""
+
+    rows = document.get("rows")
+    row_order = document.get("row_order")
+    cohort_order = document.get("cohort_order")
+    cohort_counts = document.get("cohort_counts")
+    if (
+        set(document) != _TERMINAL_INVENTORY_FIELDS
+        or not isinstance(document.get("schema"), str)
+        or _TERMINAL_INVENTORY_SCHEMA.fullmatch(document["schema"]) is None
+        or not isinstance(cohort_order, list)
+        or not 1 <= len(cohort_order) <= _TERMINAL_INVENTORY_MAX_GROUPS
+        or any(
+            not _terminal_inventory_label(cohort)
+            for cohort in cohort_order
+        )
+        or len(set(cohort_order)) != len(cohort_order)
+        or not isinstance(cohort_counts, Mapping)
+        or set(cohort_counts) != set(cohort_order)
+        or any(
+            type(cohort_counts.get(cohort)) is not int
+            or cohort_counts[cohort] < 0
+            for cohort in cohort_order
+        )
+        or not isinstance(rows, list)
+        or not 1 <= len(rows) <= _INVENTORY_MAX_ENTRIES
+        or sum(cohort_counts.values()) != len(rows)
+        or not isinstance(row_order, list)
+        or len(row_order) != len(rows)
+        or document.get("all_rows_terminal") is not True
+        or type(document.get("cross_revision_pooling_permitted")) is not bool
+        or type(document.get("cross_source_pooling_permitted")) is not bool
+    ):
+        raise ValueError("terminal inventory schema, size, or cohort counts differ")
+
+    accounting = document.get("accounting")
+    if (
+        not isinstance(accounting, Mapping)
+        or len(accounting) > _TERMINAL_INVENTORY_MAX_GROUPS
+        or any(
+            not _terminal_inventory_label(field)
+            or type(value) is not int
+            or value < 0
+            for field, value in accounting.items()
+        )
+    ):
+        raise ValueError("terminal inventory accounting is malformed")
+
+    keys: list[str] = []
+    failures: list[str] = []
+    cohort_rows = {str(cohort): [] for cohort in cohort_order}
+    project_strata: dict[str, list[str]] = {}
+    source_strata: dict[str, list[str]] = {}
+    for row in rows:
+        if not isinstance(row, Mapping) or set(row) != _TERMINAL_INVENTORY_ROW_FIELDS:
+            raise ValueError("terminal inventory row fields differ")
+        cohort = row.get("cohort")
+        logical_id = row.get("logical_id")
+        key = row.get("key")
+        state = row.get("terminal_state")
+        revision = row.get("project_revision_stratum")
+        source = row.get("source_conformance_stratum")
+        if (
+            cohort not in cohort_rows
+            or not _terminal_inventory_label(logical_id)
+            or key != f"{cohort}:{logical_id}"
+            or not _terminal_inventory_label(state)
+            or type(row.get("failure")) is not bool
+            or not _terminal_inventory_label(revision)
+            or not _terminal_inventory_label(source)
+            or not isinstance(row.get("evidence"), Mapping)
+            or not row["evidence"]
+            or len(row["evidence"]) > _TERMINAL_INVENTORY_MAX_GROUPS
+        ):
+            raise ValueError("terminal inventory row identity or fields differ")
+        keys.append(key)
+        cohort_rows[cohort].append(key)
+        project_strata.setdefault(revision, []).append(key)
+        source_strata.setdefault(source, []).append(key)
+        if row["failure"]:
+            failures.append(key)
+
+    if (
+        len(set(keys)) != len(rows)
+        or row_order != keys
+        or any(
+            len(cohort_rows[cohort]) != cohort_counts[cohort]
+            for cohort in cohort_order
+        )
+        or document.get("failure_rows") != failures
+        or document.get("project_revision_strata") != project_strata
+        or document.get("source_conformance_strata") != source_strata
+        or document.get("status")
+        != ("complete_with_failures" if failures else "complete")
+    ):
+        raise ValueError("terminal inventory partition or status differs")
 
 
 def _validate_content_id(
@@ -133,6 +276,10 @@ def _validate_content_id(
 
 def _validate_report_document(kind: str, document: Mapping[str, Any]) -> None:
     """Fail closed before a retained document receives a scientific badge."""
+
+    if kind == "terminal_inventory":
+        _validate_terminal_inventory(document)
+        return
 
     if kind == "level1":
         if document.get("schema_version") not in {
@@ -276,6 +423,17 @@ def _validate_report_document(kind: str, document: Mapping[str, Any]) -> None:
     for row in estimates:
         if not isinstance(row, Mapping) or not _LEVEL2_ROW_FIELDS.issubset(row):
             raise ValueError("Level-2 estimate row is incomplete")
+        if "sampling_policy" in row:
+            if not isinstance(row["sampling_policy"], str):
+                raise ValueError(
+                    "Level-2 estimate sampling policy is unsupported"
+                )
+            try:
+                effective_sampling_policy(row["sampling_policy"])
+            except ValueError as exc:
+                raise ValueError(
+                    "Level-2 estimate sampling policy is unsupported"
+                ) from exc
         metric = row.get("metric")
         is_approximate = isinstance(metric, str) and metric.startswith("approximate_")
         approximate_value = row.get("approximate_provenance")

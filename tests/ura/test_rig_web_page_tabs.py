@@ -173,6 +173,12 @@ def test_rig_web_core_does_not_embed_local_campaign_policy(tmp_path: Path) -> No
         "_PROVIDER_BUDGETS",
         "focal Fable target",
         "metered Haiku judge",
+        "ura-phase6-campaign-terminal-inventory",
+        "65-row",
+        "output_policy_amendment",
+        "followon_prepared",
+        "gate5_failed",
+        "target_runtime_terminal",
     )
     for term in forbidden:
         assert term.casefold() not in core_text.casefold()
@@ -186,6 +192,7 @@ def test_rig_web_core_does_not_embed_local_campaign_policy(tmp_path: Path) -> No
     # campaign tier or seed by the server-rendered form.
     assert "name='limit'" in builder
     assert "name='sample_seed'" in builder
+    assert "name='sampling_policy'" in builder
     assert "name='cap_target'" in builder and "--max-total-target-calls" in builder
     assert "name='cap_judge'" in builder and "--max-total-judge-calls" in builder
     assert "name='cap_http'" in builder and "--max-total-http-attempts" in builder
@@ -268,6 +275,7 @@ def test_general_pipeline_summary_covers_every_builder_section_and_refreshes(
         "max_age",
         "limit",
         "sample_seed",
+        "sampling_policy",
         "seeds",
         "max_queries",
         "max_turns",
