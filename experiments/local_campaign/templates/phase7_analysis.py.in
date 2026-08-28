@@ -4845,6 +4845,11 @@ def validate_gate5(
 
     rows = manifest.get("lanes")
     profile = gate5_inventory_profile(rows, label="covered manifest")
+    validate_rr_runtime_project_continuity(
+        profile["target_runtime_terminal_artifact"],
+        project_root=project,
+        label="covered manifest",
+    )
     by_lane = {str(row.get("lane_id")): row for row in rows}
     expected_inventory_counts = profile["inventory_counts"]
     if runnote_payload is None:
