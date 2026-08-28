@@ -120,7 +120,7 @@ validate_payload() {
       fail "controller SHA-256 differs: $path"
     count=$((count + 1))
   done < "$inventory"
-  [[ "$count" == '30' ]] || fail 'controller inventory count differs'
+  [[ "$count" == '31' ]] || fail 'controller inventory count differs'
   [[ -z "$(find -P "$directory" -mindepth 1 -maxdepth 1 ! -type f -print -quit)" ]] || \
     fail "controller generation contains a non-regular entry: $directory"
   [[ "$(find -P "$directory" -mindepth 1 -maxdepth 1 -type f -printf . | wc -c)" == "$expected_file_count" ]] || \
@@ -224,4 +224,4 @@ validate_generation "$GENERATION"
 
 printf 'CONTROLLER_GENERATION_INSTALLED=%s\n' "$GENERATION_NAME"
 printf 'CONTROLLER_ACTIVE=%s\n' "$ACTIVE"
-printf 'CONTROLLER_COUNT=30\n'
+printf 'CONTROLLER_COUNT=31\n'

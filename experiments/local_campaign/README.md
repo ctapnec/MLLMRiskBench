@@ -375,6 +375,20 @@ metric inputs only for
 independently validated successful Runner roots and partitions those inputs by
 project revision. Zero successful follow-on lanes is an explicit limitation,
 not a controller failure.
+The generated `followon_prepared_controller.py` is the tracked operator path
+between those two validators. It accepts only canonical prepared NanoGCG,
+IDEATOR v2 and T3MP3ST artifacts plus the retained parent Gate 5 RUNNOTE and
+promotion. It performs each no-call projection and diagnostic canary, derives
+the exact measured-purpose attestation, plan and zero-download receipt, removes
+only the single plan-only request envelope so the authorized Runner root is
+still absent, and creates the formal Gate 5 amendment before any measured
+call. It then attempts the three exact authorized argv arrays independently,
+records their external Jobs terminals, and invokes the formal Phase 6 outcome
+validator. Run this generated controller in its own tmux session; its
+`--control-root` must be one absent direct child of
+`$URA_WORK/runs/engineering`, and its short `--attempt-tag` is also the durable
+job identity. This controller is local campaign orchestration, not a
+URA-Bench product phase.
 The exact NanoGCG plan/acquire/capture/replay and IDEATOR v2 prepare/Build
 procedures are the named subsections of `experiments/RUN_AND_RETURN.md`;
 this controller README does not redefine them.

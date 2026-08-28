@@ -119,10 +119,10 @@ while IFS=$'\t' read -r name bytes sha256 self_test; do
     fail "controller SHA-256 differs: $path"
   controller_hash_count=$((controller_hash_count + 1))
 done < "$INVENTORY"
-[[ "$controller_hash_count" == '30' ]] || fail 'controller inventory count differs'
+[[ "$controller_hash_count" == '31' ]] || fail 'controller inventory count differs'
 [[ -z "$(find -P "$CONTROLLER_ROOT" -mindepth 1 -maxdepth 1 ! -type f -print -quit)" ]] || \
   fail 'active controller generation contains a non-regular entry'
-[[ "$(find -P "$CONTROLLER_ROOT" -mindepth 1 -maxdepth 1 -type f -printf . | wc -c)" == '33' ]] || \
+[[ "$(find -P "$CONTROLLER_ROOT" -mindepth 1 -maxdepth 1 -type f -printf . | wc -c)" == '34' ]] || \
   fail 'active controller generation file count differs'
 
 [[ -d "$PROJECT" && ! -L "$PROJECT" ]] || \
@@ -216,6 +216,7 @@ expected = (
     ("phase6_core_measured.sh", "none"),
     ("phase6_extended_measured.sh", "none"),
     ("phase6_followon_prepared.sh", "none"),
+    ("followon_prepared_controller.py", "followon-contract"),
     ("phase6_native_diagnostics.sh", "none"),
     ("phase6_sequence.sh", "none"),
     ("launch_phase6_sequence.sh", "none"),
@@ -318,7 +319,7 @@ PY
   controller_count=$((controller_count + 1))
 done < "$INVENTORY"
 
-[[ "$controller_count" == '30' ]] || fail 'verified controller count differs'
+[[ "$controller_count" == '31' ]] || fail 'verified controller count differs'
 
 self_test_count=0
 cd "$PROJECT"
@@ -346,6 +347,9 @@ while IFS=$'\t' read -r name bytes sha256 self_test; do
     recovery-sequence)
       bash "$path" --contract-self-test >/dev/null
       ;;
+    followon-contract)
+      "$PROJECT_PY" "$path" --contract-self-test >/dev/null
+      ;;
     *)
       fail "unexpected controller self-test assignment: $name: $self_test"
       ;;
@@ -354,7 +358,7 @@ while IFS=$'\t' read -r name bytes sha256 self_test; do
   printf 'CONTROLLER_SELF_TEST_PASSED=%s\n' "$name"
 done < "$INVENTORY"
 
-[[ "$self_test_count" == '6' ]] || fail 'executed controller self-test count differs'
+[[ "$self_test_count" == '7' ]] || fail 'executed controller self-test count differs'
 [[ -L "$ACTIVE_ROOT" && "$(readlink -- "$ACTIVE_ROOT")" == "$ACTIVE_TARGET" ]] || \
   fail 'active controller generation changed during verification'
 printf 'CONTROLLER_SET_VERIFIED=%s\n' "$EXPECTED_COMMIT"

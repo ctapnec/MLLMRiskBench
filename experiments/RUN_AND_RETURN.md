@@ -3241,17 +3241,31 @@ acquisition and its consumer; `rig_check` adds its wrapper-owned
 for the limit-50 measured request.
 
 The same purpose separation applies to NanoGCG and IDEATOR. After each live
-canary, run `experiments.lane_canary` with the canary result root and that
-canary's own eligibility artifact. Before measured execution, write one
-create-only cohort-local RUNNOTE and content-bound operator authorization that
-bind the three preparations, measured projections, canary summaries, exact
-measured vectors and approved target/local-Guard/model-judge/HTTP, wall-time,
-storage and no-hosted-call limits. Do not append to or rewrite the sealed core
-cohort's `runs/thesis/RUNNOTE.md`. Use the follow-on authorization digest as the
-generic `admission_sha256` association when publishing the existing
-`ura-external-measured-job/2` start/terminal records for each exact measured
-Runner child. This makes the jobs and their artifacts visible in Jobs/Stats but
-does not give the operational registration scientific authority.
+canary, retain `experiments.lane_canary` output with that canary's own
+eligibility artifact. Run the generated `followon_prepared_controller.py` in
+its own tmux session after all four prepared configs and their matching capture
+or manifest artifacts exist. Supply an absent direct child of
+`$URA_WORK/runs/engineering` as `--control-root`, a short unique
+`--attempt-tag`, the retained Qwen lane spec, the NanoGCG config/capture, the
+IDEATOR config/manifest/media root, both T3MP3ST config/bundle pairs, and the
+sealed parent Gate 5 RUNNOTE/promotion. The controller performs the three
+purpose-specific projections and canaries, derives fresh measured-purpose
+attestations and zero-download acquisition receipts, and writes
+`ura-followon-gate5-inputs/1`. The formal
+`phase5_followon_prepared.sh` validator creates the content-bound Gate 5
+amendment before the controller makes any measured call. Do not append to or
+rewrite the sealed core cohort's `runs/thesis/RUNNOTE.md`.
+
+Each exact measured Runner child is then registered as an existing
+`ura-external-measured-job/2` Job with the formal amendment digest as its
+`admission_sha256`. The controller attempts all three authorized argv arrays
+independently and gives the resulting `ura-followon-phase6-outcomes/2` to
+`phase6_followon_prepared.sh`. Its final `ura-followon-phase6-completion/2` is
+the Phase 7 input; the operational Jobs registration does not replace that
+scientific validation. The measured plan-only pass creates one deterministic
+request envelope under the future output root. The controller verifies that it
+is the only entry, deletes that file and empty root, and therefore presents an
+absent create-only result root to Gate 5 and the later measured child.
 Legacy single-response artifacts and bundles without `capture_runtime` remain
 readable for compatibility, but Runner rejects them as measured evidence.
 

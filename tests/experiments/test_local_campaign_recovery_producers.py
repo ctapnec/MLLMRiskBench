@@ -1160,7 +1160,7 @@ def _assert_phase7_recovery_amendment_contract(source: str) -> None:
 
 def test_recovery_producers_are_allowlisted_and_templates_compile() -> None:
     specs = {spec.output: spec for spec in CONTROLLERS}
-    assert len(CONTROLLERS) == 30
+    assert len(CONTROLLERS) == 31
     assert specs["phase6_core_length_recovery.py"].self_test == "none"
     assert specs["phase6_seven_output_policy.py"].self_test == "none"
     assert specs["launch_phase6_recovery_and_seven.sh"].self_test == "recovery-sequence"

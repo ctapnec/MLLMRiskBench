@@ -1,0 +1,1367 @@
+from __future__ import annotations
+
+import argparse
+from datetime import datetime, timezone
+import hashlib
+import importlib.util
+import json
+import os
+from pathlib import Path
+import re
+import signal
+import subprocess
+import sys
+import traceback
+from typing import Any, Mapping, Sequence
+
+
+PROJECT = Path("@@PROJECT_ROOT@@")
+PYTHON = PROJECT / ".venv" / "bin" / "python"
+EXPECTED_COMMIT = "@@EXPECTED_COMMIT@@"
+EXPECTED_LOCK = "@@FRAMEWORK_LOCK_SHA256@@"
+
+# These paths are configured from the explicit command line before any
+# campaign action.  Keeping the prepared inputs external preserves the
+# create-only capture records while making the controller reusable.
+WORK: Path
+CONTROL: Path
+ATTEMPT_TAG: str
+SOCKET_NAME: str
+PAYLOAD_PATH: Path
+QWEN_SPEC_SOURCE: Path
+IDEATOR_CONFIG: Path
+IDEATOR_MANIFEST: Path
+IDEATOR_MEDIA_ROOT: Path
+NANO_CONFIG: Path
+NANO_CAPTURE: Path
+T3_ONE_CONFIG: Path
+T3_ONE_BUNDLE: Path
+T3_FIFTY_CONFIG: Path
+T3_FIFTY_BUNDLE: Path
+PARENT_GATE5_RUNNOTE: Path
+PARENT_GATE5_PROMOTION: Path
+PHASE5_CONTROLLER: Path
+PHASE6_CONTROLLER: Path
+EXTENDED_CONTROLLER: Path
+GATE5_INPUTS: Path
+GATE5_AMENDMENT: Path
+PHASE6_OUTCOMES: Path
+PHASE6_COMPLETION: Path
+LANE_ORDER = (
+    "followon-nanogcg-qwen3-vl",
+    "followon-ideator-v2-qwen3-vl",
+    "followon-t3mp3st-qwen3-vl",
+)
+GROUP = (
+    "model,source,risk,effective_modality,expected_behavior,attacker,"
+    "source_policy_id,source_policy_version"
+)
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def canonical(value: object) -> bytes:
+    return (
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+        + "\n"
+    ).encode("utf-8")
+
+
+def sha256_bytes(value: bytes) -> str:
+    return hashlib.sha256(value).hexdigest()
+
+
+def sha256_file(path: Path) -> str:
+    return sha256_bytes(path.read_bytes())
+
+
+def descriptor(path: Path) -> dict[str, object]:
+    resolved = path.resolve(strict=True)
+    if path.is_symlink() or not resolved.is_file():
+        raise ValueError(f"unsafe descriptor path: {path}")
+    payload = resolved.read_bytes()
+    return {
+        "path": str(resolved),
+        "sha256": sha256_bytes(payload),
+        "bytes": len(payload),
+    }
+
+
+def strict_object(path: Path) -> dict[str, Any]:
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise TypeError(f"expected one JSON object: {path}")
+    return value
+
+
+def write_new(path: Path, payload: bytes, mode: int = 0o600) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    descriptor_fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+    with os.fdopen(descriptor_fd, "wb") as handle:
+        handle.write(payload)
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def register_console_start() -> None:
+    subprocess.run(
+        [
+            str(PYTHON),
+            "-m",
+            "experiments.local_campaign.console_events",
+            "child-start",
+            "--work-root",
+            str(WORK),
+            "--control-root",
+            str(CONTROL),
+            "--campaign-id",
+            CONTROL.name,
+            "--release-commit",
+            EXPECTED_COMMIT,
+            "--evidence-class",
+            "followon_prepared_local_cohort",
+            "--hard-stop-hours",
+            "72",
+            "--tmux-socket",
+            SOCKET_NAME,
+            "--tmux-session",
+            SOCKET_NAME,
+        ],
+        cwd=PROJECT,
+        check=True,
+    )
+    write_new(CONTROL / ".console-registered", b"1\n")
+
+
+def register_console_finish(exit_code: int) -> None:
+    if not (CONTROL / ".console-registered").is_file():
+        return
+    subprocess.run(
+        [
+            str(PYTHON),
+            "-m",
+            "experiments.local_campaign.console_events",
+            "child-finish",
+            "--work-root",
+            str(WORK),
+            "--control-root",
+            str(CONTROL),
+            "--exit-code",
+            str(exit_code),
+        ],
+        cwd=PROJECT,
+        check=False,
+        timeout=30,
+    )
+
+
+def option(argv: Sequence[str], name: str) -> str:
+    positions = [index for index, token in enumerate(argv) if token == name]
+    if len(positions) != 1 or positions[0] + 1 >= len(argv):
+        raise ValueError(f"expected one complete {name} option")
+    value = argv[positions[0] + 1]
+    if not value:
+        raise ValueError(f"expected a nonempty {name} value")
+    return value
+
+
+def replace_option(argv: Sequence[str], name: str, value: str) -> list[str]:
+    result = list(argv)
+    positions = [index for index, token in enumerate(result) if token == name]
+    if len(positions) != 1 or positions[0] + 1 >= len(result):
+        raise ValueError(f"expected one complete {name} option")
+    result[positions[0] + 1] = value
+    return result
+
+
+def load_payload() -> Any:
+    controller_text = EXTENDED_CONTROLLER.read_text(encoding="utf-8")
+    opening = "<<'PHASE6_PAYLOAD'\n"
+    closing = "\nPHASE6_PAYLOAD\n"
+    if controller_text.count(opening) != 1 or controller_text.count(closing) != 1:
+        raise ValueError("rendered Phase 6 extended payload boundary changed")
+    payload = controller_text.split(opening, 1)[1].split(closing, 1)[0]
+    write_new(PAYLOAD_PATH, (payload + "\n").encode("utf-8"), 0o700)
+    spec = importlib.util.spec_from_file_location("ura_followon_payload", PAYLOAD_PATH)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("cannot load retained measured-controller payload")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    if (
+        module.EXPECTED_COMMIT != EXPECTED_COMMIT
+        or module.EXPECTED_LOCK != EXPECTED_LOCK
+    ):
+        raise ValueError("rendered extended controller identity changed")
+    module.LANE_ORDER[:] = list(LANE_ORDER)
+    module.TERMINALS.clear()
+
+    original_validate = module.validate_attestation_identity
+
+    def validate_attestation_identity(
+        lane_spec: Mapping[str, Any], path: Path | str, expected_sha256: str
+    ) -> dict[str, Any]:
+        if lane_spec["modality"] == "text":
+            return original_validate(lane_spec, path, expected_sha256)
+        receipt, _ = module.load_live_attestation_file(path, expected_sha256)
+        records = receipt.get("records")
+        expected_target = (
+            f"{lane_spec['target']['spec']}@{lane_spec['target']['revision']}"
+        )
+        if (
+            not isinstance(records, list)
+            or len(records) != 1
+            or records[0].get("requested_target_spec")
+            != lane_spec["target"]["spec"]
+            or records[0].get("execution_scope_id")
+            != os.environ["URA_EXECUTION_SCOPE_ID"]
+            or records[0].get("exact_input_modalities") != ["text", "image"]
+            or records[0].get("route_kind") != "local_runtime"
+            or records[0].get("resolved_target") != expected_target
+            or records[0].get("realized_target_identity")
+            != {
+                "target": expected_target,
+                "resolved_model": lane_spec["target"]["repo_id"],
+                "model_revision": lane_spec["target"]["revision"],
+            }
+        ):
+            raise ValueError(
+                f"{lane_spec['lane_id']}: image live-attestation identity changed"
+            )
+        return receipt
+
+    module.validate_attestation_identity = validate_attestation_identity
+    module.derive_attestation = lambda ctl, lane_spec, lane_control: (
+        derive_attestation(module, ctl, lane_spec, lane_control)
+    )
+    return module
+
+
+def assert_inputs() -> None:
+    if CONTROL.exists() or CONTROL.is_symlink():
+        raise FileExistsError(f"follow-on control root already exists: {CONTROL}")
+    if os.environ.get("REF_URA") != EXPECTED_COMMIT:
+        raise ValueError("campaign environment is not bound to the rendered revision")
+    if os.environ.get("URA_FRAMEWORK_LOCK_ID") != EXPECTED_LOCK:
+        raise ValueError("campaign environment framework lock changed")
+    if (
+        subprocess.run(
+            ["git", "-C", str(PROJECT), "rev-parse", "HEAD"],
+            check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        != EXPECTED_COMMIT
+    ):
+        raise ValueError("project checkout differs from the rendered revision")
+    if subprocess.run(
+        ["git", "-C", str(PROJECT), "status", "--porcelain"],
+        check=True, capture_output=True, text=True,
+    ).stdout:
+        raise ValueError("project checkout is not clean")
+    if (
+        IDEATOR_MEDIA_ROOT.is_symlink()
+        or not IDEATOR_MEDIA_ROOT.is_dir()
+        or IDEATOR_MEDIA_ROOT.resolve(strict=True) != IDEATOR_MEDIA_ROOT
+    ):
+        raise ValueError("IDEATOR media root is not canonical")
+    for path in (
+        EXTENDED_CONTROLLER,
+        PHASE5_CONTROLLER,
+        PHASE6_CONTROLLER,
+        QWEN_SPEC_SOURCE,
+        NANO_CAPTURE,
+        NANO_CONFIG,
+        IDEATOR_CONFIG,
+        IDEATOR_MANIFEST,
+        T3_ONE_CONFIG,
+        T3_ONE_BUNDLE,
+        T3_FIFTY_CONFIG,
+        T3_FIFTY_BUNDLE,
+        PARENT_GATE5_RUNNOTE,
+        PARENT_GATE5_PROMOTION,
+        Path(os.environ["URA_PROJECT_REVISION_MANIFEST"]),
+        Path(os.environ["URA_SOURCE_CONFORMANCE_MANIFEST"]),
+    ):
+        descriptor(path)
+    if (
+        sha256_file(Path(os.environ["URA_PROJECT_REVISION_MANIFEST"]))
+        != os.environ["URA_PROJECT_REVISION_SHA256"]
+        or sha256_file(Path(os.environ["URA_SOURCE_CONFORMANCE_MANIFEST"]))
+        != os.environ["URA_SOURCE_CONFORMANCE_SHA256"]
+    ):
+        raise ValueError("campaign receipt locator/digest binding changed")
+
+
+def attacker_config_sha(path: Path) -> str:
+    value = strict_object(path)
+    if len(value) != 1:
+        raise ValueError(f"attacker config is not one-attacker: {path}")
+    return sha256_file(path)
+
+
+def build_specs() -> list[dict[str, Any]]:
+    source = strict_object(QWEN_SPEC_SOURCE)
+    base = source.get("base_argv")
+    if not isinstance(base, list) or any(not isinstance(item, str) for item in base):
+        raise TypeError("Qwen source lane has invalid base argv")
+    base = replace_option(
+        base, "--project-revision", os.environ["URA_PROJECT_REVISION_MANIFEST"]
+    )
+    base = replace_option(
+        base,
+        "--project-revision-sha256",
+        os.environ["URA_PROJECT_REVISION_SHA256"],
+    )
+
+    definitions = (
+        (
+            LANE_ORDER[0],
+            "nanogcg",
+            NANO_CONFIG,
+            "advbench_harmful",
+            1,
+            105,
+            1,
+            1,
+            "text",
+        ),
+        (
+            LANE_ORDER[1],
+            "ideator",
+            IDEATOR_CONFIG,
+            "advbench_harmful",
+            1,
+            105,
+            8,
+            8,
+            "image",
+        ),
+        (
+            LANE_ORDER[2],
+            "t3mp3st",
+            T3_FIFTY_CONFIG,
+            "strongreject_official",
+            50,
+            0,
+            1,
+            1,
+            "text",
+        ),
+    )
+    specs: list[dict[str, Any]] = []
+    for index, (
+        lane,
+        attacker,
+        config,
+        corpus,
+        limit,
+        sample_seed,
+        max_queries,
+        max_turns,
+        modality,
+    ) in enumerate(definitions, 1):
+        argv = replace_option(base, "--attackers", attacker)
+        argv = replace_option(argv, "--corpora", corpus)
+        argv = replace_option(argv, "--limit", str(limit))
+        argv = replace_option(argv, "--sample-seed", str(sample_seed))
+        argv = replace_option(argv, "--max-queries", str(max_queries))
+        argv = replace_option(argv, "--max-turns", str(max_turns))
+        argv.extend(
+            [
+                "--attacker-config",
+                str(config),
+                "--attacker-config-sha256",
+                attacker_config_sha(config),
+            ]
+        )
+        cap = 8 if attacker == "ideator" else limit
+        spec = json.loads(json.dumps(source))
+        spec.update(
+            {
+                "schema": "ura-followon-prepared-lane-spec/1",
+                "lane_id": lane,
+                "order": index,
+                "family": "bridge",
+                "base_argv": argv,
+                "expected_attacker": attacker,
+                "expected_corpora": [corpus],
+                "expected_judges": ["rules", "guardrail"],
+                "approximate_common_metrics": True,
+                "classification": False,
+                "modality": modality,
+                "runtime_engine": None,
+                "cuda_visible_devices": "0,1",
+                "acquisition_mode": "required_zero_download",
+                "approved_caps": {
+                    "target_calls": cap,
+                    "model_judge_calls": 0,
+                    "http_attempts": 0,
+                    "deadline_seconds": 86400,
+                    "wall_time_seconds": 86400,
+                },
+                "preparation": descriptor(config),
+            }
+        )
+        spec.pop("gate5", None)
+        specs.append(spec)
+    return specs
+
+
+def t3_canary_base(spec: Mapping[str, Any]) -> list[str]:
+    argv = replace_option(spec["base_argv"], "--limit", "1")
+    argv = replace_option(argv, "--attacker-config", str(T3_ONE_CONFIG))
+    return replace_option(
+        argv, "--attacker-config-sha256", attacker_config_sha(T3_ONE_CONFIG)
+    )
+
+
+def with_caps_and_out(
+    base: Sequence[str], caps: Mapping[str, Any], out: Path
+) -> list[str]:
+    return [
+        *base,
+        "--max-total-target-calls",
+        str(caps["target_calls"]),
+        "--max-total-judge-calls",
+        str(caps["model_judge_calls"]),
+        "--max-total-http-attempts",
+        str(caps["http_attempts"]),
+        "--deadline-seconds",
+        str(caps["deadline_seconds"]),
+        "--out",
+        str(out),
+    ]
+
+
+def one_file(root: Path, pattern: str) -> Path:
+    matches = sorted(root.glob(pattern))
+    if len(matches) != 1 or matches[0].is_symlink() or not matches[0].is_file():
+        raise ValueError(f"expected one safe {pattern} under {root}")
+    return matches[0]
+
+
+def projection_descriptor(
+    root: Path, expected_target_calls: int, expected_trajectories: int
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    projection_path = one_file(root, "lane-projection-*.lane-projection.json")
+    projection = strict_object(projection_path)
+    calls = projection.get("call_projection")
+    if (
+        projection.get("schema") != "ura-lane-projection/1"
+        or projection.get("status") != "complete"
+        or projection.get("purpose")
+        != "prospective_no_call_exposure_projection"
+        or not isinstance(calls, dict)
+        or calls.get("target_calls") != expected_target_calls
+        or calls.get("local_guardrail_evaluations") != expected_target_calls
+        or calls.get("trajectories") != expected_trajectories
+        or calls.get("judge_calls") != 0
+        or calls.get("http_attempts") != 0
+    ):
+        raise ValueError(f"projection accounting changed under {root}: {calls!r}")
+    projection_desc = descriptor(projection_path)
+    projection_desc["file"] = projection_path.name
+    eligibility_path = one_file(root, "eligibility-*.eligibility.json")
+    envelope_path = one_file(root, "request-envelope-*.request-envelope.json")
+    eligibility = descriptor(eligibility_path)
+    envelope = descriptor(envelope_path)
+    envelope["file"] = envelope_path.name
+    envelope["envelope_id"] = strict_object(envelope_path)["envelope_id"]
+    return projection_desc, eligibility, envelope
+
+
+def rig_check_projection(
+    module: Any,
+    ctl: Any,
+    spec: Mapping[str, Any],
+    label: str,
+    base: Sequence[str],
+    caps: Mapping[str, Any],
+    out: Path,
+    expected_target_calls: int,
+    expected_trajectories: int,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    forwarded = with_caps_and_out(base, caps, out)
+    plan_args = [*forwarded, "--preflight-only"]
+    acquisition = module.plan_acquire(
+        ctl,
+        spec,
+        label,
+        plan_args,
+        CONTROL / "gate5" / spec["lane_id"] / f"{label}-plan",
+        CONTROL / "gate5" / spec["lane_id"] / f"{label}-receipts",
+        "target_and_guard",
+    )
+    ctl.run(
+        spec["lane_id"],
+        f"{label}-rig-check",
+        [
+            str(PYTHON),
+            "-m",
+            "experiments.rig_check",
+            *forwarded,
+            *module.acquisition_args(acquisition),
+        ],
+        f"{spec['lane_id']}.{label}.rig-check.log",
+    )
+    return projection_descriptor(
+        out, expected_target_calls, expected_trajectories
+    )
+
+
+def derive_attestation(
+    module: Any, ctl: Any, spec: Mapping[str, Any], lane_control: Path
+) -> dict[str, Any]:
+    lane = spec["lane_id"]
+    image = spec["modality"] == "image"
+    corpus = "figstep" if image else "synth"
+    probe_parent = (
+        WORK
+        / "runs/thesis/attestation"
+        / f"followon-prepared-{ATTEMPT_TAG}"
+        / lane
+        / lane_control.name
+    )
+    if probe_parent.exists() or probe_parent.is_symlink():
+        raise ValueError(f"fresh attestation root already exists: {probe_parent}")
+    probe_parent.mkdir(parents=True, mode=0o700)
+    probe_root = probe_parent / "probe"
+    receipt_path = probe_parent / f"{lane}.live-attestation.json"
+    base = spec["base_argv"]
+    probe_args = [
+        "--attestation-probe",
+        "--execution-scope-id",
+        os.environ["URA_EXECUTION_SCOPE_ID"],
+        "--project-revision",
+        option(base, "--project-revision"),
+        "--project-revision-sha256",
+        option(base, "--project-revision-sha256"),
+        "--local",
+        option(base, "--local"),
+        "--local-config",
+        option(base, "--local-config"),
+        "--local-config-sha256",
+        option(base, "--local-config-sha256"),
+        "--attackers",
+        "replay",
+        "--judges",
+        "rules",
+        "--corpora",
+        corpus,
+    ]
+    if image:
+        probe_args.extend(
+            [
+                "--source-config",
+                option(base, "--source-config"),
+                "--source-config-sha256",
+                option(base, "--source-config-sha256"),
+                "--source-conformance",
+                option(base, "--source-conformance"),
+                "--source-conformance-sha256",
+                option(base, "--source-conformance-sha256"),
+            ]
+        )
+    probe_args.extend(
+        [
+            "--limit",
+            "1",
+            "--sample-seed",
+            "0",
+            "--seeds",
+            "0",
+            "--max-queries",
+            "1",
+            "--max-turns",
+            "1",
+            "--group",
+            GROUP,
+            "--max-total-target-calls",
+            "1",
+            "--max-total-judge-calls",
+            "0",
+            "--max-total-http-attempts",
+            "0",
+            "--deadline-seconds",
+            "900",
+            "--out",
+            str(probe_root),
+        ]
+    )
+    acquisition = module.plan_acquire(
+        ctl,
+        spec,
+        f"{lane}.{lane_control.name}.probe",
+        probe_args,
+        lane_control / f"probe-plan-{ATTEMPT_TAG}",
+        lane_control / "probe-receipts",
+        "target_only",
+    )
+    ctl.run(
+        lane,
+        "fresh-attestation-probe",
+        [
+            str(PYTHON),
+            "-m",
+            "experiments.run_matrix",
+            *probe_args,
+            *module.acquisition_args(acquisition),
+        ],
+        f"{lane}.{lane_control.name}.probe.run.log",
+    )
+    ctl.run(
+        lane,
+        "fresh-attestation-derive",
+        [
+            str(PYTHON),
+            "-m",
+            "experiments.live_attestation",
+            "--probe-root",
+            str(probe_root),
+            "--execution-scope-id",
+            os.environ["URA_EXECUTION_SCOPE_ID"],
+            "--out",
+            str(receipt_path),
+        ],
+        f"{lane}.{lane_control.name}.probe.derive.log",
+    )
+    receipt_sha = sha256_file(receipt_path)
+    ctl.run(
+        lane,
+        "fresh-attestation-validate",
+        [
+            str(PYTHON),
+            "-m",
+            "experiments.live_attestation",
+            "--validate",
+            str(receipt_path),
+            "--sha256",
+            receipt_sha,
+        ],
+        f"{lane}.{lane_control.name}.probe.validate.log",
+    )
+    module.validate_attestation_identity(spec, receipt_path, receipt_sha)
+    return {
+        "path": str(receipt_path),
+        "sha256": receipt_sha,
+        "probe_root": str(probe_root),
+    }
+
+
+def canary_id(root: Path) -> str:
+    path = one_file(root, "lane-canary-*.lane-canary.json")
+    value = strict_object(path)
+    identity = value.get("canary_id")
+    if not isinstance(identity, str) or not identity.startswith("lane-canary-"):
+        raise ValueError("lane-canary identity changed")
+    return identity
+
+
+def run_canary(
+    module: Any,
+    ctl: Any,
+    spec: Mapping[str, Any],
+    base: Sequence[str],
+    caps: Mapping[str, Any],
+    gate_root: Path,
+) -> dict[str, Any]:
+    attestation = derive_attestation(module, ctl, spec, gate_root / "canary-attestation")
+    out = gate_root / "canary"
+    args = [
+        *base,
+        "--diagnostic-canary",
+        "--execution-scope-id",
+        os.environ["URA_EXECUTION_SCOPE_ID"],
+        "--live-attestation",
+        attestation["path"],
+        "--live-attestation-sha256",
+        attestation["sha256"],
+        "--live-attestation-max-age-hours",
+        "24",
+        "--max-total-target-calls",
+        str(caps["target_calls"]),
+        "--max-total-judge-calls",
+        "0",
+        "--max-total-http-attempts",
+        "0",
+        "--deadline-seconds",
+        "86400",
+        "--out",
+        str(out),
+    ]
+    acquisition = module.plan_acquire(
+        ctl,
+        spec,
+        f"{spec['lane_id']}.canary",
+        args,
+        gate_root / "canary-plan",
+        gate_root / "canary-receipts",
+        "target_and_guard",
+    )
+    ctl.run(
+        spec["lane_id"],
+        "diagnostic-canary",
+        [
+            str(PYTHON),
+            "-m",
+            "experiments.run_matrix",
+            *args,
+            *module.acquisition_args(acquisition),
+        ],
+        f"{spec['lane_id']}.canary.run.log",
+    )
+    eligibility = one_file(out, "eligibility-*.eligibility.json")
+    ctl.run(
+        spec["lane_id"],
+        "lane-canary",
+        [
+            str(PYTHON),
+            "-m",
+            "experiments.lane_canary",
+            "--results",
+            str(out),
+            "--eligibility",
+            str(eligibility),
+            "--out-dir",
+            str(out),
+        ],
+        f"{spec['lane_id']}.lane-canary.log",
+    )
+    return {
+        "canary_id": canary_id(out),
+        "root": str(out),
+        "attestation": attestation,
+        "summary": descriptor(one_file(out, "lane-canary-*.lane-canary.json")),
+    }
+
+
+def gate5_lane(module: Any, ctl: Any, spec: dict[str, Any]) -> dict[str, Any]:
+    lane = spec["lane_id"]
+    gate_root = CONTROL / "gate5" / lane
+    gate_root.mkdir(parents=True, mode=0o700)
+    measured_projection = rig_check_projection(
+        module,
+        ctl,
+        spec,
+        f"{lane}.measured-preflight",
+        spec["base_argv"],
+        spec["approved_caps"],
+        gate_root / "measured-preflight",
+        spec["approved_caps"]["target_calls"],
+        1 if spec["expected_attacker"] == "ideator" else int(
+            option(spec["base_argv"], "--limit")
+        ),
+    )
+    canary_base = (
+        t3_canary_base(spec)
+        if spec["expected_attacker"] == "t3mp3st"
+        else list(spec["base_argv"])
+    )
+    canary_caps = dict(spec["approved_caps"])
+    if spec["expected_attacker"] == "t3mp3st":
+        canary_caps["target_calls"] = 1
+        rig_check_projection(
+            module,
+            ctl,
+            spec,
+            f"{lane}.canary-preflight",
+            canary_base,
+            canary_caps,
+            gate_root / "canary-preflight",
+            1,
+            1,
+        )
+    canary = run_canary(
+        module, ctl, spec, canary_base, canary_caps, gate_root
+    )
+    projection, eligibility, envelope = measured_projection
+    spec["gate5"] = {
+        "manifest_sha256": "0" * 64,
+        "preliminary_projection": projection,
+        "final_projection": dict(projection),
+        "final_eligibility": eligibility,
+        "final_request_envelope": envelope,
+        "canary_id": canary["canary_id"],
+    }
+    return {
+        "lane_id": lane,
+        "projection": projection,
+        "eligibility": eligibility,
+        "request_envelope": envelope,
+        "canary": canary,
+        "preparation": spec["preparation"],
+        "approved_caps": spec["approved_caps"],
+        "measured_args_without_live_attestation_or_acquisition": [
+            *spec["base_argv"],
+            "--max-total-target-calls",
+            str(spec["approved_caps"]["target_calls"]),
+            "--max-total-judge-calls",
+            "0",
+            "--max-total-http-attempts",
+            "0",
+            "--deadline-seconds",
+            "86400",
+        ],
+    }
+
+
+def formal_selection(spec: Mapping[str, Any], *, canary: bool) -> dict[str, Any]:
+    return {
+        "attacker": spec["expected_attacker"],
+        "corpus": spec["expected_corpora"][0],
+        "limit": 1 if canary else int(option(spec["base_argv"], "--limit")),
+        "sample_seed": int(option(spec["base_argv"], "--sample-seed")),
+        "max_queries": int(option(spec["base_argv"], "--max-queries")),
+        "max_turns": int(option(spec["base_argv"], "--max-turns")),
+        "modality": spec["modality"],
+        "judges": ["rules", "guardrail"],
+        "approximate_common_metrics": True,
+    }
+
+
+def preparation_descriptors(lane: str) -> dict[str, dict[str, object]]:
+    if lane == LANE_ORDER[0]:
+        return {
+            "attacker_config": descriptor(NANO_CONFIG),
+            "capture": descriptor(NANO_CAPTURE),
+        }
+    if lane == LANE_ORDER[1]:
+        return {
+            "attacker_config": descriptor(IDEATOR_CONFIG),
+            "seed_pair_manifest": descriptor(IDEATOR_MANIFEST),
+        }
+    if lane == LANE_ORDER[2]:
+        return {
+            "canary_attacker_config": descriptor(T3_ONE_CONFIG),
+            "canary_bundle": descriptor(T3_ONE_BUNDLE),
+            "measured_attacker_config": descriptor(T3_FIFTY_CONFIG),
+            "measured_bundle": descriptor(T3_FIFTY_BUNDLE),
+        }
+    raise ValueError(f"unsupported follow-on lane: {lane}")
+
+
+def formal_caps(spec: Mapping[str, Any]) -> dict[str, int]:
+    caps = spec["approved_caps"]
+    return {
+        "max_total_target_calls": caps["target_calls"],
+        "max_total_model_judge_calls": 0,
+        "max_total_http_attempts": 0,
+        "call_start_deadline_seconds": caps["deadline_seconds"],
+        "wall_time_seconds": caps["wall_time_seconds"],
+        "free_space_floor_bytes": spec["storage"]["free_space_floor_bytes"],
+    }
+
+
+def remove_plan_only_request_root(result_root: Path) -> None:
+    if (
+        result_root.is_symlink()
+        or not result_root.is_dir()
+        or result_root.resolve(strict=True) != result_root
+    ):
+        raise ValueError("measured plan-only request root is unsafe")
+    entries = list(result_root.iterdir())
+    if (
+        len(entries) != 1
+        or entries[0].is_symlink()
+        or not entries[0].is_file()
+        or not entries[0].name.startswith("request-envelope-")
+        or not entries[0].name.endswith(".request-envelope.json")
+    ):
+        raise ValueError("measured plan-only root contains unexpected artifacts")
+    entries[0].unlink()
+    result_root.rmdir()
+
+
+def prepare_measured_argv(
+    module: Any, ctl: Any, spec: Mapping[str, Any]
+) -> list[str]:
+    lane = spec["lane_id"]
+    lane_control = CONTROL / "measured-preparation" / lane
+    lane_control.mkdir(parents=True, mode=0o700)
+    result_root = module.expected_result_root(ctl.work, spec, CONTROL)
+    result_root.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+    if result_root.exists() or result_root.is_symlink():
+        raise ValueError(f"{lane}: measured result root is not fresh")
+    attestation = derive_attestation(
+        module, ctl, spec, lane_control / "measured-attestation"
+    )
+    measured_args = module.expected_measured_args(spec, attestation, result_root)
+    acquisition = module.plan_acquire(
+        ctl,
+        spec,
+        f"{lane}.measured",
+        measured_args,
+        lane_control / "plan",
+        lane_control / "receipts",
+        "target_and_guard",
+    )
+    argv = [*measured_args, *module.acquisition_args(acquisition)]
+    remove_plan_only_request_root(result_root)
+    if result_root.exists() or result_root.is_symlink():
+        raise ValueError(f"{lane}: measured root remains after plan derivation")
+    return argv
+
+
+def run_checked(argv: Sequence[str], log_path: Path) -> None:
+    with log_path.open("xb") as handle:
+        result = subprocess.run(
+            list(argv), cwd=PROJECT, stdout=handle, stderr=subprocess.STDOUT,
+            check=False, timeout=300,
+        )
+        handle.flush()
+        os.fsync(handle.fileno())
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"{Path(argv[0]).name} failed with {result.returncode}: {log_path}"
+        )
+
+
+def write_gate5_inputs(rows: Sequence[Mapping[str, Any]]) -> None:
+    write_new(
+        GATE5_INPUTS,
+        canonical({
+            "schema": "ura-followon-gate5-inputs/1",
+            "expected_commit": EXPECTED_COMMIT,
+            "framework_lock_id": EXPECTED_LOCK,
+            "parent_gate5_promotion": descriptor(PARENT_GATE5_PROMOTION),
+            "lanes": list(rows),
+            "runnote": descriptor(PARENT_GATE5_RUNNOTE),
+        }),
+    )
+
+
+ZERO_ACCOUNTING = {
+    "hosted_target_calls": 0,
+    "hosted_judge_calls": 0,
+    "provider_http_attempts": 0,
+    "paid_provider_calls": 0,
+    "model_downloads": 0,
+}
+CRITICAL_PATTERNS = (
+    "*.grid.json", "*.request-envelope.json", "*.eligibility.json",
+    "*.error.json", "*.complete.json", "*.manifest.json",
+)
+
+
+def external_job_id(ctl: Any, lane: str) -> str:
+    log = ctl.attempt / f"{lane}.external-measured-start.log"
+    lines = [line.strip() for line in log.read_text(encoding="utf-8").splitlines() if line.strip()]
+    if not lines:
+        raise ValueError(f"{lane}: external measured registration log is empty")
+    registration = Path(lines[-1]).resolve(strict=True)
+    if registration.name != "registration.json":
+        raise ValueError(f"{lane}: external measured registration path changed")
+    return registration.parent.name
+
+
+def critical_inventory(root: Path) -> list[dict[str, object]]:
+    paths = sorted({path for pattern in CRITICAL_PATTERNS for path in root.rglob(pattern)})
+    if any(path.is_symlink() or not path.is_file() for path in paths):
+        raise ValueError("follow-on lifecycle contains an unsafe critical artifact")
+    return [descriptor(path) for path in paths]
+
+
+def build_outcome(
+    module: Any,
+    ctl: Any,
+    spec: Mapping[str, Any],
+    measured_argv: Sequence[str],
+    error: BaseException | None,
+) -> dict[str, Any]:
+    from experiments.rig_web_app.external_measured import load_external_measured_job
+
+    lane = spec["lane_id"]
+    result_root = module.expected_result_root(ctl.work, spec, CONTROL)
+    job_id = external_job_id(ctl, lane)
+    job = load_external_measured_job(WORK / "runs", job_id, probe_session=False)
+    if job is None or job.exit_code is None or job.state not in {"complete", "failed"}:
+        raise ValueError(f"{lane}: external measured terminal is unavailable")
+    if job.exit_code == 0:
+        state = "measured_complete"
+        reason = None
+    else:
+        state = "partial" if list(result_root.rglob("*.grid.json")) else "failed"
+        reason = (
+            f"{type(error).__name__}: {error}" if error is not None
+            else f"Runner exited {job.exit_code}"
+        ).strip()[:4000]
+    return {
+        "lane_id": lane,
+        "state": state,
+        "result_root": str(result_root),
+        "measured_argv": list(measured_argv),
+        "controller_exit_code": job.exit_code,
+        "terminal_reason": reason,
+        "lifecycle_artifacts": critical_inventory(result_root),
+        "external_job_id": job_id,
+        "accounting": dict(ZERO_ACCOUNTING),
+    }
+
+
+def write_phase6_outcomes(rows: Mapping[str, Mapping[str, Any]]) -> None:
+    write_new(
+        PHASE6_OUTCOMES,
+        canonical({
+            "schema": "ura-followon-phase6-outcomes/2",
+            "expected_commit": EXPECTED_COMMIT,
+            "framework_lock_id": EXPECTED_LOCK,
+            "gate5_amendment": descriptor(GATE5_AMENDMENT),
+            "lane_order": list(LANE_ORDER),
+            "lanes": dict(rows),
+            "accounting": dict(ZERO_ACCOUNTING),
+        }),
+    )
+
+
+def contract_self_test() -> int:
+    sample = ["--attackers", "replay", "--limit", "100"]
+    if replace_option(sample, "--attackers", "ideator") != [
+        "--attackers",
+        "ideator",
+        "--limit",
+        "100",
+    ]:
+        raise ValueError("option replacement contract changed")
+    if tuple(LANE_ORDER) != (
+        "followon-nanogcg-qwen3-vl",
+        "followon-ideator-v2-qwen3-vl",
+        "followon-t3mp3st-qwen3-vl",
+    ):
+        raise ValueError("follow-on lane order changed")
+    if set(ZERO_ACCOUNTING) != {
+        "hosted_target_calls", "hosted_judge_calls",
+        "provider_http_attempts", "paid_provider_calls", "model_downloads",
+    } or any(ZERO_ACCOUNTING.values()):
+        raise ValueError("follow-on zero-accounting contract changed")
+    if not re.fullmatch(r"[0-9a-f]{40}", EXPECTED_COMMIT):
+        raise ValueError("rendered follow-on commit identity changed")
+    if not re.fullmatch(r"[0-9a-f]{64}", EXPECTED_LOCK):
+        raise ValueError("rendered follow-on framework lock identity changed")
+    print("follow-on prepared controller contract passed")
+    return 0
+
+
+def parser() -> argparse.ArgumentParser:
+    result = argparse.ArgumentParser()
+    result.add_argument("--contract-self-test", action="store_true")
+    result.add_argument("--control-root", type=Path)
+    result.add_argument("--attempt-tag")
+    result.add_argument("--qwen-lane-spec", type=Path)
+    result.add_argument("--nanogcg-config", type=Path)
+    result.add_argument("--nanogcg-capture", type=Path)
+    result.add_argument("--ideator-config", type=Path)
+    result.add_argument("--ideator-manifest", type=Path)
+    result.add_argument("--ideator-media-root", type=Path)
+    result.add_argument("--t3-canary-config", type=Path)
+    result.add_argument("--t3-canary-bundle", type=Path)
+    result.add_argument("--t3-measured-config", type=Path)
+    result.add_argument("--t3-measured-bundle", type=Path)
+    result.add_argument("--parent-gate5-runnote", type=Path)
+    result.add_argument("--parent-gate5-promotion", type=Path)
+    result.add_argument("--phase5-controller", type=Path)
+    result.add_argument("--phase6-controller", type=Path)
+    result.add_argument("--extended-controller", type=Path)
+    return result
+
+
+def canonical_file(path: Path | None, label: str) -> Path:
+    if path is None or not path.is_absolute() or path.is_symlink() or not path.is_file():
+        raise ValueError(f"{label} must be one absolute regular file")
+    resolved = path.resolve(strict=True)
+    if resolved != path:
+        raise ValueError(f"{label} must already be canonical")
+    return resolved
+
+
+def configure(args: argparse.Namespace) -> None:
+    global WORK, CONTROL, ATTEMPT_TAG, SOCKET_NAME, PAYLOAD_PATH
+    global QWEN_SPEC_SOURCE, NANO_CONFIG, NANO_CAPTURE
+    global IDEATOR_CONFIG, IDEATOR_MANIFEST, IDEATOR_MEDIA_ROOT
+    global T3_ONE_CONFIG, T3_ONE_BUNDLE, T3_FIFTY_CONFIG, T3_FIFTY_BUNDLE
+    global PARENT_GATE5_RUNNOTE, PARENT_GATE5_PROMOTION
+    global PHASE5_CONTROLLER, PHASE6_CONTROLLER, EXTENDED_CONTROLLER
+    global GATE5_INPUTS, GATE5_AMENDMENT, PHASE6_OUTCOMES, PHASE6_COMPLETION
+
+    WORK = Path(os.environ["URA_WORK"]).resolve(strict=True)
+    engineering = WORK / "runs" / "engineering"
+    if engineering.is_symlink() or not engineering.is_dir() or engineering.resolve(strict=True) != engineering:
+        raise ValueError("resolved engineering root is unavailable")
+    if (
+        args.control_root is None
+        or not args.control_root.is_absolute()
+        or args.control_root.exists()
+        or args.control_root.is_symlink()
+        or args.control_root.parent != engineering
+    ):
+        raise ValueError("control root must be one absent child of the engineering root")
+    CONTROL = args.control_root
+    if not isinstance(args.attempt_tag, str) or re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9._-]{0,29}", args.attempt_tag
+    ) is None:
+        raise ValueError("attempt tag is unsafe")
+    ATTEMPT_TAG = args.attempt_tag
+    SOCKET_NAME = f"ura-followon-{ATTEMPT_TAG}"
+    if len(SOCKET_NAME) > 80:
+        raise ValueError("follow-on tmux identity is too long")
+
+    QWEN_SPEC_SOURCE = canonical_file(args.qwen_lane_spec, "Qwen lane spec")
+    NANO_CONFIG = canonical_file(args.nanogcg_config, "NanoGCG config")
+    NANO_CAPTURE = canonical_file(args.nanogcg_capture, "NanoGCG capture")
+    IDEATOR_CONFIG = canonical_file(args.ideator_config, "IDEATOR config")
+    IDEATOR_MANIFEST = canonical_file(args.ideator_manifest, "IDEATOR manifest")
+    if args.ideator_media_root is None or args.ideator_media_root.is_symlink():
+        raise ValueError("IDEATOR media root is unsafe")
+    IDEATOR_MEDIA_ROOT = args.ideator_media_root.resolve(strict=True)
+    if IDEATOR_MEDIA_ROOT != args.ideator_media_root:
+        raise ValueError("IDEATOR media root must already be canonical")
+    T3_ONE_CONFIG = canonical_file(args.t3_canary_config, "T3 canary config")
+    T3_ONE_BUNDLE = canonical_file(args.t3_canary_bundle, "T3 canary bundle")
+    T3_FIFTY_CONFIG = canonical_file(args.t3_measured_config, "T3 measured config")
+    T3_FIFTY_BUNDLE = canonical_file(args.t3_measured_bundle, "T3 measured bundle")
+    PARENT_GATE5_RUNNOTE = canonical_file(args.parent_gate5_runnote, "parent Gate 5 RUNNOTE")
+    PARENT_GATE5_PROMOTION = canonical_file(
+        args.parent_gate5_promotion, "parent Gate 5 promotion"
+    )
+    controller_dir = Path(__file__).resolve(strict=True).parent
+    PHASE5_CONTROLLER = canonical_file(
+        args.phase5_controller or controller_dir / "phase5_followon_prepared.sh",
+        "Phase 5 follow-on controller",
+    )
+    PHASE6_CONTROLLER = canonical_file(
+        args.phase6_controller or controller_dir / "phase6_followon_prepared.sh",
+        "Phase 6 follow-on controller",
+    )
+    EXTENDED_CONTROLLER = canonical_file(
+        args.extended_controller or controller_dir / "phase6_extended_measured.sh",
+        "Phase 6 extended controller",
+    )
+    PAYLOAD_PATH = CONTROL / "payload.py"
+    GATE5_INPUTS = CONTROL / "followon-gate5-inputs.json"
+    GATE5_AMENDMENT = CONTROL / "followon-gate5-amendment.json"
+    PHASE6_OUTCOMES = CONTROL / "followon-phase6-outcomes.json"
+    PHASE6_COMPLETION = CONTROL / "followon-phase6-completion.json"
+
+
+def main() -> int:
+    args = parser().parse_args()
+    if args.contract_self_test:
+        if any(
+            value not in {None, False}
+            for key, value in vars(args).items()
+            if key != "contract_self_test"
+        ):
+            raise ValueError("contract self-test accepts no campaign arguments")
+        return contract_self_test()
+    configure(args)
+    assert_inputs()
+    os.environ["URA_MEDIA_ROOTS"] = (
+        f"{os.environ.get('URA_MEDIA_ROOTS', '')}:" if os.environ.get("URA_MEDIA_ROOTS") else ""
+    ) + str(IDEATOR_MEDIA_ROOT)
+    CONTROL.mkdir(mode=0o700)
+    (CONTROL / "attempts").mkdir(mode=0o700)
+    (CONTROL / "lane-specs").mkdir(mode=0o700)
+    write_new(
+        CONTROL / "ENGINEERING_ONLY.json",
+        canonical(
+            {
+                "schema": "ura-engineering-boundary/1",
+                "evidence_eligible": False,
+                "reason": (
+                    "local follow-on cohort controller; Runner child artifacts "
+                    "carry scientific lifecycle authority"
+                ),
+            }
+        ),
+    )
+    write_new(
+        CONTROL / "launch.json",
+        canonical({
+            "schema": "ura-followon-prepared-launch/1",
+            "expected_commit": EXPECTED_COMMIT,
+            "framework_lock_id": EXPECTED_LOCK,
+            "attempt_tag": ATTEMPT_TAG,
+            "qwen_lane_spec": descriptor(QWEN_SPEC_SOURCE),
+            "prepared_inputs": {
+                lane: preparation_descriptors(lane) for lane in LANE_ORDER
+            },
+            "parent_gate5_runnote": descriptor(PARENT_GATE5_RUNNOTE),
+            "parent_gate5_promotion": descriptor(PARENT_GATE5_PROMOTION),
+        }),
+    )
+    os.environ["CONTROL_ROOT"] = str(CONTROL)
+    os.environ["ATTEMPT_TAG"] = ATTEMPT_TAG
+    module = load_payload()
+    module.assert_environment()
+    register_console_start()
+    ctl = module.Controller()
+    for signum in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
+        signal.signal(signum, module.abort_signal)
+    specs = build_specs()
+    gate_rows: list[dict[str, Any]] = []
+    gate_failures: dict[str, str] = {}
+    for spec in specs:
+        lane = spec["lane_id"]
+        ctl.begin_lane(lane, 86400)
+        try:
+            gate = gate5_lane(module, ctl, spec)
+            measured_argv = prepare_measured_argv(module, ctl, spec)
+            gate_rows.append({
+                "lane_id": lane,
+                "selection": formal_selection(spec, canary=False),
+                "canary_selection": formal_selection(spec, canary=True),
+                "preparations": preparation_descriptors(lane),
+                "projection": gate["projection"],
+                "eligibility": gate["eligibility"],
+                "request_envelope": gate["request_envelope"],
+                "canary_summary": gate["canary"]["summary"],
+                "measured_argv": measured_argv,
+                "caps": formal_caps(spec),
+            })
+        except module.ControllerInterrupted:
+            raise
+        except Exception as exc:  # noqa: BLE001 - retain independent Gate 5 failures
+            gate_failures[lane] = f"{type(exc).__name__}: {exc}"
+            ctl.event(lane, "gate5", "failed", gate_failures[lane])
+            write_new(
+                ctl.attempt / f"{lane}.gate5-failure.json",
+                canonical(
+                    {
+                        "schema": "ura-followon-gate5-failure/1",
+                        "status": "failed",
+                        "lane_id": lane,
+                        "failed_at_utc": utc_now(),
+                        "error_type": type(exc).__name__,
+                        "error": str(exc),
+                        "traceback": traceback.format_exc(),
+                    }
+                ),
+            )
+        finally:
+            ctl.end_lane(lane)
+    if gate_failures:
+        write_new(
+            ctl.attempt / "completion.json",
+            canonical(
+                {
+                    "schema": "ura-followon-prepared-controller-completion/1",
+                    "status": "gate5_failed",
+                    "completed_at_utc": utc_now(),
+                    "gate5_failures": gate_failures,
+                    "measured_lanes_started": 0,
+                    "paid_provider_calls": 0,
+                }
+            ),
+        )
+        write_new(ctl.attempt / ".exit", b"1\n")
+        return 1
+
+    write_gate5_inputs(gate_rows)
+    run_checked(
+        [
+            str(PHASE5_CONTROLLER), "--inputs", str(GATE5_INPUTS),
+            "--out", str(GATE5_AMENDMENT),
+        ],
+        ctl.attempt / "phase5-followon-formal-validation.log",
+    )
+    authorization_sha = sha256_file(GATE5_AMENDMENT)
+    row_by_lane = {row["lane_id"]: row for row in gate_rows}
+    spec_paths: dict[str, Path] = {}
+    for index, spec in enumerate(specs, 1):
+        spec["gate5"] = {"manifest_sha256": authorization_sha}
+        spec_path = CONTROL / "lane-specs" / f"{index:02d}-{spec['lane_id']}.json"
+        write_new(spec_path, canonical(spec))
+        spec_paths[spec["lane_id"]] = spec_path
+
+    outcome_rows: dict[str, dict[str, Any]] = {}
+    outcome_errors: dict[str, str] = {}
+    for spec in specs:
+        lane = spec["lane_id"]
+        measured_argv = row_by_lane[lane]["measured_argv"]
+        result_root = module.expected_result_root(ctl.work, spec, CONTROL)
+        ctl.begin_lane(lane, 86400)
+        error: BaseException | None = None
+        try:
+            ctl.run_measured(
+                lane, "measured-run", measured_argv,
+                f"{lane}.measured.run.log", spec=spec, result_root=result_root,
+            )
+        except module.ControllerInterrupted:
+            raise
+        except Exception as exc:  # noqa: BLE001 - attempt every independent lane
+            error = exc
+            ctl.event(lane, "measured", "failed", f"{type(exc).__name__}: {exc}")
+        finally:
+            ctl.end_lane(lane)
+        try:
+            outcome_rows[lane] = build_outcome(
+                module, ctl, spec, measured_argv, error
+            )
+        except Exception as exc:  # noqa: BLE001 - preserve later independent attempts
+            outcome_errors[lane] = f"{type(exc).__name__}: {exc}"
+            ctl.emit(f"LANE={lane} OUTCOME FAILED: {outcome_errors[lane]}")
+
+    if outcome_errors:
+        write_new(
+            ctl.attempt / "completion.json",
+            canonical({
+                "schema": "ura-followon-prepared-controller-completion/1",
+                "status": "outcome_validation_failed",
+                "completed_at_utc": utc_now(),
+                "gate5_amendment": descriptor(GATE5_AMENDMENT),
+                "outcome_errors": outcome_errors,
+                "attempted_lanes": list(LANE_ORDER),
+            }),
+        )
+        write_new(ctl.attempt / ".exit", b"1\n")
+        return 1
+
+    write_phase6_outcomes(outcome_rows)
+    run_checked(
+        [
+            str(PHASE6_CONTROLLER),
+            "--amendment", str(GATE5_AMENDMENT),
+            "--outcomes", str(PHASE6_OUTCOMES),
+            "--out", str(PHASE6_COMPLETION),
+            "--authorize-amendment-sha256", authorization_sha,
+        ],
+        ctl.attempt / "phase6-followon-formal-validation.log",
+    )
+    write_new(
+        ctl.attempt / "completion.json",
+        canonical({
+            "schema": "ura-followon-prepared-controller-completion/1",
+            "status": "complete",
+            "completed_at_utc": utc_now(),
+            "gate5_inputs": descriptor(GATE5_INPUTS),
+            "gate5_amendment": descriptor(GATE5_AMENDMENT),
+            "phase6_outcomes": descriptor(PHASE6_OUTCOMES),
+            "phase6_completion": descriptor(PHASE6_COMPLETION),
+            "lane_terminal_states": {
+                lane: outcome_rows[lane]["state"] for lane in LANE_ORDER
+            },
+        }),
+    )
+    exit_code = 0
+    write_new(ctl.attempt / ".exit", f"{exit_code}\n".encode("ascii"))
+    return exit_code
+
+
+if __name__ == "__main__":
+    result = 1
+    try:
+        result = main()
+    except BaseException:
+        if "CONTROL" in globals():
+            register_console_finish(1)
+        raise
+    else:
+        if "CONTROL" in globals():
+            register_console_finish(result)
+        raise SystemExit(result)

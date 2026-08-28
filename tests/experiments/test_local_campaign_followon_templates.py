@@ -102,6 +102,35 @@ def test_followon_payloads_compile_and_ideator_cap_is_eight() -> None:
     assert ideator["preparations"] == {"attacker_config", "seed_pair_manifest"}
 
 
+def test_followon_controller_authorizes_before_measured_calls_and_finalizes_outcomes() -> None:
+    path = TEMPLATES / "followon_prepared_controller.py.in"
+    source = path.read_text(encoding="utf-8")
+    compile(source, path.name, "exec")
+
+    main = source.split("def main() -> int:\n", 1)[1]
+    assert main.index("write_gate5_inputs(gate_rows)") < main.index(
+        "authorization_sha = sha256_file(GATE5_AMENDMENT)"
+    )
+    assert main.index("authorization_sha = sha256_file(GATE5_AMENDMENT)") < main.index(
+        "ctl.run_measured("
+    )
+    assert main.index("ctl.run_measured(") < main.index(
+        "write_phase6_outcomes(outcome_rows)"
+    )
+    assert main.index("write_phase6_outcomes(outcome_rows)") < main.index(
+        "str(PHASE6_CONTROLLER)"
+    )
+    assert 'spec["gate5"] = {"manifest_sha256": authorization_sha}' in main
+
+    cleanup = source.split("def remove_plan_only_request_root(", 1)[1].split(
+        "\ndef prepare_measured_argv(", 1
+    )[0]
+    assert 'len(entries) != 1' in cleanup
+    assert '.request-envelope.json' in cleanup
+    assert "entries[0].unlink()" in cleanup
+    assert "result_root.rmdir()" in cleanup
+
+
 @pytest.mark.parametrize(
     ("option", "bad_value"),
     (
@@ -955,5 +984,8 @@ def test_followon_controllers_and_phase7_wrapper_are_packaged() -> None:
     for name in ("phase5_followon_prepared.sh", "phase6_followon_prepared.sh"):
         assert f'"{name}.in", "{name}"' in generator
         assert f'("{name}", "none")' in verifier
+    assert '"followon_prepared_controller.py.in"' in generator
+    assert '"followon_prepared_controller.py"' in generator
+    assert '("followon_prepared_controller.py", "followon-contract")' in verifier
     assert "--followon-gate5-amendment" in wrapper
     assert "--phase6-followon-completion" in wrapper

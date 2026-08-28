@@ -467,6 +467,14 @@ all eight verified pairs mapped to `advbench:245`.
 Prepare those two inputs with the runbook's named "NanoGCG: sealed suffix
 capture, then replay" and "IDEATOR: exact VLBreakBench mapping, then Build or CLI
 replay" procedures; do not substitute a manually assembled suffix or manifest.
+After NanoGCG and both T3MP3ST captures are terminal, the tracked generated
+`followon_prepared_controller.py` owns the remaining follow-on sequence in one
+persistent tmux session. It consumes the canonical prepared artifacts, performs
+the no-call projection and one-cluster canary for each lane, creates the formal
+Gate 5 amendment before measured calls, attempts the three exact authorized
+argv arrays independently, and produces the formal Phase 6 outcome/completion
+pair. It does not alter the already sealed core Gate 5 artifacts and it does
+not make this local campaign phase a product concept.
 
 The corpus limit is the outer population selector, not a universal framework-
 operation limit. `--limit 0` selects every source cluster; a positive limit uses

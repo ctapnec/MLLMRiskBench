@@ -430,12 +430,12 @@ def test_verifier_early_counts_match_the_installed_package_and_reject_stale_valu
         row.split("\t", 1)[0]
         for row in inventory.read_text(encoding="ascii").splitlines()
     }
-    assert len(inventory_names) == 30
+    assert len(inventory_names) == 31
     archive = package.output / "controller-set-1111111.tar"
     with tarfile.open(archive, mode="r:") as stream:
         members = stream.getmembers()
     archive_names = {member.name for member in members}
-    assert len(members) == len(archive_names) == 32
+    assert len(members) == len(archive_names) == 33
     assert all(member.isfile() for member in members)
     assert archive_names == inventory_names | {inventory.name, package.verifier.name}
 
@@ -443,21 +443,21 @@ def test_verifier_early_counts_match_the_installed_package_and_reject_stale_valu
     assert installed.returncode == 0, installed.stdout + installed.stderr
     generation = base / ".ura-controller-generations" / package.generation_name
     installed_names = {path.name for path in generation.iterdir()}
-    assert len(installed_names) == 33
+    assert len(installed_names) == 34
     assert installed_names == archive_names | {".ura-controller-generation.tsv"}
 
     source = package.verifier.read_text(encoding="ascii")
     inventory_check = (
-        "[[ \"$controller_hash_count\" == '30' ]] || "
+        "[[ \"$controller_hash_count\" == '31' ]] || "
         "fail 'controller inventory count differs'"
     )
     generation_check = (
         '[[ "$(find -P "$CONTROLLER_ROOT" -mindepth 1 -maxdepth 1 '
-        "-type f -printf . | wc -c)\" == '33' ]] || \\\n"
+        "-type f -printf . | wc -c)\" == '34' ]] || \\\n"
         "  fail 'active controller generation file count differs'"
     )
     later_check = (
-        "[[ \"$controller_count\" == '30' ]] || "
+        "[[ \"$controller_count\" == '31' ]] || "
         "fail 'verified controller count differs'"
     )
     assert source.count(inventory_check) == 1
@@ -491,7 +491,7 @@ def test_verifier_early_counts_match_the_installed_package_and_reject_stale_valu
         "stale-inventory-count",
         source.replace(
             inventory_check,
-            inventory_check.replace("== '30'", "== '29'"),
+            inventory_check.replace("== '31'", "== '30'"),
             1,
         ),
     )
@@ -502,7 +502,7 @@ def test_verifier_early_counts_match_the_installed_package_and_reject_stale_valu
         "stale-generation-count",
         source.replace(
             generation_check,
-            generation_check.replace("== '33'", "== '32'"),
+            generation_check.replace("== '34'", "== '33'"),
             1,
         ),
     )
