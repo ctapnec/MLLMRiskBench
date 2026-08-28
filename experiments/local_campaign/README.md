@@ -334,8 +334,8 @@ projection and canary controller self-test proves they cannot enter a runnable
 loop. Four GraySwan RR and three RWKV static identities retain immutable
 historical target-runtime-terminal artifacts from the older output policy.
 The current Runner 2.24 contract retains nonempty length-capped text with its
-terminal reason and retains a successful empty Ollama completion as typed
-`model_nonresponse`. Vague, repetitive or nonsensical text is ordinary
+terminal reason and retains a successful empty vLLM or Ollama completion as
+typed `model_nonresponse`. Vague, repetitive or nonsensical text is ordinary
 observed output and reaches the selected evaluator; a typed nonresponse bypasses
 the judge and remains visible in response and decision coverage.
 

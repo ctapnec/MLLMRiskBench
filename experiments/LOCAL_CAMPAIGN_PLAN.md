@@ -517,9 +517,10 @@ roots and call accounting.
 
 They are not the current disposition. Runner 2.22 and later retains every
 nonempty length-capped response and its `finish_reason='length'` provenance;
-Runner 2.23 and later retains a successful empty Ollama completion as typed
-`model_nonresponse`. Vague, repetitive or nonsensical text is sent to the
-selected evaluator, which may decide or abstain. A typed nonresponse does not
+Runner 2.23 retains a successful empty Ollama completion as typed
+`model_nonresponse`, and Runner 2.24 applies the same typed outcome to a
+successful empty vLLM completion. Vague, repetitive or nonsensical text is sent
+to the selected evaluator, which may decide or abstain. A typed nonresponse does not
 query the policy judge and is represented in response and decision coverage.
 Neither outcome is a software failure, and neither authorizes altered stops,
 generation caps, decoding configuration or checkpoint identity.

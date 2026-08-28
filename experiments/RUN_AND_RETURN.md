@@ -456,8 +456,9 @@ length-capped output and typed successful empty completions. Those artifacts
 still bind the exact checkpoint or Ollama digest, configuration, diagnostic
 calls and complete accounting, but they are not the current output policy.
 Runner 2.22 and later retains nonempty `finish_reason='length'` text and its
-truncation provenance; Runner 2.23 and later retains a successful empty Ollama
-completion as typed `model_nonresponse`. Nonempty vague, repetitive or
+truncation provenance; Runner 2.23 retains a successful empty Ollama completion
+as typed `model_nonresponse`, and Runner 2.24 applies the same typed outcome to
+a successful empty vLLM completion. Nonempty vague, repetitive or
 nonsensical content is sent to the selected evaluator, which may decide or
 abstain. A typed nonresponse does not query the policy judge and contributes to
 reported response and decision coverage. Neither condition is a software

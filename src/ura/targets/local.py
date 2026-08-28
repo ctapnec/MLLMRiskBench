@@ -867,12 +867,17 @@ class VLLMTarget(BaseTarget):
         latency_ms = (time.perf_counter() - t0) * 1000.0
 
         text, tokens, finish_reason, stop_reason = self._extract(outputs)
+        empty_completion_observed = not bool(text.strip())
         from .api import _dialog_fingerprint
 
         return Response(
             attempt_id=_dialog_fingerprint(dialog),
             target=self.name,
-            output_turns=[DialogTurn(role="assistant", content=text)],
+            output_turns=(
+                []
+                if empty_completion_observed
+                else [DialogTurn(role="assistant", content=text)]
+            ),
             latency_ms=latency_ms,
             tokens=tokens,
             raw={
@@ -890,6 +895,7 @@ class VLLMTarget(BaseTarget):
                 ),
                 "finish_reason": finish_reason,
                 "stop_reason": stop_reason,
+                "empty_completion_observed": empty_completion_observed,
                 "requested_seed": seed,
                 "target_sampling_control": (
                     "local_seed" if seed is not None else "uncontrolled"
@@ -919,9 +925,9 @@ class VLLMTarget(BaseTarget):
         if not isinstance(completions, (list, tuple)) or len(completions) != 1:
             raise LocalTargetOutputError("vLLM returned zero or multiple completions")
         completion = completions[0]
-        text = getattr(completion, "text", "") or ""
-        if not text.strip():
-            raise LocalTargetOutputError("vLLM returned an empty completion")
+        text = getattr(completion, "text", None)
+        if not isinstance(text, str):
+            raise LocalTargetOutputError("vLLM returned a non-text completion")
         finish_reason = getattr(completion, "finish_reason", None)
         if finish_reason not in {"stop", "length"}:
             raise LocalTargetOutputError(

@@ -363,6 +363,51 @@ def test_vllm_length_capped_nonempty_completion_is_retained() -> None:
     assert stop_reason is None
 
 
+def test_vllm_successful_empty_completion_is_typed_model_nonresponse(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeRuntime:
+        @staticmethod
+        def private_execution(_role: str, callback):
+            return callback()
+
+    class FakeSamplingParams:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+    class EmptyLLM:
+        @staticmethod
+        def chat(_messages: object, _sampling: object) -> list[object]:
+            completion = SimpleNamespace(
+                text="",
+                finish_reason="stop",
+                stop_reason=None,
+                token_ids=[],
+            )
+            return [SimpleNamespace(outputs=[completion], prompt_token_ids=[1, 2])]
+
+    monkeypatch.setitem(
+        sys.modules,
+        "vllm",
+        SimpleNamespace(SamplingParams=FakeSamplingParams),
+    )
+    target = VLLMTarget(
+        SPEC.split(":", 1)[1],
+        revision=REVISION,
+        modality_support=("text",),
+        model_runtime=FakeRuntime(),
+    )
+    monkeypatch.setattr(target, "_engine", lambda: EmptyLLM())
+
+    response = target.generate([DialogTurn(role="user", content="probe")], seed=7)
+
+    assert response.output_turns == []
+    assert response.tokens == {"prompt": 2, "completion": 0, "total": 2}
+    assert response.raw["backend"] == "vllm"
+    assert response.raw["finish_reason"] == "stop"
+    assert response.raw["empty_completion_observed"] is True
+
+
 def test_ollama_uses_the_same_nonblank_deterministic_attempt_placeholder(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
