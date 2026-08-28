@@ -405,7 +405,7 @@ def test_stats_lists_real_jobs_with_distinct_authority_and_one_lazy_modal(
     app.close()
 
 
-def test_stats_lists_external_campaigns_first_with_resolvable_detail_and_artifacts(
+def test_stats_lists_model_campaigns_first_and_collapses_resolvable_engineering_records(
     tmp_path: Path,
 ) -> None:
     app = _app(tmp_path)
@@ -424,10 +424,16 @@ def test_stats_lists_external_campaigns_first_with_resolvable_detail_and_artifac
     )
 
     text = app.handle("GET", "/stats")[2].decode("utf-8")
+    model_heading = text.index("<h2>Model campaign runs</h2>")
+    model_card = text.index("data-job-id='job-older-diagnostic'")
+    disclosure = text.index("<details class='stats-engineering-disclosure'>")
     campaign_card = text.index(f"/jobs/campaign/{campaign_id}")
-    console_heading = text.index("<h2>Console run attempts</h2>")
-    console_card = text.index("data-job-id='job-older-diagnostic'")
-    assert campaign_card < console_heading < console_card
+    assert model_heading < model_card < disclosure < campaign_card
+    disclosure_tag = text[
+        disclosure : text.index(">", disclosure) + 1
+    ]
+    assert " open" not in disclosure_tag
+    assert "Engineering campaigns (1) - non-thesis operational records" in text
 
     detail_href = f"/jobs/campaign/{campaign_id}"
     artifact_href = f"/artifacts?path=engineering/{campaign_id}"
@@ -889,9 +895,13 @@ def test_stats_engineering_campaigns_are_not_repeated_on_history_pages(
     first = app.handle("GET", "/stats")[2].decode("utf-8")
     second = app.handle("GET", "/stats?page=2")[2].decode("utf-8")
 
-    assert "Engineering campaigns" in first
+    disclosure = first.index("<details class='stats-engineering-disclosure'>")
+    disclosure_tag = first[disclosure : first.index(">", disclosure) + 1]
+    assert " open" not in disclosure_tag
+    assert "Engineering campaigns (1) - non-thesis operational records" in first
     assert f"/jobs/campaign/{campaign_id}" in first
     assert "Engineering campaigns" not in second
+    assert "stats-engineering-disclosure" not in second
     assert f"/jobs/campaign/{campaign_id}" not in second
     assert "href='/stats?page=1'>Newer</a>" in second
     app.close()

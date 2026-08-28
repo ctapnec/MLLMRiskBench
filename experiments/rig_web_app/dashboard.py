@@ -2004,8 +2004,9 @@ class DashboardMixin:
         engineering_html = ""
         if page == 1:
             engineering_html = (
-                "<h2>Engineering campaigns <span class='badge gray'>never thesis "
-                "evidence</span></h2>"
+                "<details class='stats-engineering-disclosure'><summary>"
+                f"Engineering campaigns ({len(engineering_cards)}) - non-thesis "
+                "operational records</summary>"
                 + (
                     f"<div class='notice amber'>{html.escape(engineering_note)}</div>"
                     if engineering_note
@@ -2018,6 +2019,7 @@ class DashboardMixin:
                     if engineering_cards
                     else "<p class='note'>No external engineering campaigns retained.</p>"
                 )
+                + "</details>"
             )
         page_links = "<nav class='stats-pagination' aria-label='Campaign pages'>"
         if page > 1:
@@ -2040,18 +2042,16 @@ class DashboardMixin:
             "campaign to load its validated details.</p></div></div></section>"
         )
         return (
-            "<h2>Campaign runs</h2>"
-            "<p class='note'>Externally managed campaign records appear first, "
-            "followed by console run attempts. Passed means the CLI exited with "
-            "status 0 for a console run attempt; external campaign status comes "
-            "from its generic terminal record. Only completion-bound artifacts "
-            "establish model execution. "
+            "<h2>Model campaign runs</h2>"
+            "<p class='note'>Model campaign attempts appear first. Passed means the "
+            "CLI exited with status 0 for a console run attempt; externally managed "
+            "model-run status comes from its generic terminal record. Only "
+            "completion-bound artifacts establish model execution. "
             "Thesis-measured, diagnostic, synthetic, engineering, and preflight "
             "work remain visibly separate.</p>"
-            + engineering_html
-            + "<h2>Console run attempts</h2>"
             + listing
             + page_links
+            + engineering_html
             + reusable_modal
             + self._stats_modal_script()
         )

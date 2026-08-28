@@ -208,6 +208,7 @@ def test_tab_dom_has_unique_ids_safe_form_ownership_and_no_disabled_state(
             app.handle("GET", "/")[2].decode("utf-8"),
             app.handle("GET", "/build")[2].decode("utf-8"),
             app.handle("GET", "/jobs")[2].decode("utf-8"),
+            app.handle("GET", "/stats")[2].decode("utf-8"),
         )
     finally:
         app.close()
