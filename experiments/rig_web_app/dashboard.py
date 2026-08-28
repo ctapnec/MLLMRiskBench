@@ -230,7 +230,7 @@ class DashboardMixin:
 
         if not rows:
             return ""
-        bar_h, gap, pad_l, width = 22, 10, 220, 640
+        bar_h, gap, pad_l, width = 22, 10, 280, 700
         height = len(rows) * (bar_h + gap) + gap
         parts = [
             f"<svg class='barchart' viewBox='0 0 {width} {height}' "
@@ -261,7 +261,7 @@ class DashboardMixin:
         if not rows:
             return ""
         maximum = max(1, max(value for _name, value in rows))
-        bar_h, gap, pad_l, width = 22, 10, 220, 640
+        bar_h, gap, pad_l, width = 22, 10, 280, 700
         height = len(rows) * (bar_h + gap) + gap
         parts = [
             f"<svg class='barchart' viewBox='0 0 {width} {height}' "
