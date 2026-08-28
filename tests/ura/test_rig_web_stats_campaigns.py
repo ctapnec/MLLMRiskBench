@@ -35,14 +35,14 @@ def _app(tmp_path: Path) -> RigWebApp:
 
 
 def test_stats_charts_reserve_space_for_long_labels() -> None:
-    long_label = "cyberseceval / information_security"
+    long_label = "cyberseceval / information_security / replay"
     rate_chart = RigWebApp._bar_chart([(long_label, 0.5)])
     count_chart = RigWebApp._count_bar_chart([(long_label, 5)], label="counts")
 
     for chart in (rate_chart, count_chart):
-        assert "viewBox='0 0 700" in chart
-        assert "class='bl' x='272'" in chart
-        assert long_label[:34] in chart
+        assert "viewBox='0 0 760" in chart
+        assert "class='bl' x='332'" in chart
+        assert long_label in chart
 
 
 def _descriptor(path: Path) -> dict[str, object]:

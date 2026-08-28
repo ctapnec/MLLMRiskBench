@@ -230,7 +230,7 @@ class DashboardMixin:
 
         if not rows:
             return ""
-        bar_h, gap, pad_l, width = 22, 10, 280, 700
+        bar_h, gap, pad_l, width = 22, 10, 340, 760
         height = len(rows) * (bar_h + gap) + gap
         parts = [
             f"<svg class='barchart' viewBox='0 0 {width} {height}' "
@@ -243,7 +243,7 @@ class DashboardMixin:
             shown = f"{value * 100:.0f}%" if not unit else f"{value:g}{unit}"
             parts.append(
                 f"<text class='bl' x='{pad_l - 8}' y='{y + bar_h - 6}' "
-                f"text-anchor='end'>{html.escape(label[:34])}</text>"
+                f"text-anchor='end'>{html.escape(label[:44])}</text>"
                 f"<rect class='bt' x='{pad_l}' y='{y}' "
                 f"width='{width - pad_l - 60}' height='{bar_h}' rx='4'/>"
                 f"<rect class='bv' x='{pad_l}' y='{y}' width='{bar_w:.1f}' "
@@ -261,7 +261,7 @@ class DashboardMixin:
         if not rows:
             return ""
         maximum = max(1, max(value for _name, value in rows))
-        bar_h, gap, pad_l, width = 22, 10, 280, 700
+        bar_h, gap, pad_l, width = 22, 10, 340, 760
         height = len(rows) * (bar_h + gap) + gap
         parts = [
             f"<svg class='barchart' viewBox='0 0 {width} {height}' "
@@ -272,7 +272,7 @@ class DashboardMixin:
             bar_w = (width - pad_l - 60) * value / maximum
             parts.append(
                 f"<text class='bl' x='{pad_l - 8}' y='{y + bar_h - 6}' "
-                f"text-anchor='end'>{html.escape(name[:34])}</text>"
+                f"text-anchor='end'>{html.escape(name[:44])}</text>"
                 f"<rect class='bt' x='{pad_l}' y='{y}' "
                 f"width='{width - pad_l - 60}' height='{bar_h}' rx='4'/>"
                 f"<rect class='bv' x='{pad_l}' y='{y}' width='{bar_w:.1f}' "
