@@ -129,7 +129,7 @@ validate_payload() {
 
 validate_generation() {
   local directory="$1"
-  validate_payload "$directory" 33
+  validate_payload "$directory" 34
   marker_matches "$directory/$MARKER_NAME" || \
     fail "controller generation marker differs: $directory/$MARKER_NAME"
 }
@@ -187,7 +187,7 @@ else
   stage="$(mktemp -d -- "$GENERATIONS/.stage-$GENERATION_NAME.XXXXXXXX")"
   [[ -d "$stage" && ! -L "$stage" ]] || fail 'could not create a safe controller stage'
   tar --no-same-owner --no-same-permissions -xf "$ARCHIVE" -C "$stage"
-  validate_payload "$stage" 32
+  validate_payload "$stage" 33
   write_marker "$stage/$MARKER_NAME"
   while IFS=$'\t' read -r name bytes expected_sha self_test; do
     case "$name" in
