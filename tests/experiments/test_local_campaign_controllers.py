@@ -1340,13 +1340,13 @@ def test_rendered_phase7_lifecycle_partition_mutations_fail(tmp_path: Path) -> N
 
     rendered = (output / "phase7_analysis.py").read_text(encoding="utf-8")
     rr_prerequisite = (
-        "            ADAPTIVITY_RIGHT_LANE,\n"
-        "            LLAVA_RR_IMAGE_LANE,\n"
+        "                    ADAPTIVITY_RIGHT_LANE,\n"
+        "                    LLAVA_RR_IMAGE_LANE,\n"
     )
     assert rr_prerequisite in rendered
     mutant = rendered.replace(
         rr_prerequisite,
-        "            ADAPTIVITY_RIGHT_LANE,\n",
+        "                    ADAPTIVITY_RIGHT_LANE,\n",
         1,
     )
     mutant_path = output / "phase7_analysis-rr-prerequisite-mutant.py"
@@ -2078,8 +2078,11 @@ def test_phase7_rr_pair_dispatch_is_conditioned_on_current_measured_cells() -> N
     validator_start = source.index("    def _validate_non_estimable_rr_contrast(")
     validator = source[validator_start:start]
     assert "validate_non_estimable_llava_pair(" in validator
+    rr_selector_binding = rr_contrast.index('rr_selector = selectors["llava_rr"]')
+    assert unavailable < rr_selector_binding < dispatch
     assert 'selectors["llava_base"]' in rr_contrast[dispatch:]
-    assert 'selectors["llava_rr"]' in rr_contrast[dispatch:]
+    assert '"--right-model",\n                rr_selector,' in rr_contrast[dispatch:]
+    assert "right_selector=rr_selector" in rr_contrast[dispatch:]
     identity_start = source.index("def validate_llava_pair_output_identity(")
     identity_end = source.index("\ndef ", identity_start + 4)
     identity = source[identity_start:identity_end]

@@ -5838,6 +5838,7 @@ def validate_analysis_boundaries(
     value: Mapping[str, Any],
     *,
     expected_runner_states: Mapping[str, str] | None = None,
+    expected_llava_pair_states: Mapping[str, str] | None = None,
     expected_lifecycle_authorizations: Mapping[str, Any] | None = None,
     expected_native_states: Mapping[str, str] | None = None,
     expected_cascade_lanes: Sequence[str] | None = None,
@@ -6206,9 +6207,9 @@ def validate_analysis_boundaries(
                     ("left_base", "local-llava-base-image-primary-100"),
                     ("right_rr", "local-llava-rr-image-primary-100"),
                 )
-                if expected_runner_states.get(lane) != "measured_complete"
+                if expected_llava_pair_states.get(lane) != "measured_complete"
             ]
-            if expected_runner_states is not None
+            if expected_llava_pair_states is not None
             else None
         )
         if (
@@ -8971,6 +8972,15 @@ def validate_phase7_completion(
         or value.get("seven_output_policy_metric_revision_strata") != seven_strata
     ):
         raise Phase8Error("Phase 7 seven-row lifecycle partition differs")
+    llava_pair_states = {
+        "local-llava-base-image-primary-100": recoveries["latest"].get(
+            "local-llava-base-image-primary-100",
+            {"state": runner_states["local-llava-base-image-primary-100"]},
+        )["state"],
+        "local-llava-rr-image-primary-100": seven_states[
+            "local-llava-rr-image-primary-100"
+        ],
+    }
     seven_flattened = [lane for lanes in seven_strata.values() for lane in lanes]
     if (
         set(seven_flattened) != set(seven_metric_lanes)
@@ -9436,7 +9446,7 @@ def validate_phase7_completion(
                 ("left_base", "local-llava-base-image-primary-100"),
                 ("right_rr", "local-llava-rr-image-primary-100"),
             ):
-                if runner_states[lane] != "measured_complete":
+                if llava_pair_states[lane] != "measured_complete":
                     expected_missing_roles.append(role)
             expected_reason_code = {
                 ("left_base",): "left_base_lane_failed",
@@ -9518,6 +9528,7 @@ def validate_phase7_completion(
     validate_analysis_boundaries(
         boundaries,
         expected_runner_states=runner_states,
+        expected_llava_pair_states=llava_pair_states,
         expected_lifecycle_authorizations=runner["lifecycle_authorizations"],
         expected_native_states=native_states,
         expected_cascade_lanes=runner["cascade_expected_lanes"],

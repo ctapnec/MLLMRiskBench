@@ -451,15 +451,15 @@ def test_phase8_accepts_measured_current_rr_pair_summary(phase8: ModuleType) -> 
         phase8, purplellama_complete=False
     )
     assert conditions == []
-    measured_pair_lanes = (
-        "local-llava-base-image-primary-100",
-        "local-llava-rr-image-primary-100",
-    )
-    for lane in measured_pair_lanes:
-        states[lane] = "measured_complete"
-        boundary["runner_outcomes"][lane] = "measured_complete"
-        boundary["lifecycle_registry_states"][lane] = "complete"
-        boundary["runner_lifecycle_authorizations"][lane] = {}
+    base_lane = "local-llava-base-image-primary-100"
+    rr_lane = "local-llava-rr-image-primary-100"
+    states[base_lane] = "measured_complete"
+    boundary["runner_outcomes"][base_lane] = "measured_complete"
+    boundary["lifecycle_registry_states"][base_lane] = "complete"
+    pair_states = {base_lane: "measured_complete", rr_lane: "measured_complete"}
+    assert rr_lane not in states
+    assert rr_lane not in boundary["runner_outcomes"]
+    assert rr_lane not in boundary["runner_lifecycle_authorizations"]
     cascade = sorted(
         lane for lane, state in states.items() if state == "measured_complete"
     )
@@ -481,21 +481,21 @@ def test_phase8_accepts_measured_current_rr_pair_summary(phase8: ModuleType) -> 
     phase8.validate_analysis_boundaries(
         boundary,
         expected_runner_states=states,
+        expected_llava_pair_states=pair_states,
         expected_cascade_lanes=cascade,
         expected_proxy_conditions=conditions,
     )
 
-    missing_rr_authorization = copy.deepcopy(boundary)
-    missing_rr_authorization["runner_lifecycle_authorizations"].pop(
-        "local-llava-rr-image-primary-100"
-    )
+    failed_rr = dict(pair_states)
+    failed_rr[rr_lane] = "measured_failed"
     with pytest.raises(
         phase8.Phase8Error,
-        match="expected judge-cascade lane boundary differs",
+        match="LLaVA pair availability differs from Runner state",
     ):
         phase8.validate_analysis_boundaries(
-            missing_rr_authorization,
+            boundary,
             expected_runner_states=states,
+            expected_llava_pair_states=failed_rr,
             expected_cascade_lanes=cascade,
             expected_proxy_conditions=conditions,
         )
@@ -507,14 +507,12 @@ def test_phase8_accepts_completed_but_non_estimable_rr_pair_summary(
     boundary, states, _cascade, conditions = _analysis_boundary(
         phase8, purplellama_complete=False
     )
-    for lane in (
-        "local-llava-base-image-primary-100",
-        "local-llava-rr-image-primary-100",
-    ):
-        states[lane] = "measured_complete"
-        boundary["runner_outcomes"][lane] = "measured_complete"
-        boundary["lifecycle_registry_states"][lane] = "complete"
-        boundary["runner_lifecycle_authorizations"][lane] = {}
+    base_lane = "local-llava-base-image-primary-100"
+    rr_lane = "local-llava-rr-image-primary-100"
+    states[base_lane] = "measured_complete"
+    boundary["runner_outcomes"][base_lane] = "measured_complete"
+    boundary["lifecycle_registry_states"][base_lane] = "complete"
+    pair_states = {base_lane: "measured_complete", rr_lane: "measured_complete"}
     cascade = sorted(
         lane for lane, state in states.items() if state == "measured_complete"
     )
@@ -535,6 +533,7 @@ def test_phase8_accepts_completed_but_non_estimable_rr_pair_summary(
     phase8.validate_analysis_boundaries(
         boundary,
         expected_runner_states=states,
+        expected_llava_pair_states=pair_states,
         expected_cascade_lanes=cascade,
         expected_proxy_conditions=conditions,
     )
@@ -547,6 +546,7 @@ def test_phase8_accepts_completed_but_non_estimable_rr_pair_summary(
         phase8.validate_analysis_boundaries(
             fabricated,
             expected_runner_states=states,
+            expected_llava_pair_states=pair_states,
             expected_cascade_lanes=cascade,
             expected_proxy_conditions=conditions,
         )
