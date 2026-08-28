@@ -320,7 +320,11 @@ export SCOPE="${URA_EXECUTION_SCOPE_ID:?bind it in ~/.ura_campaign_env first}"
 # bigrigsys-local-vllm: this rig, on-rig vLLM, no provider account involved.
 
 python -m experiments.run_matrix --attestation-probe --local "$LOCAL_SPEC" --local-config "$LOCAL_CONFIG" \
-  --attackers replay --judges rules --corpora <one text arm> --source-config experiments/source-instances.json \
+  --attackers replay --judges rules,guardrail \
+  --guardrail-model meta-llama/Llama-Guard-3-8B \
+  --guardrail-revision 7327bd9f6efbbe6101dc6cc4736302b3cbb6e425 \
+  --guardrail-device cuda:1 \
+  --corpora <one text arm> --source-config experiments/source-instances.json \
   --limit 1 --sample-seed 0 --seeds 0 --max-queries 1 --max-turns 1 --execution-scope-id "$SCOPE" ... --out runs/thesis/attestation/<target>-text
 # --out is the receipt FILE, opened create-only, not a directory: pointing
 # it at a directory fails with File exists, and pointing it at an existing
@@ -329,6 +333,14 @@ python -m experiments.live_attestation --probe-root runs/thesis/attestation/<tar
   --execution-scope-id "$SCOPE" \
   --out runs/thesis/attestation/receipts/<target>-text.json   # ura-live-attestation/2
 ```
+
+Although the receipt establishes transport identity rather than a benchmark
+score, the probe is a complete Runner cell and retains a stage-shaped judgment
+record. Local probes therefore use the sealed local guardrail after the rules
+stage, so a rules abstention cannot turn a valid transport observation into a
+controller failure. The purpose-bound acquisition contains target plus guard
+for vLLM targets and the guard alone for an Ollama target. It performs no hosted
+judge call.
 
 Repeat with a text+image arm (for example `mossbench_official`) for the
 image combination, and once per Ollama target for text. These are free (local

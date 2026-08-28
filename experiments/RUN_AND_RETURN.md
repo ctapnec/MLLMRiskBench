@@ -3356,6 +3356,14 @@ CUDA_VISIBLE_DEVICES=0,1 python -m experiments.rig_check \
   --deadline-seconds 86400 --out runs/thesis/preflight/local-qwen3-vl-text-core100
 ```
 
+Derive each local live-attestation receipt with the same `rules,guardrail`
+cascade and exact guard identity/device shown above. A vLLM probe's
+purpose-bound acquisition must contain the target and scoring guard; an Ollama
+probe's acquisition contains the scoring guard because the target is served by
+Ollama rather than the sealed Hugging Face store. The probe makes no hosted
+judge call. Do not reduce a local probe to `--judges rules`: a rules abstention
+is not evidence that the local transport failed.
+
 Repeat with `run_matrix`, `"${LIVE_ATTESTATION_ARGS[@]}"`, exact totals, and
 `--out runs/thesis/runner/local-qwen3-vl-text-core100`; allow the process to exit, then
 run the image lane. Repeat both for the LLaVA base using its own exact local

@@ -228,6 +228,12 @@ retained limits, sample seeds, call caps, 24-hour lane deadlines, zero-download
 admission, one-arm canaries, and create-only output roots. They do not repeat
 already successful lanes.
 
+Every fresh local attestation inside these recovery producers uses
+`rules,guardrail` with the pinned Llama Guard identity on `cuda:1`. The
+purpose-bound acquisition is `target_and_guard` for vLLM and `guard_only` for
+Ollama. This keeps a rules abstention from being misreported as a transport
+failure and introduces no hosted judge call.
+
 The core input manifest has schema
 `ura-phase6-core-length-recovery-inputs/2`. Its exact file-descriptor fields
 are:
