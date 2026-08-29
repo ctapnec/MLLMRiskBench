@@ -287,6 +287,15 @@ def test_level2_report_rejects_missing_response_count_above_abstentions(
     _write_level2(path, run_id="missing", model="fixture", metric="ASR")
     report = json.loads(path.read_text(encoding="utf-8"))
     report["common"]["estimates"][0]["judgments_missing_responses"] = 1
+    report.pop("report_id")
+    material = json.dumps(
+        report,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    report["report_id"] = "level2-" + hashlib.sha256(material).hexdigest()[:24]
 
     with pytest.raises(ValueError, match="missing-response count"):
         _validate_report_document("level2", report)
