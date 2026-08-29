@@ -6705,3 +6705,40 @@ def test_phase6_native_launch_metadata_canonicalizes_the_project_receipt() -> No
     assert changed != source
     with pytest.raises(AssertionError):
         assert_contract(changed)
+
+
+def test_phase6_runner_controllers_gate_local_targets_on_readiness_receipts() -> None:
+    templates = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+    )
+    core = (templates / "phase6_core_measured.sh.in").read_text(encoding="utf-8")
+    extended = (templates / "phase6_extended_measured.sh.in").read_text(
+        encoding="utf-8"
+    )
+
+    def assert_contract(value: str) -> None:
+        assert '${URA_LOCAL_MODEL_READINESS_ROOT:?set ' in value
+        assert value.count('-m experiments.local_model_readiness \\\n') == 1
+        assert value.count('--validate "$readiness"') == 1
+        assert value.count('--expected-spec "$spec"') == 1
+
+    assert_contract(core)
+    assert "qwen3-vl-8b\tvllm:Qwen/Qwen3-VL-8B-Instruct" in core
+    assert "llava-base\tvllm:llava-hf/llava-v1.6-mistral-7b-hf" in core
+    assert "llava-rr\tvllm:GraySwanAI/llava-v1.6-mistral-7b-hf-RR" in core
+
+    assert_contract(extended)
+    assert "qwen3-vl-8b vllm:Qwen/Qwen3-VL-8B-Instruct" in extended
+    assert (
+        "from experiments.local_campaign.current_ollama import "
+        "CURRENT_OLLAMA_MODELS"
+    ) in extended
+
+    for source in (core, extended):
+        changed = source.replace('--validate "$readiness"', '--inspect "$readiness"', 1)
+        assert changed != source
+        with pytest.raises(AssertionError):
+            assert_contract(changed)
