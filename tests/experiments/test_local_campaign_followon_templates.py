@@ -205,15 +205,24 @@ def test_followon_plan_only_cleanup_accepts_verified_binding_snapshots(
     source_root.mkdir()
     result_root.mkdir()
     sources = {
-        "--project-revision": source_root / "project-revision-fixture.json",
-        "--source-conformance": source_root / "source-conformance-fixture.json",
-        "--live-attestation": source_root / "live-attestation-fixture.json",
+        "--project-revision": (
+            source_root / "bound-project-revision.json",
+            "project-revision-fixture.project-revision.json",
+        ),
+        "--source-conformance": (
+            source_root / "bound-source-conformance.json",
+            "source-conformance-fixture.json",
+        ),
+        "--live-attestation": (
+            source_root / "bound-live-attestation.json",
+            "live-attestation-fixture.json",
+        ),
     }
     measured_args: list[str] = []
-    for index, (name, source) in enumerate(sources.items()):
+    for index, (name, (source, snapshot_name)) in enumerate(sources.items()):
         payload = f"binding-{index}\n".encode()
         source.write_bytes(payload)
-        (result_root / source.name).write_bytes(payload)
+        (result_root / snapshot_name).write_bytes(payload)
         measured_args.extend((name, str(source)))
     (result_root / "request-envelope-fixture.request-envelope.json").write_text(
         "{}\n", encoding="utf-8"

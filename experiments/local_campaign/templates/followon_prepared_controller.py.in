@@ -884,36 +884,46 @@ def remove_plan_only_request_root(
         if entry.name.startswith("request-envelope-")
         and entry.name.endswith(".request-envelope.json")
     ]
-    binding_options = (
-        "--project-revision",
-        "--source-conformance",
-        "--live-attestation",
+    binding_specs = (
+        ("--project-revision", "project-revision-", ".project-revision.json"),
+        ("--source-conformance", "source-conformance-", ".json"),
+        ("--live-attestation", "live-attestation-", ".json"),
     )
-    binding_sources = {
-        Path(option(measured_args, name)).name: Path(option(measured_args, name))
-        for name in binding_options
-    }
     if (
-        len(binding_sources) != len(binding_options)
-        or len(request_envelopes) != 1
+        len(request_envelopes) != 1
         or request_envelopes[0].is_symlink()
         or not request_envelopes[0].is_file()
     ):
         raise ValueError("measured plan-only root contains unexpected artifacts")
-    expected_names = {*binding_sources, request_envelopes[0].name}
-    if set(entries) != expected_names:
-        raise ValueError("measured plan-only root contains unexpected artifacts")
-    for name, source in binding_sources.items():
-        copy = entries[name]
+    binding_copies: list[Path] = []
+    for option_name, prefix, suffix in binding_specs:
+        source = Path(option(measured_args, option_name))
+        copies = [
+            entry
+            for entry in entries.values()
+            if entry.name.startswith(prefix) and entry.name.endswith(suffix)
+        ]
         if (
-            source.is_symlink()
+            len(copies) != 1
+            or source.is_symlink()
             or not source.is_file()
-            or copy.is_symlink()
+        ):
+            raise ValueError("measured plan-only root contains unexpected artifacts")
+        copy = copies[0]
+        if (
+            copy.is_symlink()
             or not copy.is_file()
             or copy.stat().st_size != source.stat().st_size
             or sha256_file(copy) != sha256_file(source)
         ):
             raise ValueError("measured plan-only binding snapshot changed")
+        binding_copies.append(copy)
+    expected_names = {
+        request_envelopes[0].name,
+        *(copy.name for copy in binding_copies),
+    }
+    if set(entries) != expected_names:
+        raise ValueError("measured plan-only root contains unexpected artifacts")
     for entry in entries.values():
         entry.unlink()
     result_root.rmdir()
