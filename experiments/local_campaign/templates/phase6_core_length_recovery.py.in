@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import signal
+import subprocess
 import sys
 import traceback
 from typing import Any, Mapping, Sequence
@@ -1843,12 +1844,55 @@ def execute_core_lane(module: Any, ctl: Any, spec_path: Path) -> None:
     ctl.completed.append(lane)
 
 
+def validate_local_readiness() -> None:
+    root_value = os.environ.get("URA_LOCAL_MODEL_READINESS_ROOT")
+    if not root_value:
+        raise ValueError("URA_LOCAL_MODEL_READINESS_ROOT is not set")
+    root = Path(root_value)
+    if root.is_symlink() or not root.is_dir() or root.resolve(strict=True) != root:
+        raise ValueError("local model readiness root is not one canonical directory")
+    required = (
+        ("qwen3-vl-8b", "vllm:Qwen/Qwen3-VL-8B-Instruct"),
+        ("llava-base", "vllm:llava-hf/llava-v1.6-mistral-7b-hf"),
+    )
+    for label, spec in required:
+        receipt = root / f"{label}.readiness.json"
+        sha_path = root / f"{label}.sha256"
+        if (
+            receipt.is_symlink()
+            or not receipt.is_file()
+            or sha_path.is_symlink()
+            or not sha_path.is_file()
+        ):
+            raise ValueError(f"local model readiness evidence is missing: {label}")
+        receipt_sha = sha_path.read_text(encoding="ascii").strip()
+        if re.fullmatch(r"[0-9a-f]{64}", receipt_sha) is None:
+            raise ValueError(f"local model readiness digest is malformed: {label}")
+        subprocess.run(
+            [
+                str(PYTHON),
+                "-m",
+                "experiments.local_model_readiness",
+                "--validate",
+                str(receipt),
+                "--sha256",
+                receipt_sha,
+                "--expected-spec",
+                spec,
+            ],
+            cwd=PROJECT,
+            check=True,
+            stdout=subprocess.DEVNULL,
+        )
+
+
 def main(args: Sequence[str]) -> int:
     retry_source = parse_retry_source(args)
     runnote = RETRY_RUNNOTE if retry_source is not None else BASE_RUNNOTE
     module = load_payload()
     all_specs = assert_inputs(module, runnote=runnote)
     validate_specs_contract(module, all_specs)
+    validate_local_readiness()
     if retry_source is None:
         specs = all_specs
     else:

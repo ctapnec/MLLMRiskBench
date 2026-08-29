@@ -6724,6 +6724,9 @@ def test_local_call_controllers_gate_targets_on_readiness_receipts() -> None:
     bridge_canary = (templates / "phase5_bridge_attest_canary.sh.in").read_text(
         encoding="utf-8"
     )
+    core_recovery = (templates / "phase6_core_length_recovery.py.in").read_text(
+        encoding="utf-8"
+    )
 
     def assert_contract(value: str) -> None:
         assert '${URA_LOCAL_MODEL_READINESS_ROOT:?set ' in value
@@ -6759,3 +6762,26 @@ def test_local_call_controllers_gate_targets_on_readiness_receipts() -> None:
         assert changed != source
         with pytest.raises(AssertionError):
             assert_contract(changed)
+
+    def assert_recovery_contract(value: str) -> None:
+        assert 'os.environ.get("URA_LOCAL_MODEL_READINESS_ROOT")' in value
+        assert '"experiments.local_model_readiness"' in value
+        assert '("qwen3-vl-8b", "vllm:Qwen/Qwen3-VL-8B-Instruct")' in value
+        assert (
+            '("llava-base", "vllm:llava-hf/llava-v1.6-mistral-7b-hf")'
+            in value
+        )
+        assert (
+            "validate_specs_contract(module, all_specs)\n"
+            "    validate_local_readiness()"
+        ) in value
+
+    assert_recovery_contract(core_recovery)
+    changed_recovery = core_recovery.replace(
+        "    validate_local_readiness()\n",
+        "",
+        1,
+    )
+    assert changed_recovery != core_recovery
+    with pytest.raises(AssertionError):
+        assert_recovery_contract(changed_recovery)
