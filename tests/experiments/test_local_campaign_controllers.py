@@ -2077,6 +2077,9 @@ def test_phase6_sequence_uses_gate5_identity_for_measured_children() -> None:
         / "templates"
         / "phase6_sequence.sh.in"
     ).read_text(encoding="utf-8")
+    source = source.split("validate_child_now() {", 1)[1].split(
+        "declare -A CHILD_SESSION", 1
+    )[0]
     required = (
         'gate5_code_identity = gate5.get("code_identity")',
         'set(gate5_code_identity) != {"expected_commit", "framework_lock_id"}',
