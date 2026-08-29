@@ -113,6 +113,63 @@ def test_followon_payloads_compile_and_ideator_cap_is_eight() -> None:
     assert ideator["preparations"] == {"attacker_config", "seed_pair_manifest"}
 
 
+def test_phase5_parent_chain_reads_promoted_markdown_runnote(tmp_path: Path) -> None:
+    namespace = _prelude(
+        "phase5_followon_prepared.sh.in", "src_arg = Path(sys.argv[1])"
+    )
+
+    def write(
+        path: Path, value: dict[str, Any], *, markdown: bool = False
+    ) -> dict[str, Any]:
+        encoded = json.dumps(value, sort_keys=True, separators=(",", ":"))
+        if markdown:
+            encoded = f"# Gate 5 run note\n\n```json\n{encoded}\n```\n"
+        path.write_text(encoded, encoding="utf-8")
+        raw = path.read_bytes()
+        return {
+            "path": str(path.resolve(strict=True)),
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "bytes": len(raw),
+        }
+
+    runnote_value = {
+        "schema": "ura-gate5-runnote/1",
+        "status": "complete",
+        "candidate_only": False,
+        "routes": {
+            "target": "local_only",
+            "hosted_target_calls": 0,
+            "hosted_judge_calls": 0,
+            "http_attempts": 0,
+        },
+        "future_measured_run": {
+            "authorized": False,
+            "requires_distinct_measured_purpose_plan_and_receipt": True,
+            "diagnostic_canaries_are_empirical_benchmark_evidence": False,
+        },
+    }
+    runnote = write(tmp_path / "RUNNOTE.md", runnote_value, markdown=True)
+    promotion_value = {
+        "schema": "ura-gate5-runnote-promotion/1",
+        "status": "complete",
+        "measured_run_launched": False,
+        "inventory_counts": {"total": 46},
+        "canonical_runnote": runnote,
+        "local_only": {
+            "hosted_provider_calls": 0,
+            "hosted_judge_calls": 0,
+            "http_attempts": 0,
+            "paid_provider_calls": 0,
+            "model_downloads": 0,
+        },
+    }
+    promotion = write(tmp_path / "promotion.json", promotion_value)
+
+    assert namespace["validate_parent_chain"](
+        {"runnote": runnote, "parent_gate5_promotion": promotion}
+    ) == (promotion, runnote)
+
+
 def test_followon_attestation_probe_keeps_local_guardrail_fallback() -> None:
     source = (TEMPLATES / "followon_prepared_controller.py.in").read_text(
         encoding="utf-8"

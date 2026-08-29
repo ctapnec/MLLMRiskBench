@@ -156,6 +156,22 @@ def load_object(path: Path, *, label: str) -> dict[str, Any]:
     return value
 
 
+def load_markdown_object(path: Path, *, label: str) -> dict[str, Any]:
+    if path.stat().st_size > 512 * 1024 * 1024:
+        raise SystemExit(f"{label} is unexpectedly large")
+    try:
+        markdown = path.read_text(encoding="utf-8", errors="strict")
+        matches = re.findall(r"(?ms)^```json\s*$\n(.*?)^```\s*$", markdown)
+        if len(matches) != 1:
+            raise ValueError("expected exactly one machine-readable JSON block")
+        value = strict_json_loads(matches[0])
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise SystemExit(f"{label} is not canonical Markdown JSON: {exc}") from exc
+    if not isinstance(value, dict):
+        raise SystemExit(f"{label} machine-readable block is not a JSON object")
+    return value
+
+
 def descriptor(path: Path) -> dict[str, Any]:
     return {"path": str(path), "sha256": sha256_file(path), "bytes": path.stat().st_size}
 
@@ -165,6 +181,7 @@ def checked(
     label: str,
     *,
     validator: Callable[[object], Mapping[str, Any]] | None = None,
+    markdown_json_block: bool = False,
 ) -> tuple[Path, dict[str, Any]]:
     if not isinstance(raw, dict) or set(raw) != {"path", "sha256", "bytes"}:
         raise SystemExit(f"{label} descriptor changed")
@@ -177,7 +194,8 @@ def checked(
         or raw["bytes"] <= 0 or descriptor(path) != raw
     ):
         raise SystemExit(f"{label} identity changed")
-    value = load_object(path, label=label)
+    loader = load_markdown_object if markdown_json_block else load_object
+    value = loader(path, label=label)
     if validator is not None:
         try:
             validated = validator(value)
@@ -415,7 +433,9 @@ def argv_path(
 
 
 def validate_parent_chain(value: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-    runnote_path, runnote = checked(value.get("runnote"), "follow-on RUNNOTE")
+    runnote_path, runnote = checked(
+        value.get("runnote"), "follow-on RUNNOTE", markdown_json_block=True,
+    )
     promotion_path, promotion = checked(
         value.get("parent_gate5_promotion"), "parent Gate 5 promotion"
     )
