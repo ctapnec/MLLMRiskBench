@@ -116,6 +116,25 @@ def _persisted_guard_abstention(row: dict[str, Any]) -> bool:
     )
 
 
+def _persisted_model_nonresponse(row: dict[str, Any]) -> bool:
+    return (
+        row.get("label") == "not_applicable"
+        and row.get("score") == 0.0
+        and isinstance(row.get("confidence"), (int, float))
+        and not isinstance(row.get("confidence"), bool)
+        and float(row["confidence"]) == 1.0
+        and row.get("parsed") is None
+        and row.get("policy_evaluable_turn") is True
+        and row.get("common_metrics_eligible") is True
+        and row.get("stage_queried") is False
+        and row.get("policy_evaluation_status") == "model_nonresponse"
+        and row.get("cascade_role") in {"authoritative", "shadow"}
+        and row.get("cascade_confident") is True
+        and row.get("metric_authority") is None
+        and row.get("required_metric") is None
+    )
+
+
 def _final_guard_abstention(row: dict[str, Any]) -> bool:
     raw = row.get("raw")
     return (
@@ -136,6 +155,27 @@ def _final_guard_abstention(row: dict[str, Any]) -> bool:
         and raw.get("abstention_reason") == _GUARD_ABSTENTION_REASON
         and raw.get("cascade_role") == "authoritative"
         and raw.get("cascade_confident") is True
+    )
+
+
+def _final_model_nonresponse(row: dict[str, Any]) -> bool:
+    raw = row.get("raw")
+    return (
+        isinstance(raw, dict)
+        and row.get("label") == "not_applicable"
+        and row.get("score") == 0.0
+        and isinstance(raw.get("confidence"), (int, float))
+        and not isinstance(raw.get("confidence"), bool)
+        and float(raw["confidence"]) == 1.0
+        and raw.get("parsed") is None
+        and raw.get("policy_evaluable_turn") is True
+        and raw.get("common_metrics_eligible") is True
+        and raw.get("stage_queried") is False
+        and raw.get("policy_evaluation_status") == "model_nonresponse"
+        and raw.get("cascade_role") == "authoritative"
+        and raw.get("cascade_confident") is True
+        and raw.get("metric_authority") is None
+        and raw.get("required_metric") is None
     )
 
 
@@ -1121,6 +1161,9 @@ def load_trails(
         source_metric_only = (
             evaluable is True and evaluation_status == "source_metric_only"
         )
+        model_nonresponse = (
+            evaluable is True and evaluation_status == "model_nonresponse"
+        )
         approximate_proxy = (
             evaluable is True
             and evaluation_status == "approximate_common_security_proxy"
@@ -1148,6 +1191,17 @@ def load_trails(
             ):
                 raise ValueError(
                     f"trail row for {key!r} has invalid source-metric-only semantics"
+                )
+        elif model_nonresponse:
+            if (
+                common_eligible is not True
+                or not isinstance(challenge_index, int)
+                or isinstance(challenge_index, bool)
+                or not 0 <= challenge_index < challenge_horizon
+                or not _persisted_model_nonresponse(row)
+            ):
+                raise ValueError(
+                    f"trail row for {key!r} has invalid model-nonresponse semantics"
                 )
         elif evaluable:
             if (
@@ -1417,6 +1471,7 @@ def _joined_artifacts(
             raise ValueError(f"invalid policy-turn contract for {key!r}")
         evaluation_status = raw.get("policy_evaluation_status")
         source_metric_only = evaluable and evaluation_status == "source_metric_only"
+        model_nonresponse = evaluable and evaluation_status == "model_nonresponse"
         approximate_proxy = (
             evaluable
             and evaluation_status == "approximate_common_security_proxy"
@@ -1439,6 +1494,18 @@ def _joined_artifacts(
                 or not raw["required_metric"].strip()
             ):
                 raise ValueError(f"invalid source-metric-only challenge for {key!r}")
+        elif model_nonresponse:
+            if (
+                current["common_metrics_eligible"] is not True
+                or not isinstance(challenge_index, int)
+                or isinstance(challenge_index, bool)
+                or not 0 <= challenge_index < challenge_horizon
+                or turn_expected != current["expected_behavior"]
+                or not _final_model_nonresponse(judgment)
+            ):
+                raise ValueError(
+                    f"invalid model-nonresponse challenge for {key!r}"
+                )
         elif approximate_proxy or common_evaluated:
             if (
                 not isinstance(challenge_index, int)

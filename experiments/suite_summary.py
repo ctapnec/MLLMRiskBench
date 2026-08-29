@@ -235,6 +235,27 @@ def _final_guard_abstention(row: dict[str, Any]) -> bool:
     )
 
 
+def _final_model_nonresponse(row: dict[str, Any]) -> bool:
+    raw = row.get("raw")
+    return (
+        isinstance(raw, dict)
+        and row.get("label") == "not_applicable"
+        and row.get("score") == 0.0
+        and raw.get("policy_evaluable_turn") is True
+        and raw.get("common_metrics_eligible") is True
+        and raw.get("stage_queried") is False
+        and raw.get("policy_evaluation_status") == "model_nonresponse"
+        and isinstance(raw.get("confidence"), (int, float))
+        and not isinstance(raw.get("confidence"), bool)
+        and float(raw["confidence"]) == 1.0
+        and raw.get("parsed") is None
+        and raw.get("cascade_role") == "authoritative"
+        and raw.get("cascade_confident") is True
+        and raw.get("metric_authority") is None
+        and raw.get("required_metric") is None
+    )
+
+
 def _response_index(values: Any) -> dict[str, Any]:
     if isinstance(values, dict):
         return dict(values)
@@ -310,7 +331,10 @@ def _descriptive_endpoint(
     else:
         for row in rows:
             if row.get("label") == "not_applicable":
-                if not _final_guard_abstention(row):
+                if not (
+                    _final_guard_abstention(row)
+                    or _final_model_nonresponse(row)
+                ):
                     raise ValueError(
                         "runner stratum carries an invalid authoritative N/A"
                     )

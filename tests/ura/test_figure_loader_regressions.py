@@ -1252,6 +1252,27 @@ def test_zero_result_population_allows_only_exact_unscored_companion_rows() -> N
             "required_metric": "native_source_metric",
         },
     }, strict=True)
+    model_nonresponse = Judgment.model_validate({
+        "attempt_id": "model-nonresponse",
+        "run_id": "run",
+        "judge": "rules",
+        "label": "not_applicable",
+        "score": 0.0,
+        "raw": {
+            "expected_behavior": "refuse",
+            "policy_evaluable_turn": True,
+            "common_metrics_eligible": True,
+            "stage_queried": False,
+            "policy_evaluation_status": "model_nonresponse",
+            "turn_expected_behavior": "refuse",
+            "confidence": 1.0,
+            "parsed": None,
+            "cascade_role": "authoritative",
+            "cascade_confident": True,
+            "metric_authority": None,
+            "required_metric": None,
+        },
+    }, strict=True)
 
     assert figure_results._zero_result_guardrail_abstention_population([
         setup, source_only, evaluated,
@@ -1259,6 +1280,9 @@ def test_zero_result_population_allows_only_exact_unscored_companion_rows() -> N
     assert figure_results._zero_result_guardrail_abstention_population([
         setup, source_only,
     ]) is False
+    assert figure_results._zero_result_guardrail_abstention_population([
+        model_nonresponse,
+    ]) is True
 
     invalid_setup = setup.model_copy(update={
         "raw": {**setup.raw, "stage_queried": True},
@@ -1271,6 +1295,12 @@ def test_zero_result_population_allows_only_exact_unscored_companion_rows() -> N
     ]) is False
     assert figure_results._zero_result_guardrail_abstention_population([
         invalid_source, evaluated,
+    ]) is False
+    invalid_nonresponse = model_nonresponse.model_copy(update={
+        "raw": {**model_nonresponse.raw, "stage_queried": True},
+    })
+    assert figure_results._zero_result_guardrail_abstention_population([
+        invalid_nonresponse,
     ]) is False
 
 

@@ -1031,8 +1031,24 @@ def load(
             if raw["expected_behavior"] not in {"refuse", "safe_answer", "comply_safely"}:
                 raise ValueError(f"invalid expected_behavior in {path}:{row['_line']}")
             automated_abstention = row["label"] == "not_applicable"
+            model_nonresponse = (
+                automated_abstention
+                and row.get("score") == 0.0
+                and raw.get("policy_evaluable_turn") is True
+                and raw.get("common_metrics_eligible") is True
+                and raw.get("stage_queried") is False
+                and raw.get("policy_evaluation_status") == "model_nonresponse"
+                and isinstance(raw.get("confidence"), (int, float))
+                and not isinstance(raw.get("confidence"), bool)
+                and float(raw["confidence"]) == 1.0
+                and raw.get("parsed") is None
+                and raw.get("cascade_role") == "authoritative"
+                and raw.get("cascade_confident") is True
+                and raw.get("metric_authority") is None
+                and raw.get("required_metric") is None
+            )
             if automated_abstention:
-                if not (
+                if not model_nonresponse and not (
                     row.get("judge") == "guardrail"
                     and row.get("score") == 0.0
                     and isinstance(raw.get("confidence"), (int, float))
@@ -1082,7 +1098,11 @@ def load(
                         f"{attempt_id!r} lacks current-turn media"
                     )
             if automated_abstention:
-                excluded["automated_over_refusal_abstention"] += 1
+                excluded[
+                    "model_nonresponse"
+                    if model_nonresponse
+                    else "automated_over_refusal_abstention"
+                ] += 1
                 continue
             record = TransferRecord(
                 model=str(raw["model"]),
