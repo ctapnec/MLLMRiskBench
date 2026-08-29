@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 from typing import Any, Mapping, Sequence
@@ -14,21 +15,25 @@ from typing import Any, Mapping, Sequence
 from experiments.local_campaign.current_ollama import (
     CURRENT_OLLAMA_MODELS,
     CURRENT_OLLAMA_RUNNABLE_LANES,
+    CURRENT_OLLAMA_TYPED_TERMINAL_LANES,
 )
 from experiments.local_campaign.current_ollama_gate5 import (
     _canonical,
     _descriptor,
+    _descriptor_file,
     _stable_file,
     validate_amendment,
 )
 from experiments.local_targets import _models_map, load_roster
 from experiments.rig_web_app.ollama_service import OllamaService
 from ura.live_attestation import route_config_sha256
+from ura.strict_json import strict_json_loads
 
 
 SCHEMA = "ura-current-ollama-phase6/1"
 STATE_SCHEMA = "ura-current-ollama-phase6-lane-state/1"
 FAILURE_SCHEMA = "ura-current-ollama-phase6-failure/1"
+PHASE7_INPUT_SCHEMA = "ura-current-ollama-phase7-input/1"
 MAX_AGE_HOURS = "24"
 
 
@@ -590,6 +595,410 @@ def _counts_from_level1(level1: Mapping[str, Any]) -> tuple[int, int, int]:
     ):
         raise ValueError("measured Level 1 target/missing-response counts changed")
     return attempted, attempted - missing, missing
+
+
+def _strict_object(path: Path, *, label: str) -> dict[str, Any]:
+    try:
+        value = strict_json_loads(_stable_file(path, label=label))
+    except (UnicodeError, ValueError) as exc:
+        raise ValueError(f"{label} is not strict JSON") from exc
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} is not a JSON object")
+    return value
+
+
+def _strict_jsonl(path: Path, *, label: str) -> list[dict[str, Any]]:
+    payload = _stable_file(path, label=label)
+    if not payload.endswith(b"\n") or b"\r" in payload or b"\0" in payload:
+        raise ValueError(f"{label} is not canonical JSONL")
+    rows: list[dict[str, Any]] = []
+    for index, line in enumerate(payload[:-1].split(b"\n"), start=1):
+        try:
+            value = strict_json_loads(line)
+        except (UnicodeError, ValueError) as exc:
+            raise ValueError(f"{label} row {index} is not strict JSON") from exc
+        if not isinstance(value, dict):
+            raise ValueError(f"{label} row {index} is not an object")
+        rows.append(value)
+    return rows
+
+
+def validate_completion(
+    *,
+    gate5_path: Path,
+    completion_path: Path,
+    runner_root: Path,
+) -> dict[str, Any]:
+    """Validate the additive current-Ollama Phase 6 lifecycle and metric inputs."""
+
+    runner = _canonical_dir(runner_root, label="thesis Runner root")
+    gate5 = validate_amendment(gate5_path)
+    artifact_commit = gate5.get("project_commit")
+    if (
+        not isinstance(artifact_commit, str)
+        or re.fullmatch(r"[0-9a-f]{40}", artifact_commit) is None
+    ):
+        raise ValueError("current Ollama artifact commit is malformed")
+    validate_amendment(gate5_path, expected_commit=artifact_commit)
+    gate5_descriptor = _descriptor(gate5_path, label="current Ollama Gate 5 amendment")
+    phase5_exit = _stable_file(
+        gate5_path.parent / ".exit", label="current Ollama Phase 5 exit marker"
+    )
+    if phase5_exit.decode("ascii").strip() != "0":
+        raise ValueError("current Ollama Phase 5 exit marker is nonzero")
+
+    control = _canonical_dir(completion_path.parent, label="current Ollama Phase 6 root")
+    if not control.name.startswith("phase6-current-ollama-") or completion_path.name != (
+        "completion.json"
+    ):
+        raise ValueError("current Ollama Phase 6 completion path changed")
+    completion = _strict_object(completion_path, label="current Ollama Phase 6 completion")
+    fields = {
+        "schema",
+        "status",
+        "project_commit",
+        "gate5",
+        "runnable_lanes",
+        "typed_terminal_lanes",
+        "completed_lanes",
+        "failed_lanes",
+        "target_execution",
+        "paid_provider_calls",
+        "status_rows",
+    }
+    failed_count = completion.get("failed_lanes")
+    completed_count = completion.get("completed_lanes")
+    if (
+        set(completion) != fields
+        or completion.get("schema") != SCHEMA
+        or completion.get("project_commit") != artifact_commit
+        or completion.get("gate5")
+        != {"path": str(gate5_path), "sha256": gate5_descriptor["sha256"]}
+        or completion.get("runnable_lanes") != len(CURRENT_OLLAMA_RUNNABLE_LANES)
+        or completion.get("typed_terminal_lanes")
+        != len(CURRENT_OLLAMA_TYPED_TERMINAL_LANES)
+        or isinstance(completed_count, bool)
+        or not isinstance(completed_count, int)
+        or isinstance(failed_count, bool)
+        or not isinstance(failed_count, int)
+        or completed_count < 0
+        or failed_count < 0
+        or completed_count + failed_count != len(CURRENT_OLLAMA_RUNNABLE_LANES)
+        or completion.get("status")
+        != ("complete" if failed_count == 0 else "complete_with_failures")
+        or completion.get("paid_provider_calls") != 0
+    ):
+        raise ValueError("current Ollama Phase 6 completion contract changed")
+
+    status_path = _descriptor_file(
+        completion.get("status_rows"), label="current Ollama Phase 6 status rows"
+    )
+    if status_path != control / "lanes.jsonl":
+        raise ValueError("current Ollama Phase 6 status path changed")
+    rows = _strict_jsonl(status_path, label="current Ollama Phase 6 status rows")
+    completion_descriptor = _descriptor(
+        completion_path, label="current Ollama Phase 6 completion"
+    )
+    status_order = [
+        *CURRENT_OLLAMA_TYPED_TERMINAL_LANES,
+        *CURRENT_OLLAMA_RUNNABLE_LANES,
+    ]
+    if len(rows) != len(status_order) or [row.get("lane_id") for row in rows] != status_order:
+        raise ValueError("current Ollama Phase 6 status inventory changed")
+
+    terminal_states: dict[str, str] = {}
+    lifecycle: dict[str, dict[str, Any]] = {}
+    metric_roots: dict[str, str] = {}
+    metric_evidence: dict[str, dict[str, Any]] = {}
+    metric_grids: list[dict[str, Any]] = []
+    metric_completion_markers: list[dict[str, Any]] = []
+    metric_eligibility_plans: list[dict[str, Any]] = []
+    excluded: dict[str, dict[str, str]] = {}
+    completed_rows = 0
+    failed_rows = 0
+    target_attempts = 0
+    successful_generations = 0
+    missing_responses = 0
+    by_lane = {str(row["lane_id"]): row for row in rows}
+    if len(by_lane) != len(rows):
+        raise ValueError("current Ollama Phase 6 status contains a duplicate lane")
+
+    for lane in CURRENT_OLLAMA_TYPED_TERMINAL_LANES:
+        row = by_lane[lane]
+        terminal = gate5["typed_terminal_lanes"][lane]
+        expected = {
+            "lane_id": lane,
+            "status": terminal["disposition"],
+            "reason_code": terminal["reason_code"],
+            "reason": terminal["reason"],
+            "target_attempts": 0,
+            "successful_target_generations": 0,
+            "missing_responses": 0,
+        }
+        if row != expected or any(
+            type(row.get(field)) is not int
+            for field in (
+                "target_attempts",
+                "successful_target_generations",
+                "missing_responses",
+            )
+        ):
+            raise ValueError(f"{lane}: typed terminal changed")
+        terminal_states[lane] = "unavailable"
+        lifecycle[lane] = {
+            "state": "unavailable",
+            "result_root": None,
+            "runner_lifecycle_present": False,
+            "evidence": {
+                "gate5": gate5_descriptor,
+                "completion": completion_descriptor,
+                "terminal": terminal,
+            },
+        }
+        excluded[lane] = {
+            "reason_code": str(terminal["reason_code"]),
+            "reason": str(terminal["reason"]),
+        }
+
+    for lane in CURRENT_OLLAMA_RUNNABLE_LANES:
+        row = by_lane[lane]
+        status = row.get("status")
+        result_root = Path(str(row.get("result_root")))
+        if (
+            not isinstance(row.get("result_root"), str)
+            or not result_root.is_absolute()
+            or result_root.parent != runner
+            or result_root.name != lane
+        ):
+            raise ValueError(f"{lane}: result root changed")
+        result_root = _canonical_dir(result_root, label=f"{lane} result root")
+        if status == "complete":
+            expected_fields = {
+                "lane_id",
+                "status",
+                "result_root",
+                "level1",
+                "target_attempts",
+                "successful_target_generations",
+                "missing_responses",
+            }
+            if set(row) != expected_fields:
+                raise ValueError(f"{lane}: completed status fields changed")
+            if any(
+                type(row.get(field)) is not int
+                for field in (
+                    "target_attempts",
+                    "successful_target_generations",
+                    "missing_responses",
+                )
+            ):
+                raise ValueError(f"{lane}: completed target counts changed")
+            level1_path = _descriptor_file(row.get("level1"), label=f"{lane} Level 1")
+            if level1_path != control / "lanes" / lane / "level1.json":
+                raise ValueError(f"{lane}: Level 1 path changed")
+            counts = _counts_from_level1(_strict_object(level1_path, label=f"{lane} Level 1"))
+            if tuple(row.get(field) for field in (
+                "target_attempts",
+                "successful_target_generations",
+                "missing_responses",
+            )) != counts:
+                raise ValueError(f"{lane}: retained target/missing-response counts changed")
+            attempts, successful, missing = counts
+            grids = sorted(result_root.glob("*.grid.json"))
+            eligibility = sorted(result_root.glob("eligibility-*.eligibility.json"))
+            markers = sorted(result_root.glob("*.complete.json"))
+            if len(grids) != 1 or len(eligibility) != 1 or not markers:
+                raise ValueError(f"{lane}: completed Runner artifact inventory changed")
+            completed_rows += 1
+            target_attempts += attempts
+            successful_generations += successful
+            missing_responses += missing
+            terminal_states[lane] = "measured_complete"
+            metric_roots[lane] = str(result_root)
+            metric_grids.append(_descriptor(grids[0], label=f"{lane} measured grid"))
+            metric_eligibility_plans.append(
+                _descriptor(eligibility[0], label=f"{lane} eligibility plan")
+            )
+            metric_completion_markers.extend(
+                _descriptor(marker, label=f"{lane} completion marker")
+                for marker in markers
+            )
+            metric_evidence[lane] = {
+                "level1": row["level1"],
+                "status_rows": completion["status_rows"],
+            }
+            lifecycle[lane] = {
+                "state": "measured_complete",
+                "result_root": str(result_root),
+                "runner_lifecycle_present": True,
+                "evidence": metric_evidence[lane],
+            }
+        elif status == "failed":
+            expected_fields = {
+                "lane_id",
+                "status",
+                "stage",
+                "error",
+                "result_root",
+                "failure",
+                "target_attempts",
+                "successful_target_generations",
+                "missing_responses",
+            }
+            if (
+                set(row) != expected_fields
+                or not isinstance(row.get("stage"), str)
+                or not row["stage"]
+                or not isinstance(row.get("error"), str)
+                or not row["error"]
+                or any(
+                    row.get(field) is not None
+                    for field in (
+                        "target_attempts",
+                        "successful_target_generations",
+                        "missing_responses",
+                    )
+                )
+            ):
+                raise ValueError(f"{lane}: failed status fields changed")
+            failure_path = _descriptor_file(
+                row.get("failure"), label=f"{lane} failure artifact"
+            )
+            if failure_path != result_root / "current-ollama.failure.json":
+                raise ValueError(f"{lane}: failure artifact path changed")
+            failure = _strict_object(failure_path, label=f"{lane} failure artifact")
+            failure_fields = {
+                "schema",
+                "status",
+                "lane_id",
+                "project_commit",
+                "stage",
+                "error_type",
+                "error",
+                "gate5",
+                "result_root",
+                "result_root_created_for_failure",
+                "runner_lifecycle_present",
+                "state",
+                "target_attempts",
+                "successful_target_generations",
+                "missing_responses",
+                "paid_provider_calls",
+            }
+            if (
+                set(failure) != failure_fields
+                or failure.get("schema") != FAILURE_SCHEMA
+                or failure.get("status") != "failed"
+                or failure.get("lane_id") != lane
+                or failure.get("project_commit") != artifact_commit
+                or failure.get("stage") != row["stage"]
+                or failure.get("error") != row["error"]
+                or not isinstance(failure.get("error_type"), str)
+                or not failure["error_type"]
+                or failure.get("gate5") != completion["gate5"]
+                or failure.get("result_root") != str(result_root)
+                or type(failure.get("result_root_created_for_failure")) is not bool
+                or type(failure.get("runner_lifecycle_present")) is not bool
+                or any(
+                    failure.get(field) is not None
+                    for field in (
+                        "target_attempts",
+                        "successful_target_generations",
+                        "missing_responses",
+                    )
+                )
+                or failure.get("paid_provider_calls") != 0
+            ):
+                raise ValueError(f"{lane}: failure artifact changed")
+            state_descriptor = failure.get("state")
+            if state_descriptor is not None:
+                state_path = _descriptor_file(
+                    state_descriptor, label=f"{lane} measured state"
+                )
+                if state_path != control / "lanes" / lane / "state.json":
+                    raise ValueError(f"{lane}: failed state path changed")
+                _load_state(state_path, lane=lane, gate5_sha256=str(gate5_descriptor["sha256"]))
+            observed_lifecycle = any(
+                next(result_root.rglob(pattern), None) is not None
+                for pattern in ("*.grid.json", "*.request-envelope.json")
+            )
+            if failure["runner_lifecycle_present"] is not observed_lifecycle:
+                raise ValueError(f"{lane}: failed Runner lifecycle presence changed")
+            failed_rows += 1
+            terminal_states[lane] = "failed"
+            lifecycle[lane] = {
+                "state": "failed",
+                "result_root": str(result_root),
+                "runner_lifecycle_present": observed_lifecycle,
+                "evidence": {"failure": row["failure"]},
+            }
+            excluded[lane] = {
+                "reason_code": "measured_lane_failed",
+                "reason": str(row["error"]),
+            }
+        else:
+            raise ValueError(f"{lane}: terminal status changed")
+
+    target_execution = completion.get("target_execution")
+    expected_execution = {
+        "target_attempts": target_attempts,
+        "successful_target_generations": successful_generations,
+        "missing_responses": missing_responses,
+        "accounting_scope": "completion_bound_level1_records",
+    }
+    if (
+        not isinstance(target_execution, dict)
+        or any(
+            type(target_execution.get(field)) is not int
+            for field in (
+                "target_attempts",
+                "successful_target_generations",
+                "missing_responses",
+            )
+        )
+        or set(target_execution) != set(expected_execution)
+        or target_execution != expected_execution
+        or completed_rows != completed_count
+        or failed_rows != failed_count
+    ):
+        raise ValueError("current Ollama Phase 6 terminal accounting changed")
+    expected_exit = "0" if failed_rows == 0 else "1"
+    if _stable_file(control / ".exit", label="current Ollama Phase 6 exit marker").decode(
+        "ascii"
+    ).strip() != expected_exit:
+        raise ValueError("current Ollama Phase 6 exit/status partition changed")
+
+    metric_lane_order = [
+        lane for lane in CURRENT_OLLAMA_RUNNABLE_LANES if lane in metric_roots
+    ]
+    revision = str(gate5["project_revision"]["sha256"])
+    lane_order = [
+        *CURRENT_OLLAMA_RUNNABLE_LANES,
+        *CURRENT_OLLAMA_TYPED_TERMINAL_LANES,
+    ]
+    return {
+        "schema": PHASE7_INPUT_SCHEMA,
+        "status": "validated",
+        "lane_order": lane_order,
+        "terminal_states": {lane: terminal_states[lane] for lane in lane_order},
+        "lifecycle": {lane: lifecycle[lane] for lane in lane_order},
+        "metric_lane_order": metric_lane_order,
+        "metric_roots": metric_roots,
+        "metric_evidence": metric_evidence,
+        "metric_grids": metric_grids,
+        "metric_completion_markers": metric_completion_markers,
+        "metric_eligibility_plans": metric_eligibility_plans,
+        "excluded_from_metrics": excluded,
+        "revision_strata": ({revision: metric_lane_order} if metric_lane_order else {}),
+        "project_revision_receipt_sha256": revision,
+        "source_conformance_sha256": str(gate5["source_conformance"]["sha256"]),
+        "gate5": gate5_descriptor,
+        "completion": completion_descriptor,
+        "target_execution": expected_execution,
+        "paid_provider_calls": 0,
+        "cross_revision_pooling_permitted": False,
+        "cross_source_pooling_permitted": False,
+    }
 
 
 def run(

@@ -1350,8 +1350,7 @@ def test_rendered_phase7_lifecycle_partition_mutations_fail(tmp_path: Path) -> N
     assert "phase7-adaptivity-non-estimable-contrasts" in value["contracts"]
     assert "phase7-transfer-faceted-index" in value["contracts"]
     assert "phase7-runner-view-content-binding" in value["contracts"]
-    assert "phase6-campaign-terminal-inventory-62-row-union" in value["contracts"]
-
+    assert "phase6-campaign-terminal-inventory-76-row-union" in value["contracts"]
     rendered = (output / "phase7_analysis.py").read_text(encoding="utf-8")
     rr_prerequisite = (
         "                    ADAPTIVITY_RIGHT_LANE,\n"
@@ -1376,6 +1375,39 @@ def test_rendered_phase7_lifecycle_partition_mutations_fail(tmp_path: Path) -> N
     assert "analysis prerequisite lane inventory changed" in (
         rejected.stdout + rejected.stderr
     )
+
+
+def test_phase7_requires_current_ollama_terminal_and_metric_cohort() -> None:
+    root = Path(__file__).parents[2] / "experiments" / "local_campaign" / "templates"
+    analysis = (root / "phase7_analysis.py.in").read_text(encoding="utf-8")
+    wrapper = (root / "phase7_analysis.sh.in").read_text(encoding="utf-8")
+    watcher = (root / "phase7_after_phase6_sequence.sh.in").read_text(
+        encoding="utf-8"
+    )
+    required_analysis = (
+        '"current_ollama": (',
+        'current_ollama=current_ollama,',
+        '"current_ollama": current_ollama,',
+        'def _current_ollama_metric_lanes(self)',
+        'self.record_current_ollama_outcomes()',
+        '"current_ollama_target_execution"',
+        '"phase6-campaign-terminal-inventory-76-row-union"',
+    )
+    for token in required_analysis:
+        assert token in analysis
+    for token in (
+        "--current-ollama-gate5-amendment",
+        "--phase6-current-ollama-completion",
+    ):
+        assert token in wrapper and token in watcher
+    assert 'result.get("campaign_terminal_rows") != 76' in watcher
+    assert '"current_ollama": 14' in watcher
+
+    mutant = analysis.replace('"current_ollama": current_ollama,', "", 1)
+    assert mutant != analysis
+    with pytest.raises(AssertionError):
+        for token in required_analysis:
+            assert token in mutant
 
 
 def test_phase7_conditional_defense_uses_runner_eligibility_binding_shape() -> None:
@@ -2660,6 +2692,10 @@ def test_phase7_seven_row_and_recovery_boundary_contracts(tmp_path: Path) -> Non
         "followon-amendment.json",
         "--phase6-followon-completion",
         "followon-completion.json",
+        "--current-ollama-gate5-amendment",
+        "current-ollama-amendment.json",
+        "--phase6-current-ollama-completion",
+        "current-ollama-completion.json",
     ]
     parsed = phase7["build_parser"]().parse_args(prepare_argv)
     assert parsed.phase6_recovery_completion == []

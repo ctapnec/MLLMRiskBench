@@ -15,7 +15,9 @@ usage() {
     '    --seven-output-policy-amendment ABSOLUTE_PATH \' \
     '    --phase6-seven-output-policy-completion ABSOLUTE_PATH \' \
     '    --followon-gate5-amendment ABSOLUTE_PATH \' \
-    '    --phase6-followon-completion ABSOLUTE_PATH' \
+    '    --phase6-followon-completion ABSOLUTE_PATH \' \
+    '    --current-ollama-gate5-amendment ABSOLUTE_PATH \' \
+    '    --phase6-current-ollama-completion ABSOLUTE_PATH' \
     '' \
     'Launch only the exact operator-authorized input manifest:' \
     '  phase7_analysis.sh --input-manifest ABSOLUTE_PATH \' \
@@ -58,6 +60,8 @@ seven_amendment=''
 seven_completion=''
 followon_amendment=''
 followon_completion=''
+current_ollama_amendment=''
+current_ollama_completion=''
 input_manifest=''
 authorized_sha=''
 
@@ -129,6 +133,16 @@ while (( $# )); do
       followon_completion="$2"
       shift 2
       ;;
+    --current-ollama-gate5-amendment)
+      [[ $# -ge 2 ]] || usage
+      current_ollama_amendment="$2"
+      shift 2
+      ;;
+    --phase6-current-ollama-completion)
+      [[ $# -ge 2 ]] || usage
+      current_ollama_completion="$2"
+      shift 2
+      ;;
     --input-manifest)
       [[ $# -ge 2 && -z "$mode" ]] || usage
       mode='launch'
@@ -150,6 +164,7 @@ if [[ "$mode" == 'self-test' ]]; then
   [[ ${#recovery_completions[@]} -eq 0 ]] || usage
   [[ -z "$seven_amendment" && -z "$seven_completion" ]] || usage
   [[ -z "$followon_amendment" && -z "$followon_completion" ]] || usage
+  [[ -z "$current_ollama_amendment" && -z "$current_ollama_completion" ]] || usage
   [[ -z "$input_manifest" && -z "$authorized_sha" ]] || usage
   exec "$PY" "$PAYLOAD_SOURCE" contract-self-test
 fi
@@ -159,6 +174,7 @@ if [[ "$mode" == 'prepare' ]]; then
   [[ -n "$core_completion" && -n "$extended_completion" && -n "$native_completion" ]] || usage
   [[ -n "$seven_amendment" && -n "$seven_completion" ]] || usage
   [[ -n "$followon_amendment" && -n "$followon_completion" ]] || usage
+  [[ -n "$current_ollama_amendment" && -n "$current_ollama_completion" ]] || usage
   [[ -z "$input_manifest" && -z "$authorized_sha" ]] || usage
   recovery_args=()
   for recovery_completion in "${recovery_completions[@]}"; do
@@ -176,7 +192,9 @@ if [[ "$mode" == 'prepare' ]]; then
     --seven-output-policy-amendment "$seven_amendment" \
     --phase6-seven-output-policy-completion "$seven_completion" \
     --followon-gate5-amendment "$followon_amendment" \
-    --phase6-followon-completion "$followon_completion"
+    --phase6-followon-completion "$followon_completion" \
+    --current-ollama-gate5-amendment "$current_ollama_amendment" \
+    --phase6-current-ollama-completion "$current_ollama_completion"
 fi
 
 [[ "$mode" == 'launch' && -n "$input_manifest" && -n "$authorized_sha" ]] || usage
@@ -185,6 +203,7 @@ fi
 [[ ${#recovery_completions[@]} -eq 0 ]] || usage
 [[ -z "$seven_amendment" && -z "$seven_completion" ]] || usage
 [[ -z "$followon_amendment" && -z "$followon_completion" ]] || usage
+[[ -z "$current_ollama_amendment" && -z "$current_ollama_completion" ]] || usage
 [[ "$authorized_sha" =~ ^[0-9a-f]{64}$ ]] || usage
 
 INPUT_MANIFEST="$($PY - "$input_manifest" "$authorized_sha" "$PAYLOAD_SOURCE" <<'PY'

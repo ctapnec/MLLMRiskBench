@@ -9,6 +9,8 @@ from typing import Sequence
 
 import pytest
 
+from experiments.local_campaign import current_ollama_phase6 as phase6
+
 from experiments.local_campaign.current_ollama import (
     CURRENT_OLLAMA_IMAGE_MODELS,
     CURRENT_OLLAMA_MODELS,
@@ -22,9 +24,14 @@ from experiments.local_campaign.current_ollama import (
 from experiments.local_campaign.current_ollama_gate5 import _base_argv, _lane_contract
 from experiments.local_campaign.current_ollama_phase6 import (
     FAILURE_SCHEMA,
+    PHASE7_INPUT_SCHEMA,
+    _canonical,
     _counts_from_level1,
+    _create_json,
+    _descriptor,
     _probe_args,
     _retain_failure,
+    validate_completion,
 )
 
 
@@ -286,6 +293,147 @@ def test_current_ollama_phase6_retains_typed_pre_runner_failure(tmp_path: Path) 
     assert value["successful_target_generations"] is None
     assert value["missing_responses"] is None
     assert value["paid_provider_calls"] == 0
+
+
+def test_current_ollama_phase7_input_retains_missing_and_failed_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    commit = "1" * 40
+    gate5_root = tmp_path / "phase5-ollama-fixture"
+    gate5_root.mkdir()
+    gate5_path = gate5_root / "gate5-current-ollama-amendment.json"
+    gate5_path.write_text("{}\n", encoding="ascii")
+    (gate5_root / ".exit").write_text("0\n", encoding="ascii")
+    gate5_sha = hashlib.sha256(gate5_path.read_bytes()).hexdigest()
+    typed = {
+        lane: {
+            "disposition": "unavailable",
+            "reason_code": "target_transport_text_only_for_image_source",
+            "reason": (
+                "GPTGeoChat requires image-bearing source inputs, while this exact "
+                "Ollama target is text-only."
+            ),
+        }
+        for lane in CURRENT_OLLAMA_TYPED_TERMINAL_LANES
+    }
+    gate5 = {
+        "project_commit": commit,
+        "project_revision": {"sha256": "2" * 64},
+        "source_conformance": {"sha256": "3" * 64},
+        "typed_terminal_lanes": typed,
+    }
+    monkeypatch.setattr(phase6, "validate_amendment", lambda *_args, **_kwargs: gate5)
+
+    runner_root = tmp_path / "runs" / "thesis" / "runner"
+    runner_root.mkdir(parents=True)
+    control = tmp_path / "phase6-current-ollama-20260829T000000Z"
+    (control / "lanes").mkdir(parents=True)
+    status_rows: list[dict[str, object]] = []
+    for lane in CURRENT_OLLAMA_TYPED_TERMINAL_LANES:
+        status_rows.append(
+            {
+                "lane_id": lane,
+                "status": "unavailable",
+                "reason_code": typed[lane]["reason_code"],
+                "reason": typed[lane]["reason"],
+                "target_attempts": 0,
+                "successful_target_generations": 0,
+                "missing_responses": 0,
+            }
+        )
+    complete_lane = CURRENT_OLLAMA_RUNNABLE_LANES[0]
+    for lane in CURRENT_OLLAMA_RUNNABLE_LANES:
+        result_root = runner_root / lane
+        lane_root = control / "lanes" / lane
+        lane_root.mkdir()
+        if lane == complete_lane:
+            result_root.mkdir()
+            _create_json(result_root / "fixture.grid.json", {})
+            _create_json(result_root / "eligibility-fixture.eligibility.json", {})
+            _create_json(result_root / "fixture.complete.json", {})
+            level1 = lane_root / "level1.json"
+            _create_json(
+                level1,
+                {"counts": {"judgment_records": {"completed": 10, "missing_responses": 3}}},
+            )
+            status_rows.append(
+                {
+                    "lane_id": lane,
+                    "status": "complete",
+                    "result_root": str(result_root),
+                    "level1": _descriptor(level1, label="fixture Level 1"),
+                    "target_attempts": 10,
+                    "successful_target_generations": 7,
+                    "missing_responses": 3,
+                }
+            )
+            continue
+        failure = _retain_failure(
+            lane=lane,
+            lane_root=lane_root,
+            result_root=result_root,
+            gate5_path=gate5_path,
+            gate5_sha256=gate5_sha,
+            expected_commit=commit,
+            stage="preflight",
+            error=ValueError("fixture lane failure"),
+        )
+        status_rows.append(
+            {
+                "lane_id": lane,
+                "status": "failed",
+                "stage": "preflight",
+                "error": "fixture lane failure",
+                "result_root": str(result_root),
+                "failure": failure,
+                "target_attempts": None,
+                "successful_target_generations": None,
+                "missing_responses": None,
+            }
+        )
+    status_path = control / "lanes.jsonl"
+    status_path.write_bytes(b"".join(_canonical(row) for row in status_rows))
+    completion_path = control / "completion.json"
+    _create_json(
+        completion_path,
+        {
+            "schema": phase6.SCHEMA,
+            "status": "complete_with_failures",
+            "project_commit": commit,
+            "gate5": {"path": str(gate5_path), "sha256": gate5_sha},
+            "runnable_lanes": len(CURRENT_OLLAMA_RUNNABLE_LANES),
+            "typed_terminal_lanes": len(CURRENT_OLLAMA_TYPED_TERMINAL_LANES),
+            "completed_lanes": 1,
+            "failed_lanes": len(CURRENT_OLLAMA_RUNNABLE_LANES) - 1,
+            "target_execution": {
+                "target_attempts": 10,
+                "successful_target_generations": 7,
+                "missing_responses": 3,
+                "accounting_scope": "completion_bound_level1_records",
+            },
+            "paid_provider_calls": 0,
+            "status_rows": _descriptor(status_path, label="fixture status rows"),
+        },
+    )
+    (control / ".exit").write_text("1\n", encoding="ascii")
+
+    value = validate_completion(
+        gate5_path=gate5_path,
+        completion_path=completion_path,
+        runner_root=runner_root,
+    )
+    assert value["schema"] == PHASE7_INPUT_SCHEMA
+    assert value["metric_lane_order"] == [complete_lane]
+    assert len(value["metric_grids"]) == 1
+    assert len(value["metric_completion_markers"]) == 1
+    assert len(value["metric_eligibility_plans"]) == 1
+    assert value["target_execution"]["missing_responses"] == 3
+    assert value["terminal_states"][complete_lane] == "measured_complete"
+    assert len(value["excluded_from_metrics"]) == 13
+    assert set(value["lane_order"]) == {
+        *CURRENT_OLLAMA_RUNNABLE_LANES,
+        *CURRENT_OLLAMA_TYPED_TERMINAL_LANES,
+    }
 
 
 def test_current_ollama_phase6_is_generated_and_rechecks_each_lane() -> None:

@@ -46,6 +46,8 @@ SEVEN_AMENDMENT=''
 SEVEN_COMPLETION=''
 FOLLOWON_AMENDMENT=''
 FOLLOWON_COMPLETION=''
+CURRENT_OLLAMA_AMENDMENT=''
+CURRENT_OLLAMA_COMPLETION=''
 WATCHER_ARGS=("$@")
 while (( $# )); do
   case "$1" in
@@ -79,14 +81,29 @@ while (( $# )); do
       FOLLOWON_COMPLETION="$2"
       shift 2
       ;;
+    --current-ollama-gate5-amendment)
+      [[ $# -ge 2 && -z "$CURRENT_OLLAMA_AMENDMENT" ]] || exit 2
+      CURRENT_OLLAMA_AMENDMENT="$2"
+      shift 2
+      ;;
+    --phase6-current-ollama-completion)
+      [[ $# -ge 2 && -z "$CURRENT_OLLAMA_COMPLETION" ]] || exit 2
+      CURRENT_OLLAMA_COMPLETION="$2"
+      shift 2
+      ;;
     *) exit 2 ;;
   esac
 done
 [[ -n "$PHASE6_SEQUENCE_COMPLETION" ]] || exit 2
 [[ -n "$SEVEN_AMENDMENT" && -n "$SEVEN_COMPLETION" ]] || exit 2
 [[ -n "$FOLLOWON_AMENDMENT" && -n "$FOLLOWON_COMPLETION" ]] || exit 2
+[[ -n "$CURRENT_OLLAMA_AMENDMENT" && -n "$CURRENT_OLLAMA_COMPLETION" ]] || exit 2
 case "$PHASE6_SEQUENCE_COMPLETION" in
   /*/completion.json) PHASE6_ROOT="${PHASE6_SEQUENCE_COMPLETION%/completion.json}" ;;
+  *) exit 2 ;;
+esac
+case "$CURRENT_OLLAMA_COMPLETION" in
+  /*/completion.json) CURRENT_OLLAMA_ROOT="${CURRENT_OLLAMA_COMPLETION%/completion.json}" ;;
   *) exit 2 ;;
 esac
 
@@ -444,12 +461,20 @@ PY
 
 printf 'PHASE7_WATCHER_CONTROL_ROOT=%s\n' "$CONTROL_ROOT"
 printf 'PHASE7_WATCHER_WAITING_FOR_PHASE6=%s\n' "$PHASE6_ROOT"
+printf 'PHASE7_WATCHER_WAITING_FOR_CURRENT_OLLAMA=%s\n' "$CURRENT_OLLAMA_ROOT"
 controller_hard_stop_check await-phase6
+current_ollama_terminal_seen='no'
 phase6_terminal_seen='no'
 while true; do
   controller_hard_stop_check await-phase6
   if [[ -f "$PHASE6_ROOT/.exit" && ! -L "$PHASE6_ROOT/.exit" ]]; then
     phase6_terminal_seen='yes'
+  fi
+  if [[ -f "$CURRENT_OLLAMA_ROOT/.exit" && ! -L "$CURRENT_OLLAMA_ROOT/.exit" && \
+        -f "$CURRENT_OLLAMA_COMPLETION" && ! -L "$CURRENT_OLLAMA_COMPLETION" ]]; then
+    current_ollama_terminal_seen='yes'
+  fi
+  if [[ "$phase6_terminal_seen" = 'yes' && "$current_ollama_terminal_seen" = 'yes' ]]; then
     break
   fi
   if tmux -L "$PHASE6_SOCKET" has-session -t "$PHASE6_SESSION" 2>/dev/null; then
@@ -459,6 +484,7 @@ while true; do
   sleep 30
 done
 test "$phase6_terminal_seen" = 'yes'
+test "$current_ollama_terminal_seen" = 'yes'
 controller_hard_stop_check await-phase6
 controller_task_pass await-phase6
 
@@ -845,7 +871,9 @@ bash "$WRAPPER" --prepare-input-manifest "$INPUT_MANIFEST" \
   --seven-output-policy-amendment "$SEVEN_AMENDMENT" \
   --phase6-seven-output-policy-completion "$SEVEN_COMPLETION" \
   --followon-gate5-amendment "$FOLLOWON_AMENDMENT" \
-  --phase6-followon-completion "$FOLLOWON_COMPLETION" > "$PREPARE_RESULT"
+  --phase6-followon-completion "$FOLLOWON_COMPLETION" \
+  --current-ollama-gate5-amendment "$CURRENT_OLLAMA_AMENDMENT" \
+  --phase6-current-ollama-completion "$CURRENT_OLLAMA_COMPLETION" > "$PREPARE_RESULT"
 
 INPUT_SHA="$(
   "$PY" - "$PREPARE_RESULT" "$INPUT_MANIFEST" "$PAYLOAD" <<'PY'
@@ -972,7 +1000,7 @@ if (
     or type(result.get("runner_lanes")) is not int
     or type(result.get("metric_runner_lanes")) is not int
     or not isinstance(result.get("native_outcomes"), dict)
-    or result.get("campaign_terminal_rows") != 65
+    or result.get("campaign_terminal_rows") != 76
     or result.get("campaign_terminal_status")
     not in {"complete", "complete_with_failures"}
     or result.get("authorization_required_before_launch") is not True
@@ -1201,6 +1229,9 @@ expected_fields = {
     "followon_metric_revision_strata",
     "seven_output_policy_terminal_states",
     "seven_output_policy_metric_revision_strata",
+    "current_ollama_terminal_states",
+    "current_ollama_metric_revision_strata",
+    "current_ollama_target_execution",
     "target_calls",
     "judge_calls",
     "provider_http_attempts",
@@ -1318,10 +1349,10 @@ if (
     or campaign_inventory.get("cross_revision_pooling_permitted") is not False
     or campaign_inventory.get("cross_source_pooling_permitted") is not False
     or campaign_inventory.get("cohort_counts")
-    != {"canonical": 46, "output_policy_amendment": 7,
-        "followon_prepared": 3, "native": 9}
+    != {"canonical": 46, "output_policy_amendment": 4,
+        "followon_prepared": 3, "current_ollama": 14, "native": 9}
     or not isinstance(campaign_inventory.get("rows"), list)
-    or len(campaign_inventory["rows"]) != 65
+    or len(campaign_inventory["rows"]) != 76
 ):
     raise SystemExit("campaign terminal inventory changed")
 for index, artifact in enumerate(artifacts):
@@ -1352,6 +1383,7 @@ if not isinstance(followon, dict):
 expected_followon_states = followon.get("terminal_states")
 expected_followon_strata = followon.get("revision_strata")
 seven = input_manifest.get("seven_output_policy_amendment")
+current_ollama = input_manifest.get("current_ollama")
 if (
     completion.get("followon_terminal_states") != expected_followon_states
     or completion.get("followon_metric_revision_strata")
@@ -1361,8 +1393,15 @@ if (
     != seven.get("terminal_states")
     or completion.get("seven_output_policy_metric_revision_strata")
     != seven.get("revision_strata")
+    or not isinstance(current_ollama, dict)
+    or completion.get("current_ollama_terminal_states")
+    != current_ollama.get("terminal_states")
+    or completion.get("current_ollama_metric_revision_strata")
+    != current_ollama.get("revision_strata")
+    or completion.get("current_ollama_target_execution")
+    != current_ollama.get("target_execution")
 ):
-    raise SystemExit("Phase 7 copied amendment states or revision strata differ")
+    raise SystemExit("Phase 7 copied cohort states or revision strata differ")
 
 value = {
     "schema": "ura-phase7-after-phase6-completion/1",
