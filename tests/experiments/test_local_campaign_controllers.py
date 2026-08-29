@@ -2249,6 +2249,36 @@ def test_phase7_rr_pair_dispatch_is_conditioned_on_current_measured_cells() -> N
         assert "RR_OBSERVED_PROJECT_COMMIT,\n            EXPECTED_COMMIT," not in (
             reverted_continuity
         )
+    retained_start = source.index("RETAINED_PHASE6_PAYLOADS_BY_COMMIT = {")
+    retained_end = source.index("\n\nCORE_LANES", retained_start)
+    retained = source[retained_start:retained_end]
+    retained_commit = "c62e027b0143d1db29c57f66605ac3d8dc23f11a"
+    retained_core_sha = (
+        "d4d7b17bab706665688b4fd49fc55eb7be9ac25906c21224805eff6accb6c755"
+    )
+    retained_extended_sha = (
+        "e94c4be93eb1bfcd2e4b5c17cbb5fbaf32b56f97cdb55a4e3ff3ffaf501e2903"
+    )
+    for value in (
+        retained_commit,
+        retained_core_sha,
+        retained_extended_sha,
+        '"bytes": 303543',
+        '"bytes": 330057',
+    ):
+        assert value in retained
+    payload_start = source.index("def require_frozen_phase6_payload(")
+    payload_end = source.index("\ndef ", payload_start + 4)
+    payload_contract = source[payload_start:payload_end]
+    assert "expected_commit: str" in payload_contract
+    assert "expected_commit == EXPECTED_COMMIT" in payload_contract
+    assert "RETAINED_PHASE6_PAYLOADS_BY_COMMIT.get(" in payload_contract
+    assert "if expected is None:" in payload_contract
+    assert source.count('expected_commit=code_identity["expected_commit"]') >= 3
+    reverted_retained = retained.replace(retained_core_sha, "0" * 64, 1)
+    assert reverted_retained != retained
+    with pytest.raises(AssertionError):
+        assert retained_core_sha in reverted_retained
     assert '"10-defense-local.json"' in source
     assert '"14-defense-local.json"' not in source
     assert 'set(projection) != {"path", "file", "sha256", "bytes"}' in source
@@ -2781,6 +2811,37 @@ def test_phase8_accepts_current_rr_and_rejects_only_historical_terminal_rows() -
         assert "RR_OBSERVED_PROJECT_COMMIT,\n            EXPECTED_COMMIT," not in (
             reverted_continuity
         )
+    retained_start = source.index("RETAINED_PHASE6_PAYLOADS_BY_COMMIT = {")
+    retained_end = source.index("\nFROZEN_PHASE7_PAYLOAD", retained_start)
+    retained = source[retained_start:retained_end]
+    retained_commit = "c62e027b0143d1db29c57f66605ac3d8dc23f11a"
+    retained_core_sha = (
+        "d4d7b17bab706665688b4fd49fc55eb7be9ac25906c21224805eff6accb6c755"
+    )
+    retained_extended_sha = (
+        "e94c4be93eb1bfcd2e4b5c17cbb5fbaf32b56f97cdb55a4e3ff3ffaf501e2903"
+    )
+    for value in (
+        retained_commit,
+        retained_core_sha,
+        retained_extended_sha,
+        '"bytes": 303543',
+        '"bytes": 330057',
+    ):
+        assert value in retained
+    payload_start = source.index("def phase6_payload_identity(")
+    payload_end = source.index("\ndef ", payload_start + 4)
+    payload_contract = source[payload_start:payload_end]
+    assert "expected_commit == EXPECTED_COMMIT" in payload_contract
+    assert "RETAINED_PHASE6_PAYLOADS_BY_COMMIT.get(expected_commit, {})" in (
+        payload_contract
+    )
+    assert "if retained is None:" in payload_contract
+    assert 'expected_commit=historical_identity["expected_commit"]' in source
+    reverted_retained = retained.replace(retained_extended_sha, "0" * 64, 1)
+    assert reverted_retained != retained
+    with pytest.raises(AssertionError):
+        assert retained_extended_sha in reverted_retained
     assert '"10-defense-local.json"' in source
     assert '"14-defense-local.json"' not in source
     assert "validate_llava_pair_artifact(" in source

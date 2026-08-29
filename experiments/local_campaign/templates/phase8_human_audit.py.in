@@ -87,6 +87,18 @@ FROZEN_PHASE6_PAYLOADS = {
         "bytes": @@PAYLOAD_BYTES:phase6_native_diagnostics.sh:PHASE6_NATIVE_PAYLOAD@@,
     },
 }
+RETAINED_PHASE6_PAYLOADS_BY_COMMIT = {
+    "c62e027b0143d1db29c57f66605ac3d8dc23f11a": {
+        "core": {
+            "sha256": "d4d7b17bab706665688b4fd49fc55eb7be9ac25906c21224805eff6accb6c755",
+            "bytes": 303543,
+        },
+        "extended": {
+            "sha256": "e94c4be93eb1bfcd2e4b5c17cbb5fbaf32b56f97cdb55a4e3ff3ffaf501e2903",
+            "bytes": 330057,
+        },
+    }
+}
 FROZEN_PHASE7_PAYLOAD = {
     "sha256": "@@SHA:phase7_analysis.py@@",
     "bytes": @@BYTES:phase7_analysis.py@@,
@@ -974,6 +986,21 @@ def require_descriptor_identity(
         or value.get("bytes") != expected.get("bytes")
     ):
         raise Phase8Error(f"{label} is not the frozen executed payload")
+
+
+def phase6_payload_identity(
+    controller: str, *, expected_commit: str, label: str
+) -> Mapping[str, Any]:
+    if expected_commit == EXPECTED_COMMIT:
+        return FROZEN_PHASE6_PAYLOADS[controller]
+    retained = RETAINED_PHASE6_PAYLOADS_BY_COMMIT.get(expected_commit, {}).get(
+        controller
+    )
+    if retained is None:
+        raise Phase8Error(
+            f"{label} has no retained payload identity for {expected_commit}"
+        )
+    return retained
 
 
 def descriptor_file(raw: object, *, label: str) -> Path:
@@ -3680,7 +3707,11 @@ def validate_core_completion(
     }
     require_descriptor_identity(
         value["payload"],
-        expected=FROZEN_PHASE6_PAYLOADS["core"],
+        expected=phase6_payload_identity(
+            "core",
+            expected_commit=historical_identity["expected_commit"],
+            label="Phase 6 core payload",
+        ),
         label="Phase 6 core payload",
     )
     copied_gate5 = strict_loads(
@@ -4428,7 +4459,11 @@ def validate_extended_completion(
     )
     require_descriptor_identity(
         value["payload"],
-        expected=FROZEN_PHASE6_PAYLOADS["extended"],
+        expected=phase6_payload_identity(
+            "extended",
+            expected_commit=historical_identity["expected_commit"],
+            label="Phase 6 extended payload",
+        ),
         label="Phase 6 extended payload",
     )
     summary_path, summary_payload = extended_descriptor_bytes(
@@ -4843,7 +4878,11 @@ def validate_native_completion(
     )
     require_descriptor_identity(
         value["payload"],
-        expected=FROZEN_PHASE6_PAYLOADS["native"],
+        expected=phase6_payload_identity(
+            "native",
+            expected_commit=EXPECTED_COMMIT,
+            label="Phase 6 native payload",
+        ),
         label="Phase 6 native payload",
     )
     launch_path, launch_payload = descriptor_bytes(
@@ -15194,6 +15233,35 @@ def self_test() -> int:
             "bytes": len(extended_payload_bytes),
         } != FROZEN_PHASE6_PAYLOADS["extended"]:
             raise AssertionError("frozen Phase 6 embedded payload identities differ")
+        retained_commit = "c62e027b0143d1db29c57f66605ac3d8dc23f11a"
+        if phase6_payload_identity(
+            "core",
+            expected_commit=retained_commit,
+            label="retained Phase 6 core payload",
+        ) != RETAINED_PHASE6_PAYLOADS_BY_COMMIT[retained_commit]["core"]:
+            raise AssertionError("retained Phase 6 core payload identity differs")
+        if phase6_payload_identity(
+            "extended",
+            expected_commit=retained_commit,
+            label="retained Phase 6 extended payload",
+        ) != RETAINED_PHASE6_PAYLOADS_BY_COMMIT[retained_commit]["extended"]:
+            raise AssertionError("retained Phase 6 extended payload identity differs")
+        rejected(
+            lambda: phase6_payload_identity(
+                "native",
+                expected_commit=retained_commit,
+                label="retained Phase 6 native payload",
+            ),
+            "retained Phase 6 native payload mutation",
+        )
+        rejected(
+            lambda: phase6_payload_identity(
+                "core",
+                expected_commit="0" * 40,
+                label="unknown-revision Phase 6 core payload",
+            ),
+            "unknown-revision Phase 6 payload mutation",
+        )
         passed()
 
         def self_test_lane_spec(lane: str, *, schema: str) -> dict[str, Any]:

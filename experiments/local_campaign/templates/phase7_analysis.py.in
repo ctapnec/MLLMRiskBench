@@ -437,6 +437,18 @@ FROZEN_PHASE6_PAYLOADS = {
         "bytes": @@PAYLOAD_BYTES:phase6_native_diagnostics.sh:PHASE6_NATIVE_PAYLOAD@@,
     },
 }
+RETAINED_PHASE6_PAYLOADS_BY_COMMIT = {
+    "c62e027b0143d1db29c57f66605ac3d8dc23f11a": {
+        "core": {
+            "sha256": "d4d7b17bab706665688b4fd49fc55eb7be9ac25906c21224805eff6accb6c755",
+            "bytes": 303543,
+        },
+        "extended": {
+            "sha256": "e94c4be93eb1bfcd2e4b5c17cbb5fbaf32b56f97cdb55a4e3ff3ffaf501e2903",
+            "bytes": 330057,
+        },
+    }
+}
 
 CORE_LANES = (
     "local-qwen3-vl-text-primary-100",
@@ -2174,9 +2186,18 @@ def descriptor_identity(value: object, *, label: str) -> tuple[str, int]:
 
 
 def require_frozen_phase6_payload(
-    value: object, *, controller: str, label: str
+    value: object, *, controller: str, expected_commit: str, label: str
 ) -> None:
-    expected = FROZEN_PHASE6_PAYLOADS[controller]
+    if expected_commit == EXPECTED_COMMIT:
+        expected = FROZEN_PHASE6_PAYLOADS[controller]
+    else:
+        expected = RETAINED_PHASE6_PAYLOADS_BY_COMMIT.get(
+            expected_commit, {}
+        ).get(controller)
+        if expected is None:
+            raise Phase7Error(
+                f"{label} has no retained payload identity for {expected_commit}"
+            )
     if descriptor_identity(value, label=label) != (
         expected["sha256"],
         expected["bytes"],
@@ -5651,6 +5672,7 @@ def validate_core_controller(
     require_frozen_phase6_payload(
         completion.get("payload"),
         controller="core",
+        expected_commit=code_identity["expected_commit"],
         label="Phase 6 core payload",
     )
     if (
@@ -6432,6 +6454,7 @@ def validate_extended_controller(
     require_frozen_phase6_payload(
         completion.get("payload"),
         controller="extended",
+        expected_commit=code_identity["expected_commit"],
         label="Phase 6 extended payload",
     )
     if (
@@ -6933,6 +6956,7 @@ def validate_native_controller(
     require_frozen_phase6_payload(
         completion.get("payload"),
         controller="native",
+        expected_commit=code_identity["expected_commit"],
         label="Phase 6 native payload",
     )
     if payload_path != control / "payload.py":
@@ -17324,6 +17348,7 @@ def contract_self_test() -> int:
         require_frozen_phase6_payload(
             valid_payload,
             controller=controller,
+            expected_commit=EXPECTED_COMMIT,
             label=f"Phase 6 {controller} payload",
         )
         for mutation_name, field, replacement in (
@@ -17339,10 +17364,40 @@ def contract_self_test() -> int:
                     require_frozen_phase6_payload(
                         mutation,
                         controller=controller,
+                        expected_commit=EXPECTED_COMMIT,
                         label=f"Phase 6 {controller} payload",
                     )
                 ),
             )
+
+    retained_commit = "c62e027b0143d1db29c57f66605ac3d8dc23f11a"
+    for controller, identity in RETAINED_PHASE6_PAYLOADS_BY_COMMIT[
+        retained_commit
+    ].items():
+        require_frozen_phase6_payload(
+            {"path": f"/retained/{controller}", **identity},
+            controller=controller,
+            expected_commit=retained_commit,
+            label=f"retained Phase 6 {controller} payload",
+        )
+    must_fail(
+        "phase6-retained-native-payload",
+        lambda: require_frozen_phase6_payload(
+            {"path": "/retained/native", **FROZEN_PHASE6_PAYLOADS["native"]},
+            controller="native",
+            expected_commit=retained_commit,
+            label="retained Phase 6 native payload",
+        ),
+    )
+    must_fail(
+        "phase6-unknown-revision-payload",
+        lambda: require_frozen_phase6_payload(
+            {"path": "/retained/core", **FROZEN_PHASE6_PAYLOADS["core"]},
+            controller="core",
+            expected_commit="0" * 40,
+            label="unknown-revision Phase 6 core payload",
+        ),
+    )
 
     order_contracts = {
         "phase6-core-lanes": CORE_LANES,
