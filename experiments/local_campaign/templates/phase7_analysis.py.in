@@ -3260,6 +3260,7 @@ def validate_rr_runtime_project_continuity(
     terminal_descriptor: Mapping[str, Any] | None,
     *,
     project_root: Path,
+    covered_commit: str,
     label: str,
 ) -> None:
     if terminal_descriptor is None:
@@ -3318,7 +3319,7 @@ def validate_rr_runtime_project_continuity(
             "diff",
             "--name-only",
             RR_OBSERVED_PROJECT_COMMIT,
-            EXPECTED_COMMIT,
+            covered_commit,
             "--",
             "src/ura/targets/local.py",
             "experiments/run_matrix.py",
@@ -4870,6 +4871,7 @@ def validate_gate5(
     validate_rr_runtime_project_continuity(
         profile["target_runtime_terminal_artifact"],
         project_root=project,
+        covered_commit=expected_commit,
         label="covered manifest",
     )
     by_lane = {str(row.get("lane_id")): row for row in rows}
@@ -16180,13 +16182,32 @@ def contract_self_test() -> int:
 
         valid_continuity = continuity_artifact("valid-continuity")
         original_git_output = globals()["git_output"]
+        historical_covered_commit = "1" * 40
+        observed_git_calls: list[tuple[Any, ...]] = []
         try:
-            globals()["git_output"] = lambda *_args: ""
+            globals()["git_output"] = lambda *args: (
+                observed_git_calls.append(args) or ""
+            )
             validate_rr_runtime_project_continuity(
                 valid_continuity,
                 project_root=deployed,
+                covered_commit=historical_covered_commit,
                 label="RR continuity self-test",
             )
+            if (
+                len(observed_git_calls) != 1
+                or observed_git_calls[0][1:6]
+                != (
+                    "diff",
+                    "--name-only",
+                    RR_OBSERVED_PROJECT_COMMIT,
+                    historical_covered_commit,
+                    "--",
+                )
+            ):
+                raise Phase7Error(
+                    "RR continuity did not use the covered manifest commit"
+                )
             relocated_config_path = temp / "relocated-local-llava-rr.json"
             relocated_config_path.write_bytes(config_payload)
             must_fail(
@@ -16197,6 +16218,7 @@ def contract_self_test() -> int:
                         local_config=descriptor(relocated_config_path),
                     ),
                     project_root=deployed,
+                    covered_commit=historical_covered_commit,
                     label="RR continuity self-test",
                 ),
             )
@@ -16213,6 +16235,7 @@ def contract_self_test() -> int:
                         local_config=descriptor(wrong_config_path),
                     ),
                     project_root=wrong_config_path.parent.parent,
+                    covered_commit=historical_covered_commit,
                     label="RR continuity self-test",
                 ),
             )
@@ -16223,6 +16246,7 @@ def contract_self_test() -> int:
                         "wrong-observed-commit", observed_commit="0" * 40
                     ),
                     project_root=deployed,
+                    covered_commit=historical_covered_commit,
                     label="RR continuity self-test",
                 ),
             )
@@ -16234,6 +16258,7 @@ def contract_self_test() -> int:
                 lambda: validate_rr_runtime_project_continuity(
                     valid_continuity,
                     project_root=deployed,
+                    covered_commit=historical_covered_commit,
                     label="RR continuity self-test",
                 ),
             )

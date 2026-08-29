@@ -2231,7 +2231,24 @@ def test_phase7_rr_pair_dispatch_is_conditioned_on_current_measured_cells() -> N
     assert '"diff",' in source
     gate5_start = source.index("def validate_gate5(")
     gate5_end = source.index("def validate_exact_source_portfolio(", gate5_start)
-    assert "validate_rr_runtime_project_continuity(" in source[gate5_start:gate5_end]
+    gate5 = source[gate5_start:gate5_end]
+    assert "validate_rr_runtime_project_continuity(" in gate5
+    assert "covered_commit=expected_commit" in gate5
+    continuity_start = source.index("def validate_rr_runtime_project_continuity(")
+    continuity_end = source.index("\ndef ", continuity_start + 4)
+    continuity = source[continuity_start:continuity_end]
+    assert "covered_commit: str" in continuity
+    assert "RR_OBSERVED_PROJECT_COMMIT,\n            covered_commit," in continuity
+    reverted_continuity = continuity.replace(
+        "RR_OBSERVED_PROJECT_COMMIT,\n            covered_commit,",
+        "RR_OBSERVED_PROJECT_COMMIT,\n            EXPECTED_COMMIT,",
+        1,
+    )
+    assert reverted_continuity != continuity
+    with pytest.raises(AssertionError):
+        assert "RR_OBSERVED_PROJECT_COMMIT,\n            EXPECTED_COMMIT," not in (
+            reverted_continuity
+        )
     assert '"10-defense-local.json"' in source
     assert '"14-defense-local.json"' not in source
     assert 'set(projection) != {"path", "file", "sha256", "bytes"}' in source
@@ -2746,7 +2763,24 @@ def test_phase8_accepts_current_rr_and_rejects_only_historical_terminal_rows() -
     assert "RR_OBSERVED_PROJECT_COMMIT" in source
     gate5_start = source.index("def validate_gate5(")
     gate5_end = source.index("def validate_core_completion(", gate5_start)
-    assert "_validate_rr_runtime_project_continuity(" in source[gate5_start:gate5_end]
+    gate5 = source[gate5_start:gate5_end]
+    assert "_validate_rr_runtime_project_continuity(" in gate5
+    assert 'covered_commit=code_identity["expected_commit"]' in gate5
+    continuity_start = source.index("def _validate_rr_runtime_project_continuity(")
+    continuity_end = source.index("\ndef ", continuity_start + 4)
+    continuity = source[continuity_start:continuity_end]
+    assert "covered_commit: str" in continuity
+    assert "RR_OBSERVED_PROJECT_COMMIT,\n            covered_commit," in continuity
+    reverted_continuity = continuity.replace(
+        "RR_OBSERVED_PROJECT_COMMIT,\n            covered_commit,",
+        "RR_OBSERVED_PROJECT_COMMIT,\n            EXPECTED_COMMIT,",
+        1,
+    )
+    assert reverted_continuity != continuity
+    with pytest.raises(AssertionError):
+        assert "RR_OBSERVED_PROJECT_COMMIT,\n            EXPECTED_COMMIT," not in (
+            reverted_continuity
+        )
     assert '"10-defense-local.json"' in source
     assert '"14-defense-local.json"' not in source
     assert "validate_llava_pair_artifact(" in source

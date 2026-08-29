@@ -1396,6 +1396,7 @@ def _validate_rr_runtime_project_continuity(
     terminal_descriptor: Mapping[str, Any] | None,
     *,
     project_root: Path,
+    covered_commit: str,
     label: str,
 ) -> None:
     if terminal_descriptor is None:
@@ -1458,7 +1459,7 @@ def _validate_rr_runtime_project_continuity(
             "diff",
             "--name-only",
             RR_OBSERVED_PROJECT_COMMIT,
-            EXPECTED_COMMIT,
+            covered_commit,
             "--",
             "src/ura/targets/local.py",
             "experiments/run_matrix.py",
@@ -2532,6 +2533,7 @@ def validate_gate5(
             validate_artifact=False,
         ),
         project_root=project_root,
+        covered_commit=code_identity["expected_commit"],
         label="Gate 5",
     )
     profile = _gate5_profile(runnable, terminal)
@@ -13683,13 +13685,32 @@ def self_test() -> int:
     write_new(rr_terminal_path, canonical(rr_terminal_artifact))
     rr_terminal_descriptor = descriptor(rr_terminal_path)
     original_git_output = globals()["git_output"]
+    historical_covered_commit = "1" * 40
+    observed_git_calls: list[tuple[Any, ...]] = []
     try:
-        globals()["git_output"] = lambda *_args: ""
+        globals()["git_output"] = lambda *args: (
+            observed_git_calls.append(args) or ""
+        )
         _validate_rr_runtime_project_continuity(
             rr_terminal_descriptor,
             project_root=rr_deployed_project,
+            covered_commit=historical_covered_commit,
             label="RR continuity self-test",
         )
+        if (
+            len(observed_git_calls) != 1
+            or observed_git_calls[0][1:6]
+            != (
+                "diff",
+                "--name-only",
+                RR_OBSERVED_PROJECT_COMMIT,
+                historical_covered_commit,
+                "--",
+            )
+        ):
+            raise AssertionError(
+                "RR continuity did not use the covered manifest commit"
+            )
         passed()
         relocated_config = rr_fixture_file(
             rr_fixture_root / "relocated-local-llava-rr.json",
@@ -13703,6 +13724,7 @@ def self_test() -> int:
             lambda: _validate_rr_runtime_project_continuity(
                 descriptor(relocated_artifact_path),
                 project_root=rr_deployed_project,
+                covered_commit=historical_covered_commit,
                 label="RR continuity self-test",
             ),
             "RR local config path mutation",
@@ -13720,6 +13742,7 @@ def self_test() -> int:
             lambda: _validate_rr_runtime_project_continuity(
                 descriptor(wrong_config_artifact_path),
                 project_root=wrong_project,
+                covered_commit=historical_covered_commit,
                 label="RR continuity self-test",
             ),
             "RR local config mutation",
@@ -13734,6 +13757,7 @@ def self_test() -> int:
             lambda: _validate_rr_runtime_project_continuity(
                 descriptor(wrong_commit_artifact_path),
                 project_root=rr_deployed_project,
+                covered_commit=historical_covered_commit,
                 label="RR continuity self-test",
             ),
             "RR observed commit mutation",
@@ -13745,6 +13769,7 @@ def self_test() -> int:
             lambda: _validate_rr_runtime_project_continuity(
                 rr_terminal_descriptor,
                 project_root=rr_deployed_project,
+                covered_commit=historical_covered_commit,
                 label="RR continuity self-test",
             ),
             "RR semantic-source diff mutation",
