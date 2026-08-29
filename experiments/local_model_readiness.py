@@ -56,13 +56,29 @@ TEXT_BANK = (
     ("product-9-3", "Reply with only the integer result of 9 times 3.", r"\b27\b"),
     ("difference-18-11", "Reply with only the integer result of 18 - 11.", r"\b7\b"),
     ("capital-france", "Reply with only the capital city of France.", r"\bparis\b"),
-    ("freezing-water", "Reply with only the Celsius freezing point of water as an integer.", r"\b0\b"),
+    (
+        "freezing-water",
+        "Reply with only the Celsius freezing point of water as an integer.",
+        r"\b0\b",
+    ),
     ("opposite-north", "Reply with only the opposite cardinal direction to north.", r"\bsouth\b"),
-    ("sort-integers", "Reply with only these integers in ascending order, comma-separated: 8, 2, 5.", r"\b2\s*,\s*5\s*,\s*8\b"),
+    (
+        "sort-integers",
+        "Reply with only these integers in ascending order, comma-separated: 8, 2, 5.",
+        r"\b2\s*,\s*5\s*,\s*8\b",
+    ),
     ("uppercase-thesis", "Reply with only the uppercase form of the word thesis.", r"\bTHESIS\b"),
-    ("earth-satellite", "Reply with only the common four-letter name of Earth's natural satellite.", r"\bmoon\b"),
+    (
+        "earth-satellite",
+        "Reply with only the common four-letter name of Earth's natural satellite.",
+        r"\bmoon\b",
+    ),
     ("days-week", "Reply with only the number of days in a standard week.", r"\b7\b"),
-    ("mix-red-blue", "Reply with only the common color produced by mixing red and blue.", r"\bpurple\b"),
+    (
+        "mix-red-blue",
+        "Reply with only the common color produced by mixing red and blue.",
+        r"\bpurple\b",
+    ),
     ("cat-spanish", "Reply with only the Spanish word for cat.", r"\bgato\b"),
     ("binary-six", "Reply with only the base-2 representation of decimal 6.", r"\b110\b"),
     ("even-sequence", "Reply with only the next integer in this sequence: 2, 4, 6.", r"\b8\b"),
@@ -87,8 +103,7 @@ COLORS = {
 
 def _canonical(value: object) -> bytes:
     return (
-        json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
-        + "\n"
+        json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n"
     ).encode("ascii")
 
 
@@ -145,9 +160,7 @@ def _image_ref(left: str, right: str) -> MediaRef:
 
 def _response_text(response: Response) -> str:
     return "\n".join(
-        turn.content or ""
-        for turn in response.output_turns
-        if turn.role == "assistant"
+        turn.content or "" for turn in response.output_turns if turn.role == "assistant"
     ).strip()
 
 
@@ -306,7 +319,11 @@ def main(argv: list[str] | None = None) -> int:
         if hashlib.sha256(raw).hexdigest() != args.sha256:
             raise ValueError("local-model readiness receipt SHA-256 differs")
         value = validate_readiness(_read_json(args.validate), expected_spec=args.expected_spec)
-        print(json.dumps({"readiness_id": value["readiness_id"], "status": "validated"}, sort_keys=True))
+        print(
+            json.dumps(
+                {"readiness_id": value["readiness_id"], "status": "validated"}, sort_keys=True
+            )
+        )
         return 0
     if not args.local or args.local_config is None:
         parser.error("readiness derivation requires --local and --local-config")
@@ -366,7 +383,9 @@ def main(argv: list[str] | None = None) -> int:
     acquisition: dict[str, object]
     if requirements.requirements:
         if not all(acquisition_values):
-            raise ModelAcquisitionError("vLLM readiness requires its exact acquisition plan and receipt")
+            raise ModelAcquisitionError(
+                "vLLM readiness requires its exact acquisition plan and receipt"
+            )
         import os
 
         os.environ.update(hf_offline_environment_overrides())
@@ -420,7 +439,12 @@ def main(argv: list[str] | None = None) -> int:
     with args.out.open("xb") as handle:
         handle.write(_canonical(receipt))
     digest = hashlib.sha256(args.out.read_bytes()).hexdigest()
-    print(json.dumps({"readiness_id": receipt["readiness_id"], "sha256": digest, "status": status}, sort_keys=True))
+    print(
+        json.dumps(
+            {"readiness_id": receipt["readiness_id"], "sha256": digest, "status": status},
+            sort_keys=True,
+        )
+    )
     return 0 if status == "verified" else 1
 
 
