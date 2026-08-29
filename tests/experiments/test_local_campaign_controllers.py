@@ -6499,3 +6499,45 @@ def test_local_campaign_plan_documents_bounded_controls_and_gate7() -> None:
         assert changed != plan
         with pytest.raises(AssertionError):
             assert_contract(changed)
+
+
+def test_phase7_retained_extended_root_collisions_are_registry_only() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase7_analysis.py.in"
+    ).read_text(encoding="utf-8")
+    required = (
+        "RETAINED_EXTENDED_LANE_PARENT_FAILURE_COMMIT",
+        "RETAINED_EXTENDED_MARKERLESS_FAILURE_LANES",
+        "unowned measured output root already exists:",
+        "if retained_lane_parent_failures:",
+        "if lane in retained_extended_collision_lanes:",
+        "pre_runner_failure_artifacts.append(descriptor(failure_path))",
+    )
+
+    def assert_contract(value: str) -> None:
+        _assert_source_contract(value, required)
+        retained_branch = value.split(
+            "if retained_lane_parent_failures:", 1
+        )[1].split("critical_paths = [", 1)[0]
+        assert "continue" in retained_branch
+        assert "rglob" not in retained_branch
+
+    assert_contract(source)
+    for original, replacement in (
+        (
+            "if retained_lane_parent_failures:",
+            "if False and retained_lane_parent_failures:",
+        ),
+        (
+            "pre_runner_failure_artifacts.append(descriptor(failure_path))",
+            "pre_runner_failure_artifacts.clear()",
+        ),
+    ):
+        changed = source.replace(original, replacement, 1)
+        assert changed != source
+        with pytest.raises(AssertionError):
+            assert_contract(changed)

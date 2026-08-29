@@ -449,6 +449,14 @@ RETAINED_PHASE6_PAYLOADS_BY_COMMIT = {
         },
     }
 }
+RETAINED_EXTENDED_LANE_PARENT_FAILURE_COMMIT = (
+    "c62e027b0143d1db29c57f66605ac3d8dc23f11a"
+)
+RETAINED_EXTENDED_MARKERLESS_FAILURE_LANES = {
+    "rjudge-ollama-rwkv-g1d-0p4b",
+    "rjudge-ollama-rwkv-g1f-2p9b",
+    "rjudge-ollama-rwkv-g1g-1p5b",
+}
 
 CORE_LANES = (
     "local-qwen3-vl-text-primary-100",
@@ -6528,6 +6536,10 @@ def validate_extended_controller(
     completion_markers: list[dict[str, Any]] = []
     failure_descriptors: dict[str, dict[str, Any]] = {}
     failure_values: dict[str, dict[str, Any]] = {}
+    retained_lane_parent_failures = (
+        code_identity["expected_commit"]
+        == RETAINED_EXTENDED_LANE_PARENT_FAILURE_COMMIT
+    )
     for lane in scheduled_extended_lanes:
         spec_path, _spec = specs[lane]
         if terminal_states[lane] == "failed":
@@ -6546,6 +6558,11 @@ def validate_extended_controller(
                 "lane_wall_time_exceeded"
                 if timed_out
                 else failure.get("error_type")
+            )
+            expected_failure_root = (
+                (runner_root / lane).resolve()
+                if retained_lane_parent_failures
+                else extended_result_root(runner_root, lane, control).resolve()
             )
             if (
                 set(failure) != EXTENDED_LANE_FAILURE_FIELDS
@@ -6569,13 +6586,24 @@ def validate_extended_controller(
                 )
                 or failure.get("lane_spec") != descriptor(spec_path)
                 or failure.get("result_root")
-                != str(extended_result_root(runner_root, lane, control).resolve())
+                != str(expected_failure_root)
                 or failure.get("approved_wall_time_seconds") != 86_400
                 or failure.get("evidence_eligible") is not False
                 or _spec.get("approved_caps", {}).get("wall_time_seconds")
                 != 86_400
                 or _spec.get("gate5", {}).get("manifest_sha256")
                 != sha256_file(gate5_manifest)
+                or (
+                    retained_lane_parent_failures
+                    and (
+                        timed_out
+                        or failure.get("error_type") != "ValueError"
+                        or failure.get("error")
+                        != f"unowned measured output root already exists: "
+                        f"{expected_failure_root}"
+                        or failure.get("exact_measured_argv") is not None
+                    )
+                )
             ):
                 raise Phase7Error(f"{lane}: typed lane failure changed")
             require_utc_timestamp(
@@ -6597,10 +6625,31 @@ def validate_extended_controller(
                 failure.get("result_root", ""),
                 label=f"{lane} failed Runner root",
             )
-            if result_root != extended_result_root(
-                runner_root, lane, control
-            ).resolve():
+            if result_root != expected_failure_root:
                 raise Phase7Error(f"{lane}: failed Runner root changed")
+            if retained_lane_parent_failures:
+                retained_marker = failure.get("pre_runner_failure")
+                if lane in RETAINED_EXTENDED_MARKERLESS_FAILURE_LANES:
+                    if retained_marker is not None:
+                        raise Phase7Error(
+                            f"{lane}: retained root-collision marker changed"
+                        )
+                else:
+                    validate_pre_runner_failure_artifact(
+                        retained_marker,
+                        lane=lane,
+                        attempt=attempt.name,
+                        result_root=result_root,
+                        expected_commit=str(code_identity["expected_commit"]),
+                        framework_lock_id=str(code_identity["framework_lock_id"]),
+                        gate5_manifest_sha256=sha256_file(gate5_manifest),
+                        lane_spec=failure["lane_spec"],
+                        exact_measured_argv=failed_state,
+                        failure=failure,
+                    )
+                failure_descriptors[lane] = descriptor(failure_path)
+                failure_values[lane] = failure
+                continue
             critical_paths = [
                 path
                 for pattern in (
@@ -10769,6 +10818,15 @@ def validate_runner_inventory(
         **dict(core_states),
         **dict(extended_states),
     }
+    retained_extended_collision_lanes = {
+        lane
+        for lane in scheduled_extended_lanes
+        if (
+            code_identity["expected_commit"]
+            == RETAINED_EXTENDED_LANE_PARENT_FAILURE_COMMIT
+            and normalized_states[lane] == "failed"
+        )
+    }
     if set(normalized_states.values()) - {"measured_complete", "failed"}:
         raise Phase7Error("Phase 6 runner terminal state is invalid")
     measured_lanes = tuple(
@@ -11046,6 +11104,9 @@ def validate_runner_inventory(
         _failure_path, failure_row = descriptor_object(
             failure_rows[lane], label=f"{lane} lifecycle controller failure"
         )
+        if lane in retained_extended_collision_lanes:
+            lifecycle_states[lane] = "failed"
+            continue
         candidate = Path(str(failure_row.get("result_root", "")))
         if not candidate.exists() and not candidate.is_symlink():
             raise Phase7Error(
@@ -11175,11 +11236,13 @@ def validate_runner_inventory(
         failure = controller_failure_by_lane.get(lane)
         pre_runner_failure_artifacts: list[dict[str, Any]] = []
         if failure is not None:
-            _, failure_value = descriptor_object(
+            failure_path, failure_value = descriptor_object(
                 failure, label=f"{lane} controller failure"
             )
-            pre_runner_failure = failure_value.get("pre_runner_failure")
-            if pre_runner_failure is not None:
+            if lane in retained_extended_collision_lanes:
+                pre_runner_failure_artifacts.append(descriptor(failure_path))
+            elif failure_value.get("pre_runner_failure") is not None:
+                pre_runner_failure = failure_value["pre_runner_failure"]
                 pre_runner_path = descriptor_file(
                     pre_runner_failure,
                     label=f"{lane} controller pre-Runner failure",
