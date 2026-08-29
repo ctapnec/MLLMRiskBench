@@ -210,9 +210,14 @@ Llama Guard entries are roughly twice their servable weights: both Meta repos
 ship an `original/` PyTorch checkpoint that vLLM never reads, 14.96 GiB of the
 3-8B total and 2.79 GiB of the 3-1B total. Budget acquisition time and disk
 against the figures above; the earlier "~16 GB" for the 3-8B was the weight size
-and understated the transfer by nearly half. Ollama rows (the three rwkv-7 models, plus any further
-`ollama pull` made from the console) become selectable once the live roster
-shows them with exact digests.
+and understated the transfer by nearly half. The current Ollama cohort is
+Gemma 4 12B Instruct Q4_K_M, Ministral 3 14B Instruct 2512 Q4_K_M,
+DeepSeek-R1 Distill Qwen 32B Q4_K_M, and GPT-OSS 20B in its native MXFP4
+representation. A row becomes selectable only after the live roster
+shows its exact digest and a load smoke succeeds. Gemma 4 and Ministral 3 admit
+text and image lanes; DeepSeek-R1 Distill and GPT-OSS admit text lanes only.
+The superseded RWKV tags have been removed from the live roster and from every
+prospective task. Their immutable historical artifacts remain readable.
 
 Local fit: one local target per process; GPU 0 target, GPU 1 scoring guard; the
 two-card 70B profile (4-bit, TP 2) is admitted by the fit calculator but is not
@@ -456,10 +461,11 @@ limit above. The Build and CLI requests must emit that limit and sample seed
 explicitly.
 
 The Gate 5 inventory also records target-source pairs that cannot enter measured
-execution as typed terminals. GPTGeoChat carries image-bearing source records,
-while all three local RWKV Ollama targets are text-only. Those three pairs are
-`unavailable` with reason `target_transport_text_only_for_image_source`; they
-never enter projection, canary or measured loops.
+execution as typed terminals. GPTGeoChat carries image-bearing source records.
+Its Gemma 4 and Ministral 3 pairs are projected and canaried as multimodal
+lanes. Its DeepSeek-R1 Distill and GPT-OSS pairs are `unavailable` with reason
+`target_transport_text_only_for_image_source`; those two pairs never enter a
+projection, canary, or measured loop.
 
 The core cohort records `bridge-nanogcg`, `bridge-ideator`, and `t3mp3st` as
 `unavailable` only because their prepared artifacts are assigned to a separate
@@ -537,20 +543,20 @@ query the policy judge and is represented in response and decision coverage.
 Neither outcome is a software failure, and neither authorizes altered stops,
 generation caps, decoding configuration or checkpoint identity.
 
-Only the seven affected identities are re-attested and canaried in a targeted
-Gate 5 amendment. The historical GraySwan rows keep their immutable `-full`
-terminal identities, but the amendment's current measured identities are
+Only the four affected GraySwan identities are re-attested and canaried in their
+targeted Gate 5 amendment. The historical GraySwan rows keep their immutable
+`-full` terminal identities, but the amendment's current measured identities are
 `local-llava-rr-text-primary-100`,
 `local-llava-rr-image-primary-100`, `rjudge-llava-rr` and
 `gptgeochat-llava-rr`. Their limit-100, sample-seed-0 selections and caps match
-the corresponding LLaVA-base rows. The three RWKV static identities retain
-their limit-50, sample-seed-0 selections. If the seven rows pass the ordinary
-identity, transport, cap and
-provenance checks, the amended 46-row profile is 26 runnable and 20 typed
-terminal rows, or 25 runnable and 21 terminal rows when the optional local
-defense lane is unavailable, with zero target-runtime-terminal rows. Malformed
-protocol, transport, identity, provenance, residency, timeout and backend
-failures remain hard failures. Earlier attempts remain diagnostic observations.
+the corresponding LLaVA-base rows. A separate additive Ollama amendment replaces
+the superseded RWKV tasks with the four exact current models. It uses limit 50,
+sample seed 0 for bounded text and source-classification lanes, adds image and
+GPTGeoChat lanes only for Gemma 4 and Ministral 3, and derives its own exact row
+counts from the retained projections before authorization. It does not rewrite
+the already sealed 46-row historical profile. Malformed protocol, transport,
+identity, provenance, residency, timeout and backend failures remain hard
+failures. Earlier attempts remain diagnostic observations.
 
 Gate 5: projections and canaries retained under `runs/thesis/preflight` and
 `runs/thesis/diagnostics`; the seven-row current-policy amendment retained
@@ -629,8 +635,8 @@ an outcome- or throughput-triggered extension of the current cohort.
 
 | Tier | Lane | Targets | Attackers | Judges | Output root |
 |---|---|---|---|---|---|
-| 1 [10.1] | static text, all common text arms incl. the six aggregator arms | Qwen3-VL-8B; LLaVA base; GraySwan RR and each RWKV Ollama target only after the affected identity passes its exact current-policy Gate 5 amendment | replay | rules,guardrail | `runs/thesis/runner/local-<model>-text` |
-| 1 [10.2] | static image, all common image arms | Qwen3-VL-8B; LLaVA base; GraySwan RR only after its exact current-policy Gate 5 amendment | replay | rules,guardrail | `runs/thesis/runner/local-<model>-image` |
+| 1 [10.1] | static text, all common text arms incl. the six aggregator arms | Qwen3-VL-8B; LLaVA base; GraySwan RR after its exact current-policy Gate 5 amendment; Gemma 4 12B Q4_K_M; Ministral 3 14B Q4_K_M; DeepSeek-R1 Distill 32B Q4_K_M; GPT-OSS 20B MXFP4 after the additive Ollama amendment | replay | rules,guardrail | `runs/thesis/runner/local-<model>-text` |
+| 1 [10.2] | static image, all common image arms | Qwen3-VL-8B; LLaVA base; GraySwan RR after its exact current-policy Gate 5 amendment; Gemma 4 12B Q4_K_M and Ministral 3 14B Q4_K_M after physical-image transport attestation | replay | rules,guardrail | `runs/thesis/runner/local-<model>-image` |
 | 1 [10.3] | audio/video | none (no local audio/video renderer) | - | - | structural `N/A` |
 
 Conversion cost, measured on the rig (21 August 2026): the audio arm converts its
@@ -639,7 +645,7 @@ observation took 1,218 s (20.3 minutes) while it read all 220,240 rows and hashe
 the referenced audio. This is the price of binding the full-corpus digest and the
 complete cluster inventory into the sampling audit, not a stall; budget it once per
 JALMBench invocation. Every other arm observes in under 15 s.
-| 2 [11] | R-Judge and GPTGeoChat classification | vLLM roster for both; text-only Ollama targets for R-Judge only, with GPTGeoChat pairs typed unavailable | replay | rules (not queried; source parser authoritative) | `runs/thesis/runner/rjudge`, `.../gptgeochat` |
+| 2 [11] | R-Judge and GPTGeoChat classification | vLLM roster for both; all four current Ollama targets for R-Judge; Gemma 4 and Ministral 3 for GPTGeoChat; the DeepSeek-R1 Distill and GPT-OSS GPTGeoChat pairs typed unavailable | replay | rules (not queried; source parser authoritative) | `runs/thesis/runner/rjudge`, `.../gptgeochat` |
 | 3 [12.1] | live Crescendo (response-conditioned) | Qwen3-VL-8B | crescendo | rules,guardrail | `runs/thesis/runner/crescendo-<model>` |
 | 3 [12.2] | frozen measured Runner-safe bridges | Qwen3-VL-8B | pyrit, deepteam, h4rm3l, spikee (sealed workers), purplellama (CyberSecEval arms) | rules,guardrail | `runs/thesis/runner/bridge-<attacker>` |
 | 3 [12.2] | sealed `bdd8252` prepared attacks | Qwen3-VL-8B | pinned HarmBench DirectRequest preparation + replay; T3MP3ST retained its historical pre-amendment terminal | rules,guardrail | `runs/thesis/runner/harmbench-replay` |

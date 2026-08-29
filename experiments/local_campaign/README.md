@@ -334,26 +334,30 @@ already running.
 Its one-case native canaries/imports are engineering diagnostics outside
 `runs/thesis`; they are not Runner/common-metric measured evidence.
 
-The Gate 5 inventory contains 46 rows. The three GPTGeoChat x RWKV Ollama cross-products
-are unavailable because that exact target transport is text-only; the Ollama
-projection and canary controller self-test proves they cannot enter a runnable
-loop. Four GraySwan RR and three RWKV static identities retain immutable
-historical target-runtime-terminal artifacts from the older output policy.
+The sealed historical Gate 5 inventory contains 46 rows. Four GraySwan RR and
+three RWKV static identities retain immutable target-runtime-terminal artifacts
+from the older output policy. The RWKV tags are no longer installed or selected
+by prospective tasks. The additive current Ollama cohort instead contains
+Gemma 4 12B Instruct Q4_K_M, Ministral 3 14B Instruct 2512 Q4_K_M,
+DeepSeek-R1 Distill Qwen 32B Q4_K_M, and GPT-OSS 20B in its native MXFP4
+representation, each bound to its acquired digest. Gemma 4 and
+Ministral 3 admit text and image lanes; the other two admit text lanes only.
 The current Runner 2.24 contract retains nonempty length-capped text with its
 terminal reason and retains a successful empty vLLM or Ollama completion as
 typed `model_nonresponse`. Vague, repetitive or nonsensical text is ordinary
 observed output and reaches the selected evaluator; a typed nonresponse bypasses
 the judge and remains visible in response and decision coverage.
 
-A targeted amendment re-attests and canaries only those seven identities. If it
-passes, Gate 5 requires 25 runnable, 21 typed-terminal and zero
-target-runtime-terminal rows. Only a separate successful optional defense shift
-changes that profile to 26 runnable and 20 typed-terminal rows. The older
-GraySwan `-full` terminal identities are not rewritten; the current GraySwan
-rows instead use limit 100 and sample seed 0 matched to the LLaVA-base rows.
-The RWKV static rows retain limit 50 and sample seed 0. Malformed protocol,
-transport, identity,
-provenance, residency, timeout and backend failures remain hard failures.
+A targeted amendment re-attests and canaries the four GraySwan identities. The
+older GraySwan `-full` terminal identities are not rewritten; the current
+GraySwan rows instead use limit 100 and sample seed 0 matched to the LLaVA-base
+rows. The additive Ollama amendment uses limit 50 and sample seed 0, projects
+four text and R-Judge targets, adds static-image and GPTGeoChat lanes for the two
+multimodal targets, and records the two text-only GPTGeoChat pairs as typed
+unavailable. Its exact inventory counts are derived from its retained
+projections before authorization rather than modifying the sealed historical
+profile. Malformed protocol, transport, identity, provenance, residency,
+timeout and backend failures remain hard failures.
 
 The core cohort records `bridge-nanogcg`, `bridge-ideator`, and `t3mp3st` as
 `unavailable` only because their prepared artifacts are assigned to a separate

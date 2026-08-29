@@ -200,6 +200,7 @@ import time
 import urllib.request
 
 from experiments.framework_runtime_installer import load_lock
+from experiments.local_campaign.current_ollama import CURRENT_OLLAMA_NATIVE_ROLES
 from experiments.local_campaign.ollama_static_terminal import (
     DISPOSITION as OLLAMA_STATIC_TERMINAL_DISPOSITION,
     OLLAMA_STATIC_TERMINAL_LANES,
@@ -233,18 +234,12 @@ EXPECTED_PROJECT_COMMIT = "@@EXPECTED_COMMIT@@"
 EXPECTED_PROJECT_REVISION_MANIFEST = "@@PROJECT_RECEIPT_PATH@@"
 EXPECTED_PROJECT_REVISION_SHA256 = "@@PROJECT_RECEIPT_SHA256@@"
 EXPECTED_MODELS = {
-    "primary": {
-        "tag": "mollysama/rwkv-7-g1f:2.9b",
-        "digest": "7813f2283a135ef1264b8cec647b339d92fa7ecffafefeac61a2670b572f03f7",
-    },
-    "auditor": {
-        "tag": "mollysama/rwkv-7-g1d:0.4b",
-        "digest": "78e699bd71f0cef7ed8fb38a469088310af0ab07d678661980c6b8c7f130a7f8",
-    },
-    "judge": {
-        "tag": "mollysama/rwkv-7-g1g:1.5b",
-        "digest": "8ff95f43952c361048310b50a5c4b16f98d8f0642a87b536452e627224a0dddc",
-    },
+    role: {
+        "tag": model.tag,
+        "digest": model.digest,
+        "quantization": model.quantization,
+    }
+    for role, model in CURRENT_OLLAMA_NATIVE_ROLES.items()
 }
 ORDER = [
     "fuzzyai", "garak", "promptfoo", "petri", "easyjailbreak",
@@ -263,12 +258,12 @@ PLANNED = {
     ),
     "giskard": ("run", 8, "one-row Scan with one harmful-content requirement and one generated sample"),
     "asb": (
-        "unavailable", 0,
-        "the exact local Ollama roster has no tool-call capability required by ASB agent tasks",
+        "not-selected", 0,
+        "the current bounded native controller has no one-case ASB import contract",
     ),
     "agentdojo": (
-        "unavailable", 0,
-        "the exact local Ollama roster has no tool-call capability required by AgentDojo",
+        "not-selected", 0,
+        "the current bounded native controller has no one-case AgentDojo import contract",
     ),
 }
 RR_TERMINAL_LANES = (
@@ -1514,14 +1509,23 @@ for role, expected in EXPECTED_MODELS.items():
         raise SystemExit(f"exact Ollama {role} model lost completion capability")
     if any(not isinstance(item, str) for item in capabilities):
         raise SystemExit("invalid Ollama capability inventory")
+    details = row.get("details")
+    if not isinstance(details, dict):
+        raise SystemExit(f"exact Ollama {role} model details are invalid")
     model_rows[role] = {
-        **expected,
+        "tag": expected["tag"],
+        "digest": expected["digest"],
         "capabilities": sorted(capabilities),
         "size": row.get("size"),
-        "details": row.get("details"),
+        "details": details,
     }
-if any("tools" in row["capabilities"] for row in model_rows.values()):
-    raise SystemExit("tool-capability disposition must be re-reviewed")
+    if model_rows[role]["details"].get("quantization_level") != expected["quantization"]:
+        raise SystemExit(f"exact Ollama {role} model quantization changed")
+for role in ("primary", "secondary"):
+    if "vision" not in model_rows[role]["capabilities"]:
+        raise SystemExit(f"exact Ollama {role} model lost vision capability")
+if "tools" not in model_rows["primary"]["capabilities"]:
+    raise SystemExit("exact Ollama primary model lost tool capability")
 
 engines = []
 for engine in ORDER:
@@ -1888,6 +1892,9 @@ PROJECT = Path(os.environ.get("URA_REPO", "@@PROJECT_ROOT@@")).resolve(strict=Tr
 os.chdir(PROJECT)
 sys.path.insert(0, str(PROJECT))
 
+from experiments.local_campaign.current_ollama import (  # noqa: E402
+    CURRENT_OLLAMA_NATIVE_ROLES,
+)
 from experiments.local_campaign.ollama_static_terminal import (  # noqa: E402
     DISPOSITION as OLLAMA_STATIC_TERMINAL_DISPOSITION,
     OLLAMA_STATIC_TERMINAL_LANES,
@@ -1927,30 +1934,19 @@ ORDER = [
 RUNNABLE = ["fuzzyai", "garak", "promptfoo", "petri", "easyjailbreak", "giskard"]
 TYPED = {
     "autodan_turbo": "not-selected",
-    "asb": "unavailable",
-    "agentdojo": "unavailable",
+    "asb": "not-selected",
+    "agentdojo": "not-selected",
 }
-EXPECTED_MODEL_TAGS = sorted([
-    "mollysama/rwkv-7-g1f:2.9b",
-    "mollysama/rwkv-7-g1d:0.4b",
-    "mollysama/rwkv-7-g1g:1.5b",
-])
+EXPECTED_MODEL_TAGS = sorted(
+    model.tag for model in CURRENT_OLLAMA_NATIVE_ROLES.values()
+)
 EXPECTED_MODELS = {
-    "primary": {
-        "tag": "mollysama/rwkv-7-g1f:2.9b",
-        "digest": "7813f2283a135ef1264b8cec647b339d92fa7ecffafefeac61a2670b572f03f7",
-        "capabilities": ["completion", "thinking"],
-    },
-    "auditor": {
-        "tag": "mollysama/rwkv-7-g1d:0.4b",
-        "digest": "78e699bd71f0cef7ed8fb38a469088310af0ab07d678661980c6b8c7f130a7f8",
-        "capabilities": ["completion", "thinking"],
-    },
-    "judge": {
-        "tag": "mollysama/rwkv-7-g1g:1.5b",
-        "digest": "8ff95f43952c361048310b50a5c4b16f98d8f0642a87b536452e627224a0dddc",
-        "capabilities": ["completion", "thinking"],
-    },
+    role: {
+        "tag": model.tag,
+        "digest": model.digest,
+        "quantization": model.quantization,
+    }
+    for role, model in CURRENT_OLLAMA_NATIVE_ROLES.items()
 }
 EXPECTED_RUNTIME_NAMES = {
     **{engine: engine for engine in ORDER if engine != "autodan_turbo"},
@@ -3654,19 +3650,32 @@ def validate_planned_ollama_models(
     plan: Mapping[str, Any],
 ) -> Mapping[str, Mapping[str, Any]]:
     expected_models = plan["ollama_models"]
-    if not isinstance(expected_models, dict) or set(expected_models) != {"primary", "auditor", "judge"}:
+    if not isinstance(expected_models, dict) or set(expected_models) != set(EXPECTED_MODELS):
         raise ValueError("native Ollama role inventory changed")
     for role, expected in expected_models.items():
+        capabilities = expected.get("capabilities") if isinstance(expected, dict) else None
         if (
             not isinstance(expected, dict)
             or set(expected) != {"tag", "digest", "capabilities", "size", "details"}
-            or {key: expected.get(key) for key in ("tag", "digest", "capabilities")} != EXPECTED_MODELS[role]
+            or {key: expected.get(key) for key in ("tag", "digest")} != {
+                key: EXPECTED_MODELS[role][key] for key in ("tag", "digest")
+            }
+            or not isinstance(capabilities, list)
+            or capabilities != sorted(capabilities)
+            or any(not isinstance(item, str) for item in capabilities)
+            or "completion" not in capabilities
             or isinstance(expected.get("size"), bool)
             or not isinstance(expected.get("size"), int)
             or expected["size"] <= 0
             or not isinstance(expected.get("details"), dict)
+            or expected["details"].get("quantization_level")
+            != EXPECTED_MODELS[role]["quantization"]
         ):
             raise ValueError(f"exact native Ollama {role} plan identity changed")
+        if role in {"primary", "secondary"} and "vision" not in capabilities:
+            raise ValueError(f"exact native Ollama {role} model lost vision capability")
+        if role == "primary" and "tools" not in capabilities:
+            raise ValueError("exact native Ollama primary model lost tool capability")
     return expected_models
 
 

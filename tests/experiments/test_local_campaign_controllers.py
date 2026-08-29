@@ -789,7 +789,6 @@ def test_gptgeochat_rwkv_cross_products_are_exact_typed_terminals() -> None:
     semantic_templates = (
         "phase5_finalize_gate5.sh.in",
         "phase5_promote_gate5.sh.in",
-        "phase5_ollama_workflow.sh.in",
         "phase6_core_measured.sh.in",
         "phase6_extended_measured.sh.in",
         "phase6_native_diagnostics.sh.in",
@@ -1108,11 +1107,10 @@ def test_ollama_bounded_lane_identity_is_used_by_every_workflow_stage() -> None:
         / "phase5_ollama_workflow.sh.in"
     ).read_text(encoding="utf-8")
 
-    assert source.count('f"ollama-{label}-text-exploratory-50"') == 1
     assert source.count(
-        'static_lane="ollama-${label}-text-exploratory-50"'
+        'static_lane="ollama-${label}-text-primary-50"'
     ) == 2
-    assert 'f"ollama-{label}-text-full"' not in source
+    assert 'static_lane="ollama-${label}-text-exploratory-50"' not in source
     assert 'static_lane="ollama-${label}-text-full"' not in source
 
 

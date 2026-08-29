@@ -30,6 +30,7 @@ import types
 from typing import Any, Iterable, Mapping, Sequence
 
 sys.path.insert(0, str(Path.cwd()))
+from experiments.local_campaign.current_ollama import CURRENT_OLLAMA_NATIVE_ROLES
 from experiments.local_campaign.ollama_static_terminal import (
     OLLAMA_STATIC_TERMINAL_DISPOSITION,
     OLLAMA_STATIC_TERMINAL_LANES,
@@ -545,21 +546,12 @@ NATIVE_TARGET_CALL_CAPS = {
 }
 NATIVE_AUTHORIZED_LOCAL_CALL_CAP = sum(NATIVE_TARGET_CALL_CAPS.values())
 NATIVE_OLLAMA_MODELS = {
-    "primary": {
-        "tag": "mollysama/rwkv-7-g1f:2.9b",
-        "digest": "7813f2283a135ef1264b8cec647b339d92fa7ecffafefeac61a2670b572f03f7",
-        "capabilities": ["completion", "thinking"],
-    },
-    "auditor": {
-        "tag": "mollysama/rwkv-7-g1d:0.4b",
-        "digest": "78e699bd71f0cef7ed8fb38a469088310af0ab07d678661980c6b8c7f130a7f8",
-        "capabilities": ["completion", "thinking"],
-    },
-    "judge": {
-        "tag": "mollysama/rwkv-7-g1g:1.5b",
-        "digest": "8ff95f43952c361048310b50a5c4b16f98d8f0642a87b536452e627224a0dddc",
-        "capabilities": ["completion", "thinking"],
-    },
+    role: {
+        "tag": model.tag,
+        "digest": model.digest,
+        "quantization": model.quantization,
+    }
+    for role, model in CURRENT_OLLAMA_NATIVE_ROLES.items()
 }
 NATIVE_RUNTIME_NAMES = {
     **{engine: engine for engine in NATIVE_ENGINES if engine != "autodan_turbo"},
@@ -5073,15 +5065,28 @@ def validate_native_completion(
             raise Phase8Error(f"Phase 6 native {field} differs from campaign state")
     for role, expected_model in NATIVE_OLLAMA_MODELS.items():
         model = plan_models[role]
+        capabilities = model.get("capabilities") if isinstance(model, dict) else None
         if (
             not isinstance(model, dict)
             or set(model) != {"tag", "digest", "capabilities", "size", "details"}
-            or {field: model.get(field) for field in expected_model} != expected_model
+            or {field: model.get(field) for field in ("tag", "digest")} != {
+                field: expected_model[field] for field in ("tag", "digest")
+            }
+            or not isinstance(capabilities, list)
+            or capabilities != sorted(capabilities)
+            or any(not isinstance(item, str) for item in capabilities)
+            or "completion" not in capabilities
             or type(model.get("size")) is not int
             or model["size"] < 1
             or not isinstance(model.get("details"), dict)
+            or model["details"].get("quantization_level")
+            != expected_model["quantization"]
         ):
             raise Phase8Error(f"Phase 6 native exact Ollama model differs: {role}")
+        if role in {"primary", "secondary"} and "vision" not in capabilities:
+            raise Phase8Error(f"Phase 6 native Ollama model lost vision: {role}")
+        if role == "primary" and "tools" not in capabilities:
+            raise Phase8Error("Phase 6 native primary Ollama model lost tools")
     plan_row_fields = {
         "engine",
         "runtime",

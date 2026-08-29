@@ -137,29 +137,50 @@ EXPLORATORY_CLUSTER_LIMIT=50
 SCOPE="$URA_EXECUTION_SCOPE_ID"
 MAX_ATTESTATION_AGE_HOURS='24'
 TEXT_ARMS='strongreject_official,advbench_harmful,jailbreakbench_harmful,jailbreakbench_benign,harmbench_text,cyberseceval_mitre,cyberseceval_interpreter,cyberseceval_insecure_coding,saladbench_base,airbench_full,xstest_full,simplesafetytests_full,decodingtrust_stereotype'
+IMAGE_ARMS='mmsafety_official,jailbreakv_full,harmbench_multimodal,vlsbench_release,mossbench_official,siuo_release,figstep_full,mllmguard_privacy,mllmguard_bias,mllmguard_toxicity,mllmguard_legality,holisafe_full'
 
-declare -a MODEL_LABELS=(
-  'rwkv-g1d-0p4b'
-  'rwkv-g1f-2p9b'
-  'rwkv-g1g-1p5b'
-)
-declare -A MODEL_SPECS=(
-  [rwkv-g1d-0p4b]='ollama:mollysama/rwkv-7-g1d:0.4b'
-  [rwkv-g1f-2p9b]='ollama:mollysama/rwkv-7-g1f:2.9b'
-  [rwkv-g1g-1p5b]='ollama:mollysama/rwkv-7-g1g:1.5b'
-)
-declare -A MODEL_DIGESTS=(
-  [rwkv-g1d-0p4b]='78e699bd71f0cef7ed8fb38a469088310af0ab07d678661980c6b8c7f130a7f8'
-  [rwkv-g1f-2p9b]='7813f2283a135ef1264b8cec647b339d92fa7ecffafefeac61a2670b572f03f7'
-  [rwkv-g1g-1p5b]='8ff95f43952c361048310b50a5c4b16f98d8f0642a87b536452e627224a0dddc'
+declare -a MODEL_LABELS=()
+declare -a IMAGE_MODEL_LABELS=()
+declare -a TEXT_ONLY_MODEL_LABELS=()
+declare -A MODEL_SPECS=()
+declare -A MODEL_DIGESTS=()
+declare -A MODEL_QUANTIZATIONS=()
+declare -A MODEL_MODALITIES=()
+while IFS=$'\t' read -r label spec digest quantization modalities; do
+  MODEL_LABELS+=("$label")
+  MODEL_SPECS[$label]="$spec"
+  MODEL_DIGESTS[$label]="$digest"
+  MODEL_QUANTIZATIONS[$label]="$quantization"
+  MODEL_MODALITIES[$label]="$modalities"
+  if [[ "$modalities" == 'text,image' ]]; then
+    IMAGE_MODEL_LABELS+=("$label")
+  elif [[ "$modalities" == 'text' ]]; then
+    TEXT_ONLY_MODEL_LABELS+=("$label")
+  else
+    printf 'unsupported current Ollama modality inventory: %s=%s\n' \
+      "$label" "$modalities" >&2
+    exit 1
+  fi
+done < <("$PY" - <<'PY'
+from experiments.local_campaign.current_ollama import CURRENT_OLLAMA_MODELS
+
+for model in CURRENT_OLLAMA_MODELS:
+    print(
+        model.label,
+        model.spec,
+        model.digest,
+        model.quantization,
+        ",".join(model.modalities),
+        sep="\t",
+    )
+PY
 )
 GPTGEOCHAT_TERMINAL_REASON_CODE='target_transport_text_only_for_image_source'
-GPTGEOCHAT_TERMINAL_REASON='GPTGeoChat requires image-bearing source inputs, while the exact RWKV Ollama target transport is text-only.'
-declare -a GPTGEOCHAT_OLLAMA_TERMINALS=(
-  'gptgeochat-ollama-rwkv-g1d-0p4b'
-  'gptgeochat-ollama-rwkv-g1f-2p9b'
-  'gptgeochat-ollama-rwkv-g1g-1p5b'
-)
+GPTGEOCHAT_TERMINAL_REASON='GPTGeoChat requires image-bearing source inputs, while this exact Ollama target is text-only.'
+declare -a GPTGEOCHAT_OLLAMA_TERMINALS=()
+for label in "${TEXT_ONLY_MODEL_LABELS[@]}"; do
+  GPTGEOCHAT_OLLAMA_TERMINALS+=("gptgeochat-ollama-${label}")
+done
 declare -A MODEL_CONFIGS=()
 declare -A ATTESTATION_FILES=()
 declare -A ATTESTATION_SHAS=()
@@ -177,7 +198,7 @@ mkdir -p "$SUCCESS_ROOT" "$CONFIG_ROOT" "$RECEIPTS_ROOT" \
 
 printf 'phase\tunit\tdisposition\treason\n' > "$DISPOSITIONS"
 printf 'lane\tmodel_label\trequested_spec\tdigest\tmetric_mode\tpreliminary_projection_id\tfinal_projection_id\ttarget_cap\tjudge_cap\tlocal_guardrail_evaluations\thttp_cap\tselected_clusters\tselected_records\tpreliminary_root\tfinal_root\n' > "$PROJECTION_STATUS"
-printf 'model_label\trequested_spec\tdigest\tattestation_id\treceipt\tsha256\tprobe_root\ttarget_attempts\tsuccessful_target_generations\n' > "$ATTEST_STATUS"
+printf 'model_label\tmodality\trequested_spec\tdigest\tattestation_id\treceipt\tsha256\tprobe_root\ttarget_attempts\tsuccessful_target_generations\n' > "$ATTEST_STATUS"
 printf 'lane\tmodel_label\trequested_spec\tdigest\tmetric_mode\trehearsal_projection_id\ttarget_cap\tjudge_cap\tlocal_guardrail_evaluations\thttp_cap\tcanary_id\tall_configured_stages_represented\ttarget_status\tattacker_status\tsource_evaluator_status\tdecided\tdecision_coverage\tdiagnostic_root\tdisposition\treason_code\treason\ttarget_runtime_terminal_artifact\ttarget_attempts\tsuccessful_target_generations\n' > "$CANARY_STATUS"
 
 "$PY" - "$GPTGEOCHAT_TERMINAL_REASON_CODE" "$GPTGEOCHAT_TERMINAL_REASON" \
@@ -185,50 +206,56 @@ printf 'lane\tmodel_label\trequested_spec\tdigest\tmetric_mode\trehearsal_projec
 import sys
 
 reason_code, reason, *labels = sys.argv[1:]
-expected_labels = ["rwkv-g1d-0p4b", "rwkv-g1f-2p9b", "rwkv-g1g-1p5b"]
+from experiments.local_campaign.current_ollama import (
+    CURRENT_OLLAMA_MODELS,
+    CURRENT_OLLAMA_RUNNABLE_LANES,
+    CURRENT_OLLAMA_TYPED_TERMINAL_LANES,
+)
+
+expected_labels = [model.label for model in CURRENT_OLLAMA_MODELS]
 if labels != expected_labels:
-    raise SystemExit("exact RWKV Ollama label inventory changed")
+    raise SystemExit("exact current Ollama label inventory changed")
 terminals = {
-    f"gptgeochat-ollama-{label}": {
+    lane: {
         "family": "ollama",
         "disposition": "unavailable",
         "reason_code": reason_code,
         "reason": reason,
     }
-    for label in labels
+    for lane in CURRENT_OLLAMA_TYPED_TERMINAL_LANES
 }
-expected_terminals = {f"gptgeochat-ollama-{label}" for label in expected_labels}
-runnable = {
-    lane
-    for label in labels
-    for lane in (
-        f"ollama-{label}-text-exploratory-50",
-        f"rjudge-ollama-{label}",
-    )
-}
+expected_terminals = set(CURRENT_OLLAMA_TYPED_TERMINAL_LANES)
+runnable = set(CURRENT_OLLAMA_RUNNABLE_LANES)
 if (
     set(terminals) != expected_terminals
     or any(row["family"] != "ollama" for row in terminals.values())
     or any(row["disposition"] != "unavailable" for row in terminals.values())
     or reason_code != "target_transport_text_only_for_image_source"
     or reason
-    != "GPTGeoChat requires image-bearing source inputs, while the exact RWKV Ollama target transport is text-only."
+    != "GPTGeoChat requires image-bearing source inputs, while this exact Ollama target is text-only."
     or runnable & expected_terminals
-    or len(runnable) != 6
+    or len(runnable) != 12
 ):
-    raise SystemExit("GPTGeoChat x RWKV typed-terminal contract changed")
+    raise SystemExit("current Ollama lane partition changed")
 PY
 
 assert_ollama_runnable_lane() {
   local lane="$1"
-  case "$lane" in
-    ollama-rwkv-g1d-0p4b-text-exploratory-50|ollama-rwkv-g1f-2p9b-text-exploratory-50|ollama-rwkv-g1g-1p5b-text-exploratory-50|rjudge-ollama-rwkv-g1d-0p4b|rjudge-ollama-rwkv-g1f-2p9b|rjudge-ollama-rwkv-g1g-1p5b) ;;
-    *) printf 'non-runnable Ollama lane rejected: %s\n' "$lane" >&2; return 1 ;;
-  esac
-  local terminal
-  for terminal in "${GPTGEOCHAT_OLLAMA_TERMINALS[@]}"; do
-    [[ "$lane" != "$terminal" ]] || return 1
+  local label
+  for label in "${MODEL_LABELS[@]}"; do
+    if [[ "$lane" == "ollama-${label}-text-primary-50" \
+       || "$lane" == "rjudge-ollama-${label}" ]]; then
+      return 0
+    fi
   done
+  for label in "${IMAGE_MODEL_LABELS[@]}"; do
+    if [[ "$lane" == "ollama-${label}-image-primary-50" \
+       || "$lane" == "gptgeochat-ollama-${label}" ]]; then
+      return 0
+    fi
+  done
+  printf 'non-runnable Ollama lane rejected: %s\n' "$lane" >&2
+  return 1
 }
 
 safe_marker() {
@@ -266,8 +293,8 @@ record_blocked() {
 }
 
 write_local_config() {
-  local path="$1" spec="$2" digest="$3"
-  "$PY" - "$path" "$spec" "$digest" <<'PY'
+  local path="$1" spec="$2" digest="$3" modalities="$4"
+  "$PY" - "$path" "$spec" "$digest" "$modalities" <<'PY'
 import json
 import os
 import pathlib
@@ -275,11 +302,14 @@ import re
 import sys
 
 path = pathlib.Path(sys.argv[1])
-spec, digest = sys.argv[2:]
+spec, digest, modalities_csv = sys.argv[2:]
+modalities = modalities_csv.split(",")
 if not spec.startswith("ollama:") or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
     raise SystemExit("invalid exact Ollama identity")
+if modalities not in (["text"], ["text", "image"]):
+    raise SystemExit("invalid exact Ollama modalities")
 payload = (json.dumps(
-    {spec: {"digest": digest, "modalities": ["text"]}},
+    {spec: {"digest": digest, "modalities": modalities}},
     indent=2,
     sort_keys=True,
 ) + "\n").encode("utf-8")
@@ -298,7 +328,8 @@ PY
 
 for label in "${MODEL_LABELS[@]}"; do
   config="$CONFIG_ROOT/${label}.json"
-  write_local_config "$config" "${MODEL_SPECS[$label]}" "${MODEL_DIGESTS[$label]}"
+  write_local_config "$config" "${MODEL_SPECS[$label]}" \
+    "${MODEL_DIGESTS[$label]}" "${MODEL_MODALITIES[$label]}"
   MODEL_CONFIGS[$label]="$config"
 done
 
@@ -322,9 +353,16 @@ from experiments.local_targets import _models_map, load_roster
 from experiments.rig_web_app.ollama_service import OllamaService
 
 items = sys.argv[1:]
-if not items or len(items) % 2:
-    raise SystemExit("expected spec/digest pairs")
-expected = dict(zip(items[0::2], items[1::2], strict=True))
+if not items or len(items) % 4:
+    raise SystemExit("expected spec/digest/quantization/modalities groups")
+expected = {
+    items[index]: (
+        items[index + 1],
+        items[index + 2],
+        items[index + 3].split(","),
+    )
+    for index in range(0, len(items), 4)
+}
 vllm = {
     str(spec): dict(config)
     for spec, config in _models_map(load_roster()).items()
@@ -346,7 +384,7 @@ excluded = {
     if isinstance(row, dict) and isinstance(row.get("spec"), str)
 }
 selected = []
-for spec, digest in expected.items():
+for spec, (digest, quantization, modalities) in expected.items():
     if spec in excluded:
         raise SystemExit(f"selected Ollama identity is excluded: {spec}")
     row = candidates.get(spec)
@@ -354,8 +392,14 @@ for spec, digest in expected.items():
         raise SystemExit(f"selected Ollama identity is absent: {spec}")
     if row.get("digest") != digest:
         raise SystemExit(f"selected Ollama digest changed: {spec}")
-    if row.get("modalities") != ["text"]:
+    if row.get("modalities") != modalities:
         raise SystemExit(f"selected Ollama modality changed: {spec}")
+    details = row.get("details")
+    if (
+        not isinstance(details, dict)
+        or details.get("quantization_level") != quantization
+    ):
+        raise SystemExit(f"selected Ollama quantization changed: {spec}")
     capabilities = row.get("capabilities")
     if not isinstance(capabilities, list) or "completion" not in capabilities:
         raise SystemExit(f"selected Ollama target lost completion capability: {spec}")
@@ -364,7 +408,8 @@ for spec, digest in expected.items():
     selected.append({
         "spec": spec,
         "digest": digest,
-        "modalities": ["text"],
+        "quantization": quantization,
+        "modalities": modalities,
         "capabilities": capabilities,
     })
 print(json.dumps({
@@ -378,7 +423,8 @@ PY
 
 roster_args=()
 for label in "${MODEL_LABELS[@]}"; do
-  roster_args+=("${MODEL_SPECS[$label]}" "${MODEL_DIGESTS[$label]}")
+  roster_args+=("${MODEL_SPECS[$label]}" "${MODEL_DIGESTS[$label]}" \
+    "${MODEL_QUANTIZATIONS[$label]}" "${MODEL_MODALITIES[$label]}")
 done
 verify_live_roster "$CONTROL_ROOT/roster-start.json" "${roster_args[@]}"
 
@@ -599,18 +645,18 @@ if mode == "static":
         raise SystemExit("static Ollama shared-role projection differs from the scoring guard")
     if role_exceptions != []:
         raise SystemExit("static Ollama shared-role projection has an unexpected exception")
-elif mode == "rjudge":
+elif mode in {"rjudge", "gptgeochat"}:
     if conditions.get("judges") != ["rules"] or conditions.get("guardrail_model") is not None:
-        raise SystemExit("R-Judge projection must remain source-evaluator/rules-only")
+        raise SystemExit("source-metric projection must remain source-evaluator/rules-only")
     if calls.get("local_guardrail_evaluations") != 0:
-        raise SystemExit("R-Judge projection unexpectedly selected a guardrail")
+        raise SystemExit("source-metric projection unexpectedly selected a guardrail")
     if "supplementary_metric_policy" in bindings:
-        raise SystemExit("R-Judge projection must not use approximate common metrics")
+        raise SystemExit("source-metric projection must not use approximate common metrics")
     selection = acquisition.get("selection", {})
     if acquisition.get("status") != "not_required" or selection.get("resources") != [] or selection.get("exceptions") != []:
-        raise SystemExit("R-Judge Ollama projection unexpectedly requires Hub acquisition")
+        raise SystemExit("source-metric Ollama projection unexpectedly requires Hub acquisition")
     if role_resources != [] or role_exceptions != []:
-        raise SystemExit("R-Judge Ollama shared-role projection unexpectedly requires acquisition")
+        raise SystemExit("source-metric Ollama shared-role projection unexpectedly requires acquisition")
 else:
     raise SystemExit("unknown projection mode")
 print(
@@ -671,7 +717,7 @@ run_rig_projection() {
   if [[ "$mode" == 'static' ]]; then
     guard_plan_acquire "$label" "$plan_root" "${args[@]}" --preflight-only
     while IFS= read -r -d '' item; do acq+=("$item"); done < <(acquisition_args)
-  elif [[ "$mode" != 'rjudge' ]]; then
+  elif [[ "$mode" != 'rjudge' && "$mode" != 'gptgeochat' ]]; then
     return 2
   fi
   CUDA_VISIBLE_DEVICES=0,1 "$PY" -m experiments.rig_check \
@@ -771,25 +817,37 @@ run_bounded_projection_lane() {
 }
 
 validate_attestation_receipt() {
-  "$PY" - "$1" "$2" "$3" "$4" "$5" "$SCOPE" <<'PY'
+  "$PY" - "$1" "$2" "$3" "$4" "$5" "$6" "$SCOPE" <<'PY'
 import json
 import sys
 
 from ura.live_attestation import route_config_sha256
 
-receipt_path, config_path, spec, digest, expected_kind, scope = sys.argv[1:]
+(
+    receipt_path,
+    config_path,
+    spec,
+    digest,
+    modality,
+    expected_kind,
+    scope,
+) = sys.argv[1:]
+expected_input_modalities = ["text"] if modality == "text" else ["text", "image"]
 receipt = json.load(open(receipt_path, encoding="utf-8"))
 config = json.load(open(config_path, encoding="utf-8"))
 if receipt.get("schema") != "ura-live-attestation/2" or receipt.get("status") != "complete":
     raise SystemExit("live attestation is not complete")
 records = receipt.get("records")
 if not isinstance(records, list) or len(records) != 1:
-    raise SystemExit("text attestation must contain exactly one record")
+    raise SystemExit("Ollama attestation must contain exactly one record")
 record = records[0]
 if record.get("execution_scope_id") != scope or record.get("requested_target_spec") != spec:
     raise SystemExit("attestation scope/target differs from the selected route")
-if record.get("route_kind") != "local_runtime" or record.get("exact_input_modalities") != ["text"]:
-    raise SystemExit("attestation route/modality differs from local text")
+if (
+    record.get("route_kind") != "local_runtime"
+    or record.get("exact_input_modalities") != expected_input_modalities
+):
+    raise SystemExit("attestation route/modality differs from the selected lane")
 identity = record.get("realized_target_identity", {})
 if identity.get("model_digest") != digest or identity.get("resolved_model") != spec.removeprefix("ollama:"):
     raise SystemExit("attestation realized Ollama identity differs from the exact tag/digest")
@@ -807,16 +865,33 @@ print(receipt["attestation_id"])
 PY
 }
 
-probe_ollama_text() {
-  local label="$1"
+probe_ollama() {
+  local label="$1" modality="$2" arm="$3"
   local spec="${MODEL_SPECS[$label]}" digest="${MODEL_DIGESTS[$label]}"
   local config="${MODEL_CONFIGS[$label]}" config_sha base run_root receipt_file receipt_sha attestation_id
-  local derive_log target_attempts successful_target_generations
+  local derive_log target_attempts successful_target_generations expected_kind
+  local -a source_args=()
+  if [[ "$modality" == 'text' ]]; then
+    test "$arm" = 'synth'
+    expected_kind='synthetic_live_transport_probe'
+  elif [[ "$modality" == 'image' ]]; then
+    test "$arm" = 'harmbench_multimodal'
+    test "${MODEL_MODALITIES[$label]}" = 'text,image'
+    expected_kind='real_source_live_transport_probe'
+    source_args=(
+      --source-config "$SOURCE_CONFIG"
+      --source-config-sha256 "$SOURCE_CONFIG_SHA256"
+      --source-conformance "$SOURCE_RECEIPT"
+      --source-conformance-sha256 "$SOURCE_RECEIPT_SHA256"
+    )
+  else
+    return 2
+  fi
   config_sha="$(sha256sum -- "$config" | awk '{print $1}')"
-  base="$ATTEST_ROOT/${label}-text-${TAG}"
+  base="$ATTEST_ROOT/${label}-${modality}-${TAG}"
   run_root="$base/run"
-  receipt_file="$ATTEST_RECEIPTS/${label}-text-${TAG}.live-attestation.json"
-  derive_log="$CONTROL_ROOT/${label}.attestation-derive.log"
+  receipt_file="$ATTEST_RECEIPTS/${label}-${modality}-${TAG}.live-attestation.json"
+  derive_log="$CONTROL_ROOT/${label}-${modality}.attestation-derive.log"
   test ! -e "$base" && mkdir -p "$base"
   test ! -e "$receipt_file"
 
@@ -830,7 +905,8 @@ probe_ollama_text() {
     --local-config-sha256 "$config_sha"
     --attackers replay
     --judges rules
-    --corpora synth
+    --corpora "$arm"
+    "${source_args[@]}"
     --limit 1
     --sample-seed 0
     --seeds 0
@@ -840,15 +916,15 @@ probe_ollama_text() {
     --max-total-target-calls 1
     --max-total-judge-calls 0
     --max-total-http-attempts 0
-    --deadline-seconds 900
+    --deadline-seconds 3600
     --out "$run_root"
   )
 
-  printf 'ATTESTATION_START=%s TIME=%s\n' "$label" "$(date -Is)"
+  printf 'ATTESTATION_START=%s/%s TIME=%s\n' "$label" "$modality" "$(date -Is)"
   # Ollama and deterministic rules contain no Hub resource. Acquisition-plan
   # arguments are forbidden for this exact request and are intentionally absent.
   CUDA_VISIBLE_DEVICES=0,1 "$PY" -m experiments.run_matrix \
-    "${args[@]}" > "$CONTROL_ROOT/${label}.attestation-run.log" 2>&1
+    "${args[@]}" > "$CONTROL_ROOT/${label}-${modality}.attestation-run.log" 2>&1
   "$PY" -m experiments.live_attestation \
     --probe-root "$run_root" \
     --execution-scope-id "$SCOPE" \
@@ -859,20 +935,20 @@ probe_ollama_text() {
     --validate "$receipt_file" --sha256 "$receipt_sha" \
     >> "$derive_log" 2>&1
   attestation_id="$(validate_attestation_receipt \
-    "$receipt_file" "$config" "$spec" "$digest" synthetic_live_transport_probe)"
+    "$receipt_file" "$config" "$spec" "$digest" "$modality" "$expected_kind")"
   IFS=$'\t' read -r target_attempts successful_target_generations < <(
     json_fields "$derive_log" attestation
   )
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-    "$label" "$spec" "$digest" "$attestation_id" "$receipt_file" "$receipt_sha" \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$label" "$modality" "$spec" "$digest" "$attestation_id" "$receipt_file" "$receipt_sha" \
     "$run_root" "$target_attempts" "$successful_target_generations" \
     | tee -a "$ATTEST_STATUS"
-  safe_marker "${label}.attestation"
-  printf 'ATTESTATION_END=%s TIME=%s\n' "$label" "$(date -Is)"
+  safe_marker "${label}.${modality}.attestation"
+  printf 'ATTESTATION_END=%s/%s TIME=%s\n' "$label" "$modality" "$(date -Is)"
 }
 
 canary_fields() {
-  "$PY" - "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" \
+  "$PY" - "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" \
     "$SCORE_GUARD" "$SCORE_GUARD_REV" "$EXPECTED_COMMIT" \
     "$PROJECT_SHA256" "$SOURCE_CONFIG_SHA256" "$SOURCE_RECEIPT_SHA256" \
     "$GROUP" <<'PY'
@@ -903,6 +979,7 @@ from ura.strict_json import strict_json_loads
     target_cap_text,
     config_text,
     expected_config_sha,
+    expected_modalities_csv,
     guard_model,
     guard_revision,
     expected_commit,
@@ -915,6 +992,7 @@ root = pathlib.Path(root_text)
 target_cap = int(target_cap_text)
 config_path = pathlib.Path(config_text)
 group = group_csv.split(",")
+expected_modalities = expected_modalities_csv.split(",")
 expected_runtime = expected_spec + "@sha256:" + digest
 
 def stable_payload(
@@ -1010,7 +1088,7 @@ config_payload = stable_payload(config_path, "Ollama config")
 if hashlib.sha256(config_payload).hexdigest() != expected_config_sha:
     raise SystemExit("Ollama config digest drifted")
 local_config = strict_json_loads(config_payload.decode("utf-8"))
-if local_config != {expected_spec: {"digest": digest, "modalities": ["text"]}}:
+if local_config != {expected_spec: {"digest": digest, "modalities": expected_modalities}}:
     raise SystemExit("Ollama config differs from the exact selected tag/digest")
 
 summary = validate_lane_canary_summary(
@@ -1314,11 +1392,11 @@ if mode == "static":
         raise SystemExit("static canary lacks complete stage representation")
     if execution["source_evaluator"]["status"] != "not_applicable":
         raise SystemExit("static canary unexpectedly used a source evaluator")
-elif mode == "rjudge":
+elif mode in {"rjudge", "gptgeochat"}:
     if any(request.get(field) is not None for field in (
         "guardrail_model", "guardrail_revision", "guardrail_device"
     )):
-        raise SystemExit("R-Judge canary unexpectedly configured a scoring guard")
+        raise SystemExit("source-metric canary unexpectedly configured a scoring guard")
     if (
         len(stage_rows) != 1
         or stage_rows[0].get("stage") != 0
@@ -1329,7 +1407,7 @@ elif mode == "rjudge":
         or not isinstance(stage_rows[0].get("not_queried_records"), int)
         or stage_rows[0]["not_queried_records"] <= 0
     ):
-        raise SystemExit("R-Judge rules placeholder was unexpectedly queried")
+        raise SystemExit("source-metric rules placeholder was unexpectedly queried")
     source = execution["source_evaluator"]
     # Parser-invalid predictions are measured validity=0 observations, not
     # evidence that the implemented source evaluator failed to execute.
@@ -1346,7 +1424,7 @@ elif mode == "rjudge":
         or source["valid_records"] > source["observed_records"]
     ):
         raise SystemExit(
-            "R-Judge source evaluator lacks complete implemented observations"
+            "source-metric evaluator lacks complete implemented observations"
         )
 else:
     raise SystemExit("unknown canary mode")
@@ -1370,10 +1448,12 @@ PY
 }
 
 run_canary_lane() {
-  local lane="$1" label="$2" mode="$3" arm="$4"
+  local lane="$1" label="$2" mode="$3" modality="$4" arm="$5"
   local spec="${MODEL_SPECS[$label]}" digest="${MODEL_DIGESTS[$label]}"
   local config="${MODEL_CONFIGS[$label]}" config_sha
-  local attestation_file="${ATTESTATION_FILES[$label]}" attestation_sha="${ATTESTATION_SHAS[$label]}"
+  local attestation_key="${label}:${modality}"
+  local attestation_file="${ATTESTATION_FILES[$attestation_key]}" \
+    attestation_sha="${ATTESTATION_SHAS[$attestation_key]}"
   local rehearsal_base rehearsal_plan rehearsal_run diagnostic_base diagnostic_plan diagnostic_run
   local projection_id target_cap judge_cap guard_evals http_cap clusters records eligibility
   local canary_id stages target_status attacker_status source_status decided coverage
@@ -1486,7 +1566,7 @@ run_canary_lane() {
   IFS=$'\t' read -r canary_id stages target_status attacker_status source_status \
     decided coverage target_attempts successful_target_generations < <(
     canary_fields "$diagnostic_run" "$mode" "$spec" "$digest" "$arm" \
-      "$target_cap" "$config" "$config_sha"
+      "$target_cap" "$config" "$config_sha" "${MODEL_MODALITIES[$label]}"
   )
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$lane" "$label" "$spec" "$digest" "$mode" "$projection_id" "$target_cap" \
@@ -1503,7 +1583,7 @@ run_canary_lane() {
 # retained projection. Failures are isolated so every other runnable lane is
 # still attempted before this tmux session reports its final status.
 for label in "${MODEL_LABELS[@]}"; do
-  static_lane="ollama-${label}-text-exploratory-50"
+  static_lane="ollama-${label}-text-primary-50"
   rjudge_lane="rjudge-ollama-${label}"
   assert_ollama_runnable_lane "$static_lane"
   assert_ollama_runnable_lane "$rjudge_lane"
@@ -1512,15 +1592,35 @@ for label in "${MODEL_LABELS[@]}"; do
   run_isolated projection "$rjudge_lane" \
     run_bounded_projection_lane "$rjudge_lane" "$label" rjudge rjudge_release
 done
+for label in "${IMAGE_MODEL_LABELS[@]}"; do
+  image_lane="ollama-${label}-image-primary-50"
+  gptgeochat_lane="gptgeochat-ollama-${label}"
+  assert_ollama_runnable_lane "$image_lane"
+  assert_ollama_runnable_lane "$gptgeochat_lane"
+  run_isolated projection "$image_lane" \
+    run_bounded_projection_lane "$image_lane" "$label" static "$IMAGE_ARMS"
+  run_isolated projection "$gptgeochat_lane" \
+    run_bounded_projection_lane "$gptgeochat_lane" "$label" gptgeochat \
+      gptgeochat_release
+done
 
 # Derive the expiring receipts only after bounded projections, immediately before
 # the canaries that consume them.
 for label in "${MODEL_LABELS[@]}"; do
-  run_isolated attestation "$label" probe_ollama_text "$label"
+  run_isolated attestation "${label}/text" probe_ollama "$label" text synth
   receipt_file="$ATTEST_RECEIPTS/${label}-text-${TAG}.live-attestation.json"
   if [[ -f "$receipt_file" && ! -L "$receipt_file" ]]; then
-    ATTESTATION_FILES[$label]="$receipt_file"
-    ATTESTATION_SHAS[$label]="$(sha256sum -- "$receipt_file" | awk '{print $1}')"
+    ATTESTATION_FILES["${label}:text"]="$receipt_file"
+    ATTESTATION_SHAS["${label}:text"]="$(sha256sum -- "$receipt_file" | awk '{print $1}')"
+  fi
+done
+for label in "${IMAGE_MODEL_LABELS[@]}"; do
+  run_isolated attestation "${label}/image" \
+    probe_ollama "$label" image harmbench_multimodal
+  receipt_file="$ATTEST_RECEIPTS/${label}-image-${TAG}.live-attestation.json"
+  if [[ -f "$receipt_file" && ! -L "$receipt_file" ]]; then
+    ATTESTATION_FILES["${label}:image"]="$receipt_file"
+    ATTESTATION_SHAS["${label}:image"]="$(sha256sum -- "$receipt_file" | awk '{print $1}')"
   fi
 done
 
@@ -1528,26 +1628,50 @@ done
 # exact projection or target attestation failed is explicitly blocked; it is
 # never silently replaced by another model, arm, judge, or stale receipt.
 for label in "${MODEL_LABELS[@]}"; do
-  static_lane="ollama-${label}-text-exploratory-50"
+  static_lane="ollama-${label}-text-primary-50"
   rjudge_lane="rjudge-ollama-${label}"
   assert_ollama_runnable_lane "$static_lane"
   assert_ollama_runnable_lane "$rjudge_lane"
-  if [[ ! -e "$SUCCESS_ROOT/${label}.attestation" ]]; then
+  if [[ ! -e "$SUCCESS_ROOT/${label}.text.attestation" ]]; then
     record_blocked canary "$static_lane" missing_fresh_exact_text_attestation
     record_blocked canary "$rjudge_lane" missing_fresh_exact_text_attestation
     continue
   fi
   if [[ -e "$SUCCESS_ROOT/${static_lane}.projection" ]]; then
     run_isolated canary "$static_lane" \
-      run_canary_lane "$static_lane" "$label" static airbench_full
+      run_canary_lane "$static_lane" "$label" static text airbench_full
   else
     record_blocked canary "$static_lane" missing_exact_cap_projection
   fi
   if [[ -e "$SUCCESS_ROOT/${rjudge_lane}.projection" ]]; then
     run_isolated canary "$rjudge_lane" \
-      run_canary_lane "$rjudge_lane" "$label" rjudge rjudge_release
+      run_canary_lane "$rjudge_lane" "$label" rjudge text rjudge_release
   else
     record_blocked canary "$rjudge_lane" missing_exact_cap_projection
+  fi
+done
+for label in "${IMAGE_MODEL_LABELS[@]}"; do
+  image_lane="ollama-${label}-image-primary-50"
+  gptgeochat_lane="gptgeochat-ollama-${label}"
+  assert_ollama_runnable_lane "$image_lane"
+  assert_ollama_runnable_lane "$gptgeochat_lane"
+  if [[ ! -e "$SUCCESS_ROOT/${label}.image.attestation" ]]; then
+    record_blocked canary "$image_lane" missing_fresh_exact_image_attestation
+    record_blocked canary "$gptgeochat_lane" missing_fresh_exact_image_attestation
+    continue
+  fi
+  if [[ -e "$SUCCESS_ROOT/${image_lane}.projection" ]]; then
+    run_isolated canary "$image_lane" \
+      run_canary_lane "$image_lane" "$label" static image mmsafety_official
+  else
+    record_blocked canary "$image_lane" missing_exact_cap_projection
+  fi
+  if [[ -e "$SUCCESS_ROOT/${gptgeochat_lane}.projection" ]]; then
+    run_isolated canary "$gptgeochat_lane" \
+      run_canary_lane "$gptgeochat_lane" "$label" gptgeochat image \
+        gptgeochat_release
+  else
+    record_blocked canary "$gptgeochat_lane" missing_exact_cap_projection
   fi
 done
 
@@ -1560,9 +1684,15 @@ if (( ${#FAILED_UNITS[@]} == 0 )); then
 import csv
 import sys
 
-from experiments.local_campaign.ollama_static_terminal import (
-    OLLAMA_STATIC_TERMINAL_LANES,
-    STATIC_LANE_MODELS,
+from experiments.local_campaign.current_ollama import (
+    CURRENT_OLLAMA_IMAGE_MODELS,
+    CURRENT_OLLAMA_MODELS,
+    CURRENT_OLLAMA_RUNNABLE_LANES,
+    CURRENT_OLLAMA_TYPED_TERMINAL_LANES,
+    gptgeochat_lane,
+    image_lane,
+    rjudge_lane,
+    text_lane,
 )
 from experiments.local_campaign.target_execution import aggregate_target_execution
 
@@ -1571,26 +1701,40 @@ def rows(path):
         return list(csv.DictReader(handle, delimiter="\t"))
 
 projections, attestations, canaries, dispositions = map(rows, sys.argv[1:])
-static_lanes = set(OLLAMA_STATIC_TERMINAL_LANES)
-rjudge_lanes = {f"rjudge-ollama-{model[0]}" for model in STATIC_LANE_MODELS.values()}
-expected_lanes = static_lanes | rjudge_lanes
-typed_gptgeochat = {f"gptgeochat-ollama-{model[0]}" for model in STATIC_LANE_MODELS.values()}
-if len(projections) != 6 or len(attestations) != 3 or len(canaries) != 6:
+static_lanes = {text_lane(model) for model in CURRENT_OLLAMA_MODELS} | {
+    image_lane(model) for model in CURRENT_OLLAMA_IMAGE_MODELS
+}
+source_metric_lanes = {rjudge_lane(model) for model in CURRENT_OLLAMA_MODELS} | {
+    gptgeochat_lane(model) for model in CURRENT_OLLAMA_IMAGE_MODELS
+}
+expected_lanes = set(CURRENT_OLLAMA_RUNNABLE_LANES)
+typed_gptgeochat = set(CURRENT_OLLAMA_TYPED_TERMINAL_LANES)
+if len(projections) != 12 or len(attestations) != 6 or len(canaries) != 12:
     raise SystemExit("Ollama Phase 5 row counts changed")
 if any(row["disposition"] != "completed" for row in dispositions):
     raise SystemExit("a supposedly clean workflow contains a non-complete disposition")
 if (
-    {row["metric_mode"] for row in projections} != {"static", "rjudge"}
+    {row["metric_mode"] for row in projections}
+    != {"static", "rjudge", "gptgeochat"}
     or {row["lane"] for row in projections} != expected_lanes
     or {row["lane"] for row in canaries} != expected_lanes
-    or len({row["lane"] for row in canaries}) != 6
+    or len({row["lane"] for row in canaries}) != 12
     or ({row["lane"] for row in projections + canaries} & typed_gptgeochat)
 ):
     raise SystemExit("Ollama projection/canary inventory changed")
 expected_attestations = {
-    model[0]: (model[1], model[2]) for model in STATIC_LANE_MODELS.values()
+    **{
+        (model.label, "text"): (model.spec, model.digest)
+        for model in CURRENT_OLLAMA_MODELS
+    },
+    **{
+        (model.label, "image"): (model.spec, model.digest)
+        for model in CURRENT_OLLAMA_IMAGE_MODELS
+    },
 }
-if {row["model_label"] for row in attestations} != set(expected_attestations):
+if {
+    (row["model_label"], row["modality"]) for row in attestations
+} != set(expected_attestations):
     raise SystemExit("Ollama target attestation inventory changed")
 for row in projections:
     if int(row["target_cap"]) <= 0 or int(row["judge_cap"]) != 0 or int(row["http_cap"]) != 0:
@@ -1605,10 +1749,12 @@ for row in canaries:
         raise SystemExit(f"runnable canary roles not exercised: {lane}")
     if lane in static_lanes and row["all_configured_stages_represented"] != "true":
         raise SystemExit(f"static scoring stages not represented: {lane}")
-    if lane in rjudge_lanes and row["source_evaluator_status"] != "exercised":
-        raise SystemExit(f"R-Judge evaluator not exercised: {lane}")
+    if lane in source_metric_lanes and row["source_evaluator_status"] != "exercised":
+        raise SystemExit(f"source evaluator not exercised: {lane}")
 for attestation in attestations:
-    expected_spec, expected_digest = expected_attestations[attestation["model_label"]]
+    expected_spec, expected_digest = expected_attestations[
+        (attestation["model_label"], attestation["modality"])
+    ]
     if (
         attestation["requested_spec"] != expected_spec
         or attestation["digest"] != expected_digest

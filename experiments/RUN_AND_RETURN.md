@@ -429,13 +429,12 @@ events. It terminates and confirms absence of only an exact tmux session it
 launched and owns; a controller that times out while awaiting upstream Phase 5
 or Phase 6 never terminates that upstream session.
 
-The rendered Gate 5-8 chain enforces an exact 46-row partition. Its retained
-baseline is 18 runnable and 28 typed-terminal rows, including seven
-target-runtime-terminal rows; `defense-local` remains conditional N/A. GPTGeoChat
-x each of the three RWKV Ollama targets is a typed unavailable
-row because the retained GPTGeoChat source requires images while the exact
-Ollama transport is text-only; those rows never enter projection, canary, or
-measured loops. The core cohort records `bridge-nanogcg`, `bridge-ideator`, and
+The rendered historical Gate 5-8 chain enforces an exact 46-row partition. Its
+retained baseline is 18 runnable and 28 typed-terminal rows, including seven
+target-runtime-terminal rows; `defense-local` remains conditional N/A. Its
+three GPTGeoChat x RWKV rows remain typed unavailable historical records. The
+RWKV tags are no longer installed and no prospective controller selects them.
+The core cohort records `bridge-nanogcg`, `bridge-ideator`, and
 `t3mp3st` as `unavailable` only because their prepared artifacts are assigned
 to a separate follow-on cohort and were not bound when its Gate 5 authorization
 was sealed. This is not a current capability disposition. The core controller
@@ -465,18 +464,24 @@ reported response and decision coverage. Neither condition is a software
 failure or permission to alter stops, generation caps, checkpoint identity or
 decoding.
 
-A targeted amendment must re-attest and canary only the seven affected lane
-identities under the current Runner before measured execution. The four current
-GraySwan identities use the limit-100, sample-seed-0 selections and caps from
-their matching LLaVA-base rows; the three RWKV static identities keep their
-limit-50, sample-seed-0 selections. The older GraySwan `-full` terminal names
-remain only in immutable historical provenance. On successful
-amendment, the expected Gate 5 profile is 25 runnable and 21 typed-terminal
-rows, with zero target-runtime-terminal rows. Only a separate successful
-`defense-local` admission shifts that profile to 26 runnable and 20
-typed-terminal rows. The historical terminal artifacts remain diagnostic
-provenance and are never rewritten. Malformed protocol, transport, identity,
-provenance, residency, timeout, and backend failures remain hard failures.
+A targeted amendment must re-attest and canary the four affected GraySwan lane
+identities under the current Runner before measured execution. Those identities
+use the limit-100, sample-seed-0 selections and caps from their matching
+LLaVA-base rows. The older GraySwan `-full` terminal names remain only in
+immutable historical provenance.
+
+A separate additive Ollama amendment binds the acquired exact digests for
+`gemma4:12b-it-q4_K_M`, `ministral-3:14b-instruct-2512-q4_K_M`,
+`deepseek-r1:32b-qwen-distill-q4_K_M`, and `gpt-oss:20b`. The first three are
+explicitly Q4_K_M; GPT-OSS retains its native MXFP4
+representation. All four receive bounded text and R-Judge projections and
+canaries. Gemma 4 and Ministral 3 also
+receive physical-image and GPTGeoChat projections and canaries. The DeepSeek and
+GPT-OSS GPTGeoChat pairs are typed unavailable because those exact models are
+text-only. The amendment derives its exact inventory counts before approval and
+does not rewrite the historical 46-row profile. Malformed protocol, transport,
+identity, provenance, residency, timeout, and backend failures remain hard
+failures.
 The tracked, opt-in `launch_phase6_recovery_and_seven.sh` serializes the exact
 core recovery and seven-row producers in one named tmux session. It is not part
 of `launch_chain`, does not rerun successful lanes, and does not raise caps. Its
