@@ -522,6 +522,9 @@ def derive_attestation(
     lane = spec["lane_id"]
     image = spec["modality"] == "image"
     corpus = "figstep" if image else "synth"
+    if lane_control.exists() or lane_control.is_symlink():
+        raise ValueError(f"fresh attestation control root already exists: {lane_control}")
+    lane_control.mkdir(mode=0o700)
     probe_parent = (
         WORK
         / "runs/thesis/attestation"

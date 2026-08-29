@@ -50,6 +50,17 @@ def _phase8_function(name: str, namespace: dict[str, Any]) -> Any:
     return namespace[name]
 
 
+def _followon_namespace() -> dict[str, Any]:
+    path = TEMPLATES / "followon_prepared_controller.py.in"
+    source = path.read_text(encoding="utf-8")
+    namespace: dict[str, Any] = {"__name__": "followon_template_test"}
+    exec(  # noqa: S102
+        compile(source.rsplit('\nif __name__ == "__main__":', 1)[0], path.name, "exec"),
+        namespace,
+    )
+    return namespace
+
+
 def _exact_argv(namespace: dict[str, Any], lane: str) -> list[str]:
     spec = namespace["LANES"][lane]
     values = {option: "fixture" for option in namespace["PAIR_OPTIONS"]}
@@ -114,6 +125,56 @@ def test_followon_attestation_probe_keeps_local_guardrail_fallback() -> None:
     assert '"7327bd9f6efbbe6101dc6cc4736302b3cbb6e425"' in contract
     assert '"cuda:1"' in contract
     assert '"target_and_guard"' in contract
+
+
+def test_followon_attestation_creates_its_control_root_before_acquisition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    namespace = _followon_namespace()
+    namespace["WORK"] = tmp_path
+    namespace["ATTEMPT_TAG"] = "fixture-attempt"
+    monkeypatch.setenv("URA_EXECUTION_SCOPE_ID", "fixture-scope")
+    lane_control = tmp_path / "control" / "canary-attestation"
+    lane_control.parent.mkdir(parents=True)
+
+    class AcquisitionObserved(RuntimeError):
+        pass
+
+    def plan_acquire(
+        _ctl: object,
+        _spec: object,
+        _label: str,
+        _args: object,
+        plan_root: Path,
+        receipt_root: Path,
+        _resource_set: str,
+    ) -> None:
+        assert plan_root.parent == lane_control
+        assert receipt_root.parent == lane_control
+        assert lane_control.is_dir()
+        raise AcquisitionObserved
+
+    spec = {
+        "lane_id": "followon-nanogcg-qwen3-vl",
+        "modality": "text",
+        "base_argv": [
+            "--project-revision",
+            "fixture-revision.json",
+            "--project-revision-sha256",
+            "0" * 64,
+            "--local",
+            "vllm:fixture",
+            "--local-config",
+            "fixture-local.json",
+            "--local-config-sha256",
+            "1" * 64,
+        ],
+    }
+    module = SimpleNamespace(plan_acquire=plan_acquire)
+
+    with pytest.raises(AcquisitionObserved):
+        namespace["derive_attestation"](module, object(), spec, lane_control)
 
 
 def test_followon_controller_authorizes_before_measured_calls_and_finalizes_outcomes() -> None:
