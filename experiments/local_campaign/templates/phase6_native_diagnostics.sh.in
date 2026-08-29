@@ -119,6 +119,26 @@ test "$URA_SOURCE_CONFORMANCE_SHA256" = "$EXPECTED_SOURCE_CONFORMANCE_SHA256"
 test "$(sha256sum -- "$URA_PROJECT_REVISION_MANIFEST" | awk '{print $1}')" = "$EXPECTED_PROJECT_REVISION_SHA256"
 test "$(sha256sum -- "$URA_SOURCE_CONFORMANCE_MANIFEST" | awk '{print $1}')" = "$EXPECTED_SOURCE_CONFORMANCE_SHA256"
 
+READINESS_ROOT="${URA_LOCAL_MODEL_READINESS_ROOT:?set URA_LOCAL_MODEL_READINESS_ROOT}"
+test -d "$READINESS_ROOT" && test ! -L "$READINESS_ROOT"
+while IFS=$'\t' read -r label spec; do
+  readiness="$READINESS_ROOT/${label}.readiness.json"
+  readiness_sha_file="$READINESS_ROOT/${label}.sha256"
+  test -f "$readiness" && test ! -L "$readiness"
+  test -f "$readiness_sha_file" && test ! -L "$readiness_sha_file"
+  readiness_sha="$(tr -d '\r\n' <"$readiness_sha_file")"
+  [[ "$readiness_sha" =~ ^[0-9a-f]{64}$ ]]
+  "$PY" -m experiments.local_model_readiness \
+    --validate "$readiness" --sha256 "$readiness_sha" \
+    --expected-spec "$spec" >/dev/null
+done < <("$PY" - <<'PY'
+from experiments.local_campaign.current_ollama import CURRENT_OLLAMA_MODELS
+
+for model in CURRENT_OLLAMA_MODELS:
+    print(model.label, model.spec, sep="\t")
+PY
+)
+
 "$PY" - "$URA_SOURCE_CONFORMANCE_MANIFEST" <<'PY'
 from pathlib import Path
 import sys

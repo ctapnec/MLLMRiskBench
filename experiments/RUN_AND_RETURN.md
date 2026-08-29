@@ -1645,6 +1645,22 @@ The local preflight loads the one target base engine before it constructs the
 scoring or defense guards. A successful preflight therefore tests the actual
 single-process memory layout; do not start a second target server beside it.
 
+Before that target enters any security projection, canary or measured run, run
+`python -m experiments.local_model_readiness` against the exact one-model local
+config. For a Hub-backed vLLM target, first use
+`--model-acquisition-plan-only --model-acquisition-plan-dir`, acquire that exact
+plan with section 6.1, and then pass the resulting plan, receipt and managed
+store to the readiness command. An Ollama target needs no Hub-acquisition
+arguments. The command makes ten deterministic benign question calls and, for
+an image-capable target, five deterministic synthetic-image calls. Admission
+requires zero empty responses, at least eight correct text answers and at least
+four correct image answers. Store each passing `ura-local-model-readiness/1`
+receipt and its SHA-256 under the operator-bound
+`URA_LOCAL_MODEL_READINESS_ROOT`; the local campaign controllers validate the
+exact target receipt before security calls. A failed target remains failed. A
+replacement is a newly pinned model condition and repeats acquisition and
+readiness rather than inheriting the failed target's artifacts.
+
 Create a separate local config for each selected model because the file keys must
 exactly match that command's `--local` value. Replace each revision with the
 actual full Hugging Face commit.

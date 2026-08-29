@@ -214,7 +214,21 @@ and understated the transfer by nearly half. The current Ollama cohort is
 Gemma 4 12B Instruct Q4_K_M, Ministral 3 14B Instruct 2512 Q4_K_M,
 DeepSeek-R1 Distill Qwen 32B Q4_K_M, and GPT-OSS 20B in its native MXFP4
 representation. A row becomes selectable only after the live roster
-shows its exact digest and a load smoke succeeds. Gemma 4 and Ministral 3 admit
+shows its exact digest and a load smoke succeeds. Before any local target enters
+security projection, canary or measured execution, it must also pass the
+transport-neutral `experiments.local_model_readiness` gate. The gate selects the
+same ten benign questions deterministically from a fixed twenty-question bank
+with seed 20260829, requires zero empty responses and at least eight correct,
+and, for an image-capable target, adds five deterministic synthetic split-color
+images with zero empty responses and at least four correct. This applies to the
+three vLLM targets and all four Ollama targets. Guard and classifier checkpoints
+instead retain their role-specific classifier smoke because free-form Q&A is not
+their served interface. The readiness receipt is engineering admission evidence,
+not a safety result. A failing target is retained as failed and receives no new
+security calls. A recent, relevant, hardware-fitting replacement may then be
+selected as a new exact model condition with its own pin, acquisition,
+readiness receipt, projections and Gate amendment; it never inherits the failed
+target's identity or artifacts. Gemma 4 and Ministral 3 admit
 text and image lanes; DeepSeek-R1 Distill and GPT-OSS admit text lanes only.
 The superseded RWKV tags have been removed from the live roster and from every
 prospective task. Their immutable historical artifacts remain readable.
@@ -289,7 +303,9 @@ The cost of the extra plan and receipt per lane is negligible, because
 acquisition re-imports nothing; the benefit is that each receipt states exactly
 which models that exact request needed.
 
-Gate 3: acquisition receipts present and bound; `python -m experiments.local_targets`
+Gate 3: acquisition receipts present and bound; every selected generative local
+target has a passing `ura-local-model-readiness/1` receipt for its declared
+modalities; `python -m experiments.local_targets`
 shows the three vLLM rows as compatible with an exact revision/digest; the
 console Build model picker shows the same rows under Local vLLM and the Ollama
 rows under Local Ollama.
