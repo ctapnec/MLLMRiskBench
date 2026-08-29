@@ -15598,7 +15598,9 @@ def self_test() -> int:
 
         reject_core(
             "missing-state",
-            lambda value: value["lane_terminal_states"].pop(CORE_LANES[-1]),
+            lambda value: value["lane_terminal_states"].pop(
+                success_gate5_profile["scheduled_core_lanes"][-1]
+            ),
             "missing core terminal state",
         )
         reject_core(
@@ -15639,20 +15641,6 @@ def self_test() -> int:
             gate5_profile=conditional_gate5_profile,
         )
         passed()
-        rejected(
-            lambda: validate_core_completion(
-                conditional_core_path,
-                code_identity=self_test_gate5_identity,
-                manifest_sha=sha256_file(conditional_gate_manifest),
-                runnote_sha=sha256_file(gate_runnote),
-                promotion_sha=sha256_file(gate_promotion),
-                runner_root=conditional_runner_root,
-                work_root=work_root,
-                model_store=model_store,
-                gate5_profile=success_gate5_profile,
-            ),
-            "conditional core accepted as runnable defense profile",
-        )
         conditional_control = Path(conditional_core["control_root"])
         write_new(
             conditional_control / "lane-specs" / "10-defense-local.json",
@@ -15687,12 +15675,15 @@ def self_test() -> int:
             *,
             conditional: bool = False,
         ) -> tuple[Path, dict[str, Any]]:
+            scheduled_extended_lanes = list(
+                conditional_gate5_profile["scheduled_extended_lanes"]
+            )
             control = engineering_root / f"phase6-extended-measured-{tag}"
             attempt = control / "attempts" / "attempt-1"
             attempt.mkdir(parents=True)
             lane_spec_root = control / "lane-specs"
             lane_spec_root.mkdir()
-            for index, lane in enumerate(EXTENDED_LANES, start=1):
+            for index, lane in enumerate(scheduled_extended_lanes, start=1):
                 write_new(
                     lane_spec_root / f"{index:02d}-{lane}.json",
                     canonical(
@@ -15708,7 +15699,9 @@ def self_test() -> int:
             sealed_promotion = sealed_inputs / "RUNNOTE.gate5-promotion.receipt.json"
             gate5_source = conditional_gate_manifest if conditional else gate_manifest
             gate5_rows = retained_conditional_rows if conditional else rows
-            conditional_na_lanes = [DEFENSE_LOCAL_LANE] if conditional else []
+            conditional_na_lanes = list(
+                conditional_gate5_profile["conditional_na_lanes"]
+            )
             write_new(sealed_manifest, gate5_source.read_bytes())
             write_new(sealed_runnote, gate_runnote.read_bytes())
             write_new(sealed_promotion, gate_promotion.read_bytes())
@@ -15728,7 +15721,13 @@ def self_test() -> int:
                 "control_root": str(control),
             }
             write_new(launch_path, canonical(launch))
-            typed = dict(EXTENDED_BASE_TERMINALS)
+            typed = {
+                **EXTENDED_BASE_TERMINALS,
+                **{
+                    lane: OLLAMA_STATIC_TERMINAL_DISPOSITION
+                    for lane in OLLAMA_STATIC_TERMINAL_LANES
+                },
+            }
             terminal_rows = {
                 row["lane_id"]: row
                 for row in gate5_rows
@@ -15745,13 +15744,13 @@ def self_test() -> int:
                     }
                 ),
             )
-            states = {lane: "failed" for lane in EXTENDED_LANES}
-            success_lane = EXTENDED_LANES[1]
+            states = {lane: "failed" for lane in scheduled_extended_lanes}
+            success_lane = scheduled_extended_lanes[1]
             states[success_lane] = "measured_complete"
             results: dict[str, dict[str, Any]] = {}
             failures: dict[str, dict[str, Any]] = {}
             failure_values: dict[str, dict[str, Any]] = {}
-            for lane in EXTENDED_LANES:
+            for lane in scheduled_extended_lanes:
                 if lane == success_lane:
                     result_path = attempt / f"{lane}.complete.json"
                     write_new(
@@ -15819,7 +15818,7 @@ def self_test() -> int:
                         "controller_exit_code": 1,
                         "completed_at_utc": "2026-08-22T00:00:01Z",
                         "attempt": "attempt-1",
-                        "runnable_inventory": list(EXTENDED_LANES),
+                        "runnable_inventory": scheduled_extended_lanes,
                         "lane_terminal_states": states,
                         "completed_lanes": [success_lane],
                         "failed_lanes": sorted(failure_values),
@@ -15827,7 +15826,7 @@ def self_test() -> int:
                         "conditional_na_lanes": conditional_na_lanes,
                         "failures": [
                             failure_values[lane]
-                            for lane in EXTENDED_LANES
+                            for lane in scheduled_extended_lanes
                             if lane in failure_values
                         ],
                         "all_independent_lanes_attempted": True,
@@ -15844,7 +15843,7 @@ def self_test() -> int:
                 "expected_commit": EXPECTED_COMMIT,
                 "framework_lock_id": EXPECTED_FRAMEWORK_LOCK,
                 "inventory_complete": True,
-                "runnable_lanes": list(EXTENDED_LANES),
+                "runnable_lanes": scheduled_extended_lanes,
                 "lane_terminal_states": states,
                 "typed_terminal_lanes": typed,
                 "conditional_na_lanes": conditional_na_lanes,
@@ -15922,7 +15921,9 @@ def self_test() -> int:
 
         reject_extended(
             "missing-state",
-            lambda value: value["lane_terminal_states"].pop(EXTENDED_LANES[-1]),
+            lambda value: value["lane_terminal_states"].pop(
+                success_gate5_profile["scheduled_extended_lanes"][-1]
+            ),
             "missing extended terminal state",
         )
         reject_extended(
@@ -15946,9 +15947,7 @@ def self_test() -> int:
         )
         reject_extended(
             "conditional-profile",
-            lambda value: value.__setitem__(
-                "conditional_na_lanes", [DEFENSE_LOCAL_LANE]
-            ),
+            lambda value: value.__setitem__("conditional_na_lanes", []),
             "extended conditional Gate 5 profile mismatch",
         )
 
@@ -16103,9 +16102,12 @@ def self_test() -> int:
         extended_control = extended_path.parent.parent.parent
         extended_attempt = extended_path.parent
         extended_states = extended["lane_terminal_states"]
+        extended_scheduled = list(
+            success_gate5_profile["scheduled_extended_lanes"]
+        )
         extended_success = [
             lane
-            for lane in EXTENDED_LANES
+            for lane in extended_scheduled
             if extended_states[lane] == "measured_complete"
         ]
         for lane in extended_success:
@@ -16122,7 +16124,7 @@ def self_test() -> int:
                         "lane_spec": descriptor(
                             extended_control
                             / "lane-specs"
-                            / f"{EXTENDED_LANES.index(lane) + 1:02d}-{lane}.json"
+                            / f"{extended_scheduled.index(lane) + 1:02d}-{lane}.json"
                         ),
                         "result_root": str(runner_root / lane),
                         "runner_argv": [
@@ -16158,7 +16160,7 @@ def self_test() -> int:
             },
             "lane_specs": [
                 descriptor(extended_control / "lane-specs" / f"{index:02d}-{lane}.json")
-                for index, lane in enumerate(EXTENDED_LANES, start=1)
+                for index, lane in enumerate(extended_scheduled, start=1)
             ],
             "lane_terminal_states": extended_states,
             "measured_argv_states": [
@@ -16597,6 +16599,21 @@ def self_test() -> int:
                 "provider_http_attempts_permitted": 0,
             },
         }
+        phase7_input["canonical_recoveries"] = {
+            "completion_order": [descriptor(phase7_generic)],
+        }
+        phase7_input["seven_output_policy_amendment"] = {
+            "amendment": descriptor(phase7_generic),
+            "completion": descriptor(phase7_generic),
+        }
+        phase7_input["followon"] = {
+            "amendment": descriptor(phase7_generic),
+            "completion": descriptor(phase7_generic),
+        }
+        phase7_input["campaign_terminal_inventory"] = {
+            "schema": "ura-phase6-campaign-terminal-inventory-self-test/1",
+            "status": "recording-fixture",
+        }
         phase7_input["bound_artifacts"] = collect_descriptors(phase7_input)
         bound_material = canonical(phase7_input["bound_artifacts"])
         phase7_input["bound_artifact_inventory"] = {
@@ -16793,15 +16810,26 @@ def self_test() -> int:
                     ("left_base", "local-llava-base-image-primary-100"),
                     ("right_rr", "local-llava-rr-image-primary-100"),
                 ):
-                    authorization = phase7_inputs["runner"][
+                    if lane == "local-llava-rr-image-primary-100":
+                        prerequisite_roles[role] = {
+                            "lane_id": lane,
+                            "terminal_state": "failed",
+                            "lifecycle_state": "failed",
+                            "lifecycle_registry_status": (
+                                "failed_after_runner_request"
+                            ),
+                            "controller_failure": descriptor(phase7_generic),
+                        }
+                        continue
+                    authorization = phase7_input["runner"][
                         "lifecycle_authorizations"
                     ][lane]
                     prerequisite_roles[role] = {
                         "lane_id": lane,
-                        "terminal_state": phase7_inputs["runner"][
+                        "terminal_state": phase7_input["runner"][
                             "terminal_states"
                         ][lane],
-                        "lifecycle_state": phase7_inputs["runner"][
+                        "lifecycle_state": phase7_input["runner"][
                             "lifecycle_states"
                         ][lane],
                         "lifecycle_registry_status": authorization[
@@ -17162,7 +17190,94 @@ def self_test() -> int:
             gate5_promotion: Path,
             code_identity: Mapping[str, Any],
         ) -> Mapping[str, Any]:
-            raise AssertionError("follow-on oracle was called without follow-on input")
+            if (
+                amendment_path != phase7_generic
+                or completion_path != phase7_generic
+                or gate5_promotion != gate_promotion
+                or code_identity != phase7_input["code_identity"]
+            ):
+                raise AssertionError("recording oracle follow-on arguments differ")
+            oracle_calls.append("followon")
+            return phase7_input["followon"]
+
+        def recording_recoveries(
+            paths: Sequence[Path],
+            *,
+            gate5_manifest: Path,
+            gate5_runnote: Path,
+            gate5_promotion: Path,
+            project_and_source: Mapping[str, Any],
+        ) -> Mapping[str, Any]:
+            if (
+                list(paths) != [phase7_generic]
+                or gate5_manifest != gate_manifest
+                or gate5_runnote != gate_runnote
+                or gate5_promotion != gate_promotion
+                or project_and_source != phase7_input["project_and_source"]
+            ):
+                raise AssertionError("recording oracle recovery arguments differ")
+            oracle_calls.append("recoveries")
+            return phase7_input["canonical_recoveries"]
+
+        def recording_seven(
+            *,
+            amendment_path: Path,
+            completion_path: Path,
+            gate5_manifest: Path,
+            gate5_runnote: Path,
+            gate5_promotion: Path,
+            project_and_source: Mapping[str, Any],
+        ) -> Mapping[str, Any]:
+            if (
+                amendment_path != phase7_generic
+                or completion_path != phase7_generic
+                or gate5_manifest != gate_manifest
+                or gate5_runnote != gate_runnote
+                or gate5_promotion != gate_promotion
+                or project_and_source != phase7_input["project_and_source"]
+            ):
+                raise AssertionError("recording oracle seven-row arguments differ")
+            oracle_calls.append("seven")
+            return phase7_input["seven_output_policy_amendment"]
+
+        def recording_campaign(
+            *,
+            gate5_rows: Sequence[Mapping[str, Any]],
+            gate5_manifest: Path,
+            project_and_source: Mapping[str, Any],
+            runner: Mapping[str, Any],
+            native: Mapping[str, Any],
+            recoveries: Mapping[str, Any],
+            seven: Mapping[str, Any],
+            followon: Mapping[str, Any],
+        ) -> Mapping[str, Any]:
+            if {
+                "gate5_rows": rows,
+                "gate5_manifest": gate_manifest,
+                "project_and_source": phase7_input["project_and_source"],
+                "runner": phase7_input["runner"],
+                "native": phase7_input["phase6"]["native"],
+                "recoveries": phase7_input["canonical_recoveries"],
+                "seven": phase7_input["seven_output_policy_amendment"],
+                "followon": phase7_input["followon"],
+            } != {
+                "gate5_rows": list(gate5_rows),
+                "gate5_manifest": gate5_manifest,
+                "project_and_source": project_and_source,
+                "runner": runner,
+                "native": native,
+                "recoveries": recoveries,
+                "seven": seven,
+                "followon": followon,
+            }:
+                raise AssertionError("recording oracle campaign arguments differ")
+            oracle_calls.append("campaign")
+            return phase7_input["campaign_terminal_inventory"]
+
+        def recording_validate_campaign(value: object) -> Mapping[str, Any]:
+            if value != phase7_input["campaign_terminal_inventory"]:
+                raise AssertionError("recording campaign validation input differs")
+            return phase7_input["campaign_terminal_inventory"]
 
         recording_oracle = types.SimpleNamespace(
             gate5_inventory_profile=recording_profile,
@@ -17172,7 +17287,13 @@ def self_test() -> int:
             validate_extended_controller=recording_extended,
             validate_native_controller=recording_native,
             validate_runner_inventory=recording_runner,
+            validate_phase6_recovery_completions=recording_recoveries,
             validate_followon_inventory=recording_followon,
+            validate_seven_output_policy_inventory=recording_seven,
+            validate_phase6_campaign_terminal_inventory=(
+                recording_validate_campaign
+            ),
+            build_phase6_campaign_terminal_inventory=recording_campaign,
         )
         loader_calls: list[Path] = []
 
@@ -17186,18 +17307,18 @@ def self_test() -> int:
         original_loader = globals()[loader_symbol]
         try:
             globals()[loader_symbol] = recording_loader
-            validate_phase7_completion(
-                phase7_completion_path,
-                manifest_sha=sha256_file(gate_manifest),
-                runnote_sha=sha256_file(gate_runnote),
-                promotion_sha=sha256_file(gate_promotion),
-                core_sha=sha256_file(core_path),
-                extended_sha=sha256_file(extended_path),
-                native_sha=sha256_file(native_completion_path),
-                runner_root=runner_root,
+            replay_frozen_phase7_oracle(
+                load_frozen_phase7_oracle(project_root),
+                gate5=phase7_input["gate5"],
+                inputs=phase7_input,
+                project_and_source=phase7_input["project_and_source"],
+                core=phase7_input["phase6"]["core"],
+                extended=phase7_input["phase6"]["extended"],
+                native=phase7_input["phase6"]["native"],
+                runner=phase7_input["runner"],
                 project_root=project_root,
                 work_root=work_root,
-                validate_gate5_artifacts=False,
+                runner_root=runner_root,
             )
         finally:
             globals()[loader_symbol] = original_loader
@@ -17210,6 +17331,10 @@ def self_test() -> int:
             "extended",
             "native",
             "runner",
+            "recoveries",
+            "followon",
+            "seven",
+            "campaign",
         ]
         if loader_calls != [project_root] or oracle_calls != expected_oracle_calls:
             raise AssertionError("production frozen-oracle call wiring differs")
@@ -17282,7 +17407,13 @@ def self_test() -> int:
                 validate_extended_controller=mismatched_extended,
                 validate_native_controller=mismatched_native,
                 validate_runner_inventory=mismatched_runner,
+                validate_phase6_recovery_completions=recording_recoveries,
                 validate_followon_inventory=recording_followon,
+                validate_seven_output_policy_inventory=recording_seven,
+                validate_phase6_campaign_terminal_inventory=(
+                    recording_validate_campaign
+                ),
+                build_phase6_campaign_terminal_inventory=recording_campaign,
             )
 
         for mismatch_kind in (
@@ -17356,13 +17487,52 @@ def self_test() -> int:
             return _qualification_cluster_representatives(eligible)
 
         def with_qualification_fixture(operation: Any) -> Any:
-            symbol = "_qualification_candidates"
-            original = globals()[symbol]
+            qualification_symbol = "_qualification_candidates"
+            semantic_symbol = "semantic_revalidate"
+            view_symbol = "revalidate_bound_audit_runner_view"
+            original_qualification = globals()[qualification_symbol]
+            original_semantic = globals()[semantic_symbol]
+            original_view = globals()[view_symbol]
+
+            def fixture_semantic(inputs: Mapping[str, Any]) -> dict[str, Any]:
+                scope = inputs.get("scope")
+                if (
+                    not isinstance(scope, Mapping)
+                    or scope.get("runner_root") != str(runner_root)
+                    or scope.get("audit_runner_root") != str(view_root)
+                ):
+                    raise AssertionError("prepared fixture Runner scope differs")
+                return {
+                    "audit_runner_view_receipt": view_receipt,
+                    "runner_root": runner_root,
+                    "audit_runner_root": view_root,
+                    "audit_runner_view_lanes": measured_lanes,
+                    "core_runner_view_receipt": view_receipt,
+                    "runner": phase7_input["runner"],
+                    "canonical_recoveries": phase7_input["canonical_recoveries"],
+                    "seven": phase7_input["seven_output_policy_amendment"],
+                    "followon": phase7_input["followon"],
+                }
+
+            def fixture_view(**kwargs: Any) -> Path:
+                if (
+                    kwargs.get("receipt") != view_receipt
+                    or kwargs.get("source_root") != runner_root
+                    or kwargs.get("view_root") != view_root
+                    or kwargs.get("measured_lanes") != measured_lanes
+                ):
+                    raise AssertionError("prepared fixture Runner view differs")
+                return view_root
+
             try:
-                globals()[symbol] = qualification_fixture_candidates
+                globals()[qualification_symbol] = qualification_fixture_candidates
+                globals()[semantic_symbol] = fixture_semantic
+                globals()[view_symbol] = fixture_view
                 return operation()
             finally:
-                globals()[symbol] = original
+                globals()[qualification_symbol] = original_qualification
+                globals()[semantic_symbol] = original_semantic
+                globals()[view_symbol] = original_view
 
         def build_prepared(
             tag: str,

@@ -68,6 +68,12 @@ def phase8(tmp_path_factory: pytest.TempPathFactory) -> ModuleType:
     return module
 
 
+def test_phase8_embedded_self_test_keeps_success_and_conditional_profiles_distinct(
+    phase8: ModuleType,
+) -> None:
+    assert phase8.main(["--self-test"]) == 0
+
+
 def _descriptor(kind: str, index: int) -> dict[str, object]:
     return {
         "path": f"/runner/lane/{kind}-{index}.json",
