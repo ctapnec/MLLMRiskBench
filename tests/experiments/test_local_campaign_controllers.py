@@ -2181,7 +2181,7 @@ def test_phase7_native_adoption_revalidates_only_whitelisted_history() -> None:
         "\ndef ", 1
     )[0]
     native = source.split("def validate_native_controller(", 1)[1].split(
-        "def build_runner_input_view(", 1
+        "def _retained_descriptor(", 1
     )[0]
 
     def assert_history_contract() -> None:
