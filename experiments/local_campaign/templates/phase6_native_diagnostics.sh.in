@@ -5538,7 +5538,7 @@ plan = desc(plan_value)
 if plan["sha256"] != authorized:
     raise SystemExit("native plan authorization no longer matches")
 plan_content = json.loads(Path(plan_value).read_bytes())
-project_revision = desc(project_revision_value)
+project_revision = desc(Path(project_revision_value).resolve(strict=True))
 if (
     project_revision.get("sha256") != project_revision_sha256
     or not isinstance(plan_content, dict)
