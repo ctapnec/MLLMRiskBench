@@ -215,6 +215,7 @@ expected = (
     ("launch_gate5_sequence.sh", "none"),
     ("phase6_core_measured.sh", "none"),
     ("phase6_extended_measured.sh", "none"),
+    ("phase6_current_ollama.sh", "none"),
     ("phase6_followon_prepared.sh", "none"),
     ("followon_prepared_controller.py", "followon-contract"),
     ("phase6_native_diagnostics.sh", "none"),

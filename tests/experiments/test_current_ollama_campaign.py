@@ -251,6 +251,9 @@ def test_current_ollama_phase6_is_generated_and_rechecks_each_lane() -> None:
     generator = (root / "experiments" / "local_campaign" / "generate.py").read_text(
         encoding="utf-8"
     )
+    verifier = (
+        root / "experiments" / "local_campaign" / "templates" / "verify_controller_set.sh.in"
+    ).read_text(encoding="utf-8")
     template = (
         root / "experiments" / "local_campaign" / "templates" / "phase6_current_ollama.sh.in"
     ).read_text(encoding="utf-8")
@@ -258,6 +261,7 @@ def test_current_ollama_phase6_is_generated_and_rechecks_each_lane() -> None:
         encoding="utf-8"
     )
     assert 'Controller("phase6_current_ollama.sh.in", "phase6_current_ollama.sh")' in generator
+    assert '("phase6_current_ollama.sh", "none")' in verifier
     assert '--gate5-amendment "$GATE5_AMENDMENT"' in template
     assert "tmux new-session -d" in template
     assert "--hard-stop-hours 336" in template
