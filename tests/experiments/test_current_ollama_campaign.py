@@ -42,8 +42,7 @@ def _assert_exact_current_roster(models: Sequence[CurrentOllamaModel]) -> None:
     ]
     assert all(re.fullmatch(r"[0-9a-f]{64}", model.digest) for model in models)
     assert all(
-        "rwkv" not in model.tag.lower() and "mollysama" not in model.tag.lower()
-        for model in models
+        "rwkv" not in model.tag.lower() and "mollysama" not in model.tag.lower() for model in models
     )
 
 
