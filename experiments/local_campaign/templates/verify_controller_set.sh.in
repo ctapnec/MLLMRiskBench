@@ -122,7 +122,7 @@ done < "$INVENTORY"
 [[ "$controller_hash_count" == '32' ]] || fail 'controller inventory count differs'
 [[ -z "$(find -P "$CONTROLLER_ROOT" -mindepth 1 -maxdepth 1 ! -type f -print -quit)" ]] || \
   fail 'active controller generation contains a non-regular entry'
-[[ "$(find -P "$CONTROLLER_ROOT" -mindepth 1 -maxdepth 1 -type f -printf . | wc -c)" == '34' ]] || \
+[[ "$(find -P "$CONTROLLER_ROOT" -mindepth 1 -maxdepth 1 -type f -printf . | wc -c)" == '35' ]] || \
   fail 'active controller generation file count differs'
 
 [[ -d "$PROJECT" && ! -L "$PROJECT" ]] || \
