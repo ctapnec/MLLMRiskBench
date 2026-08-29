@@ -1618,6 +1618,7 @@ gate5_initial = strict_json(gate5_validation_value, "initial Gate 5 validation")
 gate5_final = strict_json(gate5_final_validation_value, "final Gate 5 validation")
 if gate5_initial != gate5_final:
     raise SystemExit("initial and final Gate 5 validations differ")
+gate5_code_identity = gate5_initial.get("code_identity")
 expected_gate5_fields = {
     "schema",
     "status",
@@ -1638,8 +1639,12 @@ if (
     set(gate5_initial) != expected_gate5_fields
     or gate5_initial.get("schema") != "ura-phase6-sequence-gate5-validation/1"
     or gate5_initial.get("status") != "validated"
-    or gate5_initial.get("code_identity")
-    != {"expected_commit": commit, "framework_lock_id": lock}
+    or not isinstance(gate5_code_identity, dict)
+    or set(gate5_code_identity) != {"expected_commit", "framework_lock_id"}
+    or re.fullmatch(
+        r"[0-9a-f]{40}", str(gate5_code_identity.get("expected_commit"))
+    ) is None
+    or gate5_code_identity.get("framework_lock_id") != lock
     or gate5_initial.get("sequence_completion") != descriptor(gate5_completion_value)
     or gate5_initial.get("sequence_exit") != descriptor(gate5_exit_value)
     or gate5_initial.get("downloads_observed_bytes") != 0

@@ -2098,6 +2098,33 @@ def test_phase6_sequence_uses_gate5_identity_for_measured_children() -> None:
             assert_identity_contract(mutated)
 
 
+def test_phase6_sequence_preserves_validated_historical_gate5_identity() -> None:
+    source = _template_source("phase6_sequence.sh.in")
+    aggregate = source.split(
+        'gate5_initial = strict_json(gate5_validation_value, "initial Gate 5 validation")',
+        1,
+    )[1].split('launch = strict_json(launch_value, "Phase 6 sequence launch")', 1)[0]
+    required = (
+        'gate5_code_identity = gate5_initial.get("code_identity")',
+        'set(gate5_code_identity) != {"expected_commit", "framework_lock_id"}',
+        'r"[0-9a-f]{40}", str(gate5_code_identity.get("expected_commit"))',
+        'gate5_code_identity.get("framework_lock_id") != lock',
+    )
+
+    def assert_historical_identity_contract(candidate: str) -> None:
+        _assert_source_contract(candidate, required)
+        assert '{"expected_commit": commit, "framework_lock_id": lock}' not in candidate
+
+    assert_historical_identity_contract(aggregate)
+    reverted = aggregate.replace(
+        'not isinstance(gate5_code_identity, dict)',
+        'gate5_code_identity != {"expected_commit": commit, "framework_lock_id": lock}',
+        1,
+    )
+    with pytest.raises(AssertionError):
+        assert_historical_identity_contract(reverted)
+
+
 def test_phase6_sequence_passes_the_validated_gate5_profile_to_core() -> None:
     source = (
         Path(__file__).parents[2]
