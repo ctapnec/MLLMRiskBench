@@ -119,7 +119,7 @@ while IFS=$'\t' read -r name bytes sha256 self_test; do
     fail "controller SHA-256 differs: $path"
   controller_hash_count=$((controller_hash_count + 1))
 done < "$INVENTORY"
-[[ "$controller_hash_count" == '31' ]] || fail 'controller inventory count differs'
+[[ "$controller_hash_count" == '32' ]] || fail 'controller inventory count differs'
 [[ -z "$(find -P "$CONTROLLER_ROOT" -mindepth 1 -maxdepth 1 ! -type f -print -quit)" ]] || \
   fail 'active controller generation contains a non-regular entry'
 [[ "$(find -P "$CONTROLLER_ROOT" -mindepth 1 -maxdepth 1 -type f -printf . | wc -c)" == '34' ]] || \
@@ -319,7 +319,7 @@ PY
   controller_count=$((controller_count + 1))
 done < "$INVENTORY"
 
-[[ "$controller_count" == '31' ]] || fail 'verified controller count differs'
+[[ "$controller_count" == '32' ]] || fail 'verified controller count differs'
 
 self_test_count=0
 cd "$PROJECT"

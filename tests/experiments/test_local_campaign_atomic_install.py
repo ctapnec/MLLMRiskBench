@@ -448,7 +448,7 @@ def test_verifier_early_counts_match_the_installed_package_and_reject_stale_valu
 
     source = package.verifier.read_text(encoding="ascii")
     inventory_check = (
-        "[[ \"$controller_hash_count\" == '31' ]] || "
+        "[[ \"$controller_hash_count\" == '32' ]] || "
         "fail 'controller inventory count differs'"
     )
     generation_check = (
@@ -457,7 +457,7 @@ def test_verifier_early_counts_match_the_installed_package_and_reject_stale_valu
         "  fail 'active controller generation file count differs'"
     )
     later_check = (
-        "[[ \"$controller_count\" == '31' ]] || "
+        "[[ \"$controller_count\" == '32' ]] || "
         "fail 'verified controller count differs'"
     )
     assert source.count(inventory_check) == 1
