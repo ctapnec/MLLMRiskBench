@@ -624,7 +624,7 @@ def rr_tree_descriptor(value: object, *, label: str) -> dict[str, object]:
 
 
 def validate_rr_runtime_terminal_artifact(
-    descriptor_value: object, *, label: str
+    descriptor_value: object, *, label: str, classification_commit: str
 ) -> None:
     _, terminal_payload = checked_descriptor_bytes(
         descriptor_value, f"{label} RR terminal artifact"
@@ -700,7 +700,7 @@ def validate_rr_runtime_terminal_artifact(
             "classification_project_commit", "framework_lock_sha256",
             "project_revision", "semantic_source_continuity", "evidence_roots",
         }
-        or bindings.get("classification_project_commit") != expected_commit
+        or bindings.get("classification_project_commit") != classification_commit
         or bindings.get("framework_lock_sha256") != lock_id
     ):
         raise SystemExit(f"{label} RR binding changed")
@@ -889,7 +889,8 @@ def validate_rr_projection_field(value: object, *, label: str) -> None:
 
 
 def validate_rr_runtime_terminals(
-    by_id: dict[str, dict[str, object]], *, label: str
+    by_id: dict[str, dict[str, object]], *, label: str,
+    classification_commit: str,
 ) -> dict[str, object]:
     unavailable = {"status": "UNAVAILABLE", "value": None}
     expected_fields = {
@@ -930,7 +931,9 @@ def validate_rr_runtime_terminals(
             raise SystemExit(f"{label} RR terminals do not share one artifact")
     if shared is None:
         raise SystemExit(f"{label} RR terminal evidence is absent")
-    validate_rr_runtime_terminal_artifact(shared, label=label)
+    validate_rr_runtime_terminal_artifact(
+        shared, label=label, classification_commit=classification_commit
+    )
     return shared
 
 
@@ -950,7 +953,9 @@ def inventory_counts(by_id: dict[str, dict[str, object]]) -> dict[str, object]:
     )
 
 
-def validate_inventory(rows: object, *, label: str) -> dict[str, dict[str, object]]:
+def validate_inventory(
+    rows: object, *, label: str, classification_commit: str
+) -> dict[str, dict[str, object]]:
     if not isinstance(rows, list) or len(rows) != SUCCESS_COUNTS["total"]:
         raise SystemExit(f"{label} is not the exact 46-row Gate 5 inventory")
     if any(not isinstance(row, dict) or not isinstance(row.get("lane_id"), str) for row in rows):
@@ -962,7 +967,9 @@ def validate_inventory(rows: object, *, label: str) -> dict[str, dict[str, objec
         set(RUNNABLE_FAMILIES) | RR_TERMINAL_LANE_SET | set(TERMINAL_IDENTITIES)
     ):
         raise SystemExit(f"{label} lane identifiers differ from the reviewed inventory")
-    validate_rr_runtime_terminals(by_id, label=label)
+    validate_rr_runtime_terminals(
+        by_id, label=label, classification_commit=classification_commit
+    )
     static_terminals = set(validate_ollama_static_gate5_rows(
         [by_id[lane] for lane in OLLAMA_STATIC_TERMINAL_LANES],
         label=label,
@@ -1248,7 +1255,11 @@ for field in (
 ):
     if isinstance(policy.get(field), bool) or not isinstance(policy.get(field), int) or policy[field] <= 0:
         raise SystemExit(f"Gate 5 policy field is invalid: {field}")
-manifest_rows = validate_inventory(gate5.get("lanes"), label="covered manifest")
+manifest_rows = validate_inventory(
+    gate5.get("lanes"),
+    label="covered manifest",
+    classification_commit=gate5_expected_commit,
+)
 gate5_counts = inventory_counts(manifest_rows)
 
 work = Path(os.environ["URA_WORK"]).resolve(strict=True)
@@ -1275,7 +1286,11 @@ if (
     raise SystemExit("canonical Gate 5 RUNNOTE contract changed")
 if note.get("covered_manifest") != descriptor(gate5_path):
     raise SystemExit("canonical RUNNOTE does not bind the supplied Gate 5 manifest")
-note_rows = validate_inventory(note.get("lanes"), label="canonical RUNNOTE")
+note_rows = validate_inventory(
+    note.get("lanes"),
+    label="canonical RUNNOTE",
+    classification_commit=gate5_expected_commit,
+)
 if note_rows != manifest_rows:
     raise SystemExit("canonical RUNNOTE and Gate 5 manifest inventories differ")
 approval = note.get("approval")
@@ -2511,7 +2526,7 @@ def rr_tree_descriptor(value: object, *, label: str) -> dict[str, object]:
 
 
 def validate_rr_runtime_terminal_artifact(
-    descriptor_value: object, *, label: str
+    descriptor_value: object, *, label: str, classification_commit: str
 ) -> None:
     _, terminal_payload = rr_checked_descriptor_bytes(
         descriptor_value, f"{label} RR terminal artifact"
@@ -2584,7 +2599,7 @@ def validate_rr_runtime_terminal_artifact(
             "classification_project_commit", "framework_lock_sha256",
             "project_revision", "semantic_source_continuity", "evidence_roots",
         }
-        or bindings.get("classification_project_commit") != EXPECTED_COMMIT
+        or bindings.get("classification_project_commit") != classification_commit
         or bindings.get("framework_lock_sha256") != LOCK_ID
     ):
         raise ValueError(f"{label} RR binding changed")
@@ -2802,7 +2817,8 @@ def validate_rr_projection_field(value: object, *, label: str) -> None:
 
 
 def validate_rr_runtime_terminals(
-    by_id: Mapping[str, Mapping[str, Any]], *, label: str
+    by_id: Mapping[str, Mapping[str, Any]], *, label: str,
+    classification_commit: str,
 ) -> dict[str, Any]:
     unavailable = {"status": "UNAVAILABLE", "value": None}
     expected_fields = {
@@ -2843,7 +2859,9 @@ def validate_rr_runtime_terminals(
             raise ValueError(f"{label} RR terminals do not share one artifact")
     if shared is None:
         raise ValueError(f"{label} RR terminal evidence is absent")
-    validate_rr_runtime_terminal_artifact(shared, label=label)
+    validate_rr_runtime_terminal_artifact(
+        shared, label=label, classification_commit=classification_commit
+    )
     return shared
 
 
@@ -2863,7 +2881,9 @@ def gate5_inventory_counts(by_id: Mapping[str, Mapping[str, Any]]) -> dict[str, 
     )
 
 
-def validate_gate5_inventory(rows: object, label: str) -> dict[str, dict[str, Any]]:
+def validate_gate5_inventory(
+    rows: object, label: str, *, classification_commit: str
+) -> dict[str, dict[str, Any]]:
     if not isinstance(rows, list) or len(rows) != SUCCESS_GATE5_COUNTS["total"]:
         raise ValueError(f"{label} is not the exact 46-row Gate 5 inventory")
     if any(not isinstance(row, dict) or not isinstance(row.get("lane_id"), str) for row in rows):
@@ -2875,7 +2895,9 @@ def validate_gate5_inventory(rows: object, label: str) -> dict[str, dict[str, An
         set(RUNNABLE_FAMILIES) | RR_TERMINAL_LANE_SET | set(TERMINAL_IDENTITIES)
     ):
         raise ValueError(f"{label} lane identifiers differ from the reviewed inventory")
-    validate_rr_runtime_terminals(by_id, label=label)
+    validate_rr_runtime_terminals(
+        by_id, label=label, classification_commit=classification_commit
+    )
     static_terminals = set(validate_ollama_static_gate5_rows(
         [by_id[lane] for lane in OLLAMA_STATIC_TERMINAL_LANES],
         label=label,
@@ -3053,7 +3075,11 @@ def validate_gate5_contract(
     ):
         raise ValueError("sealed Gate 5 manifest identity changed")
     historical_commit = historical_code_identity["expected_commit"]
-    manifest_rows = validate_gate5_inventory(manifest.get("lanes"), "covered manifest")
+    manifest_rows = validate_gate5_inventory(
+        manifest.get("lanes"),
+        "covered manifest",
+        classification_commit=historical_commit,
+    )
     expected_counts = gate5_inventory_counts(manifest_rows)
     policy = validate_gate5_policy(manifest.get("policy"))
 
@@ -3075,7 +3101,11 @@ def validate_gate5_contract(
         or note.get("policy") != policy
     ):
         raise ValueError("canonical Gate 5 RUNNOTE contract changed")
-    note_rows = validate_gate5_inventory(note.get("lanes"), "canonical RUNNOTE")
+    note_rows = validate_gate5_inventory(
+        note.get("lanes"),
+        "canonical RUNNOTE",
+        classification_commit=historical_commit,
+    )
     if note_rows != manifest_rows:
         raise ValueError("canonical RUNNOTE and covered-manifest inventories differ")
     covered_row = note.get("covered_manifest")
@@ -3178,14 +3208,21 @@ def gate5_contract_self_test(contract: Mapping[str, Any]) -> dict[str, Any]:
             return
         raise AssertionError(f"Gate 5 contract mutation unexpectedly passed: {label}")
 
+    historical_commit = contract["manifest"]["code_identity"]["expected_commit"]
+
+    def validate_rows(rows: object, label: str) -> dict[str, dict[str, Any]]:
+        return validate_gate5_inventory(
+            rows, label, classification_commit=historical_commit
+        )
+
     rows = contract["manifest"]["lanes"]
-    must_fail("missing-lane", lambda: validate_gate5_inventory(rows[:-1], "mutated manifest"))
+    must_fail("missing-lane", lambda: validate_rows(rows[:-1], "mutated manifest"))
     duplicate = copy.deepcopy(rows)
     duplicate[-1] = copy.deepcopy(duplicate[0])
-    must_fail("duplicate-lane", lambda: validate_gate5_inventory(duplicate, "mutated manifest"))
+    must_fail("duplicate-lane", lambda: validate_rows(duplicate, "mutated manifest"))
     wrong_family = copy.deepcopy(rows)
     next(row for row in wrong_family if row["lane_id"] == "local-qwen3-vl-text-primary-100")["family"] = "bridge"
-    must_fail("runnable-family", lambda: validate_gate5_inventory(wrong_family, "mutated manifest"))
+    must_fail("runnable-family", lambda: validate_rows(wrong_family, "mutated manifest"))
     wrong_rr_disposition = copy.deepcopy(rows)
     next(
         row for row in wrong_rr_disposition
@@ -3193,11 +3230,11 @@ def gate5_contract_self_test(contract: Mapping[str, Any]) -> dict[str, Any]:
     )["disposition"] = "runnable"
     must_fail(
         "rr-current-runnable",
-        lambda: validate_gate5_inventory(wrong_rr_disposition, "mutated manifest"),
+        lambda: validate_rows(wrong_rr_disposition, "mutated manifest"),
     )
     wrong_native = copy.deepcopy(rows)
     next(row for row in wrong_native if row["lane_id"] == "structural-native-giskard")["reason_code"] = "forged"
-    must_fail("native-terminal", lambda: validate_gate5_inventory(wrong_native, "mutated manifest"))
+    must_fail("native-terminal", lambda: validate_rows(wrong_native, "mutated manifest"))
     alternate_rows = copy.deepcopy(rows)
     defense = next(row for row in alternate_rows if row["lane_id"] == "defense-local")
     if is_defense_na_row(defense):
@@ -3223,7 +3260,7 @@ def gate5_contract_self_test(contract: Mapping[str, Any]) -> dict[str, Any]:
             },
             "final_preflight": marker, "approved_caps": marker,
         }
-    alternate_by_id = validate_gate5_inventory(alternate_rows, "alternate valid manifest")
+    alternate_by_id = validate_rows(alternate_rows, "alternate valid manifest")
     alternate_counts = gate5_inventory_counts(alternate_by_id)
     alternate_static_terminals = [
         lane
@@ -3253,14 +3290,14 @@ def gate5_contract_self_test(contract: Mapping[str, Any]) -> dict[str, Any]:
         },
         "final_preflight": marker, "approved_caps": marker,
     }
-    validate_gate5_inventory(v2_rows, "v2 valid manifest")
+    validate_rows(v2_rows, "v2 valid manifest")
     v2_cross_mix = copy.deepcopy(v2_rows)
     next(row for row in v2_cross_mix if row["lane_id"] == "defense-local")[
         "reason"
     ] = DEFENSE_NA_REASON
     must_fail(
         "defense-na-v2-cross-mix",
-        lambda: validate_gate5_inventory(v2_cross_mix, "mutated v2 manifest"),
+        lambda: validate_rows(v2_cross_mix, "mutated v2 manifest"),
     )
     malformed_defense = copy.deepcopy(alternate_rows)
     malformed_row = next(row for row in malformed_defense if row["lane_id"] == "defense-local")
@@ -3268,7 +3305,7 @@ def gate5_contract_self_test(contract: Mapping[str, Any]) -> dict[str, Any]:
         malformed_row["reason_code"] = "generic_oom"
     else:
         malformed_row["disposition"] = "conditional_na"
-    must_fail("defense-na-shape", lambda: validate_gate5_inventory(malformed_defense, "mutated manifest"))
+    must_fail("defense-na-shape", lambda: validate_rows(malformed_defense, "mutated manifest"))
     policy = copy.deepcopy(contract["manifest"]["policy"])
     policy["http_attempts_required"] = 1
     must_fail("hosted-http-policy", lambda: validate_gate5_policy(policy))
