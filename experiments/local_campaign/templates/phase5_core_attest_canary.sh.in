@@ -30,6 +30,24 @@ test "$URA_SOURCE_CONFORMANCE_MANIFEST" = "$EXPECTED_SOURCE_RECEIPT"
 test "$URA_SOURCE_CONFORMANCE_SHA256" = "$EXPECTED_SOURCE_RECEIPT_SHA256"
 test -x "$PY"
 
+READINESS_ROOT="${URA_LOCAL_MODEL_READINESS_ROOT:?set URA_LOCAL_MODEL_READINESS_ROOT}"
+test -d "$READINESS_ROOT" && test ! -L "$READINESS_ROOT"
+while IFS=$'\t' read -r label spec; do
+  readiness="$READINESS_ROOT/${label}.readiness.json"
+  readiness_sha_file="$READINESS_ROOT/${label}.sha256"
+  test -f "$readiness" && test ! -L "$readiness"
+  test -f "$readiness_sha_file" && test ! -L "$readiness_sha_file"
+  readiness_sha="$(tr -d '\r\n' <"$readiness_sha_file")"
+  [[ "$readiness_sha" =~ ^[0-9a-f]{64}$ ]]
+  "$PY" -m experiments.local_model_readiness \
+    --validate "$readiness" --sha256 "$readiness_sha" \
+    --expected-spec "$spec" >/dev/null
+done <<'EOF'
+qwen3-vl-8b	vllm:Qwen/Qwen3-VL-8B-Instruct
+llava-base	vllm:llava-hf/llava-v1.6-mistral-7b-hf
+llava-rr	vllm:GraySwanAI/llava-v1.6-mistral-7b-hf-RR
+EOF
+
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
 unset HF_TOKEN HUGGING_FACE_HUB_TOKEN OPENAI_API_KEY ANTHROPIC_API_KEY \
   GOOGLE_API_KEY GEMINI_API_KEY MISTRAL_API_KEY TOGETHER_API_KEY \

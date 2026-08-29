@@ -6707,7 +6707,7 @@ def test_phase6_native_launch_metadata_canonicalizes_the_project_receipt() -> No
         assert_contract(changed)
 
 
-def test_phase6_runner_controllers_gate_local_targets_on_readiness_receipts() -> None:
+def test_local_call_controllers_gate_targets_on_readiness_receipts() -> None:
     templates = (
         Path(__file__).parents[2]
         / "experiments"
@@ -6718,12 +6718,18 @@ def test_phase6_runner_controllers_gate_local_targets_on_readiness_receipts() ->
     extended = (templates / "phase6_extended_measured.sh.in").read_text(
         encoding="utf-8"
     )
+    core_canary = (templates / "phase5_core_attest_canary.sh.in").read_text(
+        encoding="utf-8"
+    )
+    bridge_canary = (templates / "phase5_bridge_attest_canary.sh.in").read_text(
+        encoding="utf-8"
+    )
 
     def assert_contract(value: str) -> None:
         assert '${URA_LOCAL_MODEL_READINESS_ROOT:?set ' in value
         assert value.count('-m experiments.local_model_readiness \\\n') == 1
         assert value.count('--validate "$readiness"') == 1
-        assert value.count('--expected-spec "$spec"') == 1
+        assert value.count("--expected-spec") == 1
 
     assert_contract(core)
     assert "qwen3-vl-8b\tvllm:Qwen/Qwen3-VL-8B-Instruct" in core
@@ -6737,7 +6743,18 @@ def test_phase6_runner_controllers_gate_local_targets_on_readiness_receipts() ->
         "CURRENT_OLLAMA_MODELS"
     ) in extended
 
-    for source in (core, extended):
+    assert_contract(core_canary)
+    assert "qwen3-vl-8b\tvllm:Qwen/Qwen3-VL-8B-Instruct" in core_canary
+    assert "llava-base\tvllm:llava-hf/llava-v1.6-mistral-7b-hf" in core_canary
+    assert "llava-rr\tvllm:GraySwanAI/llava-v1.6-mistral-7b-hf-RR" in core_canary
+
+    assert_contract(bridge_canary)
+    assert (
+        "--expected-spec 'vllm:Qwen/Qwen3-VL-8B-Instruct'"
+        in bridge_canary
+    )
+
+    for source in (core, extended, core_canary, bridge_canary):
         changed = source.replace('--validate "$readiness"', '--inspect "$readiness"', 1)
         assert changed != source
         with pytest.raises(AssertionError):

@@ -86,6 +86,18 @@ test "$URA_SOURCE_CONFORMANCE_MANIFEST" = "$EXPECTED_SOURCE_RECEIPT"
 test "$URA_SOURCE_CONFORMANCE_SHA256" = "$EXPECTED_SOURCE_RECEIPT_SHA256"
 test -x "$PY"
 
+READINESS_ROOT="${URA_LOCAL_MODEL_READINESS_ROOT:?set URA_LOCAL_MODEL_READINESS_ROOT}"
+test -d "$READINESS_ROOT" && test ! -L "$READINESS_ROOT"
+readiness="$READINESS_ROOT/qwen3-vl-8b.readiness.json"
+readiness_sha_file="$READINESS_ROOT/qwen3-vl-8b.sha256"
+test -f "$readiness" && test ! -L "$readiness"
+test -f "$readiness_sha_file" && test ! -L "$readiness_sha_file"
+readiness_sha="$(tr -d '\r\n' <"$readiness_sha_file")"
+[[ "$readiness_sha" =~ ^[0-9a-f]{64}$ ]]
+"$PY" -m experiments.local_model_readiness \
+  --validate "$readiness" --sha256 "$readiness_sha" \
+  --expected-spec 'vllm:Qwen/Qwen3-VL-8B-Instruct' >/dev/null
+
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
 unset HF_TOKEN HUGGING_FACE_HUB_TOKEN OPENAI_API_KEY ANTHROPIC_API_KEY \
   GOOGLE_API_KEY GEMINI_API_KEY MISTRAL_API_KEY TOGETHER_API_KEY \
