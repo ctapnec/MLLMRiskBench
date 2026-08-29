@@ -17,6 +17,7 @@ from experiments.local_campaign.current_ollama import (
     CurrentOllamaModel,
     image_lane,
 )
+from experiments.local_campaign.current_ollama_gate5 import _base_argv, _lane_contract
 
 
 def _assert_exact_current_roster(models: Sequence[CurrentOllamaModel]) -> None:
@@ -139,3 +140,62 @@ def test_current_rr_amendment_excludes_retired_rwkv_rows_from_analysis() -> None
         assert "rwkv" not in amendment.lower()
     phase7 = (templates / "phase7_analysis.py.in").read_text(encoding="utf-8")
     assert '"output_policy_amendment": 4' in phase7
+
+
+def test_current_ollama_phase5_emits_a_consumable_gate5_amendment() -> None:
+    template = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase5_ollama_workflow.sh.in"
+    ).read_text(encoding="utf-8")
+    build = (
+        'experiments.local_campaign.current_ollama_gate5 --build \\\n'
+        '    --control-root "$CONTROL_ROOT"'
+    )
+    validate = (
+        "experiments.local_campaign.current_ollama_gate5 --validate "
+        '"$GATE5_AMENDMENT"'
+    )
+    assert build in template
+    assert validate in template
+    assert template.index(build) < template.index(
+        "-m experiments.local_campaign.console_events \\\n    target-execution"
+    )
+    assert (
+        'GATE5_AMENDMENT="$CONTROL_ROOT/gate5-current-ollama-amendment.json"'
+        in template
+    )
+
+
+def test_current_ollama_gate5_lane_contract_keeps_caps_sampling_and_judges_exact() -> None:
+    modes: list[str] = []
+    for lane in CURRENT_OLLAMA_RUNNABLE_LANES:
+        label = next(
+            model.label for model in CURRENT_OLLAMA_MODELS if model.label in lane
+        )
+        mode, _modality, arms, judges = _lane_contract(lane, label)
+        modes.append(mode)
+        argv = _base_argv(
+            model_label=label,
+            mode=mode,
+            arms=arms,
+            judges=judges,
+            project_revision=Path("/evidence/project-revision.json"),
+            project_sha256="1" * 64,
+            source_config=Path("/source/source-instances.json"),
+            source_sha256="2" * 64,
+            source_conformance=Path("/evidence/source-conformance.json"),
+            conformance_sha256="3" * 64,
+            local_config=Path(f"/control/local-configs/{label}.json"),
+            local_config_sha256="4" * 64,
+        )
+        assert argv[argv.index("--limit") + 1] == "50"
+        assert argv[argv.index("--sample-seed") + 1] == "0"
+        assert argv[argv.index("--judges") + 1] == judges
+        assert ("--approximate-common-metrics" in argv) is (mode == "static")
+        assert ("--guardrail-model" in argv) is (mode == "static")
+    assert modes.count("static") == 6
+    assert modes.count("rjudge") == 4
+    assert modes.count("gptgeochat") == 2

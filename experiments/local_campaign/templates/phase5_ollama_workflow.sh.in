@@ -72,6 +72,7 @@ DISPOSITIONS="$CONTROL_ROOT/dispositions.tsv"
 PROJECTION_STATUS="$CONTROL_ROOT/projections.tsv"
 ATTEST_STATUS="$CONTROL_ROOT/attestations.tsv"
 CANARY_STATUS="$CONTROL_ROOT/canaries.tsv"
+GATE5_AMENDMENT="$CONTROL_ROOT/gate5-current-ollama-amendment.json"
 SUCCESS_ROOT="$CONTROL_ROOT/success"
 CONFIG_ROOT="$CONTROL_ROOT/local-configs"
 EXIT_TMP="$CONTROL_ROOT/.exit.tmp"
@@ -1776,6 +1777,22 @@ for attestation in attestations:
 print(*aggregate_target_execution([*canaries, *attestations]), sep="\t")
 PY
   )
+  PYTHONDONTWRITEBYTECODE=1 "$PY" -m \
+    experiments.local_campaign.current_ollama_gate5 --build \
+    --control-root "$CONTROL_ROOT" \
+    --out "$GATE5_AMENDMENT" \
+    --expected-commit "$EXPECTED_COMMIT" \
+    --framework-lock-id "$EXPECTED_FRAMEWORK_LOCK" \
+    --project-revision "$PROJECT_RECEIPT" \
+    --project-revision-sha256 "$PROJECT_SHA256" \
+    --source-config "$SOURCE_CONFIG" \
+    --source-config-sha256 "$SOURCE_CONFIG_SHA256" \
+    --source-conformance "$SOURCE_RECEIPT" \
+    --source-conformance-sha256 "$SOURCE_RECEIPT_SHA256" \
+    --readiness-root "$READINESS_ROOT"
+  PYTHONDONTWRITEBYTECODE=1 "$PY" -m \
+    experiments.local_campaign.current_ollama_gate5 --validate "$GATE5_AMENDMENT" \
+    --expected-commit "$EXPECTED_COMMIT"
   PYTHONDONTWRITEBYTECODE=1 "$PY" -m experiments.local_campaign.console_events \
     target-execution --work-root "$URA_WORK" --control-root "$CONTROL_ROOT" \
     --target-attempts "$TARGET_ATTEMPTS" \
@@ -1800,5 +1817,6 @@ printf 'ATTACH=tmux -L %s attach -t %s\n' "$SOCKET" "$SESSION"
 printf 'CONTROL_ROOT=%s\n' "$CONTROL_ROOT"
 printf 'LOG=%s/phase5-ollama.log\n' "$CONTROL_ROOT"
 printf 'DISPOSITIONS=%s/dispositions.tsv\n' "$CONTROL_ROOT"
+printf 'GATE5_AMENDMENT=%s/gate5-current-ollama-amendment.json\n' "$CONTROL_ROOT"
 printf 'PAYLOAD=%s\n' "$PAYLOAD_PATH"
 printf 'EXIT_MARKER=%s/.exit\n' "$CONTROL_ROOT"
