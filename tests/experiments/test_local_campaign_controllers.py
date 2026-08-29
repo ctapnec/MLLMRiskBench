@@ -6541,3 +6541,36 @@ def test_phase7_retained_extended_root_collisions_are_registry_only() -> None:
         assert changed != source
         with pytest.raises(AssertionError):
             assert_contract(changed)
+
+
+def test_phase6_native_accepts_the_exact_bounded_gate5_policy() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase6_native_diagnostics.sh.in"
+    ).read_text(encoding="utf-8")
+
+    def assert_contract(value: str) -> None:
+        assert value.count("expected_population_tiers = {") == 2
+        assert value.count(
+            'policy.get("population_tiers") != expected_population_tiers'
+        ) == 2
+        assert value.count(
+            'policy.get("measured_lane_wall_time_seconds") != 86_400'
+        ) == 2
+        assert value.count(
+            '"controller_completion_ceiling_distinct_from_call_start_admission_window"'
+        ) == 2
+        assert value.count('"seeded_nested_source_cluster_prefix_v1"') == 4
+
+    assert_contract(source)
+    changed = source.replace(
+        'policy.get("measured_lane_wall_time_seconds") != 86_400',
+        'policy.get("measured_lane_wall_time_seconds") != 86_401',
+        1,
+    )
+    assert changed != source
+    with pytest.raises(AssertionError):
+        assert_contract(changed)

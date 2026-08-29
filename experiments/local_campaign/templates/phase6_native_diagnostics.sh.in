@@ -1196,6 +1196,24 @@ if (
 ):
     raise SystemExit("Gate 5 historical code identity is invalid")
 gate5_expected_commit = gate5_code_identity["expected_commit"]
+expected_population_tiers = {
+    "primary_core": {
+        "cluster_limit_per_selected_arm": 100,
+        "sample_seed": 0,
+        "selection_method": "seeded_nested_source_cluster_prefix_v1",
+        "purpose": "primary_cluster_level_estimation",
+    },
+    "extended_exploratory": {
+        "cluster_limit_per_selected_arm": 50,
+        "sample_seed": 0,
+        "selection_method": "seeded_nested_source_cluster_prefix_v1",
+        "purpose": "descriptive_precision_limited_framework_and_ollama_evidence",
+    },
+    "full_corpus_mode": {
+        "cluster_limit_per_selected_arm": 0,
+        "status": "supported_not_selected_for_this_measured_cohort",
+    },
+}
 policy = gate5.get("policy")
 if (
     not isinstance(policy, dict)
@@ -1206,19 +1224,28 @@ if (
         "free_space_floor_bytes", "retained_output_policy_bytes",
         "retained_output_policy_semantics", "provider_quota",
         "expected_full_lane_storage", "tokens_cost_and_throughput",
+        "measured_lane_wall_time_seconds", "measured_lane_wall_time_semantics",
+        "population_tiers",
     }
+    or policy.get("population_tiers") != expected_population_tiers
     or policy.get("target_and_transport_caps") != "exact_preliminary_call_projection_totals"
     or policy.get("model_judge_calls_required") != 0
     or policy.get("http_attempts_required") != 0
     or policy.get("downloads_required_bytes") != 0
     or policy.get("call_start_deadline_semantics") != "admission_window_from_first_invocation_not_completion_timeout"
+    or policy.get("measured_lane_wall_time_seconds") != 86_400
+    or policy.get("measured_lane_wall_time_semantics")
+    != "controller_completion_ceiling_distinct_from_call_start_admission_window"
     or policy.get("retained_output_policy_semantics") != "external_operator_policy_only_not_runner_enforced"
     or policy.get("provider_quota") != {"status": "N/A", "reason": "all_routes_are_local"}
     or policy.get("expected_full_lane_storage") != {"status": "CANNOT-VERIFY", "value": None}
     or policy.get("tokens_cost_and_throughput") != {"status": "CANNOT-VERIFY", "value": None}
 ):
     raise SystemExit("Gate 5 local exact-cap policy changed")
-for field in ("call_start_deadline_seconds", "free_space_floor_bytes", "retained_output_policy_bytes"):
+for field in (
+    "call_start_deadline_seconds", "measured_lane_wall_time_seconds",
+    "free_space_floor_bytes", "retained_output_policy_bytes",
+):
     if isinstance(policy.get(field), bool) or not isinstance(policy.get(field), int) or policy[field] <= 0:
         raise SystemExit(f"Gate 5 policy field is invalid: {field}")
 manifest_rows = validate_inventory(gate5.get("lanes"), label="covered manifest")
@@ -2875,6 +2902,24 @@ def validate_gate5_inventory(rows: object, label: str) -> dict[str, dict[str, An
 
 
 def validate_gate5_policy(policy: object) -> dict[str, Any]:
+    expected_population_tiers = {
+        "primary_core": {
+            "cluster_limit_per_selected_arm": 100,
+            "sample_seed": 0,
+            "selection_method": "seeded_nested_source_cluster_prefix_v1",
+            "purpose": "primary_cluster_level_estimation",
+        },
+        "extended_exploratory": {
+            "cluster_limit_per_selected_arm": 50,
+            "sample_seed": 0,
+            "selection_method": "seeded_nested_source_cluster_prefix_v1",
+            "purpose": "descriptive_precision_limited_framework_and_ollama_evidence",
+        },
+        "full_corpus_mode": {
+            "cluster_limit_per_selected_arm": 0,
+            "status": "supported_not_selected_for_this_measured_cohort",
+        },
+    }
     fields = {
         "target_and_transport_caps", "model_judge_calls_required",
         "http_attempts_required", "downloads_required_bytes",
@@ -2882,22 +2927,31 @@ def validate_gate5_policy(policy: object) -> dict[str, Any]:
         "free_space_floor_bytes", "retained_output_policy_bytes",
         "retained_output_policy_semantics", "provider_quota",
         "expected_full_lane_storage", "tokens_cost_and_throughput",
+        "measured_lane_wall_time_seconds", "measured_lane_wall_time_semantics",
+        "population_tiers",
     }
     if (
         not isinstance(policy, dict)
         or set(policy) != fields
+        or policy.get("population_tiers") != expected_population_tiers
         or policy.get("target_and_transport_caps") != "exact_preliminary_call_projection_totals"
         or policy.get("model_judge_calls_required") != 0
         or policy.get("http_attempts_required") != 0
         or policy.get("downloads_required_bytes") != 0
         or policy.get("call_start_deadline_semantics") != "admission_window_from_first_invocation_not_completion_timeout"
+        or policy.get("measured_lane_wall_time_seconds") != 86_400
+        or policy.get("measured_lane_wall_time_semantics")
+        != "controller_completion_ceiling_distinct_from_call_start_admission_window"
         or policy.get("retained_output_policy_semantics") != "external_operator_policy_only_not_runner_enforced"
         or policy.get("provider_quota") != {"status": "N/A", "reason": "all_routes_are_local"}
         or policy.get("expected_full_lane_storage") != {"status": "CANNOT-VERIFY", "value": None}
         or policy.get("tokens_cost_and_throughput") != {"status": "CANNOT-VERIFY", "value": None}
     ):
         raise ValueError("Gate 5 local exact-cap policy changed")
-    for field in ("call_start_deadline_seconds", "free_space_floor_bytes", "retained_output_policy_bytes"):
+    for field in (
+        "call_start_deadline_seconds", "measured_lane_wall_time_seconds",
+        "free_space_floor_bytes", "retained_output_policy_bytes",
+    ):
         value = policy[field]
         if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
             raise ValueError(f"Gate 5 policy field is invalid: {field}")
