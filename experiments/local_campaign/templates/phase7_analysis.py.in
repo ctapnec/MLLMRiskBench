@@ -10450,9 +10450,9 @@ def validate_phase6_campaign_terminal_inventory(value: object) -> dict[str, Any]
         or value.get("cohort_order") != list(CAMPAIGN_COHORTS)
         or value.get("cohort_counts") != CAMPAIGN_COHORT_COUNTS
         or not isinstance(rows, list)
-        or len(rows) != 65
+        or len(rows) != 62
         or not isinstance(row_order, list)
-        or len(row_order) != 65
+        or len(row_order) != 62
         or value.get("all_rows_terminal") is not True
         or value.get("cross_revision_pooling_permitted") is not False
         or value.get("cross_source_pooling_permitted") is not False
@@ -10512,7 +10512,7 @@ def validate_phase6_campaign_terminal_inventory(value: object) -> dict[str, Any]
         if expected_failure:
             failures.append(key)
     if (
-        len(set(keys)) != 65
+        len(set(keys)) != 62
         or row_order != keys
         or any(len(cohort_rows[cohort]) != CAMPAIGN_COHORT_COUNTS[cohort] for cohort in CAMPAIGN_COHORTS)
         or value.get("failure_rows") != failures
@@ -17876,7 +17876,7 @@ def contract_self_test() -> int:
     valid_aggregate = aggregate_fixture(aggregate_rows)
     validate_phase6_campaign_terminal_inventory(valid_aggregate)
     must_fail(
-        "campaign-terminal-64-rows",
+        "campaign-terminal-61-rows",
         lambda: validate_phase6_campaign_terminal_inventory(
             aggregate_fixture(aggregate_rows[:-1])
         ),
@@ -17887,7 +17887,7 @@ def contract_self_test() -> int:
     extra["key"] = "canonical:fixture-extra"
     extra_rows.append(extra)
     must_fail(
-        "campaign-terminal-66-rows",
+        "campaign-terminal-63-rows",
         lambda: validate_phase6_campaign_terminal_inventory(
             aggregate_fixture(extra_rows)
         ),
@@ -17936,7 +17936,7 @@ def contract_self_test() -> int:
     if (
         validated_early_failure["status"] != "complete_with_failures"
         or validated_early_failure["failure_rows"] != [early_failure_rows[0]["key"]]
-        or len(validated_early_failure["rows"]) != 65
+        or len(validated_early_failure["rows"]) != 62
     ):
         raise Phase7Error("early terminal failure suppressed independent rows")
 

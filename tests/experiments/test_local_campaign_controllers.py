@@ -1350,6 +1350,7 @@ def test_rendered_phase7_lifecycle_partition_mutations_fail(tmp_path: Path) -> N
     assert "phase7-adaptivity-non-estimable-contrasts" in value["contracts"]
     assert "phase7-transfer-faceted-index" in value["contracts"]
     assert "phase7-runner-view-content-binding" in value["contracts"]
+    assert "phase6-campaign-terminal-inventory-62-row-union" in value["contracts"]
 
     rendered = (output / "phase7_analysis.py").read_text(encoding="utf-8")
     rr_prerequisite = (
