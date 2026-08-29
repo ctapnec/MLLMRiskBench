@@ -1176,6 +1176,19 @@ def test_rendered_ollama_projection_validator_imports_its_dependencies(
         assert name in namespace
 
 
+def test_current_ollama_roles_compile_in_rendered_analysis_controllers(
+    tmp_path: Path,
+) -> None:
+    bindings = _bindings(tmp_path / "bindings.json")
+    output = tmp_path / "workspace"
+    render_controller_set(bindings, output)
+    for name in ("phase7_analysis.py", "phase8_human_audit.py"):
+        source = (output / name).read_text(encoding="utf-8")
+        compile(source, name, "exec")
+        assert "CURRENT_OLLAMA_NATIVE_ROLES" in source
+        assert "mollysama/" not in source
+
+
 def test_rendered_phase6_runtime_validators_import_their_used_globals(
     tmp_path: Path,
 ) -> None:
