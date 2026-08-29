@@ -31,7 +31,10 @@ from experiments.figure_results import (  # noqa: E402
     _string_list,
     _validate_cell,
 )
-from experiments.suite_summary import _load_eligibility_plan  # noqa: E402
+from experiments.suite_summary import (  # noqa: E402
+    _final_model_nonresponse,
+    _load_eligibility_plan,
+)
 from ura.data_models import Attempt  # noqa: E402
 from ura.adapters._engine_runtime import (  # noqa: E402
     validate_engine_runtime_selection_identity_descriptor,
@@ -155,6 +158,7 @@ _CSV_FIELDS = (
     "completed_judgment_records",
     "decided_judgment_records",
     "abstained_judgment_records",
+    "missing_response_judgment_records",
     "analysis_inclusion_status",
     "included_records",
     "missing",
@@ -1608,6 +1612,7 @@ def _item_support(
             "evaluable_judgment_records": 0,
             "decided_judgment_records": 0,
             "abstained_judgment_records": 0,
+            "missing_response_judgment_records": 0,
             "non_evaluable_judgment_records": 0,
             "approximate_proxy_evaluable_judgment_records": 0,
             "approximate_proxy_decided_judgment_records": 0,
@@ -1671,6 +1676,8 @@ def _item_support(
         record["observed_datapoint_ids"].add(attempt.get("datapoint_id"))
         state = _decision_state(judgment)
         record[f"{state}_judgment_records"] += 1
+        if _final_model_nonresponse(judgment):
+            record["missing_response_judgment_records"] += 1
         if state != "non_evaluable":
             record["evaluable_judgment_records"] += 1
         approximate_state = _approximate_decision_state(
@@ -2353,6 +2360,9 @@ def build_level1_evidence(
                     "abstained_judgment_records": item_counts.get(
                         "abstained_judgment_records", 0
                     ),
+                    "missing_response_judgment_records": item_counts.get(
+                        "missing_response_judgment_records", 0
+                    ),
                     "non_evaluable_judgment_records": item_counts.get(
                         "non_evaluable_judgment_records", 0
                     ),
@@ -2394,6 +2404,9 @@ def build_level1_evidence(
         ),
         "with_abstained_support": sum(
             row["abstained_judgment_records"] > 0 for row in rows
+        ),
+        "with_missing_response_support": sum(
+            row["missing_response_judgment_records"] > 0 for row in rows
         ),
         "missing": sum(row["missing"] for row in rows),
         "associated_execution_unit_error": sum(
@@ -2437,6 +2450,9 @@ def build_level1_evidence(
         "evaluable": sum(row["evaluable_judgment_records"] for row in rows),
         "decided": sum(row["decided_judgment_records"] for row in rows),
         "abstained": sum(row["abstained_judgment_records"] for row in rows),
+        "missing_responses": sum(
+            row["missing_response_judgment_records"] for row in rows
+        ),
         "non_evaluable": sum(
             row["non_evaluable_judgment_records"] for row in rows
         ),
@@ -2448,6 +2464,8 @@ def build_level1_evidence(
         + judgment_counts["non_evaluable"]
     ):
         raise ValueError("Level-1 judgment decision counts do not reconcile")
+    if judgment_counts["missing_responses"] > judgment_counts["abstained"]:
+        raise ValueError("Level-1 missing-response counts do not reconcile")
     approximate_proxy_counts = {
         "unit": "supplementary_approximate_judgment_record",
         "evaluable": sum(

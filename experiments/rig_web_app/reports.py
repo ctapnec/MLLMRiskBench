@@ -334,6 +334,7 @@ def _validate_report_document(kind: str, document: Mapping[str, Any]) -> None:
             evaluable = judgment_counts.get("evaluable")
             decided = judgment_counts.get("decided")
             abstained = judgment_counts.get("abstained")
+            missing_responses = judgment_counts.get("missing_responses")
             non_evaluable = judgment_counts.get("non_evaluable")
             if (
                 all(
@@ -351,6 +352,41 @@ def _validate_report_document(kind: str, document: Mapping[str, Any]) -> None:
                 and evaluable != decided + abstained
             ):
                 raise ValueError("Level-1 evaluable judgment counts do not reconcile")
+            if missing_responses is not None:
+                if (
+                    not isinstance(missing_responses, int)
+                    or isinstance(missing_responses, bool)
+                    or not isinstance(abstained, int)
+                    or isinstance(abstained, bool)
+                    or missing_responses < 0
+                    or missing_responses > abstained
+                ):
+                    raise ValueError(
+                        "Level-1 missing-response counts do not reconcile"
+                    )
+                planning_rows = document.get("planning_strata")
+                if not isinstance(planning_rows, list):
+                    raise ValueError(
+                        "Level-1 missing-response counts require planning strata"
+                    )
+                row_counts = [
+                    row.get("missing_response_judgment_records")
+                    for row in planning_rows
+                    if isinstance(row, Mapping)
+                ]
+                if (
+                    len(row_counts) != len(planning_rows)
+                    or any(
+                        not isinstance(value, int)
+                        or isinstance(value, bool)
+                        or value < 0
+                        for value in row_counts
+                    )
+                    or sum(row_counts) != missing_responses
+                ):
+                    raise ValueError(
+                        "Level-1 missing-response counts do not match planning strata"
+                    )
         approximate_counts = counts.get("approximate_proxy_judgment_records")
         if isinstance(approximate_counts, Mapping):
             evaluable = approximate_counts.get("evaluable")

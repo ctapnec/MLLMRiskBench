@@ -25,6 +25,7 @@ from experiments.level1_evidence import (
     main,
     write_csv,
 )
+from experiments.rig_web_app.reports import _validate_report_document
 from ura.approximate_metrics import (
     build_approximate_caller_binding,
     build_approximate_decision,
@@ -960,6 +961,7 @@ def test_completed_synthetic_grid_joins_exact_strata_and_decisions(
     assert judgments["completed"] == 2
     assert judgments["decided"] == 2
     assert judgments["abstained"] == 0
+    assert judgments["missing_responses"] == 0
     assert report["requests"][0]["grid_artifact"]["sha256"]
     assert report["execution_units"][0]["execution_evidence_artifact"]["sha256"]
     assert all(row["final_disposition"] == "completed" for row in report[
@@ -974,6 +976,71 @@ def test_completed_synthetic_grid_joins_exact_strata_and_decisions(
     legacy_run["sampling_policy"] = SOURCE_ORDER_CLUSTER_PREFIX
     with pytest.raises(ValueError, match="policy mismatch"):
         build_level1_evidence([artifact], grids, errors)
+
+
+def test_level1_retains_model_nonresponse_as_explicit_missingness(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "model-nonresponse"
+    assert run_matrix.main([
+        "--dry-run",
+        "--corpora", "synth",
+        "--limit", "1",
+        "--seeds", "0",
+        "--attackers", "replay",
+        "--judges", "rules,llm",
+        "--judge-model", "mock",
+        "--max-queries", "1",
+        "--max-turns", "1",
+        "--max-total-target-calls", "1",
+        "--max-total-judge-calls", "1",
+        "--max-total-http-attempts", "1",
+        "--out", str(root),
+    ]) == 0
+    artifact = _plan_artifact(next(root.glob("eligibility-*.eligibility.json")))
+    grids, errors = _load_results([root], {artifact[0]["plan_id"]: artifact})
+    grid = grids[artifact[0]["plan_id"]]
+    cell = next(iter(grid["cells"].values()))["validated_cell"]
+    judgment = cell["judgments"][0]
+    judgment.update({"judge": "rules", "label": "not_applicable", "score": 0.0})
+    judgment["raw"].update({
+        "stage_queried": False,
+        "policy_evaluation_status": "model_nonresponse",
+        "confidence": 1.0,
+        "parsed": None,
+        "cascade_role": "authoritative",
+        "cascade_confident": True,
+        "metric_authority": None,
+        "required_metric": None,
+    })
+
+    report = build_level1_evidence([artifact], grids, errors)
+
+    counts = report["counts"]["judgment_records"]
+    assert counts["completed"] == 1
+    assert counts["decided"] == 0
+    assert counts["abstained"] == 1
+    assert counts["missing_responses"] == 1
+    row = report["planning_strata"][0]
+    assert row["missing_response_judgment_records"] == 1
+    assert report["counts"]["planning_strata"][
+        "with_missing_response_support"
+    ] == 1
+    _validate_report_document("level1", report)
+
+    invalid = json.loads(json.dumps(report))
+    invalid["counts"]["judgment_records"]["missing_responses"] = 2
+    invalid.pop("evidence_id")
+    material = json.dumps(
+        invalid,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    invalid["evidence_id"] = "level1-" + hashlib.sha256(material).hexdigest()[:24]
+    with pytest.raises(ValueError, match="missing-response counts"):
+        _validate_report_document("level1", invalid)
 
 
 @pytest.mark.parametrize(
