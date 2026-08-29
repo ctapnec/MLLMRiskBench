@@ -1030,6 +1030,7 @@ def test_level1_retains_model_nonresponse_as_explicit_missingness(
 
     invalid = json.loads(json.dumps(report))
     invalid["counts"]["judgment_records"]["missing_responses"] = 2
+    invalid["planning_strata"][0]["missing_response_judgment_records"] = 2
     invalid.pop("evidence_id")
     material = json.dumps(
         invalid,
