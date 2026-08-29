@@ -7,7 +7,7 @@ from pathlib import Path
 import urllib.error
 
 import experiments.local_campaign.ollama_acquire as acquire_module
-from experiments.local_campaign.ollama_acquire import acquire, canonical
+from experiments.local_campaign.ollama_acquire import _pull_once, acquire, canonical
 
 
 class _Response(io.BytesIO):
@@ -22,6 +22,27 @@ class _InterruptedResponse(_Response):
 
 def _json_response(value: object) -> _Response:
     return _Response(json.dumps(value).encode("ascii"))
+
+
+def test_pull_rejects_a_live_stream_that_never_advances() -> None:
+    response = _Response(
+        b'{"completed":10,"status":"pulling blob"}\n'
+        b'{"completed":10,"status":"pulling blob"}\n'
+        b'{"completed":10,"status":"pulling blob"}\n'
+    )
+    ticks = iter((0.0, 1.0, 301.0, 902.0))
+
+    try:
+        _pull_once(
+            response,
+            model="deepseek-r1:32b-qwen-distill-q4_K_M",
+            monotonic=lambda: next(ticks),
+            stall_seconds=900,
+        )
+    except TimeoutError as exc:
+        assert "made no progress" in str(exc)
+    else:
+        raise AssertionError("a no-progress Ollama pull stream was accepted")
 
 
 def test_resume_skips_completed_models_and_retries_interrupted_partial_pull(

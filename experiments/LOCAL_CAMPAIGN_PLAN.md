@@ -235,11 +235,13 @@ The controller retains one canonical event ledger, skips models whose load smoke
 already completed, and retries an interrupted `/api/pull` with 30-to-300-second
 bounded backoff under a seven-day controller deadline. Socket, DNS, Ollama
 internal-retry and mid-stream HTTP disconnects are retried inside the same tmux
-controller, and Ollama resumes retained partial blobs. Relaunch the same command
-with `--resume` and the same absolute `--out-dir` and model order only after a
-controller-process or host interruption; a changed roster or terminal output
-root is refused. Non-network failures and deadline expiry remain typed terminal
-failures rather than being restarted blindly. Gemma 4 and Ministral 3 admit
+controller. A stream that stays connected but reports no changed status or byte
+count for 15 minutes is also closed and retried, and Ollama resumes retained
+partial blobs. Relaunch the same command with `--resume` and the same absolute
+`--out-dir` and model order only after a controller-process or host interruption;
+a changed roster or terminal output root is refused. Non-network failures and
+deadline expiry remain typed terminal failures rather than being restarted
+blindly. Gemma 4 and Ministral 3 admit
 text and image lanes; DeepSeek-R1 Distill and GPT-OSS admit text lanes only.
 Every empty survey item remains in the receipt as `model_nonresponse`. Measured
 campaign postprocessing likewise retains a typed model nonresponse as missing

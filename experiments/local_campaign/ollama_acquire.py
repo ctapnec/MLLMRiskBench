@@ -32,6 +32,7 @@ _RETRY_ERRORS = (
     urllib.error.URLError,
 )
 _PULL_RETRY_ERRORS = (*_RETRY_ERRORS, RuntimeError)
+_PULL_STALL_SECONDS = 15 * 60
 
 
 def canonical(value: object) -> bytes:
@@ -149,8 +150,16 @@ def _json_response(response: Any) -> dict[str, Any]:
     return value
 
 
-def _pull_once(response: Any, *, model: str) -> None:
+def _pull_once(
+    response: Any,
+    *,
+    model: str,
+    monotonic: Callable[[], float] = time.monotonic,
+    stall_seconds: float = _PULL_STALL_SECONDS,
+) -> None:
     final: dict[str, Any] | None = None
+    last_progress_at = monotonic()
+    last_progress: tuple[object, object] | None = None
     with response:
         for raw in response:
             value = strict_json_loads(raw)
@@ -160,6 +169,13 @@ def _pull_once(response: Any, *, model: str) -> None:
             error = value.get("error")
             if isinstance(error, str) and error:
                 raise RuntimeError(f"{model}: {error}")
+            progress = (value.get("status"), value.get("completed"))
+            now = monotonic()
+            if progress != last_progress:
+                last_progress = progress
+                last_progress_at = now
+            elif now - last_progress_at >= stall_seconds:
+                raise TimeoutError(f"{model}: pull stream made no progress")
     if final is None or final.get("status") != "success":
         raise ValueError(f"{model}: pull did not finish successfully")
 
@@ -312,6 +328,7 @@ def acquire(
                         timeout=600.0,
                     ),
                     model=model,
+                    monotonic=monotonic,
                 )
                 append(events, {"event": "pull_complete", "model": model})
                 break
