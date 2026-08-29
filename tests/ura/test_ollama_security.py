@@ -586,8 +586,8 @@ def test_api_header_open_is_a_hard_wall_not_an_inactivity_timeout() -> None:
         release.set()
 
 
-def test_base_family_aliases_overlap_and_runner_rejects_crafted_config(
-    tmp_path: Path,
+def test_catalog_only_base_family_alias_does_not_reject_ollama_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     assert "base-family:llama" in model_identity_keys(
         "ollama:library/llama3.2-vision:latest"
@@ -607,26 +607,90 @@ def test_base_family_aliases_overlap_and_runner_rejects_crafted_config(
         ),
         encoding="utf-8",
     )
-    with pytest.raises(ValueError, match="overlaps the vLLM roster"):
-        run_matrix._load_local_config(str(config), [spec])
+    def roster(_self, entries, *, force=False):
+        assert entries == {}
+        assert force is True
+        return {
+            "available": True,
+            "models": [
+                {"spec": spec, "digest": _DIGEST_A, "modalities": ["text", "image"]}
+            ],
+            "excluded": [],
+        }
+
+    monkeypatch.setattr(OllamaService, "roster", roster)
+    loaded, _profile = run_matrix._load_local_config(str(config), [spec])
+    assert loaded[spec]["digest"] == _DIGEST_A
 
 
-def test_runner_independently_rejects_opaque_tag_with_live_overlap(
+def test_runner_allows_overlap_with_vllm_selected_in_same_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ollama_spec = "ollama:library/llama3.2-vision:latest"
+    vllm_spec = "vllm:meta-llama/Llama-3.2-11B-Vision-Instruct"
+    config = tmp_path / "local.json"
+    config.write_text(
+        json.dumps(
+            {
+                vllm_spec: {
+                    "revision": "a" * 40,
+                    "modalities": ["text", "image"],
+                },
+                ollama_spec: {
+                    "digest": _DIGEST_A,
+                    "modalities": ["text", "image"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def roster(_self, entries, *, force=False):
+        assert entries == {}
+        assert force is True
+        return {
+            "available": True,
+            "models": [
+                {
+                    "spec": ollama_spec,
+                    "digest": _DIGEST_A,
+                    "modalities": ["text", "image"],
+                }
+            ],
+            "excluded": [],
+        }
+
+    monkeypatch.setattr(OllamaService, "roster", roster)
+    loaded, _profile = run_matrix._load_local_config(
+        str(config),
+        [vllm_spec, ollama_spec],
+        hardware={"available": False},
+    )
+    assert set(loaded) == {vllm_spec, ollama_spec}
+
+
+def test_runner_ignores_legacy_live_overlap_metadata(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     spec = "ollama:opaque-build:latest"
     config = tmp_path / "local.json"
+    vllm_spec = "vllm:meta-llama/Llama-3-8B-Instruct"
     config.write_text(
-        json.dumps({spec: {"digest": _DIGEST_A, "modalities": ["text"]}}),
+        json.dumps(
+            {
+                vllm_spec: {"revision": "a" * 40, "modalities": ["text"]},
+                spec: {"digest": _DIGEST_A, "modalities": ["text"]},
+            }
+        ),
         encoding="utf-8",
     )
 
-    def roster(_self, _entries, *, force=False):
+    def roster(_self, entries, *, force=False):
+        assert entries == {}
         assert force is True
         return {
             "available": True,
-            "models": [],
-            "excluded": [
+            "models": [
                 {
                     "spec": spec,
                     "digest": _DIGEST_A,
@@ -634,11 +698,14 @@ def test_runner_independently_rejects_opaque_tag_with_live_overlap(
                     "overlap_with": ["vllm:meta-llama/Llama-3-8B-Instruct"],
                 }
             ],
+            "excluded": [],
         }
 
     monkeypatch.setattr(OllamaService, "roster", roster)
-    with pytest.raises(ValueError, match="live /api/show identity overlaps"):
-        run_matrix._load_local_config(str(config), [spec])
+    loaded, _profile = run_matrix._load_local_config(
+        str(config), [vllm_spec, spec], hardware={"available": False}
+    )
+    assert set(loaded) == {vllm_spec, spec}
 
 
 def test_runner_live_admission_binds_exact_digest_and_modalities(

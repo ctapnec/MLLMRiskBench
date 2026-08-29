@@ -1898,42 +1898,6 @@ def _load_local_config(
         else:
             raise ValueError(f"unsupported local backend in {spec!r}")
         normalized[spec] = dict(config)
-    # Independent runner gate: UI visibility/materialization is not authority.
-    # A crafted local config cannot run an Ollama base-family/name alias that
-    # is represented by the maintained vLLM roster.
-    from experiments.local_targets import _models_map, load_roster  # noqa: PLC0415
-    from ura.ollama_security import (  # noqa: PLC0415
-        ollama_overlap_specs,
-        vllm_identity_index,
-    )
-
-    vllm_entries = {
-        str(spec): dict(entry)
-        for spec, entry in _models_map(load_roster()).items()
-        if str(spec).startswith("vllm:") and isinstance(entry, dict)
-    }
-    vllm_entries.update(
-        {
-            spec: dict(config)
-            for spec, config in normalized.items()
-            if spec.startswith("vllm:")
-        }
-    )
-    identity_index = vllm_identity_index(vllm_entries)
-    for spec in normalized:
-        if not spec.startswith("ollama:"):
-            continue
-        overlaps = ollama_overlap_specs(
-            spec.removeprefix("ollama:"),
-            {},
-            identity_index,
-        )
-        if overlaps:
-            raise ValueError(
-                f"Ollama config {spec!r} overlaps the vLLM roster by normalized "
-                "base-family/name identity and is unavailable: "
-                + ", ".join(overlaps)
-            )
     ollama_specs = [spec for spec in normalized if spec.startswith("ollama:")]
     if ollama_specs:
         # Re-query under the shared inference/mutation lock at Runner
@@ -1944,42 +1908,28 @@ def _load_local_config(
             OllamaService,
         )
 
-        live = OllamaService(Path.cwd()).roster(vllm_entries, force=True)
+        live = OllamaService(Path.cwd()).roster({}, force=True)
         if live.get("available") is not True:
             raise ValueError(
                 "Runner Ollama admission requires a current exact live roster: "
                 + str(live.get("error") or "discovery unavailable")
             )
         candidates: dict[str, dict[str, object]] = {}
-        excluded: dict[str, dict[str, object]] = {}
-        for section, destination in (("models", candidates), ("excluded", excluded)):
-            rows = live.get(section)
-            if not isinstance(rows, list):
-                raise ValueError("Runner Ollama live roster is malformed")
-            for row in rows:
-                if not isinstance(row, dict):
-                    raise ValueError("Runner Ollama live roster row is malformed")
-                live_spec = row.get("spec")
-                if (
-                    not isinstance(live_spec, str)
-                    or not live_spec.startswith("ollama:")
-                    or live_spec in candidates
-                    or live_spec in excluded
-                ):
-                    raise ValueError("Runner Ollama live roster identity is ambiguous")
-                destination[live_spec] = row
+        rows = live.get("models")
+        if not isinstance(rows, list):
+            raise ValueError("Runner Ollama live roster is malformed")
+        for row in rows:
+            if not isinstance(row, dict):
+                raise ValueError("Runner Ollama live roster row is malformed")
+            live_spec = row.get("spec")
+            if (
+                not isinstance(live_spec, str)
+                or not live_spec.startswith("ollama:")
+                or live_spec in candidates
+            ):
+                raise ValueError("Runner Ollama live roster identity is ambiguous")
+            candidates[live_spec] = row
         for spec in ollama_specs:
-            if spec in excluded:
-                overlaps = excluded[spec].get("overlap_with")
-                overlap_text = (
-                    ", ".join(str(value) for value in overlaps)
-                    if isinstance(overlaps, list)
-                    else "normalized vLLM identity"
-                )
-                raise ValueError(
-                    f"Ollama config {spec!r} is unavailable because live /api/show "
-                    f"identity overlaps the vLLM roster: {overlap_text}"
-                )
             row = candidates.get(spec)
             if row is None:
                 raise ValueError(

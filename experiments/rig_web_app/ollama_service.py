@@ -1228,7 +1228,7 @@ class OllamaService:
         *,
         force: bool = False,
     ) -> dict[str, object]:
-        """Discover exact installed tags and exclude normalized vLLM overlaps."""
+        """Discover exact installed tags independently of vLLM availability."""
 
         deadline = self._monotonic() + self.discovery_timeout
         try:
@@ -1263,6 +1263,7 @@ class OllamaService:
         """Discover while holding the cross-process shared lock."""
 
         with self._lock:
+            del vllm_entries
             now = self._monotonic()
             if (
                 not force
@@ -1270,7 +1271,6 @@ class OllamaService:
                 and now - self._roster_cache_at <= 2.0
             ):
                 return json.loads(json.dumps(self._roster_cache))
-            index = vllm_identity_index(vllm_entries)
             try:
                 def remaining() -> float:
                     value = deadline - self._monotonic()
@@ -1349,7 +1349,6 @@ class OllamaService:
                         modalities = ["text"]
                         if "vision" in normalized_capabilities:
                             modalities.append("image")
-                        overlaps = ollama_overlap_specs(tag, identity_details, index)
                         model = {
                             "capabilities": normalized_capabilities,
                             "details": merged_details,
@@ -1358,20 +1357,13 @@ class OllamaService:
                             "modalities": modalities,
                             "model": row["model"],
                             "name": row["name"],
-                            "overlap_with": list(overlaps),
+                            "overlap_with": [],
                             "spec": f"ollama:{tag}",
                             "tag": tag,
                         }
                         if architecture:
                             model["architecture"] = architecture
-                        if overlaps:
-                            model["warning"] = (
-                                "excluded from automatic Ollama candidates because its "
-                                "normalized identity overlaps the vLLM roster"
-                            )
-                            excluded.append(model)
-                        else:
-                            candidates.append(model)
+                        candidates.append(model)
                 # Close the mutable-tag race: no capability result is used
                 # unless a second /api/tags snapshot has the same exact tags
                 # and digests as the first snapshot.

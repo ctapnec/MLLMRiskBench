@@ -214,7 +214,7 @@ def test_api_uses_fixed_methods_bounded_bodies_and_no_redirect() -> None:
         OllamaAPI(open_request=redirect).tags()
 
 
-def test_live_roster_materializes_exact_capabilities_and_excludes_vllm_overlap(
+def test_live_roster_materializes_all_exact_capabilities_despite_vllm_overlap(
     tmp_path: Path,
 ) -> None:
     unique = _tag("granite-code:latest", "A" * 64, family="granite")
@@ -256,16 +256,24 @@ def test_live_roster_materializes_exact_capabilities_and_excludes_vllm_overlap(
             "overlap_with": [],
             "spec": "ollama:granite-code:latest",
             "tag": "granite-code:latest",
-        }
+        },
+        {
+            "capabilities": ["completion"],
+            "details": overlap["details"],
+            "digest": "b" * 64,
+            "loaded": False,
+            "modalities": ["text"],
+            "model": "llama3:latest",
+            "name": "llama3:latest",
+            "overlap_with": [],
+            "spec": "ollama:llama3:latest",
+            "tag": "llama3:latest",
+        },
     ]
-    excluded = roster["excluded"]
-    assert isinstance(excluded, list) and excluded[0]["spec"] == "ollama:llama3:latest"
-    assert excluded[0]["overlap_with"] == [
-        "vllm:meta-llama/Llama-3-8B-Instruct"
-    ]
+    assert roster["excluded"] == []
 
 
-def test_roster_excludes_opaque_alias_from_bounded_show_architecture(
+def test_roster_keeps_opaque_alias_despite_vllm_family_architecture(
     tmp_path: Path,
 ) -> None:
     opaque = _tag("private-alias:latest", "c" * 64)
@@ -284,8 +292,8 @@ def test_roster_excludes_opaque_alias_from_bounded_show_architecture(
     result = OllamaService(tmp_path, api=api, platform="posix").roster(
         {"vllm:meta-llama/Llama-3-8B-Instruct": {}}, force=True
     )
-    assert result["available"] is True and result["models"] == []
-    assert result["excluded"] == [
+    assert result["available"] is True
+    assert result["models"] == [
         {
             "architecture": "llama",
             "capabilities": ["completion"],
@@ -295,15 +303,12 @@ def test_roster_excludes_opaque_alias_from_bounded_show_architecture(
             "modalities": ["text"],
             "model": "private-alias:latest",
             "name": "private-alias:latest",
-            "overlap_with": ["vllm:meta-llama/Llama-3-8B-Instruct"],
+            "overlap_with": [],
             "spec": "ollama:private-alias:latest",
             "tag": "private-alias:latest",
-            "warning": (
-                "excluded from automatic Ollama candidates because its normalized "
-                "identity overlaps the vLLM roster"
-            ),
         }
     ]
+    assert result["excluded"] == []
 
 
 @pytest.mark.parametrize(
@@ -1072,7 +1077,9 @@ def test_build_renders_owned_boundaries_and_pull_controls_without_nested_forms(
         assert "<span class='badge blue'>external</span>" in page
         assert "discovery is read-only and pulls are disabled" in page
         assert "granite:latest" in page and "Loaded now" in page
-        assert "ollama:llava:latest" in page and "Excluded vLLM overlaps" in page
+        assert "ollama:llava:latest" not in page
+        assert "Excluded vLLM overlaps" not in page
+        assert "vLLM availability never excludes an installed Ollama tag" in page
         assert "one bounded fixture warning" in page
         assert "&lt;script&gt;alert(1)&lt;/script&gt;" in page
         assert "<script>alert(1)</script>" not in page
@@ -1192,9 +1199,11 @@ class _Builder(BuilderModelsMixin):
 class _RosterService:
     def __init__(self, roster: dict[str, object]) -> None:
         self.value = roster
+        self.entries: list[dict[str, object]] = []
 
-    def roster(self, _entries, *, force=False):
+    def roster(self, entries, *, force=False):
         del force
+        self.entries.append(json.loads(json.dumps(entries)))
         return json.loads(json.dumps(self.value))
 
 
@@ -1220,7 +1229,7 @@ def _builder_repo(tmp_path: Path) -> Path:
     return root
 
 
-def test_builder_uses_only_exact_live_rows_and_strictly_excludes_overlap(
+def test_builder_uses_only_exact_live_rows_and_ignores_catalog_only_overlap(
     tmp_path: Path,
 ) -> None:
     root = _builder_repo(tmp_path)
@@ -1236,8 +1245,10 @@ def test_builder_uses_only_exact_live_rows_and_strictly_excludes_overlap(
             }
         ],
     }
-    builder = _Builder(root, tmp_path / "state", _RosterService(live))
+    service = _RosterService(live)
+    builder = _Builder(root, tmp_path / "state", service)
     catalog, explicit = builder._local_entry_catalog()
+    assert service.entries == [{}]
     assert explicit == set()
     assert catalog["ollama:granite:latest"] == {
         "digest": "B" * 64,
@@ -1262,7 +1273,7 @@ def test_builder_uses_only_exact_live_rows_and_strictly_excludes_overlap(
         }
     }
     manual_path.write_text(json.dumps(manual), encoding="utf-8")
-    live["excluded"] = [
+    live["models"].append(
         {
             "spec": manual_spec,
             "digest": "c" * 64,
@@ -1272,20 +1283,75 @@ def test_builder_uses_only_exact_live_rows_and_strictly_excludes_overlap(
                 "vllm:llava-hf/llava-v1.6-mistral-7b-hf"
             ],
         }
-    ]
-    assert builder._ollama_overlap_warning(manual_spec, manual[manual_spec]) == ""
-    warning = builder._ollama_overlap_warning(manual_spec, live["excluded"][0])
-    assert "overlaps vLLM roster" in warning
-    with pytest.raises(ValueError, match="manual overlap override is not supported"):
-        builder._materialize_selected_local_config(
-            [manual_spec], require_live_ollama=True
-        )
+    )
+    generated = builder._materialize_selected_local_config(
+        [manual_spec], require_live_ollama=True
+    )
+    assert manual_spec in json.loads(generated.read_text(encoding="utf-8"))
+    paired = builder._materialize_selected_local_config(
+        ["vllm:llava-hf/llava-v1.6-mistral-7b-hf", manual_spec],
+        require_live_ollama=True,
+    )
+    assert set(json.loads(paired.read_text(encoding="utf-8"))) == {
+        "vllm:llava-hf/llava-v1.6-mistral-7b-hf",
+        manual_spec,
+    }
     manual[manual_spec]["allow_vllm_overlap"] = True
     manual_path.write_text(json.dumps(manual), encoding="utf-8")
-    with pytest.raises(ValueError, match="manual overlap override is not supported"):
-        builder._materialize_selected_local_config(
-            [manual_spec], require_live_ollama=True
-        )
+    generated = builder._materialize_selected_local_config(
+        [manual_spec], require_live_ollama=True
+    )
+    assert "allow_vllm_overlap" not in json.loads(
+        generated.read_text(encoding="utf-8")
+    )[manual_spec]
+
+
+def test_builder_keeps_downloaded_ollama_models_when_only_catalog_families_overlap(
+    tmp_path: Path,
+) -> None:
+    root = _builder_repo(tmp_path)
+    roster_path = root / "experiments" / "rig" / "vllm-roster.example.json"
+    roster_path.write_text(
+        json.dumps(
+            {
+                "models": {
+                    "vllm:google/gemma-4-12B-it": {"modalities": ["text"]},
+                    "vllm:mistralai/Ministral-3-3B-Instruct-2512": {
+                        "modalities": ["text"]
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    live = {
+        "available": True,
+        "excluded": [],
+        "issues": [],
+        "models": [
+            {
+                "spec": "ollama:gemma4:12b-it-q4_K_M",
+                "digest": "a" * 64,
+                "modalities": ["text", "image"],
+            },
+            {
+                "spec": "ollama:ministral-3:14b-instruct-2512-q4_K_M",
+                "digest": "b" * 64,
+                "modalities": ["text", "image"],
+            },
+        ],
+    }
+    service = _RosterService(live)
+    builder = _Builder(root, tmp_path / "state", service)
+
+    snapshot = builder._ollama_roster_snapshot(force=True)
+
+    assert service.entries == [{}]
+    assert [row["spec"] for row in snapshot["models"]] == [
+        "ollama:gemma4:12b-it-q4_K_M",
+        "ollama:ministral-3:14b-instruct-2512-q4_K_M",
+    ]
+    assert snapshot["excluded"] == []
 
 
 def test_unavailable_daemon_adds_no_automatic_ollama_models(tmp_path: Path) -> None:

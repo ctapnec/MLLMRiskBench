@@ -482,6 +482,15 @@ text-only. The amendment derives its exact inventory counts before approval and
 does not rewrite the historical 46-row profile. Malformed protocol, transport,
 identity, provenance, residency, timeout, and backend failures remain hard
 failures.
+Acquire that exact multi-model Ollama roster in a named tmux session with
+`python -m experiments.local_campaign.ollama_acquire --out-dir ABSOLUTE_DIR
+MODEL...`. Network and DNS interruptions produce bounded retry events rather
+than terminating the controller; retry delays grow from 30 to at most 300
+seconds under a seven-day deadline, and Ollama reuses its retained partial
+blobs. If the Python process or host itself stops, rerun the identical command
+with `--resume`, the same resolved output directory and the same model order.
+Completed load smokes are not repeated, while a changed roster or a terminal
+output root is refused.
 The tracked, opt-in `launch_phase6_recovery_and_seven.sh` serializes the exact
 core recovery and seven-row producers in one named tmux session. It is not part
 of `launch_chain`, does not rerun successful lanes, and does not raise caps. Its
@@ -1556,10 +1565,11 @@ The selectable live roster accepts at most 64 installed models under a
 five-second aggregate discovery budget, requires exact tag/digest stability
 across two `/api/tags` reads, and gets text/image modalities only from explicit
 `/api/show` completion/vision capabilities. Missing, malformed, slow, or racing
-data produces no fabricated rows. Ollama identities with normalized
-upstream/name/family overlaps in the vLLM roster are unavailable for execution.
-A stale/manual overlap remains visible and disabled with its exact reason; it
-cannot override the distinct-model requirement. Each
+data produces no fabricated rows. The vLLM supported-model roster is a
+capability catalog, not proof that a model was downloaded or selected, so it
+does not suppress installed Ollama tags. vLLM availability and selection never
+exclude an Ollama tag; exact Ollama tag, digest, capability, and daemon-stability
+checks remain authoritative. Each
 `ollama:<model-tag>` entry requires the exact lowercase 64-hex digest reported
 by `/api/tags` and a unique explicit modality list containing `text` and
 optionally `image`. vLLM-only revision,
@@ -4439,10 +4449,10 @@ loopback daemon's bounded tags, loaded-model, and show-capability APIs; it binds
 the exact lowercase 64-hex digest, checks the tag snapshot again after show,
 and never guesses a model or modality. Tags/show family fields and bounded
 `model_info.general.architecture` must provide compatible upstream identity
-evidence; architecture is included in overlap matching and missing or ambiguous
-evidence fails closed. Automatic rows overlapping the vLLM
-upstream/name/family index are unavailable. A stale/manual overlap is shown
-disabled with its exact reason and cannot override that requirement. Ollama rejects vLLM-only fit and
+evidence; missing or ambiguous evidence fails closed. The vLLM support catalog
+does not claim local model availability and therefore cannot hide an installed
+Ollama tag. vLLM availability or selection does not disable Ollama execution.
+Ollama rejects vLLM-only fit and
 quantization fields and exposes no fit or precision selector because precision
 belongs to the pulled artifact. Runner uses the daemon's HTTP API directly and
 needs no Ollama Python SDK. Runner admission independently refreshes the live

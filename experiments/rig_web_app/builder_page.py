@@ -87,8 +87,6 @@ class BuilderPageMixin:
         )
         roster_models = roster.get("models")
         models = roster_models if isinstance(roster_models, list) else []
-        roster_excluded = roster.get("excluded")
-        excluded = roster_excluded if isinstance(roster_excluded, list) else []
         roster_issues = roster.get("issues")
         issues = roster_issues if isinstance(roster_issues, list) else []
 
@@ -136,36 +134,6 @@ class BuilderPageMixin:
             else ""
         )
 
-        excluded_rows = []
-        for row in excluded:
-            if not isinstance(row, Mapping):
-                continue
-            overlaps = row.get("overlap_with")
-            overlap_text = (
-                ", ".join(
-                    str(value) for value in overlaps if isinstance(value, str)
-                )
-                if isinstance(overlaps, list)
-                else "normalized vLLM identity"
-            )
-            excluded_rows.append(
-                "<li><code>"
-                + html.escape(str(row.get("spec", "unknown")))
-                + "</code> overlaps "
-                + html.escape(overlap_text or "normalized vLLM identity")
-                + "</li>"
-            )
-        excluded_html = (
-            "<details><summary>Excluded vLLM overlaps ("
-            + str(len(excluded_rows))
-            + ")</summary><p class='note'>These live tags are not automatic "
-            "testing candidates and cannot be enabled by a manual entry. "
-            "Use a distinct Ollama model identity for testing.</p><ul>"
-            + "".join(excluded_rows)
-            + "</ul></details>"
-            if excluded_rows
-            else ""
-        )
         loaded_html = (
             "<p class='note'>Loaded now: "
             + ", ".join(f"<code>{html.escape(value)}</code>" for value in loaded)
@@ -203,12 +171,10 @@ class BuilderPageMixin:
             "<a href='/ollama/status'>JSON status</a>.</p>"
             + "<p><strong>"
             + str(len(models))
-            + " exact live candidate(s)</strong>; "
-            + str(len(excluded))
-            + " normalized vLLM overlap(s) excluded.</p>"
+            + " exact live candidate(s)</strong>. vLLM availability never "
+            "excludes an installed Ollama tag.</p>"
             + loaded_html
             + diagnostic_html
-            + excluded_html
             + "<div class='workflow-actions'>"
             "<form class='inline' method='get' action='/build#ollama-service'>"
             "<button class='ghost' type='submit'>Status</button></form>"
@@ -1050,16 +1016,11 @@ class BuilderPageMixin:
             disabled = ""
             problems: list[str] = []
             live_entry = live_ollama_by_spec.get(value)
-            overlap_warning = self._ollama_overlap_warning(
-                value, live_entry or entry
-            )
             try:
                 self._validate_ollama_local_entry(value, entry)
             except ValueError as exc:
                 problems.append(str(exc))
             manual = value in explicit_local
-            if overlap_warning:
-                problems.append(overlap_warning)
             if manual and live_entry is None:
                 problems.append(
                     "manual entry is not verified in the current live daemon roster"
@@ -1101,15 +1062,6 @@ class BuilderPageMixin:
                 + (
                     " <span class='badge green'>daemon matched</span>"
                     if manual and live_entry is not None
-                    else ""
-                )
-                + (
-                    " <span class='badge amber tip' tabindex='0' role='img' "
-                    "aria-label='Warning: ambiguous Ollama and vLLM identity'>"
-                    "&#9888; overlaps vLLM"
-                    f"<span class='tiptext'>{html.escape(overlap_warning)}</span>"
-                    "</span>"
-                    if overlap_warning
                     else ""
                 )
                 + (

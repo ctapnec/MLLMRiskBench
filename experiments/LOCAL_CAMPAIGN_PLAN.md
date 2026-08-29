@@ -229,7 +229,14 @@ not a safety result. A failing target is retained as failed and receives no new
 security calls. A recent, relevant, hardware-fitting replacement may then be
 selected as a new exact model condition with its own pin, acquisition,
 readiness receipt, projections and Gate amendment; it never inherits the failed
-target's identity or artifacts. Gemma 4 and Ministral 3 admit
+target's identity or artifacts. Multi-model Ollama acquisition uses
+`python -m experiments.local_campaign.ollama_acquire` in a named tmux session.
+The controller retains one canonical event ledger, skips models whose load smoke
+already completed, and retries an interrupted `/api/pull` with 30-to-300-second
+bounded backoff under a seven-day controller deadline. Ollama resumes retained
+partial blobs. Relaunch the same command with `--resume` and the same absolute
+`--out-dir` and model order after a controller or host interruption; a changed
+roster or terminal output root is refused. Gemma 4 and Ministral 3 admit
 text and image lanes; DeepSeek-R1 Distill and GPT-OSS admit text lanes only.
 Every empty survey item remains in the receipt as `model_nonresponse`. Measured
 campaign postprocessing likewise retains a typed model nonresponse as missing

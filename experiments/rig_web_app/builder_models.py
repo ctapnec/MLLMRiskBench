@@ -65,51 +65,9 @@ class BuilderModelsMixin:
             return None
 
     def _ollama_roster_snapshot(self, *, force: bool = False) -> dict[str, object]:
-        """Return exact daemon-backed candidates after vLLM de-duplication."""
+        """Return exact daemon-backed candidates without catalog-only exclusions."""
 
-        from experiments.local_targets import load_roster, _models_map  # noqa: PLC0415
-
-        vllm = {
-            str(spec): dict(entry)
-            for spec, entry in _models_map(load_roster(self.repo_root)).items()
-            if str(spec).startswith("vllm:") and isinstance(entry, dict)
-        }
-        return self.ollama.roster(vllm, force=force)
-
-    def _ollama_overlap_warning(
-        self, spec: str, entry: Mapping[str, object] | None = None
-    ) -> str:
-        """Explain a normalized manual Ollama/vLLM identity overlap."""
-
-        if not spec.startswith("ollama:"):
-            return ""
-        from experiments.local_targets import load_roster, _models_map  # noqa: PLC0415
-        from .ollama_service import ollama_overlap_specs, vllm_identity_index
-
-        vllm = {
-            str(candidate): dict(value)
-            for candidate, value in _models_map(load_roster(self.repo_root)).items()
-            if str(candidate).startswith("vllm:") and isinstance(value, dict)
-        }
-        identity_details: dict[str, object] = {}
-        nested_details = (entry or {}).get("details")
-        if isinstance(nested_details, Mapping):
-            identity_details.update(nested_details)
-        for key in ("architecture", "family", "families"):
-            if key in (entry or {}):
-                identity_details[key] = (entry or {})[key]
-        overlaps = ollama_overlap_specs(
-            spec.removeprefix("ollama:"),
-            identity_details,
-            vllm_identity_index(vllm),
-        )
-        if not overlaps:
-            return ""
-        return (
-            "normalized Ollama identity overlaps vLLM roster: "
-            + ", ".join(overlaps)
-            + "; Ollama execution is disabled for this identity"
-        )
+        return self.ollama.roster({}, force=force)
 
     def _model_options(self) -> list[tuple[str, str, tuple[str, ...], str]]:
         """Selectable targets as (spec, label, modalities, kind).
@@ -407,11 +365,6 @@ class BuilderModelsMixin:
                 f"local target {spec!r} Ollama config requires a 64-hex digest"
             )
         BuilderModelsMixin._validated_local_modalities(spec, entry)
-        if "allow_vllm_overlap" in entry:
-            raise ValueError(
-                f"local target {spec!r} manual overlap override is not supported"
-            )
-
     def _selected_local_config_payload(
         self,
         specs: list[str],
@@ -432,17 +385,16 @@ class BuilderModelsMixin:
                     "selected Ollama targets require a current exact live roster: "
                     + reason
                 )
-            for section in ("models", "excluded"):
-                rows = snapshot.get(section)
-                if not isinstance(rows, list):
-                    raise ValueError("live Ollama roster has malformed candidate sections")
-                for row in rows:
-                    if not isinstance(row, Mapping):
-                        raise ValueError("live Ollama roster contains a malformed row")
-                    live_spec = str(row.get("spec", ""))
-                    if not live_spec.startswith("ollama:") or live_spec in live_ollama:
-                        raise ValueError("live Ollama roster contains an ambiguous model spec")
-                    live_ollama[live_spec] = row
+            rows = snapshot.get("models")
+            if not isinstance(rows, list):
+                raise ValueError("live Ollama roster has a malformed candidate section")
+            for row in rows:
+                if not isinstance(row, Mapping):
+                    raise ValueError("live Ollama roster contains a malformed row")
+                live_spec = str(row.get("spec", ""))
+                if not live_spec.startswith("ollama:") or live_spec in live_ollama:
+                    raise ValueError("live Ollama roster contains an ambiguous model spec")
+                live_ollama[live_spec] = row
         selected: dict[str, dict[str, object]] = {}
         allowed = {
             "revision",
@@ -488,15 +440,6 @@ class BuilderModelsMixin:
                             f"local target {spec!r} configured digest/modalities do "
                             "not match current live Ollama discovery"
                         )
-                # The daemon's show details can reveal an upstream/family
-                # overlap that is absent from a minimal manual config. Never
-                # discard that stronger live identity evidence.
-                warning = self._ollama_overlap_warning(spec, live_entry or entry)
-                if warning:
-                    raise ValueError(
-                        f"local target {spec!r} is unavailable: {warning}; "
-                        "a manual overlap override is not supported"
-                    )
                 selected[spec] = {
                     "digest": str((live_entry or entry)["digest"]).lower(),
                     "modalities": self._validated_local_modalities(
