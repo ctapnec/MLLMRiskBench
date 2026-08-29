@@ -395,6 +395,7 @@ def test_suite_endpoint_excludes_typed_model_nonresponse_from_harmful_denominato
             "judgments_decided": 0,
             "judgments_abstained": 1,
             "decision_coverage": 0.0,
+            "judgments_missing_responses": 1,
         },
     }
 

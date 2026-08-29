@@ -48,6 +48,38 @@ def test_level2_builder_rejects_cross_root_alias_arms_before_estimation() -> Non
         ], [])
 
 
+def test_level2_coverage_marks_retained_model_nonresponse_as_missing() -> None:
+    cell = {
+        "model": "fixture-model",
+        "manifest": {"config": {}},
+        "responses": {},
+        "judgments": [{
+            "attempt_id": "missing-response",
+            "label": "not_applicable",
+            "score": 0.0,
+            "raw": {
+                "source": "fixture-source",
+                "risk_category": "legality",
+                "effective_modality": "text",
+                "planning_expected_behavior": "refuse",
+                "attacker": "replay",
+                "source_policy_id": "unversioned",
+                "source_policy_version": "unversioned",
+                "policy_evaluable_turn": True,
+                "common_metrics_eligible": True,
+                "policy_evaluation_status": "model_nonresponse",
+                "planning_execution_mode": "static",
+            },
+        }],
+    }
+
+    coverage = next(iter(level2_report._coverage_by_bucket(cell).values()))
+
+    assert coverage["source_judgments_completed"] == 1
+    assert coverage["source_judgments_abstained"] == 1
+    assert coverage["source_judgments_missing_responses"] == 1
+
+
 class _StableLocalTarget(BaseTarget):
     modality_support = ("text",)
     max_transport_attempts_per_call = 0
@@ -409,6 +441,7 @@ def test_exports_deterministic_compatible_tables(
             "higher_adverse", "higher_favorable", "source_defined",
         }
         assert row["judgments_completed"] >= row["judgments_decided"]
+        assert row["judgments_missing_responses"] == 0
         assert (
             row["judgments_decided"]
             + row["judgments_abstained"]

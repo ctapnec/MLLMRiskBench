@@ -2402,6 +2402,13 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
                     if isinstance(decided, int) and isinstance(completed, int)
                     else "N/A"
                 )
+                missing_responses = row.get("judgments_missing_responses")
+                missing_response_text = (
+                    f"{missing_responses:,}"
+                    if isinstance(missing_responses, int)
+                    and not isinstance(missing_responses, bool)
+                    else "N/A (older report)"
+                )
                 n_clusters = row.get("n_clusters")
                 value = row.get("value")
                 value_text = (
@@ -2447,6 +2454,7 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
                     f"<td>{html.escape(str(row.get('n_records', 'N/A')))}</td>"
                     f"<td>{html.escape(str(n_clusters) if n_clusters is not None else 'N/A')}</td>"
                     f"<td>{coverage}</td>"
+                    f"<td>{html.escape(missing_response_text)}</td>"
                     f"<td>{proxy_support}</td>"
                     f"<td>{html.escape(evidence)}</td>"
                     f"<td>{html.escape(reliability_text)}</td></tr>"
@@ -2476,6 +2484,7 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
                 "<th>corpus_arm</th><th>attacker</th><th>defense</th>"
                 "<th>value</th><th>ci_low, ci_high</th><th>n_records</th>"
                 "<th>n_clusters</th><th>decided/completed</th>"
+                "<th>missing responses</th>"
                 "<th>model queries/reference uses</th><th>evidence</th>"
                 "<th>reliability</th></tr>"
                 + "".join(table_rows)

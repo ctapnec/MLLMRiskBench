@@ -2220,11 +2220,14 @@ def test_postprocessors_retain_typed_model_nonresponse_as_missingness() -> None:
     assert units == {}
     assert audit["eligible_units"] == 1
     assert audit["abstained_units"] == 1
+    assert audit["missing_response_units"] == 1
+    assert audit["missing_response_rows"] == 1
     assert audit["decision_coverage_by_population"]["harmful"] == {
         "evaluable_units": 1,
         "decided_units": 0,
         "abstained_units": 1,
         "decision_coverage": 0.0,
+        "missing_response_units": 1,
     }
     assert human_audit._final_model_nonresponse(judgment) is True
     assert judge_sensitivity._final_model_nonresponse(judgment) is True

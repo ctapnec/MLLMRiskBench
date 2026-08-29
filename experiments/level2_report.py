@@ -129,6 +129,7 @@ _CSV_FIELDS = (
     "judgments_evaluable",
     "judgments_decided",
     "judgments_abstained",
+    "judgments_missing_responses",
     "judgments_non_evaluable",
     "cross_stratum_pooling_permitted",
 )
@@ -175,6 +176,7 @@ def _coverage_by_bucket(cell: dict[str, Any]) -> dict[str, dict[str, Any]]:
         "source_judgments_evaluable": 0,
         "source_judgments_decided": 0,
         "source_judgments_abstained": 0,
+        "source_judgments_missing_responses": 0,
         "source_judgments_non_evaluable": 0,
         "approximate_judgments_completed": 0,
         "approximate_judgments_evaluable": 0,
@@ -197,6 +199,8 @@ def _coverage_by_bucket(cell: dict[str, Any]) -> dict[str, dict[str, Any]]:
         record["source_judgments_completed"] += 1
         state = _decision_state(judgment)
         record[f"source_judgments_{state}"] += 1
+        if raw.get("policy_evaluation_status") == "model_nonresponse":
+            record["source_judgments_missing_responses"] += 1
         if state != "non_evaluable":
             record["source_judgments_evaluable"] += 1
         approximate_state = _approximate_decision_state(
@@ -366,6 +370,7 @@ def _estimate_rows(cell: dict[str, Any]) -> list[dict[str, Any]]:
                 "judgments_abstained": bucket_coverage[
                     "approximate_judgments_abstained"
                 ],
+                "judgments_missing_responses": 0,
                 "judgments_non_evaluable": 0,
                 "official_source_evaluator": bucket_coverage[
                     "official_source_evaluator"
@@ -384,6 +389,9 @@ def _estimate_rows(cell: dict[str, Any]) -> list[dict[str, Any]]:
                 ],
                 "judgments_abstained": bucket_coverage[
                     "source_judgments_abstained"
+                ],
+                "judgments_missing_responses": bucket_coverage[
+                    "source_judgments_missing_responses"
                 ],
                 "judgments_non_evaluable": bucket_coverage[
                     "source_judgments_non_evaluable"
@@ -476,6 +484,9 @@ def _estimate_rows(cell: dict[str, Any]) -> list[dict[str, Any]]:
             "judgments_evaluable": selected_coverage["judgments_evaluable"],
             "judgments_decided": selected_coverage["judgments_decided"],
             "judgments_abstained": selected_coverage["judgments_abstained"],
+            "judgments_missing_responses": selected_coverage[
+                "judgments_missing_responses"
+            ],
             "judgments_non_evaluable": selected_coverage[
                 "judgments_non_evaluable"
             ],

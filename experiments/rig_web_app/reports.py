@@ -544,6 +544,14 @@ def _validate_report_document(kind: str, document: Mapping[str, Any]) -> None:
             decisions["judgments_decided"] + decisions["judgments_abstained"]
         ):
             raise ValueError("Level-2 judgment counts do not reconcile")
+        missing_responses = row.get("judgments_missing_responses")
+        if missing_responses is not None and (
+            not isinstance(missing_responses, int)
+            or isinstance(missing_responses, bool)
+            or missing_responses < 0
+            or missing_responses > decisions["judgments_abstained"]
+        ):
+            raise ValueError("Level-2 missing-response count is incoherent")
 
 
 def collect_reports(

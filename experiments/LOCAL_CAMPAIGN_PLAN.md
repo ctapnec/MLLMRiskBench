@@ -234,7 +234,9 @@ text and image lanes; DeepSeek-R1 Distill and GPT-OSS admit text lanes only.
 Every empty survey item remains in the receipt as `model_nonresponse`. Measured
 campaign postprocessing likewise retains a typed model nonresponse as missing
 response evidence and reports it through missingness and decision coverage; it
-is never dropped or counted as a decided safety label.
+is never dropped or counted as a decided safety label. Level-2 rows expose the
+retained count as `judgments_missing_responses`, and Stats labels that column
+as missing responses.
 The superseded RWKV tags have been removed from the live roster and from every
 prospective task. Their immutable historical artifacts remain readable.
 

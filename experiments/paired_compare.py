@@ -592,6 +592,9 @@ def _build_units(
     abstained_units: list[tuple[str, int]] = []
     abstained_rows = 0
     abstained_population_counts: Counter[str] = Counter()
+    missing_response_units: list[tuple[str, int]] = []
+    missing_response_rows = 0
+    missing_response_population_counts: Counter[str] = Counter()
     eligible_sampling_controls: list[str] = []
     policy_nonevaluable_rows = 0
     for key, rows in sorted(grouped.items()):
@@ -749,6 +752,13 @@ def _build_units(
             abstained_units.append(key)
             abstained_rows += len(abstentions)
             abstained_population_counts[population] += 1
+            typed_missing = [
+                row for row in abstentions if _typed_model_nonresponse(row)
+            ]
+            if typed_missing:
+                missing_response_units.append(key)
+                missing_response_rows += len(typed_missing)
+                missing_response_population_counts[population] += 1
             continue
         value = float(decided_positive)
 
@@ -791,7 +801,7 @@ def _build_units(
         decided_count = decided_population_counts[population]
         abstained_count = abstained_population_counts[population]
         evaluable_count = decided_count + abstained_count
-        coverage_by_population[population] = {
+        population_coverage = {
             "evaluable_units": evaluable_count,
             "decided_units": decided_count,
             "abstained_units": abstained_count,
@@ -799,6 +809,11 @@ def _build_units(
                 decided_count / evaluable_count if evaluable_count else None
             ),
         }
+        if missing_response_population_counts[population]:
+            population_coverage["missing_response_units"] = (
+                missing_response_population_counts[population]
+            )
+        coverage_by_population[population] = population_coverage
     audit = {
         "judgment_rows": sum(len(rows) for rows in grouped.values()),
         "raw_units": len(grouped),
@@ -828,6 +843,14 @@ def _build_units(
         ).items())),
         "unexplained_exclusions": 0,
     }
+    if missing_response_units:
+        audit.update({
+            "missing_response_units": len(missing_response_units),
+            "missing_response_rows": missing_response_rows,
+            "missing_response_unit_keys": [
+                _unit_json(key) for key in sorted(missing_response_units)
+            ],
+        })
     return units, audit, effective_mode, constructs
 
 

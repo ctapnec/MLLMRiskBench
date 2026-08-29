@@ -342,6 +342,7 @@ def _descriptive_endpoint(
             else:
                 decision_rows.append(row)
     completed = len(decision_rows) + len(abstained_rows)
+    missing_responses = sum(_final_model_nonresponse(row) for row in abstained_rows)
     support = {
         "judgments_completed": completed,
         "judgments_evaluable": completed,
@@ -349,6 +350,8 @@ def _descriptive_endpoint(
         "judgments_abstained": len(abstained_rows),
         "decision_coverage": len(decision_rows) / completed if completed else None,
     }
+    if missing_responses:
+        support["judgments_missing_responses"] = missing_responses
     if identity["execution_mode"] == "live_response_conditioned":
         endpoint = (
             "conversation_ASR"

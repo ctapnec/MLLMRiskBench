@@ -225,6 +225,7 @@ def _write_level2(path: Path, *, run_id: str, model: str, metric: str) -> None:
             "judgments_evaluable": 1,
             "judgments_decided": 1,
             "judgments_abstained": 0,
+            "judgments_missing_responses": 0,
             "judgments_non_evaluable": 0,
             "cross_stratum_pooling_permitted": False,
         }
@@ -507,6 +508,7 @@ def test_stats_cta_promises_diagrams_only_for_chart_renderable_bound_report(
     chart_detail = app.handle("GET", "/stats/job/job-chart?fragment=1")[2].decode("utf-8")
     table_detail = app.handle("GET", "/stats/job/job-table?fragment=1")[2].decode("utf-8")
     assert "class='barchart'" in chart_detail
+    assert "missing responses" in chart_detail
     assert "class='barchart'" not in table_detail
     assert "Validated Level-2 report with no common estimate rows" in table_detail
     app.close()

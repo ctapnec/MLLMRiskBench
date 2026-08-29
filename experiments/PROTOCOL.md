@@ -91,7 +91,9 @@ modalities and policy. It is engineering admission evidence and contributes no
 safety metric. Each empty item remains a typed `model_nonresponse`; later
 campaign statistics retain the same outcome as missing response evidence and
 report missingness and decision coverage without treating it as a decided
-safety label. A failed model remains an explicit failed target condition. A
+safety label. Level-2 output records `judgments_missing_responses` explicitly,
+and Stats renders it as missing responses. A failed model remains an explicit
+failed target condition. A
 replacement is a separately pinned, acquired and readiness-tested model with new
 projection and Gate identities, never a silent substitution into the failed
 condition. Non-generative guards and classifiers use a role-specific response
