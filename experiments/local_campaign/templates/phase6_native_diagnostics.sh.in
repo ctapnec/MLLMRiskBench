@@ -1291,8 +1291,11 @@ note_rows = validate_inventory(
     label="canonical RUNNOTE",
     classification_commit=gate5_expected_commit,
 )
-if note_rows != manifest_rows:
-    raise SystemExit("canonical RUNNOTE and Gate 5 manifest inventories differ")
+if inventory_counts(note_rows) != gate5_counts:
+    raise SystemExit("covered manifest and RUNNOTE conditional inventory differ")
+for lane, manifest_row in manifest_rows.items():
+    if manifest_row["disposition"] != "runnable" and note_rows[lane] != manifest_row:
+        raise SystemExit(f"{lane}: terminal manifest/RUNNOTE row differs")
 approval = note.get("approval")
 if (
     not isinstance(approval, dict)
@@ -3106,8 +3109,14 @@ def validate_gate5_contract(
         "canonical RUNNOTE",
         classification_commit=historical_commit,
     )
-    if note_rows != manifest_rows:
-        raise ValueError("canonical RUNNOTE and covered-manifest inventories differ")
+    if gate5_inventory_counts(note_rows) != expected_counts:
+        raise ValueError("covered manifest and RUNNOTE conditional inventory differ")
+    for lane, manifest_row in manifest_rows.items():
+        if (
+            manifest_row["disposition"] != "runnable"
+            and note_rows[lane] != manifest_row
+        ):
+            raise ValueError(f"{lane}: terminal manifest/RUNNOTE row differs")
     covered_row = note.get("covered_manifest")
     covered_path = validate_descriptor_row(covered_row, "RUNNOTE covered manifest")
     if covered_path.read_bytes() != manifest_raw:

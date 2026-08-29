@@ -6603,3 +6603,33 @@ def test_phase6_native_validates_rr_against_the_gate5_revision() -> None:
     assert changed != source
     with pytest.raises(AssertionError):
         assert_contract(changed)
+
+
+def test_phase6_native_preserves_the_gate5_promotion_delta() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase6_native_diagnostics.sh.in"
+    ).read_text(encoding="utf-8")
+
+    def assert_contract(value: str) -> None:
+        assert value.count(
+            'manifest_row["disposition"] != "runnable"'
+        ) == 2
+        assert value.count("terminal manifest/RUNNOTE row differs") == 2
+        assert value.count(
+            "covered manifest and RUNNOTE conditional inventory differ"
+        ) == 2
+        assert "if note_rows != manifest_rows:" not in value
+
+    assert_contract(source)
+    changed = source.replace(
+        'manifest_row["disposition"] != "runnable"',
+        'manifest_row["disposition"] == "runnable"',
+        1,
+    )
+    assert changed != source
+    with pytest.raises(AssertionError):
+        assert_contract(changed)
