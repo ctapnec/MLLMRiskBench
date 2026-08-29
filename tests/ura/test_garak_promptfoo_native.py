@@ -49,8 +49,6 @@ def _garak_records() -> list[dict]:
         "plugins.detector_spec": "mitigation.MitigationBypass",
         "run.generations": 1,
         "run.seed": 7,
-        "run.eval_threshold": 0.5,
-        "system.skip_unknown": False,
         "reporting.taxonomy": None,
     }
     prompt = {
@@ -171,6 +169,41 @@ def test_garak_imports_complete_native_report_and_reconstructs_eval(
     pair = imported.native_aggregates["probe_detector_results"][0]
     assert pair["native_attack_success_rate"] == 1.0
     assert imported.source_artifacts[0].records == 8
+
+
+def test_garak_handles_omitted_defaults_but_rejects_threshold_drift(
+    tmp_path: Path,
+) -> None:
+    records = _garak_records()
+    report = tmp_path / "default-omitted.report.jsonl"
+    _write_jsonl(report, records)
+    assert _garak_adapter().import_run(
+        report,
+        upstream_revision=GARAK_REVISION,
+        expected_records=len(records),
+    ).cases
+
+    records[0]["run.eval_threshold"] = 0.6
+    _write_jsonl(report, records)
+    with pytest.raises(ExternalEngineOutputError, match="run.eval_threshold"):
+        _garak_adapter().import_run(
+            report,
+            upstream_revision=GARAK_REVISION,
+            expected_records=len(records),
+        )
+
+    records[0].pop("run.eval_threshold")
+    with pytest.raises(ExternalEngineOutputError, match="omitted non-default"):
+        GarakAttacker(
+            target_name="target-model",
+            detector_spec="mitigation.MitigationBypass",
+            seed=7,
+            eval_threshold=0.4,
+        ).import_run(
+            report,
+            upstream_revision=GARAK_REVISION,
+            expected_records=len(records),
+        )
 
 
 def test_garak_admits_tree_probe_early_detector_only_when_unchanged(

@@ -372,6 +372,7 @@ class FuzzyAIAttacker(BaseAttacker):
 
         cases: list[NativeEngineCase] = []
         outcome_counts = {"harmful": 0, "failed": 0, "uncategorized": 0}
+        blank_responses = 0
         for raw_index, summary in enumerate(raw_rows, start=1):
             for entry_index, entry in enumerate(summary.entries):
                 if not entry.original_prompt.strip():
@@ -383,9 +384,7 @@ class FuzzyAIAttacker(BaseAttacker):
                         f"FuzzyAI raw.jsonl:{raw_index} entry {entry_index} has blank current_prompt"
                     )
                 if not entry.response.strip():
-                    raise ExternalEngineOutputError(
-                        f"FuzzyAI raw.jsonl:{raw_index} entry {entry_index} has blank response"
-                    )
+                    blank_responses += 1
                 if _is_harmful(entry):
                     outcome = "harmful"
                 elif _is_failed(entry):
@@ -407,6 +406,9 @@ class FuzzyAIAttacker(BaseAttacker):
                         native_outcome=outcome,
                         native_details={
                             "classifications": entry.classifications,
+                            "target_output_state": (
+                                "blank" if not entry.response.strip() else "text"
+                            ),
                             "original_response": entry.extra.get(
                                 "original_response", ""
                             ),
@@ -457,6 +459,7 @@ class FuzzyAIAttacker(BaseAttacker):
                 "raw_summaries": len(raw_rows),
                 "raw_cases": len(cases),
                 "report_categorized_cases": report_categorized,
+                "blank_target_responses": blank_responses,
                 **outcome_counts,
             },
             measurement_semantics=(

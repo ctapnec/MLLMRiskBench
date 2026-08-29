@@ -7134,17 +7134,18 @@ def validate_native_controller(
     framework_python_declared = Path(
         str(plan_execution["framework_python"])
     ).expanduser()
-    expected_framework_python = Path(required_env("URA_FRAMEWORK_PYTHON")).expanduser()
+    expected_framework_python = Path(
+        required_env("URA_FRAMEWORK_PYTHON")
+    ).expanduser().resolve(strict=True)
     if (
         not framework_python_declared.is_absolute()
-        or framework_python_declared != expected_framework_python
         or not os.access(framework_python_declared, os.X_OK)
     ):
         raise Phase7Error("Phase 6 native framework Python differs")
     framework_python = framework_python_declared.resolve(strict=True)
     if (
         not framework_python.is_file()
-        or framework_python != expected_framework_python.resolve(strict=True)
+        or framework_python != expected_framework_python
     ):
         raise Phase7Error("Phase 6 native framework Python differs")
     for role, expected_model in NATIVE_OLLAMA_MODELS.items():

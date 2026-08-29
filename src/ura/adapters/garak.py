@@ -447,14 +447,28 @@ class GarakAttacker(BaseAttacker):
             "plugins.detector_spec": self.detector_spec,
             "run.generations": self.generations,
             "run.seed": self.seed,
-            "run.eval_threshold": self.eval_threshold,
-            "system.skip_unknown": False,
         }
         for key, expected in expected_setup.items():
             if setup.get(key) != expected:
                 raise ExternalEngineOutputError(
                     f"Garak setup mismatch for {key}: expected={expected!r}, "
                     f"observed={setup.get(key)!r}"
+                )
+        optional_defaults = {
+            "run.eval_threshold": (self.eval_threshold, 0.5),
+            "system.skip_unknown": (False, False),
+        }
+        for key, (expected, default) in optional_defaults.items():
+            if key not in setup:
+                if expected != default:
+                    raise ExternalEngineOutputError(
+                        f"Garak setup omitted non-default {key}: expected={expected!r}"
+                    )
+                continue
+            if setup[key] != expected:
+                raise ExternalEngineOutputError(
+                    f"Garak setup mismatch for {key}: expected={expected!r}, "
+                    f"observed={setup[key]!r}"
                 )
 
         init = records[1]

@@ -91,6 +91,30 @@ def test_easyjailbreak_import_preserves_native_roles_and_outcomes(
     assert native.source_artifacts[0].sha256 == digest
 
 
+def test_easyjailbreak_retains_a_blank_completed_target_response(
+    tmp_path: Path,
+) -> None:
+    result_path = tmp_path / "attack_results.jsonl"
+    rows = _easyjailbreak_results(result_path)[:1]
+    rows[0]["target_responses"] = [""]
+    rows[0]["eval_results"] = [0]
+    result_path.write_text(json.dumps(rows[0]) + "\n", encoding="utf-8")
+
+    native = EasyJailbreakAttacker(
+        recipe="Cipher",
+        target_model="target",
+        attack_model=None,
+        eval_model="evaluator",
+    ).import_run(
+        result_path,
+        upstream_revision="f" * 40,
+        expected_records=1,
+    )
+    assert native.cases[0].target_outputs == [""]
+    assert native.cases[0].native_details["target_output_states"] == ["blank"]
+    assert native.import_accounting["blank_target_responses"] == 1
+
+
 @pytest.mark.parametrize("mutation", ["truncated", "blank", "extra", "unpaired"])
 def test_easyjailbreak_import_fails_closed_on_invalid_or_incomplete_results(
     tmp_path: Path, mutation: str
@@ -424,6 +448,25 @@ def test_fuzzyai_imports_and_cross_validates_complete_native_result(
         "report",
     }
     assert imported.import_accounting["raw_cases"] == 2
+
+
+def test_fuzzyai_retains_a_blank_completed_target_response(tmp_path: Path) -> None:
+    result_dir, report, raw = _fuzzy_results(tmp_path)
+    raw[0]["entries"][1]["response"] = ""
+    report["attacking_techniques"][0]["models"][0]["failed_prompts"][0][
+        "harmful_response"
+    ] = ""
+    (result_dir / "raw.jsonl").write_text(
+        json.dumps(raw[0]), encoding="utf-8"
+    )
+    (result_dir / "report.json").write_text(json.dumps(report), encoding="utf-8")
+
+    imported = FuzzyAIAttacker(
+        attacks=["asc"], model="ollama/llama3"
+    ).import_run(result_dir, upstream_revision="a" * 40)
+    assert imported.cases[1].target_outputs == [""]
+    assert imported.cases[1].native_details["target_output_state"] == "blank"
+    assert imported.import_accounting["blank_target_responses"] == 1
 
 
 def test_fuzzyai_rejects_report_raw_divergence_and_wrong_configuration(

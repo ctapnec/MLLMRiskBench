@@ -215,10 +215,6 @@ class EasyJailbreakAttacker(BaseAttacker):
                 raise ExternalEngineOutputError(
                     f"EasyJailbreak line {line_no} has no target response"
                 )
-            if any(not response.strip() for response in record.target_responses):
-                raise ExternalEngineOutputError(
-                    f"EasyJailbreak line {line_no} contains a blank target response"
-                )
             results = _validated_binary_results(record.eval_results, line_no=line_no)
             if len(results) != len(record.target_responses):
                 raise ExternalEngineOutputError(
@@ -237,9 +233,13 @@ class EasyJailbreakAttacker(BaseAttacker):
         cases: list[NativeEngineCase] = []
         successes = 0
         evaluations = 0
+        blank_target_responses = 0
         for index, (raw, record, results) in enumerate(records, start=1):
             successes += sum(results)
             evaluations += len(results)
+            blank_target_responses += sum(
+                not response.strip() for response in record.target_responses
+            )
             if all(results):
                 outcome = "all_native_evaluations_jailbreak"
             elif any(results):
@@ -263,6 +263,10 @@ class EasyJailbreakAttacker(BaseAttacker):
                     },
                     native_details={
                         "native_eval_results": results,
+                        "target_output_states": [
+                            "blank" if not response.strip() else "text"
+                            for response in record.target_responses
+                        ],
                         "jailbreak_prompt_may_be_template": "{query}"
                         in record.jailbreak_prompt,
                         "recipe_class": self.upstream_recipe_class,
@@ -307,6 +311,7 @@ class EasyJailbreakAttacker(BaseAttacker):
                 "expected_records": expected_records,
                 "imported_records": len(records),
                 "target_responses": evaluations,
+                "blank_target_responses": blank_target_responses,
                 "native_evaluations": evaluations,
             },
             measurement_semantics=(

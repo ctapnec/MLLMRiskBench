@@ -149,3 +149,29 @@ def test_native_contract_self_test_inventory_matches_all_consumers() -> None:
         assert 'get("mutations_rejected") != 13' in source
         positions = [source.index(f'"{label}"') for label in labels]
         assert positions == sorted(positions)
+
+
+def _assert_phase7_framework_python_is_canonical(source: str) -> None:
+    block = source.split("framework_python_declared = Path(", 1)[1].split(
+        "for role, expected_model in NATIVE_OLLAMA_MODELS.items():", 1
+    )[0]
+    assert ').expanduser().resolve(strict=True)' in block
+    assert "framework_python_declared != expected_framework_python" not in block
+    assert "framework_python != expected_framework_python" in block
+    assert "expected_framework_python.resolve(strict=True)" not in block
+
+
+def test_phase7_accepts_a_canonical_native_framework_python_locator() -> None:
+    source = PHASE7.read_text(encoding="utf-8")
+    _assert_phase7_framework_python_is_canonical(source)
+
+    mutation = source.replace(
+        '        required_env("URA_FRAMEWORK_PYTHON")\n'
+        '    ).expanduser().resolve(strict=True)',
+        '        required_env("URA_FRAMEWORK_PYTHON")\n'
+        '    ).expanduser()',
+        1,
+    )
+    assert mutation != source
+    with pytest.raises(AssertionError):
+        _assert_phase7_framework_python_is_canonical(mutation)
