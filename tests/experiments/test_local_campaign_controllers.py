@@ -2279,6 +2279,25 @@ def test_phase7_rr_pair_dispatch_is_conditioned_on_current_measured_cells() -> N
     assert reverted_retained != retained
     with pytest.raises(AssertionError):
         assert retained_core_sha in reverted_retained
+    rr_roots_start = source.index("rr_execution_roots = (")
+    rr_roots_end = source.index("\n    )", rr_roots_start) + len("\n    )")
+    rr_roots = source[rr_roots_start:rr_roots_end]
+    assert 'control / "lane-specs"' in rr_roots
+    assert 'control / "lanes"' in rr_roots
+    assert "attempt," in rr_roots
+    assert "runner_root" not in rr_roots
+    reverted_rr_roots = rr_roots.replace(
+        "        attempt,",
+        "        attempt,\n        runner_root,",
+        1,
+    )
+    assert reverted_rr_roots != rr_roots
+    with pytest.raises(AssertionError):
+        assert "runner_root" not in reverted_rr_roots
+    conditional_start = source.index("forbidden_defense_paths = (")
+    conditional_end = source.index("\n        )", conditional_start)
+    conditional = source[conditional_start:conditional_end]
+    assert "runner_root / DEFENSE_LOCAL_LANE" not in conditional
     assert '"10-defense-local.json"' in source
     assert '"14-defense-local.json"' not in source
     assert 'set(projection) != {"path", "file", "sha256", "bytes"}' in source
@@ -2842,6 +2861,19 @@ def test_phase8_accepts_current_rr_and_rejects_only_historical_terminal_rows() -
     assert reverted_retained != retained
     with pytest.raises(AssertionError):
         assert retained_extended_sha in reverted_retained
+    conditional_start = source.index("forbidden_defense_paths = (")
+    conditional_end = source.index("\n        )", conditional_start)
+    conditional = source[conditional_start:conditional_end]
+    assert "runner_root / DEFENSE_LOCAL_LANE" not in conditional
+    reverted_conditional = conditional.replace(
+        '            attempt / f"{DEFENSE_LOCAL_LANE}.failure.json",',
+        '            attempt / f"{DEFENSE_LOCAL_LANE}.failure.json",\n'
+        "            runner_root / DEFENSE_LOCAL_LANE,",
+        1,
+    )
+    assert reverted_conditional != conditional
+    with pytest.raises(AssertionError):
+        assert "runner_root / DEFENSE_LOCAL_LANE" not in reverted_conditional
     assert '"10-defense-local.json"' in source
     assert '"14-defense-local.json"' not in source
     assert "validate_llava_pair_artifact(" in source

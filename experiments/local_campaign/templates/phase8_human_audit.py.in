@@ -3956,7 +3956,6 @@ def validate_core_completion(
             control / "lanes" / DEFENSE_LOCAL_LANE,
             attempt / f"{DEFENSE_LOCAL_LANE}.result.json",
             attempt / f"{DEFENSE_LOCAL_LANE}.failure.json",
-            runner_root / DEFENSE_LOCAL_LANE,
         )
         if any(path.exists() or path.is_symlink() for path in forbidden_defense_paths):
             raise Phase8Error(
