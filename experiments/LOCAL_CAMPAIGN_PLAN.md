@@ -781,8 +781,11 @@ inference settings and judge condition. Otherwise Phase 7 writes one strict
 `ura-phase7-non-estimable-contrast/1` artifact for every unavailable planned
 facet, binds the failed or retained-terminal prerequisite and carries no
 estimate. It must not construct RR metric input from projections, canaries or
-partial measured roots. The Level-2 export keeps rules-only
-and cascade (rules+guardrail) evaluator modes as separate compatibility keys.
+partial measured roots. The current Ollama Gate 5 amendment and Phase 6
+completion are independent, required Phase 7 inputs alongside the retained
+core, recovery, GraySwan RR and follow-on inputs. The Level-2 export keeps
+rules-only and cascade (rules+guardrail) evaluator modes as separate
+compatibility keys.
 Only successful measured lanes enter those metric and Level-2 views; failed and
 partial lanes remain visible in Level-1 lifecycle evidence rather than being
 silently dropped or replaced by Gate 5 preflight eligibility.

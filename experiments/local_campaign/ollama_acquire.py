@@ -21,6 +21,7 @@ from ura.strict_json import strict_json_loads
 
 
 OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+_FAILURE_SCHEMA = "ura-ollama-acquisition-failure/1"
 _RETRY_ERRORS = (
     OSError,
     TimeoutError,
@@ -61,6 +62,21 @@ def append(path: Path, value: object) -> None:
         os.fsync(stream.fileno())
 
 
+def _write_create_only(path: Path, payload: bytes) -> None:
+    descriptor = os.open(
+        path,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    try:
+        view = memoryview(payload)
+        while view:
+            view = view[os.write(descriptor, view) :]
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def _event_rows(path: Path) -> list[dict[str, Any]]:
     payload = path.read_bytes()
     if not payload.endswith(b"\n") or b"\r" in payload or b"\0" in payload:
@@ -85,6 +101,42 @@ def _safe_reason(exc: BaseException) -> str:
     if isinstance(exc, (TimeoutError, urllib.error.URLError)):
         return "transport_unavailable"
     return "pull_attempt_failed"
+
+
+def _publish_terminal_failure(
+    out_dir: Path,
+    models: Iterable[str],
+    exc: BaseException,
+) -> bool:
+    """Publish a terminal only for an acquisition ledger owned by this request."""
+
+    if not out_dir.is_absolute() or out_dir.is_symlink() or not out_dir.is_dir():
+        return False
+    try:
+        selected = [validate_ollama_tag(model) for model in models]
+        rows = _event_rows(out_dir / "events.jsonl")
+    except (OSError, UnicodeError, ValueError):
+        return False
+    if (
+        not rows
+        or rows[0].get("event") != "start"
+        or rows[0].get("models") != selected
+        or (out_dir / ".exit").exists()
+    ):
+        return False
+    _write_create_only(
+        out_dir / "failure.json",
+        canonical(
+            {
+                "error_type": type(exc).__name__,
+                "reason_code": _safe_reason(exc),
+                "schema": _FAILURE_SCHEMA,
+                "status": "failed",
+            }
+        ),
+    )
+    _write_create_only(out_dir / ".exit", b"1\n")
+    return True
 
 
 def _json_response(response: Any) -> dict[str, Any]:
@@ -380,6 +432,13 @@ def main(argv: list[str] | None = None) -> int:
             deadline_seconds=args.deadline_seconds,
         )
     except (OSError, TimeoutError, UnicodeError, ValueError, RuntimeError) as exc:
+        try:
+            _publish_terminal_failure(args.out_dir, args.models, exc)
+        except OSError as publish_exc:
+            print(
+                "Ollama roster acquisition terminal publication failed: "
+                f"{type(publish_exc).__name__}",
+            )
         print(f"Ollama roster acquisition failed: {type(exc).__name__}: {exc}")
         return 1
 

@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import urllib.error
 
+import experiments.local_campaign.ollama_acquire as acquire_module
 from experiments.local_campaign.ollama_acquire import acquire, canonical
 
 
@@ -132,3 +133,30 @@ def test_resume_rejects_a_different_model_roster(tmp_path: Path) -> None:
         assert "roster differs" in str(exc)
     else:
         raise AssertionError("resume accepted a different model roster")
+
+
+def test_terminal_failure_unblocks_waiters_without_retaining_transport_text(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    model = "deepseek-r1:32b-qwen-distill-q4_K_M"
+    root = (tmp_path / "ollama-acquisition").resolve()
+    root.mkdir()
+    (root / "events.jsonl").write_bytes(
+        canonical({"event": "start", "models": [model], "version": {}})
+    )
+
+    def fail(**_kwargs):
+        raise RuntimeError("signed https://example.invalid/private?credential=value")
+
+    monkeypatch.setattr(acquire_module, "acquire", fail)
+    assert acquire_module.main(["--resume", "--out-dir", str(root), model]) == 1
+    assert (root / ".exit").read_bytes() == b"1\n"
+    failure = json.loads((root / "failure.json").read_text(encoding="ascii"))
+    assert failure == {
+        "error_type": "RuntimeError",
+        "reason_code": "pull_attempt_failed",
+        "schema": "ura-ollama-acquisition-failure/1",
+        "status": "failed",
+    }
+    assert "credential" not in (root / "failure.json").read_text(encoding="ascii")

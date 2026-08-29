@@ -213,7 +213,9 @@ bash ~/.ura-controller-active/launch_phase7_watcher.sh \
   --seven-output-policy-amendment <absolute-GraySwan-RR-amendment.json> \
   --phase6-seven-output-policy-completion <absolute-GraySwan-RR-completion.json> \
   --followon-gate5-amendment <absolute-follow-on-amendment.json> \
-  --phase6-followon-completion <absolute-follow-on-completion.json>
+  --phase6-followon-completion <absolute-follow-on-completion.json> \
+  --current-ollama-gate5-amendment <absolute-current-Ollama-amendment.json> \
+  --phase6-current-ollama-completion <absolute-current-Ollama-completion.json>
 ```
 
 Repeat `--phase6-recovery-completion` for every retained recovery stratum.

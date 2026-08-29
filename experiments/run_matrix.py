@@ -1902,8 +1902,9 @@ def _load_local_config(
     if ollama_specs:
         # Re-query under the shared inference/mutation lock at Runner
         # admission. Builder materialization is useful UX, never authority:
-        # an opaque tag can reveal a vLLM-overlapping upstream family only in
-        # /api/show, and a pulled tag/digest can change after preview.
+        # a pulled tag, digest, capabilities, or modalities can change after
+        # preview. Ollama and vLLM are independent execution conditions, so a
+        # family resemblance never excludes an installed Ollama model.
         from experiments.rig_web_app.ollama_service import (  # noqa: PLC0415
             OllamaService,
         )
