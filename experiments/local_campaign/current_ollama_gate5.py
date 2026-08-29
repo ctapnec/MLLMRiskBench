@@ -10,7 +10,7 @@ import json
 import os
 from pathlib import Path
 import re
-from typing import Any, Mapping, Sequence
+from typing import Any, Sequence
 
 from experiments.local_campaign.current_ollama import (
     CURRENT_OLLAMA_BY_LABEL,
@@ -493,7 +493,7 @@ def build_amendment(
         records = _exact_int(
             projection["selected_records"], label=f"{lane} selected records", minimum=1
         )
-        canary_target_cap = _exact_int(
+        _exact_int(
             canary["target_cap"], label=f"{lane} canary target cap", minimum=1
         )
         canary_judge_cap = _exact_int(canary["judge_cap"], label=f"{lane} canary judge cap")
