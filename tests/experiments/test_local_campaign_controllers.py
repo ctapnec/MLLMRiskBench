@@ -166,15 +166,17 @@ def _bridge_canary_fields_namespace() -> dict[str, object]:
 def test_all_controller_implementations_are_versioned() -> None:
     root = Path(__file__).parents[2] / "experiments" / "local_campaign" / "templates"
     expected = {spec.template for spec in CONTROLLERS}
-    assert len(CONTROLLERS) == 31
+    assert len(CONTROLLERS) == 32
     assert {path.name for path in root.glob("*.in")} == expected | SUPPORT_TEMPLATES
     assert "phase6_native_diagnostics.sh.in" in expected
+    assert "phase6_current_ollama.sh.in" in expected
     assert "phase6_core_length_recovery.py.in" in expected
     assert "phase6_seven_output_policy.py.in" in expected
     assert "launch_phase6_recovery_and_seven.sh.in" in expected
     assert "phase8_human_audit.README.md.in" in expected
     assert "phase6_native_measured.sh.in" not in expected
     assert {spec.output for spec in CONTROLLERS} >= {
+        "phase6_current_ollama.sh",
         "phase6_native_diagnostics.sh",
         "phase8_human_audit.README.md",
     }
