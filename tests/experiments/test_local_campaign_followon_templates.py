@@ -145,6 +145,19 @@ def test_followon_controller_authorizes_before_measured_calls_and_finalizes_outc
     assert "result_root.rmdir()" in cleanup
 
 
+def test_followon_controller_leaves_jobs_marker_to_console_registration() -> None:
+    source = (TEMPLATES / "followon_prepared_controller.py.in").read_text(
+        encoding="utf-8"
+    )
+    main = source.split("def main() -> int:\n", 1)[1]
+
+    assert 'CONTROL / "ENGINEERING_ONLY.json"' not in main
+    assert main.index("CONTROL.mkdir(mode=0o700)") < main.index(
+        "register_console_start()"
+    )
+    assert main.index("register_console_start()") < main.index("ctl = module.Controller()")
+
+
 @pytest.mark.parametrize(
     ("option", "bad_value"),
     (

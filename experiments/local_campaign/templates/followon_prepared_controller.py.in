@@ -1174,19 +1174,6 @@ def main() -> int:
     (CONTROL / "attempts").mkdir(mode=0o700)
     (CONTROL / "lane-specs").mkdir(mode=0o700)
     write_new(
-        CONTROL / "ENGINEERING_ONLY.json",
-        canonical(
-            {
-                "schema": "ura-engineering-boundary/1",
-                "evidence_eligible": False,
-                "reason": (
-                    "local follow-on cohort controller; Runner child artifacts "
-                    "carry scientific lifecycle authority"
-                ),
-            }
-        ),
-    )
-    write_new(
         CONTROL / "launch.json",
         canonical({
             "schema": "ura-followon-prepared-launch/1",
