@@ -5942,6 +5942,8 @@ def test_phase6_uses_the_approved_lane_wall_ceiling_and_reaps_timed_out_trees() 
     sequence_required = (
         'GATE5_LANE_WALL_TIME_SECONDS="${gate5_values[4]}"',
         'test "$GATE5_LANE_WALL_TIME_SECONDS" = \'86400\'',
+        'test "${#gate5_final[@]}" -eq 5',
+        'test "${gate5_final[4]}" = "$GATE5_LANE_WALL_TIME_SECONDS"',
         "controller_ceiling=$((GATE5_LANE_WALL_TIME_SECONDS * (lane_count + 1)))",
         "controller-wall-time-exceeded",
         'tmux -L "$socket" kill-session -t "$session"',
@@ -5973,6 +5975,18 @@ def test_phase6_uses_the_approved_lane_wall_ceiling_and_reaps_timed_out_trees() 
             sequence_required,
             'test "$GATE5_LANE_WALL_TIME_SECONDS" = \'86400\'',
             'test "$GATE5_LANE_WALL_TIME_SECONDS" = \'86401\'',
+        ),
+        (
+            sequence,
+            sequence_required,
+            'test "${#gate5_final[@]}" -eq 5',
+            'test "${#gate5_final[@]}" -eq 4',
+        ),
+        (
+            sequence,
+            sequence_required,
+            'test "${gate5_final[4]}" = "$GATE5_LANE_WALL_TIME_SECONDS"',
+            ':',
         ),
     ):
         changed = source.replace(original, replacement, 1)

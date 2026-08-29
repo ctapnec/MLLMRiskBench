@@ -1233,11 +1233,12 @@ GATE5_FINAL_VALIDATION="$CONTROL_ROOT/gate5.final-validation.json"
 mapfile -d '' -t gate5_final < <(
   validate_gate5_now "$GATE5_FINAL_VALIDATION"
 )
-test "${#gate5_final[@]}" -eq 4
+test "${#gate5_final[@]}" -eq 5
 test "${gate5_final[0]}" = "$GATE5_MANIFEST"
 test "${gate5_final[1]}" = "$GATE5_RUNNOTE"
 test "${gate5_final[2]}" = "$GATE5_PROMOTION"
 test "${gate5_final[3]}" = "$GATE5_MANIFEST_SHA"
+test "${gate5_final[4]}" = "$GATE5_LANE_WALL_TIME_SECONDS"
 
 for kind in core extended native; do
   case "$kind" in
