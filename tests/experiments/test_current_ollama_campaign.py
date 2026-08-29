@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import re
 from pathlib import Path
+from typing import Sequence
 
 import pytest
 
@@ -12,36 +14,58 @@ from experiments.local_campaign.current_ollama import (
     CURRENT_OLLAMA_RUNNABLE_LANES,
     CURRENT_OLLAMA_TEXT_ONLY_MODELS,
     CURRENT_OLLAMA_TYPED_TERMINAL_LANES,
+    CurrentOllamaModel,
     image_lane,
 )
 
 
-def test_current_ollama_roster_is_exact_recent_thesis_cohort() -> None:
-    assert [model.tag for model in CURRENT_OLLAMA_MODELS] == [
+def _assert_exact_current_roster(models: Sequence[CurrentOllamaModel]) -> None:
+    assert [model.tag for model in models] == [
         "gemma4:12b-it-q4_K_M",
         "ministral-3:14b-instruct-2512-q4_K_M",
         "deepseek-r1:32b-qwen-distill-q4_K_M",
         "gpt-oss:20b",
     ]
-    assert len({model.label for model in CURRENT_OLLAMA_MODELS}) == 4
-    assert len({model.tag for model in CURRENT_OLLAMA_MODELS}) == 4
-    assert [model.digest for model in CURRENT_OLLAMA_MODELS] == [
+    assert len({model.label for model in models}) == 4
+    assert len({model.tag for model in models}) == 4
+    assert [model.digest for model in models] == [
         "4eb23ef187e2c5462566d6a1d3bbbc2f1346d0b4327cbb66d58fffbcc9b2b05c",
         "4760c35aeb9d9e9c6174c2492562c0b999e80a222804fd96b1915ab72bbcdcf7",
         "edba8017331d15236e57480eb45406c0d721db77a4cdcf234df500fc2ad3960c",
         "17052f91a42e97930aa6e28a6c6c06a983e6a58dbb00434885a0cf5313e376f7",
     ]
-    assert [model.quantization for model in CURRENT_OLLAMA_MODELS] == [
+    assert [model.quantization for model in models] == [
         "Q4_K_M",
         "Q4_K_M",
         "Q4_K_M",
         "MXFP4",
     ]
-    assert all(re.fullmatch(r"[0-9a-f]{64}", model.digest) for model in CURRENT_OLLAMA_MODELS)
+    assert all(re.fullmatch(r"[0-9a-f]{64}", model.digest) for model in models)
     assert all(
         "rwkv" not in model.tag.lower() and "mollysama" not in model.tag.lower()
-        for model in CURRENT_OLLAMA_MODELS
+        for model in models
     )
+
+
+def test_current_ollama_roster_is_exact_recent_thesis_cohort() -> None:
+    _assert_exact_current_roster(CURRENT_OLLAMA_MODELS)
+
+
+@pytest.mark.parametrize(
+    ("index", "changes"),
+    (
+        (0, {"tag": "mollysama/rwkv-7-g1f:2.9b"}),
+        (2, {"quantization": "F16"}),
+        (3, {"digest": "0" * 64}),
+    ),
+)
+def test_current_ollama_roster_regression_detects_identity_mutations(
+    index: int, changes: dict[str, str]
+) -> None:
+    mutant = list(CURRENT_OLLAMA_MODELS)
+    mutant[index] = replace(mutant[index], **changes)
+    with pytest.raises(AssertionError):
+        _assert_exact_current_roster(mutant)
 
 
 def test_current_ollama_modalities_roles_and_lanes_are_not_conflated() -> None:
