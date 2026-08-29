@@ -258,12 +258,12 @@ PLANNED = {
     ),
     "giskard": ("run", 8, "one-row Scan with one harmful-content requirement and one generated sample"),
     "asb": (
-        "not-selected", 0,
-        "the current bounded native controller has no one-case ASB import contract",
+        "run", 32,
+        "one direct-prompt-injection task and one test attack tool through pinned main_attacker.py",
     ),
     "agentdojo": (
-        "not-selected", 0,
-        "the current bounded native controller has no one-case AgentDojo import contract",
+        "run", 32,
+        "one attacked workspace task pair plus its mandatory injection-task utility baseline",
     ),
 }
 RR_TERMINAL_LANES = (
@@ -1876,6 +1876,7 @@ import os
 from pathlib import Path
 import re
 import selectors
+import shutil
 import signal
 import stat
 import subprocess
@@ -1931,11 +1932,12 @@ ORDER = [
     "fuzzyai", "garak", "promptfoo", "petri", "easyjailbreak",
     "autodan_turbo", "giskard", "asb", "agentdojo",
 ]
-RUNNABLE = ["fuzzyai", "garak", "promptfoo", "petri", "easyjailbreak", "giskard"]
+RUNNABLE = [
+    "fuzzyai", "garak", "promptfoo", "petri", "easyjailbreak", "giskard",
+    "asb", "agentdojo",
+]
 TYPED = {
     "autodan_turbo": "not-selected",
-    "asb": "not-selected",
-    "agentdojo": "not-selected",
 }
 EXPECTED_MODEL_TAGS = sorted(
     model.tag for model in CURRENT_OLLAMA_NATIVE_ROLES.values()
@@ -1966,9 +1968,11 @@ EXPECTED_RUNTIME_REVISIONS = {
 EXPECTED_CALL_CAPS = {
     "fuzzyai": 2, "garak": 1, "promptfoo": 8, "petri": 8,
     "easyjailbreak": 2, "autodan_turbo": 0, "giskard": 8,
-    "asb": 0, "agentdojo": 0,
+    "asb": 32, "agentdojo": 32,
 }
 EXPECTED_AUTHORIZED_CALL_CAP = sum(EXPECTED_CALL_CAPS.values())
+EXPECTED_NATIVE_CASES = {engine: 1 for engine in ORDER}
+EXPECTED_NATIVE_CASES["agentdojo"] = 2
 RR_TERMINAL_LANES = (
     "local-llava-rr-text-full",
     "local-llava-rr-image-full",
@@ -4405,6 +4409,114 @@ report.to_html(output / "scan_report.html")
     return imported
 
 
+def run_asb(root: Path, row: Mapping[str, Any], plan: Mapping[str, Any], proxy: str, env: dict[str, str], log: BoundedLog) -> dict[str, Any]:
+    runtime = Path(row["runtime"]["managed_store"])
+    source = runtime / "source" / "asb"
+    raw = root / "raw"
+    checkout = raw / "asb"
+    raw.mkdir(mode=0o700)
+    if source.is_symlink() or not source.is_dir():
+        raise ValueError("ASB pinned source checkout is absent")
+    shutil.copytree(
+        source,
+        checkout,
+        ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc"),
+    )
+    tag, _digest = primary(plan)
+    target = f"ollama/{tag}"
+    config_path = raw / "DPI.yml"
+    write_new(
+        config_path,
+        (
+            "injection_method: direct_prompt_injection\n"
+            "attack_tool:\n"
+            "  - test\n"
+            "write_db: false\n"
+            "read_db: false\n"
+            "llms:\n"
+            f"  - {target}\n"
+            "attack_types:\n"
+            "  - naive\n"
+        ).encode("ascii"),
+    )
+    result = raw / "result.csv"
+    env.update({"OLLAMA_HOST": proxy, "OLLAMA_BASE_URL": proxy})
+    argv = [
+        str(runtime / "bin" / "python"), str(checkout / "main_attacker.py"),
+        "--llm_name", target, "--attack_type", "naive", "--use_backend", "ollama",
+        "--attacker_tools_path", str(checkout / "data" / "attack_tools_test.jsonl"),
+        "--tasks_path", str(checkout / "data" / "agent_task.jsonl"),
+        "--task_num", "1", "--max_new_tokens", "256", "--res_file", str(result),
+        "--database", str(raw / "absent-memory-database"),
+        "--direct_prompt_injection",
+    ]
+    rc = run_process(argv, cwd=checkout, env=env, log=log, timeout=3600)
+    if rc != 0:
+        raise RuntimeError(f"ASB main_attacker returned {rc}")
+    if result.is_symlink() or not result.is_file():
+        raise ValueError("ASB did not produce its one-task result CSV")
+    config = {
+        "schema_version": "ura-native-import-config/1", "engine": "asb",
+        "adapter": {
+            "attack_class": "dpi",
+            "upstream_revision": row["runtime"]["upstream_revision"],
+            "python": str(runtime / "bin" / "python"),
+        },
+        "import": {
+            "result_csv": str(result), "target_model": target,
+            "attack_type": "naive", "attack_tool_type": "test",
+            "config_path": str(config_path),
+            "upstream_revision": row["runtime"]["upstream_revision"],
+            "expected_csv_sha256": hashlib.sha256(result.read_bytes()).hexdigest(),
+            "expected_config_sha256": hashlib.sha256(config_path.read_bytes()).hexdigest(),
+        },
+    }
+    return import_native(root, "asb", config, 1, log)
+
+
+def run_agentdojo(root: Path, row: Mapping[str, Any], plan: Mapping[str, Any], proxy: str, env: dict[str, str], log: BoundedLog) -> dict[str, Any]:
+    runtime = Path(row["runtime"]["managed_store"])
+    raw = root / "raw"
+    logs = raw / "logs"
+    raw.mkdir(mode=0o700)
+    logs.mkdir(mode=0o700)
+    tag, _digest = primary(plan)
+    port = proxy.rsplit(":", 1)[-1]
+    if not port.isdigit():
+        raise ValueError("AgentDojo local proxy port is invalid")
+    env.update({"LOCAL_LLM_PORT": port})
+    argv = [
+        str(runtime / "bin" / "python"), "-m", "agentdojo.scripts.benchmark",
+        "--model", "local", "--model-id", tag, "--tool-delimiter", "tool",
+        "--benchmark-version", "v1.2.2", "--logdir", str(logs),
+        "--attack", "important_instructions", "--max-workers", "1",
+        "-s", "workspace", "-ut", "user_task_16", "-it", "injection_task_0",
+        "--force-rerun",
+    ]
+    rc = run_process(argv, cwd=raw, env=env, log=log, timeout=3600)
+    if rc != 0:
+        raise RuntimeError(f"AgentDojo benchmark returned {rc}")
+    traces = sorted(path for path in logs.rglob("*.json") if path.is_file() and not path.is_symlink())
+    if len(traces) != 2:
+        raise ValueError("AgentDojo did not produce exactly one attacked trace and one baseline trace")
+    trace_hashes = {
+        path.relative_to(logs).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in traces
+    }
+    config = {
+        "schema_version": "ura-native-import-config/1", "engine": "agentdojo",
+        "adapter": {
+            "suite": "workspace", "attack": "important_instructions",
+            "benchmark_version": "v1.2.2", "model": "local", "model_id": tag,
+            "upstream_version": row["runtime"]["version"].split("+", 1)[0],
+            "upstream_revision": row["runtime"]["upstream_revision"],
+            "python": str(runtime / "bin" / "python"),
+        },
+        "import": {"trace_root": str(logs), "expected_trace_sha256": trace_hashes},
+    }
+    return import_native(root, "agentdojo", config, 2, log)
+
+
 ENGINE_RUNNERS = {
     "fuzzyai": run_fuzzyai,
     "garak": run_garak,
@@ -4412,6 +4524,8 @@ ENGINE_RUNNERS = {
     "petri": run_petri,
     "easyjailbreak": run_easyjailbreak,
     "giskard": run_giskard,
+    "asb": run_asb,
+    "agentdojo": run_agentdojo,
 }
 
 
@@ -4667,10 +4781,65 @@ def validate_import_config(
         if adapter != {"target_model": primary_identity}:
             raise ValueError("giskard: import config identity changed")
         result_path = Path(source.get("results_dir", ""))
+    elif engine == "asb":
+        expected_adapter = {
+            "attack_class": "dpi",
+            "upstream_revision": row["runtime"]["upstream_revision"],
+            "python": str(runtime / "bin" / "python"),
+        }
+        expected_source_keys = {
+            "result_csv", "target_model", "attack_type", "attack_tool_type",
+            "config_path", "upstream_revision", "expected_csv_sha256",
+            "expected_config_sha256",
+        }
+        if (
+            adapter != expected_adapter
+            or set(source) != expected_source_keys
+            or source.get("target_model") != f"ollama/{primary_tag}"
+            or source.get("attack_type") != "naive"
+            or source.get("attack_tool_type") != "test"
+            or source.get("upstream_revision") != row["runtime"]["upstream_revision"]
+        ):
+            raise ValueError("asb: import config identity changed")
+        require_within(
+            Path(source.get("config_path", "")).resolve(strict=True),
+            attempt,
+            "asb generated config",
+        )
+        result_path = Path(source.get("result_csv", ""))
+    elif engine == "agentdojo":
+        expected_adapter = {
+            "suite": "workspace", "attack": "important_instructions",
+            "benchmark_version": "v1.2.2", "model": "local",
+            "model_id": primary_tag,
+            "upstream_version": row["runtime"]["version"].split("+", 1)[0],
+            "upstream_revision": row["runtime"]["upstream_revision"],
+            "python": str(runtime / "bin" / "python"),
+        }
+        trace_hashes = source.get("expected_trace_sha256")
+        if (
+            adapter != expected_adapter
+            or set(source) != {"trace_root", "expected_trace_sha256"}
+            or not isinstance(trace_hashes, dict)
+            or len(trace_hashes) != 2
+            or any(
+                not isinstance(name, str)
+                or not name.endswith(".json")
+                or Path(name).is_absolute()
+                or ".." in Path(name).parts
+                or not isinstance(digest, str)
+                or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+                for name, digest in trace_hashes.items()
+            )
+        ):
+            raise ValueError("agentdojo: import config identity changed")
+        result_path = Path(source.get("trace_root", ""))
     else:
         raise ValueError(f"{engine}: unsupported native import config")
     require_within(result_path.resolve(strict=True), attempt, f"{engine} native input")
     for key, value in source.items():
+        if key == "expected_trace_sha256":
+            continue
         if key.endswith("sha256") and (not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value)):
             raise ValueError(f"{engine}: invalid native input digest")
     return config
@@ -4826,7 +4995,7 @@ def validate_terminal(
             or not isinstance(native_run.get("native_run_id"), str)
             or not native_run["native_run_id"]
             or not isinstance(native_run.get("cases"), list)
-            or len(native_run["cases"]) != 1
+            or len(native_run["cases"]) != EXPECTED_NATIVE_CASES[engine]
         ):
             raise ValueError(f"{engine}: canonical native envelope identity or eligibility changed")
         config_path = validate_descriptor_row(evidence["import_config"], f"{engine} import config")
@@ -4881,7 +5050,7 @@ def validate_terminal(
             or set(native_import) != expected_import_fields
             or native_import.get("native_engine") not in canonical_native_engine_ids(engine)
             or native_import.get("native_run_id") != native_run["native_run_id"]
-            or native_import.get("native_cases") != 1
+            or native_import.get("native_cases") != EXPECTED_NATIVE_CASES[engine]
             or native_import.get("common_metric_eligible") is not False
             or native_import.get("runner_replay_eligible") is not False
             or (

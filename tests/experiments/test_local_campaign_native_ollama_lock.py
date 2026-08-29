@@ -24,8 +24,8 @@ def _payload(source: str | None = None) -> str:
     return template.split(marker, 1)[1].split("\nPHASE6_NATIVE_PAYLOAD\n", 1)[0]
 
 
-def _planner_payload() -> str:
-    template = _TEMPLATE.read_text(encoding="utf-8")
+def _planner_payload(source: str | None = None) -> str:
+    template = _TEMPLATE.read_text(encoding="utf-8") if source is None else source
     blocks = re.findall(r"<<'PY'\n(.*?)\nPY(?:\n|$)", template, re.DOTALL)
     matches = [block for block in blocks if "raw_roster" in block]
     assert len(matches) == 1
@@ -109,6 +109,88 @@ def _named_calls(node: ast.AST, name: str) -> list[ast.Call]:
         and isinstance(row.func, ast.Name)
         and row.func.id == name
     ]
+
+
+def _assignment_value(payload: str, name: str) -> object:
+    tree = ast.parse(payload)
+    node = next(
+        row
+        for row in tree.body
+        if isinstance(row, ast.Assign)
+        and len(row.targets) == 1
+        and isinstance(row.targets[0], ast.Name)
+        and row.targets[0].id == name
+    )
+    return ast.literal_eval(node.value)
+
+
+def _function_literals(payload: str, name: str) -> set[object]:
+    node = _node(payload, ast.FunctionDef, name)
+    return {
+        row.value
+        for row in ast.walk(node)
+        if isinstance(row, ast.Constant)
+    }
+
+
+def _assert_bounded_agent_framework_contract(template: str) -> None:
+    planner = _planner_payload(template)
+    planned = _assignment_value(planner, "PLANNED")
+    assert planned["asb"][:2] == ("run", 32)
+    assert planned["agentdojo"][:2] == ("run", 32)
+
+    payload = _payload(template)
+    assert set(_assignment_value(payload, "RUNNABLE")) >= {"asb", "agentdojo"}
+    assert set(_assignment_value(payload, "TYPED")) == {"autodan_turbo"}
+    caps = _assignment_value(payload, "EXPECTED_CALL_CAPS")
+    assert caps["asb"] == 32
+    assert caps["agentdojo"] == 32
+    assert 'EXPECTED_NATIVE_CASES["agentdojo"] = 2' in payload
+
+    asb_literals = _function_literals(payload, "run_asb")
+    assert {
+        "main_attacker.py", "--task_num", "--direct_prompt_injection",
+        "attack_tools_test.jsonl", "agent_task.jsonl", "OLLAMA_HOST",
+    } <= asb_literals
+    agentdojo_literals = _function_literals(payload, "run_agentdojo")
+    assert {
+        "agentdojo.scripts.benchmark", "--model-id", "local", "user_task_16",
+        "injection_task_0", "important_instructions", "--force-rerun",
+    } <= agentdojo_literals
+
+    for name, cases in (("run_asb", 1), ("run_agentdojo", 2)):
+        calls = _named_calls(_node(payload, ast.FunctionDef, name), "import_native")
+        assert len(calls) == 1
+        assert isinstance(calls[0].args[3], ast.Constant)
+        assert calls[0].args[3].value == cases
+
+    tree = ast.parse(payload)
+    runner_assignment = next(
+        row
+        for row in tree.body
+        if isinstance(row, ast.Assign)
+        and len(row.targets) == 1
+        and isinstance(row.targets[0], ast.Name)
+        and row.targets[0].id == "ENGINE_RUNNERS"
+    )
+    assert isinstance(runner_assignment.value, ast.Dict)
+    runners = {
+        key.value: value.id
+        for key, value in zip(
+            runner_assignment.value.keys, runner_assignment.value.values
+        )
+        if isinstance(key, ast.Constant)
+        and isinstance(key.value, str)
+        and isinstance(value, ast.Name)
+    }
+    assert runners["asb"] == "run_asb"
+    assert runners["agentdojo"] == "run_agentdojo"
+    validator = ast.get_source_segment(
+        payload, _node(payload, ast.FunctionDef, "validate_import_config")
+    )
+    assert validator is not None
+    assert 'engine == "asb"' in validator
+    assert 'engine == "agentdojo"' in validator
 
 
 def _assert_execution_roster_call_graph(payload: str) -> None:
@@ -356,3 +438,34 @@ def test_promptfoo_native_generation_is_forced_local_and_noninteractive() -> Non
     assert mutation != payload
     with pytest.raises(AssertionError):
         _assert_promptfoo_local_generation_env(mutation)
+
+
+def test_asb_and_agentdojo_have_bounded_native_execution_contracts() -> None:
+    _assert_bounded_agent_framework_contract(
+        _TEMPLATE.read_text(encoding="utf-8")
+    )
+
+
+@pytest.mark.parametrize(
+    ("needle", "replacement"),
+    [
+        (
+            '    "asb": 32, "agentdojo": 32,',
+            '    "asb": 0, "agentdojo": 0,',
+        ),
+        (
+            'EXPECTED_NATIVE_CASES["agentdojo"] = 2',
+            'EXPECTED_NATIVE_CASES["agentdojo"] = 1',
+        ),
+        ('    "asb": run_asb,\n', ''),
+        ('    "agentdojo": run_agentdojo,\n', ''),
+    ],
+)
+def test_bounded_agent_framework_mutations_are_rejected(
+    needle: str, replacement: str
+) -> None:
+    template = _TEMPLATE.read_text(encoding="utf-8")
+    assert template.count(needle) == 1
+    mutation = template.replace(needle, replacement, 1)
+    with pytest.raises(AssertionError):
+        _assert_bounded_agent_framework_contract(mutation)
