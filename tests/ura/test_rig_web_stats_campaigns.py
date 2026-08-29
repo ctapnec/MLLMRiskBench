@@ -11,7 +11,10 @@ import time
 from html.parser import HTMLParser
 from pathlib import Path
 
+import pytest
+
 from experiments.rig_web import Job, RigWebApp, _LEVEL2_ROW_FIELDS, collect_reports
+from experiments.rig_web_app.reports import _validate_report_document
 from experiments.rig_web_app.server import _make_server
 
 
@@ -275,6 +278,18 @@ def _write_empty_level2(path: Path) -> None:
     report["report_id"] = "level2-" + hashlib.sha256(material).hexdigest()[:24]
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(report), encoding="utf-8")
+
+
+def test_level2_report_rejects_missing_response_count_above_abstentions(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "level2.json"
+    _write_level2(path, run_id="missing", model="fixture", metric="ASR")
+    report = json.loads(path.read_text(encoding="utf-8"))
+    report["common"]["estimates"][0]["judgments_missing_responses"] = 1
+
+    with pytest.raises(ValueError, match="missing-response count"):
+        _validate_report_document("level2", report)
 
 
 def _write_engineering_campaign(
