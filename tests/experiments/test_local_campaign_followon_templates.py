@@ -170,6 +170,40 @@ def test_phase5_parent_chain_reads_promoted_markdown_runnote(tmp_path: Path) -> 
     ) == (promotion, runnote)
 
 
+def test_phase5_accepts_verified_content_addressed_descriptors(tmp_path: Path) -> None:
+    namespace = _prelude(
+        "phase5_followon_prepared.sh.in", "src_arg = Path(sys.argv[1])"
+    )
+    envelope_id = "request-envelope-0123456789abcdef01234567"
+    path = tmp_path / f"{envelope_id}.request-envelope.json"
+    value = {"envelope_id": envelope_id, "schema": "fixture/1"}
+    path.write_text(json.dumps(value), encoding="utf-8")
+    raw = path.read_bytes()
+    descriptor = {
+        "path": str(path.resolve(strict=True)),
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "bytes": len(raw),
+        "file": path.name,
+        "envelope_id": envelope_id,
+    }
+
+    assert namespace["checked"](
+        descriptor,
+        "request envelope",
+        extra_descriptor_fields=frozenset({"envelope_id", "file"}),
+    ) == (path.resolve(strict=True), value)
+    with pytest.raises(SystemExit, match="identity changed"):
+        namespace["checked"](
+            {**descriptor, "file": "wrong.request-envelope.json"},
+            "request envelope",
+            extra_descriptor_fields=frozenset({"envelope_id", "file"}),
+        )
+
+    payload = _python_payload("phase5_followon_prepared.sh.in")
+    assert 'extra_descriptor_fields=frozenset({"envelope_id", "file"})' in payload
+    assert 'extra_descriptor_fields=frozenset({"file"})' in payload
+
+
 def test_followon_attestation_probe_keeps_local_guardrail_fallback() -> None:
     source = (TEMPLATES / "followon_prepared_controller.py.in").read_text(
         encoding="utf-8"

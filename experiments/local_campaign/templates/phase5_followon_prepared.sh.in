@@ -182,8 +182,10 @@ def checked(
     *,
     validator: Callable[[object], Mapping[str, Any]] | None = None,
     markdown_json_block: bool = False,
+    extra_descriptor_fields: frozenset[str] = frozenset(),
 ) -> tuple[Path, dict[str, Any]]:
-    if not isinstance(raw, dict) or set(raw) != {"path", "sha256", "bytes"}:
+    expected_fields = {"path", "sha256", "bytes"} | set(extra_descriptor_fields)
+    if not isinstance(raw, dict) or set(raw) != expected_fields:
         raise SystemExit(f"{label} descriptor changed")
     path = Path(str(raw.get("path", "")))
     if (
@@ -191,7 +193,12 @@ def checked(
         or path.resolve(strict=True) != path
         or HEX64.fullmatch(str(raw.get("sha256", ""))) is None
         or isinstance(raw.get("bytes"), bool) or not isinstance(raw.get("bytes"), int)
-        or raw["bytes"] <= 0 or descriptor(path) != raw
+        or raw["bytes"] <= 0
+        or (
+            descriptor(path)
+            | {field: raw[field] for field in extra_descriptor_fields}
+        ) != raw
+        or ("file" in extra_descriptor_fields and raw.get("file") != path.name)
     ):
         raise SystemExit(f"{label} identity changed")
     loader = load_markdown_object if markdown_json_block else load_object
@@ -694,8 +701,12 @@ def validate_artifact_chain(
     request_path, request = checked(
         row.get("request_envelope"), f"{lane} request envelope",
         validator=validate_request_envelope,
+        extra_descriptor_fields=frozenset({"envelope_id", "file"}),
     )
-    _, projection_raw = checked(row.get("projection"), f"{lane} projection")
+    _, projection_raw = checked(
+        row.get("projection"), f"{lane} projection",
+        extra_descriptor_fields=frozenset({"file"}),
+    )
     try:
         projection = validate_lane_projection_binding(
             projection_raw,
@@ -710,10 +721,15 @@ def validate_artifact_chain(
     except (KeyError, TypeError, ValueError) as exc:
         raise SystemExit(f"{lane} projection/eligibility binding changed: {exc}") from exc
     envelope_binding = eligibility.get("bindings", {}).get("request_envelope")
-    if envelope_binding != {
-        "envelope_id": request["envelope_id"], "file": request_path.name,
-        "sha256": sha256_file(request_path), "bytes": request_path.stat().st_size,
-    }:
+    request_descriptor = row["request_envelope"]
+    if (
+        request_descriptor["envelope_id"] != request["envelope_id"]
+        or envelope_binding != {
+            "envelope_id": request["envelope_id"], "file": request_path.name,
+            "sha256": sha256_file(request_path),
+            "bytes": request_path.stat().st_size,
+        }
+    ):
         raise SystemExit(f"{lane} eligibility/request-envelope binding changed")
     request_value = request["request"]
     expected_request = {
