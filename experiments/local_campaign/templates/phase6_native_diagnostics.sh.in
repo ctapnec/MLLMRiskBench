@@ -3944,6 +3944,7 @@ def clean_env(root: Path, proxy: str) -> dict[str, str]:
         "NO_PROXY": "127.0.0.1,localhost", "no_proxy": "127.0.0.1,localhost",
         "HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1", "HF_DATASETS_OFFLINE": "1",
         "DO_NOT_TRACK": "1", "PROMPTFOO_DISABLE_TELEMETRY": "1",
+        "PROMPTFOO_DISABLE_REDTEAM_REMOTE_GENERATION": "1",
         "PROMPTFOO_DISABLE_UPDATE": "1", "PROMPTFOO_DISABLE_DATABASE": "1",
         "GISKARD_DISABLE_ANALYTICS": "1", "GIT_CONFIG_NOSYSTEM": "1",
         "URA_REPO": str(PROJECT),

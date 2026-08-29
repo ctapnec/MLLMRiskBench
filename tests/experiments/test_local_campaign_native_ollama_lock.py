@@ -324,3 +324,35 @@ def test_native_inference_lease_removal_mutation_is_rejected() -> None:
     mutation = payload.replace(needle, "", 1)
     with pytest.raises(AssertionError, match="events"):
         _assert_exact_lease_contract(mutation)
+
+
+def _assert_promptfoo_local_generation_env(payload: str) -> None:
+    clean_env = _node(payload, ast.FunctionDef, "clean_env")
+    returns = [
+        row for row in ast.walk(clean_env)
+        if isinstance(row, ast.Return) and isinstance(row.value, ast.Dict)
+    ]
+    assert len(returns) == 1
+    values = {
+        key.value: value.value
+        for key, value in zip(returns[0].value.keys, returns[0].value.values)
+        if isinstance(key, ast.Constant)
+        and isinstance(key.value, str)
+        and isinstance(value, ast.Constant)
+        and isinstance(value.value, str)
+    }
+    assert values["PROMPTFOO_DISABLE_REDTEAM_REMOTE_GENERATION"] == "1"
+
+
+def test_promptfoo_native_generation_is_forced_local_and_noninteractive() -> None:
+    payload = _payload()
+    _assert_promptfoo_local_generation_env(payload)
+
+    mutation = payload.replace(
+        '"PROMPTFOO_DISABLE_REDTEAM_REMOTE_GENERATION": "1"',
+        '"PROMPTFOO_DISABLE_REDTEAM_REMOTE_GENERATION": "0"',
+        1,
+    )
+    assert mutation != payload
+    with pytest.raises(AssertionError):
+        _assert_promptfoo_local_generation_env(mutation)
