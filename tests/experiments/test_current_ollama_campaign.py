@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import hashlib
+import json
 import re
 from pathlib import Path
 from typing import Sequence
@@ -19,8 +21,10 @@ from experiments.local_campaign.current_ollama import (
 )
 from experiments.local_campaign.current_ollama_gate5 import _base_argv, _lane_contract
 from experiments.local_campaign.current_ollama_phase6 import (
+    FAILURE_SCHEMA,
     _counts_from_level1,
     _probe_args,
+    _retain_failure,
 )
 
 
@@ -246,6 +250,44 @@ def test_current_ollama_phase6_retains_nonresponses_in_measured_counts() -> None
         _counts_from_level1(level1)
 
 
+def test_current_ollama_phase6_retains_typed_pre_runner_failure(tmp_path: Path) -> None:
+    lane = "ollama-fixture-text-primary-50"
+    result_root = tmp_path / "runs" / "thesis" / "runner" / lane
+    result_root.parent.mkdir(parents=True)
+    lane_root = tmp_path / "runs" / "engineering" / "phase6" / "lanes" / lane
+    gate5 = tmp_path / "gate5-current-ollama-amendment.json"
+    gate5.write_text("{}\n", encoding="ascii")
+    gate5_sha = hashlib.sha256(gate5.read_bytes()).hexdigest()
+
+    descriptor = _retain_failure(
+        lane=lane,
+        lane_root=lane_root,
+        result_root=result_root,
+        gate5_path=gate5,
+        gate5_sha256=gate5_sha,
+        expected_commit="1" * 40,
+        stage="preflight",
+        error=ValueError("fixture transport failure"),
+    )
+
+    failure = result_root / "current-ollama.failure.json"
+    value = json.loads(failure.read_text(encoding="utf-8"))
+    assert descriptor == {
+        "path": str(failure),
+        "sha256": hashlib.sha256(failure.read_bytes()).hexdigest(),
+        "bytes": failure.stat().st_size,
+    }
+    assert value["schema"] == FAILURE_SCHEMA
+    assert value["status"] == "failed"
+    assert value["result_root_created_for_failure"] is True
+    assert value["runner_lifecycle_present"] is False
+    assert value["state"] is None
+    assert value["target_attempts"] is None
+    assert value["successful_target_generations"] is None
+    assert value["missing_responses"] is None
+    assert value["paid_provider_calls"] == 0
+
+
 def test_current_ollama_phase6_is_generated_and_rechecks_each_lane() -> None:
     root = Path(__file__).parents[2]
     generator = (root / "experiments" / "local_campaign" / "generate.py").read_text(
@@ -268,4 +310,6 @@ def test_current_ollama_phase6_is_generated_and_rechecks_each_lane() -> None:
     loop = runner.split("    for row in rows:", 1)[1]
     assert "validate_amendment(gate5_path, expected_commit=expected_commit)" in loop
     assert "_validate_live_roster(project)" in loop
+    assert "failure = _retain_failure(" in loop
+    assert '"failure": failure' in loop
     assert loop.index("validate_amendment(") < loop.index("_build_state(")

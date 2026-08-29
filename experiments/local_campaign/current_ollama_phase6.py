@@ -28,6 +28,7 @@ from ura.live_attestation import route_config_sha256
 
 SCHEMA = "ura-current-ollama-phase6/1"
 STATE_SCHEMA = "ura-current-ollama-phase6-lane-state/1"
+FAILURE_SCHEMA = "ura-current-ollama-phase6-failure/1"
 MAX_AGE_HOURS = "24"
 
 
@@ -61,6 +62,60 @@ def _append_jsonl(path: Path, value: object) -> None:
         os.fsync(fd)
     finally:
         os.close(fd)
+
+
+def _retain_failure(
+    *,
+    lane: str,
+    lane_root: Path,
+    result_root: Path,
+    gate5_path: Path,
+    gate5_sha256: str,
+    expected_commit: str,
+    stage: str,
+    error: BaseException,
+) -> dict[str, object]:
+    """Retain one typed failed lane in the thesis Runner tree."""
+
+    created_root = False
+    if result_root.exists() or result_root.is_symlink():
+        _canonical_dir(result_root, label=f"{lane} failed result root")
+    else:
+        result_root.mkdir(mode=0o700)
+        created_root = True
+    state_path = lane_root / "state.json"
+    state = (
+        _descriptor(state_path, label=f"{lane} measured state")
+        if state_path.exists() and not state_path.is_symlink()
+        else None
+    )
+    runner_lifecycle_present = any(
+        next(result_root.rglob(pattern), None) is not None
+        for pattern in ("*.grid.json", "*.request-envelope.json")
+    )
+    failure_path = result_root / "current-ollama.failure.json"
+    _create_json(
+        failure_path,
+        {
+            "schema": FAILURE_SCHEMA,
+            "status": "failed",
+            "lane_id": lane,
+            "project_commit": expected_commit,
+            "stage": stage,
+            "error_type": type(error).__name__,
+            "error": str(error),
+            "gate5": {"path": str(gate5_path), "sha256": gate5_sha256},
+            "result_root": str(result_root),
+            "result_root_created_for_failure": created_root,
+            "runner_lifecycle_present": runner_lifecycle_present,
+            "state": state,
+            "target_attempts": None,
+            "successful_target_generations": None,
+            "missing_responses": None,
+            "paid_provider_calls": 0,
+        },
+    )
+    return _descriptor(failure_path, label=f"{lane} failure artifact")
 
 
 def _load_json(path: Path, *, label: str) -> dict[str, Any]:
@@ -587,6 +642,7 @@ def run(
     for row in rows:
         lane = row["lane_id"]
         lane_root = lane_root_parent / lane
+        result_root = work / "runs" / "thesis" / "runner" / lane
         stage = "preflight"
         try:
             validate_amendment(gate5_path, expected_commit=expected_commit)
@@ -647,6 +703,16 @@ def run(
             RuntimeError,
         ) as exc:
             failures += 1
+            failure = _retain_failure(
+                lane=lane,
+                lane_root=lane_root,
+                result_root=result_root,
+                gate5_path=gate5_path,
+                gate5_sha256=gate5_sha,
+                expected_commit=expected_commit,
+                stage=stage,
+                error=exc,
+            )
             _append_jsonl(
                 status_path,
                 {
@@ -654,6 +720,8 @@ def run(
                     "status": "failed",
                     "stage": stage,
                     "error": str(exc),
+                    "result_root": str(result_root),
+                    "failure": failure,
                     "target_attempts": None,
                     "successful_target_generations": None,
                     "missing_responses": None,
