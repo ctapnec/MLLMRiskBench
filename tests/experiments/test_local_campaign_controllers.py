@@ -6633,3 +6633,35 @@ def test_phase6_native_preserves_the_gate5_promotion_delta() -> None:
     assert changed != source
     with pytest.raises(AssertionError):
         assert_contract(changed)
+
+
+def test_phase6_native_launch_uses_the_canonical_project_receipt_path() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase6_native_diagnostics.sh.in"
+    ).read_text(encoding="utf-8")
+
+    canonical_check = (
+        'project_revision.get("path")\n'
+        '    != str(project_revision_path.resolve(strict=True))'
+    )
+
+    def assert_contract(value: str) -> None:
+        assert value.count(canonical_check) == 2
+        assert (
+            'project_revision.get("path") != str(project_revision_path)'
+            not in value
+        )
+
+    assert_contract(source)
+    changed = source.replace(
+        canonical_check,
+        'project_revision.get("path") != str(project_revision_path)',
+        1,
+    )
+    assert changed != source
+    with pytest.raises(AssertionError):
+        assert_contract(changed)

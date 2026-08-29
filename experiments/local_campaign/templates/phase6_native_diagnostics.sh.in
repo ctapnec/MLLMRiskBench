@@ -1665,7 +1665,8 @@ if (
     not isinstance(plan_code, dict)
     or not isinstance(project_revision, dict)
     or set(project_revision) != {"path", "sha256", "bytes"}
-    or project_revision.get("path") != str(project_revision_path)
+    or project_revision.get("path")
+    != str(project_revision_path.resolve(strict=True))
     or project_revision.get("sha256") != project_revision_sha256
 ):
     raise SystemExit("native authorized plan project-revision binding changed")
@@ -1747,7 +1748,8 @@ project_revision_path = Path(sys.argv[3])
 if (
     not isinstance(project_revision, dict)
     or set(project_revision) != {"path", "sha256", "bytes"}
-    or project_revision.get("path") != str(project_revision_path)
+    or project_revision.get("path")
+    != str(project_revision_path.resolve(strict=True))
     or project_revision.get("sha256") != sys.argv[4]
 ):
     raise SystemExit("native canary plan project-revision descriptor changed")
