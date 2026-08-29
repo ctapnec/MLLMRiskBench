@@ -5,6 +5,7 @@ import random
 import pytest
 
 from experiments.local_model_readiness import (
+    COLORS,
     READINESS_SEED,
     SCHEMA,
     TEXT_BANK,
@@ -13,6 +14,7 @@ from experiments.local_model_readiness import (
     VISION_MIN_CORRECT,
     VISION_SAMPLE_SIZE,
     _run_text,
+    _run_vision,
     readiness_policy,
     validate_readiness,
 )
@@ -46,7 +48,9 @@ class AnsweringTarget:
         }
         self.answers = {prompt: answers[question_id] for question_id, prompt, _ in selected}
 
-    def generate(self, dialog: list[DialogTurn], *, seed: int | None = None) -> Response:
+    def generate(
+        self, dialog: list[DialogTurn], *, seed: int | None = None
+    ) -> Response:
         prompt = dialog[0].content or ""
         answer = self.answers[prompt]
         return Response(
@@ -55,6 +59,53 @@ class AnsweringTarget:
             output_turns=[DialogTurn(role="assistant", content=answer)],
             latency_ms=1.0,
             tokens={"prompt": 1, "completion": 1, "total": 2},
+            raw={"backend": "mock"},
+        )
+
+
+class PartiallyAnsweringTarget(AnsweringTarget):
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls = 0
+
+    def generate(self, dialog: list[DialogTurn], *, seed: int | None = None) -> Response:
+        self.calls += 1
+        if self.calls <= 5:
+            return super().generate(dialog, seed=seed)
+        return Response(
+            attempt_id=f"readiness-{seed}",
+            target="mock-local",
+            output_turns=[DialogTurn(role="assistant", content="")],
+            latency_ms=1.0,
+            tokens={"prompt": 1, "completion": 0, "total": 1},
+            raw={"backend": "mock"},
+        )
+
+
+class PartiallySeeingTarget:
+    def __init__(self) -> None:
+        pairs = [
+            (left, right) for left in COLORS for right in COLORS if left != right
+        ]
+        selected = random.Random(READINESS_SEED).sample(pairs, VISION_SAMPLE_SIZE)
+        self.answers = [f"LEFT={left};RIGHT={right}" for left, right in selected]
+        self.calls = 0
+
+    def generate(
+        self, _dialog: list[DialogTurn], *, seed: int | None = None
+    ) -> Response:
+        answer = self.answers[self.calls] if self.calls < 2 else ""
+        self.calls += 1
+        return Response(
+            attempt_id=f"readiness-{seed}",
+            target="mock-local",
+            output_turns=[DialogTurn(role="assistant", content=answer)],
+            latency_ms=1.0,
+            tokens={
+                "prompt": 1,
+                "completion": int(bool(answer)),
+                "total": 1 + int(bool(answer)),
+            },
             raw={"backend": "mock"},
         )
 
@@ -101,22 +152,32 @@ def test_benign_text_readiness_uses_ten_seeded_questions() -> None:
     assert result["correct"] == 10
     assert result["nonresponses"] == 0
 
+    partial = _run_text(PartiallyAnsweringTarget())
+    assert partial["passed"] is True
+    assert partial["correct"] == 5
+    assert partial["nonresponses"] == 5
+
 
 def test_readiness_validator_requires_text_and_image_thresholds() -> None:
     assert VISION_MIN_CORRECT == 2
     validate_readiness(readiness_receipt(), expected_spec="vllm:example/model")
+    pass_with_nonresponses = readiness_receipt()
+    pass_with_nonresponses["text"]["nonresponses"] = 5
+    assert isinstance(pass_with_nonresponses["vision"], dict)
+    pass_with_nonresponses["vision"]["nonresponses"] = 3
+    validate_readiness(pass_with_nonresponses)
     with pytest.raises(ValueError, match="text readiness"):
         validate_readiness(readiness_receipt(text_correct=4))
-    failed_vision = readiness_receipt()
-    assert isinstance(failed_vision["vision"], dict)
-    failed_vision["vision"]["nonresponses"] = 1
-    with pytest.raises(ValueError, match="vision readiness"):
-        validate_readiness(failed_vision)
     below_vision_threshold = readiness_receipt()
     assert isinstance(below_vision_threshold["vision"], dict)
     below_vision_threshold["vision"]["correct"] = 1
     with pytest.raises(ValueError, match="vision readiness"):
         validate_readiness(below_vision_threshold)
+
+    vision = _run_vision(PartiallySeeingTarget())
+    assert vision["passed"] is True
+    assert vision["correct"] == 2
+    assert vision["nonresponses"] == 3
 
 
 def test_local_campaign_controllers_require_readiness_receipts() -> None:

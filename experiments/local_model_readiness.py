@@ -113,12 +113,16 @@ def _sha(value: object) -> str:
 
 def readiness_policy() -> dict[str, object]:
     return {
+        "nonresponses_count_as_incorrect": True,
         "readiness_seed": READINESS_SEED,
+        "text_max_nonresponses_at_passing_threshold": TEXT_SAMPLE_SIZE
+        - TEXT_MIN_CORRECT,
         "text_min_correct": TEXT_MIN_CORRECT,
         "text_sample_size": TEXT_SAMPLE_SIZE,
+        "vision_max_nonresponses_at_passing_threshold": VISION_SAMPLE_SIZE
+        - VISION_MIN_CORRECT,
         "vision_min_correct": VISION_MIN_CORRECT,
         "vision_sample_size": VISION_SAMPLE_SIZE,
-        "zero_nonresponses_required": True,
     }
 
 
@@ -198,7 +202,7 @@ def _run_text(target: Any) -> dict[str, object]:
         "minimum_correct": TEXT_MIN_CORRECT,
         "nonresponses": nonresponses,
         "observations": rows,
-        "passed": nonresponses == 0 and correct >= TEXT_MIN_CORRECT,
+        "passed": correct >= TEXT_MIN_CORRECT,
         "sample_seed": READINESS_SEED,
         "sample_size": TEXT_SAMPLE_SIZE,
     }
@@ -241,7 +245,7 @@ def _run_vision(target: Any) -> dict[str, object]:
         "minimum_correct": VISION_MIN_CORRECT,
         "nonresponses": nonresponses,
         "observations": rows,
-        "passed": nonresponses == 0 and correct >= VISION_MIN_CORRECT,
+        "passed": correct >= VISION_MIN_CORRECT,
         "sample_seed": READINESS_SEED,
         "sample_size": VISION_SAMPLE_SIZE,
     }
@@ -263,9 +267,11 @@ def validate_readiness(value: object, *, expected_spec: str | None = None) -> di
         text.get("passed") is not True
         or text.get("sample_size") != TEXT_SAMPLE_SIZE
         or text.get("minimum_correct") != TEXT_MIN_CORRECT
-        or text.get("nonresponses") != 0
+        or not isinstance(text.get("nonresponses"), int)
         or not isinstance(text.get("correct"), int)
         or text["correct"] < TEXT_MIN_CORRECT
+        or text["correct"] > TEXT_SAMPLE_SIZE
+        or not 0 <= text["nonresponses"] <= TEXT_SAMPLE_SIZE - text["correct"]
         or not isinstance(text.get("observations"), list)
         or len(text["observations"]) != TEXT_SAMPLE_SIZE
     ):
@@ -276,9 +282,13 @@ def validate_readiness(value: object, *, expected_spec: str | None = None) -> di
             or vision.get("passed") is not True
             or vision.get("sample_size") != VISION_SAMPLE_SIZE
             or vision.get("minimum_correct") != VISION_MIN_CORRECT
-            or vision.get("nonresponses") != 0
+            or not isinstance(vision.get("nonresponses"), int)
             or not isinstance(vision.get("correct"), int)
             or vision["correct"] < VISION_MIN_CORRECT
+            or vision["correct"] > VISION_SAMPLE_SIZE
+            or not 0
+            <= vision["nonresponses"]
+            <= VISION_SAMPLE_SIZE - vision["correct"]
             or not isinstance(vision.get("observations"), list)
             or len(vision["observations"]) != VISION_SAMPLE_SIZE
         ):

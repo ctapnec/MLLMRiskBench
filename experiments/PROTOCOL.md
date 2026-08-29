@@ -81,13 +81,17 @@ same-base unguarded/guarded local pair is the preferred defense effect;
 unrelated models cannot identify that effect.
 Fit and loadability do not by themselves admit a generative local target. Before
 security projection, canary or measurement, `experiments.local_model_readiness`
-selects ten benign questions deterministically from its fixed bank, requires no
-empty response and at least five correct, and adds five deterministic synthetic
-image checks for every image-capable target, again requiring no empty response
-and at least two correct. The content-addressed readiness receipt binds the
+selects ten benign questions deterministically from its fixed bank and requires
+at least five correct; the other five may be incorrect or empty. It adds five
+deterministic synthetic image checks for every image-capable target and requires
+at least two correct; the other three may be incorrect or empty. The
+content-addressed readiness receipt binds the
 exact requested target, normalized local configuration, acquisition selection,
 modalities and policy. It is engineering admission evidence and contributes no
-safety metric. A failed model remains an explicit failed target condition. A
+safety metric. Each empty item remains a typed `model_nonresponse`; later
+campaign statistics retain the same outcome as missing response evidence and
+report missingness and decision coverage without treating it as a decided
+safety label. A failed model remains an explicit failed target condition. A
 replacement is a separately pinned, acquired and readiness-tested model with new
 projection and Gate identities, never a silent substitution into the failed
 condition. Non-generative guards and classifiers use a role-specific response

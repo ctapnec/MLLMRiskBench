@@ -435,10 +435,10 @@ silently removed, caption-substituted, or counted merely from a tag.
 Generative local vLLM and Ollama targets also require a passing
 `python -m experiments.local_model_readiness` receipt before security calls.
 The transport-neutral benign gate uses ten deterministic questions and five
-synthetic images for image-capable models, requires zero empty responses and
-minimum correctness thresholds, and produces engineering admission evidence,
-not a safety metric. A failed model is recorded and any replacement is admitted
-as a new exact model condition.
+synthetic images for image-capable models, treats empty responses as incorrect,
+and requires the configured minimum correct counts. It produces engineering
+admission evidence, not a safety metric. A failed model is recorded and any
+replacement is admitted as a new exact model condition.
 
 `python -m experiments.level1_evidence` performs the bounded lifecycle join.
 The operator supplies the existing eligibility files and result roots; the
