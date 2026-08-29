@@ -115,12 +115,10 @@ def readiness_policy() -> dict[str, object]:
     return {
         "nonresponses_count_as_incorrect": True,
         "readiness_seed": READINESS_SEED,
-        "text_max_nonresponses_at_passing_threshold": TEXT_SAMPLE_SIZE
-        - TEXT_MIN_CORRECT,
+        "text_max_nonresponses_at_passing_threshold": TEXT_SAMPLE_SIZE - TEXT_MIN_CORRECT,
         "text_min_correct": TEXT_MIN_CORRECT,
         "text_sample_size": TEXT_SAMPLE_SIZE,
-        "vision_max_nonresponses_at_passing_threshold": VISION_SAMPLE_SIZE
-        - VISION_MIN_CORRECT,
+        "vision_max_nonresponses_at_passing_threshold": VISION_SAMPLE_SIZE - VISION_MIN_CORRECT,
         "vision_min_correct": VISION_MIN_CORRECT,
         "vision_sample_size": VISION_SAMPLE_SIZE,
     }
@@ -286,9 +284,7 @@ def validate_readiness(value: object, *, expected_spec: str | None = None) -> di
             or not isinstance(vision.get("correct"), int)
             or vision["correct"] < VISION_MIN_CORRECT
             or vision["correct"] > VISION_SAMPLE_SIZE
-            or not 0
-            <= vision["nonresponses"]
-            <= VISION_SAMPLE_SIZE - vision["correct"]
+            or not 0 <= vision["nonresponses"] <= VISION_SAMPLE_SIZE - vision["correct"]
             or not isinstance(vision.get("observations"), list)
             or len(vision["observations"]) != VISION_SAMPLE_SIZE
         ):

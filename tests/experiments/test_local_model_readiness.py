@@ -48,9 +48,7 @@ class AnsweringTarget:
         }
         self.answers = {prompt: answers[question_id] for question_id, prompt, _ in selected}
 
-    def generate(
-        self, dialog: list[DialogTurn], *, seed: int | None = None
-    ) -> Response:
+    def generate(self, dialog: list[DialogTurn], *, seed: int | None = None) -> Response:
         prompt = dialog[0].content or ""
         answer = self.answers[prompt]
         return Response(
@@ -84,16 +82,12 @@ class PartiallyAnsweringTarget(AnsweringTarget):
 
 class PartiallySeeingTarget:
     def __init__(self) -> None:
-        pairs = [
-            (left, right) for left in COLORS for right in COLORS if left != right
-        ]
+        pairs = [(left, right) for left in COLORS for right in COLORS if left != right]
         selected = random.Random(READINESS_SEED).sample(pairs, VISION_SAMPLE_SIZE)
         self.answers = [f"LEFT={left};RIGHT={right}" for left, right in selected]
         self.calls = 0
 
-    def generate(
-        self, _dialog: list[DialogTurn], *, seed: int | None = None
-    ) -> Response:
+    def generate(self, _dialog: list[DialogTurn], *, seed: int | None = None) -> Response:
         answer = self.answers[self.calls] if self.calls < 2 else ""
         self.calls += 1
         return Response(
