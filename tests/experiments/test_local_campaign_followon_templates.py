@@ -127,15 +127,21 @@ def test_followon_attestation_probe_keeps_local_guardrail_fallback() -> None:
     assert '"target_and_guard"' in contract
 
 
+@pytest.mark.parametrize(
+    ("modality", "expected_corpus"),
+    (("text", "synth"), ("image", "figstep_full")),
+)
 def test_followon_attestation_creates_its_control_root_before_acquisition(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    modality: str,
+    expected_corpus: str,
 ) -> None:
     namespace = _followon_namespace()
     namespace["WORK"] = tmp_path
     namespace["ATTEMPT_TAG"] = "fixture-attempt"
     monkeypatch.setenv("URA_EXECUTION_SCOPE_ID", "fixture-scope")
-    lane_control = tmp_path / "control" / "canary-attestation"
+    lane_control = tmp_path / "control" / modality / "canary-attestation"
     lane_control.parent.mkdir(parents=True)
 
     class AcquisitionObserved(RuntimeError):
@@ -145,7 +151,7 @@ def test_followon_attestation_creates_its_control_root_before_acquisition(
         _ctl: object,
         _spec: object,
         _label: str,
-        _args: object,
+        args: list[str],
         plan_root: Path,
         receipt_root: Path,
         _resource_set: str,
@@ -153,11 +159,16 @@ def test_followon_attestation_creates_its_control_root_before_acquisition(
         assert plan_root.parent == lane_control
         assert receipt_root.parent == lane_control
         assert lane_control.is_dir()
+        assert args[args.index("--corpora") + 1] == expected_corpus
         raise AcquisitionObserved
 
     spec = {
-        "lane_id": "followon-nanogcg-qwen3-vl",
-        "modality": "text",
+        "lane_id": (
+            "followon-ideator-v2-qwen3-vl"
+            if modality == "image"
+            else "followon-nanogcg-qwen3-vl"
+        ),
+        "modality": modality,
         "base_argv": [
             "--project-revision",
             "fixture-revision.json",
@@ -169,12 +180,48 @@ def test_followon_attestation_creates_its_control_root_before_acquisition(
             "fixture-local.json",
             "--local-config-sha256",
             "1" * 64,
+            "--source-config",
+            "fixture-sources.json",
+            "--source-config-sha256",
+            "2" * 64,
+            "--source-conformance",
+            "fixture-conformance.json",
+            "--source-conformance-sha256",
+            "3" * 64,
         ],
     }
     module = SimpleNamespace(plan_acquire=plan_acquire)
 
     with pytest.raises(AcquisitionObserved):
         namespace["derive_attestation"](module, object(), spec, lane_control)
+
+
+def test_followon_plan_only_cleanup_accepts_verified_binding_snapshots(
+    tmp_path: Path,
+) -> None:
+    namespace = _followon_namespace()
+    source_root = tmp_path / "sources"
+    result_root = tmp_path / "result"
+    source_root.mkdir()
+    result_root.mkdir()
+    sources = {
+        "--project-revision": source_root / "project-revision-fixture.json",
+        "--source-conformance": source_root / "source-conformance-fixture.json",
+        "--live-attestation": source_root / "live-attestation-fixture.json",
+    }
+    measured_args: list[str] = []
+    for index, (name, source) in enumerate(sources.items()):
+        payload = f"binding-{index}\n".encode()
+        source.write_bytes(payload)
+        (result_root / source.name).write_bytes(payload)
+        measured_args.extend((name, str(source)))
+    (result_root / "request-envelope-fixture.request-envelope.json").write_text(
+        "{}\n", encoding="utf-8"
+    )
+
+    namespace["remove_plan_only_request_root"](result_root, measured_args)
+
+    assert not result_root.exists()
 
 
 def test_followon_controller_authorizes_before_measured_calls_and_finalizes_outcomes() -> None:
@@ -196,14 +243,6 @@ def test_followon_controller_authorizes_before_measured_calls_and_finalizes_outc
         "str(PHASE6_CONTROLLER)"
     )
     assert 'spec["gate5"] = {"manifest_sha256": authorization_sha}' in main
-
-    cleanup = source.split("def remove_plan_only_request_root(", 1)[1].split(
-        "\ndef prepare_measured_argv(", 1
-    )[0]
-    assert 'len(entries) != 1' in cleanup
-    assert '.request-envelope.json' in cleanup
-    assert "entries[0].unlink()" in cleanup
-    assert "result_root.rmdir()" in cleanup
 
 
 def test_followon_controller_leaves_jobs_marker_to_console_registration() -> None:

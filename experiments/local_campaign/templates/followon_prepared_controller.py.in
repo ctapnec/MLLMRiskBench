@@ -521,7 +521,7 @@ def derive_attestation(
 ) -> dict[str, Any]:
     lane = spec["lane_id"]
     image = spec["modality"] == "image"
-    corpus = "figstep" if image else "synth"
+    corpus = "figstep_full" if image else "synth"
     if lane_control.exists() or lane_control.is_symlink():
         raise ValueError(f"fresh attestation control root already exists: {lane_control}")
     lane_control.mkdir(mode=0o700)
@@ -868,23 +868,54 @@ def formal_caps(spec: Mapping[str, Any]) -> dict[str, int]:
     }
 
 
-def remove_plan_only_request_root(result_root: Path) -> None:
+def remove_plan_only_request_root(
+    result_root: Path, measured_args: Sequence[str]
+) -> None:
     if (
         result_root.is_symlink()
         or not result_root.is_dir()
         or result_root.resolve(strict=True) != result_root
     ):
         raise ValueError("measured plan-only request root is unsafe")
-    entries = list(result_root.iterdir())
+    entries = {entry.name: entry for entry in result_root.iterdir()}
+    request_envelopes = [
+        entry
+        for entry in entries.values()
+        if entry.name.startswith("request-envelope-")
+        and entry.name.endswith(".request-envelope.json")
+    ]
+    binding_options = (
+        "--project-revision",
+        "--source-conformance",
+        "--live-attestation",
+    )
+    binding_sources = {
+        Path(option(measured_args, name)).name: Path(option(measured_args, name))
+        for name in binding_options
+    }
     if (
-        len(entries) != 1
-        or entries[0].is_symlink()
-        or not entries[0].is_file()
-        or not entries[0].name.startswith("request-envelope-")
-        or not entries[0].name.endswith(".request-envelope.json")
+        len(binding_sources) != len(binding_options)
+        or len(request_envelopes) != 1
+        or request_envelopes[0].is_symlink()
+        or not request_envelopes[0].is_file()
     ):
         raise ValueError("measured plan-only root contains unexpected artifacts")
-    entries[0].unlink()
+    expected_names = {*binding_sources, request_envelopes[0].name}
+    if set(entries) != expected_names:
+        raise ValueError("measured plan-only root contains unexpected artifacts")
+    for name, source in binding_sources.items():
+        copy = entries[name]
+        if (
+            source.is_symlink()
+            or not source.is_file()
+            or copy.is_symlink()
+            or not copy.is_file()
+            or copy.stat().st_size != source.stat().st_size
+            or sha256_file(copy) != sha256_file(source)
+        ):
+            raise ValueError("measured plan-only binding snapshot changed")
+    for entry in entries.values():
+        entry.unlink()
     result_root.rmdir()
 
 
@@ -912,7 +943,7 @@ def prepare_measured_argv(
         "target_and_guard",
     )
     argv = [*measured_args, *module.acquisition_args(acquisition)]
-    remove_plan_only_request_root(result_root)
+    remove_plan_only_request_root(result_root, measured_args)
     if result_root.exists() or result_root.is_symlink():
         raise ValueError(f"{lane}: measured root remains after plan derivation")
     return argv
