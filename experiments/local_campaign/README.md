@@ -43,7 +43,7 @@ counts cannot become shell or Python fragments. Rebind output is create-only.
 
 Rebinding the immediately preceding pre-recovery-controller key shape is a
 controlled migration. It requires two fresh UTC tags and exact path, SHA-256,
-and byte bindings for the core-recovery and seven-row input manifests. A still
+and byte bindings for the core-recovery and GraySwan RR input manifests. A still
 older pre-RR binding additionally requires all four RR evidence roots. The
 legacy a05 migration also discards its obsolete shared GPU hash and requires an
 explicit `--set` for every new or changed binding below.
@@ -202,7 +202,7 @@ bash ~/.ura-controller-active/launch_chain_<new-commit7>.sh
 ```
 
 The launch chain stops after Phase 6. Phase 7 cannot be launched honestly at
-the beginning of the campaign because its exact recovery, seven-row amendment,
+the beginning of the campaign because its exact recovery, GraySwan RR amendment,
 and follow-on completion artifacts do not exist yet. After those controllers
 terminate, launch the read-only watcher with their absolute artifact paths:
 
@@ -210,8 +210,8 @@ terminate, launch the read-only watcher with their absolute artifact paths:
 bash ~/.ura-controller-active/launch_phase7_watcher.sh \
   --phase6-sequence-completion <absolute-phase6-completion.json> \
   --phase6-recovery-completion <absolute-recovery-completion.json> \
-  --seven-output-policy-amendment <absolute-seven-row-amendment.json> \
-  --phase6-seven-output-policy-completion <absolute-seven-row-completion.json> \
+  --seven-output-policy-amendment <absolute-GraySwan-RR-amendment.json> \
+  --phase6-seven-output-policy-completion <absolute-GraySwan-RR-completion.json> \
   --followon-gate5-amendment <absolute-follow-on-amendment.json> \
   --phase6-followon-completion <absolute-follow-on-completion.json>
 ```
@@ -223,10 +223,10 @@ available only through the generated
 `launch_phase6_recovery_and_seven.sh`. The launcher starts one named tmux
 session, executes `phase6_core_length_recovery.py`, and starts
 `phase6_seven_output_policy.py` only after the core process is terminal. The
-core exit code does not gate the seven-row launch. Both producers preserve the
-retained limits, sample seeds, call caps, 24-hour lane deadlines, zero-download
-admission, one-arm canaries, and create-only output roots. They do not repeat
-already successful lanes.
+core exit code does not gate the four-row GraySwan RR launch. Both producers
+preserve the retained limits, sample seeds, call caps, 24-hour lane deadlines,
+zero-download admission, one-arm canaries, and create-only output roots. They do
+not repeat already successful lanes.
 
 Every fresh local attestation inside these recovery producers uses
 `rules,guardrail` with the pinned Llama Guard identity on `cuda:1`. The
@@ -256,7 +256,7 @@ to be the exact successful three-lane Runner 2.24 R-Judge recovery, validates
 its completion, launch, amendment, summary and result descriptor chain, and
 cross-links its retained payload and source lane specs to the bound inputs.
 
-The seven-row input manifest has schema
+The legacy-named GraySwan RR input manifest has schema
 `ura-seven-output-policy-amendment-inputs/2`. Its exact file-descriptor fields
 are:
 
@@ -379,7 +379,7 @@ one for NanoGCG, eight for IDEATOR v2, and 50 for T3MP3ST. The generated
 `phase5_followon_prepared.sh` converts only a fully validated three-lane input
 into the separate Gate 5 amendment, and `phase6_followon_prepared.sh` derives
 the typed `measured_complete`, `partial`, or `failed` lifecycle from the exact
-Runner roots. The 65-row Phase 7 campaign union requires the amendment and
+Runner roots. The 62-row Phase 7 campaign union requires the amendment and
 completion as one exact pair. It retains all three terminal states, emits
 metric inputs only for
 independently validated successful Runner roots and partitions those inputs by

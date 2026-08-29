@@ -38,9 +38,6 @@ SEVEN_LANES = (
     "local-llava-rr-image-primary-100",
     "rjudge-llava-rr",
     "gptgeochat-llava-rr",
-    "ollama-rwkv-g1d-0p4b-text-exploratory-50",
-    "ollama-rwkv-g1f-2p9b-text-exploratory-50",
-    "ollama-rwkv-g1g-1p5b-text-exploratory-50",
 )
 PRIOR_RECOVERY_LANES = (
     "rjudge-ollama-rwkv-g1d-0p4b",
@@ -780,9 +777,6 @@ def _assert_seven_contract(source: str) -> None:
         "local-llava-rr-image-primary-100": 1632,
         "rjudge-llava-rr": 100,
         "gptgeochat-llava-rr": 2020,
-        "ollama-rwkv-g1d-0p4b-text-exploratory-50": 1945,
-        "ollama-rwkv-g1f-2p9b-text-exploratory-50": 1945,
-        "ollama-rwkv-g1g-1p5b-text-exploratory-50": 1945,
     }
     assert _dict_keys(_function(tree, "finalize"), "completion") == COMPLETION_FIELDS
     gate5_fields = _dict_keys(_function(tree, "write_gate5_inventory"), "value")
@@ -796,7 +790,7 @@ def _assert_seven_contract(source: str) -> None:
         "policy_amendment",
         "profile",
         "rows",
-        "all_seven_evaluated_before_measured_execution",
+        "all_affected_lanes_evaluated_before_measured_execution",
         "generation_caps_changed",
         "paid_provider_calls",
     }
@@ -804,29 +798,19 @@ def _assert_seven_contract(source: str) -> None:
     assert '"runnable": 18 + len(ready)' in source
     assert '"typed_terminal": 28 - len(ready)' in source
     assert '"conditional_na_lanes": ["defense-local"]' in source
-    assert '"all_seven_evaluated_before_measured_execution": True' in source
+    assert '"all_affected_lanes_evaluated_before_measured_execution": True' in source
     assert '"generation_caps_changed": False' in source
     assert 'option_value(argv, "--sample-seed") != "0"' in source
     assert 'option_value(argv, "--seeds") != "0"' in source
     assert '"--sampling-policy" in argv' in source
     assert 'option_value(argv, "--source-conformance")' in source
     assert 'option_value(argv, "--source-config-sha256") != source_config_sha' in source
-    for selector, digest in (
-        (
-            "ollama:mollysama/rwkv-7-g1d:0.4b",
-            "78e699bd71f0cef7ed8fb38a469088310af0ab07d678661980c6b8c7f130a7f8",
-        ),
-        (
-            "ollama:mollysama/rwkv-7-g1f:2.9b",
-            "7813f2283a135ef1264b8cec647b339d92fa7ecffafefeac61a2670b572f03f7",
-        ),
-        (
-            "ollama:mollysama/rwkv-7-g1g:1.5b",
-            "8ff95f43952c361048310b50a5c4b16f98d8f0642a87b536452e627224a0dddc",
-        ),
-    ):
-        assert selector in source
-        assert digest in source
+    spec_sources = _seven_lane_ids(tree)
+    assert len(spec_sources) == 4
+    assert all("rwkv" not in row.lower() for row in spec_sources)
+    validator_source = ast.get_source_segment(source, validator)
+    assert validator_source is not None
+    assert "ollama-rwkv" not in validator_source
     assert 'schema="ura-seven-output-policy-amendment-inputs/2"' in source
     assert "retained_pyrit" not in source.lower()
     assert '"unavailable": 7,' in source
@@ -852,11 +836,11 @@ def _assert_seven_contract(source: str) -> None:
     }
     assert _nested_dict_literal(amendment, "value", "all_pass_profile") == {
         "rows": 46,
-        "runnable": 25,
-        "typed_terminal": 21,
+        "runnable": 22,
+        "typed_terminal": 24,
         "unavailable": 7,
         "conditional_na": 1,
-        "target_runtime_terminal": 0,
+        "target_runtime_terminal": 3,
         "structural_na": 13,
         "conditional_na_lanes": ["defense-local"],
     }
@@ -865,7 +849,9 @@ def _assert_seven_contract(source: str) -> None:
     assert "validate_specs_contract(module, specs)" in main_source
     assert main_source.index("specs = assert_inputs(module)") < main_source.index(
         "validate_specs_contract(module, specs)"
-    ) < main_source.index("CONTROL.mkdir")
+    ) < main_source.index("validate_local_readiness()") < main_source.index(
+        "CONTROL.mkdir"
+    )
     assert "record_gate5_failure(" in main_source
     assert 'ctl.record_failure(lane, "gate5"' not in main_source
     assert 'ctl.record_failure(lane, "measured"' in main_source

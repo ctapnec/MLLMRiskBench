@@ -4096,7 +4096,7 @@ python -m experiments.paired_compare --results runs/thesis/runner \
 
 ```
 
-Invoke `paired_compare` for an LLaVA base/RR facet only when the seven-row Gate 5
+Invoke `paired_compare` for an LLaVA base/RR facet only when the GraySwan RR Gate 5
 amendment admits all four bounded RR identities and both exact measured inputs
 match on source clusters, input bytes, limit, sample seed, inference settings and
 judge condition. When any prerequisite is absent or failed, write one

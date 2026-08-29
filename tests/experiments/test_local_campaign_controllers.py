@@ -2987,9 +2987,6 @@ def test_canonical_c926_contract_stays_separate_from_seven_amendment() -> None:
         "local-llava-rr-image-primary-100",
         "rjudge-llava-rr",
         "gptgeochat-llava-rr",
-        "ollama-rwkv-g1d-0p4b-text-exploratory-50",
-        "ollama-rwkv-g1f-2p9b-text-exploratory-50",
-        "ollama-rwkv-g1g-1p5b-text-exploratory-50",
     ]
 
 
@@ -6456,8 +6453,11 @@ def test_length_capped_output_documentation_matches_runner_policy() -> None:
         .read_text(encoding="utf-8")
         .split()
     )
-    assert "26 runnable and 20 typed terminal rows" in plan
-    assert "zero target-runtime-terminal rows" in plan
+    assert "Only the four affected GraySwan identities" in plan
+    assert (
+        "separate additive Ollama amendment replaces the superseded RWKV tasks"
+        in plan
+    )
     assert "local-llava-rr-text-primary-100" in plan
     assert "local-llava-rr-image-primary-100" in plan
     assert "match the corresponding LLaVA-base rows" in plan
@@ -6468,7 +6468,10 @@ def test_length_capped_output_documentation_matches_runner_policy() -> None:
         .split()
     )
     assert "Do not invoke `paired_compare` for the current LLaVA base/RR plan" not in runbook
-    assert "only when the seven-row Gate 5 amendment admits all four bounded RR identities" in runbook
+    assert (
+        "only when the GraySwan RR Gate 5 amendment admits all four bounded RR identities"
+        in runbook
+    )
 
 
 def test_local_campaign_plan_documents_bounded_controls_and_gate7() -> None:
@@ -6727,6 +6730,9 @@ def test_local_call_controllers_gate_targets_on_readiness_receipts() -> None:
     core_recovery = (templates / "phase6_core_length_recovery.py.in").read_text(
         encoding="utf-8"
     )
+    rr_amendment = (templates / "phase6_seven_output_policy.py.in").read_text(
+        encoding="utf-8"
+    )
 
     def assert_contract(value: str) -> None:
         assert '${URA_LOCAL_MODEL_READINESS_ROOT:?set ' in value
@@ -6785,3 +6791,19 @@ def test_local_call_controllers_gate_targets_on_readiness_receipts() -> None:
     assert changed_recovery != core_recovery
     with pytest.raises(AssertionError):
         assert_recovery_contract(changed_recovery)
+
+    def assert_rr_amendment_contract(value: str) -> None:
+        assert 'os.environ.get("URA_LOCAL_MODEL_READINESS_ROOT")' in value
+        assert '"experiments.local_model_readiness"' in value
+        assert 'label = "llava-rr"' in value
+        assert '"--expected-spec",\n            RR_SPEC,' in value
+        assert (
+            "validate_specs_contract(module, specs)\n"
+            "    validate_local_readiness()"
+        ) in value
+
+    assert_rr_amendment_contract(rr_amendment)
+    changed_rr = rr_amendment.replace("    validate_local_readiness()\n", "", 1)
+    assert changed_rr != rr_amendment
+    with pytest.raises(AssertionError):
+        assert_rr_amendment_contract(changed_rr)

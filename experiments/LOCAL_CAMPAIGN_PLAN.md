@@ -53,7 +53,7 @@ edited as the implementation.
 | Source receipt | historical 26-arm receipt bound; 19 arms (6 aggregator + 13 conversion-only) have no entry | a fresh 45-arm receipt is required before any measured lane (Phase 2) |
 | Framework runtimes | 1/15 installed under the lock (PyRIT); legacy pre-lock venvs exist but are not installer-managed | install and verify the other 14 (Phase 1, ~65 GiB, 3-6 h) |
 | Local models | Qwen3-VL-8B, LLaVA-1.6 base and GraySwan RR only in a legacy HF hub; sealed store absent; no Llama Guard | sealed acquisition for 3 targets + 2 guards (Phase 3, ~80 GB) |
-| Ollama | daemon owned by the console; three small rwkv-7 models | usable as free targets only after a local transport attestation |
+| Ollama | historical snapshot: daemon owned by the console and three small rwkv-7 models | later superseded by the exact current four-model roster; no RWKV model is scheduled prospectively |
 | Main venv | contains pyrit 0.14.0, spikee 0.9.1, datasets 4.8.4 (isolation policy violation) | remove in Phase 0 |
 | Temp | `/tmp/pytest-of-ura` leftovers (~850 MB) | clear before the re-pin gate |
 
@@ -562,10 +562,12 @@ nonempty length-capped response and its `finish_reason='length'` provenance;
 Runner 2.23 retains a successful empty Ollama completion as typed
 `model_nonresponse`, and Runner 2.24 applies the same typed outcome to a
 successful empty vLLM completion. Vague, repetitive or nonsensical text is sent
-to the selected evaluator, which may decide or abstain. A typed nonresponse does not
-query the policy judge and is represented in response and decision coverage.
-Neither outcome is a software failure, and neither authorizes altered stops,
-generation caps, decoding configuration or checkpoint identity.
+to the selected evaluator, which may decide or abstain. A typed nonresponse does
+not query the policy judge, but remains in the final population as a missing
+response, counts in missingness and response coverage, and is excluded only from
+the decided safety-rate denominator. Neither outcome is a software failure, and
+neither authorizes altered stops, generation caps, decoding configuration or
+checkpoint identity.
 
 Only the four affected GraySwan identities are re-attested and canaried in their
 targeted Gate 5 amendment. The historical GraySwan rows keep their immutable
@@ -583,8 +585,9 @@ identity, provenance, residency, timeout and backend failures remain hard
 failures. Earlier attempts remain diagnostic observations.
 
 Gate 5: projections and canaries retained under `runs/thesis/preflight` and
-`runs/thesis/diagnostics`; the seven-row current-policy amendment retained
-without rewriting the earlier terminal artifacts; caps recorded in
+`runs/thesis/diagnostics`; the four-row GraySwan RR current-policy amendment and
+the separate current four-model Ollama amendment retained without rewriting the
+earlier terminal artifacts; caps recorded in
 `runs/thesis/RUNNOTE.md`; all 46
 planned rows represented exactly once as runnable or typed terminal. Each
 runnable row also binds `core_primary_100` or `extended_50`, limit, sample seed,
@@ -765,7 +768,7 @@ narrower: `suite_summary`, `level2_report`, `judge_sensitivity --attacker replay
 --defense none`, `kappa --attacker replay --defense none`, `transfer_matrix
 --attacker replay --defense none`, and the free replay-vs-Crescendo paired
 comparison within Qwen3-VL-8B [16]. The planned LLaVA base-vs-RR comparison is
-estimated only when the seven-row amendment admits all four bounded RR rows and
+estimated only when the GraySwan RR amendment admits all four bounded RR rows and
 both base and RR measured cells match on source clusters, input bytes, sampling,
 inference settings and judge condition. Otherwise Phase 7 writes one strict
 `ura-phase7-non-estimable-contrast/1` artifact for every unavailable planned
