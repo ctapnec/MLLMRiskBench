@@ -140,6 +140,37 @@ def _sleep_delay(
     return min(maximum, initial * (2 ** min(attempt - 1, 4)))
 
 
+def _retry_call(
+    action: Callable[[], Any],
+    *,
+    label: str,
+    deadline: float,
+    retry_delay_seconds: float,
+    max_retry_delay_seconds: float,
+    sleep: Callable[[float], None],
+    monotonic: Callable[[], float],
+    on_retry: Callable[[int, float, BaseException], None] | None = None,
+) -> Any:
+    attempt = 0
+    while True:
+        if monotonic() >= deadline:
+            raise TimeoutError(f"{label}: acquisition deadline expired")
+        attempt += 1
+        try:
+            return action()
+        except _RETRY_ERRORS as exc:
+            delay = _sleep_delay(
+                attempt=attempt,
+                initial=retry_delay_seconds,
+                maximum=max_retry_delay_seconds,
+            )
+            if monotonic() + delay >= deadline:
+                raise TimeoutError(f"{label}: acquisition deadline expired") from exc
+            if on_retry is not None:
+                on_retry(attempt, delay, exc)
+            sleep(delay)
+
+
 def acquire(
     *,
     out_dir: Path,
@@ -165,6 +196,7 @@ def acquire(
         raise ValueError("out-dir must be one absolute non-symlink path")
 
     events = out_dir / "events.jsonl"
+    deadline = monotonic() + deadline_seconds
     if resume:
         if not out_dir.is_dir() or not events.is_file() or events.is_symlink():
             raise ValueError("resume requires an existing acquisition event ledger")
@@ -190,12 +222,19 @@ def acquire(
     else:
         if out_dir.exists():
             raise ValueError("new acquisition out-dir must be absent")
+        version = _retry_call(
+            lambda: _json_response(request_fn(endpoint, "/api/version", timeout=30.0)),
+            label="Ollama version discovery",
+            deadline=deadline,
+            retry_delay_seconds=retry_delay_seconds,
+            max_retry_delay_seconds=max_retry_delay_seconds,
+            sleep=sleep,
+            monotonic=monotonic,
+        )
         out_dir.mkdir(mode=0o700, parents=False)
-        version = _json_response(request_fn(endpoint, "/api/version", timeout=30.0))
         append(events, {"event": "start", "models": selected, "version": version})
         completed = set()
 
-    deadline = monotonic() + deadline_seconds
     for model in selected:
         if model in completed:
             continue
@@ -243,19 +282,37 @@ def acquire(
                 sleep(delay)
 
         started = monotonic()
-        generated = _json_response(
-            request_fn(
-                endpoint,
-                "/api/generate",
+        generated = _retry_call(
+            lambda: _json_response(
+                request_fn(
+                    endpoint,
+                    "/api/generate",
+                    {
+                        "model": model,
+                        "prompt": "Reply with exactly OK.",
+                        "stream": False,
+                        "keep_alive": "0s",
+                        "options": {"temperature": 0, "num_predict": 32},
+                    },
+                    timeout=600.0,
+                )
+            ),
+            label=f"{model} load smoke",
+            deadline=deadline,
+            retry_delay_seconds=retry_delay_seconds,
+            max_retry_delay_seconds=max_retry_delay_seconds,
+            sleep=sleep,
+            monotonic=monotonic,
+            on_retry=lambda attempt, delay, exc: append(
+                events,
                 {
+                    "attempt": attempt,
+                    "delay_seconds": delay,
+                    "event": "load_smoke_retry",
                     "model": model,
-                    "prompt": "Reply with exactly OK.",
-                    "stream": False,
-                    "keep_alive": "0s",
-                    "options": {"temperature": 0, "num_predict": 32},
+                    "reason_code": _safe_reason(exc),
                 },
-                timeout=600.0,
-            )
+            ),
         )
         if generated.get("done") is not True:
             raise RuntimeError(f"{model}: load smoke did not finish")
@@ -270,7 +327,24 @@ def acquire(
             },
         )
 
-    roster = _tags(endpoint, request_fn, timeout=30.0)
+    roster = _retry_call(
+        lambda: _tags(endpoint, request_fn, timeout=30.0),
+        label="final Ollama roster",
+        deadline=deadline,
+        retry_delay_seconds=retry_delay_seconds,
+        max_retry_delay_seconds=max_retry_delay_seconds,
+        sleep=sleep,
+        monotonic=monotonic,
+        on_retry=lambda attempt, delay, exc: append(
+            events,
+            {
+                "attempt": attempt,
+                "delay_seconds": delay,
+                "event": "roster_retry",
+                "reason_code": _safe_reason(exc),
+            },
+        ),
+    )
     if any(model not in roster for model in selected):
         raise RuntimeError("the acquired roster is incomplete")
     (out_dir / "selected-roster.json").write_bytes(

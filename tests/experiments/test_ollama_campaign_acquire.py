@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 from pathlib import Path
+import urllib.error
 
 from experiments.local_campaign.ollama_acquire import acquire, canonical
 
@@ -43,10 +44,15 @@ def test_resume_skips_completed_models_and_retries_interrupted_partial_pull(
     installed = {models[0]}
     pulls: list[str] = []
     generated: list[str] = []
+    final_tag_failures = 0
 
     def request(_base, path, payload=None, *, timeout):
+        nonlocal final_tag_failures
         assert timeout > 0
         if path == "/api/tags":
+            if len(installed) == len(models) and len(generated) == 2 and not final_tag_failures:
+                final_tag_failures += 1
+                raise urllib.error.URLError("temporary DNS failure")
             return _json_response(
                 {"models": [{"name": model, "digest": model} for model in installed]}
             )
@@ -59,6 +65,8 @@ def test_resume_skips_completed_models_and_retries_interrupted_partial_pull(
             return _Response(b'{"status":"success"}\n')
         if path == "/api/generate":
             generated.append(payload["model"])
+            if len(generated) == 1:
+                raise urllib.error.URLError("temporary connection refused")
             return _json_response({"done": True, "done_reason": "stop", "response": "OK"})
         raise AssertionError(path)
 
@@ -77,8 +85,9 @@ def test_resume_skips_completed_models_and_retries_interrupted_partial_pull(
         == 0
     )
     assert pulls == [models[1], models[1]]
-    assert generated == [models[1]]
-    assert sleeps == [1]
+    assert generated == [models[1], models[1]]
+    assert final_tag_failures == 1
+    assert sleeps == [1, 1, 1]
     events = [
         json.loads(line)
         for line in (root / "events.jsonl").read_text(encoding="ascii").splitlines()
@@ -92,6 +101,11 @@ def test_resume_skips_completed_models_and_retries_interrupted_partial_pull(
             "model": models[1],
             "reason_code": "ollama_internal_retry_exhausted",
         }
+    ]
+    assert [row["event"] for row in events if row["event"].endswith("_retry")] == [
+        "pull_retry",
+        "load_smoke_retry",
+        "roster_retry",
     ]
     assert (root / ".exit").read_bytes() == b"0\n"
     assert [
