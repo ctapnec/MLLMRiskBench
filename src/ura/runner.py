@@ -2574,6 +2574,22 @@ class Runner:
         run_id = next(iter(judgment_run_ids), self._last_run_id)
         if judgment_run_ids and self._last_run_id and run_id != self._last_run_id:
             raise ValueError("judgments do not belong to the Runner's most recent run")
+        model_nonresponses = [
+            judgment
+            for judgment in judgments
+            if judgment.raw.get("policy_evaluation_status") == "model_nonresponse"
+        ]
+        if any(
+            judgment.label != "not_applicable"
+            or judgment.score != 0.0
+            or judgment.raw.get("policy_evaluable_turn") is not True
+            or judgment.raw.get("stage_queried") is not False
+            or judgment.raw.get("cascade_role") != "authoritative"
+            or judgment.raw.get("cascade_confident") is not True
+            or judgment.raw.get("parsed") is not None
+            for judgment in model_nonresponses
+        ):
+            raise ValueError("malformed model-nonresponse judgment")
 
         def _key(j: Judgment) -> str:
             # Escape-aware composite label; values containing the separators
@@ -2638,6 +2654,8 @@ class Runner:
             common_bucket = [
                 judgment for judgment in bucket
                 if judgment.raw.get("common_metrics_eligible", True) is True
+                and judgment.raw.get("policy_evaluation_status")
+                != "model_nonresponse"
             ]
             harmful = metrics.metric_population(
                 common_bucket, population=None, semantic_default="harmful"

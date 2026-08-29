@@ -6557,6 +6557,7 @@ def test_runner_retains_typed_empty_completion_without_querying_judges(
     assert judgments[0].label == "not_applicable"
     assert judgments[0].raw["policy_evaluation_status"] == "model_nonresponse"
     assert judgments[0].raw["stage_queried"] is False
+    assert runner.aggregate(judgments, []) == []
     trail_path = tmp_path / "model-nonresponse.trails.jsonl"
     runner.save_trails(trail_path)
     rows = [
