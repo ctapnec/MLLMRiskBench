@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 from pathlib import Path
@@ -23,6 +24,7 @@ from ura.strict_json import strict_json_loads
 OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 _FAILURE_SCHEMA = "ura-ollama-acquisition-failure/1"
 _RETRY_ERRORS = (
+    http.client.HTTPException,
     OSError,
     TimeoutError,
     UnicodeError,

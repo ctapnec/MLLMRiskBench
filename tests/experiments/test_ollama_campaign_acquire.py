@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import http.client
 import io
 import json
 from pathlib import Path
@@ -12,6 +13,11 @@ from experiments.local_campaign.ollama_acquire import acquire, canonical
 class _Response(io.BytesIO):
     def __iter__(self):
         return iter(self.readlines())
+
+
+class _InterruptedResponse(_Response):
+    def __iter__(self):
+        raise http.client.IncompleteRead(b'{"status":"pulling"', 1)
 
 
 def _json_response(value: object) -> _Response:
@@ -61,6 +67,8 @@ def test_resume_skips_completed_models_and_retries_interrupted_partial_pull(
             model = payload["model"]
             pulls.append(model)
             if len(pulls) == 1:
+                return _InterruptedResponse()
+            if len(pulls) == 2:
                 return _Response(b'{"error":"max retries exceeded: DNS connection refused"}\n')
             installed.add(model)
             return _Response(b'{"status":"success"}\n')
@@ -85,10 +93,10 @@ def test_resume_skips_completed_models_and_retries_interrupted_partial_pull(
         )
         == 0
     )
-    assert pulls == [models[1], models[1]]
+    assert pulls == [models[1], models[1], models[1]]
     assert generated == [models[1], models[1]]
     assert final_tag_failures == 1
-    assert sleeps == [1, 1, 1]
+    assert sleeps == [1, 2, 1, 1]
     events = [
         json.loads(line)
         for line in (root / "events.jsonl").read_text(encoding="ascii").splitlines()
@@ -100,10 +108,18 @@ def test_resume_skips_completed_models_and_retries_interrupted_partial_pull(
             "delay_seconds": 1,
             "event": "pull_retry",
             "model": models[1],
+            "reason_code": "pull_attempt_failed",
+        },
+        {
+            "attempt": 2,
+            "delay_seconds": 2,
+            "event": "pull_retry",
+            "model": models[1],
             "reason_code": "ollama_internal_retry_exhausted",
-        }
+        },
     ]
     assert [row["event"] for row in events if row["event"].endswith("_retry")] == [
+        "pull_retry",
         "pull_retry",
         "load_smoke_retry",
         "roster_retry",

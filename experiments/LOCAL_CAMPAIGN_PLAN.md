@@ -233,10 +233,13 @@ target's identity or artifacts. Multi-model Ollama acquisition uses
 `python -m experiments.local_campaign.ollama_acquire` in a named tmux session.
 The controller retains one canonical event ledger, skips models whose load smoke
 already completed, and retries an interrupted `/api/pull` with 30-to-300-second
-bounded backoff under a seven-day controller deadline. Ollama resumes retained
-partial blobs. Relaunch the same command with `--resume` and the same absolute
-`--out-dir` and model order after a controller or host interruption; a changed
-roster or terminal output root is refused. Gemma 4 and Ministral 3 admit
+bounded backoff under a seven-day controller deadline. Socket, DNS, Ollama
+internal-retry and mid-stream HTTP disconnects are retried inside the same tmux
+controller, and Ollama resumes retained partial blobs. Relaunch the same command
+with `--resume` and the same absolute `--out-dir` and model order only after a
+controller-process or host interruption; a changed roster or terminal output
+root is refused. Non-network failures and deadline expiry remain typed terminal
+failures rather than being restarted blindly. Gemma 4 and Ministral 3 admit
 text and image lanes; DeepSeek-R1 Distill and GPT-OSS admit text lanes only.
 Every empty survey item remains in the receipt as `model_nonresponse`. Measured
 campaign postprocessing likewise retains a typed model nonresponse as missing
@@ -708,6 +711,14 @@ Import every complete native artifact family with `experiments.native_import`
 one-case runs remain engineering diagnostics under `$URA_WORK/runs/engineering`.
 They exercise the native bridge and importer but are not measured Runner lanes
 and are not promoted into thesis metrics.
+
+The Phase 6 sequence may adopt an already terminal core, extended or native
+launch only from an exact retained sequence path. It copies the launch and, for
+native diagnostics, the matching plan and plan-result bytes, then revalidates
+the whitelisted controller payload, historical project-revision receipt,
+framework lock and complete terminal inventory. Adoption makes no target call
+and never invokes the child wrapper again; any changed or unregistered identity
+fails instead of being treated as reusable evidence.
 
 Every core and extended measured lane runs in its own process group under the
 Gate 5 24-hour lane wall-time ceiling. Core lanes are terminated and reaped on

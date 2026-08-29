@@ -1260,7 +1260,7 @@ def test_phase8_frozen_replay_uses_current_identity_for_native_only(
         )
 
 
-def test_phase8_native_snapshot_binds_current_project_receipt(
+def test_phase8_native_snapshot_binds_its_retained_project_receipt(
     phase8: ModuleType,
 ) -> None:
     source = Path(phase8.__file__).read_text(encoding="utf-8")
@@ -1269,28 +1269,28 @@ def test_phase8_native_snapshot_binds_current_project_receipt(
         source.index("    native_outcomes = inputs.get(\"native_outcomes\")")
     ]
 
-    def assert_current_contract(candidate: str) -> None:
+    def assert_retained_contract(candidate: str) -> None:
         assert '"project_revision",' in candidate
         assert 'native["project_revision"], label="Phase 7 native project-revision receipt"' in candidate
         assert 'native_plan_code.get("project_revision") != native["project_revision"]' in candidate
-        assert 'native["project_revision"].get("sha256")' in candidate
-        assert "!= EXPECTED_PROJECT_REVISION_SHA256" in candidate
-        assert 'authoritative_native.get("expected_commit")' in candidate
-        assert '!= inputs["code_identity"]["expected_commit"]' in candidate
+        assert 'native_commit = authoritative_native.get("expected_commit")' in candidate
+        assert 'expected_commit=str(native_commit)' in candidate
+        assert 'native_plan_code.get("expected_commit")\n        != native_commit' in candidate
         assert 'native_repository.get("observed_commit")' in candidate
+        assert '!= inputs["code_identity"]["expected_commit"]' not in candidate
+        assert "EXPECTED_PROJECT_REVISION_SHA256" not in candidate
 
-    assert_current_contract(block)
+    assert_retained_contract(block)
     for old in (
         '        "project_revision",\n',
-        '        or native["project_revision"].get("sha256")\n'
-        '        != EXPECTED_PROJECT_REVISION_SHA256\n',
+        '    native_commit = authoritative_native.get("expected_commit")\n',
         '        or native_repository.get("observed_commit")\n'
-        '        != authoritative_native.get("expected_commit")\n',
+        '        != native_commit\n',
     ):
         changed = block.replace(old, "", 1)
         assert changed != block
         with pytest.raises(AssertionError):
-            assert_current_contract(changed)
+            assert_retained_contract(changed)
 
 
 def test_phase8_mixed_revision_validators_separate_historical_and_current(
@@ -1329,8 +1329,12 @@ def test_phase8_mixed_revision_validators_separate_historical_and_current(
         assert 'project_repository.get("observed_commit")' in conditional
         assert 'set(plan_code)\n        != {' in native
         assert '"project_revision",' in native
-        assert "!= EXPECTED_PROJECT_REVISION_SHA256" in native
-        assert 'native_repository.get("expected_commit") != EXPECTED_COMMIT' in native
+        assert "EXPECTED_PROJECT_REVISION_SHA256" not in native
+        assert 'native_commit = value.get("expected_commit")' in native
+        assert 'expected_commit=str(native_commit)' in native
+        assert "RETAINED_NATIVE_OLLAMA_MODELS_BY_COMMIT.get" in native
+        assert "recheck_checkout=False" in native
+        assert 'native_repository.get("expected_commit") != native_commit' in native
         assert (
             "per-engine literal-loopback proxy under one production exclusive "
             "inference lease with protected pre/post exact-roster checks"

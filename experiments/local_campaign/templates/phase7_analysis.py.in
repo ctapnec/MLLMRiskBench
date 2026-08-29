@@ -458,7 +458,32 @@ RETAINED_PHASE6_PAYLOADS_BY_COMMIT = {
             "sha256": "e94c4be93eb1bfcd2e4b5c17cbb5fbaf32b56f97cdb55a4e3ff3ffaf501e2903",
             "bytes": 330057,
         },
-    }
+    },
+    "da062d0e2121ea2104b0c81374ef40f4f4f74473": {
+        "native": {
+            "sha256": "393a53d174ee5ca0ef52ed9a8be0f0ed6acb784a037e62d03d55cf2e32a6ba9f",
+            "bytes": 172062,
+        },
+    },
+}
+RETAINED_NATIVE_OLLAMA_MODELS_BY_COMMIT = {
+    "da062d0e2121ea2104b0c81374ef40f4f4f74473": {
+        "primary": {
+            "tag": "mollysama/rwkv-7-g1f:2.9b",
+            "digest": "7813f2283a135ef1264b8cec647b339d92fa7ecffafefeac61a2670b572f03f7",
+            "capabilities": ["completion", "thinking"],
+        },
+        "auditor": {
+            "tag": "mollysama/rwkv-7-g1d:0.4b",
+            "digest": "78e699bd71f0cef7ed8fb38a469088310af0ab07d678661980c6b8c7f130a7f8",
+            "capabilities": ["completion", "thinking"],
+        },
+        "judge": {
+            "tag": "mollysama/rwkv-7-g1g:1.5b",
+            "digest": "8ff95f43952c361048310b50a5c4b16f98d8f0642a87b536452e627224a0dddc",
+            "capabilities": ["completion", "thinking"],
+        },
+    },
 }
 RETAINED_EXTENDED_LANE_PARENT_FAILURE_COMMIT = (
     "c62e027b0143d1db29c57f66605ac3d8dc23f11a"
@@ -2213,6 +2238,32 @@ def require_frozen_phase6_payload(
         expected["bytes"],
     ):
         raise Phase7Error(f"{label} is not the frozen {controller} controller")
+
+
+def native_code_identity_from_completion(completion_path: Path) -> dict[str, str]:
+    """Return one current or explicitly retained native-controller identity."""
+
+    completion = strict_object(
+        checked_file(completion_path, label="Phase 6 native completion identity")
+    )
+    expected_commit = completion.get("expected_commit")
+    framework_lock_id = completion.get("framework_lock_id")
+    if (
+        re.fullmatch(r"[0-9a-f]{40}", str(expected_commit)) is None
+        or framework_lock_id != EXPECTED_FRAMEWORK_LOCK
+        or (
+            expected_commit != EXPECTED_COMMIT
+            and RETAINED_PHASE6_PAYLOADS_BY_COMMIT.get(
+                str(expected_commit), {}
+            ).get("native")
+            is None
+        )
+    ):
+        raise Phase7Error("Phase 6 native code identity is not retained")
+    return {
+        "expected_commit": str(expected_commit),
+        "framework_lock_id": str(framework_lock_id),
+    }
 
 
 def require_exact_fields(
@@ -7073,6 +7124,13 @@ def validate_native_controller(
     plan_execution = plan.get("execution")
     plan_models = plan.get("ollama_models")
     plan_rows = plan.get("engines")
+    expected_native_models = (
+        NATIVE_OLLAMA_MODELS
+        if code_identity["expected_commit"] == EXPECTED_COMMIT
+        else RETAINED_NATIVE_OLLAMA_MODELS_BY_COMMIT.get(
+            str(code_identity["expected_commit"]), {}
+        )
+    )
     if (
         set(plan) != expected_plan_fields
         or plan.get("schema") != "ura-phase6-native-canary-plan/1"
@@ -7119,7 +7177,8 @@ def validate_native_controller(
         or plan_execution.get("call_gate")
         != "per-engine literal-loopback proxy under one production exclusive inference lease with protected pre/post exact-roster checks, exact model allow-list, and hard request cap"
         or not isinstance(plan_models, dict)
-        or set(plan_models) != set(NATIVE_OLLAMA_MODELS)
+        or not expected_native_models
+        or set(plan_models) != set(expected_native_models)
         or not isinstance(plan_rows, list)
         or [row.get("engine") for row in plan_rows if isinstance(row, dict)]
         != list(NATIVE_ENGINES)
@@ -7150,9 +7209,11 @@ def validate_native_controller(
         or framework_python != expected_framework_python
     ):
         raise Phase7Error("Phase 6 native framework Python differs")
-    for role, expected_model in NATIVE_OLLAMA_MODELS.items():
+    for role, expected_model in expected_native_models.items():
         model = plan_models[role]
         capabilities = model.get("capabilities") if isinstance(model, dict) else None
+        retained_capabilities = expected_model.get("capabilities")
+        expected_quantization = expected_model.get("quantization")
         if (
             not isinstance(model, dict)
             or set(model) != {"tag", "digest", "capabilities", "size", "details"}
@@ -7163,17 +7224,32 @@ def validate_native_controller(
             or capabilities != sorted(capabilities)
             or any(not isinstance(item, str) for item in capabilities)
             or "completion" not in capabilities
+            or (
+                retained_capabilities is not None
+                and capabilities != retained_capabilities
+            )
             or isinstance(model.get("size"), bool)
             or not isinstance(model.get("size"), int)
             or model["size"] <= 0
             or not isinstance(model.get("details"), dict)
-            or model["details"].get("quantization_level")
-            != expected_model["quantization"]
+            or (
+                expected_quantization is not None
+                and model["details"].get("quantization_level")
+                != expected_quantization
+            )
         ):
             raise Phase7Error(f"Phase 6 native exact Ollama model changed: {role}")
-        if role in {"primary", "secondary"} and "vision" not in capabilities:
+        if (
+            code_identity["expected_commit"] == EXPECTED_COMMIT
+            and role in {"primary", "secondary"}
+            and "vision" not in capabilities
+        ):
             raise Phase7Error(f"Phase 6 native Ollama model lost vision: {role}")
-        if role == "primary" and "tools" not in capabilities:
+        if (
+            code_identity["expected_commit"] == EXPECTED_COMMIT
+            and role == "primary"
+            and "tools" not in capabilities
+        ):
             raise Phase7Error("Phase 6 native primary Ollama model lost tools")
     framework_lock_path = descriptor_file(
         plan_code["framework_lock"], label="Phase 6 native framework lock"
@@ -7185,14 +7261,25 @@ def validate_native_controller(
         plan_code.get("project_revision"),
         label="Phase 6 native project-revision receipt",
     )
-    if (
-        native_project_path
-        != Path(EXPECTED_PROJECT_REVISION_MANIFEST).resolve(strict=True)
-        or plan_code["project_revision"].get("sha256")
-        != EXPECTED_PROJECT_REVISION_SHA256
-    ):
+    expected_project_root = Path(EXPECTED_PROJECT_REVISION_MANIFEST).parent.resolve(
+        strict=True
+    )
+    if native_project_path.parent != expected_project_root:
         raise Phase7Error("Phase 6 native project-revision descriptor changed")
-    native_project_receipt = strict_object(native_project_path)
+    try:
+        from ura.project_revision import load_project_revision_file
+
+        native_project_receipt, _native_project_binding = load_project_revision_file(
+            native_project_path,
+            str(plan_code["project_revision"].get("sha256")),
+            Path.cwd() / "experiments" / "run_matrix.py",
+            recheck_checkout=False,
+        )
+    except Exception as exc:  # noqa: BLE001 - historical receipt boundary
+        raise Phase7Error(
+            f"Phase 6 native project-revision receipt validation failed: "
+            f"{type(exc).__name__}"
+        ) from exc
     native_repository = native_project_receipt.get("repository")
     if (
         not isinstance(native_repository, dict)
@@ -11826,12 +11913,14 @@ def build_input_manifest(args: argparse.Namespace) -> dict[str, Any]:
         code_identity=code_identity,
         runner_root=runner_root,
     )
+    native_completion_path = Path(args.phase6_native_completion)
+    native_code_identity = native_code_identity_from_completion(native_completion_path)
     native = validate_native_controller(
-        completion_path=Path(args.phase6_native_completion),
+        completion_path=native_completion_path,
         gate5_manifest=gate5_manifest,
         gate5_runnote=gate5_runnote,
         gate5_promotion=gate5_promotion,
-        code_identity=analysis_code_identity,
+        code_identity=native_code_identity,
     )
     runner = validate_runner_inventory(
         runner_root=runner_root,
@@ -12913,14 +13002,17 @@ class AnalysisController:
             code_identity=validated_code,
             runner_root=runner_root,
         )
+        native_completion_path = descriptor_file(
+            native["completion"], label="authorized Phase 6 native completion"
+        )
         validated_native = validate_native_controller(
-            completion_path=descriptor_file(
-                native["completion"], label="authorized Phase 6 native completion"
-            ),
+            completion_path=native_completion_path,
             gate5_manifest=gate5_manifest_path,
             gate5_runnote=gate5_runnote_path,
             gate5_promotion=gate5_promotion_path,
-            code_identity=code,
+            code_identity=native_code_identity_from_completion(
+                native_completion_path
+            ),
         )
         if (
             validated_core != core

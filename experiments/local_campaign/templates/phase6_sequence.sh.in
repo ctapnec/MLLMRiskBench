@@ -958,7 +958,9 @@ if (
 if kind in {"core", "extended"}:
     code_identity = gate5_code_identity
 else:
-    code_identity = {"expected_commit": commit, "framework_lock_id": lock}
+    code_identity = phase7.native_code_identity_from_completion(completion)
+    if code_identity["framework_lock_id"] != lock:
+        raise SystemExit("native: retained framework lock changed")
 kwargs = {
     "completion_path": completion,
     "gate5_manifest": Path(manifest_value),
@@ -1175,20 +1177,48 @@ NATIVE_PLAN_RESULT="$CONTROL_ROOT/native-plan-result.json"
 test ! -e "$NATIVE_PLAN" && test ! -L "$NATIVE_PLAN"
 test ! -e "$NATIVE_PLAN_RESULT" && test ! -L "$NATIVE_PLAN_RESULT"
 verify_regular "$NATIVE" "$NATIVE_SHA256" "$NATIVE_BYTES"
-bash "$NATIVE" --plan-only \
-  --expected-commit "$EXPECTED_COMMIT" \
-  --out "$NATIVE_PLAN" \
-  --gate5-manifest "$GATE5_MANIFEST" \
-  --gate5-runnote "$GATE5_RUNNOTE" \
-  --gate5-promotion-receipt "$GATE5_PROMOTION" \
-  --authorize-gate5-manifest-sha256 "$GATE5_MANIFEST_SHA" > "$NATIVE_PLAN_RESULT"
-test -f "$NATIVE_PLAN" && test ! -L "$NATIVE_PLAN"
-NATIVE_PLAN_SHA="$(sha256sum -- "$NATIVE_PLAN" | awk '{print $1}')"
-
 NATIVE_LAUNCH="$CONTROL_ROOT/native.launch.txt"
 test ! -e "$NATIVE_LAUNCH" && test ! -L "$NATIVE_LAUNCH"
-bash "$NATIVE" --plan "$NATIVE_PLAN" \
-  --authorize-plan-sha256 "$NATIVE_PLAN_SHA" > "$NATIVE_LAUNCH"
+if [[ -n "${PHASE6_NATIVE_ADOPT_LAUNCH-}" ]]; then
+  test "${PHASE6_NATIVE_ADOPT_LAUNCH#/}" != "$PHASE6_NATIVE_ADOPT_LAUNCH"
+  test -f "$PHASE6_NATIVE_ADOPT_LAUNCH" && test ! -L "$PHASE6_NATIVE_ADOPT_LAUNCH"
+  adopted_native_launch="$(readlink -e -- "$PHASE6_NATIVE_ADOPT_LAUNCH")"
+  test "$adopted_native_launch" = "$PHASE6_NATIVE_ADOPT_LAUNCH"
+  case "$adopted_native_launch" in
+    "$URA_WORK"/runs/engineering/phase6-sequence-*/native.launch.txt) ;;
+    *) printf 'unsafe adopted native launch\n' >&2; exit 1 ;;
+  esac
+  adopted_native_root="${adopted_native_launch%/*}"
+  adopted_native_plan="$adopted_native_root/native-plan.json"
+  adopted_native_plan_result="$adopted_native_root/native-plan-result.json"
+  for adopted_native_file in \
+    "$adopted_native_launch" "$adopted_native_plan" "$adopted_native_plan_result"; do
+    test -f "$adopted_native_file" && test ! -L "$adopted_native_file"
+    test "$(readlink -e -- "$adopted_native_file")" = "$adopted_native_file"
+    test "$(stat -c '%a' -- "$adopted_native_file")" = '600'
+    test "$(stat -c '%h' -- "$adopted_native_file")" = '1'
+  done
+  cp -- "$adopted_native_plan" "$NATIVE_PLAN"
+  cp -- "$adopted_native_plan_result" "$NATIVE_PLAN_RESULT"
+  cp -- "$adopted_native_launch" "$NATIVE_LAUNCH"
+  chmod 600 -- "$NATIVE_PLAN" "$NATIVE_PLAN_RESULT" "$NATIVE_LAUNCH"
+  cmp -s -- "$adopted_native_plan" "$NATIVE_PLAN"
+  cmp -s -- "$adopted_native_plan_result" "$NATIVE_PLAN_RESULT"
+  cmp -s -- "$adopted_native_launch" "$NATIVE_LAUNCH"
+  printf 'PHASE6_CONTROLLER_ADOPTED=native LAUNCH=%s\n' "$adopted_native_launch"
+else
+  bash "$NATIVE" --plan-only \
+    --expected-commit "$EXPECTED_COMMIT" \
+    --out "$NATIVE_PLAN" \
+    --gate5-manifest "$GATE5_MANIFEST" \
+    --gate5-runnote "$GATE5_RUNNOTE" \
+    --gate5-promotion-receipt "$GATE5_PROMOTION" \
+    --authorize-gate5-manifest-sha256 "$GATE5_MANIFEST_SHA" > "$NATIVE_PLAN_RESULT"
+  test -f "$NATIVE_PLAN" && test ! -L "$NATIVE_PLAN"
+  NATIVE_PLAN_SHA="$(sha256sum -- "$NATIVE_PLAN" | awk '{print $1}')"
+  bash "$NATIVE" --plan "$NATIVE_PLAN" \
+    --authorize-plan-sha256 "$NATIVE_PLAN_SHA" > "$NATIVE_LAUNCH"
+fi
 wait_for_child native "$NATIVE" "$NATIVE_SHA256" "$NATIVE_BYTES" \
   "$NATIVE_LAUNCH"
 if [ "${CHILD_RC[native]}" = '0' ]; then

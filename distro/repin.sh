@@ -21,8 +21,8 @@
 #      processes, clear /tmp/pytest-of-<user>
 #   3. clean-env full-suite gate (every URA_* variable unset; venv interpreter)
 #   4. local-target roster refresh, then refuse if any TRACKED file changed
-#   5. project-revision receipt: supersede the old one, create + validate the
-#      new (an invalid receipt aborts)
+#   5. project-revision receipt: retain every content-addressed historical
+#      receipt, create + validate the new one (an invalid receipt aborts)
 #   6. rebind REF_URA / URA_PROJECT_REVISION_MANIFEST / _SHA256 in ~/.ura_campaign_env
 #   7. re-validate the retained source-conformance receipt against the
 #      registry (bound but invalid aborts; unbound is reported only)
@@ -93,13 +93,41 @@ set +a
 ( set -o pipefail; "$PY" -m experiments.local_targets --refresh 2>&1 | tail -1 )
 git diff --quiet || { echo "TRACKED files modified after refresh:" >&2; git diff --stat >&2; exit 1; }
 
-mkdir -p runs/thesis/project-revision/superseded
-mv runs/thesis/project-revision/project-revision-*.project-revision.json runs/thesis/project-revision/superseded/ 2>/dev/null || true
-"$PY" -m experiments.project_revision --expected-revision "$REF" --out runs/thesis/project-revision >/dev/null
-FILES=(runs/thesis/project-revision/project-revision-*.project-revision.json)
-[ "${#FILES[@]}" -eq 1 ] && [ -f "${FILES[0]}" ] || { echo "expected exactly one project-revision receipt, found ${#FILES[@]}" >&2; exit 1; }
-MANIFEST="${FILES[0]}"
+mkdir -p runs/thesis/project-revision
+RECEIPT_ROOT="$(readlink -e -- runs/thesis/project-revision)"
+RECEIPT_STAGE="$RECEIPT_ROOT/.repin-$REF-$$"
+test ! -e "$RECEIPT_STAGE" && test ! -L "$RECEIPT_STAGE"
+mkdir -m 700 "$RECEIPT_STAGE"
+CREATE_RESULT="$(
+  "$PY" -m experiments.project_revision \
+    --expected-revision "$REF" --out "$RECEIPT_STAGE"
+)"
+mapfile -t CREATED < <(
+  printf '%s' "$CREATE_RESULT" | "$PY" -c \
+    'import json,sys; v=json.load(sys.stdin); print(v["artifact"]); print(v["sha256"])'
+)
+[ "${#CREATED[@]}" -eq 2 ] || { echo "invalid project-revision creation result" >&2; exit 1; }
+STAGED_MANIFEST="${CREATED[0]}"
+REPORTED_SHA="${CREATED[1]}"
+test -f "$STAGED_MANIFEST" && test ! -L "$STAGED_MANIFEST"
+test "${STAGED_MANIFEST%/*}" = "$RECEIPT_STAGE"
+case "${STAGED_MANIFEST##*/}" in
+  project-revision-*.project-revision.json) ;;
+  *) echo "invalid project-revision receipt name" >&2; exit 1 ;;
+esac
+MANIFEST="$RECEIPT_ROOT/${STAGED_MANIFEST##*/}"
+if [ -e "$MANIFEST" ] || [ -L "$MANIFEST" ]; then
+  test -f "$MANIFEST" && test ! -L "$MANIFEST"
+  cmp -s -- "$STAGED_MANIFEST" "$MANIFEST" \
+    || { echo "content-addressed project-revision receipt collision" >&2; exit 1; }
+  rm -f -- "$STAGED_MANIFEST"
+else
+  mv -- "$STAGED_MANIFEST" "$MANIFEST"
+fi
+rmdir -- "$RECEIPT_STAGE"
 SHA=$(sha256sum "$MANIFEST" | awk '{print $1}')
+test "$SHA" = "$REPORTED_SHA" \
+  || { echo "project-revision creation SHA changed" >&2; exit 1; }
 # Explicit abort: under set -e a failure on the left of '&&' would NOT stop
 # the script, and the campaign env must never be rebound to an invalid receipt.
 "$PY" -m experiments.project_revision --validate "$MANIFEST" --sha256 "$SHA" >/dev/null \
@@ -108,7 +136,7 @@ echo "revision receipt valid"
 
 # Rebind the campaign env (replace the line when present, append when absent).
 # The manifest path is written relative to $HOME when the repo lives under it.
-REPO_ENV="${REPO/#"$HOME"/\$HOME}"
+MANIFEST_ENV="${MANIFEST/#"$HOME"/\$HOME}"
 rebind() { # VAR value
   if grep -q "^export $1=" "$CAMPAIGN_ENV"; then
     sed -i "s|^export $1=.*|export $1=$2|" "$CAMPAIGN_ENV"
@@ -117,7 +145,7 @@ rebind() { # VAR value
   fi
 }
 rebind REF_URA "$REF"
-rebind URA_PROJECT_REVISION_MANIFEST "$REPO_ENV/$MANIFEST"
+rebind URA_PROJECT_REVISION_MANIFEST "$MANIFEST_ENV"
 rebind URA_PROJECT_REVISION_SHA256 "$SHA"
 set -a; source "$CAMPAIGN_ENV"; set +a
 

@@ -136,8 +136,9 @@ checks it out, then:
    digits such as `URA_PROJECT_REVISION_SHA256` included);
 3. `experiments.local_targets --refresh`, then refuses if any TRACKED file
    changed (`git diff --quiet`);
-4. project-revision receipt: supersedes the previous receipt, creates the new one
-   with `--expected-revision <commit>`, validates it by sha256 - an invalid
+4. project-revision receipt: preserves every prior content-addressed receipt at
+   its stable path, creates or byte-identically adopts the receipt for
+   `--expected-revision <commit>`, and validates it by sha256 - an invalid
    receipt aborts (`revision receipt INVALID`) before anything is rebound;
 5. rebinds `REF_URA`, `URA_PROJECT_REVISION_MANIFEST`,
    `URA_PROJECT_REVISION_SHA256` in `~/.ura_campaign_env` and re-sources it;

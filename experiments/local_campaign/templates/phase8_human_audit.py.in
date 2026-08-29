@@ -102,7 +102,32 @@ RETAINED_PHASE6_PAYLOADS_BY_COMMIT = {
             "sha256": "e94c4be93eb1bfcd2e4b5c17cbb5fbaf32b56f97cdb55a4e3ff3ffaf501e2903",
             "bytes": 330057,
         },
-    }
+    },
+    "da062d0e2121ea2104b0c81374ef40f4f4f74473": {
+        "native": {
+            "sha256": "393a53d174ee5ca0ef52ed9a8be0f0ed6acb784a037e62d03d55cf2e32a6ba9f",
+            "bytes": 172062,
+        },
+    },
+}
+RETAINED_NATIVE_OLLAMA_MODELS_BY_COMMIT = {
+    "da062d0e2121ea2104b0c81374ef40f4f4f74473": {
+        "primary": {
+            "tag": "mollysama/rwkv-7-g1f:2.9b",
+            "digest": "7813f2283a135ef1264b8cec647b339d92fa7ecffafefeac61a2670b572f03f7",
+            "capabilities": ["completion", "thinking"],
+        },
+        "auditor": {
+            "tag": "mollysama/rwkv-7-g1d:0.4b",
+            "digest": "78e699bd71f0cef7ed8fb38a469088310af0ab07d678661980c6b8c7f130a7f8",
+            "capabilities": ["completion", "thinking"],
+        },
+        "judge": {
+            "tag": "mollysama/rwkv-7-g1g:1.5b",
+            "digest": "8ff95f43952c361048310b50a5c4b16f98d8f0642a87b536452e627224a0dddc",
+            "capabilities": ["completion", "thinking"],
+        },
+    },
 }
 FROZEN_PHASE7_PAYLOAD = {
     "sha256": "@@SHA:phase7_analysis.py@@",
@@ -3109,6 +3134,7 @@ def _validate_native_call_summary(
     call_cap: int,
     observed_calls: int,
     require_success: bool,
+    expected_model_tags: Sequence[str] | None = None,
     payload: bytes | None = None,
 ) -> None:
     if payload is None:
@@ -3135,7 +3161,17 @@ def _validate_native_call_summary(
         "hosted_calls",
         "downloads",
     }
-    model_tags = sorted(model["tag"] for model in NATIVE_OLLAMA_MODELS.values())
+    model_tags = sorted(
+        expected_model_tags
+        if expected_model_tags is not None
+        else (model["tag"] for model in NATIVE_OLLAMA_MODELS.values())
+    )
+    if (
+        not model_tags
+        or len(set(model_tags)) != len(model_tags)
+        or any(not isinstance(tag, str) or not tag for tag in model_tags)
+    ):
+        raise Phase8Error(f"{engine}: native model allow-list differs")
     generation_paths = {
         "/api/chat",
         "/api/generate",
@@ -4778,6 +4814,7 @@ def validate_native_completion(
         "all_independent_engines_attempted",
     }
     attempt_name = value.get("attempt")
+    native_commit = value.get("expected_commit")
     local_calls = value.get("local_model_calls")
     if (
         set(value) != expected_fields
@@ -4787,7 +4824,7 @@ def validate_native_completion(
         or not isinstance(attempt_name, str)
         or not attempt_name
         or Path(attempt_name).name != attempt_name
-        or value.get("expected_commit") != EXPECTED_COMMIT
+        or re.fullmatch(r"[0-9a-f]{40}", str(native_commit)) is None
         or value.get("framework_lock_id") != EXPECTED_FRAMEWORK_LOCK
         or value.get("inventory_complete") is not True
         or value.get("conditional_na_lanes")
@@ -4872,7 +4909,7 @@ def validate_native_completion(
         value["payload"],
         expected=phase6_payload_identity(
             "native",
-            expected_commit=EXPECTED_COMMIT,
+            expected_commit=str(native_commit),
             label="Phase 6 native payload",
         ),
         label="Phase 6 native payload",
@@ -4916,7 +4953,7 @@ def validate_native_completion(
         or launch.get("plan") != value.get("plan")
         or launch.get("payload") != value.get("payload")
         or launch.get("authorized_plan_sha256") != plan_sha
-        or launch.get("expected_commit") != EXPECTED_COMMIT
+        or launch.get("expected_commit") != native_commit
         or launch.get("framework_lock_id") != EXPECTED_FRAMEWORK_LOCK
         or launch.get("gate5_inputs") != gate5_inputs
     ):
@@ -4942,6 +4979,11 @@ def validate_native_completion(
     plan_execution = plan.get("execution")
     plan_code = plan.get("code_identity")
     plan_models = plan.get("ollama_models")
+    expected_native_models = (
+        NATIVE_OLLAMA_MODELS
+        if native_commit == EXPECTED_COMMIT
+        else RETAINED_NATIVE_OLLAMA_MODELS_BY_COMMIT.get(str(native_commit), {})
+    )
     execution_fields = {
         "work_root",
         "framework_env_root",
@@ -4968,7 +5010,7 @@ def validate_native_completion(
             "framework_lock",
             "project_revision",
         }
-        or plan_code.get("expected_commit") != EXPECTED_COMMIT
+        or plan_code.get("expected_commit") != native_commit
         or plan_code.get("framework_lock_id") != EXPECTED_FRAMEWORK_LOCK
         or plan.get("gate5_inputs") != gate5_inputs
         or plan.get("engine_order") != list(NATIVE_ENGINES)
@@ -5002,7 +5044,8 @@ def validate_native_completion(
         or plan_execution.get("call_gate")
         != "per-engine literal-loopback proxy under one production exclusive inference lease with protected pre/post exact-roster checks, exact model allow-list, and hard request cap"
         or not isinstance(plan_models, dict)
-        or set(plan_models) != set(NATIVE_OLLAMA_MODELS)
+        or not expected_native_models
+        or set(plan_models) != set(expected_native_models)
     ):
         raise Phase8Error("Phase 6 native authorized plan differs")
     framework_lock_path, framework_lock = descriptor_object(
@@ -5024,17 +5067,33 @@ def validate_native_completion(
         or any(not isinstance(row, dict) for row in framework_rows)
     ):
         raise Phase8Error("deployed framework runtime lock differs")
-    _native_project_path, native_project_receipt = descriptor_object(
+    native_project_path = descriptor_file(
         plan_code["project_revision"],
         label="Phase 6 native project-revision receipt",
     )
+    expected_project_root = Path(EXPECTED_PROJECT_REVISION_MANIFEST).parent.resolve(
+        strict=True
+    )
+    if native_project_path.parent != expected_project_root:
+        raise Phase8Error("Phase 6 native project-revision receipt moved")
+    try:
+        from ura.project_revision import load_project_revision_file
+
+        native_project_receipt, _native_project_binding = load_project_revision_file(
+            native_project_path,
+            str(plan_code["project_revision"].get("sha256")),
+            Path.cwd() / "experiments" / "run_matrix.py",
+            recheck_checkout=False,
+        )
+    except Exception as exc:  # noqa: BLE001 - historical receipt boundary
+        raise Phase8Error(
+            "Phase 6 native project-revision receipt is invalid"
+        ) from exc
     native_repository = native_project_receipt.get("repository")
     if (
-        plan_code["project_revision"].get("sha256")
-        != EXPECTED_PROJECT_REVISION_SHA256
-        or not isinstance(native_repository, dict)
-        or native_repository.get("expected_commit") != EXPECTED_COMMIT
-        or native_repository.get("observed_commit") != EXPECTED_COMMIT
+        not isinstance(native_repository, dict)
+        or native_repository.get("expected_commit") != native_commit
+        or native_repository.get("observed_commit") != native_commit
         or native_repository.get("clean") is not True
     ):
         raise Phase8Error("Phase 6 native project-revision receipt differs")
@@ -5064,9 +5123,11 @@ def validate_native_completion(
             or observed_path.resolve(strict=True) != expected_path
         ):
             raise Phase8Error(f"Phase 6 native {field} differs from campaign state")
-    for role, expected_model in NATIVE_OLLAMA_MODELS.items():
+    for role, expected_model in expected_native_models.items():
         model = plan_models[role]
         capabilities = model.get("capabilities") if isinstance(model, dict) else None
+        retained_capabilities = expected_model.get("capabilities")
+        expected_quantization = expected_model.get("quantization")
         if (
             not isinstance(model, dict)
             or set(model) != {"tag", "digest", "capabilities", "size", "details"}
@@ -5077,16 +5138,31 @@ def validate_native_completion(
             or capabilities != sorted(capabilities)
             or any(not isinstance(item, str) for item in capabilities)
             or "completion" not in capabilities
+            or (
+                retained_capabilities is not None
+                and capabilities != retained_capabilities
+            )
             or type(model.get("size")) is not int
             or model["size"] < 1
             or not isinstance(model.get("details"), dict)
-            or model["details"].get("quantization_level")
-            != expected_model["quantization"]
+            or (
+                expected_quantization is not None
+                and model["details"].get("quantization_level")
+                != expected_quantization
+            )
         ):
             raise Phase8Error(f"Phase 6 native exact Ollama model differs: {role}")
-        if role in {"primary", "secondary"} and "vision" not in capabilities:
+        if (
+            native_commit == EXPECTED_COMMIT
+            and role in {"primary", "secondary"}
+            and "vision" not in capabilities
+        ):
             raise Phase8Error(f"Phase 6 native Ollama model lost vision: {role}")
-        if role == "primary" and "tools" not in capabilities:
+        if (
+            native_commit == EXPECTED_COMMIT
+            and role == "primary"
+            and "tools" not in capabilities
+        ):
             raise Phase8Error("Phase 6 native primary Ollama model lost tools")
     plan_row_fields = {
         "engine",
@@ -5417,6 +5493,9 @@ def validate_native_completion(
                 call_cap=NATIVE_TARGET_CALL_CAPS[engine],
                 observed_calls=terminal_calls,
                 require_success=True,
+                expected_model_tags=tuple(
+                    model["tag"] for model in expected_native_models.values()
+                ),
                 payload=evidence_observations["local_call_summary"][1],
             )
             _validate_native_run_receipts(
@@ -5533,6 +5612,9 @@ def validate_native_completion(
                         call_cap=NATIVE_TARGET_CALL_CAPS[engine],
                         observed_calls=terminal_calls,
                         require_success=False,
+                        expected_model_tags=tuple(
+                            model["tag"] for model in expected_native_models.values()
+                        ),
                         payload=call_summary_payload,
                     )
     if observed_local_calls != local_calls:
@@ -5642,7 +5724,7 @@ def validate_native_completion(
         or summary.get("status") != expected_status
         or not UTC_RE.fullmatch(str(summary.get("completed_at_utc", "")))
         or summary.get("attempt") != attempt_name
-        or summary.get("expected_commit") != EXPECTED_COMMIT
+        or summary.get("expected_commit") != native_commit
         or summary.get("framework_lock_id") != EXPECTED_FRAMEWORK_LOCK
         or summary.get("gate5_inputs") != gate5_inputs
         or summary.get("conditional_na_lanes") != conditional_na_lanes
@@ -8146,21 +8228,32 @@ def validate_phase7_completion(
     )
     native_plan_code = native_plan.get("code_identity")
     native_repository = native_project_receipt.get("repository")
+    native_commit = authoritative_native.get("expected_commit")
+    if (
+        re.fullmatch(r"[0-9a-f]{40}", str(native_commit)) is None
+        or authoritative_native.get("framework_lock_id") != EXPECTED_FRAMEWORK_LOCK
+    ):
+        raise Phase8Error("Phase 7 native historical identity is invalid")
+    require_descriptor_identity(
+        native["payload"],
+        expected=phase6_payload_identity(
+            "native",
+            expected_commit=str(native_commit),
+            label="Phase 7 native payload",
+        ),
+        label="Phase 7 native payload",
+    )
     if (
         not isinstance(native_plan_code, dict)
         or native_plan_code.get("project_revision") != native["project_revision"]
-        or native["project_revision"].get("sha256")
-        != EXPECTED_PROJECT_REVISION_SHA256
         or not isinstance(native_repository, dict)
         or native_repository.get("clean") is not True
-        or authoritative_native.get("expected_commit")
-        != inputs["code_identity"]["expected_commit"]
         or native_plan_code.get("expected_commit")
-        != authoritative_native.get("expected_commit")
+        != native_commit
         or native_repository.get("expected_commit")
-        != authoritative_native.get("expected_commit")
+        != native_commit
         or native_repository.get("observed_commit")
-        != authoritative_native.get("expected_commit")
+        != native_commit
     ):
         raise Phase8Error(
             "Phase 7 native snapshot is not bound to its current project revision"

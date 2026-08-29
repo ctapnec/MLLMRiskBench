@@ -2715,6 +2715,12 @@ def test_distro_repin_script_is_fail_closed_and_sources_canonical_ura_env_last()
     # (a failure on the left of '&&' would not trip errexit)
     assert '--validate "$MANIFEST" --sha256 "$SHA" >/dev/null \\\n  || { echo "revision receipt INVALID' in text
     assert '>/dev/null && echo "revision receipt valid"' not in text
+    assert "mv runs/thesis/project-revision/project-revision-*" not in text
+    assert 'RECEIPT_STAGE="$RECEIPT_ROOT/.repin-$REF-$$"' in text
+    assert 'cmp -s -- "$STAGED_MANIFEST" "$MANIFEST"' in text
+    assert 'MANIFEST="$RECEIPT_ROOT/${STAGED_MANIFEST##*/}"' in text
+    assert 'MANIFEST_ENV="${MANIFEST/#"$HOME"/\\$HOME}"' in text
+    assert 'rebind URA_PROJECT_REVISION_MANIFEST "$MANIFEST_ENV"' in text
     assert '|| { echo "source receipt: NOT VALID' in text and "exit 1; }" in text[text.index("source receipt: NOT VALID"):]
     # the executing copy is compared with the deployed commit's distro/repin.sh
     assert 'git cat-file -e "$REF:distro/repin.sh"' in text

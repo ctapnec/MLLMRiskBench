@@ -2040,13 +2040,30 @@ def test_phase6_sequence_adopts_only_exact_terminal_measured_launches() -> None:
         'cmp -s -- "$adopted_extended_launch" "$EXTENDED_LAUNCH"',
         'wait_for_child extended "$EXTENDED" "$EXTENDED_SHA256"',
     )
+    native_required = (
+        'if [[ -n "${PHASE6_NATIVE_ADOPT_LAUNCH-}" ]]; then',
+        'test -f "$PHASE6_NATIVE_ADOPT_LAUNCH" '
+        '&& test ! -L "$PHASE6_NATIVE_ADOPT_LAUNCH"',
+        'test "$adopted_native_launch" = "$PHASE6_NATIVE_ADOPT_LAUNCH"',
+        '"$URA_WORK"/runs/engineering/phase6-sequence-*/native.launch.txt)',
+        'adopted_native_plan="$adopted_native_root/native-plan.json"',
+        'adopted_native_plan_result="$adopted_native_root/native-plan-result.json"',
+        'cmp -s -- "$adopted_native_plan" "$NATIVE_PLAN"',
+        'cmp -s -- "$adopted_native_plan_result" "$NATIVE_PLAN_RESULT"',
+        'cmp -s -- "$adopted_native_launch" "$NATIVE_LAUNCH"',
+        'wait_for_child native "$NATIVE" "$NATIVE_SHA256" "$NATIVE_BYTES"',
+    )
 
     def assert_adoption_contract(candidate: str) -> None:
-        for item in (*core_required, *extended_required):
+        for item in (*core_required, *extended_required, *native_required):
             assert item in candidate
+        native_adoption = candidate.split(native_required[0], 1)[1].split(
+            "else", 1
+        )[0]
+        assert 'bash "$NATIVE"' not in native_adoption
 
     assert_adoption_contract(source)
-    for item in (*core_required[:-1], *extended_required[:-1]):
+    for item in (*core_required[:-1], *extended_required[:-1], *native_required[:-1]):
         mutated = source.replace(item, "removed-adoption-check", 1)
         with pytest.raises(AssertionError):
             assert_adoption_contract(mutated)
@@ -2066,7 +2083,8 @@ def test_phase6_sequence_uses_gate5_identity_for_measured_children() -> None:
         'gate5_code_identity.get("framework_lock_id") != lock',
         'if kind in {"core", "extended"}:\n'
         '    code_identity = gate5_code_identity',
-        'else:\n    code_identity = {"expected_commit": commit, "framework_lock_id": lock}',
+        "else:\n    code_identity = phase7.native_code_identity_from_completion(completion)",
+        'if code_identity["framework_lock_id"] != lock:',
         '"code_identity": code_identity,',
     )
 
@@ -2149,6 +2167,37 @@ def test_phase7_validates_controller_gate5_copies_by_location_and_bytes() -> Non
     )
     with pytest.raises(AssertionError):
         assert_copy_contract((core, extended, reverted_native))
+
+
+def test_phase7_native_adoption_revalidates_only_whitelisted_history() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase7_analysis.py.in"
+    ).read_text(encoding="utf-8")
+    helper = source.split("def native_code_identity_from_completion(", 1)[1].split(
+        "\ndef ", 1
+    )[0]
+    native = source.split("def validate_native_controller(", 1)[1].split(
+        "def build_runner_input_view(", 1
+    )[0]
+
+    def assert_history_contract() -> None:
+        assert "RETAINED_PHASE6_PAYLOADS_BY_COMMIT.get(" in helper
+        assert ').get("native")' in helper
+        assert "RETAINED_NATIVE_OLLAMA_MODELS_BY_COMMIT.get(" in native
+        assert "expected_native_models" in native
+        assert "recheck_checkout=False" in native
+        assert "native_project_path.parent != expected_project_root" in native
+        assert "!= EXPECTED_PROJECT_REVISION_SHA256" not in native
+
+    assert_history_contract()
+    mutated = native.replace("recheck_checkout=False", "recheck_checkout=True", 1)
+    assert mutated != native
+    with pytest.raises(AssertionError):
+        assert "recheck_checkout=False" in mutated
 
 
 def test_phase6_failure_sealers_create_missing_runner_parent() -> None:
@@ -2348,12 +2397,19 @@ def test_phase7_rr_pair_dispatch_is_conditioned_on_current_measured_cells() -> N
     retained_extended_sha = (
         "e94c4be93eb1bfcd2e4b5c17cbb5fbaf32b56f97cdb55a4e3ff3ffaf501e2903"
     )
+    retained_native_commit = "da062d0e2121ea2104b0c81374ef40f4f4f74473"
+    retained_native_sha = (
+        "393a53d174ee5ca0ef52ed9a8be0f0ed6acb784a037e62d03d55cf2e32a6ba9f"
+    )
     for value in (
         retained_commit,
         retained_core_sha,
         retained_extended_sha,
+        retained_native_commit,
+        retained_native_sha,
         '"bytes": 303543',
         '"bytes": 330057',
+        '"bytes": 172062',
     ):
         assert value in retained
     payload_start = source.index("def require_frozen_phase6_payload(")
@@ -2368,6 +2424,18 @@ def test_phase7_rr_pair_dispatch_is_conditioned_on_current_measured_cells() -> N
     assert reverted_retained != retained
     with pytest.raises(AssertionError):
         assert retained_core_sha in reverted_retained
+    native_models_start = source.index("RETAINED_NATIVE_OLLAMA_MODELS_BY_COMMIT = {")
+    native_models_end = source.index(
+        "\nRETAINED_EXTENDED_LANE_PARENT_FAILURE_COMMIT", native_models_start
+    )
+    retained_native_models = source[native_models_start:native_models_end]
+    for value in (
+        retained_native_commit,
+        "mollysama/rwkv-7-g1f:2.9b",
+        "mollysama/rwkv-7-g1d:0.4b",
+        "mollysama/rwkv-7-g1g:1.5b",
+    ):
+        assert value in retained_native_models
     rr_roots_start = source.index("rr_execution_roots = (")
     rr_roots_end = source.index("\n    )", rr_roots_start) + len("\n    )")
     rr_roots = source[rr_roots_start:rr_roots_end]
@@ -2933,12 +3001,22 @@ def test_phase8_accepts_current_rr_and_rejects_only_historical_terminal_rows() -
     retained_extended_sha = (
         "e94c4be93eb1bfcd2e4b5c17cbb5fbaf32b56f97cdb55a4e3ff3ffaf501e2903"
     )
+    retained_native_commit = "da062d0e2121ea2104b0c81374ef40f4f4f74473"
+    retained_native_sha = (
+        "393a53d174ee5ca0ef52ed9a8be0f0ed6acb784a037e62d03d55cf2e32a6ba9f"
+    )
     for value in (
         retained_commit,
         retained_core_sha,
         retained_extended_sha,
+        retained_native_commit,
+        retained_native_sha,
         '"bytes": 303543',
         '"bytes": 330057',
+        '"bytes": 172062',
+        "mollysama/rwkv-7-g1f:2.9b",
+        "mollysama/rwkv-7-g1d:0.4b",
+        "mollysama/rwkv-7-g1g:1.5b",
     ):
         assert value in retained
     payload_start = source.index("def phase6_payload_identity(")
