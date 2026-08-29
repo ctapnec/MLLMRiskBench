@@ -37,10 +37,7 @@ def test_current_ollama_roster_is_exact_recent_thesis_cohort() -> None:
         "Q4_K_M",
         "MXFP4",
     ]
-    assert all(
-        re.fullmatch(r"[0-9a-f]{64}", model.digest)
-        for model in CURRENT_OLLAMA_MODELS
-    )
+    assert all(re.fullmatch(r"[0-9a-f]{64}", model.digest) for model in CURRENT_OLLAMA_MODELS)
     assert all(
         "rwkv" not in model.tag.lower() and "mollysama" not in model.tag.lower()
         for model in CURRENT_OLLAMA_MODELS
@@ -56,9 +53,7 @@ def test_current_ollama_modalities_roles_and_lanes_are_not_conflated() -> None:
         "deepseek-r1-distill-32b",
         "gpt-oss-20b",
     ]
-    native_roles = {
-        role: model.label for role, model in CURRENT_OLLAMA_NATIVE_ROLES.items()
-    }
+    native_roles = {role: model.label for role, model in CURRENT_OLLAMA_NATIVE_ROLES.items()}
     assert native_roles == {
         "primary": "gemma4-12b",
         "secondary": "ministral3-14b",
@@ -70,9 +65,7 @@ def test_current_ollama_modalities_roles_and_lanes_are_not_conflated() -> None:
         "gptgeochat-ollama-deepseek-r1-distill-32b",
         "gptgeochat-ollama-gpt-oss-20b",
     }
-    assert not set(CURRENT_OLLAMA_RUNNABLE_LANES) & set(
-        CURRENT_OLLAMA_TYPED_TERMINAL_LANES
-    )
+    assert not set(CURRENT_OLLAMA_RUNNABLE_LANES) & set(CURRENT_OLLAMA_TYPED_TERMINAL_LANES)
 
 
 def test_image_lane_rejects_text_only_model() -> None:
@@ -81,12 +74,7 @@ def test_image_lane_rejects_text_only_model() -> None:
 
 
 def test_prospective_controllers_use_only_the_current_ollama_roster() -> None:
-    templates = (
-        Path(__file__).parents[2]
-        / "experiments"
-        / "local_campaign"
-        / "templates"
-    )
+    templates = Path(__file__).parents[2] / "experiments" / "local_campaign" / "templates"
     for name in (
         "phase5_ollama_workflow.sh.in",
         "phase6_native_diagnostics.sh.in",
@@ -96,9 +84,7 @@ def test_prospective_controllers_use_only_the_current_ollama_roster() -> None:
         source = (templates / name).read_text(encoding="utf-8")
         assert "mollysama/" not in source
         assert "CURRENT_OLLAMA_NATIVE_ROLES" in source or name.startswith("phase5_")
-    native = (templates / "phase6_native_diagnostics.sh.in").read_text(
-        encoding="utf-8"
-    )
+    native = (templates / "phase6_native_diagnostics.sh.in").read_text(encoding="utf-8")
     assert "the exact local Ollama roster has no tool-call capability" not in native
-    assert 'set(expected_models) != set(EXPECTED_MODELS)' in native
+    assert "set(expected_models) != set(EXPECTED_MODELS)" in native
     assert 'get("quantization_level")' in native
