@@ -113,12 +113,8 @@ def test_prospective_controllers_use_only_the_current_ollama_roster() -> None:
     assert "set(expected_models) != set(EXPECTED_MODELS)" in native
     assert 'get("quantization_level")' in native
 
-    rr_amendment = (templates / "phase6_seven_output_policy.py.in").read_text(
-        encoding="utf-8"
-    )
-    prospective_specs = rr_amendment.split("SPEC_SOURCES = (", 1)[1].split(
-        "\n)\nLANE_ORDER", 1
-    )[0]
+    rr_amendment = (templates / "phase6_seven_output_policy.py.in").read_text(encoding="utf-8")
+    prospective_specs = rr_amendment.split("SPEC_SOURCES = (", 1)[1].split("\n)\nLANE_ORDER", 1)[0]
     assert "rwkv" not in prospective_specs.lower()
     assert "mollysama" not in prospective_specs.lower()
 
@@ -151,30 +147,22 @@ def test_current_ollama_phase5_emits_a_consumable_gate5_amendment() -> None:
         / "phase5_ollama_workflow.sh.in"
     ).read_text(encoding="utf-8")
     build = (
-        'experiments.local_campaign.current_ollama_gate5 --build \\\n'
+        "experiments.local_campaign.current_ollama_gate5 --build \\\n"
         '    --control-root "$CONTROL_ROOT"'
     )
-    validate = (
-        "experiments.local_campaign.current_ollama_gate5 --validate "
-        '"$GATE5_AMENDMENT"'
-    )
+    validate = 'experiments.local_campaign.current_ollama_gate5 --validate "$GATE5_AMENDMENT"'
     assert build in template
     assert validate in template
     assert template.index(build) < template.index(
         "-m experiments.local_campaign.console_events \\\n    target-execution"
     )
-    assert (
-        'GATE5_AMENDMENT="$CONTROL_ROOT/gate5-current-ollama-amendment.json"'
-        in template
-    )
+    assert 'GATE5_AMENDMENT="$CONTROL_ROOT/gate5-current-ollama-amendment.json"' in template
 
 
 def test_current_ollama_gate5_lane_contract_keeps_caps_sampling_and_judges_exact() -> None:
     modes: list[str] = []
     for lane in CURRENT_OLLAMA_RUNNABLE_LANES:
-        label = next(
-            model.label for model in CURRENT_OLLAMA_MODELS if model.label in lane
-        )
+        label = next(model.label for model in CURRENT_OLLAMA_MODELS if model.label in lane)
         mode, _modality, arms, judges = _lane_contract(lane, label)
         modes.append(mode)
         argv = _base_argv(

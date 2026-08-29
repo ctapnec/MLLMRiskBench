@@ -257,10 +257,7 @@ def _expected_dispositions() -> set[tuple[str, str]]:
         *(("projection", lane) for lane in CURRENT_OLLAMA_RUNNABLE_LANES),
         *(("canary", lane) for lane in CURRENT_OLLAMA_RUNNABLE_LANES),
         *(("attestation", f"{model.label}/text") for model in CURRENT_OLLAMA_MODELS),
-        *(
-            ("attestation", f"{model.label}/image")
-            for model in CURRENT_OLLAMA_IMAGE_MODELS
-        ),
+        *(("attestation", f"{model.label}/image") for model in CURRENT_OLLAMA_IMAGE_MODELS),
         ("integrity", "roster-final"),
     }
 
@@ -386,9 +383,7 @@ def build_amendment(
     attestations = _read_tsv(
         control / "attestations.tsv", ATTESTATION_FIELDS, label="Ollama attestations"
     )
-    canaries = _read_tsv(
-        control / "canaries.tsv", CANARY_FIELDS, label="Ollama canaries"
-    )
+    canaries = _read_tsv(control / "canaries.tsv", CANARY_FIELDS, label="Ollama canaries")
     dispositions = _read_tsv(
         control / "dispositions.tsv", DISPOSITION_FIELDS, label="Ollama dispositions"
     )
@@ -411,13 +406,9 @@ def build_amendment(
         raise ValueError("current Ollama Gate 5 contains duplicate lanes")
 
     expected_attestations = {
-        (model.label, modality)
-        for model in CURRENT_OLLAMA_MODELS
-        for modality in model.modalities
+        (model.label, modality) for model in CURRENT_OLLAMA_MODELS for modality in model.modalities
     }
-    by_attestation = {
-        (row["model_label"], row["modality"]): row for row in attestations
-    }
+    by_attestation = {(row["model_label"], row["modality"]): row for row in attestations}
     if set(by_attestation) != expected_attestations:
         raise ValueError("current Ollama attestation inventory changed")
     _validate_roster(control / "roster-start.json", label="initial Ollama roster")
@@ -429,17 +420,15 @@ def build_amendment(
         receipt = readiness / f"{model.label}.readiness.json"
         sha_file = readiness / f"{model.label}.sha256"
         receipt_payload = _stable_file(receipt, label=f"{model.label} readiness receipt")
-        digest = _stable_file(
-            sha_file, label=f"{model.label} readiness digest"
-        ).decode("ascii").strip()
+        digest = (
+            _stable_file(sha_file, label=f"{model.label} readiness digest").decode("ascii").strip()
+        )
         if HEX64.fullmatch(digest) is None or hashlib.sha256(receipt_payload).hexdigest() != digest:
             raise ValueError(f"{model.label} readiness binding changed")
         validate_readiness(json.loads(receipt_payload), expected_spec=model.spec)
         readiness_evidence[model.label] = {
             "receipt": _descriptor(receipt, label=f"{model.label} readiness receipt"),
-            "sha256_file": _descriptor(
-                sha_file, label=f"{model.label} readiness digest"
-            ),
+            "sha256_file": _descriptor(sha_file, label=f"{model.label} readiness digest"),
         }
 
     lane_rows: list[dict[str, object]] = []
@@ -507,12 +496,8 @@ def build_amendment(
         canary_target_cap = _exact_int(
             canary["target_cap"], label=f"{lane} canary target cap", minimum=1
         )
-        canary_judge_cap = _exact_int(
-            canary["judge_cap"], label=f"{lane} canary judge cap"
-        )
-        canary_http_cap = _exact_int(
-            canary["http_cap"], label=f"{lane} canary HTTP cap"
-        )
+        canary_judge_cap = _exact_int(canary["judge_cap"], label=f"{lane} canary judge cap")
+        canary_http_cap = _exact_int(canary["http_cap"], label=f"{lane} canary HTTP cap")
         canary_guard_evaluations = _exact_int(
             canary["local_guardrail_evaluations"],
             label=f"{lane} canary local guardrail evaluations",
@@ -528,9 +513,7 @@ def build_amendment(
             raise ValueError(f"{lane}: hosted-call cap changed")
         local_config = control / "local-configs" / f"{label}.json"
         _validate_local_config(local_config, model_label=label)
-        local_config_descriptor = _descriptor(
-            local_config, label=f"{lane} local configuration"
-        )
+        local_config_descriptor = _descriptor(local_config, label=f"{lane} local configuration")
         attestation = by_attestation[(label, modality)]
         receipt = Path(attestation["receipt"])
         receipt_payload = _stable_file(receipt, label=f"{lane} live attestation")
@@ -628,27 +611,15 @@ def build_amendment(
         "control_root": str(control),
         "project_revision": _descriptor(project_revision, label="project revision"),
         "source_config": _descriptor(source_config, label="source config"),
-        "source_conformance": _descriptor(
-            source_conformance, label="source conformance"
-        ),
+        "source_conformance": _descriptor(source_conformance, label="source conformance"),
         "readiness": readiness_evidence,
-        "roster_start": _descriptor(
-            control / "roster-start.json", label="initial Ollama roster"
-        ),
-        "roster_final": _descriptor(
-            control / "roster-final.json", label="final Ollama roster"
-        ),
+        "roster_start": _descriptor(control / "roster-start.json", label="initial Ollama roster"),
+        "roster_final": _descriptor(control / "roster-final.json", label="final Ollama roster"),
         "status_tables": {
-            "projections": _descriptor(
-                control / "projections.tsv", label="Ollama projections"
-            ),
-            "attestations": _descriptor(
-                control / "attestations.tsv", label="Ollama attestations"
-            ),
+            "projections": _descriptor(control / "projections.tsv", label="Ollama projections"),
+            "attestations": _descriptor(control / "attestations.tsv", label="Ollama attestations"),
             "canaries": _descriptor(control / "canaries.tsv", label="Ollama canaries"),
-            "dispositions": _descriptor(
-                control / "dispositions.tsv", label="Ollama dispositions"
-            ),
+            "dispositions": _descriptor(control / "dispositions.tsv", label="Ollama dispositions"),
         },
         "runnable_lane_order": expected_lanes,
         "typed_terminal_lanes": {
@@ -667,12 +638,8 @@ def build_amendment(
             "canary_target_attempts": canary_target_attempts,
             "canary_successful_target_generations": canary_successful_generations,
             "attestation_target_attempts": attestation_target_attempts,
-            "attestation_successful_target_generations": (
-                attestation_successful_generations
-            ),
-            "total_target_attempts": (
-                canary_target_attempts + attestation_target_attempts
-            ),
+            "attestation_successful_target_generations": (attestation_successful_generations),
+            "total_target_attempts": (canary_target_attempts + attestation_target_attempts),
             "total_successful_target_generations": (
                 canary_successful_generations + attestation_successful_generations
             ),
@@ -735,9 +702,7 @@ def validate_amendment(path: Path, *, expected_commit: str | None = None) -> dic
         evidence = readiness[model.label]
         if not isinstance(evidence, dict) or set(evidence) != {"receipt", "sha256_file"}:
             raise ValueError(f"{model.label} readiness evidence changed")
-        receipt = _descriptor_file(
-            evidence["receipt"], label=f"{model.label} readiness receipt"
-        )
+        receipt = _descriptor_file(evidence["receipt"], label=f"{model.label} readiness receipt")
         sha_file = _descriptor_file(
             evidence["sha256_file"], label=f"{model.label} readiness digest"
         )
@@ -763,9 +728,7 @@ def validate_amendment(path: Path, *, expected_commit: str | None = None) -> dic
     projections = _read_tsv(
         table_paths["projections"], PROJECTION_FIELDS, label="Ollama projections"
     )
-    canaries = _read_tsv(
-        table_paths["canaries"], CANARY_FIELDS, label="Ollama canaries"
-    )
+    canaries = _read_tsv(table_paths["canaries"], CANARY_FIELDS, label="Ollama canaries")
     dispositions = _read_tsv(
         table_paths["dispositions"], DISPOSITION_FIELDS, label="Ollama dispositions"
     )
@@ -774,8 +737,7 @@ def validate_amendment(path: Path, *, expected_commit: str | None = None) -> dic
     if (
         list(by_projection) != list(CURRENT_OLLAMA_RUNNABLE_LANES)
         or list(by_canary) != list(CURRENT_OLLAMA_RUNNABLE_LANES)
-        or {(row["phase"], row["unit"]) for row in dispositions}
-        != _expected_dispositions()
+        or {(row["phase"], row["unit"]) for row in dispositions} != _expected_dispositions()
         or any(row["disposition"] != "completed" for row in dispositions)
     ):
         raise ValueError("current Ollama status-table inventory changed")
@@ -820,9 +782,7 @@ def validate_amendment(path: Path, *, expected_commit: str | None = None) -> dic
         }:
             raise ValueError(f"{lane}: approved caps changed")
         local_config_value = row.get("local_config")
-        local_config = _descriptor_file(
-            local_config_value, label=f"{lane} local configuration"
-        )
+        local_config = _descriptor_file(local_config_value, label=f"{lane} local configuration")
         _validate_local_config(local_config, model_label=model.label)
         if not isinstance(local_config_value, dict):
             raise ValueError(f"{lane}: local configuration descriptor changed")
@@ -881,9 +841,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
         if args.validate is not None:
-            value = validate_amendment(
-                args.validate, expected_commit=args.expected_commit
-            )
+            value = validate_amendment(args.validate, expected_commit=args.expected_commit)
             print(
                 json.dumps(
                     {
