@@ -211,6 +211,7 @@ CONTROLLERS: tuple[Controller, ...] = (
     Controller("launch_gate5_sequence.sh.in", "launch_gate5_sequence.sh"),
     Controller("phase6_core_measured.sh.in", "phase6_core_measured.sh"),
     Controller("phase6_extended_measured.sh.in", "phase6_extended_measured.sh"),
+    Controller("phase6_current_ollama.sh.in", "phase6_current_ollama.sh"),
     Controller("phase6_followon_prepared.sh.in", "phase6_followon_prepared.sh"),
     Controller(
         "followon_prepared_controller.py.in",

@@ -18,6 +18,10 @@ from experiments.local_campaign.current_ollama import (
     image_lane,
 )
 from experiments.local_campaign.current_ollama_gate5 import _base_argv, _lane_contract
+from experiments.local_campaign.current_ollama_phase6 import (
+    _counts_from_level1,
+    _probe_args,
+)
 
 
 def _assert_exact_current_roster(models: Sequence[CurrentOllamaModel]) -> None:
@@ -187,3 +191,77 @@ def test_current_ollama_gate5_lane_contract_keeps_caps_sampling_and_judges_exact
     assert modes.count("static") == 6
     assert modes.count("rjudge") == 4
     assert modes.count("gptgeochat") == 2
+
+
+def _phase6_row(*, modality: str) -> dict[str, object]:
+    model = CURRENT_OLLAMA_MODELS[0]
+    arms = ("mmsafety_official",) if modality == "image" else ("airbench_full",)
+    return {
+        "lane_id": f"test-{modality}",
+        "modality": modality,
+        "model": {
+            "spec": model.spec,
+            "digest": model.digest,
+        },
+        "base_argv": _base_argv(
+            model_label=model.label,
+            mode="static",
+            arms=arms,
+            judges="rules,guardrail",
+            project_revision=Path("/evidence/project-revision.json"),
+            project_sha256="1" * 64,
+            source_config=Path("/source/source-instances.json"),
+            source_sha256="2" * 64,
+            source_conformance=Path("/evidence/source-conformance.json"),
+            conformance_sha256="3" * 64,
+            local_config=Path(f"/control/local-configs/{model.label}.json"),
+            local_config_sha256="4" * 64,
+        ),
+    }
+
+
+def test_current_ollama_phase6_uses_fresh_modality_specific_transport_probes() -> None:
+    text = _probe_args(_phase6_row(modality="text"), scope="scope", out=Path("/text"))
+    image = _probe_args(_phase6_row(modality="image"), scope="scope", out=Path("/image"))
+    assert text[text.index("--corpora") + 1] == "synth"
+    assert "--source-config" not in text
+    assert image[image.index("--corpora") + 1] == "harmbench_multimodal"
+    assert image[image.index("--source-config") + 1] == "/source/source-instances.json"
+    assert text[text.index("--max-total-target-calls") + 1] == "1"
+    assert image[image.index("--max-total-target-calls") + 1] == "1"
+
+
+def test_current_ollama_phase6_retains_nonresponses_in_measured_counts() -> None:
+    level1 = {
+        "counts": {
+            "judgment_records": {
+                "completed": 10,
+                "missing_responses": 3,
+            }
+        }
+    }
+    assert _counts_from_level1(level1) == (10, 7, 3)
+    level1["counts"]["judgment_records"]["missing_responses"] = 11
+    with pytest.raises(ValueError, match="target/missing-response"):
+        _counts_from_level1(level1)
+
+
+def test_current_ollama_phase6_is_generated_and_rechecks_each_lane() -> None:
+    root = Path(__file__).parents[2]
+    generator = (root / "experiments" / "local_campaign" / "generate.py").read_text(
+        encoding="utf-8"
+    )
+    template = (
+        root / "experiments" / "local_campaign" / "templates" / "phase6_current_ollama.sh.in"
+    ).read_text(encoding="utf-8")
+    runner = (root / "experiments" / "local_campaign" / "current_ollama_phase6.py").read_text(
+        encoding="utf-8"
+    )
+    assert 'Controller("phase6_current_ollama.sh.in", "phase6_current_ollama.sh")' in generator
+    assert '--gate5-amendment "$GATE5_AMENDMENT"' in template
+    assert "tmux new-session -d" in template
+    assert "--hard-stop-hours 336" in template
+    loop = runner.split("    for row in rows:", 1)[1]
+    assert "validate_amendment(gate5_path, expected_commit=expected_commit)" in loop
+    assert "_validate_live_roster(project)" in loop
+    assert loop.index("validate_amendment(") < loop.index("_build_state(")

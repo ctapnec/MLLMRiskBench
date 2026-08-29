@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+usage() {
+  printf 'usage: phase6_current_ollama.sh --gate5-amendment ABSOLUTE_PATH\n' >&2
+  exit 2
+}
+
+MODE='launch'
+GATE5_AMENDMENT=''
+CONTROL_ROOT=''
+SESSION=''
+while (( "$#" )); do
+  case "$1" in
+    --gate5-amendment)
+      (( "$#" >= 2 )) || usage
+      GATE5_AMENDMENT="$2"
+      shift 2
+      ;;
+    --worker)
+      MODE='worker'
+      shift
+      ;;
+    --control-root)
+      (( "$#" >= 2 )) || usage
+      CONTROL_ROOT="$2"
+      shift 2
+      ;;
+    --session)
+      (( "$#" >= 2 )) || usage
+      SESSION="$2"
+      shift 2
+      ;;
+    *) usage ;;
+  esac
+done
+
+source ~/.ura_campaign_env
+cd ~/MLLMRiskBench
+
+EXPECTED_COMMIT='@@EXPECTED_COMMIT@@'
+EXPECTED_FRAMEWORK_LOCK='@@FRAMEWORK_LOCK_SHA256@@'
+PY="$PWD/.venv/bin/python"
+SCRIPT="$(readlink -e -- "$0")"
+test -f "$SCRIPT" && test ! -L "$SCRIPT"
+
+assert_environment() {
+  test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
+  test -z "$(git status --porcelain)"
+  test "$URA_FRAMEWORK_LOCK_ID" = "$EXPECTED_FRAMEWORK_LOCK"
+  test -x "$PY"
+}
+
+validate_gate5() {
+  [[ "$GATE5_AMENDMENT" = /* ]]
+  GATE5_AMENDMENT="$(readlink -e -- "$GATE5_AMENDMENT")"
+  test -f "$GATE5_AMENDMENT" && test ! -L "$GATE5_AMENDMENT"
+  local parent
+  parent="$(dirname -- "$GATE5_AMENDMENT")"
+  test "$(readlink -e -- "$parent")" = "$parent"
+  case "$parent" in
+    "$URA_WORK"/runs/engineering/phase5-ollama-*) ;;
+    *) printf 'Gate 5 amendment is outside a Phase 5 Ollama control root\n' >&2; return 1 ;;
+  esac
+  test -f "$parent/.exit" && test ! -L "$parent/.exit"
+  test "$(tr -d '\r\n' < "$parent/.exit")" = '0'
+  PYTHONDONTWRITEBYTECODE=1 "$PY" -m experiments.local_campaign.current_ollama_gate5 --validate "$GATE5_AMENDMENT" --expected-commit "$EXPECTED_COMMIT"
+}
+
+assert_environment
+validate_gate5
+
+if [[ "$MODE" == 'launch' ]]; then
+  [[ -z "$CONTROL_ROOT" && -z "$SESSION" ]] || usage
+  TAG="$(date -u +%Y%m%dT%H%M%SZ)"
+  SESSION="ura-phase6-current-ollama-${TAG}"
+  CONTROL_ROOT="$URA_WORK/runs/engineering/phase6-current-ollama-${TAG}"
+  test ! -e "$CONTROL_ROOT"
+  mkdir -m 700 "$CONTROL_ROOT"
+  WORKER=(bash "$SCRIPT" --worker --gate5-amendment "$GATE5_AMENDMENT" --control-root "$CONTROL_ROOT" --session "$SESSION")
+  printf -v COMMAND '%q ' "${WORKER[@]}"
+  tmux new-session -d -s "$SESSION" "$COMMAND"
+  printf 'SESSION=%s\n' "$SESSION"
+  printf 'ATTACH=tmux attach -t %s\n' "$SESSION"
+  printf 'CONTROL_ROOT=%s\n' "$CONTROL_ROOT"
+  printf 'LOG=%s/phase6-current-ollama.log\n' "$CONTROL_ROOT"
+  printf 'EXIT_MARKER=%s/.exit\n' "$CONTROL_ROOT"
+  exit 0
+fi
+
+[[ "$CONTROL_ROOT" = /* && -n "$SESSION" ]] || usage
+CONTROL_ROOT="$(readlink -e -- "$CONTROL_ROOT")"
+test -d "$CONTROL_ROOT" && test ! -L "$CONTROL_ROOT"
+test "$(dirname -- "$CONTROL_ROOT")" = "$URA_WORK/runs/engineering"
+case "$(basename -- "$CONTROL_ROOT")" in
+  phase6-current-ollama-20??????T??????Z) ;;
+  *) printf 'invalid current Ollama Phase 6 control root\n' >&2; exit 1 ;;
+esac
+
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
+unset HF_TOKEN HUGGING_FACE_HUB_TOKEN OPENAI_API_KEY ANTHROPIC_API_KEY GOOGLE_API_KEY GEMINI_API_KEY MISTRAL_API_KEY TOGETHER_API_KEY DEEPSEEK_API_KEY XAI_API_KEY
+
+EXIT_TMP="$CONTROL_ROOT/.exit.tmp"
+EXIT_MARKER="$CONTROL_ROOT/.exit"
+CONSOLE_STARTED=0
+exec > >(tee "$CONTROL_ROOT/phase6-current-ollama.log") 2>&1
+
+finish() {
+  rc=$?
+  trap - EXIT
+  if [[ -f "$CONTROL_ROOT/target-execution.json" ]]; then
+    IFS=$'\t' read -r attempts successful < <(
+      "$PY" - "$CONTROL_ROOT/target-execution.json" <<'PY'
+import json
+import sys
+
+value = json.load(open(sys.argv[1], encoding="utf-8"))
+print(value["target_attempts"], value["successful_target_generations"], sep="\t")
+PY
+    )
+    TARGET_EVENT=("$PY" -m experiments.local_campaign.console_events target-execution --work-root "$URA_WORK" --control-root "$CONTROL_ROOT" --target-attempts "$attempts" --successful-target-generations "$successful")
+    PYTHONDONTWRITEBYTECODE=1 "${TARGET_EVENT[@]}" || rc=1
+  fi
+  if [[ "$CONSOLE_STARTED" = '1' ]]; then
+    FINISH_EVENT=("$PY" -m experiments.local_campaign.console_events child-finish --work-root "$URA_WORK" --control-root "$CONTROL_ROOT" --exit-code "$rc")
+    PYTHONDONTWRITEBYTECODE=1 "${FINISH_EVENT[@]}" || rc=1
+  fi
+  printf '%s\n' "$rc" > "$EXIT_TMP"
+  mv -- "$EXIT_TMP" "$EXIT_MARKER"
+  printf 'PHASE6_CURRENT_OLLAMA_EXIT=%s\n' "$rc"
+  exit "$rc"
+}
+trap finish EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+
+START_EVENT=("$PY" -m experiments.local_campaign.console_events child-start --work-root "$URA_WORK" --control-root "$CONTROL_ROOT" --campaign-id "$(basename -- "$CONTROL_ROOT")" --release-commit "$EXPECTED_COMMIT" --evidence-class measured-local-current-ollama --hard-stop-hours 336 --tmux-socket default --tmux-session "$SESSION" --target-execution)
+PYTHONDONTWRITEBYTECODE=1 "${START_EVENT[@]}"
+CONSOLE_STARTED=1
+
+PHASE6=("$PY" -m experiments.local_campaign.current_ollama_phase6 --gate5-amendment "$GATE5_AMENDMENT" --control-root "$CONTROL_ROOT" --work-root "$URA_WORK" --project-root "$PWD" --python "$PY" --expected-commit "$EXPECTED_COMMIT")
+CUDA_VISIBLE_DEVICES=0,1 PYTHONDONTWRITEBYTECODE=1 "${PHASE6[@]}"
