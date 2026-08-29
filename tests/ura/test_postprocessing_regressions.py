@@ -2244,6 +2244,25 @@ def test_postprocessors_retain_typed_model_nonresponse_as_missingness() -> None:
     assert judge_sensitivity._final_model_nonresponse(judgment) is False
 
 
+def test_sensitivity_and_human_readers_validate_model_nonresponse_shape() -> None:
+    judgment = _typed_model_nonresponse_cell()["judgments"][0]
+    persisted = {
+        **judgment["raw"],
+        "judge": "rules",
+        "label": "not_applicable",
+        "score": 0.0,
+    }
+
+    assert human_audit._final_model_nonresponse(judgment) is True
+    assert judge_sensitivity._final_model_nonresponse(judgment) is True
+    assert human_audit._persisted_model_nonresponse(persisted) is True
+    assert judge_sensitivity._persisted_model_nonresponse(persisted) is True
+
+    persisted["confidence"] = True
+    assert human_audit._persisted_model_nonresponse(persisted) is False
+    assert judge_sensitivity._persisted_model_nonresponse(persisted) is False
+
+
 def test_transfer_loader_excludes_only_exact_typed_guard_abstention(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
