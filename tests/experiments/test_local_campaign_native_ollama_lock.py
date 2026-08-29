@@ -183,8 +183,8 @@ def _assert_bounded_agent_framework_contract(template: str) -> None:
         and isinstance(key.value, str)
         and isinstance(value, ast.Name)
     }
-    assert runners["asb"] == "run_asb"
-    assert runners["agentdojo"] == "run_agentdojo"
+    assert runners.get("asb") == "run_asb"
+    assert runners.get("agentdojo") == "run_agentdojo"
     validator = ast.get_source_segment(
         payload, _node(payload, ast.FunctionDef, "validate_import_config")
     )
