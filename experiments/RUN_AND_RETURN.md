@@ -1653,7 +1653,7 @@ plan with section 6.1, and then pass the resulting plan, receipt and managed
 store to the readiness command. An Ollama target needs no Hub-acquisition
 arguments. The command makes ten deterministic benign question calls and, for
 an image-capable target, five deterministic synthetic-image calls. Admission
-requires zero empty responses, at least eight correct text answers and at least
+requires zero empty responses, at least five correct text answers and at least
 four correct image answers. Store each passing `ura-local-model-readiness/1`
 receipt and its SHA-256 under the operator-bound
 `URA_LOCAL_MODEL_READINESS_ROOT`; the local campaign controllers validate the

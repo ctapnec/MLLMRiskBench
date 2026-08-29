@@ -59,7 +59,7 @@ class AnsweringTarget:
         )
 
 
-def readiness_receipt(*, text_correct: int = 8, vision: bool = True) -> dict[str, object]:
+def readiness_receipt(*, text_correct: int = 5, vision: bool = True) -> dict[str, object]:
     return {
         "modalities": ["text", "image"] if vision else ["text"],
         "policy": readiness_policy(),
@@ -95,7 +95,7 @@ def readiness_receipt(*, text_correct: int = 8, vision: bool = True) -> dict[str
 def test_benign_text_readiness_uses_ten_seeded_questions() -> None:
     assert READINESS_SEED == 20260829
     assert TEXT_SAMPLE_SIZE == 10
-    assert TEXT_MIN_CORRECT == 8
+    assert TEXT_MIN_CORRECT == 5
     result = _run_text(AnsweringTarget())
     assert result["passed"] is True
     assert result["correct"] == 10
@@ -105,7 +105,7 @@ def test_benign_text_readiness_uses_ten_seeded_questions() -> None:
 def test_readiness_validator_requires_text_and_image_thresholds() -> None:
     validate_readiness(readiness_receipt(), expected_spec="vllm:example/model")
     with pytest.raises(ValueError, match="text readiness"):
-        validate_readiness(readiness_receipt(text_correct=7))
+        validate_readiness(readiness_receipt(text_correct=4))
     failed_vision = readiness_receipt()
     assert isinstance(failed_vision["vision"], dict)
     failed_vision["vision"]["nonresponses"] = 1

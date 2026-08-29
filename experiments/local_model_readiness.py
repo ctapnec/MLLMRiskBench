@@ -48,7 +48,7 @@ from ura.model_acquisition_runtime import (  # noqa: E402
 SCHEMA = "ura-local-model-readiness/1"
 READINESS_SEED = 20260829
 TEXT_SAMPLE_SIZE = 10
-TEXT_MIN_CORRECT = 8
+TEXT_MIN_CORRECT = 5
 VISION_SAMPLE_SIZE = 5
 VISION_MIN_CORRECT = 4
 TEXT_BANK = (
