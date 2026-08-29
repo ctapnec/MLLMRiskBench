@@ -79,6 +79,7 @@ def _exact_argv(namespace: dict[str, Any], lane: str) -> list[str]:
             "--max-queries": str(spec["max_queries"]),
             "--max-turns": str(spec["max_turns"]),
             "--group": namespace["GROUP"],
+            "--dtype": "auto",
             "--max-total-target-calls": str(spec["target_calls"]),
             "--max-total-judge-calls": "0",
             "--max-total-http-attempts": "0",
@@ -202,6 +203,18 @@ def test_phase5_accepts_verified_content_addressed_descriptors(tmp_path: Path) -
     payload = _python_payload("phase5_followon_prepared.sh.in")
     assert 'extra_descriptor_fields=frozenset({"envelope_id", "file"})' in payload
     assert 'extra_descriptor_fields=frozenset({"file"})' in payload
+
+
+def test_phase5_projection_uses_real_eligibility_record_count(tmp_path: Path) -> None:
+    namespace = _prelude(
+        "phase5_followon_prepared.sh.in", "src_arg = Path(sys.argv[1])"
+    )
+    eligibility = tmp_path / "eligibility.json"
+    eligibility.write_text('{\n  "schema": "fixture/1"\n}\n', encoding="utf-8")
+    assert namespace["record_count"](eligibility) == 3
+
+    payload = _python_payload("phase5_followon_prepared.sh.in")
+    assert '"records": record_count(eligibility_path)' in payload
 
 
 def test_followon_attestation_probe_keeps_local_guardrail_fallback() -> None:

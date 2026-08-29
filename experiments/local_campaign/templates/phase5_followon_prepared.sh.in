@@ -118,6 +118,7 @@ PAIR_OPTIONS = {
     "--corpora", "--source-config", "--source-config-sha256",
     "--source-conformance", "--source-conformance-sha256", "--limit",
     "--sample-seed", "--seeds", "--max-queries", "--max-turns", "--group",
+    "--dtype",
     "--project-revision", "--project-revision-sha256",
     "--max-total-target-calls", "--max-total-judge-calls",
     "--max-total-http-attempts", "--deadline-seconds", "--out",
@@ -174,6 +175,14 @@ def load_markdown_object(path: Path, *, label: str) -> dict[str, Any]:
 
 def descriptor(path: Path) -> dict[str, Any]:
     return {"path": str(path), "sha256": sha256_file(path), "bytes": path.stat().st_size}
+
+
+def record_count(path: Path) -> int:
+    with path.open("r", encoding="utf-8") as handle:
+        count = sum(1 for line in handle if line.strip())
+    if count <= 0:
+        raise SystemExit(f"{path.name} has no records")
+    return count
 
 
 def checked(
@@ -715,7 +724,7 @@ def validate_artifact_chain(
                 "file": eligibility_path.name,
                 "sha256": sha256_file(eligibility_path),
                 "bytes": eligibility_path.stat().st_size,
-                "records": 1,
+                "records": record_count(eligibility_path),
             },
         )
     except (KeyError, TypeError, ValueError) as exc:
@@ -869,7 +878,8 @@ def validate_argv_policy(
         "--corpora": spec["corpus"], "--limit": str(spec["limit"]),
         "--sample-seed": str(spec["sample_seed"]), "--seeds": "0",
         "--max-queries": str(spec["max_queries"]), "--max-turns": str(spec["max_turns"]),
-        "--group": GROUP, "--max-total-target-calls": str(spec["target_calls"]),
+        "--group": GROUP, "--dtype": "auto",
+        "--max-total-target-calls": str(spec["target_calls"]),
         "--max-total-judge-calls": "0", "--max-total-http-attempts": "0",
         "--deadline-seconds": str(DEADLINE_SECONDS),
         "--live-attestation-max-age-hours": "24",
