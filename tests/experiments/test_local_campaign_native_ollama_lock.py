@@ -32,13 +32,9 @@ def _planner_payload(source: str | None = None) -> str:
     return matches[0]
 
 
-def _tree_node(
-    tree: ast.Module, kind: type[ast.AST], name: str
-) -> ast.AST:
+def _tree_node(tree: ast.Module, kind: type[ast.AST], name: str) -> ast.AST:
     return next(
-        row
-        for row in tree.body
-        if isinstance(row, kind) and getattr(row, "name", None) == name
+        row for row in tree.body if isinstance(row, kind) and getattr(row, "name", None) == name
     )
 
 
@@ -81,9 +77,7 @@ def _exercise_lease(
             raise ValueError("exact Ollama roster drift")
 
     lease_node = _node(payload, ast.ClassDef, "NativeOllamaInferenceLease")
-    module = ast.fix_missing_locations(
-        ast.Module(body=[lease_node], type_ignores=[])
-    )
+    module = ast.fix_missing_locations(ast.Module(body=[lease_node], type_ignores=[]))
     namespace: dict[str, object] = {
         "Any": Any,
         "Mapping": Mapping,
@@ -105,9 +99,7 @@ def _named_calls(node: ast.AST, name: str) -> list[ast.Call]:
     return [
         row
         for row in ast.walk(node)
-        if isinstance(row, ast.Call)
-        and isinstance(row.func, ast.Name)
-        and row.func.id == name
+        if isinstance(row, ast.Call) and isinstance(row.func, ast.Name) and row.func.id == name
     ]
 
 
@@ -126,11 +118,7 @@ def _assignment_value(payload: str, name: str) -> object:
 
 def _function_literals(payload: str, name: str) -> set[object]:
     node = _node(payload, ast.FunctionDef, name)
-    return {
-        row.value
-        for row in ast.walk(node)
-        if isinstance(row, ast.Constant)
-    }
+    return {row.value for row in ast.walk(node) if isinstance(row, ast.Constant)}
 
 
 def _assert_bounded_agent_framework_contract(template: str) -> None:
@@ -149,13 +137,22 @@ def _assert_bounded_agent_framework_contract(template: str) -> None:
 
     asb_literals = _function_literals(payload, "run_asb")
     assert {
-        "main_attacker.py", "--task_num", "--direct_prompt_injection",
-        "attack_tools_test.jsonl", "agent_task.jsonl", "OLLAMA_HOST",
+        "main_attacker.py",
+        "--task_num",
+        "--direct_prompt_injection",
+        "attack_tools_test.jsonl",
+        "agent_task.jsonl",
+        "OLLAMA_HOST",
     } <= asb_literals
     agentdojo_literals = _function_literals(payload, "run_agentdojo")
     assert {
-        "agentdojo.scripts.benchmark", "--model-id", "local", "user_task_16",
-        "injection_task_0", "important_instructions", "--force-rerun",
+        "agentdojo.scripts.benchmark",
+        "--model-id",
+        "local",
+        "user_task_16",
+        "injection_task_0",
+        "important_instructions",
+        "--force-rerun",
     } <= agentdojo_literals
 
     for name, cases in (("run_asb", 1), ("run_agentdojo", 2)):
@@ -176,9 +173,7 @@ def _assert_bounded_agent_framework_contract(template: str) -> None:
     assert isinstance(runner_assignment.value, ast.Dict)
     runners = {
         key.value: value.id
-        for key, value in zip(
-            runner_assignment.value.keys, runner_assignment.value.values
-        )
+        for key, value in zip(runner_assignment.value.keys, runner_assignment.value.values)
         if isinstance(key, ast.Constant)
         and isinstance(key.value, str)
         and isinstance(value, ast.Name)
@@ -196,26 +191,20 @@ def _assert_bounded_agent_framework_contract(template: str) -> None:
 def _assert_execution_roster_call_graph(payload: str) -> None:
     tree = ast.parse(payload)
     lease = _tree_node(tree, ast.ClassDef, "NativeOllamaInferenceLease")
-    lease_methods = {
-        row.name: row
-        for row in lease.body
-        if isinstance(row, ast.FunctionDef)
-    }
+    lease_methods = {row.name: row for row in lease.body if isinstance(row, ast.FunctionDef)}
     protected_calls = [
         *_named_calls(lease_methods["__enter__"], "validate_roster"),
         *_named_calls(lease_methods["__exit__"], "validate_roster"),
     ]
     all_live_calls = _named_calls(tree, "validate_roster")
     assert len(protected_calls) == 2
-    assert {id(row) for row in all_live_calls} == {
-        id(row) for row in protected_calls
-    }, "live roster validation escaped the production inference lease"
+    assert {id(row) for row in all_live_calls} == {id(row) for row in protected_calls}, (
+        "live roster validation escaped the production inference lease"
+    )
 
     validate_plan = _tree_node(tree, ast.FunctionDef, "validate_plan")
     assert not _named_calls(validate_plan, "validate_roster")
-    assert len(
-        _named_calls(validate_plan, "validate_planned_ollama_models")
-    ) == 1
+    assert len(_named_calls(validate_plan, "validate_planned_ollama_models")) == 1
     controller_main = _tree_node(tree, ast.FunctionDef, "controller_main")
     assert not _named_calls(controller_main, "validate_roster")
 
@@ -244,18 +233,18 @@ def _assert_exact_lease_contract(payload: str) -> None:
 
 def test_native_call_gate_holds_one_production_inference_lease() -> None:
     template = _TEMPLATE.read_text(encoding="utf-8")
-    assert template.count(
-        "one production exclusive inference lease with protected pre/post "
-        "exact-roster checks"
-    ) == 2
+    assert (
+        template.count(
+            "one production exclusive inference lease with protected pre/post exact-roster checks"
+        )
+        == 2
+    )
     payload = _payload()
     _assert_exact_lease_contract(payload)
 
     tree = ast.parse(payload)
     imports = [row for row in tree.body if isinstance(row, ast.ImportFrom)]
-    production_import = next(
-        row for row in imports if row.module == "ura.ollama_security"
-    )
+    production_import = next(row for row in imports if row.module == "ura.ollama_security")
     assert {alias.name for alias in production_import.names} >= {
         "DEFAULT_OLLAMA_URL",
         "OllamaProcessLock",
@@ -276,9 +265,7 @@ def test_native_call_gate_holds_one_production_inference_lease() -> None:
     assert len(lease_blocks) == 1
     calls = list(ast.walk(lease_blocks[0]))
     assert any(
-        isinstance(row, ast.Call)
-        and isinstance(row.func, ast.Name)
-        and row.func.id == "CallGate"
+        isinstance(row, ast.Call) and isinstance(row.func, ast.Name) and row.func.id == "CallGate"
         for row in calls
     )
     assert any(
@@ -306,9 +293,7 @@ def test_plan_only_roster_snapshot_uses_shared_production_endpoint_lock() -> Non
     planner = _planner_payload()
     tree = ast.parse(planner)
     imports = [row for row in tree.body if isinstance(row, ast.ImportFrom)]
-    production_import = next(
-        row for row in imports if row.module == "ura.ollama_security"
-    )
+    production_import = next(row for row in imports if row.module == "ura.ollama_security")
     assert {alias.name for alias in production_import.names} >= {
         "DEFAULT_OLLAMA_URL",
         "OllamaProcessLock",
@@ -370,9 +355,7 @@ def test_execution_roster_reads_have_no_pre_lease_call_path() -> None:
 def test_native_call_gate_fails_closed_on_post_call_roster_drift() -> None:
     events: list[object] = []
     with pytest.raises(ValueError, match="exact Ollama roster drift"):
-        _exercise_lease(
-            _payload(), drift_on_validation=2, event_sink=events
-        )
+        _exercise_lease(_payload(), drift_on_validation=2, event_sink=events)
     assert events == [
         "lock-created",
         "lock-enter",
@@ -394,9 +377,7 @@ def test_native_call_gate_fails_closed_on_post_call_roster_drift() -> None:
     assert len(exits) == 1
     exit_source = ast.get_source_segment(payload, exits[0])
     assert exit_source is not None
-    assert exit_source.index("validate_roster(self.plan)") < exit_source.index(
-        "lease.__exit__"
-    )
+    assert exit_source.index("validate_roster(self.plan)") < exit_source.index("lease.__exit__")
 
 
 def test_native_inference_lease_removal_mutation_is_rejected() -> None:
@@ -411,7 +392,8 @@ def test_native_inference_lease_removal_mutation_is_rejected() -> None:
 def _assert_promptfoo_local_generation_env(payload: str) -> None:
     clean_env = _node(payload, ast.FunctionDef, "clean_env")
     returns = [
-        row for row in ast.walk(clean_env)
+        row
+        for row in ast.walk(clean_env)
         if isinstance(row, ast.Return) and isinstance(row.value, ast.Dict)
     ]
     assert len(returns) == 1
@@ -441,9 +423,7 @@ def test_promptfoo_native_generation_is_forced_local_and_noninteractive() -> Non
 
 
 def test_asb_and_agentdojo_have_bounded_native_execution_contracts() -> None:
-    _assert_bounded_agent_framework_contract(
-        _TEMPLATE.read_text(encoding="utf-8")
-    )
+    _assert_bounded_agent_framework_contract(_TEMPLATE.read_text(encoding="utf-8"))
 
 
 @pytest.mark.parametrize(
@@ -457,13 +437,11 @@ def test_asb_and_agentdojo_have_bounded_native_execution_contracts() -> None:
             'EXPECTED_NATIVE_CASES["agentdojo"] = 2',
             'EXPECTED_NATIVE_CASES["agentdojo"] = 1',
         ),
-        ('    "asb": run_asb,\n', ''),
-        ('    "agentdojo": run_agentdojo,\n', ''),
+        ('    "asb": run_asb,\n', ""),
+        ('    "agentdojo": run_agentdojo,\n', ""),
     ],
 )
-def test_bounded_agent_framework_mutations_are_rejected(
-    needle: str, replacement: str
-) -> None:
+def test_bounded_agent_framework_mutations_are_rejected(needle: str, replacement: str) -> None:
     template = _TEMPLATE.read_text(encoding="utf-8")
     assert template.count(needle) == 1
     mutation = template.replace(needle, replacement, 1)
