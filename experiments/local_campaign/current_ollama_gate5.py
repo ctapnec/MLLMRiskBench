@@ -493,9 +493,7 @@ def build_amendment(
         records = _exact_int(
             projection["selected_records"], label=f"{lane} selected records", minimum=1
         )
-        _exact_int(
-            canary["target_cap"], label=f"{lane} canary target cap", minimum=1
-        )
+        _exact_int(canary["target_cap"], label=f"{lane} canary target cap", minimum=1)
         canary_judge_cap = _exact_int(canary["judge_cap"], label=f"{lane} canary judge cap")
         canary_http_cap = _exact_int(canary["http_cap"], label=f"{lane} canary HTTP cap")
         canary_guard_evaluations = _exact_int(
