@@ -1410,6 +1410,49 @@ def test_phase7_requires_current_ollama_terminal_and_metric_cohort() -> None:
             assert token in mutant
 
 
+def test_phase8_replays_current_ollama_oracle_and_sampling_cohort() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase8_human_audit.py.in"
+    ).read_text(encoding="utf-8")
+    required = (
+        '"validate_current_ollama_completion": (',
+        '("current_ollama", keyword_only),',
+        "oracle_current_ollama = oracle.validate_current_ollama_completion(",
+        "current_ollama=oracle_current_ollama,",
+        'or oracle_current_ollama != inputs.get("current_ollama")',
+        '"current_ollama_terminal_states",',
+        '"included_current_ollama_lanes",',
+        '"ura-phase7-human-audit-sampling-view/3"',
+        'current_ollama=support["current_ollama"],',
+    )
+    for token in required:
+        assert token in source
+
+    mutant = source.replace("current_ollama=oracle_current_ollama,", "", 1)
+    assert mutant != source
+    with pytest.raises(AssertionError):
+        for token in required:
+            assert token in mutant
+
+
+def test_rendered_phase8_current_ollama_contract_self_test(tmp_path: Path) -> None:
+    bindings = _bindings(tmp_path / "bindings.json")
+    output = tmp_path / "workspace"
+    render_controller_set(bindings, output)
+    result = subprocess.run(
+        [sys.executable, str(output / "phase8_human_audit.py"), "--self-test"],
+        cwd=Path(__file__).parents[2],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_phase7_conditional_defense_uses_runner_eligibility_binding_shape() -> None:
     source = (
         Path(__file__).parents[2]
