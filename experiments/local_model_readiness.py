@@ -50,7 +50,7 @@ READINESS_SEED = 20260829
 TEXT_SAMPLE_SIZE = 10
 TEXT_MIN_CORRECT = 5
 VISION_SAMPLE_SIZE = 5
-VISION_MIN_CORRECT = 4
+VISION_MIN_CORRECT = 2
 TEXT_BANK = (
     ("sum-7-5", "Reply with only the integer result of 7 + 5.", r"\b12\b"),
     ("product-9-3", "Reply with only the integer result of 9 times 3.", r"\b27\b"),

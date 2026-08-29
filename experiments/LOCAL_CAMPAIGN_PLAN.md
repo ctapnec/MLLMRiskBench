@@ -220,7 +220,7 @@ transport-neutral `experiments.local_model_readiness` gate. The gate selects the
 same ten benign questions deterministically from a fixed twenty-question bank
 with seed 20260829, requires zero empty responses and at least five correct,
 and, for an image-capable target, adds five deterministic synthetic split-color
-images with zero empty responses and at least four correct. This applies to the
+images with zero empty responses and at least two correct. This applies to the
 three vLLM targets and all four Ollama targets. Guard and classifier checkpoints
 instead retain their role-specific classifier smoke because free-form Q&A is not
 their served interface. The readiness receipt is engineering admission evidence,

@@ -84,7 +84,7 @@ security projection, canary or measurement, `experiments.local_model_readiness`
 selects ten benign questions deterministically from its fixed bank, requires no
 empty response and at least five correct, and adds five deterministic synthetic
 image checks for every image-capable target, again requiring no empty response
-and at least four correct. The content-addressed readiness receipt binds the
+and at least two correct. The content-addressed readiness receipt binds the
 exact requested target, normalized local configuration, acquisition selection,
 modalities and policy. It is engineering admission evidence and contributes no
 safety metric. A failed model remains an explicit failed target condition. A

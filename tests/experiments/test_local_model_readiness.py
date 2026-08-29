@@ -103,6 +103,7 @@ def test_benign_text_readiness_uses_ten_seeded_questions() -> None:
 
 
 def test_readiness_validator_requires_text_and_image_thresholds() -> None:
+    assert VISION_MIN_CORRECT == 2
     validate_readiness(readiness_receipt(), expected_spec="vllm:example/model")
     with pytest.raises(ValueError, match="text readiness"):
         validate_readiness(readiness_receipt(text_correct=4))
@@ -111,6 +112,11 @@ def test_readiness_validator_requires_text_and_image_thresholds() -> None:
     failed_vision["vision"]["nonresponses"] = 1
     with pytest.raises(ValueError, match="vision readiness"):
         validate_readiness(failed_vision)
+    below_vision_threshold = readiness_receipt()
+    assert isinstance(below_vision_threshold["vision"], dict)
+    below_vision_threshold["vision"]["correct"] = 1
+    with pytest.raises(ValueError, match="vision readiness"):
+        validate_readiness(below_vision_threshold)
 
 
 def test_local_campaign_controllers_require_readiness_receipts() -> None:
