@@ -667,6 +667,13 @@ uses the same configured answer retry and model-stability accounting as Ollama,
 while its revision and output-policy stratum remains explicit in Phase 7 rather
 than being silently pooled with historical Runner evidence.
 
+The retained current vLLM continuation is exactly seven new Runner 2.25 units
+and 7,199 selected rows: 1,632 Qwen3-VL image rows, 2,020 GPTGeoChat-Qwen rows,
+1,632 LLaVA-base image rows, the exact 815-row unfinished AirBench suffix, 100
+XSTest rows, 100 SimpleSafetyTests rows and 900 DecodingTrust stereotype rows.
+Completed Qwen3-VL text, completed Crescendo and the 1,039 durable LLaVA
+AirBench prefix are not part of this call inventory.
+
 ## 7. Phase 6: bounded measured local lanes (sized by projections and canaries)
 
 **Source-record inventory, which is NOT the row count.** The figures below are

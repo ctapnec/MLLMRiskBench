@@ -471,6 +471,15 @@ permits altered stops, generation caps, checkpoint identity or decoding. The
 selected retry count and failed-output behavior are provider-neutral across
 hosted, vLLM and Ollama targets.
 
+The retained local-campaign vLLM gaps are scheduled by
+`python -m experiments.local_campaign.vllm_stability_phase6`. The controller
+accepts the exact historical completion and current project-revision receipt,
+then creates three complete first-measured image/GPTGeoChat conditions plus the
+content-bound unfinished LLaVA text units. Its current inventory is seven units
+and 7,199 selected rows. It excludes completed Qwen3-VL text, completed
+Crescendo and the 1,039-row completed LLaVA AirBench prefix. This controller is
+a campaign-specific executable, not a general Runner phase abstraction.
+
 A targeted amendment must re-attest and canary the four affected GraySwan lane
 identities under the current Runner before measured execution. Those identities
 use the limit-100, sample-seed-0 selections and caps from their matching
