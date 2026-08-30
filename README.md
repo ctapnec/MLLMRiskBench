@@ -582,7 +582,7 @@ The runbook is the canonical from-zero procedure:
   call. A selected local guardrail is loaded at its exact revision and device
   before any paid call. The check prints selected source-policy counts and
   conservative target, local-guardrail, judge, and HTTP-attempt upper bounds. It
-  retains the exact `ura-lane-projection/1` artifact alongside the eligibility
+  retains the exact `ura-lane-projection/2` artifact alongside the eligibility
   plan. The projection records selected input-media bytes when physical media
   are present, while token use, price/cost, runtime/throughput, and expected
   output storage remain `CANNOT-VERIFY`. It cannot prove account access,

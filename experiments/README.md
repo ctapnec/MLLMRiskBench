@@ -191,7 +191,7 @@ Generic hosted candidates are bound by `--api-config`; local candidates by
 `--local-config`. A no-call `rig_check` verifies configuration, corpus, policy,
 component, declared modality, credential presence and conservative call bounds.
 After whole-request admission it retains a content-addressed
-`ura-lane-projection/1` with the exact condition, selected cluster/policy/input-
+`ura-lane-projection/2` with the exact condition, selected cluster/policy/input-
 media byte inventory, and conservative complete-grid logical-call/HTTP exposure.
 The measured grid binds its own exact projection before its first call. Tokens,
 price/cost, runtime/throughput, and expected output storage remain

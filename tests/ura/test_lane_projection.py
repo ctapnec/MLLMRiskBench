@@ -73,7 +73,7 @@ def test_rig_check_persists_strict_no_call_lane_projection(
         "sha256": digest,
         "bytes": path.stat().st_size,
     }
-    assert projection["schema"] == "ura-lane-projection/1"
+    assert projection["schema"] == "ura-lane-projection/2"
     assert projection["eligibility_binding"]["plan_id"] == eligibility["plan_id"]
     assert projection["eligibility_binding"]["request_id"] == eligibility["request_id"]
     assert (
@@ -95,6 +95,50 @@ def test_rig_check_persists_strict_no_call_lane_projection(
         for estimate in projection["unavailable_estimates"].values()
     )
     assert target.calls == 0
+
+
+def test_legacy_v1_projection_remains_readable_without_retry_relabeling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, path, _ = _produce_projection(tmp_path, monkeypatch)
+    projection = json.loads(path.read_text(encoding="utf-8"))
+    projection["schema"] = "ura-lane-projection/1"
+    projection["call_projection"]["semantics"] = (
+        "conservative_complete_grid_upper_bound_v1"
+    )
+    del projection["call_projection"]["target_answer_retries"]
+    body = {
+        key: value for key, value in projection.items() if key != "projection_id"
+    }
+    projection["projection_id"] = (
+        "lane-projection-" + canonical_json_sha256(body)[:24]
+    )
+
+    validated = validate_lane_projection(projection)
+
+    assert validated == projection
+    assert validated["schema"] == "ura-lane-projection/1"
+    assert "target_answer_retries" not in validated["call_projection"]
+
+
+@pytest.mark.parametrize("invalid", [-1, 11, True])
+def test_current_projection_rejects_invalid_target_answer_retries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    invalid: object,
+) -> None:
+    _, path, _ = _produce_projection(tmp_path, monkeypatch)
+    projection = json.loads(path.read_text(encoding="utf-8"))
+    projection["call_projection"]["target_answer_retries"] = invalid
+    body = {
+        key: value for key, value in projection.items() if key != "projection_id"
+    }
+    projection["projection_id"] = (
+        "lane-projection-" + canonical_json_sha256(body)[:24]
+    )
+
+    with pytest.raises(ValueError, match="target_answer_retries"):
+        validate_lane_projection(projection)
 
 
 def test_text_only_selection_has_explicit_empty_media_inventory(

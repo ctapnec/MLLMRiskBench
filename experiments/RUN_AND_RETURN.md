@@ -1861,7 +1861,7 @@ python -m experiments.lane_canary \
 
 The first command makes no provider call and needs no credentials, source
 acquisition, source receipt, or human work. Before any mock target execution it
-persists the exact content-addressed `ura-lane-projection/1`; the second command
+persists the exact content-addressed `ura-lane-projection/2`; the second command
 makes no call and writes a content-addressed `ura-lane-canary/1`. Inspect its
 `evidence_class=synthetic_offline`, `campaign_authorized=false`, and
 `empirical_benchmark_evidence=false`, together with
@@ -2056,7 +2056,7 @@ policy-stratum counts plus projected target, guard, LLM-judge, and HTTP-attempt
 totals without a hosted generation call. Only the planning ceilings differ from
 the later measured command. `rig_check` executes the no-call plan in temporary
 scratch storage but validates and copies both its content-addressed
-eligibility/`N/A` ledger and `ura-lane-projection/1` into the requested `--out`
+eligibility/`N/A` ledger and `ura-lane-projection/2` into the requested `--out`
 directory, including when a later compatibility gate fails. A successful exact
 measured invocation creates and binds its own projection after whole-request
 admission and before its first generation call. These artifacts are planning
@@ -4408,7 +4408,8 @@ the tree retains the separate `preflight/`, `attestation/`, and measured
 shadow trails, checkpoints, completion/error records, aggregates, modality
 coverage, call ledgers, native raw artifacts and canonical envelopes, the
 common human-audit files and the separate source-task audit sample/labelled
-CSVs plus `source_task_audit.json`, every retained `ura-lane-projection/1`,
+CSVs plus `source_task_audit.json`, every retained `ura-lane-projection/1` or
+`ura-lane-projection/2`,
 diagnostic `ura-lane-canary/1`, the rebuilt `suite-evidence.json` broad-roster
 inventory, the Level-1 JSON/CSV, the deterministic
 `ura-level2-report/1` JSON/CSV/Markdown tables, the remaining analyses,

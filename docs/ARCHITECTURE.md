@@ -171,7 +171,7 @@ additional answer attempt. Retained version-1 and version-2 envelopes validate
 without relabeling or inferred fields.
 
 After the whole request passes admission and before the first generation call,
-Runner 2.20 writes a content-addressed `ura-lane-projection/1`. The artifact
+Runner 2.25 writes a content-addressed `ura-lane-projection/2`. The artifact
 binds the exact experiment condition and eligibility descriptor, selected
 record/cluster/source-policy counts, deterministic sampling identities,
 selected physical input-media bytes, and the conservative complete-grid target,

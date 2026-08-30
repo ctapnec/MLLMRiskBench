@@ -280,7 +280,7 @@ supplied grid; blocked and error states do not inflate it.
 
 ## Projection and canary accounting are not outcome metrics
 
-`ura-lane-projection/1` is prospective exposure evidence for one exact admitted
+`ura-lane-projection/2` is prospective exposure evidence for one exact admitted
 condition. Its target/model-judge logical calls and declared HTTP attempts are
 conservative complete-grid upper bounds, not observed usage. Selected physical
 input-media bytes are content observations; token use, monetary price/cost,

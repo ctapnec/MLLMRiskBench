@@ -18,7 +18,8 @@ from .eligibility import canonical_json_sha256, validate_eligibility_plan
 from .sampling import effective_sampling_policy
 
 
-LANE_PROJECTION_SCHEMA = "ura-lane-projection/1"
+LANE_PROJECTION_SCHEMA = "ura-lane-projection/2"
+_LEGACY_LANE_PROJECTION_SCHEMA = "ura-lane-projection/1"
 _HEX64 = re.compile(r"[0-9a-f]{64}")
 _ID = re.compile(r"lane-projection-[0-9a-f]{24}")
 _TOP_FIELDS = frozenset({
@@ -73,7 +74,7 @@ _TOTAL_FIELDS = frozenset({
     "source_policy_clusters",
     "arm_summed_unique_input_media_bytes",
 })
-_CALL_FIELDS = frozenset({
+_CALL_FIELDS_V1 = frozenset({
     "semantics",
     "trajectories",
     "target_calls",
@@ -81,6 +82,10 @@ _CALL_FIELDS = frozenset({
     "local_guardrail_evaluations",
     "http_attempts",
     "by_attacker",
+})
+_CALL_FIELDS = frozenset({
+    *_CALL_FIELDS_V1,
+    "target_answer_retries",
 })
 _CALL_COUNT_FIELDS = (
     "trajectories",
@@ -161,10 +166,29 @@ def _validate_condition(value: object) -> dict[str, Any]:
     return condition
 
 
-def _validate_call_projection(value: object) -> dict[str, Any]:
-    projection = _strict_object(value, _CALL_FIELDS, "call projection")
-    if projection.get("semantics") != "conservative_complete_grid_upper_bound_v1":
+def _validate_call_projection(
+    value: object, *, schema: str,
+) -> dict[str, Any]:
+    fields = (
+        _CALL_FIELDS
+        if schema == LANE_PROJECTION_SCHEMA
+        else _CALL_FIELDS_V1
+    )
+    projection = _strict_object(value, fields, "call projection")
+    expected_semantics = (
+        "conservative_complete_grid_upper_bound_v2"
+        if schema == LANE_PROJECTION_SCHEMA
+        else "conservative_complete_grid_upper_bound_v1"
+    )
+    if projection.get("semantics") != expected_semantics:
         raise ValueError("call projection has unsupported semantics")
+    if schema == LANE_PROJECTION_SCHEMA:
+        retries = _nonnegative_int(
+            projection.get("target_answer_retries"),
+            "call projection target_answer_retries",
+        )
+        if retries > 10:
+            raise ValueError("call projection target_answer_retries must be <= 10")
     by_attacker = projection.get("by_attacker")
     if not isinstance(by_attacker, dict) or not by_attacker:
         raise ValueError("call projection requires a non-empty attacker inventory")
@@ -227,10 +251,13 @@ def _validate_media(value: object, label: str) -> dict[str, Any]:
 
 
 def validate_lane_projection(value: object) -> dict[str, Any]:
-    """Validate one self-contained ``ura-lane-projection/1`` artifact."""
+    """Validate one self-contained current or retained lane projection."""
 
     artifact = _strict_object(value, _TOP_FIELDS, "lane projection")
-    if artifact.get("schema") != LANE_PROJECTION_SCHEMA:
+    schema = artifact.get("schema")
+    if not isinstance(schema, str) or schema not in {
+        LANE_PROJECTION_SCHEMA, _LEGACY_LANE_PROJECTION_SCHEMA,
+    }:
         raise ValueError("unsupported lane-projection schema")
     if artifact.get("status") != "complete":
         raise ValueError("lane projection must declare status=complete")
@@ -337,7 +364,7 @@ def validate_lane_projection(value: object) -> dict[str, Any]:
     if totals != expected_totals:
         raise ValueError("lane projection selection totals do not reconcile")
 
-    _validate_call_projection(artifact.get("call_projection"))
+    _validate_call_projection(artifact.get("call_projection"), schema=schema)
     unavailable = artifact.get("unavailable_estimates")
     if not isinstance(unavailable, dict) or set(unavailable) != set(_UNAVAILABLE_REASONS):
         raise ValueError("lane projection unavailable-estimate inventory is invalid")

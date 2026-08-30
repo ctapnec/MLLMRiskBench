@@ -209,7 +209,7 @@ either the request or the plan as realized coverage.
 ## Prospective lane projection
 
 After successful whole-request admission and before the first generation call,
-`run_matrix` emits strict `ura-lane-projection/1` as
+`run_matrix` emits strict `ura-lane-projection/2` as
 `lane-projection-<content-id>.lane-projection.json`. `projection_id` is derived
 from the canonical artifact body. The projection binds the exact eligibility
 plan/request/condition and artifact descriptor, then records per logical source
@@ -222,10 +222,13 @@ arm:
   modality, or an explicit no-physical-media state; and
 - reconciled selected-arm totals.
 
-Its `call_projection` uses
-`conservative_complete_grid_upper_bound_v1` for trajectory, target-call,
-model-judge-call, local-guardrail-evaluation, and declared HTTP-attempt exposure,
-including per-attacker subtotals. `unavailable_estimates` fixes token use,
+Its `call_projection` uses `conservative_complete_grid_upper_bound_v2` for
+trajectory, retry-reserved target-call, model-judge-call, local-guardrail-
+evaluation, and declared HTTP-attempt exposure,
+including per-attacker subtotals, and records `target_answer_retries` in the
+range 0 through 10. Retained version-1 projections remain readable with their
+exact field inventory and version-1 semantics; validators do not infer a retry
+field. `unavailable_estimates` fixes token use,
 monetary price/cost, runtime/throughput, and expected output storage to
 `status=CANNOT-VERIFY` and `value=null`; consumers may not fill those fields by
 extrapolation. Selected input-media bytes are observed content bytes, not
@@ -734,9 +737,10 @@ evidence.
 
 Grid requests also bind `source_policy_cluster_counts` for every selected corpus
 and a `call_projection` using
-`conservative_complete_grid_upper_bound_v1`. The latter reports trajectory,
+`conservative_complete_grid_upper_bound_v2`. The latter reports trajectory,
 target-call, local-guardrail-evaluation, model-judge-call, and declared
-provider-HTTP-attempt upper bounds, including per-attacker subtotals. It is an
+provider-HTTP-attempt upper bounds, including the retry reserve and per-attacker
+subtotals. It is an
 exposure/budget planning record, not a price, token, latency, or expected-usage
 estimate.
 

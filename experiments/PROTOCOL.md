@@ -486,9 +486,11 @@ credential presence, but cannot prove key validity, entitlement, quota,
 reachability, routing, model visibility, or physical-media transport.
 
 After successful whole-request admission and before generation,
-`run_matrix` persists `ura-lane-projection/1`. It binds the exact eligibility
+`run_matrix` persists `ura-lane-projection/2`. It binds the exact eligibility
 condition, selected row/cluster/source-policy counts, selected input-media bytes,
-and `conservative_complete_grid_upper_bound_v1`. `rig_check` retains the same
+and `conservative_complete_grid_upper_bound_v2`, including the retry reserve.
+Retained version-1 projections remain readable without inferred retry fields.
+`rig_check` retains the same
 artifact class; the exact measured grid also binds its own projection. Every
 non-dry provider-backed logical-call and declared HTTP-attempt ceiling must cover
 the complete projection or admission fails before a provider call. Token use,
