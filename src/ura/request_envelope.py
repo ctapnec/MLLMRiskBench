@@ -18,7 +18,8 @@ from .project_revision import validate_project_revision_binding
 from .sampling import effective_sampling_policy
 
 
-REQUEST_ENVELOPE_SCHEMA = "ura-request-envelope/2"
+REQUEST_ENVELOPE_SCHEMA = "ura-request-envelope/3"
+_REQUEST_ENVELOPE_SCHEMA_V2 = "ura-request-envelope/2"
 _LEGACY_REQUEST_ENVELOPE_SCHEMA = "ura-request-envelope/1"
 REQUEST_ERROR_SCHEMA = "ura-request-error/1"
 _ENVELOPE_ID = re.compile(r"request-envelope-[0-9a-f]{24}")
@@ -37,18 +38,25 @@ _REQUEST_FIELDS_V1 = frozenset({
     "limit", "max_queries", "max_turns", "defense", "defense_guard",
     "group_keys", "quantization", "dtype", "dry_run", "call_caps",
 })
-_REQUEST_FIELDS = frozenset({
+_REQUEST_FIELDS_V2 = frozenset({
     *_REQUEST_FIELDS_V1,
     "approximate_common_metrics",
     "hosted_judge_data_transfer_acknowledged",
+})
+_REQUEST_FIELDS = frozenset({
+    *_REQUEST_FIELDS_V2,
+    "target_answer_retries",
+})
+_REQUEST_FIELDS_V2_WITH_SAMPLING_POLICY = frozenset({
+    *_REQUEST_FIELDS_V2,
+    "sampling_policy",
 })
 _REQUEST_FIELDS_WITH_SAMPLING_POLICY = frozenset({
     *_REQUEST_FIELDS,
     "sampling_policy",
 })
-# Omitted CLI policy must keep already-retained /2 envelopes byte-compatible.
-# The validator therefore admits exactly the deployed inventory or this one
-# explicit, content-addressed extension - never an arbitrary optional object.
+# Sampling-policy omission retains one exact inventory per schema. The validator
+# accepts immutable /1 and /2 artifacts without adding the /3 retry field.
 _BINDING_FIELDS = frozenset({
     "project_revision", "harness_source", "driver_source",
 })
@@ -203,11 +211,12 @@ def build_request_envelope(
     """Build the fixed whole-arm request universe before source materialization."""
 
     request_value = dict(request)
-    # Preserve the public builder API for callers authored before schema v2.
-    # Newly built artifacts still persist the explicit default-off policy;
-    # already-retained v1 artifacts are validated unchanged below.
+    # Preserve the public builder API for callers authored before schemas v2/v3.
+    # Newly built artifacts persist both explicit defaults; retained older
+    # artifacts are validated byte-for-byte without relabeling below.
     request_value.setdefault("approximate_common_metrics", False)
     request_value.setdefault("hosted_judge_data_transfer_acknowledged", False)
+    request_value.setdefault("target_answer_retries", 1)
     request_fields = (
         _REQUEST_FIELDS_WITH_SAMPLING_POLICY
         if "sampling_policy" in request_value
@@ -263,6 +272,7 @@ def validate_request_envelope(value: object) -> dict[str, Any]:
     schema = envelope["schema"]
     if schema not in {
         REQUEST_ENVELOPE_SCHEMA,
+        _REQUEST_ENVELOPE_SCHEMA_V2,
         _LEGACY_REQUEST_ENVELOPE_SCHEMA,
     } or envelope["status"] != "fixed_before_source_materialization":
         raise ValueError("unsupported or incomplete request envelope")
@@ -277,7 +287,13 @@ def validate_request_envelope(value: object) -> dict[str, Any]:
 
     request_value = envelope["request"]
     request_fields = _REQUEST_FIELDS_V1
-    if schema == REQUEST_ENVELOPE_SCHEMA:
+    if schema == _REQUEST_ENVELOPE_SCHEMA_V2:
+        request_fields = (
+            _REQUEST_FIELDS_V2_WITH_SAMPLING_POLICY
+            if isinstance(request_value, dict) and "sampling_policy" in request_value
+            else _REQUEST_FIELDS_V2
+        )
+    elif schema == REQUEST_ENVELOPE_SCHEMA:
         request_fields = (
             _REQUEST_FIELDS_WITH_SAMPLING_POLICY
             if isinstance(request_value, dict) and "sampling_policy" in request_value
@@ -327,8 +343,15 @@ def validate_request_envelope(value: object) -> dict[str, Any]:
     _integer(request["limit"], "request limit")
     _integer(request["max_queries"], "request max_queries", minimum=1)
     _integer(request["max_turns"], "request max_turns", minimum=1)
+    if schema == REQUEST_ENVELOPE_SCHEMA:
+        retries = _integer(
+            request["target_answer_retries"],
+            "request target_answer_retries",
+        )
+        if retries > 10:
+            raise ValueError("request target_answer_retries must be <= 10")
     if not isinstance(request["dry_run"], bool) or (
-        schema == REQUEST_ENVELOPE_SCHEMA
+        schema != _LEGACY_REQUEST_ENVELOPE_SCHEMA
         and (
             not isinstance(request["approximate_common_metrics"], bool)
             or not isinstance(

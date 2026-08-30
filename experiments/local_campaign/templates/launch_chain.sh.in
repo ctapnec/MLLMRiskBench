@@ -326,7 +326,7 @@ expected_argv = [
     "--defense-guardrail-model", "meta-llama/Llama-Guard-3-1B",
     "--defense-guardrail-revision", "acf7aafa60f0410f8f42b1fa35e077d705892029",
     "--defense-guardrail-device", "cuda:1", "--approximate-common-metrics",
-    "--max-total-target-calls", "1", "--max-total-judge-calls", "0",
+    "--max-total-target-calls", "2", "--max-total-judge-calls", "0",
     "--max-total-http-attempts", "0", "--deadline-seconds", "3600",
     "--out", str(preflight_root),
 ]
@@ -410,19 +410,19 @@ if set(resolved_snapshots) != set(expected_resource_roles):
 envelope = validate_request_envelope(json.loads(envelope_payload))
 expected_envelope_request = {
     "approximate_common_metrics": True,
-    "call_caps": {"deadline_seconds": 3600, "http_attempts": None, "judge": None, "target": 1},
+    "call_caps": {"deadline_seconds": 3600, "http_attempts": None, "judge": None, "target": 2},
     "defense": "both", "defense_guard": "guardrail", "dry_run": False,
     "dtype": "auto", "execution_purpose": "preflight_only", "group_keys": group_keys,
     "hosted_judge_data_transfer_acknowledged": False, "judge_model": None,
     "judges": ["rules", "guardrail"], "limit": 1,
     "logical_source_arms": ["jailbreakbench_benign"], "max_queries": 1,
-    "max_turns": 1, "quantization": "",
+    "max_turns": 1, "target_answer_retries": 1, "quantization": "",
     "requested_target_keys": ["vllm:Qwen/Qwen3-VL-8B-Instruct"],
     "sample_seed": 0, "seeds": [0], "selected_attackers": ["replay"],
 }
 project_binding = envelope["bindings"]["project_revision"]
 if (
-    envelope["schema"] != "ura-request-envelope/2"
+    envelope["schema"] != "ura-request-envelope/3"
     or envelope["request"] != expected_envelope_request
     or project_binding["expected_commit"] != commit
     or project_binding["observed_commit"] != commit
@@ -500,13 +500,13 @@ if (
 expected_projection_calls = {
     "by_attacker": {
         "replay": {
-            "http_attempts": 0, "judge_calls": 0, "local_guardrail_evaluations": 3,
-            "target_calls": 1, "trajectories": 1,
+            "http_attempts": 0, "judge_calls": 0, "local_guardrail_evaluations": 5,
+            "target_calls": 2, "trajectories": 1,
         }
     },
-    "http_attempts": 0, "judge_calls": 0, "local_guardrail_evaluations": 3,
-    "semantics": "conservative_complete_grid_upper_bound_v1",
-    "target_calls": 1, "trajectories": 1,
+    "http_attempts": 0, "judge_calls": 0, "local_guardrail_evaluations": 5,
+    "semantics": "conservative_complete_grid_upper_bound_v2",
+    "target_answer_retries": 1, "target_calls": 2, "trajectories": 1,
 }
 if (
     projection["call_projection"] != expected_projection_calls

@@ -62,6 +62,7 @@ def _request() -> dict[str, object]:
         "limit": 3,
         "max_queries": 2,
         "max_turns": 2,
+        "target_answer_retries": 1,
         "defense": "none",
         "defense_guard": "rules",
         "group_keys": ["model", "source"],
@@ -128,6 +129,30 @@ def test_envelope_fixes_only_exact_requested_whole_arm_cross_product() -> None:
         assert forbidden not in serialized
     assert envelope["limitations"]["source_strata_materialized"] is False
     assert envelope["limitations"]["compatibility_evaluated"] is False
+    assert envelope["request"]["target_answer_retries"] == 1
+
+
+def test_envelope_defaults_retry_once_and_rejects_out_of_range_values() -> None:
+    project, harness, driver = _source_bindings()
+    request = _request()
+    del request["target_answer_retries"]
+
+    envelope = build_request_envelope(
+        request=request,
+        project_revision=project,
+        harness_source=harness,
+        driver_source=driver,
+    )
+    assert envelope["request"]["target_answer_retries"] == 1
+
+    for invalid in (-1, 11, True):
+        with pytest.raises(ValueError, match="target_answer_retries"):
+            build_request_envelope(
+                request={**_request(), "target_answer_retries": invalid},
+                project_revision=project,
+                harness_source=harness,
+                driver_source=driver,
+            )
 
 
 def test_request_envelope_rejects_unbound_row_exclusion_switch() -> None:
@@ -214,6 +239,7 @@ def test_legacy_v1_envelope_remains_readable_without_relabeling() -> None:
     envelope["schema"] = "ura-request-envelope/1"
     del envelope["request"]["approximate_common_metrics"]
     del envelope["request"]["hosted_judge_data_transfer_acknowledged"]
+    del envelope["request"]["target_answer_retries"]
     _refresh_envelope_id(envelope)
 
     validated = validate_request_envelope(envelope)
@@ -221,6 +247,19 @@ def test_legacy_v1_envelope_remains_readable_without_relabeling() -> None:
     assert validated == envelope
     assert validated["schema"] == "ura-request-envelope/1"
     assert "approximate_common_metrics" not in validated["request"]
+
+
+def test_legacy_v2_envelope_remains_readable_without_retry_relabeling() -> None:
+    envelope = copy.deepcopy(_envelope())
+    envelope["schema"] = "ura-request-envelope/2"
+    del envelope["request"]["target_answer_retries"]
+    _refresh_envelope_id(envelope)
+
+    validated = validate_request_envelope(envelope)
+
+    assert validated == envelope
+    assert validated["schema"] == "ura-request-envelope/2"
+    assert "target_answer_retries" not in validated["request"]
 
 
 def test_envelope_rejects_missing_units_and_source_binding_substitution() -> None:

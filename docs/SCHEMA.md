@@ -109,7 +109,7 @@ removes the path and persists `response_artifact_identity` or
 ## Prospective request envelope and early failures
 
 Before planning exists, `run_matrix` emits strict
-`ura-request-envelope/2` as
+`ura-request-envelope/3` as
 `<envelope_id>.request-envelope.json`. Its exact top-level
 fields are `schema`, `status`, `envelope_id`, `request`, `bindings`,
 `execution_units`, and `limitations`. `request` fixes execution purpose,
@@ -120,9 +120,8 @@ identity. Every execution unit has exactly `request_unit_id`,
 `requested_target_key`, `logical_source_arm`, and `attacker`; the list is the
 complete exact cross-product of those three selected axes.
 
-For byte compatibility with deployed version-2 requests, omission keeps the
-historical request inventory and seeded pseudorandom behavior. When the operator
-supplies `--sampling-policy`, the request has exactly one additional
+Sampling-policy omission keeps the seeded pseudorandom behavior. When the
+operator supplies `--sampling-policy`, the request has exactly one additional
 `sampling_policy` field whose value is
 `seeded_pseudorandom_whole_cluster_prefix_v1` or
 `source_order_whole_cluster_prefix_v1`. That field contributes to envelope
@@ -136,6 +135,12 @@ will leave the rig under the selected judge provider's retention and data-use
 terms; it is not proof of institutional approval, a retention guarantee, or
 provider deletion. It remains `false` for dry runs, no-call `rig_check`, rules-
 only judging, and a local LLM judge.
+
+Version 3 requires integer `request.target_answer_retries` in 0 through 10 and
+records the CLI default `1`. It is the number of additional target calls allowed
+after a deterministically unusable answer. Version-1 and version-2 envelopes
+remain readable with their exact historical field inventories; validators do
+not add or infer the version-3 retry field.
 
 The envelope is created after basic CLI/axis validation but before selected
 config loading, source-conformance input loading, or conversion. It is a

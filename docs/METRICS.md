@@ -242,7 +242,7 @@ completed Judgment-record counts. Analysis-inclusion counts remain null and
 `not_supplied`; these quantities must not all be relabelled as "cells".
 
 `experiments.level1_evidence` implements this accounting by automatically
-discovering `ura-request-envelope/2` artifacts from supplied result roots and
+discovering `ura-request-envelope/3` artifacts from supplied result roots and
 eligibility siblings, then joining any materialized plans and final
 complete/partial grids. It emits `ura-level1-evidence/3` JSON and the existing
 deterministic planning-stratum CSV. It

@@ -344,7 +344,7 @@ def test_core_docs_describe_request_endpoint_and_execution_config_contracts() ->
     )
     for path in paths:
         document = path.read_text(encoding="utf-8")
-        assert "ura-request-envelope/2" in document, path
+        assert "ura-request-envelope/3" in document, path
         assert "hosted_judge_data_transfer_acknowledged" in document, path
         assert "ura-builder-selected-api-config/1" in document, path
         assert "endpoint_identity" in document, path
