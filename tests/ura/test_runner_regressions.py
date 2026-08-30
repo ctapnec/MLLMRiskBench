@@ -78,7 +78,7 @@ from ura.source_conformance import (
     observed_arm_conformance,
 )
 from ura.targets.api import MockTarget
-from ura.targets.base import BaseTarget
+from ura.targets.base import BaseTarget, TargetAnswerError, TargetIntegrityError
 from ura.targets.guarded import GuardedTarget
 
 
@@ -1832,7 +1832,8 @@ def test_call_projection_reports_local_guardrail_work_separately() -> None:
         max_turns=4,
     )
 
-    assert projection["target_calls"] == 2
+    assert projection["target_calls"] == 4
+    assert projection["target_answer_retries"] == 1
     assert projection["judge_calls"] == 2
     assert projection["local_guardrail_evaluations"] == 2
 
@@ -1861,7 +1862,7 @@ def test_call_projection_excludes_common_judges_for_source_metric_only_rows() ->
         max_turns=1,
     )
 
-    assert projection["target_calls"] == 2
+    assert projection["target_calls"] == 4
     assert projection["judge_calls"] == 0
     assert projection["local_guardrail_evaluations"] == 0
 
@@ -1890,7 +1891,7 @@ def test_call_projection_adds_only_opted_in_approximate_judge_work() -> None:
         **common, approximate_common_metrics=True
     )
 
-    assert default_off["target_calls"] == opted_in["target_calls"] == 2
+    assert default_off["target_calls"] == opted_in["target_calls"] == 4
     assert default_off["judge_calls"] == 0
     assert opted_in["judge_calls"] == 2
     assert default_off["http_attempts"] == opted_in["http_attempts"] == 0
@@ -1919,7 +1920,7 @@ def test_call_projection_includes_input_and_output_defense_guard_work() -> None:
         max_turns=1,
     )
 
-    assert projection["local_guardrail_evaluations"] == 3
+    assert projection["local_guardrail_evaluations"] == 5
 
 
 def test_matrix_guardrail_requires_and_records_immutable_revision(
@@ -6500,7 +6501,7 @@ def test_failed_provider_call_keeps_safe_audit_and_consumes_durable_budget(
     assert budget.snapshot()["http_attempts"] == 1
 
 
-def test_runner_rejects_empty_mismatched_and_unreported_target_outputs() -> None:
+def test_runner_rejects_mismatched_and_unreported_target_outputs() -> None:
     class BadTarget(_RecordingTarget):
         def __init__(self, mode: str) -> None:
             super().__init__()
@@ -6524,12 +6525,100 @@ def test_runner_rejects_empty_mismatched_and_unreported_target_outputs() -> None
             )
 
     for mode, message in (
-        ("empty", "must report exactly one"),
         ("mismatch", "returned identity"),
         ("sampling", "sampling-control"),
     ):
         with pytest.raises(ValueError, match=message):
             _runner(_FloodAttacker(), BadTarget(mode)).run([_datapoint()])
+
+
+def test_runner_retries_one_unusable_answer_by_default_then_scores_recovery() -> None:
+    class SymbolThenAnswer(_RecordingTarget):
+        def generate(
+            self, dialog: list[DialogTurn], *, seed: int | None = None
+        ) -> Response:
+            self._dialogs.append(list(dialog))
+            self._seeds.append(seed)
+            text = "!!!" if len(self._dialogs) == 1 else "usable answer"
+            return Response(
+                attempt_id="placeholder",
+                target=self.name,
+                output_turns=[DialogTurn(role="assistant", content=text)],
+                raw={
+                    "target_sampling_control": "seeded",
+                    "requested_seed": seed,
+                },
+            )
+
+    target = SymbolThenAnswer()
+    runner = _runner(_FloodAttacker(), target)
+    judgments, _manifest = runner.run([_datapoint()])
+
+    assert len(target._dialogs) == 2
+    assert len(runner.responses) == len(judgments) == 1
+    assert judgments[0].label == "safe"
+    assert runner.responses[0].raw["model_stability_status"] == (
+        "recovered_after_retry"
+    )
+    assert runner.responses[0].raw["model_stability_category"] == (
+        "symbol_only_output"
+    )
+    assert runner.responses[0].raw["model_stability_retry_count"] == 1
+
+
+def test_runner_retains_exhausted_answer_failures_and_completes_population() -> None:
+    class AlwaysUnusable(_RecordingTarget):
+        def generate(
+            self, dialog: list[DialogTurn], *, seed: int | None = None
+        ) -> Response:
+            self._dialogs.append(list(dialog))
+            self._seeds.append(seed)
+            raise TargetAnswerError(
+                "fixture target produced no usable answer",
+                category="empty_output",
+            )
+
+    target = AlwaysUnusable()
+    judge = _ConfidentBinaryJudge()
+    runner = Runner(
+        _FloodAttacker(),
+        target,
+        JudgeCascade([judge]),
+        AttackBudget(max_queries=1, max_turns=1, seed=0),
+        [0],
+    )
+    corpus = [_datapoint(f"failed-{index}") for index in range(3)]
+
+    judgments, _manifest = runner.run(corpus)
+
+    assert len(target._dialogs) == 6  # initial call plus one retry for every row
+    assert len(runner.attempts) == len(runner.responses) == len(judgments) == 3
+    assert judge.calls == 0
+    assert all(judgment.label == "not_applicable" for judgment in judgments)
+    assert all(
+        judgment.raw["policy_evaluation_status"] == "model_nonresponse"
+        and judgment.raw["model_stability_status"] == "failed_output"
+        and judgment.raw["model_stability_category"] == "empty_output"
+        and judgment.raw["model_stability_retry_count"] == 1
+        for judgment in judgments
+    )
+
+
+def test_runner_keeps_target_integrity_failure_terminal_without_retry() -> None:
+    class DriftedIdentity(_RecordingTarget):
+        def generate(
+            self, dialog: list[DialogTurn], *, seed: int | None = None
+        ) -> Response:
+            self._dialogs.append(list(dialog))
+            self._seeds.append(seed)
+            raise TargetIntegrityError("resolved model identity drifted")
+
+    target = DriftedIdentity()
+    with pytest.raises(ExternalCallFailure) as raised:
+        _runner(_FloodAttacker(), target).run([_datapoint()])
+
+    assert raised.value.phase == "target_call"
+    assert len(target._dialogs) == 1
 
 
 def test_runner_retains_typed_empty_completion_without_querying_judges(
@@ -6628,7 +6717,7 @@ def test_common_metric_nonresponse_does_not_claim_declared_source_metric(
     )
 
 
-def test_empty_source_metric_response_is_invalid_prediction_not_trail_failure(
+def test_empty_source_metric_response_is_retained_as_model_stability_failure(
     tmp_path: Path,
 ) -> None:
     class EmptySourceTarget(_RecordingTarget):
@@ -6668,22 +6757,11 @@ def test_empty_source_metric_response_is_invalid_prediction_not_trail_failure(
     judgments, _manifest = runner.run([point])
 
     final = judgments[0]
-    assert final.raw["policy_evaluation_status"] == "source_metric_only"
+    assert final.raw["policy_evaluation_status"] == "model_nonresponse"
     assert final.raw["required_metric"] == required_metric
-    assert final.raw["source_evaluation"] == {
-        "family": required_metric,
-        "implemented": True,
-        "valid": False,
-        "prediction": None,
-        "reference": "safe",
-        "correct": False,
-        "risk_description_available": False,
-        "risk_effectiveness_scored": False,
-        "source_cluster_id": "rjudge:empty-source-prediction",
-        "source_protocol": None,
-        "official_serial_two_call_protocol": None,
-        "parser": "strict_single_final_safe_unsafe_label_line_v2",
-    }
+    assert final.raw["model_stability_status"] == "failed_output"
+    assert final.raw["model_stability_category"] == "empty_output"
+    assert "source_evaluation" not in final.raw
     trail_path = tmp_path / "empty-source-prediction.trails.jsonl"
     runner.save_trails(trail_path)
     rows = [

@@ -963,7 +963,8 @@ localOnlyMeasured?'0 (complete release)':'not set')+
  '; sampling policy: '+namedValue('sampling_policy','legacy seeded default')+
  '; sample seed: '+namedValue('sample_seed','not set')+'; seeds: '+
  namedValue('seeds','not set')+'; queries: '+namedValue('max_queries','not set')+
- '; turns: '+namedValue('max_turns','not set')+'; group: '+namedValue('group','CLI default')+
+ '; turns: '+namedValue('max_turns','not set')+'; answer retries: '+
+ namedValue('target_answer_retries','1')+'; group: '+namedValue('group','CLI default')+
  '; IDEATOR pair limit: '+namedValue('ideator_pair_limit','0 (all)')+
 '; exclude tool-conditioned: '+(checkedName('exclude_tool_conditioned')?'on':'off')+
 '; reset open circuits: '+(checkedName('reset_open_circuits')?'on':'off')+

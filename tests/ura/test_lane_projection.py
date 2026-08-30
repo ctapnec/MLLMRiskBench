@@ -87,7 +87,8 @@ def test_rig_check_persists_strict_no_call_lane_projection(
     assert sum(arm["source_policy_cluster_counts"].values()) == 2
     assert arm["selected_input_media"]["status"] == "available"
     assert arm["selected_input_media"]["total_unique_bytes"] > 0
-    assert projection["call_projection"]["target_calls"] == 20
+    assert projection["call_projection"]["target_calls"] == 40
+    assert projection["call_projection"]["target_answer_retries"] == 1
     assert projection["call_projection"]["judge_calls"] == 0
     assert all(
         estimate["status"] == "CANNOT-VERIFY" and estimate["value"] is None

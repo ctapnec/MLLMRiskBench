@@ -1892,6 +1892,9 @@ class BuilderValidationMixin:
             )
         max_queries_value = require_int("max_queries", positive=True)
         max_turns_value = require_int("max_turns", positive=True)
+        target_answer_retries = require_int("target_answer_retries")
+        if target_answer_retries is not None and not 0 <= target_answer_retries <= 10:
+            errors["target_answer_retries"] = "must be an integer in [0, 10]"
         if ideator_requirements is not None:
             available_pairs, selected_pairs = ideator_requirements
             effective_max_queries = 4 if max_queries_value is None else max_queries_value
@@ -2470,6 +2473,11 @@ class BuilderValidationMixin:
                 ),
                 ("max_queries", "--max-queries", "target calls per datapoint and seed"),
                 ("max_turns", "--max-turns", "conversation turns per datapoint and seed"),
+                (
+                    "target_answer_retries",
+                    "--target-answer-retries",
+                    "additional attempts for unusable output; default 1",
+                ),
                 (
                     "ideator_pair_limit",
                     "IDEATOR pair limit",

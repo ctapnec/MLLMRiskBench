@@ -2407,6 +2407,15 @@ class BuilderPageMixin:
                 "max conversation turns per datapoint and seed",
                 kind="number",
             )
+            + text_field(
+                "target_answer_retries",
+                "--target-answer-retries",
+                "additional attempts for empty, malformed, binary/control-like, "
+                "or symbol-only output; exhausted answers remain model-stability "
+                "missing responses",
+                default="1",
+                kind="number",
+            )
             + "</div></div>"
             "<div class='card'><h2>"
             + _icon("chart")

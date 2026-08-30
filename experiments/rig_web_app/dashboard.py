@@ -2387,6 +2387,31 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
                     "<p class='note'>Not charted: values are not rates in "
                     "[0, 1]; the table below is the presentation.</p>"
                 )
+            stability_bars = []
+            for row in rows[: self._LEVEL2_CHART_CAP]:
+                completed = row.get("judgments_completed")
+                missing = row.get("judgments_missing_responses")
+                if (
+                    isinstance(completed, int)
+                    and not isinstance(completed, bool)
+                    and completed > 0
+                    and isinstance(missing, int)
+                    and not isinstance(missing, bool)
+                    and 0 <= missing <= completed
+                ):
+                    stability_bars.append((
+                        f"{row.get('model_spec', '?')} / {row.get('corpus_arm', '?')}",
+                        missing / completed,
+                    ))
+            stability_chart = (
+                "<h4>Model stability - failed-output rate</h4>"
+                + self._bar_chart(stability_bars)
+                + "<p class='note'>Failed or missing model outputs are retained "
+                "as coverage failures and excluded from security-rate denominators.</p>"
+                if stability_bars
+                else "<h4>Model stability</h4><p class='note'>N/A: this older "
+                "report does not carry completed and missing-response counts.</p>"
+            )
             table_rows = []
             for row in rows:  # every bounded row, never truncated
                 ci_low, ci_high = row.get("ci_low"), row.get("ci_high")
@@ -2480,11 +2505,12 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
                 + "</h3>"
                 + authority_note
                 + chart
+                + stability_chart
                 + "<div class='scroll'><table><tr><th>model_spec</th>"
                 "<th>corpus_arm</th><th>attacker</th><th>defense</th>"
                 "<th>value</th><th>ci_low, ci_high</th><th>n_records</th>"
                 "<th>n_clusters</th><th>decided/completed</th>"
-                "<th>missing responses</th>"
+                "<th>model stability: failed/missing responses</th>"
                 "<th>model queries/reference uses</th><th>evidence</th>"
                 "<th>reliability</th></tr>"
                 + "".join(table_rows)

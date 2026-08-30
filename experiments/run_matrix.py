@@ -3234,6 +3234,7 @@ def _project_grid_call_upper_bounds(
     seeds: list[int],
     max_queries: int,
     max_turns: int,
+    target_answer_retries: int = 1,
     approximate_common_metrics: bool = False,
 ) -> dict[str, object]:
     """Conservative complete-grid exposure using already-built components.
@@ -3287,7 +3288,8 @@ def _project_grid_call_upper_bounds(
                 )
                 for rows in corpora.values()
             ) * len(seeds)
-            target_calls = trajectories * target_turns
+            intended_target_calls = trajectories * target_turns
+            target_calls = intended_target_calls * (target_answer_retries + 1)
             judge_calls = (
                 judge_eligible_trajectories
                 * evaluable_turns
@@ -3305,7 +3307,7 @@ def _project_grid_call_upper_bounds(
                 judge_eligible_trajectories
                 * evaluable_turns
                 * local_guardrails_per_evaluable
-                + trajectories * target_turns * defense_guardrails_per_target_turn
+                + target_calls * defense_guardrails_per_target_turn
             )
             http_attempts = (
                 target_calls * _declared_transport_attempts(target)
@@ -3331,7 +3333,8 @@ def _project_grid_call_upper_bounds(
         total_local_guardrail += attacker_local_guardrail
         total_http += attacker_http
     return {
-        "semantics": "conservative_complete_grid_upper_bound_v1",
+        "semantics": "conservative_complete_grid_upper_bound_v2",
+        "target_answer_retries": target_answer_retries,
         "trajectories": total_trajectories,
         "target_calls": total_target,
         "judge_calls": total_judge,
@@ -4061,6 +4064,17 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--max-turns", type=int, default=4,
                     help="maximum dialog turns per datapoint and seed")
     ap.add_argument(
+        "--target-answer-retries",
+        type=int,
+        choices=range(0, 11),
+        default=1,
+        help=(
+            "additional calls after an empty, malformed, binary/control-like, "
+            "or symbol-only target answer (default: 1); exhausted attempts are "
+            "retained as model-stability missing responses"
+        ),
+    )
+    ap.add_argument(
         "--group",
         default=(
             "model,source,risk,effective_modality,expected_behavior,attacker,"
@@ -4620,6 +4634,7 @@ def _main(argv=None) -> int:
             **sampling_policy_binding,
             "max_queries": args.max_queries,
             "max_turns": args.max_turns,
+            "target_answer_retries": args.target_answer_retries,
             "defense": args.defense,
             "defense_guard": args.defense_guard,
             "group_keys": group_keys,
@@ -6024,6 +6039,7 @@ def _main(argv=None) -> int:
                             approximate_evidence_class=(
                                 "synthetic" if args.dry_run else "measured"
                             ),
+                            target_answer_retries=args.target_answer_retries,
                         ).plan_manifest(
                             corpus,
                             started_at=run_started,
@@ -6037,6 +6053,7 @@ def _main(argv=None) -> int:
                                 "approximate_common_metrics": bool(
                                     args.approximate_common_metrics
                                 ),
+                                "target_answer_retries": args.target_answer_retries,
                             },
                         )
                     except Exception as exc:  # noqa: BLE001 - audit all cells
@@ -6081,6 +6098,7 @@ def _main(argv=None) -> int:
             seeds=seeds,
             max_queries=args.max_queries,
             max_turns=args.max_turns,
+            target_answer_retries=args.target_answer_retries,
             approximate_common_metrics=bool(args.approximate_common_metrics),
         )
         _validate_planned_call_budget(
@@ -6260,6 +6278,7 @@ def _main(argv=None) -> int:
         **sampling_policy_binding,
         "max_queries": args.max_queries,
         "max_turns": args.max_turns,
+        "target_answer_retries": args.target_answer_retries,
         "global_call_budget": {
             "max_target_calls": args.max_total_target_calls or None,
             "max_judge_calls": args.max_total_judge_calls or None,
@@ -6675,6 +6694,7 @@ def _main(argv=None) -> int:
                         approximate_evidence_class=(
                             "synthetic" if args.dry_run else "measured"
                         ),
+                        target_answer_retries=args.target_answer_retries,
                     )
                     cell_config = {
                         "grid_id": grid_id,
@@ -6762,6 +6782,7 @@ def _main(argv=None) -> int:
                         "approximate_common_metrics": bool(
                             args.approximate_common_metrics
                         ),
+                        "target_answer_retries": args.target_answer_retries,
                         "attestation_probe": bool(args.attestation_probe),
                         "live_attestation": live_attestation_projection,
                         "expected_target_identity": (

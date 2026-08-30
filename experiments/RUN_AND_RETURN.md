@@ -457,12 +457,18 @@ calls and complete accounting, but they are not the current output policy.
 Runner 2.22 and later retains nonempty `finish_reason='length'` text and its
 truncation provenance; Runner 2.23 retains a successful empty Ollama completion
 as typed `model_nonresponse`, and Runner 2.24 applies the same typed outcome to
-a successful empty vLLM completion. Nonempty vague, repetitive or
-nonsensical content is sent to the selected evaluator, which may decide or
-abstain. A typed nonresponse does not query the policy judge and contributes to
-reported response and decision coverage. Neither condition is a software
-failure or permission to alter stops, generation caps, checkpoint identity or
-decoding.
+a successful empty vLLM completion. Runner 2.25 defaults to one additional
+answer attempt (`--target-answer-retries 1`) after empty, malformed,
+binary/control-like, symbol-only or exhausted-transport output. Nonempty vague,
+repetitive or semantically poor natural language is sent to the selected
+evaluator. If the retry also fails, the row is checkpointed as
+`model_stability_status=failed_output`, the policy judge is not queried, and the
+remaining assigned population continues. Stats reports this missing-response
+coverage separately from decided security rates. Projections reserve the target
+and transport upper bounds for both attempts. Exact identity, seals, fixed
+configuration, durable caps and operator wall-time limits remain terminal;
+neither condition permits altered stops, generation caps, checkpoint identity
+or decoding.
 
 A targeted amendment must re-attest and canary the four affected GraySwan lane
 identities under the current Runner before measured execution. Those identities
@@ -1917,8 +1923,8 @@ python -m experiments.run_matrix \
   --attackers replay --judges rules \
   --corpora synth --limit 1 --sample-seed 0 --seeds 0 \
   --max-queries 1 --max-turns 1 \
-  --max-total-target-calls 1 \
-  --max-total-http-attempts 4 --deadline-seconds 900 \
+  --max-total-target-calls 2 \
+  --max-total-http-attempts 8 --deadline-seconds 900 \
   --out "$TEXT_PROBE_ROOT"
 
 python -m experiments.live_attestation \
@@ -1931,7 +1937,8 @@ test "${#TEXT_RECEIPT_SHA256}" -eq 64
 
 For a target declared image-capable, `--limit 2` includes the text fixture and
 the verified text+one-pixel-image fixture. It can therefore emit separate exact
-text and text+image receipt records while retaining a two-call ceiling:
+text and text+image receipt records while retaining a four-call ceiling under
+the default one-retry answer policy:
 
 ```bash
 export IMAGE_PROBE_ROOT="runs/thesis/attestation/$TARGET_LABEL/synthetic-text-image"
@@ -1943,8 +1950,8 @@ python -m experiments.run_matrix \
   --attackers replay --judges rules \
   --corpora synth --limit 2 --sample-seed 0 --seeds 0 \
   --max-queries 1 --max-turns 1 \
-  --max-total-target-calls 2 \
-  --max-total-http-attempts 8 --deadline-seconds 900 \
+  --max-total-target-calls 4 \
+  --max-total-http-attempts 16 --deadline-seconds 900 \
   --out "$IMAGE_PROBE_ROOT"
 
 python -m experiments.live_attestation \

@@ -35,7 +35,7 @@ from ..ollama_security import (
     read_bounded_response,
     remaining_seconds,
 )
-from .base import REGISTRY, BaseTarget
+from .base import REGISTRY, BaseTarget, TargetAnswerError, TargetIntegrityError
 
 _ROLE_MAP = {
     "system": "system",
@@ -262,6 +262,10 @@ def _is_explicit_local_path(model: str) -> bool:
 
 class LocalTargetOutputError(RuntimeError):
     """A local backend returned incomplete output or unverifiable provenance."""
+
+
+class LocalTargetAnswerError(LocalTargetOutputError, TargetAnswerError):
+    """One local inference call produced no usable answer."""
 
 
 def _tree_sha256(path: Path) -> str:
@@ -952,20 +956,20 @@ class VLLMTarget(BaseTarget):
         Isolated so the online API surface is easy to adjust in one place.
         """
         if not isinstance(outputs, (list, tuple)) or len(outputs) != 1:
-            raise LocalTargetOutputError(
+            raise LocalTargetAnswerError(
                 "vLLM must return exactly one RequestOutput for one chat request"
             )
         first = outputs[0]
         completions = getattr(first, "outputs", None)
         if not isinstance(completions, (list, tuple)) or len(completions) != 1:
-            raise LocalTargetOutputError("vLLM returned zero or multiple completions")
+            raise LocalTargetAnswerError("vLLM returned zero or multiple completions")
         completion = completions[0]
         text = getattr(completion, "text", None)
         if not isinstance(text, str):
-            raise LocalTargetOutputError("vLLM returned a non-text completion")
+            raise LocalTargetAnswerError("vLLM returned a non-text completion")
         finish_reason = getattr(completion, "finish_reason", None)
         if finish_reason not in {"stop", "length"}:
-            raise LocalTargetOutputError(
+            raise LocalTargetAnswerError(
                 f"vLLM completion ended with an unsupported reason: {finish_reason!r}"
             )
         stop_reason_raw = getattr(completion, "stop_reason", None)
@@ -973,7 +977,9 @@ class VLLMTarget(BaseTarget):
         prompt_ids = getattr(first, "prompt_token_ids", None)
         completion_ids = getattr(completion, "token_ids", None)
         if prompt_ids is None or completion_ids is None:
-            raise LocalTargetOutputError("vLLM omitted prompt/completion token provenance")
+            raise LocalTargetAnswerError(
+                "vLLM omitted prompt/completion token provenance"
+            )
         prompt_n = len(prompt_ids)
         completion_n = len(completion_ids)
         tokens = {
@@ -1429,20 +1435,20 @@ class OllamaTarget(BaseTarget):
                 latency_ms = (time.perf_counter() - t0) * 1000.0
 
                 if not isinstance(data, dict):
-                    raise LocalTargetOutputError(
+                    raise LocalTargetAnswerError(
                         "Ollama response is not an object"
                     )
                 if data.get("error"):
-                    raise LocalTargetOutputError(
+                    raise LocalTargetAnswerError(
                         f"Ollama returned an error: {data['error']}"
                     )
                 if data.get("done") is not True:
-                    raise LocalTargetOutputError(
+                    raise LocalTargetAnswerError(
                         "Ollama response did not declare done=true"
                     )
                 done_reason = data.get("done_reason")
                 if done_reason not in {"stop", "length"}:
-                    raise LocalTargetOutputError(
+                    raise LocalTargetAnswerError(
                         "Ollama response ended with an unsupported reason: "
                         f"{done_reason!r}"
                     )
@@ -1451,22 +1457,22 @@ class OllamaTarget(BaseTarget):
                     not isinstance(resolved_model, str)
                     or resolved_model != self.model
                 ):
-                    raise LocalTargetOutputError(
+                    raise TargetIntegrityError(
                         "Ollama returned unexpected model identity "
                         f"{resolved_model!r}"
                     )
                 message = data.get("message")
                 if not isinstance(message, dict):
-                    raise LocalTargetOutputError(
+                    raise LocalTargetAnswerError(
                         "Ollama response omitted its message object"
                     )
                 if message.get("role", "assistant") != "assistant":
-                    raise LocalTargetOutputError(
+                    raise LocalTargetAnswerError(
                         "Ollama returned a non-assistant message"
                     )
                 text = message.get("content")
                 if not isinstance(text, str):
-                    raise LocalTargetOutputError(
+                    raise LocalTargetAnswerError(
                         "Ollama returned a non-text completion"
                     )
                 empty_completion_observed = not bool(text.strip())
@@ -1573,13 +1579,20 @@ class OllamaTarget(BaseTarget):
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        value = self._bounded_json_request(
-            req,
-            purpose="chat response",
-            deadline=deadline or (self._monotonic() + self.timeout),
-        )
+        try:
+            value = self._bounded_json_request(
+                req,
+                purpose="chat response",
+                deadline=deadline or (self._monotonic() + self.timeout),
+            )
+        except (LocalTargetOutputError, RuntimeError) as exc:
+            raise LocalTargetAnswerError(
+                str(exc), category="transport_failure"
+            ) from exc
         if not isinstance(value, dict):
-            raise LocalTargetOutputError("Ollama HTTP response is not a JSON object")
+            raise LocalTargetAnswerError(
+                "Ollama HTTP response is not a JSON object"
+            )
         return value
 
     def _bounded_json_request(
@@ -1648,7 +1661,7 @@ class OllamaTarget(BaseTarget):
             or not isinstance(completion_n, int)
             or completion_n < 0
         ):
-            raise LocalTargetOutputError(
+            raise LocalTargetAnswerError(
                 "Ollama omitted valid prompt/completion token provenance"
             )
         return {

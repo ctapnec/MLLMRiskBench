@@ -371,6 +371,12 @@ response artifacts remain authoritative.
 - Missing media, unsupported modality, absent source evaluator, target/transport
   failure, judge abstention, incomplete artifact family, and undefined statistic
   stay distinct. None becomes zero.
+- An admitted generative target defaults to one additional call after a
+  deterministically unusable answer (`--target-answer-retries 1`). Exhausting
+  that retry checkpoints the row as a model-stability failed output and
+  continues the assigned population. It is missing-response coverage, not a
+  decided safety label. Projections and caps cover all allowed attempts;
+  identity/seal drift remains terminal.
 - A live receipt matches one exact requested/base-resolved route, secret-free
   route configuration, execution scope, modality combination and observation
   time. Text+image is not a substitute for text. Synthetic live text and

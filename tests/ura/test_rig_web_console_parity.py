@@ -417,6 +417,7 @@ def test_builder_sampling_control_and_local_wall_time_keep_cli_semantics(
     app = _app(tmp_path)
     try:
         fresh = app.handle("GET", "/build")[2].decode("utf-8")
+        assert "name='target_answer_retries' value='1'" in fresh
         selected = app._build_page(
             prefill={
                 **_DRY_BASE,
@@ -510,6 +511,21 @@ def test_builder_sampling_control_and_local_wall_time_keep_cli_semantics(
         })
         assert values["--sampling-policy"] == SOURCE_ORDER_CLUSTER_PREFIX
         assert params["sampling_policy"] == SOURCE_ORDER_CLUSTER_PREFIX
+        _command, retry_values, retry_params = app._compose_from_builder({
+            **_DRY_BASE,
+            "target_answer_retries": "1",
+        })
+        assert retry_values["--target-answer-retries"] == "1"
+        assert retry_params["target_answer_retries"] == "1"
+        for allowed in ("0", "10"):
+            assert "target_answer_retries" not in app._validate_builder({
+                **_DRY_BASE,
+                "target_answer_retries": allowed,
+            })
+        assert "integer in [0, 10]" in app._validate_builder({
+            **_DRY_BASE,
+            "target_answer_retries": "11",
+        })["target_answer_retries"]
         assert app._projection_params({
             **_DRY_BASE,
             "sampling_policy": DEFAULT_SAMPLING_POLICY,

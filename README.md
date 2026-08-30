@@ -453,6 +453,14 @@ synthetic images for image-capable models, treats empty responses as incorrect,
 and requires the configured minimum correct counts. It produces engineering
 admission evidence, not a safety metric. A failed model is recorded and any
 replacement is admitted as a new exact model condition.
+Once admitted, a generative model's assigned evaluation does not terminate for
+one empty or deterministically unusable answer. Runner defaults to one retry
+after the initial call (`--target-answer-retries 1`). An exhausted row is
+checkpointed as a model-stability failed output, excluded from decided security-
+rate denominators, shown in missing-response coverage and followed by the next
+assigned row. The Build page exposes the same 0 through 10 control and Stats
+charts the failed-output rate. Identity/seal drift and explicit call/time caps
+remain terminal.
 
 Acquire a multi-model Ollama roster with
 `python -m experiments.local_campaign.ollama_acquire` in a named tmux session.

@@ -99,6 +99,23 @@ replacement is a separately pinned, acquired and readiness-tested model with new
 projection and Gate identities, never a silent substitution into the failed
 condition. Non-generative guards and classifiers use a role-specific response
 smoke rather than an irrelevant Q&A test.
+
+After a generative model passes the applicable readiness threshold, one empty
+or deterministically unusable answer cannot terminate its assigned evaluation.
+Runner makes one additional answer attempt by default
+(`--target-answer-retries 1`; 0 through 10 are explicit alternatives). Binary
+control text, symbol-only text, excessive replacement-character corruption,
+malformed backend output and exhausted transport attempts are retryable answer
+failures. Vague, terse, repetitive or semantically poor natural language remains
+an answer for the selected evaluator. If all allowed attempts fail, Runner
+publishes a typed `model_stability_status=failed_output` response and an
+unqueried `model_nonresponse` judgment, checkpoints the row, and continues with
+the complete assigned population. Stats reports the failed-output rate and
+decision coverage separately; missing answers do not enter a decided security-
+rate denominator. Exact model-identity drift, seal/configuration drift, durable
+budget exhaustion and operator time limits remain terminal. No retry weakens
+those gates. Projections reserve the target and transport upper bound for the
+initial call plus every configured answer retry.
 The optional per-vLLM-model `max_model_len` is distinct from generation
 `max_tokens`: it sets the engine-context ceiling passed before KV-cache
 allocation. Omission delegates context length to the immutable checkpoint;

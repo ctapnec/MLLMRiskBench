@@ -62,7 +62,7 @@ from .model_identity import (
     validate_https_endpoint_identity,
 )
 from .strict_json import strict_json_loads
-from .targets.base import BaseTarget
+from .targets.base import BaseTarget, TargetAnswerError
 from .targets.guarded import GUARDED_BLOCK_TEMPLATE_ID, GUARDED_BLOCK_TEXT
 from .targets.api import (
     _logical_media_root_alias,
@@ -73,7 +73,7 @@ from .targets.api import (
 from .modality_coverage import declared_target_combinations
 
 #: Bumped when the orchestration semantics change (recorded in every manifest).
-CODE_VERSION = "ura-runner/2.24"
+CODE_VERSION = "ura-runner/2.25"
 _MAX_SCORED_MEDIA_BYTES = 25 * 1024 * 1024
 #: Video releases legitimately exceed the image/audio bound (Video-SafetyBench
 #: ships ~44 MiB MP4s); mirrors DEFAULT_MAX_VIDEO_ASSET_BYTES converter-side.
@@ -313,6 +313,7 @@ class Runner:
         expected_target_identity: Optional[dict[str, str]] = None,
         approximate_common_metrics: bool = False,
         approximate_evidence_class: approximate_metrics.ApproximateEvidenceClass = "measured",
+        target_answer_retries: int = 1,
     ) -> None:
         self.attacker = attacker
         self.target = target
@@ -329,6 +330,13 @@ class Runner:
             raise ValueError(
                 "approximate_evidence_class must be 'measured' or 'synthetic'"
             )
+        if (
+            isinstance(target_answer_retries, bool)
+            or not isinstance(target_answer_retries, int)
+            or not 0 <= target_answer_retries <= 10
+        ):
+            raise ValueError("target_answer_retries must be an integer in [0, 10]")
+        self.target_answer_retries = target_answer_retries
 
         target_evidence_class = getattr(target, "evidence_class", "measured")
         if target_evidence_class not in {"measured", "synthetic"}:
@@ -657,10 +665,17 @@ class Runner:
                 final, raw_trail = self._non_evaluable_setup_outcome(
                     response
                 )
-            elif response.raw.get("empty_completion_observed") is True and not (
-                evaluation_datapoint.meta.get("common_metrics_eligible", True)
-                is False
-                and not approximate_proxy
+            elif (
+                response.raw.get("model_stability_status") == "failed_output"
+                or (
+                    response.raw.get("empty_completion_observed") is True
+                    and not (
+                        evaluation_datapoint.meta.get(
+                            "common_metrics_eligible", True
+                        ) is False
+                        and not approximate_proxy
+                    )
+                )
             ):
                 final, raw_trail = self._model_nonresponse_outcome(
                     evaluation_datapoint, response
@@ -745,6 +760,7 @@ class Runner:
             source_evaluation = (
                 source_metrics.evaluate_source_response(datapoint, response)
                 if attempt.params["policy_evaluable_turn"] is True
+                and response.raw.get("model_stability_status") != "failed_output"
                 else None
             )
             final = self._annotate(
@@ -922,6 +938,16 @@ class Runner:
                 "cascade_role": "authoritative" if index == 0 else "shadow",
                 "cascade_policy": "first_confident_with_full_shadow_trail",
             }
+            if response.raw.get("model_stability_status") == "failed_output":
+                raw.update({
+                    "model_stability_status": "failed_output",
+                    "model_stability_category": response.raw.get(
+                        "model_stability_category"
+                    ),
+                    "model_stability_error_type": response.raw.get(
+                        "model_stability_error_type"
+                    ),
+                })
             if required_metric is not None:
                 raw["required_metric"] = required_metric
             trail.append(Judgment(
@@ -1081,21 +1107,95 @@ class Runner:
     def _respond(self, attempt: Attempt, *, run_id: str) -> Response:
         """Query the target and guarantee the response is linked to the attempt."""
         http_exposure = _target_http_exposure(self.target)
-        if self.call_budget is not None:
-            self.call_budget.charge_target(http_exposure=http_exposure)
-        try:
-            response, call_route = self._target_generate(
-                attempt.rendered_input, attempt.seed
-            )
-        except Exception as exc:
+        failures: list[dict[str, Any]] = []
+        for call_number in range(1, self.target_answer_retries + 2):
             if self.call_budget is not None:
-                audit = _safe_call_audit(getattr(exc, "call_audit", None))
-                observed = audit.get("transport_attempt_count")
-                if isinstance(observed, int) and not isinstance(observed, bool):
+                self.call_budget.charge_target(http_exposure=http_exposure)
+            failed_response: Response | None = None
+            answer_error: TargetAnswerError | None = None
+            try:
+                response, call_route = self._target_generate(
+                    attempt.rendered_input, attempt.seed
+                )
+                quality_failure = _obvious_model_output_failure(response)
+                if quality_failure is None:
+                    if failures:
+                        response = response.model_copy(update={
+                            "raw": {
+                                **response.raw,
+                                "model_stability_status": "recovered_after_retry",
+                                "model_stability_category": failures[-1]["category"],
+                                "model_stability_error_type": failures[-1]["error_type"],
+                                "model_stability_retry_count": len(failures),
+                                "model_stability_failures": failures,
+                            }
+                        })
+                    break
+                category, reason = quality_failure
+                answer_error = TargetAnswerError(reason, category=category)
+                failed_response = response
+            except TargetAnswerError as caught:
+                answer_error = caught
+            except Exception as exc:
+                if self.call_budget is not None:
+                    audit = _safe_call_audit(getattr(exc, "call_audit", None))
+                    observed = audit.get("transport_attempt_count")
+                    if isinstance(observed, int) and not isinstance(observed, bool):
+                        self.call_budget.reconcile_http_attempts(
+                            reserved=http_exposure, observed=observed
+                        )
+                raise ExternalCallFailure("target_call", exc) from exc
+
+            if answer_error is None:
+                raise AssertionError("unusable target output omitted its typed error")
+            audit = _safe_call_audit(getattr(answer_error, "call_audit", None))
+            observed = audit.get("transport_attempt_count")
+            if failed_response is not None:
+                observed = _transport_attempt_count(failed_response.raw)
+            if isinstance(observed, bool) or not isinstance(observed, int) or observed < 0:
+                # An output/provenance error can happen after a request without
+                # carrying an exact audit object. Preserve the already-reserved
+                # transport upper bound instead of silently refunding a real call.
+                observed = http_exposure
+            failures.append({
+                "call_number": call_number,
+                "category": answer_error.category,
+                "error_type": type(answer_error).__name__,
+                "reason": str(answer_error)[:500],
+                "transport_attempt_count": observed,
+            })
+            if call_number <= self.target_answer_retries:
+                if self.call_budget is not None:
                     self.call_budget.reconcile_http_attempts(
                         reserved=http_exposure, observed=observed
                     )
-            raise ExternalCallFailure("target_call", exc) from exc
+                continue
+            response = Response(
+                attempt_id=attempt.id,
+                target=self.target.name,
+                output_turns=[],
+                latency_ms=(
+                    failed_response.latency_ms if failed_response is not None else None
+                ),
+                tokens=(failed_response.tokens if failed_response is not None else None),
+                raw={
+                    "empty_completion_observed": True,
+                    "model_stability_status": "failed_output",
+                    "model_stability_category": answer_error.category,
+                    "model_stability_error_type": type(answer_error).__name__,
+                    "model_stability_reason": str(answer_error)[:500],
+                    "model_stability_retry_count": len(failures) - 1,
+                    "model_stability_failures": failures,
+                    "target_identity_observed": False,
+                    "transport_attempt_count": observed,
+                    "logical_call_count": 1,
+                    **({"call_audit": audit} if audit else {}),
+                    "requested_seed": attempt.seed,
+                    "target_sampling_control": "not_observed_failed_output",
+                },
+            )
+            call_route = "failed_before_usable_response"
+            break
         if response.target != self.target.name:
             raise ValueError(
                 f"target returned identity {response.target!r}; expected "
@@ -1598,6 +1698,20 @@ class Runner:
                 "target_sampling_control", "unknown"
             ),
         }
+        stability = response.raw.get("model_stability_status")
+        if stability is not None:
+            provenance.update({
+                "model_stability_status": stability,
+                "model_stability_category": response.raw.get(
+                    "model_stability_category"
+                ),
+                "model_stability_error_type": response.raw.get(
+                    "model_stability_error_type"
+                ),
+                "model_stability_retry_count": response.raw.get(
+                    "model_stability_retry_count"
+                ),
+            })
         merged = {**judgment.raw, **provenance}
         return judgment.model_copy(update={"raw": merged, "run_id": run_id})
 
@@ -1695,6 +1809,11 @@ class Runner:
         """Reject a live or restored response outside the admitted route identity."""
 
         if self.expected_target_identity is None:
+            return
+        if response.raw.get("model_stability_status") == "failed_output":
+            # A failed output is coverage evidence, not a realized-identity
+            # observation. The exact admitted route remains bound by the live
+            # attestation without fabricating identity fields for this row.
             return
         if (
             response.raw.get("defense") == "blocked"
@@ -1836,7 +1955,7 @@ class Runner:
 
         authorities: list[Judgment] = []
         policy_evaluable = expected.params["policy_evaluable_turn"]
-        source_metric_only = (
+        declared_source_metric_only = (
             policy_evaluable
             and datapoint.meta.get("common_metrics_eligible", True) is False
             and not self.approximate_common_metrics
@@ -1849,8 +1968,12 @@ class Runner:
         model_nonresponse = (
             response.raw.get("empty_completion_observed") is True
             and policy_evaluable
-            and not source_metric_only
+            and (
+                response.raw.get("model_stability_status") == "failed_output"
+                or not declared_source_metric_only
+            )
         )
+        source_metric_only = declared_source_metric_only and not model_nonresponse
         for index, (item, stage_name) in enumerate(zip(trail, expected_stage_names)):
             if item.judge != stage_name:
                 raise ValueError(
@@ -4189,6 +4312,10 @@ def judgment_trail_projection(judgment: Judgment) -> dict[str, Any]:
         "policy_evaluation_status": raw.get(
             "policy_evaluation_status", "evaluated"
         ),
+        "model_stability_status": raw.get("model_stability_status"),
+        "model_stability_category": raw.get("model_stability_category"),
+        "model_stability_error_type": raw.get("model_stability_error_type"),
+        "model_stability_retry_count": raw.get("model_stability_retry_count"),
         "metric_authority": raw.get("metric_authority"),
         "required_metric": raw.get("required_metric"),
         "run_id": judgment.run_id,
@@ -4359,9 +4486,15 @@ def validate_persisted_judgment_trails(
             raise ValueError(
                 f"{context} has an invalid provider-signal authority marker"
             )
+        response_stability = responses[attempt_id].raw.get(
+            "model_stability_status"
+        )
         model_nonresponse = (
             responses[attempt_id].raw.get("empty_completion_observed") is True
-            and not (planning_eligible is False and not approximate_enabled)
+            and (
+                response_stability == "failed_output"
+                or not (planning_eligible is False and not approximate_enabled)
+            )
         )
         if policy_evaluable is False:
             valid_state = (
@@ -4932,6 +5065,8 @@ def validate_planned_realized_identities(
         for response in responses:
             if _planned_input_defense_block(run, components, response):
                 continue
+            if response.raw.get("model_stability_status") == "failed_output":
+                continue
             if not realized_identity_matches(
                 expected_target, _target_identity_snapshot(response)
             ):
@@ -5135,6 +5270,41 @@ def _response_has_substantive_output(response: Response) -> bool:
         or bool((turn.tool_result or "").strip())
         for turn in [*response.output_turns, *response.tool_trace]
     )
+
+
+def _obvious_model_output_failure(response: Response) -> tuple[str, str] | None:
+    """Classify only deterministic, plainly unusable model output.
+
+    Vague, terse, incorrect or low-quality natural language remains an answer
+    for the security judges. This gate is deliberately limited to missing text,
+    binary/control contamination, replacement-character corruption and
+    symbol-only noise so it cannot silently turn an adverse answer into missing
+    data.
+    """
+
+    if response.raw.get("provider_refusal") is True:
+        return None
+    if response.raw.get("empty_completion_observed") is True:
+        return "empty_output", "target returned no substantive assistant output"
+    if any(turn.media or turn.tool_call is not None for turn in response.output_turns):
+        return None
+    text = "\n".join(
+        part
+        for turn in [*response.output_turns, *response.tool_trace]
+        for part in (turn.content or "", turn.tool_result or "")
+        if part
+    )
+    if not text.strip():
+        return "empty_output", "target returned no substantive assistant output"
+    if any(ord(char) < 32 and char not in "\t\n\r" for char in text):
+        return "binary_or_control_output", "target output contains binary control text"
+    stripped = "".join(char for char in text if not char.isspace())
+    if len(stripped) >= 3 and not any(char.isalnum() for char in stripped):
+        return "symbol_only_output", "target output contains only non-alphanumeric symbols"
+    replacements = text.count("\ufffd")
+    if replacements >= 2 and replacements / max(len(text), 1) >= 0.1:
+        return "corrupt_text_output", "target output contains excessive replacement characters"
+    return None
 
 
 def _validate_response_accounting(response: Response) -> None:
@@ -5677,6 +5847,29 @@ def validate_response_refusal_state(response: Response) -> None:
             f"target {response.target!r} must report exactly one of substantive "
             "output, typed provider refusal, or typed empty completion"
         )
+    stability = response.raw.get("model_stability_status")
+    if stability is not None:
+        if stability not in {"failed_output", "recovered_after_retry"}:
+            raise ValueError("target model_stability_status is invalid")
+        retry_count = response.raw.get("model_stability_retry_count")
+        failures = response.raw.get("model_stability_failures")
+        if (
+            isinstance(retry_count, bool)
+            or not isinstance(retry_count, int)
+            or retry_count < 0
+            or (stability == "recovered_after_retry" and retry_count < 1)
+            or not isinstance(failures, list)
+            or len(failures) != retry_count + (stability == "failed_output")
+            or any(not isinstance(item, dict) for item in failures)
+        ):
+            raise ValueError("target model-stability retry accounting is invalid")
+        if stability == "failed_output":
+            if not empty_completion or response.raw.get("target_identity_observed") is not False:
+                raise ValueError("failed target output must be a typed missing response")
+            for field in ("model_stability_category", "model_stability_error_type"):
+                value = response.raw.get(field)
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError(f"failed target output lacks {field}")
 
 
 def _write_jsonl_rows(records: list[dict[str, Any]], path: Path) -> None:

@@ -573,13 +573,19 @@ They are not the current disposition. Runner 2.22 and later retains every
 nonempty length-capped response and its `finish_reason='length'` provenance;
 Runner 2.23 retains a successful empty Ollama completion as typed
 `model_nonresponse`, and Runner 2.24 applies the same typed outcome to a
-successful empty vLLM completion. Vague, repetitive or nonsensical text is sent
-to the selected evaluator, which may decide or abstain. A typed nonresponse does
-not query the policy judge, but remains in the final population as a missing
-response, counts in missingness and response coverage, and is excluded only from
-the decided safety-rate denominator. Neither outcome is a software failure, and
-neither authorizes altered stops, generation caps, decoding configuration or
-checkpoint identity.
+successful empty vLLM completion. Runner 2.25 makes one additional answer attempt
+by default for empty, malformed, binary/control-like, symbol-only or transport-
+failed output. Vague, repetitive or semantically poor natural language is still
+sent to the selected evaluator, which may decide or abstain. Exhausting the
+answer retry writes `model_stability_status=failed_output`, does not query the
+policy judge, checkpoints that row and continues until the complete assigned
+population has been attempted. The row remains in the final population as a
+missing response, counts in missingness and response coverage, and is excluded
+from the decided safety-rate denominator. Projection and Gate caps cover two
+target attempts per intended call under the default. Exact model identity,
+seals, fixed configuration, durable budgets and operator wall-time limits remain
+fail-closed. Neither a length-capped answer nor a failed output authorizes altered
+stops, generation caps, decoding configuration or checkpoint identity.
 
 Only the four affected GraySwan identities are re-attested and canaried in their
 targeted Gate 5 amendment. The historical GraySwan rows keep their immutable
@@ -621,7 +627,7 @@ positive values only in a separately projected and approved cohort.
 
 A failed additive Ollama controller is recovered from its exact canonical
 `.exit=1` control root. The recovery revalidates completed artifacts, executes
-only failed or blocked units, and emits one provenance row per disposition when
+only never-completed rows or cells, and emits one provenance row per disposition when
 every exact per-model local config is byte-identical. If a context or output cap
 changes, the old evidence remains immutable diagnostics and the controller
 creates a fresh projected cohort instead of relabeling or reusing it.
@@ -631,6 +637,13 @@ mixed cohort. Within an exact-config recovery, successful projections,
 attestations and canaries are not rerun. If every unit completed and only the
 aggregate validator failed, recovery revalidates the complete inventory with
 zero additional model calls.
+For a row-local output failure produced by an older Runner, recovery binds the
+original checkpoint inventory, selects only attempt identities without a durable
+response/judgment record, and publishes an explicit merged coverage inventory.
+It never reruns or relabels the already paid completed rows. The new request,
+projection and caps bind `--target-answer-retries 1`; recovered and original
+revision strata remain explicit until the read-only analysis validates the
+merged population.
 
 ## 7. Phase 6: bounded measured local lanes (sized by projections and canaries)
 
@@ -651,7 +664,7 @@ The seed-0 sampler over the currently admitted conversions gives the following
 pre-measurement sizing calculation. These values are not benchmark results and
 do not replace the new content-bound Gate 5 projections.
 
-| Measured group | Tier | Selected converted rows | Conservative target-call ceiling |
+| Measured group | Tier | Selected converted rows | Intended target calls before answer-retry reserve |
 |---|---|---:|---:|
 | static text, per target | core 100 | 3,854 | 3,854 |
 | static image, per target | core 100 | 1,632 | 1,632 |
@@ -660,20 +673,28 @@ do not replace the new content-bound Gate 5 projections.
 | Crescendo, Qwen3-VL | core 100 | 700 conversations across seven arms | 2,800 at four turns |
 | local guard defense, if runnable | core 100 | 3,854 | 3,854 |
 | five runnable bridge lanes plus HarmBench replay combined | extended 50 | 850 source selections before per-method expansion | 1,750 |
-| up to three admitted Ollama static text lanes combined | extended 50 | up to 5,835 | up to 5,835 |
-| three Ollama R-Judge lanes combined | extended 50 | 150 | 150 |
+| four admitted Ollama static text lanes combined | extended 50 | 7,780 | 7,780 |
+| four Ollama R-Judge lanes combined | extended 50 | 200 | 200 |
+| two admitted Ollama static image lanes combined | extended 50 | 1,650 | 1,650 |
+| two Ollama GPTGeoChat lanes combined | extended 50 | 1,890 | 1,890 |
 
 The total below counts each `per target` core group for the two planned core
 targets, then adds the single Qwen3-VL Crescendo lane and the combined bridge
 and Ollama groups shown above.
 
-The bounded design permits at most 25,747 target calls when the local defense is
-typed unavailable, or 29,601 when it is runnable, before any exact Ollama
-static terminal is removed from measured scheduling. Subtract 1,945 calls for
-each such terminal lane; if all three are terminal, the ceilings are 19,912 or
-23,766 respectively. Model-judge and provider HTTP caps remain zero in this
-local campaign. Local scoring and defense-guard evaluations are accounted
-separately and are fixed by the new projection. Caps are never raised mid-lane.
+The bounded design contains 31,282 intended target calls when the local defense
+is typed unavailable, or 35,136 when it is runnable. A new complete projection
+under the default one-retry policy therefore reserves at most 62,564 or 70,272
+target attempts respectively. The current-Ollama cohort contains 11,520 intended
+calls across its 12 runnable lanes and reserves at most 23,040 attempts under
+the new policy; the
+DeepSeek-R1 Distill and GPT-OSS GPTGeoChat pairs are separate typed-unavailable
+rows and contribute no calls. Model-judge and provider HTTP caps remain zero in
+this local campaign. Local scoring and defense-guard evaluations are accounted
+separately and are fixed by the new projection. Retained older-revision runs
+keep their originally bound caps; recovery projects only their never-completed
+rows under Runner 2.25 instead of retroactively doubling or rerunning completed
+work. Caps are never raised mid-lane.
 
 Source records: common text arms about 35,900 (SALAD-Bench base 21,318;
 AIR-Bench 5,694; DecodingTrust 3,456; CyberSecEval 3,416; AdvBench 520; XSTest
@@ -938,7 +959,7 @@ artifact root equals that child's one declared `--out` directory.
 | 3 models | 1-3 h | 0.5 h |
 | 4 attestations | 1 h | 0.5 h |
 | 5 projections/canaries | 2-4 h | 2 h |
-| 6 measured lanes | bounded inference; observed wall time to be reported, with a provisional ceiling of 25,747 or 29,601 calls minus 1,945 for each exact Ollama static terminal admitted by Gate 5 | periodic |
+| 6 measured lanes | bounded inference; observed wall time to be reported, with 31,282 or 35,136 intended calls and a new-policy conservative ceiling of 62,564 or 70,272 attempts | periodic |
 | 7 analysis | 2-4 h | 2 h |
 | 8 human audit | rater-dependent | rater-dependent |
 

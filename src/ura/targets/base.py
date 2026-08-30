@@ -11,6 +11,23 @@ from abc import ABC, abstractmethod
 from ..data_models import DialogTurn, Response
 
 
+class TargetAnswerError(RuntimeError):
+    """One target call produced no usable model answer.
+
+    The Runner retains this as a typed model-stability observation and continues
+    the admitted evaluation population.  Identity, seal, configuration and
+    budget failures must use a different exception type and remain terminal.
+    """
+
+    def __init__(self, message: str, *, category: str = "unusable_output") -> None:
+        super().__init__(message)
+        self.category = category
+
+
+class TargetIntegrityError(RuntimeError):
+    """A target violated admitted identity or fixed execution provenance."""
+
+
 class BaseTarget(ABC):
     """A model under test.
 
@@ -61,4 +78,10 @@ class TargetRegistry:
 
 REGISTRY = TargetRegistry()
 
-__all__ = ["BaseTarget", "TargetRegistry", "REGISTRY"]
+__all__ = [
+    "BaseTarget",
+    "TargetAnswerError",
+    "TargetIntegrityError",
+    "TargetRegistry",
+    "REGISTRY",
+]

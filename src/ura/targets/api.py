@@ -42,7 +42,7 @@ from ..model_identity import (
     canonical_https_endpoint_identity,
     canonical_provider_name,
 )
-from .base import REGISTRY, BaseTarget
+from .base import REGISTRY, BaseTarget, TargetAnswerError, TargetIntegrityError
 
 # --------------------------------------------------------------------------- #
 # Shared helpers
@@ -239,27 +239,27 @@ def _validated_provider_modalities(
     return modalities
 
 
-class OpenAIResponsesOutputError(RuntimeError):
+class OpenAIResponsesOutputError(TargetAnswerError):
     """A Responses API result cannot be used as a complete model output."""
 
 
-class AnthropicFableOutputError(RuntimeError):
+class AnthropicFableOutputError(TargetAnswerError):
     """A Fable Messages result cannot be used as a complete model output."""
 
 
-class AnthropicOutputError(RuntimeError):
+class AnthropicOutputError(TargetAnswerError):
     """An Anthropic Messages result is incomplete or lacks provenance."""
 
 
-class OpenAIChatOutputError(RuntimeError):
+class OpenAIChatOutputError(TargetAnswerError):
     """An OpenAI Chat Completions result is incomplete or lacks provenance."""
 
 
-class GeminiOutputError(RuntimeError):
+class GeminiOutputError(TargetAnswerError):
     """A Gemini GenerateContent result is incomplete or lacks provenance."""
 
 
-class ProviderTransportError(RuntimeError):
+class ProviderTransportError(TargetAnswerError):
     """A hosted request exhausted its explicit, auditable retry policy."""
 
     def __init__(
@@ -269,7 +269,7 @@ class ProviderTransportError(RuntimeError):
         provider: str,
         transport_attempts: list[dict[str, Any]],
     ) -> None:
-        super().__init__(message)
+        super().__init__(message, category="transport_failure")
         self.transport_attempts = list(transport_attempts)
         last = self.transport_attempts[-1] if self.transport_attempts else {}
         # Runner persists this deliberately small summary in error artifacts.
@@ -1013,7 +1013,7 @@ class AnthropicTarget(BaseTarget):
             resp, "model", error=AnthropicOutputError, location="Anthropic response"
         )
         if not _resolved_model_matches(self.model, resolved_model):
-            raise AnthropicOutputError(
+            raise TargetIntegrityError(
                 f"Anthropic resolved unexpected model {resolved_model!r}"
             )
         content = _provider_field(resp, "content")
@@ -1421,7 +1421,7 @@ class AnthropicFableTarget(AnthropicTarget):
                 or resolved_model.startswith(f"{self.model}-")
             )
         ):
-            raise AnthropicFableOutputError(
+            raise TargetIntegrityError(
                 f"Anthropic Fable resolved unexpected model {resolved_model!r}"
             )
         stop_reason = _provider_field(resp, "stop_reason")
@@ -1712,7 +1712,7 @@ class OpenAITarget(BaseTarget):
             location="OpenAI Chat response",
         )
         if not _resolved_model_matches(self.model, resolved_model):
-            raise OpenAIChatOutputError(
+            raise TargetIntegrityError(
                 f"OpenAI Chat resolved unexpected model {resolved_model!r}"
             )
         choices = _provider_field(resp, "choices")
@@ -2172,7 +2172,7 @@ class OpenAIResponsesTarget(OpenAITarget):
         for field, wanted in expected.items():
             actual = _provider_field(reasoning, field)
             if actual != wanted:
-                raise OpenAIResponsesOutputError(
+                raise TargetIntegrityError(
                     f"OpenAI Responses effective reasoning.{field} was "
                     f"{actual!r}, expected {wanted!r}"
                 )
@@ -2334,17 +2334,17 @@ class OpenAIResponsesTarget(OpenAITarget):
                 or resolved_model.startswith(f"{self.model}-")
             )
         ):
-            raise OpenAIResponsesOutputError(
+            raise TargetIntegrityError(
                 f"OpenAI Responses resolved unexpected model {resolved_model!r}"
             )
         effective_reasoning = self._validated_reasoning(resp)
         if _provider_field(resp, "max_output_tokens") != self.max_output_tokens:
-            raise OpenAIResponsesOutputError(
+            raise TargetIntegrityError(
                 "OpenAI Responses effective max_output_tokens disagrees with "
                 "the fixed request"
             )
         if _provider_field(resp, "truncation") != self.truncation:
-            raise OpenAIResponsesOutputError(
+            raise TargetIntegrityError(
                 "OpenAI Responses effective truncation disagrees with the "
                 "fixed request"
             )
@@ -2677,7 +2677,7 @@ class GeminiTarget(BaseTarget):
             location="Gemini response",
         )
         if not _resolved_model_matches(self.model, resolved_model):
-            raise GeminiOutputError(
+            raise TargetIntegrityError(
                 f"Gemini resolved unexpected model {resolved_model!r}"
             )
         prompt_feedback = _provider_field(resp, "prompt_feedback")
