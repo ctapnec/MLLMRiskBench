@@ -225,6 +225,20 @@ def test_current_ollama_phase5_recovery_reuses_only_completed_evidence() -> None
     assert 'local label="$1" modality="$2"\n  local key="${label}/${modality}"' in template
     assert "revalidate_canary_lane" in template
     assert "record_revalidated" in template
+    assert "recovery_source_all_completed()" in template
+    assert "RECOVERY_REUSE=all_completed_exact_config" in template
+    assert "static text airbench_full completed" in template
+    assert "gptgeochat image gptgeochat_release completed" in template
+    assert 'observed_id="$(validate_attestation_receipt' in template
+    assert 'test "$observed_id" = "$attestation_id"' in template
+    completed_start = template.index("  if recovery_source_all_completed; then")
+    completed_end = template.index(
+        "  else\n  # Only DeepSeek's text attestation failed", completed_start
+    )
+    completed_branch = template[completed_start:completed_end]
+    assert "run_isolated" not in completed_branch
+    assert completed_branch.count("reuse_attestation") == 2
+    assert completed_branch.count("revalidate_canary_lane") == 4
     assert "recovery_configs_match()" in template
     assert 'source_config="$RECOVERY_SOURCE_ROOT/local-configs/${label}.json"' in template
     assert '! cmp -s -- "$source_config" "${MODEL_CONFIGS[$label]}"' in template

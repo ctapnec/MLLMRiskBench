@@ -1791,6 +1791,31 @@ if len(rows) != 1 or rows[0].get("disposition") != expected:
 PY
 }
 
+recovery_source_all_completed() {
+  "$PY" - "$RECOVERY_SOURCE_ROOT/dispositions.tsv" <<'PY'
+import csv
+import pathlib
+import sys
+
+from experiments.local_campaign.current_ollama_gate5 import _expected_dispositions
+
+path = pathlib.Path(sys.argv[1])
+if path.is_symlink() or not path.is_file() or path.resolve(strict=True) != path:
+    raise SystemExit(1)
+with path.open(encoding="utf-8", newline="") as handle:
+    rows = list(csv.DictReader(handle, delimiter="\t"))
+pairs = [(row.get("phase"), row.get("unit")) for row in rows]
+raise SystemExit(
+    0 if (
+        len(rows) == len(_expected_dispositions())
+        and len(set(pairs)) == len(pairs)
+        and set(pairs) == _expected_dispositions()
+        and all(row.get("disposition") == "completed" for row in rows)
+    ) else 1
+)
+PY
+}
+
 record_revalidated() {
   local phase="$1" unit="$2"
   printf '%s\t%s\tcompleted\trevalidated_existing\n' "$phase" "$unit" \
@@ -1848,7 +1873,7 @@ reuse_attestation() {
   local label="$1" modality="$2"
   local key="${label}/${modality}"
   local row requested_label requested_modality spec digest attestation_id receipt
-  local receipt_sha probe_root target_attempts successful_generations
+  local receipt_sha probe_root target_attempts successful_generations expected_kind observed_id
   require_source_disposition attestation "$key" completed
   row="$(source_status_row attestations.tsv "$ATTEST_STATUS" model_label "$label" \
     modality "$modality")"
@@ -1863,6 +1888,15 @@ reuse_attestation() {
   test "$(sha256sum -- "$receipt" | awk '{print $1}')" = "$receipt_sha"
   "$PY" -m experiments.live_attestation --validate "$receipt" \
     --sha256 "$receipt_sha" >/dev/null
+  if [[ "$modality" == 'text' ]]; then
+    expected_kind='synthetic_live_transport_probe'
+  else
+    expected_kind='real_source_live_transport_probe'
+  fi
+  observed_id="$(validate_attestation_receipt \
+    "$receipt" "${MODEL_CONFIGS[$label]}" "$spec" "$digest" "$modality" \
+    "$expected_kind")"
+  test "$observed_id" = "$attestation_id"
   printf '%s\n' "$row" >> "$ATTEST_STATUS"
   ATTESTATION_FILES["${label}:${modality}"]="$receipt"
   ATTESTATION_SHAS["${label}:${modality}"]="$receipt_sha"
@@ -1900,6 +1934,7 @@ PY
 
 revalidate_canary_lane() {
   local lane="$1" label="$2" mode="$3" modality="$4" arm="$5"
+  local expected_source_disposition="${6:-}"
   local old_tag="${RECOVERY_SOURCE_ROOT##*/phase5-ollama-}"
   local diagnostic_run="$DIAGNOSTIC_ROOT/${lane}-${old_tag}/run"
   local rehearsal_run="$PREFLIGHT_ROOT/${lane}-rehearsal-${old_tag}/run"
@@ -1908,12 +1943,14 @@ revalidate_canary_lane() {
   local projection_id target_cap judge_cap guard_evals http_cap clusters records
   local canary_id stages target_status attacker_status source_status decided coverage
   local target_attempts successful_target_generations
-  if [[ "$lane" == 'ollama-gemma4-12b-text-primary-50' \
-     || "$lane" == 'ollama-gpt-oss-20b-text-primary-50' ]]; then
-    require_source_disposition canary "$lane" failed
-  else
-    require_source_disposition canary "$lane" completed
+  if [[ -z "$expected_source_disposition" ]]; then
+    expected_source_disposition='completed'
+    if [[ "$lane" == 'ollama-gemma4-12b-text-primary-50' \
+       || "$lane" == 'ollama-gpt-oss-20b-text-primary-50' ]]; then
+      expected_source_disposition='failed'
+    fi
   fi
+  require_source_disposition canary "$lane" "$expected_source_disposition"
   config_sha="$(sha256sum -- "$config" | awk '{print $1}')"
   project_sha="$(historical_project_sha "$diagnostic_run")"
   IFS=$' ' read -r projection_id target_cap judge_cap guard_evals http_cap \
@@ -1953,8 +1990,29 @@ if [[ -n "$RECOVERY_SOURCE_ROOT" ]] && recovery_configs_match; then
       gptgeochat_release
   done
 
-  # Only DeepSeek's text attestation failed. Every other exact receipt is
-  # revalidated and rebound without probing its target again.
+  if recovery_source_all_completed; then
+    printf 'RECOVERY_REUSE=all_completed_exact_config\n'
+    for label in "${MODEL_LABELS[@]}"; do
+      reuse_attestation "$label" text
+    done
+    for label in "${IMAGE_MODEL_LABELS[@]}"; do
+      reuse_attestation "$label" image
+    done
+    for label in "${MODEL_LABELS[@]}"; do
+      revalidate_canary_lane "ollama-${label}-text-primary-50" "$label" \
+        static text airbench_full completed
+      revalidate_canary_lane "rjudge-ollama-${label}" "$label" \
+        rjudge text rjudge_release completed
+    done
+    for label in "${IMAGE_MODEL_LABELS[@]}"; do
+      revalidate_canary_lane "ollama-${label}-image-primary-50" "$label" \
+        static image mmsafety_official completed
+      revalidate_canary_lane "gptgeochat-ollama-${label}" "$label" \
+        gptgeochat image gptgeochat_release completed
+    done
+  else
+  # Only DeepSeek's text attestation failed in the original recovery source.
+  # Every other exact receipt is revalidated without probing its target again.
   for label in "${MODEL_LABELS[@]}"; do
     if [[ "$label" == 'deepseek-r1-distill-32b' ]]; then
       run_isolated attestation "${label}/text" probe_ollama "$label" text synth
@@ -2006,6 +2064,7 @@ if [[ -n "$RECOVERY_SOURCE_ROOT" ]] && recovery_configs_match; then
         gptgeochat_release
     fi
   done
+  fi
 else
   if [[ -n "$RECOVERY_SOURCE_ROOT" ]]; then
     # A changed execution config is a new projected cohort. Retain the older

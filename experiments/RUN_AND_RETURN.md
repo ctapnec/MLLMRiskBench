@@ -513,6 +513,8 @@ for every Gate 5 disposition and separates `execution_commit`,
 `validation_commit`, `evidence_mode` and source control root. Amendment schema
 `ura-current-ollama-gate5-amendment/2` rejects missing, duplicate or drifted
 provenance and therefore cannot present a mixed cohort as one current execution.
+When every unit completed and only aggregate validation failed, recovery
+revalidates the exact inventory and performs zero additional model calls.
 The tracked, opt-in `launch_phase6_recovery_and_seven.sh` serializes the exact
 core recovery and seven-row producers in one named tmux session. It is not part
 of `launch_chain`, does not rerun successful lanes, and does not raise caps. Its

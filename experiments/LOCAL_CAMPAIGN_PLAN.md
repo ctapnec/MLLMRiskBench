@@ -628,7 +628,9 @@ creates a fresh projected cohort instead of relabeling or reusing it.
 Gate 5 keeps the historical execution commit and current validation commit as
 separate identities; it rejects a missing, duplicate or silently relabeled
 mixed cohort. Within an exact-config recovery, successful projections,
-attestations and canaries are not rerun.
+attestations and canaries are not rerun. If every unit completed and only the
+aggregate validator failed, recovery revalidates the complete inventory with
+zero additional model calls.
 
 ## 7. Phase 6: bounded measured local lanes (sized by projections and canaries)
 
