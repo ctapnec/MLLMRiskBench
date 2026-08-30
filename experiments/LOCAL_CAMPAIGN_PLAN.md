@@ -613,6 +613,13 @@ separate: it may terminate and reap the lane process group at 24 hours. Both
 values are prospective current-cohort bindings; the software supports other
 positive values only in a separately projected and approved cohort.
 
+A failed additive Ollama controller is recovered from its exact canonical
+`.exit=1` control root. The recovery revalidates completed artifacts, executes
+only failed or blocked units, and emits one provenance row per disposition.
+Gate 5 keeps the historical execution commit and current validation commit as
+separate identities; it rejects a missing, duplicate or silently relabeled
+mixed cohort. Successful projections, attestations and canaries are not rerun.
+
 ## 7. Phase 6: bounded measured local lanes (sized by projections and canaries)
 
 **Source-record inventory, which is NOT the row count.** The figures below are

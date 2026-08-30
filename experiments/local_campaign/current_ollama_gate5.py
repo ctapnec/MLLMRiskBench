@@ -331,6 +331,60 @@ def _validate_evidence_provenance(
     return result
 
 
+def validate_static_canary_stage_support(
+    rows: list[dict[str, Any]], *, completed: int, nonresponses: int
+) -> None:
+    if (
+        isinstance(completed, bool)
+        or not isinstance(completed, int)
+        or completed < 1
+        or isinstance(nonresponses, bool)
+        or not isinstance(nonresponses, int)
+        or nonresponses < 0
+        or nonresponses > completed
+    ):
+        raise ValueError("static canary stage-support population is invalid")
+    queried = completed - nonresponses
+    observed_keys: list[tuple[object, object]] = []
+    for row in rows:
+        key = (row.get("stage"), row.get("judge"))
+        if not observed_keys or observed_keys[-1] != key:
+            observed_keys.append(key)
+    if observed_keys != [(0, "rules"), (1, "guardrail")]:
+        raise ValueError("static canary stage inventory changed")
+    for stage, judge in observed_keys:
+        support = [
+            row for row in rows
+            if row.get("stage") == stage and row.get("judge") == judge
+        ]
+        counts = [
+            (
+                row.get("trail_records"),
+                row.get("queried_records"),
+                row.get("not_queried_records"),
+            )
+            for row in support
+        ]
+        if any(
+            isinstance(value, bool) or not isinstance(value, int) or value < 0
+            for values in counts
+            for value in values
+        ):
+            raise ValueError("static canary stage support contains an invalid count")
+        if (
+            sum(values[0] for values in counts) != completed
+            or sum(values[1] for values in counts) != queried
+            or sum(values[2] for values in counts) != nonresponses
+            or any(
+                row.get("reached") is not (row.get("queried_records", 0) > 0)
+                for row in support
+            )
+        ):
+            raise ValueError(
+                "static canary rules/guard support does not match typed nonresponses"
+            )
+
+
 def _base_argv(
     *,
     model_label: str,

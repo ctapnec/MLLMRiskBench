@@ -5887,12 +5887,9 @@ def _assert_completion_bound_guard_query_contract(
         stage_contract = template.split(
             '    queried = completed - len(nonresponse_ids)', 1
         )[1].split("    guard_trails = [", 1)[0]
-        assert 'row.get("reached") is not (queried > 0)' in stage_contract
-        assert 'row["queried_records"] != queried' in stage_contract
-        assert (
-            'row.get("not_queried_records") != len(nonresponse_ids)'
-            in stage_contract
-        )
+        assert "validate_static_canary_stage_support(" in stage_contract
+        assert "completed=completed" in stage_contract
+        assert "nonresponses=len(nonresponse_ids)" in stage_contract
         assert "len(queried_guard_trails) != queried" in guard_contract
         assert (
             "len(unqueried_guard_trails) != len(nonresponse_ids)"
@@ -6009,8 +6006,8 @@ def test_canaries_prove_a_completion_bound_guard_query(
 
     if typed_nonresponse:
         reachability_mutation = template.replace(
-            'row.get("reached") is not (queried > 0)',
-            'row.get("reached") is not True',
+            "validate_static_canary_stage_support(",
+            "validate_static_canary_stage_support_disabled(",
             1,
         )
         assert reachability_mutation != template

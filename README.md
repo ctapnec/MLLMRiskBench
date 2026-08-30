@@ -448,6 +448,15 @@ without a changed status or completed-byte count. After a process or host
 interruption, use `--resume` with the same absolute output directory and exact
 model order; completed model smokes are not repeated.
 
+If the current Ollama Phase 5 controller terminates after only some units fail,
+set `URA_PHASE5_OLLAMA_RECOVERY_SOURCE_ROOT` to that canonical failed control
+root and launch the same active `phase5_ollama_workflow.sh`. Recovery revalidates
+completed projections, attestations and canaries under the current validators,
+runs only the failed or previously blocked units, and writes an exact
+`evidence-provenance.tsv`. The Gate 5 amendment records the original execution
+commit and current validation commit separately; historical evidence is never
+silently relabeled as current execution.
+
 `python -m experiments.level1_evidence` performs the bounded lifecycle join.
 The operator supplies the existing eligibility files and result roots; the
 command automatically discovers their request envelopes and bound early

@@ -493,6 +493,23 @@ host itself stops, rerun the identical command with `--resume`, the same
 resolved output directory and the same model order.
 Completed load smokes are not repeated, while a changed roster or a terminal
 output root is refused.
+If the additive Ollama Phase 5 controller ends with a mixed terminal inventory,
+do not rerun its successful lanes. Launch the active controller with the exact
+canonical failed root:
+
+```bash
+export URA_PHASE5_OLLAMA_RECOVERY_SOURCE_ROOT="$URA_WORK/runs/engineering/phase5-ollama-<failed-tag>"
+bash ~/.ura-controller-active/phase5_ollama_workflow.sh
+```
+
+The recovery source must carry `.exit=1`, canonical
+`ura-engineering-campaign/1` metadata and an older exact release commit.
+Recovery revalidates every reused artifact with the current validators and
+executes only failed or blocked units. Its `evidence-provenance.tsv` has one row
+for every Gate 5 disposition and separates `execution_commit`,
+`validation_commit`, `evidence_mode` and source control root. Amendment schema
+`ura-current-ollama-gate5-amendment/2` rejects missing, duplicate or drifted
+provenance and therefore cannot present a mixed cohort as one current execution.
 The tracked, opt-in `launch_phase6_recovery_and_seven.sh` serializes the exact
 core recovery and seven-row producers in one named tmux session. It is not part
 of `launch_chain`, does not rerun successful lanes, and does not raise caps. Its

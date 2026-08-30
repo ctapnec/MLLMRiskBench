@@ -26,6 +26,7 @@ from experiments.local_campaign.current_ollama_gate5 import (
     _expected_dispositions,
     _lane_contract,
     _validate_evidence_provenance,
+    validate_static_canary_stage_support,
 )
 from experiments.local_campaign.current_ollama_phase6 import (
     FAILURE_SCHEMA,
@@ -216,6 +217,7 @@ def test_current_ollama_gate5_binds_execution_and_validation_cohorts(
             }),
             encoding="utf-8",
         )
+
     pairs = sorted(_expected_dispositions())
     dispositions = [
         {"phase": phase, "unit": unit, "disposition": "completed", "reason": "validated"}
@@ -248,6 +250,51 @@ def test_current_ollama_gate5_binds_execution_and_validation_cohorts(
             expected_commit=current_commit,
             control_root=current,
         )
+
+
+def test_static_canary_stage_support_aggregates_authority_role_partitions() -> None:
+    rows = [
+        {
+            "stage": 0,
+            "judge": "rules",
+            "role": "authoritative",
+            "trail_records": 6,
+            "queried_records": 6,
+            "not_queried_records": 0,
+            "reached": True,
+        },
+        {
+            "stage": 0,
+            "judge": "rules",
+            "role": "shadow",
+            "trail_records": 9,
+            "queried_records": 9,
+            "not_queried_records": 0,
+            "reached": True,
+        },
+        {
+            "stage": 1,
+            "judge": "guardrail",
+            "role": "authoritative",
+            "trail_records": 9,
+            "queried_records": 9,
+            "not_queried_records": 0,
+            "reached": True,
+        },
+        {
+            "stage": 1,
+            "judge": "guardrail",
+            "role": "shadow",
+            "trail_records": 6,
+            "queried_records": 6,
+            "not_queried_records": 0,
+            "reached": True,
+        },
+    ]
+    validate_static_canary_stage_support(rows, completed=15, nonresponses=0)
+    rows[1]["queried_records"] = 8
+    with pytest.raises(ValueError, match="typed nonresponses"):
+        validate_static_canary_stage_support(rows, completed=15, nonresponses=0)
 
 
 def test_current_ollama_gate5_lane_contract_keeps_caps_sampling_and_judges_exact() -> None:

@@ -1015,6 +1015,9 @@ import pathlib
 import sys
 
 from experiments.local_campaign.target_execution import completed_target_execution
+from experiments.local_campaign.current_ollama_gate5 import (
+    validate_static_canary_stage_support,
+)
 from experiments.run_matrix import _bounded_nofollow_read
 from ura.eligibility import validate_eligibility_plan
 from ura.lane_canary import validate_lane_canary_summary
@@ -1391,11 +1394,6 @@ if mode == "static":
         or conditions.get("guardrail_device") != "cuda:1"
     ):
         raise SystemExit("static canary did not bind the selected scoring guard")
-    observed_stage_keys = []
-    for stage_row in stage_rows:
-        key = (stage_row.get("stage"), stage_row.get("judge"))
-        if not observed_stage_keys or observed_stage_keys[-1] != key:
-            observed_stage_keys.append(key)
     completed = summary["workload"]["completed_judgments"]
     judgment_rows = completion_rows("judgments")
     response_rows = completion_rows("responses")
@@ -1445,21 +1443,12 @@ if mode == "static":
             raise SystemExit("static canary model_nonresponse lacks an empty response")
         nonresponse_ids.add(item["attempt_id"])
     queried = completed - len(nonresponse_ids)
-    if (
-        observed_stage_keys != [(0, "rules"), (1, "guardrail")]
-        or any(
-            row.get("reached") is not (queried > 0)
-            or not isinstance(row.get("trail_records"), int)
-            or row["trail_records"] != completed
-            or not isinstance(row.get("queried_records"), int)
-            or row["queried_records"] != queried
-            or row.get("not_queried_records") != len(nonresponse_ids)
-            for row in stage_rows
+    try:
+        validate_static_canary_stage_support(
+            stage_rows, completed=completed, nonresponses=len(nonresponse_ids)
         )
-    ):
-        raise SystemExit(
-            "static canary rules/guard support does not match typed nonresponses"
-        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     guard_trails = [
         item for item in completion_rows("trails")
         if item.get("stage") == 1 and item.get("judge") == "guardrail"
