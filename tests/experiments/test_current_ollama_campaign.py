@@ -21,11 +21,15 @@ from experiments.local_campaign.current_ollama import (
     CURRENT_OLLAMA_TEXT_ONLY_MODELS,
     CURRENT_OLLAMA_TYPED_TERMINAL_LANES,
     CurrentOllamaModel,
+    gptgeochat_lane,
     image_lane,
+    rjudge_lane,
+    text_lane,
 )
 from experiments.local_campaign.current_ollama_gate5 import (
     _base_argv,
     _expected_dispositions,
+    _has_exact_lane_inventory,
     _lane_contract,
     _validate_evidence_provenance,
     _validate_local_config,
@@ -233,6 +237,24 @@ def test_current_ollama_phase5_recovery_reuses_only_completed_evidence() -> None
     assert "if [[ \"$label\" == 'gemma4-12b' ]]; then" in template
     assert 'run_canary_lane "$image_lane" "$label" static image mmsafety_official' in template
     assert "evidence-provenance.tsv" in template
+
+
+def test_current_ollama_gate5_accepts_exact_interleaved_controller_rows() -> None:
+    observed = [
+        lane
+        for model in CURRENT_OLLAMA_MODELS
+        for lane in (text_lane(model), rjudge_lane(model))
+    ] + [
+        lane
+        for model in CURRENT_OLLAMA_IMAGE_MODELS
+        for lane in (image_lane(model), gptgeochat_lane(model))
+    ]
+    assert observed != list(CURRENT_OLLAMA_RUNNABLE_LANES)
+    rows = [{"lane": lane} for lane in observed]
+    assert _has_exact_lane_inventory(rows, CURRENT_OLLAMA_RUNNABLE_LANES)
+
+    rows[-1] = {"lane": rows[0]["lane"]}
+    assert not _has_exact_lane_inventory(rows, CURRENT_OLLAMA_RUNNABLE_LANES)
 
 
 def test_current_ollama_gate5_binds_execution_and_validation_cohorts(

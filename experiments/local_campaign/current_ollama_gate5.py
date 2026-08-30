@@ -274,6 +274,17 @@ def _expected_dispositions() -> set[tuple[str, str]]:
     }
 
 
+def _has_exact_lane_inventory(
+    rows: Sequence[dict[str, str]], expected_lanes: Sequence[str]
+) -> bool:
+    lanes = [row["lane"] for row in rows]
+    return (
+        len(lanes) == len(expected_lanes)
+        and len(set(lanes)) == len(lanes)
+        and set(lanes) == set(expected_lanes)
+    )
+
+
 def _lane_contract(lane: str, label: str) -> tuple[str, str, tuple[str, ...], str]:
     model = CURRENT_OLLAMA_BY_LABEL[label]
     if lane == text_lane(model):
@@ -509,10 +520,8 @@ def build_amendment(
     expected_lanes = list(CURRENT_OLLAMA_RUNNABLE_LANES)
     disposition_pairs = {(row["phase"], row["unit"]) for row in dispositions}
     if (
-        len(projections) != 12
-        or len(canaries) != 12
-        or [row["lane"] for row in projections] != expected_lanes
-        or [row["lane"] for row in canaries] != expected_lanes
+        not _has_exact_lane_inventory(projections, expected_lanes)
+        or not _has_exact_lane_inventory(canaries, expected_lanes)
         or len(attestations) != 6
         or len(dispositions) != 31
         or disposition_pairs != _expected_dispositions()
