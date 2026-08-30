@@ -43,6 +43,15 @@ unusable answers as model-stability missing responses. Phase 7 must keep this
 Runner 2.25 output-policy stratum distinct from the historical Runner 2.24
 rows.
 
+`current_ollama_stability_phase6.py` handles the corresponding old-Runner
+current-Ollama boundary when exact-argv recovery is terminal with unchanged
+durable counts because the retained circuit is open. It validates the exact
+Gate 5, base and failed-recovery bytes, omits every completed cell, binds the
+three partial-corpus prefixes and runs 14 fresh Runner 2.25 per-corpus units for
+the remaining 1,684 rows. Its Jobs lifecycle is operational only. Phase 7 must
+retain these units separately from the 1,911 durable historical rows and must
+not pool their output-policy strata.
+
 Each current measured lane also binds `--deadline-seconds 86400` and
 `measured_lane_wall_time_seconds=86400`. The Runner value gates call starts and
 does not interrupt an in-flight call; the controller value permits termination

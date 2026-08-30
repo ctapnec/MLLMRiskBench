@@ -11,6 +11,7 @@ from typing import Sequence
 import pytest
 
 from experiments.local_campaign import current_ollama_phase6 as phase6
+from experiments.local_campaign import current_ollama_stability_phase6 as phase6_stability
 from experiments.local_campaign import resume_current_ollama_phase6 as phase6_recovery
 
 from experiments.local_campaign.current_ollama import (
@@ -798,6 +799,148 @@ def test_current_ollama_recovery_metric_evidence_is_lane_local(
     assert "evidence = _recovered_metric_evidence(" in overlay
     assert "lane=lane" in overlay
     assert 'Path(row["result_root"])' in overlay
+
+
+def test_current_ollama_stability_selects_only_exact_missing_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    by_lane: dict[str, list[tuple[str, int, int]]] = {
+        lane: [] for lane in phase6_stability.FAILED_LANES
+    }
+    for _unit, lane, corpus, remaining, prefix in phase6_stability.EXPECTED_LAYOUT:
+        by_lane[lane].append((corpus, remaining, prefix))
+
+    gate5_rows = []
+    lifecycle = {}
+    counts_by_lane: dict[str, dict[str, int]] = {}
+    for lane in phase6_stability.FAILED_LANES:
+        result_root = tmp_path / lane
+        result_root.mkdir()
+        lifecycle[lane] = {"result_root": str(result_root)}
+        completed, _checkpointed = phase6_stability.EXPECTED_DURABLE_COUNTS[lane]
+        counts = {"already_complete": completed}
+        counts.update({
+            corpus: remaining + prefix
+            for corpus, remaining, prefix in by_lane[lane]
+        })
+        counts_by_lane[lane] = counts
+        gate5_rows.append({
+            "lane_id": lane,
+            "selection": {"corpora": list(counts)},
+            "base_argv": ["--corpora", ",".join(counts)],
+            "modality": "text" if "text" in lane else "image",
+        })
+
+    monkeypatch.setattr(
+        phase6_stability,
+        "_projection_counts",
+        lambda spec: counts_by_lane[str(spec["lane_id"])],
+    )
+
+    def corpus_state(
+        *, corpus: str, selected_records: int, result_root: Path
+    ) -> tuple[int, dict[str, object] | None, bool]:
+        lane = result_root.name
+        if corpus == "already_complete":
+            return selected_records, None, True
+        _name, remaining, prefix = next(
+            row for row in by_lane[lane] if row[0] == corpus
+        )
+        assert selected_records == remaining + prefix
+        recovery = (
+            {
+                "schema": phase6_stability.PREFIX_SCHEMA,
+                "corpus": corpus,
+                "completed_prefix_count": prefix,
+            }
+            if prefix
+            else None
+        )
+        return prefix, recovery, False
+
+    monkeypatch.setattr(phase6_stability, "_corpus_state", corpus_state)
+    units, durable = phase6_stability.build_units(
+        gate5={"lanes": gate5_rows},
+        base={"lifecycle": lifecycle},
+    )
+
+    assert [
+        (
+            unit.unit_id,
+            unit.source_lane,
+            unit.corpus,
+            unit.selected_records,
+            int(unit.recovery["completed_prefix_count"])
+            if unit.recovery is not None
+            else 0,
+        )
+        for unit in units
+    ] == list(phase6_stability.EXPECTED_LAYOUT)
+    assert sum(unit.selected_records for unit in units) == 1684
+    assert durable == {
+        "ollama-gemma4-12b-text-primary-50": 880,
+        "ollama-gemma4-12b-image-primary-50": 503,
+        "ollama-ministral3-14b-image-primary-50": 528,
+    }
+    assert all(unit.corpus != "already_complete" for unit in units)
+
+
+def test_current_ollama_stability_publishes_tmux_job_lifecycle() -> None:
+    source = Path(phase6_stability.__file__).read_text(encoding="utf-8")
+    assert source.count("start_child_controller(") == 1
+    assert source.count("publish_target_execution(") == 1
+    assert source.count("finish_child_controller(") == 1
+    assert 'evidence_class="measured_local_current_ollama_stability"' in source
+    assert 'parser.add_argument("--tmux-session", required=True)' in source
+    assert '"target_answer_retries": 1' in source
+    assert '"no_completed_rows_repeated": True' in source
+
+
+def test_current_ollama_stability_binds_exact_durable_prefix(tmp_path: Path) -> None:
+    corpus = "airbench_full"
+    selected = ["row-a", "row-b", "row-c"]
+    manifest = tmp_path / f"{corpus}--fixture.manifest.json"
+    manifest.write_text(
+        json.dumps({
+            "config": {"run": {"sampling_audit": {"selected_ids": selected}}}
+        }),
+        encoding="utf-8",
+    )
+    attempts = tmp_path / f"{corpus}--fixture.attempts.jsonl"
+    attempts.write_text(
+        "".join(json.dumps({"datapoint_id": item}) + "\n" for item in selected[:2]),
+        encoding="utf-8",
+    )
+
+    completed, recovery, complete = phase6_stability._corpus_state(
+        corpus=corpus,
+        selected_records=3,
+        result_root=tmp_path,
+    )
+    assert completed == 2
+    assert complete is False
+    assert recovery is not None
+    assert recovery["completed_prefix_count"] == 2
+    assert recovery["corpus"] == corpus
+
+    marker = tmp_path / f"{corpus}--fixture.complete.json"
+    marker.write_text(json.dumps({"n_responses": 3}), encoding="utf-8")
+    with pytest.raises(ValueError, match="historical completion count changed"):
+        phase6_stability._corpus_state(
+            corpus=corpus,
+            selected_records=3,
+            result_root=tmp_path,
+        )
+
+    attempts.write_text(
+        "".join(json.dumps({"datapoint_id": item}) + "\n" for item in selected),
+        encoding="utf-8",
+    )
+    assert phase6_stability._corpus_state(
+        corpus=corpus,
+        selected_records=3,
+        result_root=tmp_path,
+    ) == (3, None, True)
 
 
 def test_current_ollama_phase6_retains_typed_pre_runner_failure(tmp_path: Path) -> None:

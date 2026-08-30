@@ -662,6 +662,19 @@ policy. A fresh Runner 2.25 cohort instead binds
 recovered and later-revision strata remain explicit until read-only analysis
 validates each population.
 
+If that exact-argv recovery reaches a terminal zero-progress state because the
+old result root retains an open circuit, it is not relaunched again. The current
+Ollama stability continuation validates the immutable base and failed recovery,
+then schedules exactly 14 fresh per-corpus Runner 2.25 units covering only the
+1,684 never-completed rows. Content-bound prefix selectors exclude the 430
+completed Gemma AirBench rows, two completed Gemma MLLMGuard-privacy rows and
+27 completed Ministral MLLMGuard-privacy rows; nine complete Gemma text cells
+and seven complete image cells per model are omitted entirely. The 1,911
+durable historical rows and the later-revision units remain separate output-
+policy strata, with no cross-policy pooling. This continuation may run after a
+vLLM continuation has terminalized, but never concurrently with it on the two-
+GPU rig.
+
 Before Gate 6 closes, every retained local vLLM failure is partitioned by the
 boundary it reached. A lane that failed before measured Runner execution is run
 as a complete first measured Runner 2.25 condition. A lane with a durable

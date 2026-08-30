@@ -483,6 +483,18 @@ required `--tmux-session` and optional `--tmux-socket` bind the controller to
 the existing Jobs lifecycle record; terminal target-attempt and successful-
 generation counts are published from the completed unit inventory.
 
+An exact old-Runner current-Ollama recovery can be terminal yet make no progress
+when its retained result root has an open circuit. Do not repeat that argv loop
+or clear the historical circuit in place. Run
+`python -m experiments.local_campaign.current_ollama_stability_phase6` with the
+exact Gate 5 amendment, base completion, failed recovery completion and current
+project-revision receipt. It validates all three historical inputs and creates
+14 fresh per-corpus Runner 2.25 units for exactly 1,684 missing rows. The three
+partial corpora use content-bound completed-prefix selectors; fully completed
+cells are not called again. The new controller publishes its named tmux
+lifecycle to Jobs and retains the old and new output policies as non-poolable
+strata.
+
 A targeted amendment must re-attest and canary the four affected GraySwan lane
 identities under the current Runner before measured execution. Those identities
 use the limit-100, sample-seed-0 selections and caps from their matching
