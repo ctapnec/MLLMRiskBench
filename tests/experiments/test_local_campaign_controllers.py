@@ -1537,7 +1537,6 @@ def test_phase7_requires_current_ollama_stability_as_a_separate_stratum() -> Non
     for token in (wrapper, watcher):
         assert "--phase6-current-ollama-stability-completion" in token
     assert '"current_ollama_stability": 14' in watcher
-
     mutant = analysis.replace(
         '"current_ollama_stability": current_ollama_stability,', "", 1
     )
@@ -1545,6 +1544,26 @@ def test_phase7_requires_current_ollama_stability_as_a_separate_stratum() -> Non
     with pytest.raises(AssertionError):
         for token in required:
             assert token in mutant
+
+
+def test_phase7_docs_bind_exact_97_row_stability_partition() -> None:
+    root = Path(__file__).parents[2]
+    plan = (root / "experiments" / "LOCAL_CAMPAIGN_PLAN.md").read_text(
+        encoding="utf-8"
+    )
+    runbook = (root / "experiments" / "RUN_AND_RETURN.md").read_text(
+        encoding="utf-8"
+    )
+    local_readme = (
+        root / "experiments" / "local_campaign" / "README.md"
+    ).read_text(encoding="utf-8")
+
+    for document in (plan, runbook, local_readme):
+        assert "97" in document
+        assert "14 current-Ollama stability" in document
+        assert "seven vLLM stability" in document
+    assert "--phase6-current-ollama-stability-completion" in local_readme
+    assert "83-row Phase 7 campaign union" not in local_readme
 
 
 def test_phase8_replays_current_ollama_oracle_and_sampling_cohort() -> None:
