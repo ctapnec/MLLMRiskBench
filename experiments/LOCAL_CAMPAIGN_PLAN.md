@@ -705,9 +705,11 @@ DeepSeek-R1 Distill and GPT-OSS GPTGeoChat pairs are separate typed-unavailable
 rows and contribute no calls. Model-judge and provider HTTP caps remain zero in
 this local campaign. Local scoring and defense-guard evaluations are accounted
 separately and are fixed by the new projection. Retained older-revision runs
-keep their originally bound caps; recovery projects only their never-completed
-rows under Runner 2.25 instead of retroactively doubling or rerunning completed
-work. Caps are never raised mid-lane.
+keep their originally bound caps. Exact checkpoint recovery retains the
+originally bound Runner and argv and executes only never-completed rows. A
+separately projected fresh Runner 2.25 cohort reserves the answer-retry attempts
+without retroactively doubling or rerunning completed work. Caps are never
+raised mid-lane.
 
 Source records: common text arms about 35,900 (SALAD-Bench base 21,318;
 AIR-Bench 5,694; DecodingTrust 3,456; CyberSecEval 3,416; AdvBench 520; XSTest
