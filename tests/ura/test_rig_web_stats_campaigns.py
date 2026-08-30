@@ -533,7 +533,7 @@ def test_stats_cta_promises_diagrams_only_for_chart_renderable_bound_report(
     table_detail = app.handle("GET", "/stats/job/job-table?fragment=1")[2].decode("utf-8")
     assert "class='barchart'" in chart_detail
     assert "missing responses" in chart_detail
-    assert "Model stability - failed-output rate" in chart_detail
+    assert "<h4>Model stability - failed-output rate</h4>" in chart_detail
     assert "class='barchart'" not in table_detail
     assert "Validated Level-2 report with no common estimate rows" in table_detail
     app.close()
