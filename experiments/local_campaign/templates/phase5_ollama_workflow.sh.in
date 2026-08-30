@@ -72,11 +72,14 @@ DISPOSITIONS="$CONTROL_ROOT/dispositions.tsv"
 PROJECTION_STATUS="$CONTROL_ROOT/projections.tsv"
 ATTEST_STATUS="$CONTROL_ROOT/attestations.tsv"
 CANARY_STATUS="$CONTROL_ROOT/canaries.tsv"
+PROVENANCE_STATUS="$CONTROL_ROOT/evidence-provenance.tsv"
 GATE5_AMENDMENT="$CONTROL_ROOT/gate5-current-ollama-amendment.json"
 SUCCESS_ROOT="$CONTROL_ROOT/success"
 CONFIG_ROOT="$CONTROL_ROOT/local-configs"
 EXIT_TMP="$CONTROL_ROOT/.exit.tmp"
 EXIT_MARKER="$CONTROL_ROOT/.exit"
+RECOVERY_SOURCE_ROOT="${URA_PHASE5_OLLAMA_RECOVERY_SOURCE_ROOT:-}"
+RECOVERY_EXECUTION_COMMIT=''
 
 exec > >(tee "$LOG") 2>&1
 CONSOLE_CAMPAIGN_STARTED=0
@@ -116,6 +119,34 @@ test "$URA_PROJECT_REVISION_SHA256" = "$EXPECTED_PROJECT_RECEIPT_SHA256"
 test "$URA_SOURCE_CONFORMANCE_MANIFEST" = "$EXPECTED_SOURCE_RECEIPT"
 test "$URA_SOURCE_CONFORMANCE_SHA256" = "$EXPECTED_SOURCE_RECEIPT_SHA256"
 test -x "$PY"
+if [[ -n "$RECOVERY_SOURCE_ROOT" ]]; then
+  RECOVERY_SOURCE_ROOT="$(readlink -e -- "$RECOVERY_SOURCE_ROOT")"
+  RECOVERY_EXECUTION_COMMIT="$("$PY" - "$RECOVERY_SOURCE_ROOT" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+root = pathlib.Path(sys.argv[1])
+if root.is_symlink() or not root.is_dir() or root.resolve(strict=True) != root:
+    raise SystemExit("recovery source is not one canonical directory")
+if (root / ".exit").read_text(encoding="ascii").strip() != "1":
+    raise SystemExit("recovery source is not the exact terminal failed campaign")
+metadata = json.loads((root / "ENGINEERING_ONLY.json").read_text(encoding="utf-8"))
+commit = metadata.get("release_commit") if isinstance(metadata, dict) else None
+if (
+    not isinstance(metadata, dict)
+    or metadata.get("schema") != "ura-engineering-campaign/1"
+    or metadata.get("hosted_calls_allowed") is not False
+    or not isinstance(commit, str)
+    or re.fullmatch(r"[0-9a-f]{40}", commit) is None
+):
+    raise SystemExit("recovery source campaign identity is invalid")
+print(commit)
+PY
+)"
+  test "$RECOVERY_EXECUTION_COMMIT" != "$EXPECTED_COMMIT"
+fi
 
 SOURCE_CONFIG="$PWD/experiments/source-instances.json"
 SOURCE_CONFIG_SHA256="$(sha256sum -- "$SOURCE_CONFIG" | awk '{print $1}')"
@@ -214,6 +245,7 @@ printf 'phase\tunit\tdisposition\treason\n' > "$DISPOSITIONS"
 printf 'lane\tmodel_label\trequested_spec\tdigest\tmetric_mode\tpreliminary_projection_id\tfinal_projection_id\ttarget_cap\tjudge_cap\tlocal_guardrail_evaluations\thttp_cap\tselected_clusters\tselected_records\tpreliminary_root\tfinal_root\n' > "$PROJECTION_STATUS"
 printf 'model_label\tmodality\trequested_spec\tdigest\tattestation_id\treceipt\tsha256\tprobe_root\ttarget_attempts\tsuccessful_target_generations\n' > "$ATTEST_STATUS"
 printf 'lane\tmodel_label\trequested_spec\tdigest\tmetric_mode\trehearsal_projection_id\ttarget_cap\tjudge_cap\tlocal_guardrail_evaluations\thttp_cap\tcanary_id\tall_configured_stages_represented\ttarget_status\tattacker_status\tsource_evaluator_status\tdecided\tdecision_coverage\tdiagnostic_root\tdisposition\treason_code\treason\ttarget_runtime_terminal_artifact\ttarget_attempts\tsuccessful_target_generations\n' > "$CANARY_STATUS"
+printf 'phase\tunit\texecution_commit\tvalidation_commit\tevidence_mode\tsource_control_root\n' > "$PROVENANCE_STATUS"
 
 "$PY" - "$GPTGEOCHAT_TERMINAL_REASON_CODE" "$GPTGEOCHAT_TERMINAL_REASON" \
   "${MODEL_LABELS[@]}" <<'PY'
@@ -280,6 +312,13 @@ safe_marker() {
   mv -- "$tmp" "$final"
 }
 
+record_provenance() {
+  local phase="$1" unit="$2" execution_commit="$3" mode="$4" source_root="$5"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$phase" "$unit" "$execution_commit" "$EXPECTED_COMMIT" "$mode" \
+    "$source_root" >> "$PROVENANCE_STATUS"
+}
+
 run_isolated() {
   local phase="$1" unit="$2"
   shift 2
@@ -293,6 +332,7 @@ run_isolated() {
   set -e
   if (( rc == 0 )); then
     printf '%s\t%s\tcompleted\tvalidated\n' "$phase" "$unit" | tee -a "$DISPOSITIONS"
+    record_provenance "$phase" "$unit" "$EXPECTED_COMMIT" executed "$CONTROL_ROOT"
   else
     printf '%s\t%s\tfailed\texit_%s_see_control_logs\n' "$phase" "$unit" "$rc" | tee -a "$DISPOSITIONS"
     FAILED_UNITS+=("${phase}/${unit}:exit_${rc}")
@@ -962,9 +1002,11 @@ probe_ollama() {
 }
 
 canary_fields() {
+  local evidence_commit="${10:-$EXPECTED_COMMIT}"
+  local evidence_project_sha="${11:-$PROJECT_SHA256}"
   "$PY" - "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" \
-    "$SCORE_GUARD" "$SCORE_GUARD_REV" "$EXPECTED_COMMIT" \
-    "$PROJECT_SHA256" "$SOURCE_CONFIG_SHA256" "$SOURCE_RECEIPT_SHA256" \
+    "$SCORE_GUARD" "$SCORE_GUARD_REV" "$evidence_commit" \
+    "$evidence_project_sha" "$SOURCE_CONFIG_SHA256" "$SOURCE_RECEIPT_SHA256" \
     "$GROUP" <<'PY'
 import hashlib
 import json
@@ -1673,6 +1715,267 @@ run_canary_lane() {
   printf 'CANARY_END=%s TIME=%s\n' "$lane" "$(date -Is)"
 }
 
+source_status_row() {
+  local table="$1" destination="$2" key_field="$3" key_value="$4"
+  "$PY" - "$RECOVERY_SOURCE_ROOT/$table" "$destination" \
+    "$key_field" "$key_value" "${5:-}" "${6:-}" <<'PY'
+import csv
+import pathlib
+import sys
+
+source, destination = map(pathlib.Path, sys.argv[1:3])
+key_field, key_value, second_field, second_value = sys.argv[3:]
+if source.is_symlink() or not source.is_file() or source.resolve(strict=True) != source:
+    raise SystemExit("recovery status source is not one canonical file")
+with source.open(encoding="utf-8", newline="") as handle:
+    reader = csv.DictReader(handle, delimiter="\t")
+    rows = [
+        row for row in reader
+        if row.get(key_field) == key_value
+        and (not second_field or row.get(second_field) == second_value)
+    ]
+destination_header = destination.read_text(encoding="utf-8").splitlines()[0].split("\t")
+if reader.fieldnames != destination_header or len(rows) != 1:
+    raise SystemExit("recovery status row inventory changed")
+print("\t".join(rows[0][field] for field in destination_header))
+PY
+}
+
+require_source_disposition() {
+  local phase="$1" unit="$2" expected="$3"
+  "$PY" - "$RECOVERY_SOURCE_ROOT/dispositions.tsv" "$phase" "$unit" \
+    "$expected" <<'PY'
+import csv
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+phase, unit, expected = sys.argv[2:]
+with path.open(encoding="utf-8", newline="") as handle:
+    rows = [
+        row for row in csv.DictReader(handle, delimiter="\t")
+        if row.get("phase") == phase and row.get("unit") == unit
+    ]
+if len(rows) != 1 or rows[0].get("disposition") != expected:
+    raise SystemExit("recovery source disposition changed")
+PY
+}
+
+record_revalidated() {
+  local phase="$1" unit="$2"
+  printf '%s\t%s\tcompleted\trevalidated_existing\n' "$phase" "$unit" \
+    | tee -a "$DISPOSITIONS"
+  record_provenance "$phase" "$unit" "$RECOVERY_EXECUTION_COMMIT" \
+    revalidated "$RECOVERY_SOURCE_ROOT"
+}
+
+reuse_projection_lane() {
+  local lane="$1" label="$2" mode="$3" arms="$4"
+  local spec="${MODEL_SPECS[$label]}" digest="${MODEL_DIGESTS[$label]}"
+  local row preliminary_id final_id target_cap judge_cap guard_evals http_cap
+  local clusters records preliminary_root final_root
+  local observed_id observed_target observed_judge observed_guard observed_http
+  local observed_clusters observed_records
+  require_source_disposition projection "$lane" completed
+  row="$(source_status_row projections.tsv "$PROJECTION_STATUS" lane "$lane")"
+  IFS=$'\t' read -r observed_lane observed_label observed_spec observed_digest \
+    observed_mode preliminary_id final_id target_cap judge_cap guard_evals \
+    http_cap clusters records preliminary_root final_root <<<"$row"
+  test "$observed_lane" = "$lane"
+  test "$observed_label" = "$label"
+  test "$observed_spec" = "$spec"
+  test "$observed_digest" = "$digest"
+  test "$observed_mode" = "$mode"
+  IFS=$' ' read -r observed_id observed_target observed_judge observed_guard \
+    observed_http observed_clusters observed_records < <(
+      projection_fields "$preliminary_root" "$mode" "$spec" "$arms" 400000
+    )
+  test "$observed_id" = "$preliminary_id"
+  test "$observed_target" = "$target_cap"
+  test "$observed_judge" = "$judge_cap"
+  test "$observed_guard" = "$guard_evals"
+  test "$observed_http" = "$http_cap"
+  test "$observed_clusters" = "$clusters"
+  test "$observed_records" = "$records"
+  IFS=$' ' read -r observed_id observed_target observed_judge observed_guard \
+    observed_http observed_clusters observed_records < <(
+      projection_fields "$final_root" "$mode" "$spec" "$arms" "$target_cap"
+    )
+  test "$observed_id" = "$final_id"
+  test "$observed_target" = "$target_cap"
+  test "$observed_judge" = "$judge_cap"
+  test "$observed_guard" = "$guard_evals"
+  test "$observed_http" = "$http_cap"
+  test "$observed_clusters" = "$clusters"
+  test "$observed_records" = "$records"
+  compare_projections "$preliminary_root" "$final_root"
+  printf '%s\n' "$row" >> "$PROJECTION_STATUS"
+  safe_marker "${lane}.projection"
+  record_revalidated projection "$lane"
+}
+
+reuse_attestation() {
+  local label="$1" modality="$2" key="${label}/${modality}"
+  local row requested_label requested_modality spec digest attestation_id receipt
+  local receipt_sha probe_root target_attempts successful_generations
+  require_source_disposition attestation "$key" completed
+  row="$(source_status_row attestations.tsv "$ATTEST_STATUS" model_label "$label" \
+    modality "$modality")"
+  test -n "$row"
+  IFS=$'\t' read -r requested_label requested_modality spec digest attestation_id \
+    receipt receipt_sha probe_root target_attempts successful_generations <<<"$row"
+  test "$requested_label" = "$label"
+  test "$requested_modality" = "$modality"
+  test "$spec" = "${MODEL_SPECS[$label]}"
+  test "$digest" = "${MODEL_DIGESTS[$label]}"
+  test -f "$receipt" && test ! -L "$receipt"
+  test "$(sha256sum -- "$receipt" | awk '{print $1}')" = "$receipt_sha"
+  "$PY" -m experiments.live_attestation --validate "$receipt" \
+    --sha256 "$receipt_sha" >/dev/null
+  printf '%s\n' "$row" >> "$ATTEST_STATUS"
+  ATTESTATION_FILES["${label}:${modality}"]="$receipt"
+  ATTESTATION_SHAS["${label}:${modality}"]="$receipt_sha"
+  safe_marker "${label}.${modality}.attestation"
+  record_revalidated attestation "$key"
+}
+
+historical_project_sha() {
+  "$PY" - "$1" "$RECOVERY_EXECUTION_COMMIT" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+root = pathlib.Path(sys.argv[1])
+expected_commit = sys.argv[2]
+paths = sorted(root.rglob("*.grid.json"))
+if len(paths) != 1:
+    raise SystemExit("historical canary grid inventory changed")
+request = json.loads(paths[0].read_text(encoding="utf-8")).get("request", {})
+binding = request.get("project_revision") if isinstance(request, dict) else None
+digest = binding.get("sha256") if isinstance(binding, dict) else None
+if (
+    not isinstance(binding, dict)
+    or binding.get("mode") != "verified"
+    or binding.get("expected_commit") != expected_commit
+    or binding.get("observed_commit") != expected_commit
+    or not isinstance(digest, str)
+    or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+):
+    raise SystemExit("historical canary project binding changed")
+print(digest)
+PY
+}
+
+revalidate_canary_lane() {
+  local lane="$1" label="$2" mode="$3" modality="$4" arm="$5"
+  local old_tag="${RECOVERY_SOURCE_ROOT##*/phase5-ollama-}"
+  local diagnostic_run="$DIAGNOSTIC_ROOT/${lane}-${old_tag}/run"
+  local rehearsal_run="$PREFLIGHT_ROOT/${lane}-rehearsal-${old_tag}/run"
+  local spec="${MODEL_SPECS[$label]}" digest="${MODEL_DIGESTS[$label]}"
+  local config="${MODEL_CONFIGS[$label]}" config_sha project_sha
+  local projection_id target_cap judge_cap guard_evals http_cap clusters records
+  local canary_id stages target_status attacker_status source_status decided coverage
+  local target_attempts successful_target_generations
+  if [[ "$lane" == 'ollama-gemma4-12b-text-primary-50' \
+     || "$lane" == 'ollama-gpt-oss-20b-text-primary-50' ]]; then
+    require_source_disposition canary "$lane" failed
+  else
+    require_source_disposition canary "$lane" completed
+  fi
+  config_sha="$(sha256sum -- "$config" | awk '{print $1}')"
+  project_sha="$(historical_project_sha "$diagnostic_run")"
+  IFS=$' ' read -r projection_id target_cap judge_cap guard_evals http_cap \
+    clusters records < <(
+      projection_fields "$rehearsal_run" "$mode" "$spec" "$arm" 1000
+    )
+  test "$clusters" = 1
+  IFS=$'\t' read -r canary_id stages target_status attacker_status source_status \
+    decided coverage target_attempts successful_target_generations < <(
+      canary_fields "$diagnostic_run" "$mode" "$spec" "$digest" "$arm" \
+        "$target_cap" "$config" "$config_sha" "${MODEL_MODALITIES[$label]}" \
+        "$RECOVERY_EXECUTION_COMMIT" "$project_sha"
+    )
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$lane" "$label" "$spec" "$digest" "$mode" "$projection_id" "$target_cap" \
+    "$judge_cap" "$guard_evals" "$http_cap" "$canary_id" "$stages" \
+    "$target_status" "$attacker_status" "$source_status" "$decided" "$coverage" \
+    "$diagnostic_run" 'runnable' '' '' '' "$target_attempts" \
+    "$successful_target_generations" >> "$CANARY_STATUS"
+  safe_marker "${lane}.canary"
+  record_revalidated canary "$lane"
+}
+
+if [[ -n "$RECOVERY_SOURCE_ROOT" ]]; then
+  # Revalidate the completed no-call projections. Recovery executes no
+  # projection or model call that the source campaign already completed.
+  for label in "${MODEL_LABELS[@]}"; do
+    reuse_projection_lane "ollama-${label}-text-primary-50" "$label" static \
+      "$TEXT_ARMS"
+    reuse_projection_lane "rjudge-ollama-${label}" "$label" rjudge \
+      rjudge_release
+  done
+  for label in "${IMAGE_MODEL_LABELS[@]}"; do
+    reuse_projection_lane "ollama-${label}-image-primary-50" "$label" static \
+      "$IMAGE_ARMS"
+    reuse_projection_lane "gptgeochat-ollama-${label}" "$label" gptgeochat \
+      gptgeochat_release
+  done
+
+  # Only DeepSeek's text attestation failed. Every other exact receipt is
+  # revalidated and rebound without probing its target again.
+  for label in "${MODEL_LABELS[@]}"; do
+    if [[ "$label" == 'deepseek-r1-distill-32b' ]]; then
+      run_isolated attestation "${label}/text" probe_ollama "$label" text synth
+      receipt_file="$ATTEST_RECEIPTS/${label}-text-${TAG}.live-attestation.json"
+      if [[ -f "$receipt_file" && ! -L "$receipt_file" ]]; then
+        ATTESTATION_FILES["${label}:text"]="$receipt_file"
+        ATTESTATION_SHAS["${label}:text"]="$(sha256sum -- "$receipt_file" | awk '{print $1}')"
+      fi
+    else
+      reuse_attestation "$label" text
+    fi
+  done
+  for label in "${IMAGE_MODEL_LABELS[@]}"; do
+    reuse_attestation "$label" image
+  done
+
+  # The two validator-only text failures and all passed canaries are revalidated
+  # at the current revision. DeepSeek's blocked pair and Gemma's incomplete image
+  # cell are the only canaries that execute new target calls.
+  for label in "${MODEL_LABELS[@]}"; do
+    static_lane="ollama-${label}-text-primary-50"
+    rjudge_lane="rjudge-ollama-${label}"
+    if [[ "$label" == 'deepseek-r1-distill-32b' ]]; then
+      if [[ -e "$SUCCESS_ROOT/${label}.text.attestation" ]]; then
+        run_isolated canary "$static_lane" \
+          run_canary_lane "$static_lane" "$label" static text airbench_full
+        run_isolated canary "$rjudge_lane" \
+          run_canary_lane "$rjudge_lane" "$label" rjudge text rjudge_release
+      else
+        record_blocked canary "$static_lane" missing_fresh_exact_text_attestation
+        record_blocked canary "$rjudge_lane" missing_fresh_exact_text_attestation
+      fi
+    else
+      revalidate_canary_lane "$static_lane" "$label" static text airbench_full
+      revalidate_canary_lane "$rjudge_lane" "$label" rjudge text rjudge_release
+    fi
+  done
+  for label in "${IMAGE_MODEL_LABELS[@]}"; do
+    image_lane="ollama-${label}-image-primary-50"
+    gptgeochat_lane="gptgeochat-ollama-${label}"
+    if [[ "$label" == 'gemma4-12b' ]]; then
+      run_isolated canary "$image_lane" \
+        run_canary_lane "$image_lane" "$label" static image mmsafety_official
+      revalidate_canary_lane "$gptgeochat_lane" "$label" gptgeochat image \
+        gptgeochat_release
+    else
+      revalidate_canary_lane "$image_lane" "$label" static image mmsafety_official
+      revalidate_canary_lane "$gptgeochat_lane" "$label" gptgeochat image \
+        gptgeochat_release
+    fi
+  done
+else
 # Phase 5 bounded no-call projections. Each lane gets a preliminary ceiling and a
 # second, independently bound final preflight whose target cap equals the exact
 # retained projection. Failures are isolated so every other runnable lane is
@@ -1769,6 +2072,7 @@ for label in "${IMAGE_MODEL_LABELS[@]}"; do
     record_blocked canary "$gptgeochat_lane" missing_exact_cap_projection
   fi
 done
+fi
 
 run_isolated integrity roster-final \
   verify_live_roster "$CONTROL_ROOT/roster-final.json" "${roster_args[@]}"

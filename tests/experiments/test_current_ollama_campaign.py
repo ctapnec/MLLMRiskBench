@@ -21,7 +21,12 @@ from experiments.local_campaign.current_ollama import (
     CurrentOllamaModel,
     image_lane,
 )
-from experiments.local_campaign.current_ollama_gate5 import _base_argv, _lane_contract
+from experiments.local_campaign.current_ollama_gate5 import (
+    _base_argv,
+    _expected_dispositions,
+    _lane_contract,
+    _validate_evidence_provenance,
+)
 from experiments.local_campaign.current_ollama_phase6 import (
     FAILURE_SCHEMA,
     PHASE7_INPUT_SCHEMA,
@@ -172,6 +177,76 @@ def test_current_ollama_phase5_emits_a_consumable_gate5_amendment() -> None:
         "-m experiments.local_campaign.console_events \\\n    target-execution"
     )
     assert 'GATE5_AMENDMENT="$CONTROL_ROOT/gate5-current-ollama-amendment.json"' in template
+
+
+def test_current_ollama_phase5_recovery_reuses_only_completed_evidence() -> None:
+    template = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "templates"
+        / "phase5_ollama_workflow.sh.in"
+    ).read_text(encoding="utf-8")
+    assert 'RECOVERY_SOURCE_ROOT="${URA_PHASE5_OLLAMA_RECOVERY_SOURCE_ROOT:-}"' in template
+    assert "reuse_projection_lane" in template
+    assert "reuse_attestation" in template
+    assert "revalidate_canary_lane" in template
+    assert "record_revalidated" in template
+    assert "if [[ \"$label\" == 'deepseek-r1-distill-32b' ]]; then" in template
+    assert "if [[ \"$label\" == 'gemma4-12b' ]]; then" in template
+    assert 'run_canary_lane "$image_lane" "$label" static image mmsafety_official' in template
+    assert "evidence-provenance.tsv" in template
+
+
+def test_current_ollama_gate5_binds_execution_and_validation_cohorts(
+    tmp_path: Path,
+) -> None:
+    current_commit = "1" * 40
+    historical_commit = "2" * 40
+    current = tmp_path / "phase5-ollama-current"
+    historical = tmp_path / "phase5-ollama-historical"
+    for root, commit in ((current, current_commit), (historical, historical_commit)):
+        root.mkdir()
+        (root / "ENGINEERING_ONLY.json").write_text(
+            json.dumps({
+                "schema": "ura-engineering-campaign/1",
+                "release_commit": commit,
+                "hosted_calls_allowed": False,
+            }),
+            encoding="utf-8",
+        )
+    pairs = sorted(_expected_dispositions())
+    dispositions = [
+        {"phase": phase, "unit": unit, "disposition": "completed", "reason": "validated"}
+        for phase, unit in pairs
+    ]
+    rows = [
+        {
+            "phase": phase,
+            "unit": unit,
+            "execution_commit": historical_commit if index == 0 else current_commit,
+            "validation_commit": current_commit,
+            "evidence_mode": "revalidated" if index == 0 else "executed",
+            "source_control_root": str(historical if index == 0 else current),
+        }
+        for index, (phase, unit) in enumerate(pairs)
+    ]
+
+    result = _validate_evidence_provenance(
+        rows,
+        dispositions=dispositions,
+        expected_commit=current_commit,
+        control_root=current,
+    )
+    assert set(result) == set(pairs)
+    rows[0]["validation_commit"] = historical_commit
+    with pytest.raises(ValueError, match="provenance is malformed"):
+        _validate_evidence_provenance(
+            rows,
+            dispositions=dispositions,
+            expected_commit=current_commit,
+            control_root=current,
+        )
 
 
 def test_current_ollama_gate5_lane_contract_keeps_caps_sampling_and_judges_exact() -> None:
