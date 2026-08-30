@@ -92,7 +92,7 @@ _STRUCTURAL_NA = frozenset({
     "attack_mode_incompatible",
 })
 _MAX_ERROR_BYTES = 8 * 1024 * 1024
-_CONDITION_FIELDS = frozenset({
+_CONDITION_FIELDS_V2 = frozenset({
     "execution_purpose",
     "project_revision",
     "defense",
@@ -120,6 +120,22 @@ _CONDITION_FIELDS = frozenset({
     "engine_runtimes",
     "model_acquisition",
     "live_attestation",
+})
+_CONDITION_FIELDS_V3 = frozenset({
+    *_CONDITION_FIELDS_V2,
+    "target_answer_retries",
+})
+_CONDITION_FIELDS = frozenset({
+    *_CONDITION_FIELDS_V3,
+    "recovery_selection",
+})
+_CONDITION_FIELDS_V2_WITH_SAMPLING_POLICY = frozenset({
+    *_CONDITION_FIELDS_V2,
+    "sampling_policy",
+})
+_CONDITION_FIELDS_V3_WITH_SAMPLING_POLICY = frozenset({
+    *_CONDITION_FIELDS_V3,
+    "sampling_policy",
 })
 _CONDITION_FIELDS_WITH_SAMPLING_POLICY = frozenset({
     *_CONDITION_FIELDS,
@@ -327,12 +343,15 @@ def _live_attestation_projection(value: object) -> dict[str, Any] | None:
 def _condition_values(value: object) -> dict[str, Any]:
     """Validate the compact experiment-condition projection used by Level 1."""
 
-    expected_fields = (
-        _CONDITION_FIELDS_WITH_SAMPLING_POLICY
-        if isinstance(value, dict) and "sampling_policy" in value
-        else _CONDITION_FIELDS
-    )
-    if not isinstance(value, dict) or set(value) != expected_fields:
+    allowed_fields = {
+        _CONDITION_FIELDS_V2,
+        _CONDITION_FIELDS_V3,
+        _CONDITION_FIELDS,
+        _CONDITION_FIELDS_V2_WITH_SAMPLING_POLICY,
+        _CONDITION_FIELDS_V3_WITH_SAMPLING_POLICY,
+        _CONDITION_FIELDS_WITH_SAMPLING_POLICY,
+    }
+    if not isinstance(value, dict) or frozenset(value) not in allowed_fields:
         raise ValueError("eligibility experiment-condition fields are incomplete")
     if "sampling_policy" in value:
         from ura.sampling import effective_sampling_policy  # noqa: PLC0415
@@ -381,6 +400,60 @@ def _condition_values(value: object) -> dict[str, Any]:
             raise ValueError(f"experiment condition {field} must be an integer")
     if value["limit"] < 0 or value["max_queries"] <= 0 or value["max_turns"] <= 0:
         raise ValueError("experiment condition limit/horizon is out of range")
+    if "target_answer_retries" in value:
+        retries = value["target_answer_retries"]
+        if (
+            isinstance(retries, bool)
+            or not isinstance(retries, int)
+            or not 0 <= retries <= 10
+        ):
+            raise ValueError(
+                "experiment condition target_answer_retries must be in [0, 10]"
+            )
+    if "recovery_selection" in value:
+        recovery = value["recovery_selection"]
+        if recovery is not None:
+            recovery_fields = {
+                "schema",
+                "sha256",
+                "bytes",
+                "corpus",
+                "completed_prefix_count",
+                "selected_datapoint_ids_sha256",
+                "completed_prefix_ids_sha256",
+                "remaining_datapoint_ids_sha256",
+            }
+            if not isinstance(recovery, dict) or set(recovery) != recovery_fields:
+                raise ValueError("experiment condition recovery_selection is incomplete")
+            if recovery["schema"] != "ura-recovery-completed-prefix/1":
+                raise ValueError(
+                    "experiment condition recovery_selection schema is invalid"
+                )
+            if (
+                not isinstance(recovery["corpus"], str)
+                or not recovery["corpus"].strip()
+            ):
+                raise ValueError(
+                    "experiment condition recovery_selection corpus is invalid"
+                )
+            for field in (
+                "sha256",
+                "selected_datapoint_ids_sha256",
+                "completed_prefix_ids_sha256",
+                "remaining_datapoint_ids_sha256",
+            ):
+                if not isinstance(recovery[field], str) or _HEX64.fullmatch(
+                    recovery[field]
+                ) is None:
+                    raise ValueError(
+                        f"experiment condition recovery_selection {field} is invalid"
+                    )
+            for field in ("bytes", "completed_prefix_count"):
+                item = recovery[field]
+                if isinstance(item, bool) or not isinstance(item, int) or item < 1:
+                    raise ValueError(
+                        f"experiment condition recovery_selection {field} is invalid"
+                    )
     call_caps = value["call_caps"]
     expected_caps = {"target", "judge", "http_attempts", "deadline_seconds"}
     if not isinstance(call_caps, dict) or set(call_caps) != expected_caps:
@@ -434,7 +507,7 @@ def _condition_values(value: object) -> dict[str, Any]:
 def _legacy_condition_values(value: object) -> dict[str, Any]:
     """Normalize the exact runtime-free eligibility-v2 projection."""
 
-    legacy_fields = _CONDITION_FIELDS - {"engine_runtimes"}
+    legacy_fields = _CONDITION_FIELDS_V2 - {"engine_runtimes"}
     if not isinstance(value, dict) or set(value) != legacy_fields:
         raise ValueError(
             "legacy eligibility experiment-condition fields are incomplete"
@@ -614,6 +687,10 @@ def _grid_condition(
             request.get("live_attestation")
         ),
     }
+    if "target_answer_retries" in request:
+        values["target_answer_retries"] = request["target_answer_retries"]
+    if "recovery_selection" in request:
+        values["recovery_selection"] = request["recovery_selection"]
     if "sampling_policy" in request:
         values["sampling_policy"] = request["sampling_policy"]
     if legacy:
@@ -1738,13 +1815,21 @@ def _validate_envelope_plan_binding(
         raise ValueError(
             "eligibility condition/request-envelope sampling policy presence mismatch"
         )
+    projected_fields = [
+        "execution_purpose", "judges", "judge_model", "seeds", "sample_seed",
+        "limit", "max_queries", "max_turns", "defense", "defense_guard",
+        "group_keys", "quantization", "dtype", "dry_run", "call_caps",
+    ]
+    for field in ("target_answer_retries", "recovery_selection"):
+        if (field in request) != (field in condition):
+            raise ValueError(
+                f"eligibility condition/request-envelope {field} presence mismatch"
+            )
+        if field in request:
+            projected_fields.append(field)
     projected = {
         field: request[field]
-        for field in (
-            "execution_purpose", "judges", "judge_model", "seeds", "sample_seed",
-            "limit", "max_queries", "max_turns", "defense", "defense_guard",
-            "group_keys", "quantization", "dtype", "dry_run", "call_caps",
-        )
+        for field in projected_fields
     }
     if "sampling_policy" in request:
         projected["sampling_policy"] = request["sampling_policy"]
@@ -1776,7 +1861,7 @@ def _bind_request_lifecycle(
         return [], [], {
             "status": "not_supplied",
             "counts": None,
-            "reason": "no ura-request-envelope/2 or /3 artifacts were supplied",
+            "reason": "no ura-request-envelope/2, /3, or /4 artifacts were supplied",
         }
     envelopes: dict[str, dict[str, Any]] = {}
     descriptors: dict[str, dict[str, Any]] = {}

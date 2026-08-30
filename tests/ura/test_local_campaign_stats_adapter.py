@@ -679,6 +679,9 @@ def _sealed_chain(
     level1_fifth = (
         analysis / "lifecycle-strata" / f"{'6' * 12}-{'e' * 12}" / "level1-evidence.json"
     )
+    level1_sixth = (
+        analysis / "lifecycle-strata" / f"{'7' * 12}-{'f' * 12}" / "level1-evidence.json"
+    )
     level2 = analysis / "metric-strata" / f"{'1' * 12}-{'a' * 12}" / "level2-report.json"
     level2_second = (
         analysis / "metric-strata" / f"{'2' * 12}-{'b' * 12}" / "level2-report.json"
@@ -692,6 +695,9 @@ def _sealed_chain(
     level2_fifth = (
         analysis / "metric-strata" / f"{'6' * 12}-{'e' * 12}" / "level2-report.json"
     )
+    level2_sixth = (
+        analysis / "metric-strata" / f"{'7' * 12}-{'f' * 12}" / "level2-report.json"
+    )
     _level1(
         level1,
         revision="9" * 64 if mutation == "report_scope_revision" else "1" * 64,
@@ -701,6 +707,7 @@ def _sealed_chain(
     _level1(level1_third, revision="3" * 64, source="c" * 64)
     _level1(level1_fourth, revision="5" * 64, source="d" * 64)
     _level1(level1_fifth, revision="6" * 64, source="e" * 64)
+    _level1(level1_sixth, revision="7" * 64, source="f" * 64)
     _level2(
         level2,
         revision="9" * 64 if mutation == "level2_scope_revision" else "1" * 64,
@@ -709,6 +716,7 @@ def _sealed_chain(
     _level2(level2_third, revision="3" * 64)
     _level2(level2_fourth, revision="5" * 64)
     _level2(level2_fifth, revision="6" * 64)
+    _level2(level2_sixth, revision="7" * 64)
     statuses = {
         "level1-evidence": "complete",
         "level2-report": "complete_with_limitations" if limited else "complete",
@@ -725,11 +733,13 @@ def _sealed_chain(
             level1_third,
             level1_fourth,
             level1_fifth,
+            level1_sixth,
             level2,
             level2_second,
             level2_third,
             level2_fourth,
             level2_fifth,
+            level2_sixth,
             campaign_inventory,
         )
     ]
@@ -899,8 +909,8 @@ def test_phase7_watcher_chain_binds_reports_and_rejects_mutated_output(
     assert bundle is not None
     assert [report.kind for report in bundle.reports] == [
         "terminal_inventory",
-        "level1", "level1", "level1", "level1", "level1",
-        "level2", "level2", "level2", "level2", "level2",
+        "level1", "level1", "level1", "level1", "level1", "level1",
+        "level2", "level2", "level2", "level2", "level2", "level2",
     ]
     assert [report.display_name for report in bundle.reports] == [
         "campaign-terminal-inventory.json",
@@ -909,11 +919,13 @@ def test_phase7_watcher_chain_binds_reports_and_rejects_mutated_output(
         "lifecycle-strata/333333333333-cccccccccccc/level1-evidence.json",
         "lifecycle-strata/555555555555-dddddddddddd/level1-evidence.json",
         "lifecycle-strata/666666666666-eeeeeeeeeeee/level1-evidence.json",
+        "lifecycle-strata/777777777777-ffffffffffff/level1-evidence.json",
         "metric-strata/111111111111-aaaaaaaaaaaa/level2-report.json",
         "metric-strata/222222222222-bbbbbbbbbbbb/level2-report.json",
         "metric-strata/333333333333-cccccccccccc/level2-report.json",
         "metric-strata/555555555555-dddddddddddd/level2-report.json",
         "metric-strata/666666666666-eeeeeeeeeeee/level2-report.json",
+        "metric-strata/777777777777-ffffffffffff/level2-report.json",
     ]
     assert bundle.expected_commit == COMMIT
     phase6_completion = json.loads(
@@ -1005,8 +1017,8 @@ def test_stats_links_sealed_phase7_reports_to_watcher_campaign(
     assert registration is not None
     assert [report.kind for report in registration.reports] == [
         "terminal_inventory",
-        "level1", "level1", "level1", "level1", "level1",
-        "level2", "level2", "level2", "level2", "level2",
+        "level1", "level1", "level1", "level1", "level1", "level1",
+        "level2", "level2", "level2", "level2", "level2", "level2",
     ]
     app = RigWebApp(
         results_root=results,

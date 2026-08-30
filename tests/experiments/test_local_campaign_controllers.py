@@ -7479,6 +7479,43 @@ def test_vllm_stability_phase6_registers_its_tmux_job_lifecycle() -> None:
     assert 'parser.add_argument("--tmux-session", required=True)' in source
 
 
+def test_vllm_stability_attestation_probe_uses_local_guardrail() -> None:
+    from experiments.local_campaign import vllm_stability_phase6 as recovery
+
+    unit = recovery.Unit(
+        unit_id="probe-fixture",
+        source_lane="local-llava-base-image-primary-100",
+        corpus=None,
+        spec={"modality": "image"},
+        selected_records=1,
+    )
+    base = [
+        "--project-revision", "/revision.json",
+        "--project-revision-sha256", "a" * 64,
+        "--local", "vllm:llava-hf/llava-v1.6-mistral-7b-hf",
+        "--local-config", "/local.json",
+        "--local-config-sha256", "b" * 64,
+        "--source-config", "/source.json",
+        "--source-config-sha256", "c" * 64,
+        "--source-conformance", "/conformance.json",
+        "--source-conformance-sha256", "d" * 64,
+        "--group", "model,source",
+    ]
+
+    argv = recovery._probe_args(
+        unit,
+        base=base,
+        out=Path("/probe"),
+        scope="scope-fixture",
+    )
+
+    assert recovery._option(argv, "--judges") == "rules,guardrail"
+    assert recovery._option(argv, "--guardrail-model") == (
+        "meta-llama/Llama-Guard-3-8B"
+    )
+    assert recovery._option(argv, "--guardrail-device") == "cuda:1"
+
+
 def test_vllm_stability_phase6_accepts_standard_venv_python_symlink(
     tmp_path: Path,
 ) -> None:

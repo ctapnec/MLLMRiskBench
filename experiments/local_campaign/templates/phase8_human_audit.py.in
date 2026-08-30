@@ -18161,6 +18161,9 @@ def self_test() -> int:
                     "seven": phase7_input["seven_output_policy_amendment"],
                     "followon": phase7_input["followon"],
                     "current_ollama": phase7_input["current_ollama"],
+                    "current_ollama_stability": phase7_input[
+                        "current_ollama_stability"
+                    ],
                     "vllm_stability": phase7_input["vllm_stability"],
                 }
 

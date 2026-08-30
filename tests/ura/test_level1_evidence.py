@@ -150,6 +150,8 @@ def _conditions(
         "limit": 2,
         "max_queries": 1,
         "max_turns": 1,
+        "target_answer_retries": 1,
+        "recovery_selection": None,
         "call_caps": {
             "target": None,
             "judge": None,
@@ -290,6 +292,8 @@ def _runtime_free_legacy_plan(plan: dict) -> dict:
     bindings["selected_config_identities"].pop("engine_runtime_config")
     condition = bindings["experiment_conditions"]
     values = condition["values"]
+    values.pop("target_answer_retries")
+    values.pop("recovery_selection")
     values.pop("engine_runtimes")
     values["selected_config_identities"].pop("engine_runtime_config")
     condition["condition_id"] = (
@@ -522,6 +526,29 @@ def test_condition_projection_rejects_malformed_types() -> None:
     )
 
     with pytest.raises(ValueError, match="judges"):
+        _condition_from_plan(plan)
+
+
+def test_condition_projection_binds_current_retry_and_recovery_fields() -> None:
+    condition, bindings = _conditions()
+    corpora = {"synth-arm": synth_corpus(1)}
+    plan = build_eligibility_plan(
+        requested_targets=["text-target"],
+        targets={"text-target": _Target("resolved-text", ("text",))},
+        corpora=corpora,
+        attackers=["replay"],
+        attacker_input_contracts=_replay_contracts(corpora),
+        bindings=bindings,
+        dry_run=True,
+    )
+
+    assert _condition_from_plan(plan) == condition
+    values = plan["bindings"]["experiment_conditions"]["values"]
+    values["target_answer_retries"] = 11
+    plan["bindings"]["experiment_conditions"]["condition_id"] = (
+        "condition-" + canonical_json_sha256(values)[:24]
+    )
+    with pytest.raises(ValueError, match="target_answer_retries"):
         _condition_from_plan(plan)
 
 

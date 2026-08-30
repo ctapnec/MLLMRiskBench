@@ -18578,6 +18578,7 @@ def contract_self_test() -> int:
             "output_policy_amendment": "measured_complete",
             "followon_prepared": "measured_complete",
             "current_ollama": "measured_complete",
+            "current_ollama_stability": "measured_complete",
             "vllm_stability": "measured_complete",
             "native": "run",
         }[cohort]
