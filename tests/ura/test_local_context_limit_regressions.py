@@ -31,8 +31,8 @@ SPEC = "vllm:Qwen/Qwen3-VL-8B-Instruct"
 REVISION = "6" * 40
 
 
-def test_local_context_contract_bumps_runner_version() -> None:
-    assert CODE_VERSION == "ura-runner/2.24"
+def test_current_runner_version_includes_local_context_contract() -> None:
+    assert CODE_VERSION == "ura-runner/2.25"
 
 
 def _rig_hardware() -> dict[str, object]:
