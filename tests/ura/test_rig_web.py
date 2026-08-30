@@ -4824,7 +4824,7 @@ def test_external_campaign_marker_scan_cap_is_visible(
         campaign_id = f"campaign-cap-{index}"
         directory = engineering / campaign_id
         directory.mkdir()
-        started_at = f"2026-08-17T00:00:0{index}Z"
+        started_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         (directory / "ENGINEERING_ONLY.json").write_text(
             json.dumps({
                 "schema": "ura-engineering-campaign/1",
