@@ -1559,9 +1559,10 @@ def test_phase7_docs_bind_exact_97_row_stability_partition() -> None:
     ).read_text(encoding="utf-8")
 
     for document in (plan, runbook, local_readme):
-        assert "97" in document
-        assert "14 current-Ollama stability" in document
-        assert "seven vLLM stability" in document
+        normalized = " ".join(document.split())
+        assert "97" in normalized
+        assert "14 current-Ollama stability" in normalized
+        assert "seven vLLM stability" in normalized
     assert "--phase6-current-ollama-stability-completion" in local_readme
     assert "83-row Phase 7 campaign union" not in local_readme
 
