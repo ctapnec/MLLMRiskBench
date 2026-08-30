@@ -2162,6 +2162,12 @@ def test_phase6_sequence_core_inventory_is_exact_but_order_independent() -> None
     block = "def require_exact_core_inventory" + source.split(
         "def require_exact_core_inventory", 1
     )[1].split("steps = checked_file", 1)[0]
+    rr_terminal_lanes = (
+        "local-llava-rr-text-full",
+        "local-llava-rr-image-full",
+        "rjudge-llava-rr",
+        "gptgeochat-llava-rr",
+    )
     namespace = {
         "CORE_CANDIDATE_ORDER": [
             "local-qwen3-vl-text-primary-100",
@@ -2179,12 +2185,8 @@ def test_phase6_sequence_core_inventory_is_exact_but_order_independent() -> None
             "crescendo-qwen3-vl",
             "defense-local",
         ],
-        "RR_TERMINAL_LANE_SET": {
-            "local-llava-rr-text-full",
-            "local-llava-rr-image-full",
-            "rjudge-llava-rr",
-            "gptgeochat-llava-rr",
-        },
+        "RR_TERMINAL_LANES": rr_terminal_lanes,
+        "RR_TERMINAL_LANE_SET": set(rr_terminal_lanes),
     }
     exec(compile(block, "<phase6-core-inventory>", "exec"), namespace)
 
