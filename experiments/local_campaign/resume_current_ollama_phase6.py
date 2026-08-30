@@ -127,6 +127,10 @@ def run(
         raise ValueError("wait and poll seconds are invalid")
     if max_lane_launches < 1 or max_lane_launches > 10:
         raise ValueError("max lane launches must be in [1, 10]")
+    controller_path = Path(__file__).resolve(strict=True)
+    controller_source = _descriptor(
+        controller_path, label="current Ollama recovery controller"
+    )
     _wait_for_file(
         base_completion, wait_seconds=wait_seconds, poll_seconds=poll_seconds
     )
@@ -235,6 +239,7 @@ def run(
         "status": "complete" if failures == 0 else "complete_with_failures",
         "base_phase6": _descriptor(base_completion, label="base Phase 6 completion"),
         "gate5": _descriptor(gate5_path, label="current Ollama Gate 5 amendment"),
+        "controller_source": controller_source,
         "project_commit": expected_commit,
         "failed_lanes_selected": failed_lanes,
         "recovered_lanes": sum(row["status"] == "complete" for row in rows),
@@ -242,6 +247,10 @@ def run(
         "rows": rows,
         "paid_provider_calls": 0,
     }
+    if _descriptor(
+        controller_path, label="current Ollama recovery controller"
+    ) != controller_source:
+        raise ValueError("current Ollama recovery controller changed while running")
     body["recovery_id"] = "current-ollama-recovery-" + hashlib.sha256(
         _canonical(body)
     ).hexdigest()[:24]
