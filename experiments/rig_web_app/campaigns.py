@@ -1388,11 +1388,9 @@ def scan_engineering_campaigns(
         return [], ""
     candidates: list[tuple[float, int, Path]] = []
     truncated = False
+    inspected_campaigns = 0
     try:
-        for index, candidate in enumerate(root.iterdir()):
-            if index >= _MAX_DIRECTORY_ENTRIES:
-                truncated = True
-                break
+        for candidate in root.iterdir():
             if candidate.is_symlink() or not _ROUTE_ID.fullmatch(candidate.name):
                 continue
             try:
@@ -1425,6 +1423,10 @@ def scan_engineering_campaigns(
                     float(started_from) <= started_at <= float(started_to)
                 ):
                     continue
+                if inspected_campaigns >= _MAX_DIRECTORY_ENTRIES:
+                    truncated = True
+                    break
+                inspected_campaigns += 1
                 candidates.append((started_at, metadata.st_mtime_ns, candidate))
     except OSError:
         return [], "External campaign directory could not be scanned."
@@ -1514,8 +1516,8 @@ def scan_engineering_campaigns(
         )
     if truncated:
         notices.append(
-            f"The external campaign scan stopped after {_MAX_DIRECTORY_ENTRIES} directory "
-            "entries; later entries were not inspected."
+            f"The external campaign scan stopped after {_MAX_DIRECTORY_ENTRIES} validated "
+            "campaign markers; later matching campaigns were not inspected."
         )
     return (
         sorted(campaigns, key=lambda item: item.started_at, reverse=True),

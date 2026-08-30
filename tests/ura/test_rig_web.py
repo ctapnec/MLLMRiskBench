@@ -4791,7 +4791,7 @@ def test_external_campaign_log_endpoint_reads_only_bounded_tail(tmp_path: Path) 
     normal_app.close()
 
 
-def test_external_campaign_directory_scan_cap_is_visible(
+def test_non_campaign_directories_do_not_consume_campaign_scan_cap(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4807,8 +4807,63 @@ def test_external_campaign_directory_scan_cap_is_visible(
     status, _, body = app.handle("GET", "/jobs")
     text = body.decode("utf-8")
     assert status == 200 and "All (<span class='chip-count'>0</span>)" in text
-    assert "scan stopped after 3 directory entries" in text
-    assert "later entries were not inspected" in text
+    assert "scan stopped" not in text
+    app.close()
+
+
+def test_external_campaign_marker_scan_cap_is_visible(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from experiments.rig_web_app import campaigns as campaign_index
+
+    app = _app(tmp_path)
+    engineering = app.results_root / "engineering"
+    engineering.mkdir()
+    for index in range(4):
+        campaign_id = f"campaign-cap-{index}"
+        directory = engineering / campaign_id
+        directory.mkdir()
+        started_at = f"2026-08-17T00:00:0{index}Z"
+        (directory / "ENGINEERING_ONLY.json").write_text(
+            json.dumps({
+                "schema": "ura-engineering-campaign/1",
+                "campaign_id": campaign_id,
+                "release_commit": "a" * 40,
+                "evidence_class": "engineering_stress",
+                "thesis_empirical_evidence": False,
+                "hosted_calls_allowed": False,
+                "started_at": started_at,
+            }),
+            encoding="utf-8",
+        )
+        (directory / "task-log.jsonl").write_text(
+            "\n".join((
+                json.dumps({
+                    "at": started_at,
+                    "event": "campaign_start",
+                    "task": "bootstrap",
+                    "status": "running",
+                    "detail": campaign_id,
+                }),
+                json.dumps({
+                    "at": started_at,
+                    "event": "campaign_end",
+                    "task": "bootstrap",
+                    "status": "passed",
+                    "detail": campaign_id,
+                }),
+            ))
+            + "\n",
+            encoding="utf-8",
+        )
+    monkeypatch.setattr(campaign_index, "_MAX_DIRECTORY_ENTRIES", 3)
+
+    status, _, body = app.handle("GET", "/jobs")
+    text = body.decode("utf-8")
+    assert status == 200 and "All (<span class='chip-count'>3</span>)" in text
+    assert "scan stopped after 3 validated campaign markers" in text
+    assert "later matching campaigns were not inspected" in text
     app.close()
 
 
