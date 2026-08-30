@@ -659,6 +659,8 @@ def test_current_ollama_phase6_is_generated_and_rechecks_each_lane() -> None:
     assert '--gate5-amendment "$GATE5_AMENDMENT"' in template
     assert "tmux new-session -d" in template
     assert "--hard-stop-hours 336" in template
+    assert "--evidence-class measured_local_current_ollama" in template
+    assert "--evidence-class measured-local-current-ollama" not in template
     loop = runner.split("    for row in rows:", 1)[1]
     assert "validate_amendment(gate5_path, expected_commit=expected_commit)" in loop
     assert "_validate_live_roster(project)" in loop
