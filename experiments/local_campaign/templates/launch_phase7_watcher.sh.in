@@ -33,6 +33,24 @@ EXPECTED_SHA256='@@SHA:phase7_after_phase6_sequence.sh@@'
 test -f "$SCRIPT" && test ! -L "$SCRIPT"
 test "$(sha256sum -- "$SCRIPT" | awk '{print $1}')" = "$EXPECTED_SHA256"
 bash -n "$SCRIPT"
-export AUTHORIZED_WATCHER_SHA256="$EXPECTED_SHA256"
-export PHASE7_WATCHER_TAG='@@PHASE7_WATCHER_TAG@@'
-exec bash "$SCRIPT" "$@"
+
+SOCKET='ura-phase7-after-phase6-@@COMMIT_SHORT@@'
+SESSION='ura-phase7-after-phase6-@@COMMIT_SHORT@@'
+if tmux -L "$SOCKET" has-session -t "$SESSION" 2>/dev/null; then
+  printf 'Phase 7 watcher session already exists: %s/%s\n' \
+    "$SOCKET" "$SESSION" >&2
+  exit 1
+fi
+
+printf -v watcher_command \
+  'exec env AUTHORIZED_WATCHER_SHA256=%q PHASE7_WATCHER_TAG=%q bash %q' \
+  "$EXPECTED_SHA256" '@@PHASE7_WATCHER_TAG@@' "$SCRIPT"
+for argument in "$@"; do
+  printf -v watcher_command '%s %q' "$watcher_command" "$argument"
+done
+tmux -L "$SOCKET" new-session -d -s "$SESSION" "$watcher_command"
+sleep 1
+tmux -L "$SOCKET" has-session -t "$SESSION" 2>/dev/null
+
+printf 'PHASE7_WATCHER_SOCKET=%s\n' "$SOCKET"
+printf 'PHASE7_WATCHER_SESSION=%s\n' "$SESSION"

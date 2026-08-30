@@ -219,6 +219,10 @@ bash ~/.ura-controller-active/launch_phase7_watcher.sh \
   --phase6-current-ollama-recovery-completion <absolute-current-Ollama-recovery-completion.json>
 ```
 
+The launcher returns after starting the watcher in the exact detached tmux
+socket and session named by its Jobs registration. Monitor that printed
+identity; do not wrap the launcher in a differently named session.
+
 Repeat `--phase6-recovery-completion` for every retained recovery stratum.
 Pass `--phase6-current-ollama-recovery-completion` only when the base current
 Ollama completion has failed lanes. The watcher waits for that exact recovery;

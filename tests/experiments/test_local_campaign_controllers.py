@@ -4,6 +4,7 @@ import argparse
 import copy
 import hashlib
 import json
+import os
 import re
 from pathlib import Path
 import shutil
@@ -555,6 +556,75 @@ def test_launch_chain_stops_before_the_explicit_phase7_artifact_launch() -> None
         "--phase6-followon-completion",
     ):
         assert option in readme
+
+
+def test_phase7_watcher_launcher_owns_its_registered_tmux_session(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commit = "1" * 40
+    bindings = _bindings(tmp_path / "bindings.json", commit=commit)
+    generations = tmp_path / ".ura-controller-generations"
+    generations.mkdir()
+    archive_sha = "a" * 64
+    generation = generations / f"{commit[:7]}-{archive_sha}"
+    render_controller_set(bindings, generation)
+    (generation / ".ura-controller-generation.tsv").write_text(
+        "schema\tura-controller-generation/1\n"
+        f"expected_commit\t{commit}\n"
+        f"archive_sha256\t{archive_sha}\n",
+        encoding="ascii",
+    )
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    state = tmp_path / "tmux-state"
+    capture = tmp_path / "tmux-new-session-argv"
+    tmux = fake_bin / "tmux"
+    tmux.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -Eeuo pipefail\n"
+        "case \" $* \" in\n"
+        "  *\" has-session \"*) test -f \"$FAKE_TMUX_STATE\" ;;\n"
+        "  *\" new-session \"*)\n"
+        "    printf '%s\\n' \"$@\" > \"$FAKE_TMUX_CAPTURE\"\n"
+        "    : > \"$FAKE_TMUX_STATE\"\n"
+        "    ;;\n"
+        "  *) exit 2 ;;\n"
+        "esac\n",
+        encoding="ascii",
+    )
+    tmux.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake_bin}:{os.environ['PATH']}")
+    monkeypatch.setenv("FAKE_TMUX_STATE", str(state))
+    monkeypatch.setenv("FAKE_TMUX_CAPTURE", str(capture))
+    monkeypatch.delenv("URA_CONTROLLER_GENERATION_ROOT", raising=False)
+
+    completed = subprocess.run(
+        [
+            "bash",
+            str(generation / "launch_phase7_watcher.sh"),
+            "--phase6-sequence-completion",
+            "/bound/core completion.json",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    socket = f"ura-phase7-after-phase6-{commit[:7]}"
+    assert f"PHASE7_WATCHER_SOCKET={socket}" in completed.stdout
+    assert f"PHASE7_WATCHER_SESSION={socket}" in completed.stdout
+    captured = capture.read_text(encoding="utf-8").splitlines()
+    assert captured[:6] == ["-L", socket, "new-session", "-d", "-s", socket]
+    assert captured[6].startswith(
+        "exec env AUTHORIZED_WATCHER_SHA256="
+    )
+    assert "PHASE7_WATCHER_TAG=20260822T120000Z" in captured[6]
+    assert "--phase6-sequence-completion" in captured[6]
+    assert "/bound/core\\ completion.json" in captured[6]
+    assert state.is_file()
 
 
 def test_phase3_registers_one_tmux_owned_console_campaign_with_exact_progress(
