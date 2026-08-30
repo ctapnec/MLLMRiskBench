@@ -147,6 +147,10 @@ After the selected corpora materialize, `run_matrix` writes a content-addressed
 `ura-eligibility-plan/3` artifact before any model call. It retains every
 requested planning stratum as `compatible_if_isolated` or `N/A`, with its failed
 gates, whole-arm execution-unit status, and bound configuration/corpus digests.
+Its experiment-condition projection preserves the version-specific request
+shape. Current requests bind answer retries and nullable completed-prefix
+recovery selection, while retained older projections remain byte-compatible;
+Level 1 rejects any request/condition presence or value mismatch.
 This is planning evidence only: it is not a live
 attestation, attempted/completed-cell record, or scientific result.
 

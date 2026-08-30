@@ -495,6 +495,15 @@ cells are not called again. The new controller publishes its named tmux
 lifecycle to Jobs and retains the old and new output policies as non-poolable
 strata.
 
+Phase 7 requires both that current-Ollama stability completion and the exact
+seven-unit vLLM stability completion. Its plan-owned terminal inventory has 97
+rows: 46 canonical, four output-policy amendment, three follow-on, 14
+historical current-Ollama, 14 current-Ollama stability, seven vLLM stability
+and nine native. The analysis self-test, Phase 8 frozen replay and Stats adapter
+all reject an omitted cohort, a changed terminal state or any cross-policy
+pooling. These counts describe this local campaign only; they are not generic
+Runner phases or product defaults.
+
 A targeted amendment must re-attest and canary the four affected GraySwan lane
 identities under the current Runner before measured execution. Those identities
 use the limit-100, sample-seed-0 selections and caps from their matching

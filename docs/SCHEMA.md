@@ -188,6 +188,13 @@ model calls. Each item binds the requested and resolved target identities,
 logical source arm, selected source stratum and item digest, exact modality,
 attacker, execution/metric mode, evaluator/reference mode, disposition, and
 failed gates. The artifact self-validates its content-derived `plan_id`.
+Its `bindings.experiment_conditions.values` preserves the exact condition shape
+from the request-envelope generation that produced it. Current version-4
+requests therefore carry both `target_answer_retries` and nullable
+`recovery_selection`; retained version-2 and version-3 condition shapes remain
+readable without inferred fields. Level 1 validates the exact field inventory,
+types and content ID, then requires retry/recovery field presence and values to
+match the bound request envelope before accepting the plan or grid.
 
 Validation strictly reconstructs the embedded grid attacker-input plan and
 recomputes every media ID, contract ID, and plan digest. Each eligibility cell

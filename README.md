@@ -449,6 +449,9 @@ execution evidence; an output-defense block after a real target call is. Image,
 audio, video, and agent/tool lanes remain pending until their byte-level source,
 transport, target capability, runtime, and evaluator gates pass. Media is never
 silently removed, caption-substituted, or counted merely from a tag.
+The eligibility experiment condition retains the request version's exact retry
+and recovery field inventory. Level 1 accepts immutable older shapes but rejects
+any field-presence or value mismatch against the bound request envelope.
 
 Generative local vLLM and Ollama targets also require a passing
 `python -m experiments.local_model_readiness` receipt before security calls.

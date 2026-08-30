@@ -892,14 +892,20 @@ completion are independent, required Phase 7 inputs alongside the retained
 core, recovery, GraySwan RR and follow-on inputs. When that Phase 6 completion
 contains a failed readiness-admitted lane, Phase 7 additionally requires the
 exact checkpoint-recovery completion, validates every originally failed lane as
-fully recovered, and overlays its Level-1 counts and Runner artifacts without
-repeating or replacing the immutable base completion. The Level-2 export keeps
+its immutable terminal outcome, and then requires the separate 14-unit Runner
+2.25 current-Ollama stability completion for the remaining 1,684 rows. The
+historical 1,911 durable rows and fresh stability units retain separate
+retry/output-policy strata and are never pooled. The Level-2 export keeps
 rules-only and cascade (rules+guardrail) evaluator modes as separate
 compatibility keys.
 The exact seven-unit Runner 2.25 vLLM stability completion is another required
 input. Phase 7 admits its 7,199 rows as a separate retry/output-policy stratum,
 retains missing responses in stability accounting, and forbids pooling them
 with the completed Runner 2.24 Qwen text and Crescendo evidence.
+The exact Phase 6 campaign terminal inventory contains 97 logical rows: 46
+canonical, four output-policy amendment, three follow-on, 14 historical
+current-Ollama, 14 current-Ollama stability, seven vLLM stability and nine
+native. The contract self-test rejects any other count or cohort partition.
 Only successful measured lanes enter those metric and Level-2 views; failed and
 partial lanes remain visible in Level-1 lifecycle evidence rather than being
 silently dropped or replaced by Gate 5 preflight eligibility.

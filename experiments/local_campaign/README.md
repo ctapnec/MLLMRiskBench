@@ -240,6 +240,7 @@ bash ~/.ura-controller-active/launch_phase7_watcher.sh \
   --current-ollama-gate5-amendment <absolute-current-Ollama-amendment.json> \
   --phase6-current-ollama-completion <absolute-current-Ollama-completion.json> \
   --phase6-current-ollama-recovery-completion <absolute-current-Ollama-recovery-completion.json> \
+  --phase6-current-ollama-stability-completion <absolute-current-Ollama-stability-completion.json> \
   --phase6-vllm-stability-completion <absolute-vLLM-stability-completion.json>
 ```
 
@@ -250,8 +251,10 @@ identity; do not wrap the launcher in a differently named session.
 Repeat `--phase6-recovery-completion` for every retained recovery stratum.
 Pass `--phase6-current-ollama-recovery-completion` only when the base current
 Ollama completion has failed lanes. The watcher waits for that exact recovery;
-Phase 7 rejects an omitted, partial, failed, or unrelated recovery and consumes
-the base completion plus recovered Level-1 evidence as one revision stratum.
+Phase 7 rejects an omitted or unrelated recovery and preserves its terminal
+partition. The separate current-Ollama stability completion is always required
+for this retained campaign. It contributes the 14 fresh Runner 2.25 per-corpus
+units without relabeling or pooling the 1,911 durable old-Runner rows.
 The vLLM stability completion is always required and contributes only its seven
 fresh Runner 2.25 units; completed Runner 2.24 Qwen text and Crescendo lanes are
 not repeated and remain in their historical output-policy stratum.
@@ -426,8 +429,11 @@ one for NanoGCG, eight for IDEATOR v2, and 50 for T3MP3ST. The generated
 `phase5_followon_prepared.sh` converts only a fully validated three-lane input
 into the separate Gate 5 amendment, and `phase6_followon_prepared.sh` derives
 the typed `measured_complete`, `partial`, or `failed` lifecycle from the exact
-Runner roots. The 83-row Phase 7 campaign union requires the amendment and
-completion as one exact pair. It retains all three terminal states, emits
+Runner roots. The 97-row Phase 7 campaign union requires the amendment and
+completion as one exact pair. Its exact cohort counts are 46 canonical, four
+output-policy amendment, three follow-on, 14 historical current-Ollama, 14
+current-Ollama stability, seven vLLM stability and nine native rows. It retains
+all three terminal states, emits
 metric inputs only for
 independently validated successful Runner roots and partitions those inputs by
 project revision. Zero successful follow-on lanes is an explicit limitation,
