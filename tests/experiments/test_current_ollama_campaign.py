@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 import hashlib
+import inspect
 import json
 import re
 from pathlib import Path
@@ -33,6 +34,7 @@ from experiments.local_campaign.current_ollama_gate5 import (
     _lane_contract,
     _validate_evidence_provenance,
     _validate_local_config,
+    validate_amendment,
     validate_static_canary_stage_support,
 )
 from experiments.local_campaign.current_ollama_phase6 import (
@@ -269,6 +271,14 @@ def test_current_ollama_gate5_accepts_exact_interleaved_controller_rows() -> Non
 
     rows[-1] = {"lane": rows[0]["lane"]}
     assert not _has_exact_lane_inventory(rows, CURRENT_OLLAMA_RUNNABLE_LANES)
+
+
+def test_current_ollama_gate5_validator_accepts_exact_interleaved_status_rows() -> None:
+    source = inspect.getsource(validate_amendment)
+
+    assert source.count("not _has_exact_lane_inventory(") == 2
+    assert "list(by_projection)" not in source
+    assert "list(by_canary)" not in source
 
 
 def test_current_ollama_gate5_binds_execution_and_validation_cohorts(

@@ -904,8 +904,8 @@ def validate_amendment(path: Path, *, expected_commit: str | None = None) -> dic
     by_projection = {row["lane"]: row for row in projections}
     by_canary = {row["lane"]: row for row in canaries}
     if (
-        list(by_projection) != list(CURRENT_OLLAMA_RUNNABLE_LANES)
-        or list(by_canary) != list(CURRENT_OLLAMA_RUNNABLE_LANES)
+        not _has_exact_lane_inventory(projections, CURRENT_OLLAMA_RUNNABLE_LANES)
+        or not _has_exact_lane_inventory(canaries, CURRENT_OLLAMA_RUNNABLE_LANES)
         or {(row["phase"], row["unit"]) for row in dispositions} != _expected_dispositions()
         or any(row["disposition"] != "completed" for row in dispositions)
     ):
