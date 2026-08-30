@@ -110,7 +110,11 @@ def _create_json(path: Path, value: object) -> None:
 
 
 def _validate_descriptor(value: object, *, label: str) -> Path:
-    if not isinstance(value, dict) or set(value) != {"path", "sha256", "bytes"}:
+    fields = set(value) if isinstance(value, dict) else set()
+    if fields not in (
+        {"path", "sha256", "bytes"},
+        {"path", "file", "sha256", "bytes"},
+    ):
         raise ValueError(f"{label} is not one exact file descriptor")
     raw_path = value.get("path")
     digest = value.get("sha256")
@@ -126,6 +130,8 @@ def _validate_descriptor(value: object, *, label: str) -> Path:
     ):
         raise ValueError(f"{label} descriptor fields are invalid")
     path = Path(raw_path)
+    if "file" in value and value.get("file") != path.name:
+        raise ValueError(f"{label} descriptor filename does not match its path")
     payload = _stable_file(path, label=label)
     if len(payload) != size or hashlib.sha256(payload).hexdigest() != digest:
         raise ValueError(f"{label} content identity changed")

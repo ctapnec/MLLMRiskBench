@@ -7336,3 +7336,39 @@ def test_vllm_stability_phase6_schedules_only_missing_runner_225_work(
     )
     with pytest.raises(ValueError, match="terminal partition changed"):
         recovery.validate_historical_completion(historical)
+
+
+def test_vllm_stability_phase6_reads_retained_projection_descriptor(
+    tmp_path: Path,
+) -> None:
+    from experiments.local_campaign import vllm_stability_phase6 as recovery
+
+    projection = tmp_path / "lane-projection-retained.lane-projection.json"
+    payload = json.dumps({
+        "selection": {
+            "arms": [{
+                "logical_source_arm": "airbench_full",
+                "selected_records": 1854,
+            }],
+        },
+    }).encode("utf-8")
+    projection.write_bytes(payload)
+    descriptor = {
+        "path": str(projection),
+        "file": projection.name,
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "bytes": len(payload),
+    }
+
+    assert recovery._projection_arms({
+        "lane_id": "local-llava-base-text-primary-100",
+        "gate5": {"final_projection": descriptor},
+    })["airbench_full"]["selected_records"] == 1854
+
+    with pytest.raises(ValueError, match="filename does not match"):
+        recovery._projection_arms({
+            "lane_id": "local-llava-base-text-primary-100",
+            "gate5": {
+                "final_projection": {**descriptor, "file": "different.json"},
+            },
+        })
