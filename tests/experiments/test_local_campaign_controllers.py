@@ -7435,6 +7435,25 @@ def test_vllm_stability_phase6_registers_its_tmux_job_lifecycle() -> None:
     assert 'parser.add_argument("--tmux-session", required=True)' in source
 
 
+def test_vllm_stability_phase6_accepts_standard_venv_python_symlink(
+    tmp_path: Path,
+) -> None:
+    from experiments.local_campaign import vllm_stability_phase6 as recovery
+
+    project = tmp_path / "project"
+    binary = project / ".venv" / "bin" / "python3"
+    binary.parent.mkdir(parents=True)
+    binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    binary.chmod(0o700)
+    python = binary.parent / "python"
+    python.symlink_to(binary.name)
+
+    assert recovery._project_python(project, python) == python
+
+    with pytest.raises(ValueError, match="project virtual environment"):
+        recovery._project_python(project, binary)
+
+
 def test_vllm_stability_completion_is_one_separate_runner_225_stratum(
     tmp_path: Path,
 ) -> None:

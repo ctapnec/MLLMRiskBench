@@ -122,6 +122,15 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _project_python(project_root: Path, candidate: Path) -> Path:
+    expected = project_root / ".venv/bin/python"
+    if candidate != expected:
+        raise ValueError("controller Python is not the project virtual environment")
+    if not candidate.is_file() or not os.access(candidate, os.X_OK):
+        raise ValueError("controller Python is not one executable regular file")
+    return candidate
+
+
 def _load_json(path: Path, *, label: str) -> dict[str, Any]:
     try:
         value = json.loads(_stable_file(path, label=label).decode("utf-8"))
@@ -1043,9 +1052,7 @@ def run(args: argparse.Namespace) -> int:
     if HEX40.fullmatch(args.expected_commit) is None:
         raise ValueError("expected commit must be one lowercase Git object ID")
     project_root = args.project_root.resolve(strict=True)
-    python = args.python.resolve(strict=True)
-    if python != project_root / ".venv/bin/python":
-        raise ValueError("controller Python is not the project virtual environment")
+    python = _project_python(project_root, args.python)
     work_root = args.work_root.resolve(strict=True)
     control_root = args.control_root
     if control_root.exists() or control_root.is_symlink():
