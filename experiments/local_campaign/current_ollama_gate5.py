@@ -26,7 +26,7 @@ from experiments.local_campaign.current_ollama import (
 from experiments.local_model_readiness import validate_readiness
 
 
-SCHEMA = "ura-current-ollama-gate5-amendment/1"
+SCHEMA = "ura-current-ollama-gate5-amendment/2"
 TEXT_ARMS = (
     "strongreject_official",
     "advbench_harmful",
@@ -121,6 +121,14 @@ CANARY_FIELDS = (
     "successful_target_generations",
 )
 DISPOSITION_FIELDS = ("phase", "unit", "disposition", "reason")
+PROVENANCE_FIELDS = (
+    "phase",
+    "unit",
+    "execution_commit",
+    "validation_commit",
+    "evidence_mode",
+    "source_control_root",
+)
 
 
 def _canonical(value: object) -> bytes:
@@ -275,6 +283,54 @@ def _lane_contract(lane: str, label: str) -> tuple[str, str, tuple[str, ...], st
     raise ValueError(f"{lane}: no current Ollama lane contract")
 
 
+def _validate_evidence_provenance(
+    rows: list[dict[str, str]],
+    *,
+    dispositions: list[dict[str, str]],
+    expected_commit: str,
+    control_root: Path,
+) -> dict[tuple[str, str], dict[str, str]]:
+    expected_pairs = _expected_dispositions()
+    pairs = [(row["phase"], row["unit"]) for row in rows]
+    disposition_pairs = [(row["phase"], row["unit"]) for row in dispositions]
+    if (
+        len(rows) != len(expected_pairs)
+        or len(set(pairs)) != len(pairs)
+        or set(pairs) != expected_pairs
+        or pairs != disposition_pairs
+    ):
+        raise ValueError("current Ollama evidence-provenance inventory changed")
+    result: dict[tuple[str, str], dict[str, str]] = {}
+    for row in rows:
+        execution_commit = row["execution_commit"]
+        validation_commit = row["validation_commit"]
+        mode = row["evidence_mode"]
+        if (
+            HEX40.fullmatch(execution_commit) is None
+            or validation_commit != expected_commit
+            or mode not in {"executed", "revalidated"}
+        ):
+            raise ValueError("current Ollama evidence provenance is malformed")
+        source = _canonical_dir(
+            Path(row["source_control_root"]), label="Ollama provenance source root"
+        )
+        metadata = _load_json(source / "ENGINEERING_ONLY.json", label="campaign metadata")
+        if (
+            not isinstance(metadata, dict)
+            or metadata.get("schema") != "ura-engineering-campaign/1"
+            or metadata.get("release_commit") != execution_commit
+            or metadata.get("hosted_calls_allowed") is not False
+        ):
+            raise ValueError("current Ollama provenance source identity changed")
+        if mode == "executed":
+            if execution_commit != expected_commit or source != control_root:
+                raise ValueError("executed Ollama evidence names another campaign")
+        elif execution_commit == expected_commit or source == control_root:
+            raise ValueError("revalidated Ollama evidence lacks a historical cohort")
+        result[(row["phase"], row["unit"])] = dict(row)
+    return result
+
+
 def _base_argv(
     *,
     model_label: str,
@@ -387,6 +443,11 @@ def build_amendment(
     dispositions = _read_tsv(
         control / "dispositions.tsv", DISPOSITION_FIELDS, label="Ollama dispositions"
     )
+    provenance = _read_tsv(
+        control / "evidence-provenance.tsv",
+        PROVENANCE_FIELDS,
+        label="Ollama evidence provenance",
+    )
     expected_lanes = list(CURRENT_OLLAMA_RUNNABLE_LANES)
     disposition_pairs = {(row["phase"], row["unit"]) for row in dispositions}
     if (
@@ -400,6 +461,12 @@ def build_amendment(
         or any(row["disposition"] != "completed" for row in dispositions)
     ):
         raise ValueError("current Ollama Gate 5 row inventory changed")
+    by_provenance = _validate_evidence_provenance(
+        provenance,
+        dispositions=dispositions,
+        expected_commit=expected_commit,
+        control_root=control,
+    )
     by_projection = {row["lane"]: row for row in projections}
     by_canary = {row["lane"]: row for row in canaries}
     if len(by_projection) != 12 or len(by_canary) != 12:
@@ -597,6 +664,11 @@ def build_amendment(
                         )
                     ),
                 },
+                "evidence_provenance": {
+                    "projection": by_provenance[("projection", lane)],
+                    "attestation": by_provenance[("attestation", f"{label}/{modality}")],
+                    "canary": by_provenance[("canary", lane)],
+                },
             }
         )
 
@@ -618,7 +690,12 @@ def build_amendment(
             "attestations": _descriptor(control / "attestations.tsv", label="Ollama attestations"),
             "canaries": _descriptor(control / "canaries.tsv", label="Ollama canaries"),
             "dispositions": _descriptor(control / "dispositions.tsv", label="Ollama dispositions"),
+            "evidence_provenance": _descriptor(
+                control / "evidence-provenance.tsv", label="Ollama evidence provenance"
+            ),
         },
+        "execution_cohorts": sorted({row["execution_commit"] for row in provenance}),
+        "validation_commit": expected_commit,
         "runnable_lane_order": expected_lanes,
         "typed_terminal_lanes": {
             lane: {
@@ -668,6 +745,8 @@ def validate_amendment(path: Path, *, expected_commit: str | None = None) -> dic
         raise ValueError("current Ollama Gate 5 amendment project commit changed")
     if value.get("runnable_lane_order") != list(CURRENT_OLLAMA_RUNNABLE_LANES):
         raise ValueError("current Ollama runnable lane order changed")
+    if value.get("unrelated_completed_work_repeated") is not False:
+        raise ValueError("current Ollama amendment repeated unrelated completed work")
     expected_terminals = {
         lane: {
             "disposition": "unavailable",
@@ -717,6 +796,7 @@ def validate_amendment(path: Path, *, expected_commit: str | None = None) -> dic
         "attestations",
         "canaries",
         "dispositions",
+        "evidence_provenance",
     }:
         raise ValueError("current Ollama status-table inventory changed")
     table_paths = {
@@ -730,6 +810,30 @@ def validate_amendment(path: Path, *, expected_commit: str | None = None) -> dic
     dispositions = _read_tsv(
         table_paths["dispositions"], DISPOSITION_FIELDS, label="Ollama dispositions"
     )
+    provenance = _read_tsv(
+        table_paths["evidence_provenance"],
+        PROVENANCE_FIELDS,
+        label="Ollama evidence provenance",
+    )
+    control_value = value.get("control_root")
+    if not isinstance(control_value, str) or Path(control_value) != path.parent:
+        raise ValueError("current Ollama control-root binding changed")
+    control = _canonical_dir(Path(control_value), label="Phase 5 Ollama control root")
+    validation_commit = value.get("validation_commit")
+    if not isinstance(validation_commit, str) or HEX40.fullmatch(validation_commit) is None:
+        raise ValueError("current Ollama validation commit changed")
+    by_provenance = _validate_evidence_provenance(
+        provenance,
+        dispositions=dispositions,
+        expected_commit=validation_commit,
+        control_root=control,
+    )
+    if (
+        value.get("project_commit") != validation_commit
+        or value.get("execution_cohorts")
+        != sorted({row["execution_commit"] for row in provenance})
+    ):
+        raise ValueError("current Ollama execution cohort binding changed")
     by_projection = {row["lane"]: row for row in projections}
     by_canary = {row["lane"]: row for row in canaries}
     if (
@@ -811,6 +915,12 @@ def validate_amendment(path: Path, *, expected_commit: str | None = None) -> dic
             }
             or row.get("canary")
             != {"canary_id": canary["canary_id"], "root": canary["diagnostic_root"]}
+            or row.get("evidence_provenance")
+            != {
+                "projection": by_provenance[("projection", lane)],
+                "attestation": by_provenance[("attestation", f"{model.label}/{modality}")],
+                "canary": by_provenance[("canary", lane)],
+            }
         ):
             raise ValueError(f"{lane}: bound Gate 5 evidence changed")
     return value

@@ -1112,7 +1112,7 @@ def test_ollama_bounded_lane_identity_is_used_by_every_workflow_stage() -> None:
 
     assert source.count(
         'static_lane="ollama-${label}-text-primary-50"'
-    ) == 2
+    ) == 3
     assert 'static_lane="ollama-${label}-text-exploratory-50"' not in source
     assert 'static_lane="ollama-${label}-text-full"' not in source
 
@@ -5796,7 +5796,7 @@ def test_ollama_nonzero_canary_failures_are_not_converted_to_old_terminals() -> 
         / "phase5_ollama_workflow.sh.in"
     ).read_text(encoding="utf-8")
     _, canary_tail = source.split("run_canary_lane() {", 1)
-    canary_body, remainder = canary_tail.split("\n}\n\n# Phase 5 bounded", 1)
+    canary_body, remainder = canary_tail.split("\n}\n\nsource_status_row()", 1)
     canary_required = (
         "Runner 2.24 retains nonempty length-capped text",
         "successful empty completion as model_nonresponse",
