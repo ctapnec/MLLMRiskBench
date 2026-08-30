@@ -621,10 +621,14 @@ positive values only in a separately projected and approved cohort.
 
 A failed additive Ollama controller is recovered from its exact canonical
 `.exit=1` control root. The recovery revalidates completed artifacts, executes
-only failed or blocked units, and emits one provenance row per disposition.
+only failed or blocked units, and emits one provenance row per disposition when
+every exact per-model local config is byte-identical. If a context or output cap
+changes, the old evidence remains immutable diagnostics and the controller
+creates a fresh projected cohort instead of relabeling or reusing it.
 Gate 5 keeps the historical execution commit and current validation commit as
 separate identities; it rejects a missing, duplicate or silently relabeled
-mixed cohort. Successful projections, attestations and canaries are not rerun.
+mixed cohort. Within an exact-config recovery, successful projections,
+attestations and canaries are not rerun.
 
 ## 7. Phase 6: bounded measured local lanes (sized by projections and canaries)
 

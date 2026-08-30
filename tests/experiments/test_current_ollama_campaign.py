@@ -221,6 +221,14 @@ def test_current_ollama_phase5_recovery_reuses_only_completed_evidence() -> None
     assert 'local label="$1" modality="$2"\n  local key="${label}/${modality}"' in template
     assert "revalidate_canary_lane" in template
     assert "record_revalidated" in template
+    assert "recovery_configs_match()" in template
+    assert 'source_config="$RECOVERY_SOURCE_ROOT/local-configs/${label}.json"' in template
+    assert '! cmp -s -- "$source_config" "${MODEL_CONFIGS[$label]}"' in template
+    assert (
+        'if [[ -n "$RECOVERY_SOURCE_ROOT" ]] && recovery_configs_match; then'
+        in template
+    )
+    assert "RECOVERY_REUSE=disabled_exact_local_config_changed" in template
     assert "if [[ \"$label\" == 'deepseek-r1-distill-32b' ]]; then" in template
     assert "if [[ \"$label\" == 'gemma4-12b' ]]; then" in template
     assert 'run_canary_lane "$image_lane" "$label" static image mmsafety_official' in template

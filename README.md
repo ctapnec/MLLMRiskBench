@@ -238,6 +238,9 @@ provenance. This avoids allocating a model's full advertised long context for
 short benchmark prompts while keeping a different bounded value available as a
 separately reviewed execution condition. Reaching `num_predict` remains a valid
 length-capped response and the observed text is still evaluated.
+Recovery reuses prior Ollama projections, attestations and canaries only when
+every exact per-model config is unchanged. A context/output-cap change retains
+the older artifacts as diagnostics and creates a fresh projected cohort.
 
 The exact campaign GraySwan RR checkpoint remains sealed and installed. Its
 text and physical-image probes reached the declared 4,096-token generation cap

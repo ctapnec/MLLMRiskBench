@@ -505,7 +505,10 @@ bash ~/.ura-controller-active/phase5_ollama_workflow.sh
 The recovery source must carry `.exit=1`, canonical
 `ura-engineering-campaign/1` metadata and an older exact release commit.
 Recovery revalidates every reused artifact with the current validators and
-executes only failed or blocked units. Its `evidence-provenance.tsv` has one row
+executes only failed or blocked units when every exact per-model local config is
+byte-identical. If the context or output cap changed, the old artifacts remain
+diagnostics and the controller creates a fresh projected cohort. Its
+`evidence-provenance.tsv` has one row
 for every Gate 5 disposition and separates `execution_commit`,
 `validation_commit`, `evidence_mode` and source control root. Amendment schema
 `ura-current-ollama-gate5-amendment/2` rejects missing, duplicate or drifted

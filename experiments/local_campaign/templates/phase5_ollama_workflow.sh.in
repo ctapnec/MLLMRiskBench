@@ -407,6 +407,18 @@ for label in "${MODEL_LABELS[@]}"; do
   MODEL_CONFIGS[$label]="$config"
 done
 
+recovery_configs_match() {
+  local label source_config
+  for label in "${MODEL_LABELS[@]}"; do
+    source_config="$RECOVERY_SOURCE_ROOT/local-configs/${label}.json"
+    if [[ ! -f "$source_config" || -L "$source_config" ]] \
+       || ! cmp -s -- "$source_config" "${MODEL_CONFIGS[$label]}"; then
+      return 1
+    fi
+  done
+  return 0
+}
+
 verify_live_roster() {
   local output="$1"
   shift
@@ -1925,7 +1937,7 @@ revalidate_canary_lane() {
   record_revalidated canary "$lane"
 }
 
-if [[ -n "$RECOVERY_SOURCE_ROOT" ]]; then
+if [[ -n "$RECOVERY_SOURCE_ROOT" ]] && recovery_configs_match; then
   # Revalidate the completed no-call projections. Recovery executes no
   # projection or model call that the source campaign already completed.
   for label in "${MODEL_LABELS[@]}"; do
@@ -1995,6 +2007,12 @@ if [[ -n "$RECOVERY_SOURCE_ROOT" ]]; then
     fi
   done
 else
+  if [[ -n "$RECOVERY_SOURCE_ROOT" ]]; then
+    # A changed execution config is a new projected cohort. Retain the older
+    # artifacts as diagnostics, but do not relabel or reuse their projections,
+    # attestations, or canaries under the new config identity.
+    printf 'RECOVERY_REUSE=disabled_exact_local_config_changed\n'
+  fi
 # Phase 5 bounded no-call projections. Each lane gets a preliminary ceiling and a
 # second, independently bound final preflight whose target cap equals the exact
 # retained projection. Failures are isolated so every other runnable lane is
