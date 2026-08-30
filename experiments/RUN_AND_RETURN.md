@@ -478,7 +478,10 @@ then creates three complete first-measured image/GPTGeoChat conditions plus the
 content-bound unfinished LLaVA text units. Its current inventory is seven units
 and 7,199 selected rows. It excludes completed Qwen3-VL text, completed
 Crescendo and the 1,039-row completed LLaVA AirBench prefix. This controller is
-a campaign-specific executable, not a general Runner phase abstraction.
+a campaign-specific executable, not a general Runner phase abstraction. Its
+required `--tmux-session` and optional `--tmux-socket` bind the controller to
+the existing Jobs lifecycle record; terminal target-attempt and successful-
+generation counts are published from the completed unit inventory.
 
 A targeted amendment must re-attest and canary the four affected GraySwan lane
 identities under the current Runner before measured execution. Those identities

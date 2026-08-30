@@ -29,6 +29,11 @@ from experiments.local_campaign.current_ollama_phase6 import (
     _level1_counts,
     _run,
 )
+from experiments.local_campaign.console_events import (
+    finish_child_controller,
+    publish_target_execution,
+    start_child_controller,
+)
 
 
 SCHEMA = "ura-vllm-stability-phase6/1"
@@ -819,6 +824,17 @@ def run(args: argparse.Namespace) -> int:
         "paid_provider_calls": 0,
     }
     _create_json(control_root / "launch.json", launch)
+    start_child_controller(
+        work_root=work_root,
+        control_root=control_root,
+        campaign_id=control_root.name,
+        release_commit=args.expected_commit,
+        evidence_class="measured_local_vllm_stability",
+        hard_stop_hours=336,
+        tmux_socket=args.tmux_socket,
+        tmux_session=args.tmux_session,
+        target_execution=True,
+    )
 
     results: dict[str, Any] = {}
     failures: dict[str, Any] = {}
@@ -887,7 +903,19 @@ def run(args: argparse.Namespace) -> int:
     _create_json(control_root / "completion.json", completion_value)
     with (control_root / ".exit").open("xb") as handle:
         handle.write(f"{completion_value['controller_exit_code']}\n".encode("ascii"))
-    return int(completion_value["controller_exit_code"])
+    exit_code = int(completion_value["controller_exit_code"])
+    publish_target_execution(
+        work_root=work_root,
+        control_root=control_root,
+        target_attempts=attempted,
+        successful_target_generations=successful,
+    )
+    finish_child_controller(
+        work_root=work_root,
+        control_root=control_root,
+        exit_code=exit_code,
+    )
+    return exit_code
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -902,6 +930,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--project-revision", type=Path, required=True)
     parser.add_argument("--project-revision-sha256", required=True)
     parser.add_argument("--execution-scope-id", required=True)
+    parser.add_argument("--tmux-socket", default="default")
+    parser.add_argument("--tmux-session", required=True)
     return parser
 
 

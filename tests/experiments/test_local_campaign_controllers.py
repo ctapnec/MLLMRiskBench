@@ -7372,3 +7372,20 @@ def test_vllm_stability_phase6_reads_retained_projection_descriptor(
                 "final_projection": {**descriptor, "file": "different.json"},
             },
         })
+
+
+def test_vllm_stability_phase6_registers_its_tmux_job_lifecycle() -> None:
+    source = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "vllm_stability_phase6.py"
+    ).read_text(encoding="utf-8")
+
+    assert source.count("start_child_controller(") == 1
+    assert source.count("publish_target_execution(") == 1
+    assert source.count("finish_child_controller(") == 1
+    assert 'evidence_class="measured_local_vllm_stability"' in source
+    assert "tmux_socket=args.tmux_socket" in source
+    assert "tmux_session=args.tmux_session" in source
+    assert 'parser.add_argument("--tmux-session", required=True)' in source
