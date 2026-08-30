@@ -19,6 +19,8 @@ from ura.judges.base import JudgeCascade
 from ura.judges.rules import RuleJudge
 from ura.runner import CODE_VERSION, Runner, _component_config
 from ura.targets.local import (
+    DEFAULT_OLLAMA_NUM_CTX,
+    DEFAULT_OLLAMA_NUM_PREDICT,
     MAX_VLLM_MODEL_LEN,
     OllamaTarget,
     VLLMTarget,
@@ -526,6 +528,83 @@ def test_ollama_config_forbids_vllm_context_cap(tmp_path: Path) -> None:
     assert legitimate._sampling_options()["num_ctx"] == 8192
 
 
+def test_ollama_local_config_binds_context_and_output_caps(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec = "ollama:fixture:latest"
+    from experiments.rig_web_app.ollama_service import OllamaService  # noqa: PLC0415
+
+    monkeypatch.setattr(
+        OllamaService,
+        "roster",
+        lambda _self, _entries, *, force=False: {
+            "available": True,
+            "models": [{
+                "spec": spec,
+                "digest": "a" * 64,
+                "modalities": ["text"],
+            }],
+            "excluded": [],
+            "issues": [],
+        },
+    )
+    path = tmp_path / "ollama-caps.json"
+    path.write_text(
+        json.dumps({spec: {
+            "digest": "a" * 64,
+            "modalities": ["text"],
+            "num_ctx": 8192,
+            "num_predict": 768,
+        }}),
+        encoding="utf-8",
+    )
+
+    loaded, _artifact = run_matrix._load_local_config(str(path), [spec])
+    assert loaded[spec]["num_ctx"] == 8192
+    assert loaded[spec]["num_predict"] == 768
+    target = run_matrix.build_target(spec, local_identity=loaded[spec])
+    assert target._sampling_options() == {
+        "temperature": 0.0,
+        "num_ctx": 8192,
+        "num_predict": 768,
+    }
+
+    default_path = tmp_path / "ollama-default-caps.json"
+    default_path.write_text(
+        json.dumps({spec: {"digest": "a" * 64, "modalities": ["text"]}}),
+        encoding="utf-8",
+    )
+    defaults, _artifact = run_matrix._load_local_config(str(default_path), [spec])
+    assert defaults[spec]["num_ctx"] == DEFAULT_OLLAMA_NUM_CTX
+    assert defaults[spec]["num_predict"] == DEFAULT_OLLAMA_NUM_PREDICT
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    (
+        ("num_ctx", True, "num_ctx must be an integer"),
+        ("num_ctx", 0, "num_ctx must be an integer"),
+        ("num_predict", 0, "num_predict must be an integer"),
+    ),
+)
+def test_ollama_local_config_rejects_invalid_execution_caps(
+    tmp_path: Path, field: str, value: object, message: str
+) -> None:
+    spec = "ollama:fixture:latest"
+    path = tmp_path / f"invalid-{field}.json"
+    path.write_text(
+        json.dumps({spec: {
+            "digest": "a" * 64,
+            "modalities": ["text"],
+            field: value,
+        }}),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match=message):
+        run_matrix._load_local_config(str(path), [spec])
+
+
 def test_rig_web_preserves_and_displays_curated_context_cap(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     rig = repo / "experiments" / "rig"
@@ -552,6 +631,43 @@ def test_rig_web_preserves_and_displays_curated_context_cap(tmp_path: Path) -> N
     assert selected["max_model_len"] == 12288
     assert selected["max_tokens"] == 4096
     assert "context cap 12,288 tokens" in page
+
+
+def test_rig_web_preserves_and_displays_ollama_execution_caps(
+    tmp_path: Path,
+) -> None:
+    spec = "ollama:fixture:latest"
+    repo = tmp_path / "repo"
+    rig = repo / "experiments" / "rig"
+    rig.mkdir(parents=True)
+    (rig / "local-targets.example.json").write_text(
+        json.dumps({spec: {
+            "digest": "a" * 64,
+            "modalities": ["text"],
+            "num_ctx": 4096,
+            "num_predict": 256,
+        }}),
+        encoding="utf-8",
+    )
+    (rig / "vllm-roster.example.json").write_text(
+        json.dumps({"models": {}}), encoding="utf-8"
+    )
+    app = RigWebApp(
+        results_root=tmp_path / "runs",
+        state_dir=tmp_path / "state",
+        repo_root=repo,
+        gpu_hardware=_rig_hardware(),
+    )
+    try:
+        selected_path = app._materialize_selected_local_config([spec])
+        selected = json.loads(selected_path.read_text(encoding="utf-8"))[spec]
+        page = app.handle("GET", "/build")[2].decode("utf-8")
+    finally:
+        app.close()
+
+    assert selected["num_ctx"] == 4096
+    assert selected["num_predict"] == 256
+    assert "context cap 4,096 tokens / output cap 256 tokens" in page
 
 
 def test_rig_web_rejects_invalid_curated_context_cap(tmp_path: Path) -> None:

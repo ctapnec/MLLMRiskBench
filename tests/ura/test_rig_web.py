@@ -3196,6 +3196,7 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
     assert "data-backend='ollama'" in ollama_row
     assert "digest pinned" in ollama_row
     assert "precision is fixed by the pulled Ollama artifact" in ollama_row
+    assert "context cap 8,192 tokens / output cap 512 tokens" in ollama_row
     assert "data-compatible" not in ollama_row
     assert "data-params-b" not in ollama_row
     assert "precision-badge" not in ollama_row
@@ -3204,7 +3205,12 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
     ollama_config_path = app._materialize_selected_local_config([ollama_spec])
     ollama_config = json.loads(ollama_config_path.read_text(encoding="utf-8"))
     assert ollama_config == {
-        ollama_spec: {"digest": "a" * 64, "modalities": ["text"]}
+        ollama_spec: {
+            "digest": "a" * 64,
+            "modalities": ["text"],
+            "num_ctx": 8192,
+            "num_predict": 512,
+        }
     }
     from experiments.rig_web_app.ollama_service import OllamaService  # noqa: PLC0415
 
@@ -3230,6 +3236,7 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
         ollama_spec, local_identity=loaded_ollama[ollama_spec]
     )
     assert ollama_target.__class__.__name__ == "OllamaTarget"
+    assert ollama_target._sampling_options()["num_ctx"] == 8192
 
     # Rendering, validation, and generated execution config share one
     # precedence: per-model selection, then the submitted global default.

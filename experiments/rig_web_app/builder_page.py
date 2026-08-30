@@ -722,6 +722,7 @@ class BuilderPageMixin:
                 local_config_error = ""
                 known_quant_issues: dict[str, str] = {}
                 context_limit = None
+                generation_limit = None
                 if private_identity_unavailable:
                     local_config_error = (
                         "private explicit checkpoint has no durable digest identity"
@@ -730,6 +731,12 @@ class BuilderPageMixin:
                 elif runtime_value.startswith("ollama:"):
                     try:
                         self._validate_ollama_local_entry(runtime_value, entry)
+                        context_limit = self._local_ollama_num_ctx(
+                            runtime_value, entry
+                        )
+                        generation_limit = self._local_ollama_num_predict(
+                            runtime_value, entry
+                        )
                     except ValueError as exc:
                         local_config_error = durable_ui_text(exc)
                         disabled = " disabled"
@@ -815,6 +822,8 @@ class BuilderPageMixin:
                     context_text = "invalid local config"
                 elif context_limit is not None:
                     context_text = f"context cap {context_limit:,} tokens"
+                    if generation_limit is not None:
+                        context_text += f" / output cap {generation_limit:,} tokens"
                 else:
                     context_text = "native model context"
                 # A known non-fit stays disabled. Unknown fit is an explicit UI
@@ -1015,9 +1024,13 @@ class BuilderPageMixin:
             entry = local_catalog.get(value, {})
             disabled = ""
             problems: list[str] = []
+            context_limit = None
+            generation_limit = None
             live_entry = live_ollama_by_spec.get(value)
             try:
                 self._validate_ollama_local_entry(value, entry)
+                context_limit = self._local_ollama_num_ctx(value, entry)
+                generation_limit = self._local_ollama_num_predict(value, entry)
             except ValueError as exc:
                 problems.append(str(exc))
             manual = value in explicit_local
@@ -1077,6 +1090,12 @@ class BuilderPageMixin:
                 + " - "
                 + pin_text
                 + "; precision is fixed by the pulled Ollama artifact"
+                + (
+                    f"; context cap {context_limit:,} tokens / output cap "
+                    f"{generation_limit:,} tokens"
+                    if context_limit is not None and generation_limit is not None
+                    else ""
+                )
                 + (" - " + html.escape(error) if error else "")
                 + "</span>"
             )

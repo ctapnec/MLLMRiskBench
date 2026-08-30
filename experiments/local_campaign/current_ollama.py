@@ -10,6 +10,15 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Mapping
 
+from ura.targets.local import (
+    DEFAULT_OLLAMA_NUM_CTX,
+    DEFAULT_OLLAMA_NUM_PREDICT,
+)
+
+
+CURRENT_OLLAMA_NUM_CTX = DEFAULT_OLLAMA_NUM_CTX
+CURRENT_OLLAMA_NUM_PREDICT = DEFAULT_OLLAMA_NUM_PREDICT
+
 
 @dataclass(frozen=True)
 class CurrentOllamaModel:

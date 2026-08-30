@@ -16,6 +16,8 @@ from experiments.local_campaign.current_ollama import (
     CURRENT_OLLAMA_BY_LABEL,
     CURRENT_OLLAMA_IMAGE_MODELS,
     CURRENT_OLLAMA_MODELS,
+    CURRENT_OLLAMA_NUM_CTX,
+    CURRENT_OLLAMA_NUM_PREDICT,
     CURRENT_OLLAMA_RUNNABLE_LANES,
     CURRENT_OLLAMA_TYPED_TERMINAL_LANES,
     gptgeochat_lane,
@@ -254,6 +256,8 @@ def _validate_local_config(path: Path, *, model_label: str) -> None:
         model.spec: {
             "digest": model.digest,
             "modalities": list(model.modalities),
+            "num_ctx": CURRENT_OLLAMA_NUM_CTX,
+            "num_predict": CURRENT_OLLAMA_NUM_PREDICT,
         }
     }
     if _load_json(path, label=f"{model_label} local configuration") != expected:

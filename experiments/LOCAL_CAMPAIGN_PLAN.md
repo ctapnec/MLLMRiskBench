@@ -592,7 +592,13 @@ the superseded RWKV tasks with the four exact current models. It uses limit 50,
 sample seed 0 for bounded text and source-classification lanes, adds image and
 GPTGeoChat lanes only for Gemma 4 and Ministral 3, and derives its own exact row
 counts from the retained projections before authorization. It does not rewrite
-the already sealed 46-row historical profile. Malformed protocol, transport,
+the already sealed 46-row historical profile. Every Ollama request in this
+amendment binds `num_ctx=8192` and `num_predict=512`. The first value prevents
+the 32B DeepSeek condition from allocating its full 131,072-token native context
+and spilling nearly half of a short-prompt canary to CPU while the scoring guard
+is resident; the second is an output cap, not a reason to discard observed
+length-capped text. A different context or output cap is a separate projected
+cohort. Malformed protocol, transport,
 identity, provenance, residency, timeout and backend failures remain hard
 failures. Earlier attempts remain diagnostic observations.
 

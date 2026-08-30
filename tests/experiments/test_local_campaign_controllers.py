@@ -1115,6 +1115,9 @@ def test_ollama_bounded_lane_identity_is_used_by_every_workflow_stage() -> None:
     ) == 3
     assert 'static_lane="ollama-${label}-text-exploratory-50"' not in source
     assert 'static_lane="ollama-${label}-text-full"' not in source
+    assert '"num_ctx": num_ctx' in source
+    assert '"num_predict": num_predict' in source
+    assert 'if num_ctx != 8192 or num_predict != 512:' in source
 
 
 def test_rendered_ollama_roster_validator_imports_json(tmp_path: Path) -> None:

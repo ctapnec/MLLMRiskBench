@@ -1725,6 +1725,7 @@ def _load_local_config(
         if not isinstance(config, dict) or set(config) - {
             "revision", "digest", "modalities", "tensor_parallel_size",
             "gpu_memory_utilization", "max_tokens", "max_model_len",
+            "num_ctx", "num_predict",
             "parameter_count_b",
             "multi_gpu_compatible", "quantization", "allow_unknown_fit",
         }:
@@ -1756,6 +1757,16 @@ def _load_local_config(
             digest = digest.lower()
             config["digest"] = digest
         if backend == "vllm":
+            from ura.targets.local import (  # noqa: PLC0415
+                VLLM_FORBIDDEN_LOCAL_CONFIG_FIELDS,
+            )
+
+            forbidden = sorted(set(config) & VLLM_FORBIDDEN_LOCAL_CONFIG_FIELDS)
+            if forbidden:
+                raise ValueError(
+                    f"vLLM config {display_spec!r} forbids Ollama fields: "
+                    + ", ".join(forbidden)
+                )
             if bool(revision) == bool(digest):
                 raise ValueError(
                     f"vLLM config {display_spec!r} requires exactly one revision or digest"
@@ -1878,7 +1889,11 @@ def _load_local_config(
             config["tensor_parallel_size"] = resolved_tp
         elif backend == "ollama":
             from ura.targets.local import (  # noqa: PLC0415
+                DEFAULT_OLLAMA_NUM_CTX,
+                DEFAULT_OLLAMA_NUM_PREDICT,
                 OLLAMA_FORBIDDEN_LOCAL_CONFIG_FIELDS,
+                validate_ollama_num_ctx,
+                validate_ollama_num_predict,
             )
 
             if (
@@ -1889,12 +1904,23 @@ def _load_local_config(
                 raise ValueError(
                     f"Ollama config {spec!r} requires digest and forbids vLLM fields"
                 )
-            unsupported = sorted(set(config) - {"digest", "modalities"})
+            unsupported = sorted(
+                set(config) - {"digest", "modalities", "num_ctx", "num_predict"}
+            )
             if unsupported:
                 raise ValueError(
                     f"Ollama config {spec!r} contains unsupported fields: "
                     + ", ".join(unsupported)
                 )
+            try:
+                config["num_ctx"] = validate_ollama_num_ctx(
+                    config.get("num_ctx", DEFAULT_OLLAMA_NUM_CTX)
+                )
+                config["num_predict"] = validate_ollama_num_predict(
+                    config.get("num_predict", DEFAULT_OLLAMA_NUM_PREDICT)
+                )
+            except ValueError as exc:
+                raise ValueError(f"Ollama config {spec!r} {exc}") from exc
         else:
             raise ValueError(f"unsupported local backend in {spec!r}")
         normalized[spec] = dict(config)
@@ -2913,6 +2939,8 @@ def build_target(
                 model=model,
                 model_digest=str(local_identity["digest"]),
                 modality_support=modalities,
+                num_ctx=int(local_identity["num_ctx"]),
+                num_predict=int(local_identity["num_predict"]),
             )
             target.validate_research_identity()
             return target

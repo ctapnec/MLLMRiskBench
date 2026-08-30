@@ -15,6 +15,8 @@ from experiments.local_campaign.current_ollama import (
     CURRENT_OLLAMA_IMAGE_MODELS,
     CURRENT_OLLAMA_MODELS,
     CURRENT_OLLAMA_NATIVE_ROLES,
+    CURRENT_OLLAMA_NUM_CTX,
+    CURRENT_OLLAMA_NUM_PREDICT,
     CURRENT_OLLAMA_RUNNABLE_LANES,
     CURRENT_OLLAMA_TEXT_ONLY_MODELS,
     CURRENT_OLLAMA_TYPED_TERMINAL_LANES,
@@ -26,6 +28,7 @@ from experiments.local_campaign.current_ollama_gate5 import (
     _expected_dispositions,
     _lane_contract,
     _validate_evidence_provenance,
+    _validate_local_config,
     validate_static_canary_stage_support,
 )
 from experiments.local_campaign.current_ollama_phase6 import (
@@ -70,6 +73,30 @@ def _assert_exact_current_roster(models: Sequence[CurrentOllamaModel]) -> None:
 
 def test_current_ollama_roster_is_exact_recent_thesis_cohort() -> None:
     _assert_exact_current_roster(CURRENT_OLLAMA_MODELS)
+    assert CURRENT_OLLAMA_NUM_CTX == 8192
+    assert CURRENT_OLLAMA_NUM_PREDICT == 512
+
+
+def test_current_ollama_gate5_binds_bounded_context_and_output_caps(
+    tmp_path: Path,
+) -> None:
+    model = CURRENT_OLLAMA_MODELS[2]
+    path = tmp_path / "deepseek.json"
+    config = {
+        model.spec: {
+            "digest": model.digest,
+            "modalities": list(model.modalities),
+            "num_ctx": CURRENT_OLLAMA_NUM_CTX,
+            "num_predict": CURRENT_OLLAMA_NUM_PREDICT,
+        }
+    }
+    path.write_text(json.dumps(config), encoding="utf-8")
+    _validate_local_config(path, model_label=model.label)
+
+    config[model.spec]["num_ctx"] = 131072
+    path.write_text(json.dumps(config), encoding="utf-8")
+    with pytest.raises(ValueError, match="exact local configuration changed"):
+        _validate_local_config(path, model_label=model.label)
 
 
 @pytest.mark.parametrize(

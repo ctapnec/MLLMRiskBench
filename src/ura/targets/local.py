@@ -59,6 +59,10 @@ _OLLAMA_TAG = re.compile(
 )
 MAX_VLLM_MODEL_LEN = 1_000_000
 MAX_VLLM_GENERATION_TOKENS = 25_000
+DEFAULT_OLLAMA_NUM_CTX = 8_192
+DEFAULT_OLLAMA_NUM_PREDICT = 512
+MAX_OLLAMA_NUM_CTX = 1_000_000
+MAX_OLLAMA_NUM_PREDICT = 25_000
 VLLM_IN_PROCESS_EXECUTION_MODE = "in_process"
 _VLLM_MULTIPROCESSING_ENV = "VLLM_ENABLE_V1_MULTIPROCESSING"
 _VLLM_ENVIRONMENT_LOCK = threading.RLock()
@@ -73,6 +77,7 @@ OLLAMA_FORBIDDEN_LOCAL_CONFIG_FIELDS = frozenset({
     "quantization",
     "allow_unknown_fit",
 })
+VLLM_FORBIDDEN_LOCAL_CONFIG_FIELDS = frozenset({"num_ctx", "num_predict"})
 _OLLAMA_RESERVED_CONSTRUCTOR_OPTIONS = (
     OLLAMA_FORBIDDEN_LOCAL_CONFIG_FIELDS
     | {"digest", "modalities", "multi_gpu_support_basis", "dtype"}
@@ -159,6 +164,36 @@ def validate_vllm_max_tokens(value: object) -> int:
         raise ValueError(
             "max_tokens must be an integer in "
             f"1..{MAX_VLLM_GENERATION_TOKENS}"
+        )
+    return value
+
+
+def validate_ollama_num_ctx(value: object) -> int:
+    """Return one bounded Ollama request context allocation or reject it."""
+
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not 1 <= value <= MAX_OLLAMA_NUM_CTX
+    ):
+        raise ValueError(
+            "num_ctx must be an integer in "
+            f"1..{MAX_OLLAMA_NUM_CTX}"
+        )
+    return value
+
+
+def validate_ollama_num_predict(value: object) -> int:
+    """Return one bounded Ollama generation limit or reject it."""
+
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not 1 <= value <= MAX_OLLAMA_NUM_PREDICT
+    ):
+        raise ValueError(
+            "num_predict must be an integer in "
+            f"1..{MAX_OLLAMA_NUM_PREDICT}"
         )
     return value
 
@@ -967,7 +1002,8 @@ class OllamaTarget(BaseTarget):
         model_digest: Optional[str] = None,
         host: str = DEFAULT_OLLAMA_URL,
         temperature: float = 0.0,
-        num_predict: int = 512,
+        num_ctx: int = DEFAULT_OLLAMA_NUM_CTX,
+        num_predict: int = DEFAULT_OLLAMA_NUM_PREDICT,
         timeout: float = 300.0,
         modality_support: tuple[str, ...] = ("text",),
         media_roots: Optional[Iterable[str | Path]] = None,
@@ -992,7 +1028,8 @@ class OllamaTarget(BaseTarget):
         self.name = f"ollama:{model}@{identity}"
         self.host = canonicalize_ollama_url(host)
         self.temperature = temperature
-        self.num_predict = num_predict
+        self.num_ctx = validate_ollama_num_ctx(num_ctx)
+        self.num_predict = validate_ollama_num_predict(num_predict)
         self.timeout = timeout
         self._monotonic: Callable[[], float] = time.monotonic
         self._sleep: Callable[[float], None] = time.sleep
@@ -1355,6 +1392,7 @@ class OllamaTarget(BaseTarget):
     def _sampling_options(self, seed: int | None = None) -> dict[str, Any]:
         opts: dict[str, Any] = {
             "temperature": self.temperature,
+            "num_ctx": self.num_ctx,
             "num_predict": self.num_predict,
         }
         opts.update(self.options)
@@ -1495,6 +1533,7 @@ class OllamaTarget(BaseTarget):
                 "generation": {
                     "seed": seed,
                     "temperature": self.temperature,
+                    "num_ctx": self.num_ctx,
                     "num_predict": self.num_predict,
                 },
             },
@@ -1663,14 +1702,21 @@ REGISTRY.register(
 
 
 __all__ = [
+    "DEFAULT_OLLAMA_NUM_CTX",
+    "DEFAULT_OLLAMA_NUM_PREDICT",
+    "MAX_OLLAMA_NUM_CTX",
+    "MAX_OLLAMA_NUM_PREDICT",
     "MAX_VLLM_GENERATION_TOKENS",
     "MAX_VLLM_MODEL_LEN",
     "OLLAMA_FORBIDDEN_LOCAL_CONFIG_FIELDS",
+    "VLLM_FORBIDDEN_LOCAL_CONFIG_FIELDS",
     "VLLMTarget",
     "OllamaTarget",
     "canonical_local_model_identity",
     "make_vllm_target",
     "make_ollama_target",
+    "validate_ollama_num_ctx",
+    "validate_ollama_num_predict",
     "validate_vllm_max_model_len",
     "validate_vllm_max_tokens",
 ]

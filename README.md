@@ -230,6 +230,15 @@ Rig Web preserves the field in its selected local config, and the normalized
 value enters grid/run provenance. Each Build row labels either the explicit
 context cap or native model context.
 
+Ollama uses its native request fields instead: optional `num_ctx` and
+`num_predict` integers in the selected local config. Runner and Build default
+them to 8,192 context tokens and 512 generated tokens, pass both in every
+`/api/chat` request, and retain them in config, grid, condition, and response
+provenance. This avoids allocating a model's full advertised long context for
+short benchmark prompts while keeping a different bounded value available as a
+separately reviewed execution condition. Reaching `num_predict` remains a valid
+length-capped response and the observed text is still evaluated.
+
 The exact campaign GraySwan RR checkpoint remains sealed and installed. Its
 text and physical-image probes reached the declared 4,096-token generation cap
 without a stop; an independent Transformers control reproduced its two-token
@@ -322,18 +331,18 @@ derives text/image modalities only from explicit show capabilities. Invalid or
 ambiguous rows are reported but never fabricated as selectable models. Exact
 bounded family evidence from tags/show details and
 `model_info.general.architecture` must be present and mutually compatible; the
-architecture participates in overlap matching. Exact normalized
-upstream/name/family overlaps with the vLLM roster are unavailable
-for Ollama execution. A stale/manual `local-targets` overlap remains visible
-with its exact reason, but cannot override this distinct-model requirement.
+architecture is retained as capability evidence. The vLLM catalog never
+suppresses an installed Ollama tag: the backends are separate execution routes,
+whether or not model families or names resemble one another.
 Every `ollama:<model-tag>`
 entry must carry the exact lowercase 64-hex digest reported by `/api/tags` and
 an explicit unique modality list containing `text` and optionally `image`.
-Ollama entries reject vLLM-only revision, parameter, topology, memory, output,
-context, quantization, and unknown-fit fields; the pulled artifact fixes its
-precision, so the Build page shows no automatic fit or precision control for
-it. Runner admission independently refreshes the live show-backed roster, so an
-opaque manual tag cannot hide an overlapping upstream family. Each inference
+Ollama entries reject vLLM-only revision, parameter, topology, memory,
+`max_tokens`, `max_model_len`, quantization, and unknown-fit fields; they accept
+only their bounded `num_ctx` and `num_predict` execution controls in addition to
+digest and modalities. The pulled artifact fixes precision, so the Build page
+shows no automatic fit or precision control for it. Runner admission
+independently refreshes the live show-backed roster. Each inference
 holds the shared endpoint lock and binds pre-chat `/api/tags`, the returned
 model, post-chat `/api/tags`, and exact post-chat `/api/ps` tag/digest evidence
 in one hard-deadline transaction. The Runner talks to the daemon over its HTTP

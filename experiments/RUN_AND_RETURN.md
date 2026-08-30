@@ -1591,10 +1591,11 @@ exclude an Ollama tag; exact Ollama tag, digest, capability, and daemon-stabilit
 checks remain authoritative. Each
 `ollama:<model-tag>` entry requires the exact lowercase 64-hex digest reported
 by `/api/tags` and a unique explicit modality list containing `text` and
-optionally `image`. vLLM-only revision,
-quantization, tensor parallelism, memory utilization, parameter count, output
-and context bounds, and unknown-fit fields are forbidden. The pulled artifact
-fixes precision. Runner
+optionally `image`. vLLM-only revision, quantization, tensor parallelism, memory
+utilization, parameter count, `max_tokens`, `max_model_len`, and unknown-fit
+fields are forbidden. Ollama instead binds `num_ctx` and `num_predict`, which
+default to 8,192 and 512, respectively, in the selected config. The pulled
+artifact fixes precision. Runner
 uses the daemon HTTP API through the Python standard library, so no Ollama
 Python SDK is required; the daemon and matching pulled tag must exist before a
 live run.
@@ -1645,6 +1646,15 @@ the selected-config hash and grid/run provenance, is passed as
 `vllm.LLM(max_model_len=...)` before engine/KV admission, and is reported in the
 local response metadata. The Build row displays either the explicit context cap
 or `native model context`.
+
+For Ollama, `num_ctx` is the request context/KV allocation and `num_predict` is
+the generated-token cap. Both must be non-boolean positive integers; the global
+upper bounds are 1,000,000 and 25,000. Rig Web defaults them to 8,192 and 512,
+shows both on each installed-model row, and preserves configured overrides in
+the selected-config hash. Runner passes them to `/api/chat` and records them in
+the effective condition and response provenance. A changed value therefore
+requires a new plan, projection, attestation, and canary; it never silently
+rewrites an existing cohort.
 
 Runner 2.20 local adapters construct each vLLM/Ollama `Response` with the same
 deterministic dialog-fingerprint placeholder used by hosted adapters: the first

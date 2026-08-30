@@ -173,6 +173,10 @@ class BuilderModelsMixin:
         """Merged vLLM catalog and specs explicitly maintained by the operator."""
 
         from experiments.local_targets import load_roster, _models_map  # noqa: PLC0415
+        from ura.targets.local import (  # noqa: PLC0415
+            DEFAULT_OLLAMA_NUM_CTX,
+            DEFAULT_OLLAMA_NUM_PREDICT,
+        )
 
         roster = _models_map(load_roster(self.repo_root))
         catalog = {
@@ -195,6 +199,8 @@ class BuilderModelsMixin:
                 catalog[spec] = {
                     "digest": digest,
                     "modalities": list(modalities),
+                    "num_ctx": DEFAULT_OLLAMA_NUM_CTX,
+                    "num_predict": DEFAULT_OLLAMA_NUM_PREDICT,
                 }
         for spec, entry in configured.items():
             if isinstance(entry, dict):
@@ -291,6 +297,38 @@ class BuilderModelsMixin:
             raise ValueError(f"local target {spec!r} {exc}") from exc
 
     @staticmethod
+    def _local_ollama_num_ctx(spec: str, entry: Mapping[str, object]) -> int:
+        """Validate the request-bound Ollama context allocation."""
+
+        from ura.targets.local import (  # noqa: PLC0415
+            DEFAULT_OLLAMA_NUM_CTX,
+            validate_ollama_num_ctx,
+        )
+
+        try:
+            return validate_ollama_num_ctx(
+                entry.get("num_ctx", DEFAULT_OLLAMA_NUM_CTX)
+            )
+        except ValueError as exc:
+            raise ValueError(f"local target {spec!r} {exc}") from exc
+
+    @staticmethod
+    def _local_ollama_num_predict(spec: str, entry: Mapping[str, object]) -> int:
+        """Validate the request-bound Ollama generation cap."""
+
+        from ura.targets.local import (  # noqa: PLC0415
+            DEFAULT_OLLAMA_NUM_PREDICT,
+            validate_ollama_num_predict,
+        )
+
+        try:
+            return validate_ollama_num_predict(
+                entry.get("num_predict", DEFAULT_OLLAMA_NUM_PREDICT)
+            )
+        except ValueError as exc:
+            raise ValueError(f"local target {spec!r} {exc}") from exc
+
+    @staticmethod
     def _local_gpu_memory_utilization(
         spec: str, entry: Mapping[str, object]
     ) -> float:
@@ -365,6 +403,9 @@ class BuilderModelsMixin:
                 f"local target {spec!r} Ollama config requires a 64-hex digest"
             )
         BuilderModelsMixin._validated_local_modalities(spec, entry)
+        BuilderModelsMixin._local_ollama_num_ctx(spec, entry)
+        BuilderModelsMixin._local_ollama_num_predict(spec, entry)
+
     def _selected_local_config_payload(
         self,
         specs: list[str],
@@ -404,6 +445,8 @@ class BuilderModelsMixin:
             "gpu_memory_utilization",
             "max_tokens",
             "max_model_len",
+            "num_ctx",
+            "num_predict",
             "parameter_count_b",
             "multi_gpu_compatible",
             "quantization",
@@ -445,8 +488,20 @@ class BuilderModelsMixin:
                     "modalities": self._validated_local_modalities(
                         spec, live_entry or entry
                     ),
+                    "num_ctx": self._local_ollama_num_ctx(spec, entry),
+                    "num_predict": self._local_ollama_num_predict(spec, entry),
                 }
                 continue
+            from ura.targets.local import (  # noqa: PLC0415
+                VLLM_FORBIDDEN_LOCAL_CONFIG_FIELDS,
+            )
+
+            forbidden = sorted(set(entry) & VLLM_FORBIDDEN_LOCAL_CONFIG_FIELDS)
+            if forbidden:
+                raise ValueError(
+                    f"local target {spec!r} vLLM config forbids Ollama fields: "
+                    + ", ".join(forbidden)
+                )
             model_override = str((quantization_overrides or {}).get(spec, "")).strip().lower()
             profile = self._effective_local_profile(
                 spec,

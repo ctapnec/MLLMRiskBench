@@ -178,12 +178,16 @@ declare -A MODEL_SPECS=()
 declare -A MODEL_DIGESTS=()
 declare -A MODEL_QUANTIZATIONS=()
 declare -A MODEL_MODALITIES=()
-while IFS=$'\t' read -r label spec digest quantization modalities; do
+declare -A MODEL_NUM_CTX=()
+declare -A MODEL_NUM_PREDICT=()
+while IFS=$'\t' read -r label spec digest quantization modalities num_ctx num_predict; do
   MODEL_LABELS+=("$label")
   MODEL_SPECS[$label]="$spec"
   MODEL_DIGESTS[$label]="$digest"
   MODEL_QUANTIZATIONS[$label]="$quantization"
   MODEL_MODALITIES[$label]="$modalities"
+  MODEL_NUM_CTX[$label]="$num_ctx"
+  MODEL_NUM_PREDICT[$label]="$num_predict"
   if [[ "$modalities" == 'text,image' ]]; then
     IMAGE_MODEL_LABELS+=("$label")
   elif [[ "$modalities" == 'text' ]]; then
@@ -194,7 +198,11 @@ while IFS=$'\t' read -r label spec digest quantization modalities; do
     exit 1
   fi
 done < <("$PY" - <<'PY'
-from experiments.local_campaign.current_ollama import CURRENT_OLLAMA_MODELS
+from experiments.local_campaign.current_ollama import (
+    CURRENT_OLLAMA_MODELS,
+    CURRENT_OLLAMA_NUM_CTX,
+    CURRENT_OLLAMA_NUM_PREDICT,
+)
 
 for model in CURRENT_OLLAMA_MODELS:
     print(
@@ -203,6 +211,8 @@ for model in CURRENT_OLLAMA_MODELS:
         model.digest,
         model.quantization,
         ",".join(model.modalities),
+        CURRENT_OLLAMA_NUM_CTX,
+        CURRENT_OLLAMA_NUM_PREDICT,
         sep="\t",
     )
 PY
@@ -347,8 +357,8 @@ record_blocked() {
 }
 
 write_local_config() {
-  local path="$1" spec="$2" digest="$3" modalities="$4"
-  "$PY" - "$path" "$spec" "$digest" "$modalities" <<'PY'
+  local path="$1" spec="$2" digest="$3" modalities="$4" num_ctx="$5" num_predict="$6"
+  "$PY" - "$path" "$spec" "$digest" "$modalities" "$num_ctx" "$num_predict" <<'PY'
 import json
 import os
 import pathlib
@@ -356,14 +366,23 @@ import re
 import sys
 
 path = pathlib.Path(sys.argv[1])
-spec, digest, modalities_csv = sys.argv[2:]
+spec, digest, modalities_csv, num_ctx_raw, num_predict_raw = sys.argv[2:]
 modalities = modalities_csv.split(",")
+num_ctx = int(num_ctx_raw)
+num_predict = int(num_predict_raw)
 if not spec.startswith("ollama:") or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
     raise SystemExit("invalid exact Ollama identity")
 if modalities not in (["text"], ["text", "image"]):
     raise SystemExit("invalid exact Ollama modalities")
+if num_ctx != 8192 or num_predict != 512:
+    raise SystemExit("invalid bounded Ollama execution caps")
 payload = (json.dumps(
-    {spec: {"digest": digest, "modalities": modalities}},
+    {spec: {
+        "digest": digest,
+        "modalities": modalities,
+        "num_ctx": num_ctx,
+        "num_predict": num_predict,
+    }},
     indent=2,
     sort_keys=True,
 ) + "\n").encode("utf-8")
@@ -383,7 +402,8 @@ PY
 for label in "${MODEL_LABELS[@]}"; do
   config="$CONFIG_ROOT/${label}.json"
   write_local_config "$config" "${MODEL_SPECS[$label]}" \
-    "${MODEL_DIGESTS[$label]}" "${MODEL_MODALITIES[$label]}"
+    "${MODEL_DIGESTS[$label]}" "${MODEL_MODALITIES[$label]}" \
+    "${MODEL_NUM_CTX[$label]}" "${MODEL_NUM_PREDICT[$label]}"
   MODEL_CONFIGS[$label]="$config"
 done
 
@@ -1018,6 +1038,10 @@ from experiments.local_campaign.target_execution import completed_target_executi
 from experiments.local_campaign.current_ollama_gate5 import (
     validate_static_canary_stage_support,
 )
+from experiments.local_campaign.current_ollama import (
+    CURRENT_OLLAMA_NUM_CTX,
+    CURRENT_OLLAMA_NUM_PREDICT,
+)
 from experiments.run_matrix import _bounded_nofollow_read
 from ura.eligibility import validate_eligibility_plan
 from ura.lane_canary import validate_lane_canary_summary
@@ -1147,7 +1171,12 @@ config_payload = stable_payload(config_path, "Ollama config")
 if hashlib.sha256(config_payload).hexdigest() != expected_config_sha:
     raise SystemExit("Ollama config digest drifted")
 local_config = strict_json_loads(config_payload.decode("utf-8"))
-if local_config != {expected_spec: {"digest": digest, "modalities": expected_modalities}}:
+if local_config != {expected_spec: {
+    "digest": digest,
+    "modalities": expected_modalities,
+    "num_ctx": CURRENT_OLLAMA_NUM_CTX,
+    "num_predict": CURRENT_OLLAMA_NUM_PREDICT,
+}}:
     raise SystemExit("Ollama config differs from the exact selected tag/digest")
 
 summary = validate_lane_canary_summary(
