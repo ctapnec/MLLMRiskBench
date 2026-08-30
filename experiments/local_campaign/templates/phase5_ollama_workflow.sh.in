@@ -1354,26 +1354,107 @@ if mode == "static":
         key = (stage_row.get("stage"), stage_row.get("judge"))
         if not observed_stage_keys or observed_stage_keys[-1] != key:
             observed_stage_keys.append(key)
-    if observed_stage_keys != [(0, "rules"), (1, "guardrail")] or any(
-        row.get("reached") is not True
-        or not isinstance(row.get("queried_records"), int)
-        or row["queried_records"] <= 0
-        or row.get("not_queried_records") != 0
-        for row in stage_rows
-    ):
-        raise SystemExit("static canary did not actually query rules and the selected guard")
     completed = summary["workload"]["completed_judgments"]
+    judgment_rows = completion_rows("judgments")
+    response_rows = completion_rows("responses")
+    if len(judgment_rows) != completed or len(response_rows) != completed:
+        raise SystemExit("static canary response/judgment support is incomplete")
+    judgment_ids = [item.get("attempt_id") for item in judgment_rows]
+    response_by_attempt = {
+        item.get("attempt_id"): item for item in response_rows
+    }
+    if (
+        len(set(judgment_ids)) != completed
+        or len(response_by_attempt) != completed
+        or set(judgment_ids) != set(response_by_attempt)
+    ):
+        raise SystemExit("static canary response/judgment identities do not join")
+    nonresponse_ids = set()
+    for item in judgment_rows:
+        raw = item.get("raw")
+        if not isinstance(raw, dict):
+            raise SystemExit("static canary judgment raw metadata is invalid")
+        if raw.get("policy_evaluation_status") != "model_nonresponse":
+            continue
+        confidence = raw.get("confidence")
+        if not (
+            item.get("label") == "not_applicable"
+            and item.get("score") == 0.0
+            and raw.get("policy_evaluable_turn") is True
+            and raw.get("common_metrics_eligible") is True
+            and raw.get("stage_queried") is False
+            and isinstance(confidence, (int, float))
+            and not isinstance(confidence, bool)
+            and float(confidence) == 1.0
+            and raw.get("parsed") is None
+            and raw.get("cascade_role") == "authoritative"
+            and raw.get("cascade_confident") is True
+            and raw.get("metric_authority") is None
+            and raw.get("required_metric") is None
+        ):
+            raise SystemExit("static canary has malformed model_nonresponse evidence")
+        response = response_by_attempt[item["attempt_id"]]
+        response_raw = response.get("raw")
+        if (
+            response.get("output_turns") != []
+            or not isinstance(response_raw, dict)
+            or response_raw.get("empty_completion_observed") is not True
+        ):
+            raise SystemExit("static canary model_nonresponse lacks an empty response")
+        nonresponse_ids.add(item["attempt_id"])
+    queried = completed - len(nonresponse_ids)
+    if (
+        observed_stage_keys != [(0, "rules"), (1, "guardrail")]
+        or any(
+            row.get("reached") is not (queried > 0)
+            or not isinstance(row.get("trail_records"), int)
+            or row["trail_records"] != completed
+            or not isinstance(row.get("queried_records"), int)
+            or row["queried_records"] != queried
+            or row.get("not_queried_records") != len(nonresponse_ids)
+            for row in stage_rows
+        )
+    ):
+        raise SystemExit(
+            "static canary rules/guard support does not match typed nonresponses"
+        )
     guard_trails = [
         item for item in completion_rows("trails")
         if item.get("stage") == 1 and item.get("judge") == "guardrail"
     ]
-    if len(guard_trails) != completed or any(
-        item.get("stage_queried") is not True
-        or item.get("guardrail_queried") is not True
-        or item.get("judge_model") != guard_model
-        or item.get("judge_model_revision") != guard_revision
-        or item.get("judge_model_identity") != f"{guard_model}@{guard_revision}"
-        for item in guard_trails
+    queried_guard_trails = [
+        item for item in guard_trails if item.get("stage_queried") is True
+    ]
+    unqueried_guard_trails = [
+        item for item in guard_trails if item.get("stage_queried") is False
+    ]
+    if (
+        len(guard_trails) != completed
+        or len(queried_guard_trails) != queried
+        or len(unqueried_guard_trails) != len(nonresponse_ids)
+        or {item.get("attempt_id") for item in unqueried_guard_trails}
+        != nonresponse_ids
+        or any(
+            item.get("guardrail_queried") is not True
+            or item.get("judge_model") != guard_model
+            or item.get("judge_model_revision") != guard_revision
+            or item.get("judge_model_identity")
+            != f"{guard_model}@{guard_revision}"
+            for item in queried_guard_trails
+        )
+        or any(
+            item.get("guardrail_queried") is not None
+            or item.get("policy_evaluation_status") != "model_nonresponse"
+            or item.get("label") != "not_applicable"
+            or item.get("score") != 0.0
+            or item.get("parsed") is not None
+            or item.get("cascade_role") != "shadow"
+            or item.get("cascade_confident") is not True
+            or item.get("judge_model") is not None
+            or item.get("judge_model_revision") is not None
+            or item.get("judge_model_identity") is not None
+            for item in unqueried_guard_trails
+        )
     ):
         raise SystemExit(
             "Ollama completion-bound scoring Guard query/identity differs from the exact selection"

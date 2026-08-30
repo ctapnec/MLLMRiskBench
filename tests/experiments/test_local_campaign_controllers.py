@@ -4,6 +4,7 @@ import argparse
 import copy
 import hashlib
 import json
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -5822,7 +5823,11 @@ def test_ollama_nonzero_canary_failures_are_not_converted_to_old_terminals() -> 
 
 
 def _assert_completion_bound_guard_query_contract(
-    template: str, *, summary_name: str, adaptive: bool
+    template: str,
+    *,
+    summary_name: str,
+    adaptive: bool,
+    typed_nonresponse: bool,
 ) -> None:
     assert "completion_payload = stable_payload(completion_path" in template
     assert (
@@ -5878,6 +5883,36 @@ def _assert_completion_bound_guard_query_contract(
         assert 'item.get("policy_evaluation_status") != "not_evaluable"' in (
             guard_contract
         )
+    elif typed_nonresponse:
+        stage_contract = template.split(
+            '    queried = completed - len(nonresponse_ids)', 1
+        )[1].split("    guard_trails = [", 1)[0]
+        assert 'row.get("reached") is not (queried > 0)' in stage_contract
+        assert 'row["queried_records"] != queried' in stage_contract
+        assert (
+            'row.get("not_queried_records") != len(nonresponse_ids)'
+            in stage_contract
+        )
+        assert "len(queried_guard_trails) != queried" in guard_contract
+        assert (
+            "len(unqueried_guard_trails) != len(nonresponse_ids)"
+            in guard_contract
+        )
+        assert (
+            '{item.get("attempt_id") for item in unqueried_guard_trails}\n'
+            "        != nonresponse_ids"
+        ) in guard_contract
+        assert guard_contract.count('item.get("stage_queried") is True') == 1
+        assert guard_contract.count('item.get("stage_queried") is False') == 1
+        assert guard_contract.count(
+            'item.get("guardrail_queried") is not True'
+        ) == 1
+        assert guard_contract.count(
+            'item.get("guardrail_queried") is not None'
+        ) == 1
+        assert 'item.get("policy_evaluation_status") != "model_nonresponse"' in (
+            guard_contract
+        )
     else:
         assert guard_contract.count('item.get("stage_queried") is not True') == 1
         assert guard_contract.count(
@@ -5889,14 +5924,17 @@ def _assert_completion_bound_guard_query_contract(
 
 
 @pytest.mark.parametrize(
-    ("filename", "summary_name", "adaptive"),
+    ("filename", "summary_name", "adaptive", "typed_nonresponse"),
     [
-        ("phase5_core_attest_canary.sh.in", "row", True),
-        ("phase5_ollama_workflow.sh.in", "summary", False),
+        ("phase5_core_attest_canary.sh.in", "row", True, False),
+        ("phase5_ollama_workflow.sh.in", "summary", False, True),
     ],
 )
 def test_canaries_prove_a_completion_bound_guard_query(
-    filename: str, summary_name: str, adaptive: bool
+    filename: str,
+    summary_name: str,
+    adaptive: bool,
+    typed_nonresponse: bool,
 ) -> None:
     template = (
         Path(__file__).parents[2]
@@ -5906,8 +5944,18 @@ def test_canaries_prove_a_completion_bound_guard_query(
         / filename
     ).read_text(encoding="utf-8")
     _assert_completion_bound_guard_query_contract(
-        template, summary_name=summary_name, adaptive=adaptive
+        template,
+        summary_name=summary_name,
+        adaptive=adaptive,
+        typed_nonresponse=typed_nonresponse,
     )
+    if typed_nonresponse:
+        function = template.split("canary_fields() {", 1)[1].split(
+            "\n}\n\nrun_canary_lane()", 1
+        )[0]
+        match = re.search(r"<<'PY'\n(.*?)\nPY(?:\n|$)", function, re.DOTALL)
+        assert match is not None
+        compile(match.group(1), "phase5_ollama_canary_fields.py", "exec")
 
     guard_start = template.index("    guard_trails = [")
     query_start = template.index(
@@ -5924,7 +5972,10 @@ def test_canaries_prove_a_completion_bound_guard_query(
     assert query_mutation != template
     with pytest.raises(AssertionError):
         _assert_completion_bound_guard_query_contract(
-            query_mutation, summary_name=summary_name, adaptive=adaptive
+            query_mutation,
+            summary_name=summary_name,
+            adaptive=adaptive,
+            typed_nonresponse=typed_nonresponse,
         )
 
     if adaptive:
@@ -5939,6 +5990,7 @@ def test_canaries_prove_a_completion_bound_guard_query(
                 stage_denominator_mutation,
                 summary_name=summary_name,
                 adaptive=adaptive,
+                typed_nonresponse=typed_nonresponse,
             )
 
         completion_denominator_mutation = template.replace(
@@ -5952,6 +6004,35 @@ def test_canaries_prove_a_completion_bound_guard_query(
                 completion_denominator_mutation,
                 summary_name=summary_name,
                 adaptive=adaptive,
+                typed_nonresponse=typed_nonresponse,
+            )
+
+    if typed_nonresponse:
+        reachability_mutation = template.replace(
+            'row.get("reached") is not (queried > 0)',
+            'row.get("reached") is not True',
+            1,
+        )
+        assert reachability_mutation != template
+        with pytest.raises(AssertionError):
+            _assert_completion_bound_guard_query_contract(
+                reachability_mutation,
+                summary_name=summary_name,
+                adaptive=adaptive,
+                typed_nonresponse=typed_nonresponse,
+            )
+        completion_denominator_mutation = template.replace(
+            "len(queried_guard_trails) != queried",
+            "len(queried_guard_trails) != completed",
+            1,
+        )
+        assert completion_denominator_mutation != template
+        with pytest.raises(AssertionError):
+            _assert_completion_bound_guard_query_contract(
+                completion_denominator_mutation,
+                summary_name=summary_name,
+                adaptive=adaptive,
+                typed_nonresponse=typed_nonresponse,
             )
 
     binding_mutation = template.replace(
@@ -5962,7 +6043,10 @@ def test_canaries_prove_a_completion_bound_guard_query(
     assert binding_mutation != template
     with pytest.raises(AssertionError):
         _assert_completion_bound_guard_query_contract(
-            binding_mutation, summary_name=summary_name, adaptive=adaptive
+            binding_mutation,
+            summary_name=summary_name,
+            adaptive=adaptive,
+            typed_nonresponse=typed_nonresponse,
         )
 
 
