@@ -674,6 +674,11 @@ XSTest rows, 100 SimpleSafetyTests rows and 900 DecodingTrust stereotype rows.
 Completed Qwen3-VL text, completed Crescendo and the 1,039 durable LLaVA
 AirBench prefix are not part of this call inventory.
 
+The continuation controller binds its named tmux session to the existing Jobs
+lifecycle and publishes terminal target-attempt and successful-generation
+counts. This registration makes the campaign operationally visible; it does not
+replace or authorize the measured Runner artifacts.
+
 ## 7. Phase 6: bounded measured local lanes (sized by projections and canaries)
 
 **Source-record inventory, which is NOT the row count.** The figures below are
