@@ -905,7 +905,11 @@ class Runner:
     ) -> tuple[Judgment, list[Judgment]]:
         """Retain a successful target call that emitted no assistant content."""
 
-        required_metric = datapoint.meta.get("required_metric")
+        required_metric = (
+            datapoint.meta.get("required_metric")
+            if datapoint.meta.get("common_metrics_eligible", True) is False
+            else None
+        )
         trail: list[Judgment] = []
         for index, stage in enumerate(self.judge_cascade.stages):
             raw: dict[str, Any] = {

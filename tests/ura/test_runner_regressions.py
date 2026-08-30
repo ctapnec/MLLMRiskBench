@@ -6583,6 +6583,51 @@ def test_runner_retains_typed_empty_completion_without_querying_judges(
     )
 
 
+def test_common_metric_nonresponse_does_not_claim_declared_source_metric(
+    tmp_path: Path,
+) -> None:
+    class EmptyTarget(_RecordingTarget):
+        def generate(
+            self, dialog: list[DialogTurn], *, seed: int | None = None
+        ) -> Response:
+            return Response(
+                attempt_id="placeholder",
+                target=self.name,
+                output_turns=[],
+                raw={
+                    "target_sampling_control": "uncontrolled",
+                    "requested_seed": seed,
+                    "empty_completion_observed": True,
+                },
+            )
+
+    datapoint = _datapoint()
+    datapoint.meta.update({
+        "common_metrics_eligible": True,
+        "required_metric": "mmsafety_official_attack_rate",
+    })
+    runner = _runner(_FloodAttacker(), EmptyTarget())
+    runner.run([datapoint])
+
+    trail_path = tmp_path / "common-model-nonresponse.trails.jsonl"
+    runner.save_trails(trail_path)
+    rows = [
+        json.loads(line)
+        for line in trail_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert rows
+    assert all(row.get("required_metric") is None for row in rows)
+    runner_module.validate_persisted_judgment_trails(
+        {attempt.id: attempt for attempt in runner.attempts},
+        {response.attempt_id: response for response in runner.responses},
+        {judgment.attempt_id: judgment for judgment in runner.judgments},
+        rows,
+        {"run": {"approximate_common_metrics": False}},
+        ["binary"],
+    )
+
+
 def test_empty_source_metric_response_is_invalid_prediction_not_trail_failure(
     tmp_path: Path,
 ) -> None:
