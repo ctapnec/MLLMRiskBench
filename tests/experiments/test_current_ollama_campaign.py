@@ -11,6 +11,7 @@ from typing import Sequence
 import pytest
 
 from experiments.local_campaign import current_ollama_phase6 as phase6
+from experiments.local_campaign import resume_current_ollama_phase6 as phase6_recovery
 
 from experiments.local_campaign.current_ollama import (
     CURRENT_OLLAMA_IMAGE_MODELS,
@@ -459,6 +460,118 @@ def test_current_ollama_phase6_retains_nonresponses_in_measured_counts() -> None
     level1["counts"]["judgment_records"]["missing_responses"] = 11
     with pytest.raises(ValueError, match="target/missing-response"):
         _counts_from_level1(level1)
+
+
+def test_current_ollama_recovery_does_not_double_count_mirrored_checkpoints(
+    tmp_path: Path,
+) -> None:
+    result_root = tmp_path / "lane"
+    result_root.mkdir()
+    for index, count in enumerate((50, 20)):
+        (result_root / f"cell-{index}.complete.json").write_text(
+            json.dumps({"n_responses": count}), encoding="utf-8"
+        )
+    rows = "".join(json.dumps({"row": index}) + "\n" for index in range(3))
+    (result_root / "partial.checkpoint.jsonl").write_text(rows, encoding="utf-8")
+    (result_root / "partial.responses.checkpoint.jsonl").write_text(
+        rows, encoding="utf-8"
+    )
+
+    assert phase6_recovery._completed_records(result_root) == 70
+    assert phase6_recovery._checkpoint_records(result_root) == 3
+
+
+def test_current_ollama_recovery_reuses_exact_state_argv_and_checkpoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commit = "1" * 40
+    lane = "ollama-fixture-text-primary-50"
+    project = tmp_path / "project"
+    runner_root = tmp_path / "runner"
+    result_root = runner_root / lane
+    base_control = tmp_path / "phase6-current-ollama-fixture"
+    state_root = base_control / "lanes" / lane
+    control = tmp_path / "phase6-current-ollama-recovery-fixture"
+    for path in (project, result_root, state_root):
+        path.mkdir(parents=True)
+    gate5 = tmp_path / "gate5.json"
+    gate5.write_text("{}\n", encoding="ascii")
+    base_completion = base_control / "completion.json"
+    base_completion.write_text("{}\n", encoding="ascii")
+    python = tmp_path / "python"
+    python.write_text("fixture\n", encoding="ascii")
+    python.chmod(0o700)
+    (result_root / "sealed.complete.json").write_text(
+        json.dumps({"n_responses": 2}), encoding="utf-8"
+    )
+    checkpoint = result_root / "partial.checkpoint.jsonl"
+    checkpoint.write_text(
+        "".join(json.dumps({"row": index}) + "\n" for index in range(3)),
+        encoding="utf-8",
+    )
+    exact_argv = [
+        "--deadline-seconds", "60", "--out", str(result_root), "--fixed", "value"
+    ]
+    state = {
+        "argv": exact_argv,
+        "result_root": str(result_root),
+        "attestation": {"path": str(tmp_path / "attestation"), "sha256": "2" * 64},
+    }
+    monkeypatch.setattr(
+        phase6_recovery,
+        "validate_completion",
+        lambda **_kwargs: {"terminal_states": {lane: "failed"}},
+    )
+    monkeypatch.setattr(
+        phase6_recovery,
+        "validate_amendment",
+        lambda *_args, **_kwargs: {"project_commit": commit},
+    )
+    monkeypatch.setattr(
+        phase6_recovery, "_tracked_checkout_commit", lambda _path: commit
+    )
+    monkeypatch.setattr(
+        phase6_recovery, "_load_state", lambda *_args, **_kwargs: state
+    )
+    observed: list[list[str]] = []
+
+    def complete_exact(*, python: Path, argv: Sequence[str], log: Path, timeout: int) -> int:
+        del python, timeout
+        observed.append(list(argv))
+        log.write_text("resumed\n", encoding="ascii")
+        checkpoint.unlink()
+        (result_root / "recovered.complete.json").write_text(
+            json.dumps({"n_responses": 3}), encoding="utf-8"
+        )
+        return 0
+
+    def level1(**kwargs) -> tuple[int, int, int]:
+        lane_root = kwargs["lane_root"]
+        (lane_root / "level1.json").write_text("{}\n", encoding="ascii")
+        return 5, 4, 1
+
+    monkeypatch.setattr(phase6_recovery, "_run_exact", complete_exact)
+    monkeypatch.setattr(phase6_recovery, "_level1_counts", level1)
+
+    assert phase6_recovery.run(
+        gate5_path=gate5,
+        base_completion=base_completion,
+        runner_root=runner_root,
+        control_root=control,
+        project_root=project,
+        python=python,
+        wait_seconds=1,
+        poll_seconds=1,
+        max_lane_launches=1,
+    ) == 0
+    assert observed == [exact_argv]
+    completion = json.loads((control / "completion.json").read_text(encoding="utf-8"))
+    row = completion["rows"][0]
+    assert row["initial_completed_responses"] == 2
+    assert row["initial_checkpointed_responses"] == 3
+    assert row["final_completed_responses"] == 5
+    assert row["final_checkpointed_responses"] == 0
+    assert row["missing_responses"] == 1
 
 
 def test_current_ollama_phase6_retains_typed_pre_runner_failure(tmp_path: Path) -> None:
