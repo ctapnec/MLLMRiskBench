@@ -9,30 +9,36 @@ attempts absent from its durable checkpoint.
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import os
 from pathlib import Path
 import subprocess
 import time
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 from experiments.local_campaign.current_ollama_gate5 import (
     _canonical,
     _descriptor,
+    _descriptor_file,
+    _stable_file,
     validate_amendment,
 )
 from experiments.local_campaign.current_ollama_phase6 import (
     _arg_value,
     _canonical_dir,
+    _counts_from_level1,
     _create_json,
     _level1_counts,
     _load_state,
+    _strict_object,
     validate_completion,
 )
 
 
 SCHEMA = "ura-current-ollama-phase6-recovery/1"
+PHASE7_INPUT_SCHEMA = "ura-current-ollama-phase7-input/2"
 
 
 def _wait_for_file(path: Path, *, wait_seconds: int, poll_seconds: int) -> None:
@@ -93,7 +99,11 @@ def _completed_records(result_root: Path) -> int:
 
 
 def _run_exact(
-    *, python: Path, argv: Sequence[str], log: Path, timeout: int,
+    *,
+    python: Path,
+    argv: Sequence[str],
+    log: Path,
+    timeout: int,
 ) -> int:
     if log.exists() or log.is_symlink():
         raise FileExistsError(f"recovery log already exists: {log}")
@@ -128,12 +138,8 @@ def run(
     if max_lane_launches < 1 or max_lane_launches > 10:
         raise ValueError("max lane launches must be in [1, 10]")
     controller_path = Path(__file__).resolve(strict=True)
-    controller_source = _descriptor(
-        controller_path, label="current Ollama recovery controller"
-    )
-    _wait_for_file(
-        base_completion, wait_seconds=wait_seconds, poll_seconds=poll_seconds
-    )
+    controller_source = _descriptor(controller_path, label="current Ollama recovery controller")
+    _wait_for_file(base_completion, wait_seconds=wait_seconds, poll_seconds=poll_seconds)
     base = validate_completion(
         gate5_path=gate5_path,
         completion_path=base_completion,
@@ -152,11 +158,7 @@ def run(
     control_root.mkdir(mode=0o700)
     (control_root / "lanes").mkdir(mode=0o700)
 
-    failed_lanes = [
-        lane
-        for lane, state in base["terminal_states"].items()
-        if state == "failed"
-    ]
+    failed_lanes = [lane for lane, state in base["terminal_states"].items() if state == "failed"]
     rows: list[dict[str, Any]] = []
     failures = 0
     gate5_sha256 = hashlib.sha256(gate5_path.read_bytes()).hexdigest()
@@ -186,11 +188,13 @@ def run(
                 log=log,
                 timeout=timeout,
             )
-            launches.append({
-                "number": number,
-                "returncode": returncode,
-                "log": _descriptor(log, label=f"{lane} recovery launch {number}"),
-            })
+            launches.append(
+                {
+                    "number": number,
+                    "returncode": returncode,
+                    "log": _descriptor(log, label=f"{lane} recovery launch {number}"),
+                }
+            )
             if returncode == 0:
                 break
         row: dict[str, Any] = {
@@ -212,26 +216,30 @@ def run(
             after_checkpointed = _checkpoint_records(result_root)
             if after_completed != attempted or after_checkpointed != 0:
                 raise ValueError(f"{lane}: recovery completion counts do not reconcile")
-            row.update({
-                "status": "complete",
-                "target_attempts": attempted,
-                "successful_target_generations": successful,
-                "missing_responses": missing,
-                "final_completed_responses": after_completed,
-                "final_checkpointed_responses": after_checkpointed,
-                "level1": _descriptor(
-                    lane_root / "level1.json", label=f"{lane} recovery Level 1"
-                ),
-            })
+            row.update(
+                {
+                    "status": "complete",
+                    "target_attempts": attempted,
+                    "successful_target_generations": successful,
+                    "missing_responses": missing,
+                    "final_completed_responses": after_completed,
+                    "final_checkpointed_responses": after_checkpointed,
+                    "level1": _descriptor(
+                        lane_root / "level1.json", label=f"{lane} recovery Level 1"
+                    ),
+                }
+            )
         else:
             failures += 1
-            row.update({
-                "target_attempts": None,
-                "successful_target_generations": None,
-                "missing_responses": None,
-                "final_completed_responses": _completed_records(result_root),
-                "final_checkpointed_responses": _checkpoint_records(result_root),
-            })
+            row.update(
+                {
+                    "target_attempts": None,
+                    "successful_target_generations": None,
+                    "missing_responses": None,
+                    "final_completed_responses": _completed_records(result_root),
+                    "final_checkpointed_responses": _checkpoint_records(result_root),
+                }
+            )
         rows.append(row)
 
     body: dict[str, Any] = {
@@ -247,18 +255,275 @@ def run(
         "rows": rows,
         "paid_provider_calls": 0,
     }
-    if _descriptor(
-        controller_path, label="current Ollama recovery controller"
-    ) != controller_source:
+    if (
+        _descriptor(controller_path, label="current Ollama recovery controller")
+        != controller_source
+    ):
         raise ValueError("current Ollama recovery controller changed while running")
-    body["recovery_id"] = "current-ollama-recovery-" + hashlib.sha256(
-        _canonical(body)
-    ).hexdigest()[:24]
-    _create_json(control_root / "completion.json", body)
-    (control_root / ".exit").write_text(
-        "0\n" if failures == 0 else "1\n", encoding="ascii"
+    body["recovery_id"] = (
+        "current-ollama-recovery-" + hashlib.sha256(_canonical(body)).hexdigest()[:24]
     )
+    _create_json(control_root / "completion.json", body)
+    (control_root / ".exit").write_text("0\n" if failures == 0 else "1\n", encoding="ascii")
     return 0 if failures == 0 else 1
+
+
+def _nonnegative_int(value: object, *, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{label} is not a nonnegative integer")
+    return value
+
+
+def _validate_launches(value: object, *, lane: str, lane_root: Path) -> list[dict[str, Any]]:
+    if not isinstance(value, list) or not 1 <= len(value) <= 10:
+        raise ValueError(f"{lane}: recovery launch inventory changed")
+    launches: list[dict[str, Any]] = []
+    for number, raw in enumerate(value, start=1):
+        if not isinstance(raw, dict) or set(raw) != {"number", "returncode", "log"}:
+            raise ValueError(f"{lane}: recovery launch fields changed")
+        returncode = raw.get("returncode")
+        if (
+            raw.get("number") != number
+            or isinstance(returncode, bool)
+            or not isinstance(returncode, int)
+        ):
+            raise ValueError(f"{lane}: recovery launch sequence changed")
+        log = _descriptor_file(raw.get("log"), label=f"{lane} recovery launch {number}")
+        if log != lane_root / f"resume-{number}.log":
+            raise ValueError(f"{lane}: recovery launch log path changed")
+        launches.append(dict(raw))
+    if launches[-1]["returncode"] != 0:
+        raise ValueError(f"{lane}: recovery did not finish successfully")
+    return launches
+
+
+def _metric_artifacts(
+    *, lane: str, result_root: Path
+) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
+    grids = sorted(result_root.glob("*.grid.json"))
+    eligibility = sorted(result_root.glob("eligibility-*.eligibility.json"))
+    markers = sorted(result_root.glob("*.complete.json"))
+    if len(grids) != 1 or len(eligibility) != 1 or not markers:
+        raise ValueError(f"{lane}: recovered Runner artifact inventory changed")
+    return (
+        _descriptor(grids[0], label=f"{lane} recovered measured grid"),
+        _descriptor(eligibility[0], label=f"{lane} recovered eligibility plan"),
+        [_descriptor(marker, label=f"{lane} recovered completion marker") for marker in markers],
+    )
+
+
+def validate_recovery_completion(
+    *,
+    gate5_path: Path,
+    base_completion: Path,
+    recovery_completion: Path,
+    runner_root: Path,
+) -> dict[str, Any]:
+    """Validate one complete failed-lane recovery and overlay it for Phase 7."""
+
+    base = validate_completion(
+        gate5_path=gate5_path,
+        completion_path=base_completion,
+        runner_root=runner_root,
+    )
+    selected = [lane for lane, state in base["terminal_states"].items() if state == "failed"]
+    if not selected:
+        raise ValueError("current Ollama recovery is unnecessary for a complete base run")
+    control = _canonical_dir(
+        recovery_completion.parent, label="current Ollama Phase 6 recovery root"
+    )
+    if (
+        not control.name.startswith("phase6-current-ollama-recovery-")
+        or recovery_completion != control / "completion.json"
+    ):
+        raise ValueError("current Ollama recovery completion path changed")
+    value = _strict_object(recovery_completion, label="current Ollama Phase 6 recovery completion")
+    fields = {
+        "schema",
+        "status",
+        "base_phase6",
+        "gate5",
+        "controller_source",
+        "project_commit",
+        "failed_lanes_selected",
+        "recovered_lanes",
+        "remaining_failed_lanes",
+        "rows",
+        "paid_provider_calls",
+        "recovery_id",
+    }
+    gate5 = validate_amendment(gate5_path)
+    if (
+        set(value) != fields
+        or value.get("schema") != SCHEMA
+        or value.get("status") != "complete"
+        or value.get("base_phase6")
+        != _descriptor(base_completion, label="base current Ollama Phase 6 completion")
+        or value.get("gate5") != _descriptor(gate5_path, label="current Ollama Gate 5 amendment")
+        or value.get("project_commit") != gate5.get("project_commit")
+        or value.get("failed_lanes_selected") != selected
+        or value.get("recovered_lanes") != len(selected)
+        or value.get("remaining_failed_lanes") != 0
+        or value.get("paid_provider_calls") != 0
+    ):
+        raise ValueError("current Ollama recovery completion contract changed")
+    controller_source = _descriptor_file(
+        value.get("controller_source"), label="current Ollama recovery controller"
+    )
+    if (
+        _descriptor(controller_source, label="current Ollama recovery controller")
+        != value["controller_source"]
+    ):
+        raise ValueError("current Ollama recovery controller identity changed")
+    recovery_id = value.get("recovery_id")
+    identity_body = dict(value)
+    identity_body.pop("recovery_id")
+    expected_recovery_id = (
+        "current-ollama-recovery-" + hashlib.sha256(_canonical(identity_body)).hexdigest()[:24]
+    )
+    if recovery_id != expected_recovery_id:
+        raise ValueError("current Ollama recovery identity changed")
+    if _stable_file(control / ".exit", label="current Ollama recovery exit marker") != b"0\n":
+        raise ValueError("current Ollama recovery exit marker is nonzero")
+
+    rows = value.get("rows")
+    if (
+        not isinstance(rows, list)
+        or len(rows) != len(selected)
+        or [row.get("lane_id") if isinstance(row, Mapping) else None for row in rows] != selected
+    ):
+        raise ValueError("current Ollama recovery row inventory changed")
+    recovered_rows: dict[str, dict[str, Any]] = {}
+    for raw in rows:
+        if not isinstance(raw, dict):
+            raise ValueError("current Ollama recovery row is not an object")
+        lane = str(raw.get("lane_id"))
+        expected_fields = {
+            "lane_id",
+            "status",
+            "initial_completed_responses",
+            "initial_checkpointed_responses",
+            "launches",
+            "result_root",
+            "target_attempts",
+            "successful_target_generations",
+            "missing_responses",
+            "final_completed_responses",
+            "final_checkpointed_responses",
+            "level1",
+        }
+        if set(raw) != expected_fields or raw.get("status") != "complete":
+            raise ValueError(f"{lane}: recovered row fields changed")
+        result_root = Path(str(raw.get("result_root")))
+        expected_root = Path(str(base["lifecycle"][lane]["result_root"]))
+        if result_root != expected_root:
+            raise ValueError(f"{lane}: recovered result root changed")
+        result_root = _canonical_dir(result_root, label=f"{lane} recovered result root")
+        initial_completed = _nonnegative_int(
+            raw.get("initial_completed_responses"),
+            label=f"{lane} initial completed responses",
+        )
+        initial_checkpointed = _nonnegative_int(
+            raw.get("initial_checkpointed_responses"),
+            label=f"{lane} initial checkpointed responses",
+        )
+        target_attempts = _nonnegative_int(
+            raw.get("target_attempts"), label=f"{lane} recovered target attempts"
+        )
+        successful = _nonnegative_int(
+            raw.get("successful_target_generations"),
+            label=f"{lane} recovered successful generations",
+        )
+        missing = _nonnegative_int(
+            raw.get("missing_responses"), label=f"{lane} recovered missing responses"
+        )
+        final_completed = _nonnegative_int(
+            raw.get("final_completed_responses"),
+            label=f"{lane} final completed responses",
+        )
+        final_checkpointed = _nonnegative_int(
+            raw.get("final_checkpointed_responses"),
+            label=f"{lane} final checkpointed responses",
+        )
+        if (
+            target_attempts < 1
+            or successful + missing != target_attempts
+            or final_completed != target_attempts
+            or final_checkpointed != 0
+            or initial_completed + initial_checkpointed > target_attempts
+            or _completed_records(result_root) != target_attempts
+            or _checkpoint_records(result_root) != 0
+        ):
+            raise ValueError(f"{lane}: recovered response accounting changed")
+        lane_root = control / "lanes" / lane
+        lane_root = _canonical_dir(lane_root, label=f"{lane} recovery control root")
+        _validate_launches(raw.get("launches"), lane=lane, lane_root=lane_root)
+        level1_path = _descriptor_file(raw.get("level1"), label=f"{lane} recovered Level 1")
+        if level1_path != lane_root / "level1.json":
+            raise ValueError(f"{lane}: recovered Level 1 path changed")
+        if _counts_from_level1(_strict_object(level1_path, label=f"{lane} recovered Level 1")) != (
+            target_attempts,
+            successful,
+            missing,
+        ):
+            raise ValueError(f"{lane}: recovered Level 1 counts changed")
+        _metric_artifacts(lane=lane, result_root=result_root)
+        recovered_rows[lane] = dict(raw)
+
+    result = copy.deepcopy(base)
+    result["schema"] = PHASE7_INPUT_SCHEMA
+    recovery_descriptor = _descriptor(
+        recovery_completion, label="current Ollama recovery completion"
+    )
+    result["recovery_completion"] = recovery_descriptor
+    result["recovery_id"] = recovery_id
+    for lane, row in recovered_rows.items():
+        base_failure = result["lifecycle"][lane]["evidence"]
+        evidence = {
+            "base_failure": base_failure,
+            "recovery_completion": recovery_descriptor,
+            "level1": row["level1"],
+        }
+        result["terminal_states"][lane] = "measured_complete"
+        result["lifecycle"][lane] = {
+            "state": "measured_complete",
+            "result_root": row["result_root"],
+            "runner_lifecycle_present": True,
+            "evidence": evidence,
+        }
+        result["metric_roots"][lane] = row["result_root"]
+        result["metric_evidence"][lane] = evidence
+        result["excluded_from_metrics"].pop(lane)
+
+    metric_lane_order = [lane for lane in result["lane_order"] if lane in result["metric_roots"]]
+    metric_grids: list[dict[str, Any]] = []
+    metric_eligibility: list[dict[str, Any]] = []
+    metric_markers: list[dict[str, Any]] = []
+    for lane in metric_lane_order:
+        grid, eligibility, markers = _metric_artifacts(
+            lane=lane,
+            result_root=_canonical_dir(
+                Path(result["metric_roots"][lane]), label=f"{lane} metric result root"
+            ),
+        )
+        metric_grids.append(grid)
+        metric_eligibility.append(eligibility)
+        metric_markers.extend(markers)
+    result["metric_lane_order"] = metric_lane_order
+    result["metric_grids"] = metric_grids
+    result["metric_eligibility_plans"] = metric_eligibility
+    result["metric_completion_markers"] = metric_markers
+    result["revision_strata"] = {result["project_revision_receipt_sha256"]: metric_lane_order}
+    result["target_execution"] = {
+        "target_attempts": base["target_execution"]["target_attempts"]
+        + sum(row["target_attempts"] for row in recovered_rows.values()),
+        "successful_target_generations": base["target_execution"]["successful_target_generations"]
+        + sum(row["successful_target_generations"] for row in recovered_rows.values()),
+        "missing_responses": base["target_execution"]["missing_responses"]
+        + sum(row["missing_responses"] for row in recovered_rows.values()),
+        "accounting_scope": ("base_completion_plus_recovery_completion_bound_level1_records"),
+    }
+    return result
 
 
 def parser() -> argparse.ArgumentParser:

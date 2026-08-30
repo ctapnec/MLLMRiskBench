@@ -1402,8 +1402,11 @@ def test_phase7_requires_current_ollama_terminal_and_metric_cohort() -> None:
     for token in (
         "--current-ollama-gate5-amendment",
         "--phase6-current-ollama-completion",
+        "--phase6-current-ollama-recovery-completion",
     ):
         assert token in wrapper and token in watcher
+    assert "validate_current_ollama_recovery_completion(" in analysis
+    assert "current Ollama Phase 6 failures require their exact recovery completion" in analysis
     assert 'result.get("campaign_terminal_rows") != 76' in watcher
     assert '"current_ollama": 14' in watcher
 
@@ -2885,6 +2888,7 @@ def test_phase7_seven_row_and_recovery_boundary_contracts(tmp_path: Path) -> Non
     ]
     parsed = phase7["build_parser"]().parse_args(prepare_argv)
     assert parsed.phase6_recovery_completion == []
+    assert parsed.phase6_current_ollama_recovery_completion is None
     parsed_with_recovery = phase7["build_parser"]().parse_args(
         [
             *prepare_argv,
@@ -2893,6 +2897,17 @@ def test_phase7_seven_row_and_recovery_boundary_contracts(tmp_path: Path) -> Non
         ]
     )
     assert parsed_with_recovery.phase6_recovery_completion == ["recovery.json"]
+    parsed_with_current_ollama_recovery = phase7["build_parser"]().parse_args(
+        [
+            *prepare_argv,
+            "--phase6-current-ollama-recovery-completion",
+            "current-ollama-recovery.json",
+        ]
+    )
+    assert (
+        parsed_with_current_ollama_recovery.phase6_current_ollama_recovery_completion
+        == "current-ollama-recovery.json"
+    )
     wrapper = _template_source("phase7_analysis.sh.in")
     watcher = _template_source("phase7_after_phase6_sequence.sh.in")
     assert '[[ ${#recovery_completions[@]} -gt 0 ]] || usage' not in wrapper
@@ -2905,6 +2920,8 @@ def test_phase7_seven_row_and_recovery_boundary_contracts(tmp_path: Path) -> Non
         'RECOVERY_ARGS+=(--phase6-recovery-completion "$recovery_completion")'
         in watcher
     )
+    assert "CURRENT_OLLAMA_RECOVERY_ARGS+=(" in watcher
+    assert "current_ollama_recovery_args+=(" in wrapper
 
 
 def test_phase7_and_phase8_do_not_require_defense_success_at_gate6() -> None:

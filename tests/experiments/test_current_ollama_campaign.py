@@ -574,6 +574,152 @@ def test_current_ollama_recovery_reuses_exact_state_argv_and_checkpoint(
     assert row["missing_responses"] == 1
 
 
+def test_current_ollama_recovery_is_required_and_overlaid_for_phase7(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lane = "ollama-fixture-text-primary-50"
+    commit = "1" * 40
+    gate5 = tmp_path / "gate5-current-ollama-amendment.json"
+    gate5.write_text("{}\n", encoding="ascii")
+    base_root = tmp_path / "phase6-current-ollama-fixture"
+    base_root.mkdir()
+    base_completion = base_root / "completion.json"
+    base_completion.write_text("{}\n", encoding="ascii")
+    runner_root = tmp_path / "runner"
+    result_root = runner_root / lane
+    result_root.mkdir(parents=True)
+    _create_json(result_root / "fixture.grid.json", {})
+    _create_json(result_root / "eligibility-fixture.eligibility.json", {})
+    _create_json(result_root / "fixture.complete.json", {"n_responses": 5})
+
+    base = {
+        "schema": PHASE7_INPUT_SCHEMA,
+        "status": "validated",
+        "lane_order": [lane],
+        "terminal_states": {lane: "failed"},
+        "lifecycle": {
+            lane: {
+                "state": "failed",
+                "result_root": str(result_root),
+                "runner_lifecycle_present": True,
+                "evidence": {"failure": {"sha256": "2" * 64}},
+            }
+        },
+        "metric_lane_order": [],
+        "metric_roots": {},
+        "metric_evidence": {},
+        "metric_grids": [],
+        "metric_completion_markers": [],
+        "metric_eligibility_plans": [],
+        "excluded_from_metrics": {
+            lane: {"reason_code": "measured_lane_failed", "reason": "fixture"}
+        },
+        "revision_strata": {},
+        "project_revision_receipt_sha256": "3" * 64,
+        "source_conformance_sha256": "4" * 64,
+        "gate5": _descriptor(gate5, label="fixture Gate 5"),
+        "completion": _descriptor(base_completion, label="fixture base completion"),
+        "target_execution": {
+            "target_attempts": 0,
+            "successful_target_generations": 0,
+            "missing_responses": 0,
+            "accounting_scope": "completion_bound_level1_records",
+        },
+        "paid_provider_calls": 0,
+        "cross_revision_pooling_permitted": False,
+        "cross_source_pooling_permitted": False,
+    }
+    monkeypatch.setattr(
+        phase6_recovery, "validate_completion", lambda **_kwargs: base
+    )
+    monkeypatch.setattr(
+        phase6_recovery,
+        "validate_amendment",
+        lambda *_args, **_kwargs: {"project_commit": commit},
+    )
+
+    recovery_root = tmp_path / "phase6-current-ollama-recovery-fixture"
+    lane_root = recovery_root / "lanes" / lane
+    lane_root.mkdir(parents=True)
+    launch_log = lane_root / "resume-1.log"
+    launch_log.write_text("complete\n", encoding="ascii")
+    level1 = lane_root / "level1.json"
+    _create_json(
+        level1,
+        {"counts": {"judgment_records": {"completed": 5, "missing_responses": 1}}},
+    )
+    controller_source = Path(phase6_recovery.__file__).resolve()
+    body = {
+        "schema": phase6_recovery.SCHEMA,
+        "status": "complete",
+        "base_phase6": _descriptor(base_completion, label="fixture base completion"),
+        "gate5": _descriptor(gate5, label="fixture Gate 5"),
+        "controller_source": _descriptor(
+            controller_source, label="fixture recovery controller"
+        ),
+        "project_commit": commit,
+        "failed_lanes_selected": [lane],
+        "recovered_lanes": 1,
+        "remaining_failed_lanes": 0,
+        "rows": [
+            {
+                "lane_id": lane,
+                "status": "complete",
+                "initial_completed_responses": 2,
+                "initial_checkpointed_responses": 3,
+                "launches": [
+                    {
+                        "number": 1,
+                        "returncode": 0,
+                        "log": _descriptor(launch_log, label="fixture recovery log"),
+                    }
+                ],
+                "result_root": str(result_root),
+                "target_attempts": 5,
+                "successful_target_generations": 4,
+                "missing_responses": 1,
+                "final_completed_responses": 5,
+                "final_checkpointed_responses": 0,
+                "level1": _descriptor(level1, label="fixture recovery Level 1"),
+            }
+        ],
+        "paid_provider_calls": 0,
+    }
+    body["recovery_id"] = "current-ollama-recovery-" + hashlib.sha256(
+        _canonical(body)
+    ).hexdigest()[:24]
+    recovery_completion = recovery_root / "completion.json"
+    _create_json(recovery_completion, body)
+    (recovery_root / ".exit").write_text("0\n", encoding="ascii")
+
+    value = phase6_recovery.validate_recovery_completion(
+        gate5_path=gate5,
+        base_completion=base_completion,
+        recovery_completion=recovery_completion,
+        runner_root=runner_root,
+    )
+    assert value["schema"] == phase6_recovery.PHASE7_INPUT_SCHEMA
+    assert value["terminal_states"] == {lane: "measured_complete"}
+    assert value["metric_lane_order"] == [lane]
+    assert value["target_execution"]["missing_responses"] == 1
+    assert value["excluded_from_metrics"] == {}
+
+    body["rows"][0]["missing_responses"] = 2
+    body.pop("recovery_id")
+    body["recovery_id"] = "current-ollama-recovery-" + hashlib.sha256(
+        _canonical(body)
+    ).hexdigest()[:24]
+    recovery_completion.unlink()
+    _create_json(recovery_completion, body)
+    with pytest.raises(ValueError, match="recovered response accounting"):
+        phase6_recovery.validate_recovery_completion(
+            gate5_path=gate5,
+            base_completion=base_completion,
+            recovery_completion=recovery_completion,
+            runner_root=runner_root,
+        )
+
+
 def test_current_ollama_phase6_retains_typed_pre_runner_failure(tmp_path: Path) -> None:
     lane = "ollama-fixture-text-primary-50"
     result_root = tmp_path / "runs" / "thesis" / "runner" / lane

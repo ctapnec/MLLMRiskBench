@@ -215,10 +215,15 @@ bash ~/.ura-controller-active/launch_phase7_watcher.sh \
   --followon-gate5-amendment <absolute-follow-on-amendment.json> \
   --phase6-followon-completion <absolute-follow-on-completion.json> \
   --current-ollama-gate5-amendment <absolute-current-Ollama-amendment.json> \
-  --phase6-current-ollama-completion <absolute-current-Ollama-completion.json>
+  --phase6-current-ollama-completion <absolute-current-Ollama-completion.json> \
+  --phase6-current-ollama-recovery-completion <absolute-current-Ollama-recovery-completion.json>
 ```
 
 Repeat `--phase6-recovery-completion` for every retained recovery stratum.
+Pass `--phase6-current-ollama-recovery-completion` only when the base current
+Ollama completion has failed lanes. The watcher waits for that exact recovery;
+Phase 7 rejects an omitted, partial, failed, or unrelated recovery and consumes
+the base completion plus recovered Level-1 evidence as one revision stratum.
 
 Targeted Runner-output recovery is deliberately outside `launch_chain`. It is
 available only through the generated

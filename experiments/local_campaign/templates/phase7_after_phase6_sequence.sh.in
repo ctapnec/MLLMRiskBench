@@ -48,6 +48,7 @@ FOLLOWON_AMENDMENT=''
 FOLLOWON_COMPLETION=''
 CURRENT_OLLAMA_AMENDMENT=''
 CURRENT_OLLAMA_COMPLETION=''
+CURRENT_OLLAMA_RECOVERY_COMPLETION=''
 WATCHER_ARGS=("$@")
 while (( $# )); do
   case "$1" in
@@ -91,6 +92,11 @@ while (( $# )); do
       CURRENT_OLLAMA_COMPLETION="$2"
       shift 2
       ;;
+    --phase6-current-ollama-recovery-completion)
+      [[ $# -ge 2 && -z "$CURRENT_OLLAMA_RECOVERY_COMPLETION" ]] || exit 2
+      CURRENT_OLLAMA_RECOVERY_COMPLETION="$2"
+      shift 2
+      ;;
     *) exit 2 ;;
   esac
 done
@@ -106,6 +112,15 @@ case "$CURRENT_OLLAMA_COMPLETION" in
   /*/completion.json) CURRENT_OLLAMA_ROOT="${CURRENT_OLLAMA_COMPLETION%/completion.json}" ;;
   *) exit 2 ;;
 esac
+CURRENT_OLLAMA_RECOVERY_ROOT=''
+if [[ -n "$CURRENT_OLLAMA_RECOVERY_COMPLETION" ]]; then
+  case "$CURRENT_OLLAMA_RECOVERY_COMPLETION" in
+    /*/completion.json)
+      CURRENT_OLLAMA_RECOVERY_ROOT="${CURRENT_OLLAMA_RECOVERY_COMPLETION%/completion.json}"
+      ;;
+    *) exit 2 ;;
+  esac
+fi
 
 test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
 test -z "$(git status --porcelain)"
@@ -462,8 +477,16 @@ PY
 printf 'PHASE7_WATCHER_CONTROL_ROOT=%s\n' "$CONTROL_ROOT"
 printf 'PHASE7_WATCHER_WAITING_FOR_PHASE6=%s\n' "$PHASE6_ROOT"
 printf 'PHASE7_WATCHER_WAITING_FOR_CURRENT_OLLAMA=%s\n' "$CURRENT_OLLAMA_ROOT"
+if [[ -n "$CURRENT_OLLAMA_RECOVERY_ROOT" ]]; then
+  printf 'PHASE7_WATCHER_WAITING_FOR_CURRENT_OLLAMA_RECOVERY=%s\n' \
+    "$CURRENT_OLLAMA_RECOVERY_ROOT"
+fi
 controller_hard_stop_check await-phase6
 current_ollama_terminal_seen='no'
+current_ollama_recovery_terminal_seen='yes'
+if [[ -n "$CURRENT_OLLAMA_RECOVERY_ROOT" ]]; then
+  current_ollama_recovery_terminal_seen='no'
+fi
 phase6_terminal_seen='no'
 while true; do
   controller_hard_stop_check await-phase6
@@ -474,7 +497,16 @@ while true; do
         -f "$CURRENT_OLLAMA_COMPLETION" && ! -L "$CURRENT_OLLAMA_COMPLETION" ]]; then
     current_ollama_terminal_seen='yes'
   fi
-  if [[ "$phase6_terminal_seen" = 'yes' && "$current_ollama_terminal_seen" = 'yes' ]]; then
+  if [[ -n "$CURRENT_OLLAMA_RECOVERY_ROOT" && \
+        -f "$CURRENT_OLLAMA_RECOVERY_ROOT/.exit" && \
+        ! -L "$CURRENT_OLLAMA_RECOVERY_ROOT/.exit" && \
+        -f "$CURRENT_OLLAMA_RECOVERY_COMPLETION" && \
+        ! -L "$CURRENT_OLLAMA_RECOVERY_COMPLETION" ]]; then
+    current_ollama_recovery_terminal_seen='yes'
+  fi
+  if [[ "$phase6_terminal_seen" = 'yes' && \
+        "$current_ollama_terminal_seen" = 'yes' && \
+        "$current_ollama_recovery_terminal_seen" = 'yes' ]]; then
     break
   fi
   if tmux -L "$PHASE6_SOCKET" has-session -t "$PHASE6_SESSION" 2>/dev/null; then
@@ -485,6 +517,7 @@ while true; do
 done
 test "$phase6_terminal_seen" = 'yes'
 test "$current_ollama_terminal_seen" = 'yes'
+test "$current_ollama_recovery_terminal_seen" = 'yes'
 controller_hard_stop_check await-phase6
 controller_task_pass await-phase6
 
@@ -860,6 +893,13 @@ RECOVERY_ARGS=()
 for recovery_completion in "${RECOVERY_COMPLETIONS[@]}"; do
   RECOVERY_ARGS+=(--phase6-recovery-completion "$recovery_completion")
 done
+CURRENT_OLLAMA_RECOVERY_ARGS=()
+if [[ -n "$CURRENT_OLLAMA_RECOVERY_COMPLETION" ]]; then
+  CURRENT_OLLAMA_RECOVERY_ARGS+=(
+    --phase6-current-ollama-recovery-completion
+    "$CURRENT_OLLAMA_RECOVERY_COMPLETION"
+  )
+fi
 bash "$WRAPPER" --prepare-input-manifest "$INPUT_MANIFEST" \
   --gate5-manifest "$GATE5_MANIFEST" \
   --gate5-runnote "$GATE5_RUNNOTE" \
@@ -873,7 +913,8 @@ bash "$WRAPPER" --prepare-input-manifest "$INPUT_MANIFEST" \
   --followon-gate5-amendment "$FOLLOWON_AMENDMENT" \
   --phase6-followon-completion "$FOLLOWON_COMPLETION" \
   --current-ollama-gate5-amendment "$CURRENT_OLLAMA_AMENDMENT" \
-  --phase6-current-ollama-completion "$CURRENT_OLLAMA_COMPLETION" > "$PREPARE_RESULT"
+  --phase6-current-ollama-completion "$CURRENT_OLLAMA_COMPLETION" \
+  "${CURRENT_OLLAMA_RECOVERY_ARGS[@]}" > "$PREPARE_RESULT"
 
 INPUT_SHA="$(
   "$PY" - "$PREPARE_RESULT" "$INPUT_MANIFEST" "$PAYLOAD" <<'PY'

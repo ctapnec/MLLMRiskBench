@@ -36,6 +36,9 @@ from experiments.local_campaign.current_ollama import (
 from experiments.local_campaign.current_ollama_phase6 import (
     validate_completion as validate_current_ollama_completion,
 )
+from experiments.local_campaign.resume_current_ollama_phase6 import (
+    validate_recovery_completion as validate_current_ollama_recovery_completion,
+)
 from experiments.local_campaign.ollama_static_terminal import (
     OLLAMA_STATIC_TERMINAL_DISPOSITION,
     OLLAMA_STATIC_TERMINAL_LANES,
@@ -11972,6 +11975,19 @@ def build_input_manifest(args: argparse.Namespace) -> dict[str, Any]:
         completion_path=Path(args.phase6_current_ollama_completion),
         runner_root=runner_root,
     )
+    if args.phase6_current_ollama_recovery_completion:
+        current_ollama = validate_current_ollama_recovery_completion(
+            gate5_path=Path(args.current_ollama_gate5_amendment),
+            base_completion=Path(args.phase6_current_ollama_completion),
+            recovery_completion=Path(
+                args.phase6_current_ollama_recovery_completion
+            ),
+            runner_root=runner_root,
+        )
+    elif "failed" in current_ollama["terminal_states"].values():
+        raise Phase7Error(
+            "current Ollama Phase 6 failures require their exact recovery completion"
+        )
     campaign_inventory = build_phase6_campaign_terminal_inventory(
         gate5_rows=gate5["lanes"],
         gate5_manifest=gate5_manifest,
@@ -13080,17 +13096,35 @@ class AnalysisController:
         current_ollama = value.get("current_ollama")
         if not isinstance(current_ollama, dict):
             raise Phase7Error("authorized current Ollama snapshot is invalid")
-        validated_current_ollama = validate_current_ollama_completion(
-            gate5_path=descriptor_file(
-                current_ollama.get("gate5"),
-                label="authorized current Ollama Gate 5 amendment",
-            ),
-            completion_path=descriptor_file(
-                current_ollama.get("completion"),
-                label="authorized current Ollama Phase 6 completion",
-            ),
-            runner_root=runner_root,
+        current_gate5_path = descriptor_file(
+            current_ollama.get("gate5"),
+            label="authorized current Ollama Gate 5 amendment",
         )
+        current_base_completion = descriptor_file(
+            current_ollama.get("completion"),
+            label="authorized current Ollama Phase 6 completion",
+        )
+        current_recovery = current_ollama.get("recovery_completion")
+        if current_recovery is None:
+            validated_current_ollama = validate_current_ollama_completion(
+                gate5_path=current_gate5_path,
+                completion_path=current_base_completion,
+                runner_root=runner_root,
+            )
+            if "failed" in validated_current_ollama["terminal_states"].values():
+                raise Phase7Error(
+                    "authorized current Ollama failures lack recovery evidence"
+                )
+        else:
+            validated_current_ollama = validate_current_ollama_recovery_completion(
+                gate5_path=current_gate5_path,
+                base_completion=current_base_completion,
+                recovery_completion=descriptor_file(
+                    current_recovery,
+                    label="authorized current Ollama recovery completion",
+                ),
+                runner_root=runner_root,
+            )
         if validated_current_ollama != current_ollama:
             raise Phase7Error("authorized current Ollama semantic snapshot changed")
         validated_campaign = build_phase6_campaign_terminal_inventory(
@@ -18317,6 +18351,7 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_parser.add_argument("--phase6-followon-completion", required=True)
     prepare_parser.add_argument("--current-ollama-gate5-amendment", required=True)
     prepare_parser.add_argument("--phase6-current-ollama-completion", required=True)
+    prepare_parser.add_argument("--phase6-current-ollama-recovery-completion")
     execute_parser = subparsers.add_parser("execute")
     execute_parser.add_argument("--launch", required=True)
     subparsers.add_parser("contract-self-test")
