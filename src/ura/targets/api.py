@@ -259,6 +259,30 @@ class GeminiOutputError(TargetAnswerError):
     """A Gemini GenerateContent result is incomplete or lacks provenance."""
 
 
+class OpenAIResponsesIntegrityError(
+    TargetIntegrityError, OpenAIResponsesOutputError,
+):
+    """A Responses result contradicts fixed request or model identity."""
+
+
+class AnthropicFableIntegrityError(
+    TargetIntegrityError, AnthropicFableOutputError,
+):
+    """A Fable result contradicts the admitted model identity."""
+
+
+class AnthropicIntegrityError(TargetIntegrityError, AnthropicOutputError):
+    """An Anthropic result contradicts the admitted model identity."""
+
+
+class OpenAIChatIntegrityError(TargetIntegrityError, OpenAIChatOutputError):
+    """A Chat Completions result contradicts the admitted model identity."""
+
+
+class GeminiIntegrityError(TargetIntegrityError, GeminiOutputError):
+    """A Gemini result contradicts the admitted model identity."""
+
+
 class ProviderTransportError(TargetAnswerError):
     """A hosted request exhausted its explicit, auditable retry policy."""
 
@@ -1013,7 +1037,7 @@ class AnthropicTarget(BaseTarget):
             resp, "model", error=AnthropicOutputError, location="Anthropic response"
         )
         if not _resolved_model_matches(self.model, resolved_model):
-            raise TargetIntegrityError(
+            raise AnthropicIntegrityError(
                 f"Anthropic resolved unexpected model {resolved_model!r}"
             )
         content = _provider_field(resp, "content")
@@ -1421,7 +1445,7 @@ class AnthropicFableTarget(AnthropicTarget):
                 or resolved_model.startswith(f"{self.model}-")
             )
         ):
-            raise TargetIntegrityError(
+            raise AnthropicFableIntegrityError(
                 f"Anthropic Fable resolved unexpected model {resolved_model!r}"
             )
         stop_reason = _provider_field(resp, "stop_reason")
@@ -1712,7 +1736,7 @@ class OpenAITarget(BaseTarget):
             location="OpenAI Chat response",
         )
         if not _resolved_model_matches(self.model, resolved_model):
-            raise TargetIntegrityError(
+            raise OpenAIChatIntegrityError(
                 f"OpenAI Chat resolved unexpected model {resolved_model!r}"
             )
         choices = _provider_field(resp, "choices")
@@ -2172,7 +2196,7 @@ class OpenAIResponsesTarget(OpenAITarget):
         for field, wanted in expected.items():
             actual = _provider_field(reasoning, field)
             if actual != wanted:
-                raise TargetIntegrityError(
+                raise OpenAIResponsesIntegrityError(
                     f"OpenAI Responses effective reasoning.{field} was "
                     f"{actual!r}, expected {wanted!r}"
                 )
@@ -2334,17 +2358,17 @@ class OpenAIResponsesTarget(OpenAITarget):
                 or resolved_model.startswith(f"{self.model}-")
             )
         ):
-            raise TargetIntegrityError(
+            raise OpenAIResponsesIntegrityError(
                 f"OpenAI Responses resolved unexpected model {resolved_model!r}"
             )
         effective_reasoning = self._validated_reasoning(resp)
         if _provider_field(resp, "max_output_tokens") != self.max_output_tokens:
-            raise TargetIntegrityError(
+            raise OpenAIResponsesIntegrityError(
                 "OpenAI Responses effective max_output_tokens disagrees with "
                 "the fixed request"
             )
         if _provider_field(resp, "truncation") != self.truncation:
-            raise TargetIntegrityError(
+            raise OpenAIResponsesIntegrityError(
                 "OpenAI Responses effective truncation disagrees with the "
                 "fixed request"
             )
@@ -2677,7 +2701,7 @@ class GeminiTarget(BaseTarget):
             location="Gemini response",
         )
         if not _resolved_model_matches(self.model, resolved_model):
-            raise TargetIntegrityError(
+            raise GeminiIntegrityError(
                 f"Gemini resolved unexpected model {resolved_model!r}"
             )
         prompt_feedback = _provider_field(resp, "prompt_feedback")

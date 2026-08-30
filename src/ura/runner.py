@@ -62,7 +62,7 @@ from .model_identity import (
     validate_https_endpoint_identity,
 )
 from .strict_json import strict_json_loads
-from .targets.base import BaseTarget, TargetAnswerError
+from .targets.base import BaseTarget, TargetAnswerError, TargetIntegrityError
 from .targets.guarded import GUARDED_BLOCK_TEMPLATE_ID, GUARDED_BLOCK_TEXT
 from .targets.api import (
     _logical_media_root_alias,
@@ -1137,6 +1137,15 @@ class Runner:
                 category, reason = quality_failure
                 answer_error = TargetAnswerError(reason, category=category)
                 failed_response = response
+            except TargetIntegrityError as exc:
+                if self.call_budget is not None:
+                    audit = _safe_call_audit(getattr(exc, "call_audit", None))
+                    observed = audit.get("transport_attempt_count")
+                    if isinstance(observed, int) and not isinstance(observed, bool):
+                        self.call_budget.reconcile_http_attempts(
+                            reserved=http_exposure, observed=observed
+                        )
+                raise ExternalCallFailure("target_call", exc) from exc
             except TargetAnswerError as caught:
                 answer_error = caught
             except Exception as exc:
