@@ -1406,7 +1406,7 @@ def require_exact_core_inventory(
     ]
     if (
         not isinstance(states, dict)
-        or list(states) != expected
+        or set(states) != set(expected)
         or core_conditional != gate_conditional
     ):
         raise SystemExit(f"{label} core inventory differs from Gate 5")
@@ -1431,12 +1431,18 @@ def core_inventory_self_test() -> None:
         gate_conditional=["defense-local"],
         label="self-test",
     )
+    require_exact_core_inventory(
+        dict(reversed(list(conditional_states.items()))),
+        core_conditional=["defense-local"],
+        gate_conditional=["defense-local"],
+        label="reordered-self-test",
+    )
     mutations = (
         (conditional_states, [], ["defense-local"]),
         (success_states, ["defense-local"], ["defense-local"]),
         (conditional_states, ["defense-local"], []),
         (
-            dict(reversed(list(conditional_states.items()))),
+            dict(list(conditional_states.items())[1:]),
             ["defense-local"],
             ["defense-local"],
         ),

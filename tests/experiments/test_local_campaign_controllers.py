@@ -2157,6 +2157,45 @@ def test_phase6_sequence_passes_the_validated_gate5_profile_to_core() -> None:
         assert_profile_contract(reverted)
 
 
+def test_phase6_sequence_core_inventory_is_exact_but_order_independent() -> None:
+    source = _template_source("phase6_sequence.sh.in")
+    block = "def require_exact_core_inventory" + source.split(
+        "def require_exact_core_inventory", 1
+    )[1].split("steps = checked_file", 1)[0]
+    namespace = {
+        "CORE_CANDIDATE_ORDER": [
+            "local-qwen3-vl-text-primary-100",
+            "local-qwen3-vl-image-primary-100",
+            "local-llava-base-text-primary-100",
+            "local-llava-base-image-primary-100",
+            "local-llava-rr-text-full",
+            "local-llava-rr-image-full",
+            "rjudge-qwen3-vl",
+            "rjudge-llava-base",
+            "rjudge-llava-rr",
+            "gptgeochat-qwen3-vl",
+            "gptgeochat-llava-base",
+            "gptgeochat-llava-rr",
+            "crescendo-qwen3-vl",
+            "defense-local",
+        ],
+        "RR_TERMINAL_LANE_SET": {
+            "local-llava-rr-text-full",
+            "local-llava-rr-image-full",
+            "rjudge-llava-rr",
+            "gptgeochat-llava-rr",
+        },
+    }
+    exec(compile(block, "<phase6-core-inventory>", "exec"), namespace)
+
+    reverted = block.replace(
+        "or set(states) != set(expected)", "or list(states) != expected", 1
+    )
+    assert reverted != block
+    with pytest.raises(SystemExit, match="core inventory differs"):
+        exec(compile(reverted, "<phase6-core-inventory-reverted>", "exec"), namespace)
+
+
 def test_phase7_validates_controller_gate5_copies_by_location_and_bytes() -> None:
     source = (
         Path(__file__).parents[2]
