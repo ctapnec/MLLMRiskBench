@@ -440,6 +440,14 @@ and requires the configured minimum correct counts. It produces engineering
 admission evidence, not a safety metric. A failed model is recorded and any
 replacement is admitted as a new exact model condition.
 
+Acquire a multi-model Ollama roster with
+`python -m experiments.local_campaign.ollama_acquire` in a named tmux session.
+The controller retains partial blobs, retries transient transport failures with
+bounded backoff, and closes and retries a connected pull stream after 15 minutes
+without a changed status or completed-byte count. After a process or host
+interruption, use `--resume` with the same absolute output directory and exact
+model order; completed model smokes are not repeated.
+
 `python -m experiments.level1_evidence` performs the bounded lifecycle join.
 The operator supplies the existing eligibility files and result roots; the
 command automatically discovers their request envelopes and bound early

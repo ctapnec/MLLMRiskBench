@@ -485,10 +485,12 @@ failures.
 Acquire that exact multi-model Ollama roster in a named tmux session with
 `python -m experiments.local_campaign.ollama_acquire --out-dir ABSOLUTE_DIR
 MODEL...`. Network and DNS interruptions produce bounded retry events rather
-than terminating the controller; retry delays grow from 30 to at most 300
-seconds under a seven-day deadline, and Ollama reuses its retained partial
-blobs. If the Python process or host itself stops, rerun the identical command
-with `--resume`, the same resolved output directory and the same model order.
+than terminating the controller. A connected pull stream whose status and
+completed-byte count remain unchanged for 15 minutes is also closed and
+retried. Retry delays grow from 30 to at most 300 seconds under a seven-day
+deadline, and Ollama reuses its retained partial blobs. If the Python process or
+host itself stops, rerun the identical command with `--resume`, the same
+resolved output directory and the same model order.
 Completed load smokes are not repeated, while a changed roster or a terminal
 output root is refused.
 The tracked, opt-in `launch_phase6_recovery_and_seven.sh` serializes the exact

@@ -6558,6 +6558,14 @@ def test_runner_retains_typed_empty_completion_without_querying_judges(
     assert judgments[0].raw["policy_evaluation_status"] == "model_nonresponse"
     assert judgments[0].raw["stage_queried"] is False
     assert runner.aggregate(judgments, []) == []
+    assert run_matrix._completed_scored_population_is_admissible(
+        runner.attempts, runner.responses, runner.judgments, []
+    )
+    malformed = judgments[0].model_copy(deep=True)
+    malformed.raw["cascade_confident"] = False
+    assert not run_matrix._completed_scored_population_is_admissible(
+        runner.attempts, runner.responses, [malformed], []
+    )
     trail_path = tmp_path / "model-nonresponse.trails.jsonl"
     runner.save_trails(trail_path)
     rows = [

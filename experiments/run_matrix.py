@@ -2364,6 +2364,52 @@ def _validate_budget_recovery_high_water(
             )
 
 
+def _completed_scored_population_is_admissible(
+    attempts: list[Attempt],
+    responses: list[Response],
+    judgments: list[Judgment],
+    results: list[EvalResult],
+) -> bool:
+    """Admit scored cells, including an exact all-nonresponse population."""
+
+    if not attempts or not responses or not judgments:
+        return False
+    if results:
+        return True
+    attempt_ids = [row.id for row in attempts]
+    response_by_attempt = {row.attempt_id: row for row in responses}
+    if (
+        len(response_by_attempt) != len(responses)
+        or Counter(attempt_ids) != Counter(response_by_attempt.keys())
+        or Counter(attempt_ids) != Counter(row.attempt_id for row in judgments)
+    ):
+        return False
+    for judgment in judgments:
+        raw = judgment.raw
+        response = response_by_attempt[judgment.attempt_id]
+        confidence = raw.get("confidence")
+        if not (
+            judgment.label == "not_applicable"
+            and judgment.score == 0.0
+            and raw.get("policy_evaluable_turn") is True
+            and raw.get("common_metrics_eligible") is True
+            and raw.get("stage_queried") is False
+            and raw.get("policy_evaluation_status") == "model_nonresponse"
+            and isinstance(confidence, (int, float))
+            and not isinstance(confidence, bool)
+            and float(confidence) == 1.0
+            and raw.get("parsed") is None
+            and raw.get("cascade_role") == "authoritative"
+            and raw.get("cascade_confident") is True
+            and raw.get("metric_authority") is None
+            and raw.get("required_metric") is None
+            and response.output_turns == []
+            and response.raw.get("empty_completion_observed") is True
+        ):
+            return False
+    return True
+
+
 def _validate_completion_marker(
     paths: dict[str, Path],
     planned: RunManifest,
@@ -2460,7 +2506,9 @@ def _validate_completion_marker(
             raise ValueError(f"completion marker {field} mismatch")
         if field != "n_results" and manifest.config.get(field) != count:
             raise ValueError(f"stored manifest {field} mismatch")
-    if not attempts or not responses or not judgments or not results:
+    if not _completed_scored_population_is_admissible(
+        attempts, responses, judgments, results
+    ):
         raise ValueError("completed scored cell has an empty core/result artifact")
     attempt_ids = [row.id for row in attempts]
     response_ids = [row.attempt_id for row in responses]
