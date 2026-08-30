@@ -587,6 +587,16 @@ seals, fixed configuration, durable budgets and operator wall-time limits remain
 fail-closed. Neither a length-capped answer nor a failed output authorizes altered
 stops, generation caps, decoding configuration or checkpoint identity.
 
+An older Runner may already have stopped a lane before this policy was
+available. `experiments.local_campaign.resume_current_ollama_phase6` handles
+that historical boundary without redefining the experiment: it waits for the
+base Phase 6 completion, selects only lanes retained as failed, and relaunches
+each lane with the exact stored argv, run IDs, call-budget ledger and original
+checkpoint. Sealed cells are call-free and checkpointed attempts are restored;
+the controller counts the judgment checkpoint once and does not also count its
+mirrored response checkpoint. It writes a separate source-bound recovery
+completion and never edits the immutable base completion.
+
 Only the four affected GraySwan identities are re-attested and canaried in their
 targeted Gate 5 amendment. The historical GraySwan rows keep their immutable
 `-full` terminal identities, but the amendment's current measured identities are
@@ -604,9 +614,10 @@ the 32B DeepSeek condition from allocating its full 131,072-token native context
 and spilling nearly half of a short-prompt canary to CPU while the scoring guard
 is resident; the second is an output cap, not a reason to discard observed
 length-capped text. A different context or output cap is a separate projected
-cohort. Malformed protocol, transport,
-identity, provenance, residency, timeout and backend failures remain hard
-failures. Earlier attempts remain diagnostic observations.
+cohort. Identity, provenance, residency, seal, budget and wall-time failures
+remain hard failures. Exhausted answer-level malformed output or transport
+failures use the typed missing-response policy above. Earlier attempts remain
+diagnostic observations.
 
 Gate 5: projections and canaries retained under `runs/thesis/preflight` and
 `runs/thesis/diagnostics`; the four-row GraySwan RR current-policy amendment and

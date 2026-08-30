@@ -344,11 +344,13 @@ Gemma 4 12B Instruct Q4_K_M, Ministral 3 14B Instruct 2512 Q4_K_M,
 DeepSeek-R1 Distill Qwen 32B Q4_K_M, and GPT-OSS 20B in its native MXFP4
 representation, each bound to its acquired digest. Gemma 4 and
 Ministral 3 admit text and image lanes; the other two admit text lanes only.
-The current Runner 2.24 contract retains nonempty length-capped text with its
-terminal reason and retains a successful empty vLLM or Ollama completion as
-typed `model_nonresponse`. Vague, repetitive or nonsensical text is ordinary
-observed output and reaches the selected evaluator; a typed nonresponse bypasses
-the judge and remains visible in response and decision coverage.
+The current Runner 2.25 contract retains nonempty length-capped text with its
+terminal reason and makes one additional answer attempt by default for an
+empty, structurally malformed, binary/control-like, symbol-only or transport-
+failed answer. Exhaustion becomes typed model-stability missing-response
+evidence, bypasses the policy judge and does not stop the assigned population.
+Vague, repetitive or semantically poor natural language remains ordinary
+observed output for the selected evaluator.
 
 A targeted amendment re-attests and canaries the four GraySwan identities. The
 older GraySwan `-full` terminal identities are not rewritten; the current
@@ -358,8 +360,11 @@ four text and R-Judge targets, adds static-image and GPTGeoChat lanes for the tw
 multimodal targets, and records the two text-only GPTGeoChat pairs as typed
 unavailable. Its exact inventory counts are derived from its retained
 projections before authorization rather than modifying the sealed historical
-profile. Malformed protocol, transport, identity, provenance, residency,
-timeout and backend failures remain hard failures.
+profile. Identity, provenance, residency, seal, budget and wall-time failures
+remain hard failures. An older partial current-Ollama lane is resumed by
+`resume_current_ollama_phase6` with its exact stored argv, sealed cells and
+checkpoint; the separate recovery completion binds the controller source and
+does not rewrite the base Phase 6 completion.
 
 The core cohort records `bridge-nanogcg`, `bridge-ideator`, and `t3mp3st` as
 `unavailable` only because their prepared artifacts are assigned to a separate
