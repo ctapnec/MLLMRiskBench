@@ -2404,7 +2404,8 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
                         missing / completed,
                     ))
             stability_chart = (
-                "<h4>Model stability - failed-output rate</h4>"
+                "<h4 data-chart='model-stability-failed-output'>"
+                "Model stability - failed-output rate</h4>"
                 + self._bar_chart(stability_bars)
                 + "<p class='note'>Failed or missing model outputs are retained "
                 "as coverage failures and excluded from security-rate denominators.</p>"
