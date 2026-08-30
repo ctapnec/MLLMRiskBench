@@ -651,10 +651,12 @@ zero additional model calls.
 For a row-local output failure produced by an older Runner, recovery binds the
 original checkpoint inventory, selects only attempt identities without a durable
 response/judgment record, and publishes an explicit merged coverage inventory.
-It never reruns or relabels the already paid completed rows. The new request,
-projection and caps bind `--target-answer-retries 1`; recovered and original
-revision strata remain explicit until the read-only analysis validates the
-merged population.
+It never reruns or relabels the already paid completed rows, and same-revision
+recovery retains the original argv rather than claiming the later answer-retry
+policy. A fresh Runner 2.25 cohort instead binds
+`--target-answer-retries 1` in its request, projection and caps. Original,
+recovered and later-revision strata remain explicit until read-only analysis
+validates each population.
 
 ## 7. Phase 6: bounded measured local lanes (sized by projections and canaries)
 
