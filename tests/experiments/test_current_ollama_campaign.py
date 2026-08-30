@@ -751,6 +751,55 @@ def test_current_ollama_recovery_is_required_and_overlaid_for_phase7(
         )
 
 
+def test_current_ollama_recovery_metric_evidence_is_lane_local(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    roots = {
+        lane: tmp_path / lane
+        for lane in ("ollama-fixture-a", "ollama-fixture-b")
+    }
+    observed: list[tuple[str, Path]] = []
+
+    def artifacts(*, lane: str, result_root: Path) -> tuple[
+        dict[str, str], dict[str, str], dict[str, str], list[dict[str, str]]
+    ]:
+        observed.append((lane, result_root))
+        return (
+            {"path": f"/{lane}.grid.json"},
+            {"path": f"/{lane}.request-envelope.json"},
+            {"path": f"/{lane}.eligibility.json"},
+            [{"path": f"/{lane}.complete.json"}],
+        )
+
+    monkeypatch.setattr(phase6_recovery, "_metric_artifacts", artifacts)
+    evidence = {
+        lane: phase6_recovery._recovered_metric_evidence(
+            lane=lane,
+            result_root=root,
+            base_failure={"lane": lane},
+            recovery_descriptor={"sha256": lane},
+            level1={"path": f"/{lane}.level1.json"},
+        )
+        for lane, root in roots.items()
+    }
+
+    assert observed == list(roots.items())
+    for lane in roots:
+        assert evidence[lane]["grid"]["path"] == f"/{lane}.grid.json"
+        assert evidence[lane]["request_envelope"]["path"] == (
+            f"/{lane}.request-envelope.json"
+        )
+        assert evidence[lane]["base_failure"] == {"lane": lane}
+
+    source = Path(phase6_recovery.__file__).read_text(encoding="utf-8")
+    overlay = source.split(
+        "for lane, row in recovered_rows.items():", 1
+    )[1].split("metric_lane_order =", 1)[0]
+    assert "evidence = _recovered_metric_evidence(" in overlay
+    assert "lane=lane" in overlay
+    assert 'Path(row["result_root"])' in overlay
+
+
 def test_current_ollama_phase6_retains_typed_pre_runner_failure(tmp_path: Path) -> None:
     lane = "ollama-fixture-text-primary-50"
     result_root = tmp_path / "runs" / "thesis" / "runner" / lane

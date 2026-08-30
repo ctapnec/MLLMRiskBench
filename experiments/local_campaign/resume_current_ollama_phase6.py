@@ -356,6 +356,28 @@ def _metric_artifacts(
     )
 
 
+def _recovered_metric_evidence(
+    *,
+    lane: str,
+    result_root: Path,
+    base_failure: Mapping[str, Any],
+    recovery_descriptor: Mapping[str, Any],
+    level1: Mapping[str, Any],
+) -> dict[str, Any]:
+    grid, envelope, eligibility, markers = _metric_artifacts(
+        lane=lane, result_root=result_root
+    )
+    return {
+        "base_failure": base_failure,
+        "recovery_completion": recovery_descriptor,
+        "grid": grid,
+        "request_envelope": envelope,
+        "eligibility_plan": eligibility,
+        "completion_markers": markers,
+        "level1": level1,
+    }
+
+
 def validate_recovery_completion(
     *,
     gate5_path: Path,
@@ -511,9 +533,6 @@ def validate_recovery_completion(
             missing,
         ):
             raise ValueError(f"{lane}: recovered Level 1 counts changed")
-        grid, envelope, eligibility, markers = _metric_artifacts(
-            lane=lane, result_root=result_root
-        )
         recovered_rows[lane] = dict(raw)
 
     result = copy.deepcopy(base)
@@ -525,15 +544,15 @@ def validate_recovery_completion(
     result["recovery_id"] = recovery_id
     for lane, row in recovered_rows.items():
         base_failure = result["lifecycle"][lane]["evidence"]
-        evidence = {
-            "base_failure": base_failure,
-            "recovery_completion": recovery_descriptor,
-            "grid": grid,
-            "request_envelope": envelope,
-            "eligibility_plan": eligibility,
-            "completion_markers": markers,
-            "level1": row["level1"],
-        }
+        evidence = _recovered_metric_evidence(
+            lane=lane,
+            result_root=_canonical_dir(
+                Path(row["result_root"]), label=f"{lane} recovered result root"
+            ),
+            base_failure=base_failure,
+            recovery_descriptor=recovery_descriptor,
+            level1=row["level1"],
+        )
         result["terminal_states"][lane] = "measured_complete"
         result["lifecycle"][lane] = {
             "state": "measured_complete",
