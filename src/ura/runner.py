@@ -947,6 +947,9 @@ class Runner:
                     "model_stability_error_type": response.raw.get(
                         "model_stability_error_type"
                     ),
+                    "model_stability_retry_count": response.raw.get(
+                        "model_stability_retry_count"
+                    ),
                 })
             if required_metric is not None:
                 raw["required_metric"] = required_metric

@@ -6761,7 +6761,7 @@ def test_empty_source_metric_response_is_retained_as_model_stability_failure(
     assert final.raw["required_metric"] == required_metric
     assert final.raw["model_stability_status"] == "failed_output"
     assert final.raw["model_stability_category"] == "empty_output"
-    assert "source_evaluation" not in final.raw
+    assert final.raw["source_evaluation"] is None
     trail_path = tmp_path / "empty-source-prediction.trails.jsonl"
     runner.save_trails(trail_path)
     rows = [
