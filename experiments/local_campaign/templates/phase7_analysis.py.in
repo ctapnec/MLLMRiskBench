@@ -39,6 +39,10 @@ from experiments.local_campaign.current_ollama_phase6 import (
 from experiments.local_campaign.resume_current_ollama_phase6 import (
     validate_recovery_completion as validate_current_ollama_recovery_completion,
 )
+from experiments.local_campaign.vllm_stability_phase6 import (
+    UNIT_LAYOUT as VLLM_STABILITY_UNIT_LAYOUT,
+    validate_completion as validate_vllm_stability_completion,
+)
 from experiments.local_campaign.ollama_static_terminal import (
     OLLAMA_STATIC_TERMINAL_DISPOSITION,
     OLLAMA_STATIC_TERMINAL_LANES,
@@ -51,17 +55,17 @@ from experiments.local_campaign.ollama_static_terminal import (
 from ura.eligibility import validate_eligibility_plan
 
 
-INPUT_SCHEMA = "ura-phase7-analysis-inputs/1"
+INPUT_SCHEMA = "ura-phase7-analysis-inputs/2"
 LAUNCH_SCHEMA = "ura-phase7-analysis-launch/1"
-COMPLETION_SCHEMA = "ura-phase7-analysis-completion/1"
+COMPLETION_SCHEMA = "ura-phase7-analysis-completion/2"
 STATUS_SCHEMA = "ura-phase7-analysis-status/1"
 RUNNER_VIEW_SCHEMA = "ura-phase7-runner-input-view/3"
 LIFECYCLE_RUNNER_VIEW_SCHEMA = "ura-phase7-lifecycle-runner-input-view/2"
 FOLLOWON_AMENDMENT_SCHEMA = "ura-followon-gate5-amendment/2"
 FOLLOWON_COMPLETION_SCHEMA = "ura-followon-phase6-completion/2"
 FOLLOWON_VIEW_SCHEMA = "ura-phase7-followon-input-view/1"
-HUMAN_AUDIT_VIEW_SCHEMA = "ura-phase7-human-audit-sampling-view/3"
-PHASE6_CAMPAIGN_INVENTORY_SCHEMA = "ura-phase6-campaign-terminal-inventory/1"
+HUMAN_AUDIT_VIEW_SCHEMA = "ura-phase7-human-audit-sampling-view/4"
+PHASE6_CAMPAIGN_INVENTORY_SCHEMA = "ura-phase6-campaign-terminal-inventory/2"
 SEVEN_AMENDMENT_SCHEMA = "ura-gate5-seven-output-policy-amendment/1"
 SEVEN_COMPLETION_SCHEMA = "ura-seven-output-policy-amendment-completion/1"
 SEVEN_AMENDMENT_LANES = (
@@ -338,6 +342,7 @@ CAMPAIGN_COHORTS = (
     "output_policy_amendment",
     "followon_prepared",
     "current_ollama",
+    "vllm_stability",
     "native",
 )
 CAMPAIGN_COHORT_COUNTS = {
@@ -348,8 +353,10 @@ CAMPAIGN_COHORT_COUNTS = {
         len(CURRENT_OLLAMA_RUNNABLE_LANES)
         + len(CURRENT_OLLAMA_TYPED_TERMINAL_LANES)
     ),
+    "vllm_stability": len(VLLM_STABILITY_UNIT_LAYOUT),
     "native": 9,
 }
+CAMPAIGN_TOTAL_ROWS = sum(CAMPAIGN_COHORT_COUNTS.values())
 CAMPAIGN_TERMINAL_STATES = {
     "canonical": {
         "measured_complete", "partial", "failed", "unavailable", "structural_na",
@@ -358,6 +365,7 @@ CAMPAIGN_TERMINAL_STATES = {
     "output_policy_amendment": SEVEN_TERMINAL_STATES,
     "followon_prepared": {"measured_complete", "partial", "failed"},
     "current_ollama": {"measured_complete", "failed", "unavailable"},
+    "vllm_stability": {"measured_complete"},
     "native": {"run", "failed", "unavailable", "not-selected"},
 }
 FOLLOWON_LANES = (
@@ -10535,7 +10543,7 @@ def validate_phase6_recovery_transitions(
 
 
 def validate_phase6_campaign_terminal_inventory(value: object) -> dict[str, Any]:
-    """Validate the thin, namespaced 76-row campaign terminal union."""
+    """Validate the thin, namespaced campaign terminal union."""
 
     fields = {
         "schema", "status", "cohort_order", "cohort_counts", "row_order",
@@ -10553,9 +10561,9 @@ def validate_phase6_campaign_terminal_inventory(value: object) -> dict[str, Any]
         or value.get("cohort_order") != list(CAMPAIGN_COHORTS)
         or value.get("cohort_counts") != CAMPAIGN_COHORT_COUNTS
         or not isinstance(rows, list)
-        or len(rows) != 76
+        or len(rows) != CAMPAIGN_TOTAL_ROWS
         or not isinstance(row_order, list)
-        or len(row_order) != 76
+        or len(row_order) != CAMPAIGN_TOTAL_ROWS
         or value.get("all_rows_terminal") is not True
         or value.get("cross_revision_pooling_permitted") is not False
         or value.get("cross_source_pooling_permitted") is not False
@@ -10615,7 +10623,7 @@ def validate_phase6_campaign_terminal_inventory(value: object) -> dict[str, Any]
         if expected_failure:
             failures.append(key)
     if (
-        len(set(keys)) != 76
+        len(set(keys)) != CAMPAIGN_TOTAL_ROWS
         or row_order != keys
         or any(len(cohort_rows[cohort]) != CAMPAIGN_COHORT_COUNTS[cohort] for cohort in CAMPAIGN_COHORTS)
         or value.get("failure_rows") != failures
@@ -10638,6 +10646,7 @@ def build_phase6_campaign_terminal_inventory(
     seven: Mapping[str, Any],
     followon: Mapping[str, Any],
     current_ollama: Mapping[str, Any],
+    vllm_stability: Mapping[str, Any],
 ) -> dict[str, Any]:
     validate_phase6_recovery_transitions(recoveries=recoveries, runner=runner)
     canonical_revision = project_and_source["project_revision"]["artifact"]["sha256"]
@@ -10823,6 +10832,16 @@ def build_phase6_campaign_terminal_inventory(
                 "gate5": current_ollama["gate5"],
                 "completion": current_ollama["completion"],
                 "lifecycle": record["evidence"],
+            },
+        )
+    for lane in vllm_stability["unit_order"]:
+        append(
+            "vllm_stability", lane, "measured_complete",
+            vllm_stability["project_revision_receipt_sha256"],
+            vllm_stability["source_conformance_sha256"],
+            {
+                "completion": vllm_stability["completion"],
+                **vllm_stability["metric_evidence"][lane],
             },
         )
     _native_completion_path, native_completion = descriptor_object(
@@ -11942,7 +11961,7 @@ def build_input_manifest(args: argparse.Namespace) -> dict[str, Any]:
     )
     if not args.seven_output_policy_amendment or not args.phase6_seven_output_policy_completion:
         raise Phase7Error(
-            "the 76-row campaign inventory requires the paired GraySwan RR amendment and completion"
+            "the campaign inventory requires the paired GraySwan RR amendment and completion"
         )
     seven = validate_seven_output_policy_inventory(
         amendment_path=Path(args.seven_output_policy_amendment),
@@ -11958,7 +11977,7 @@ def build_input_manifest(args: argparse.Namespace) -> dict[str, Any]:
         )
     if not args.followon_gate5_amendment:
         raise Phase7Error(
-            "the 76-row campaign inventory requires the paired follow-on amendment and completion"
+            "the campaign inventory requires the paired follow-on amendment and completion"
         )
     followon = validate_followon_inventory(
         amendment_path=Path(args.followon_gate5_amendment),
@@ -11968,7 +11987,7 @@ def build_input_manifest(args: argparse.Namespace) -> dict[str, Any]:
     )
     if not args.current_ollama_gate5_amendment or not args.phase6_current_ollama_completion:
         raise Phase7Error(
-            "the 76-row campaign inventory requires the current Ollama Gate 5 amendment and Phase 6 completion"
+            "the campaign inventory requires the current Ollama Gate 5 amendment and Phase 6 completion"
         )
     current_ollama = validate_current_ollama_completion(
         gate5_path=Path(args.current_ollama_gate5_amendment),
@@ -11988,6 +12007,10 @@ def build_input_manifest(args: argparse.Namespace) -> dict[str, Any]:
         raise Phase7Error(
             "current Ollama Phase 6 failures require their exact recovery completion"
         )
+    vllm_stability = validate_vllm_stability_completion(
+        Path(args.phase6_vllm_stability_completion),
+        runner_root=runner_root,
+    )
     campaign_inventory = build_phase6_campaign_terminal_inventory(
         gate5_rows=gate5["lanes"],
         gate5_manifest=gate5_manifest,
@@ -11998,6 +12021,7 @@ def build_input_manifest(args: argparse.Namespace) -> dict[str, Any]:
         seven=seven,
         followon=followon,
         current_ollama=current_ollama,
+        vllm_stability=vllm_stability,
     )
 
     gate5_terminal_rows = {
@@ -12050,6 +12074,7 @@ def build_input_manifest(args: argparse.Namespace) -> dict[str, Any]:
         "seven_output_policy_amendment": seven,
         "followon": followon,
         "current_ollama": current_ollama,
+        "vllm_stability": vllm_stability,
         "campaign_terminal_inventory": campaign_inventory,
         "analysis_contract": {
             "level1_over_every_final_eligibility_plan": True,
@@ -12064,6 +12089,7 @@ def build_input_manifest(args: argparse.Namespace) -> dict[str, Any]:
             "evaluator_modes_are_compatibility_keys": True,
             "missingness_and_decision_coverage_required": True,
             "current_ollama_missing_responses_retained": True,
+            "vllm_stability_missing_responses_retained": True,
             "source_parser_classification_kept_out_of_common_metrics": True,
             "failed_phase6_lanes_excluded_from_metric_and_level2_views": True,
             "missing_prerequisites_emit_typed_unavailable_artifacts": True,
@@ -12218,6 +12244,7 @@ class AnalysisController:
             "seven_output_policy_amendment",
             "followon",
             "current_ollama",
+            "vllm_stability",
             "campaign_terminal_inventory",
             "analysis_contract",
             "bound_artifacts",
@@ -12247,6 +12274,7 @@ class AnalysisController:
             "evaluator_modes_are_compatibility_keys",
             "missingness_and_decision_coverage_required",
             "current_ollama_missing_responses_retained",
+            "vllm_stability_missing_responses_retained",
             "source_parser_classification_kept_out_of_common_metrics",
             "failed_phase6_lanes_excluded_from_metric_and_level2_views",
             "missing_prerequisites_emit_typed_unavailable_artifacts",
@@ -12270,6 +12298,7 @@ class AnalysisController:
                     "evaluator_modes_are_compatibility_keys",
                     "missingness_and_decision_coverage_required",
                     "current_ollama_missing_responses_retained",
+                    "vllm_stability_missing_responses_retained",
                     "source_parser_classification_kept_out_of_common_metrics",
                     "failed_phase6_lanes_excluded_from_metric_and_level2_views",
                     "missing_prerequisites_emit_typed_unavailable_artifacts",
@@ -13127,6 +13156,18 @@ class AnalysisController:
             )
         if validated_current_ollama != current_ollama:
             raise Phase7Error("authorized current Ollama semantic snapshot changed")
+        vllm_stability = value.get("vllm_stability")
+        if not isinstance(vllm_stability, dict):
+            raise Phase7Error("authorized vLLM stability snapshot is invalid")
+        validated_vllm_stability = validate_vllm_stability_completion(
+            descriptor_file(
+                vllm_stability.get("completion"),
+                label="authorized vLLM stability completion",
+            ),
+            runner_root=runner_root,
+        )
+        if validated_vllm_stability != vllm_stability:
+            raise Phase7Error("authorized vLLM stability semantic snapshot changed")
         validated_campaign = build_phase6_campaign_terminal_inventory(
             gate5_rows=gate5_value["lanes"],
             gate5_manifest=gate5_manifest_path,
@@ -13137,9 +13178,10 @@ class AnalysisController:
             seven=validated_seven,
             followon=validated_followon,
             current_ollama=validated_current_ollama,
+            vllm_stability=validated_vllm_stability,
         )
         if validated_campaign != value.get("campaign_terminal_inventory"):
-            raise Phase7Error("authorized 76-row campaign terminal inventory changed")
+            raise Phase7Error("authorized campaign terminal inventory changed")
 
     @property
     def python(self) -> Path:
@@ -13302,6 +13344,13 @@ class AnalysisController:
                 else None
             )
             add(f"current-ollama-{lane}", root, record["state"])
+        vllm_stability = self.inputs["vllm_stability"]
+        for lane in vllm_stability["unit_order"]:
+            root = self._representable_lifecycle_root(
+                vllm_stability["metric_roots"][lane],
+                label=f"vLLM stability lifecycle {lane}",
+            )
+            add(f"vllm-stability-{lane}", root, "measured_complete")
         return roots, states, registry_only
 
     def _lifecycle_root_stratum(self, raw_root: str, *, label: str) -> tuple[str, str]:
@@ -13446,10 +13495,18 @@ class AnalysisController:
             raise Phase7Error("current Ollama metric lane order changed")
         return list(lanes)
 
+    def _vllm_stability_metric_lanes(self) -> list[str]:
+        lanes = self.inputs["vllm_stability"].get("metric_lane_order")
+        expected = [row[0] for row in VLLM_STABILITY_UNIT_LAYOUT]
+        if lanes != expected:
+            raise Phase7Error("vLLM stability metric lane order changed")
+        return list(lanes)
+
     def _all_metric_lanes(self) -> list[str]:
         lanes = [
             *self.inputs["runner"]["metric_lane_order"],
             *self._current_ollama_metric_lanes(),
+            *self._vllm_stability_metric_lanes(),
         ]
         if len(set(lanes)) != len(lanes):
             raise Phase7Error("combined metric lane order contains a duplicate")
@@ -13459,18 +13516,26 @@ class AnalysisController:
         return [
             *self.inputs["runner"]["metric_eligibility_plans"],
             *self.inputs["current_ollama"]["metric_eligibility_plans"],
+            *self.inputs["vllm_stability"]["metric_eligibility_plans"],
         ]
 
     def _all_metric_completion_markers(self) -> list[dict[str, Any]]:
         return [
             *self.inputs["runner"]["metric_completion_markers"],
             *self.inputs["current_ollama"]["metric_completion_markers"],
+            *self.inputs["vllm_stability"]["metric_completion_markers"],
         ]
 
     def _current_ollama_sampling_root(self, lane: str) -> Path:
         return checked_dir(
             self.inputs["current_ollama"]["metric_roots"].get(lane),
             label=f"{lane} current Ollama sampling root",
+        )
+
+    def _vllm_stability_sampling_root(self, lane: str) -> Path:
+        return checked_dir(
+            self.inputs["vllm_stability"]["metric_roots"].get(lane),
+            label=f"{lane} vLLM stability sampling root",
         )
 
     def _followon_metric_lanes(self) -> list[str]:
@@ -13524,6 +13589,7 @@ class AnalysisController:
             *self._seven_metric_lanes(),
             *self._followon_metric_lanes(),
             *self._current_ollama_metric_lanes(),
+            *self._vllm_stability_metric_lanes(),
         ]
         if len(set(lanes)) != len(lanes):
             raise Phase7Error("human-audit Runner view contains a duplicate lane")
@@ -13569,6 +13635,12 @@ class AnalysisController:
                 if lane in by_lane:
                     raise Phase7Error("current Ollama sampling lane is duplicated")
                 by_lane[lane] = revision
+        vllm_stability = self.inputs["vllm_stability"]
+        for revision, lanes in vllm_stability["revision_strata"].items():
+            for lane in lanes:
+                if lane in by_lane:
+                    raise Phase7Error("vLLM stability sampling lane is duplicated")
+                by_lane[lane] = revision
         lane_order = self._human_audit_lane_order()
         if set(by_lane) != set(lane_order):
             raise Phase7Error("human-audit sampling revision inventory is incomplete")
@@ -13601,6 +13673,9 @@ class AnalysisController:
         current_ollama = self.inputs["current_ollama"]
         for lane in self._current_ollama_metric_lanes():
             by_lane[lane] = current_ollama["source_conformance_sha256"]
+        vllm_stability = self.inputs["vllm_stability"]
+        for lane in self._vllm_stability_metric_lanes():
+            by_lane[lane] = vllm_stability["source_conformance_sha256"]
         lane_order = self._human_audit_lane_order()
         if set(by_lane) != set(lane_order):
             raise Phase7Error("human-audit sampling source inventory is incomplete")
@@ -13621,7 +13696,8 @@ class AnalysisController:
             "view_root", "included_core_lanes", "included_amendment_lanes",
             "amendment_result_roots", "included_followon_lanes",
             "followon_result_roots", "included_current_ollama_lanes",
-            "current_ollama_result_roots", "regular_files_copied", "logical_bytes",
+            "current_ollama_result_roots", "included_vllm_stability_lanes",
+            "vllm_stability_result_roots", "regular_files_copied", "logical_bytes",
             "source_files_modified", "permitted_view_outputs", "file_inventory",
             "file_inventory_sha256",
         }
@@ -13652,6 +13728,13 @@ class AnalysisController:
             != {
                 lane: self.inputs["current_ollama"]["metric_roots"][lane]
                 for lane in self._current_ollama_metric_lanes()
+            }
+            or receipt.get("included_vllm_stability_lanes")
+            != self._vllm_stability_metric_lanes()
+            or receipt.get("vllm_stability_result_roots")
+            != {
+                lane: self.inputs["vllm_stability"]["metric_roots"][lane]
+                for lane in self._vllm_stability_metric_lanes()
             }
             or receipt.get("source_files_modified") is not False
             or receipt.get("permitted_view_outputs") != []
@@ -13758,6 +13841,16 @@ class AnalysisController:
                 if destination in sources:
                     raise Phase7Error("current Ollama sampling source path collides")
                 sources[destination] = (path, self.runner_root)
+        for lane in self._vllm_stability_metric_lanes():
+            root = self._vllm_stability_sampling_root(lane)
+            prefix = root.relative_to(self.runner_root).as_posix()
+            for relative, path in _regular_tree_files(
+                root, label=f"{lane} exact successful vLLM stability root"
+            ).items():
+                destination = f"{prefix}/{relative}"
+                if destination in sources:
+                    raise Phase7Error("vLLM stability sampling source path collides")
+                sources[destination] = (path, self.runner_root)
         return {relative: sources[relative] for relative in sorted(sources)}
 
     def human_audit_runner_input_view(self) -> Path:
@@ -13808,6 +13901,11 @@ class AnalysisController:
             "current_ollama_result_roots": {
                 lane: self.inputs["current_ollama"]["metric_roots"][lane]
                 for lane in self._current_ollama_metric_lanes()
+            },
+            "included_vllm_stability_lanes": self._vllm_stability_metric_lanes(),
+            "vllm_stability_result_roots": {
+                lane: self.inputs["vllm_stability"]["metric_roots"][lane]
+                for lane in self._vllm_stability_metric_lanes()
             },
             "regular_files_copied": len(file_inventory),
             "logical_bytes": sum(
@@ -14440,6 +14538,15 @@ class AnalysisController:
                     self._current_ollama_sampling_root(lane),
                     revision,
                     current_ollama["source_conformance_sha256"],
+                )
+        vllm_stability = self.inputs["vllm_stability"]
+        for revision, lanes in vllm_stability["revision_strata"].items():
+            for lane in lanes:
+                add(
+                    lane,
+                    self._vllm_stability_sampling_root(lane),
+                    revision,
+                    vllm_stability["source_conformance_sha256"],
                 )
         return grouped
 
@@ -15378,6 +15485,57 @@ class AnalysisController:
                 outputs=(output,),
             )
 
+    def record_vllm_stability_outcomes(self) -> None:
+        """Retain the fresh Runner 2.25 continuation as one separate stratum."""
+
+        current = self.inputs["vllm_stability"]
+        lifecycle_output = self.analysis / "vllm-stability" / "lifecycle.json"
+        lifecycle_value = {
+            "schema": "ura-phase7-vllm-stability-input-view/1",
+            "status": "validated",
+            "unit_order": current["unit_order"],
+            "runner_code_version": current["runner_code_version"],
+            "output_policy_stratum": current["output_policy_stratum"],
+            "target_execution": current["target_execution"],
+            "missing_responses_retained": True,
+            "historical_completed_lanes_repeated": False,
+            "cross_output_policy_pooling_permitted": False,
+        }
+        write_new(lifecycle_output, canonical(lifecycle_value))
+        self.status(
+            "vllm-stability-lifecycle",
+            "complete",
+            detail="fresh vLLM retry-policy continuation retained separately",
+            outputs=(lifecycle_output,),
+        )
+        for revision, lanes in current["revision_strata"].items():
+            output = (
+                self.analysis / "vllm-stability" / "metric-inputs" / f"{revision}.json"
+            )
+            value = {
+                "schema": "ura-phase7-vllm-stability-metric-inputs/1",
+                "status": "validated",
+                "project_revision_sha256": revision,
+                "source_conformance_sha256": current["source_conformance_sha256"],
+                "lane_order": lanes,
+                "result_roots": {
+                    lane: current["metric_roots"][lane] for lane in lanes
+                },
+                "metric_evidence": {
+                    lane: current["metric_evidence"][lane] for lane in lanes
+                },
+                "cross_output_policy_pooling_permitted": False,
+                "cross_revision_pooling_permitted": False,
+                "cross_source_pooling_permitted": False,
+            }
+            write_new(output, canonical(value))
+            self.status(
+                f"vllm-stability-metric-inputs-{revision[:12]}",
+                "complete",
+                detail="vLLM continuation roots retained in one policy/revision stratum",
+                outputs=(output,),
+            )
+
     def record_campaign_terminal_inventory(self) -> None:
         output = self.analysis / "campaign-terminal-inventory.json"
         value = validate_phase6_campaign_terminal_inventory(
@@ -15387,7 +15545,7 @@ class AnalysisController:
         self.status(
             "campaign-terminal-inventory",
             value["status"],
-            detail="validated namespaced terminal inventory across five revision-aware cohorts",
+            detail="validated namespaced terminal inventory across revision-aware cohorts",
             outputs=(output,),
             limitations=(
                 {"failure_rows": value["failure_rows"]}
@@ -15843,6 +16001,14 @@ class AnalysisController:
                 for revision in current["revision_strata"]
             },
         }
+        vllm_stability = self.inputs["vllm_stability"]
+        vllm_stability_statuses = {
+            "vllm-stability-lifecycle",
+            *{
+                f"vllm-stability-metric-inputs-{revision[:12]}"
+                for revision in vllm_stability["revision_strata"]
+            },
+        }
         stratum_statuses = {
             f"metric-stratum-{revision[:12]}-{source[:12]}"
             for revision, source in self._metric_stratum_roots()
@@ -15867,13 +16033,16 @@ class AnalysisController:
             *followon_statuses,
             *seven_statuses,
             *current_statuses,
+            *vllm_stability_statuses,
             *stratum_statuses,
         }
         expected_count = 36 + len(
             self.inputs["gate5"]["terminal_inventory"]
         ) + len(failed_runner_lanes) + len(followon_statuses) + len(
             seven_statuses
-        ) + len(current_statuses) + len(stratum_statuses)
+        ) + len(current_statuses) + len(vllm_stability_statuses) + len(
+            stratum_statuses
+        )
         if set(self.statuses) != expected or len(expected) != expected_count:
             raise Phase7Error(
                 "Phase 7 completion inventory differs: "
@@ -16010,6 +16179,15 @@ class AnalysisController:
             "revision_strata"
         ]
         completion["current_ollama_target_execution"] = current["target_execution"]
+        completion["vllm_stability_metric_revision_strata"] = vllm_stability[
+            "revision_strata"
+        ]
+        completion["vllm_stability_terminal_states"] = vllm_stability[
+            "terminal_states"
+        ]
+        completion["vllm_stability_target_execution"] = vllm_stability[
+            "target_execution"
+        ]
         write_new(self.completion_path, canonical(completion))
         self.event(
             "controller", "final-inventory", "complete", f"{len(expected)} statuses"
@@ -16030,6 +16208,7 @@ class AnalysisController:
         self.record_seven_output_policy_outcomes()
         self.record_followon_outcomes()
         self.record_current_ollama_outcomes()
+        self.record_vllm_stability_outcomes()
         self.run_level1()
         self.run_metric_strata()
         suite = self.run_suite_summary()
@@ -16968,6 +17147,11 @@ def contract_self_test() -> int:
         lane_root.mkdir(parents=True)
         source_file = lane_root / "cell.manifest.json"
         source_file.write_bytes(b"sealed-runner-input")
+        vllm_fixture_lanes = [row[0] for row in VLLM_STABILITY_UNIT_LAYOUT]
+        for lane in vllm_fixture_lanes:
+            fixture_root = source_root / lane
+            fixture_root.mkdir()
+            (fixture_root / "cell.manifest.json").write_bytes(b"sealed-vllm-input")
         view_controller = object.__new__(AnalysisController)
         view_controller.inputs = {
             "runner": {
@@ -16975,6 +17159,7 @@ def contract_self_test() -> int:
                 "metric_lane_order": ["lane-a"],
             },
             "current_ollama": {"metric_lane_order": []},
+            "vllm_stability": {"metric_lane_order": vllm_fixture_lanes},
         }
         view_controller.runner_view = temp / "view"
         view_controller.runner_view_receipt = temp / "view-receipt.json"
@@ -16985,7 +17170,7 @@ def contract_self_test() -> int:
             view_receipt,
             source_root=source_root,
             view_root=view_root,
-            included_measured_lanes=["lane-a"],
+            included_measured_lanes=["lane-a", *vllm_fixture_lanes],
         )
         forged = view_root / "transfer_matrix__replay__forged.manifest.json"
         forged.write_bytes(b"{}")
@@ -18178,6 +18363,7 @@ def contract_self_test() -> int:
             "output_policy_amendment": "measured_complete",
             "followon_prepared": "measured_complete",
             "current_ollama": "measured_complete",
+            "vllm_stability": "measured_complete",
             "native": "run",
         }[cohort]
         for index in range(CAMPAIGN_COHORT_COUNTS[cohort]):
@@ -18226,7 +18412,7 @@ def contract_self_test() -> int:
     valid_aggregate = aggregate_fixture(aggregate_rows)
     validate_phase6_campaign_terminal_inventory(valid_aggregate)
     must_fail(
-        "campaign-terminal-75-rows",
+        "campaign-terminal-one-row-short",
         lambda: validate_phase6_campaign_terminal_inventory(
             aggregate_fixture(aggregate_rows[:-1])
         ),
@@ -18237,7 +18423,7 @@ def contract_self_test() -> int:
     extra["key"] = "canonical:fixture-extra"
     extra_rows.append(extra)
     must_fail(
-        "campaign-terminal-77-rows",
+        "campaign-terminal-one-row-extra",
         lambda: validate_phase6_campaign_terminal_inventory(
             aggregate_fixture(extra_rows)
         ),
@@ -18286,7 +18472,7 @@ def contract_self_test() -> int:
     if (
         validated_early_failure["status"] != "complete_with_failures"
         or validated_early_failure["failure_rows"] != [early_failure_rows[0]["key"]]
-        or len(validated_early_failure["rows"]) != 76
+        or len(validated_early_failure["rows"]) != CAMPAIGN_TOTAL_ROWS
     ):
         raise Phase7Error("early terminal failure suppressed independent rows")
 
@@ -18315,7 +18501,7 @@ def contract_self_test() -> int:
                         "phase7-metric-boundary-derivation",
                         "phase7-all-abstained-proxy-boundary",
                         "phase7-proxy-condition-realization-counts",
-                        "phase6-campaign-terminal-inventory-76-row-union",
+                        "phase6-campaign-terminal-inventory-83-row-union",
                         "phase6-campaign-terminal-early-failure-independence",
                         "source-conformance-45-row-portfolio",
                     }
@@ -18352,6 +18538,7 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_parser.add_argument("--current-ollama-gate5-amendment", required=True)
     prepare_parser.add_argument("--phase6-current-ollama-completion", required=True)
     prepare_parser.add_argument("--phase6-current-ollama-recovery-completion")
+    prepare_parser.add_argument("--phase6-vllm-stability-completion", required=True)
     execute_parser = subparsers.add_parser("execute")
     execute_parser.add_argument("--launch", required=True)
     subparsers.add_parser("contract-self-test")

@@ -805,9 +805,15 @@ def validate_completion(
                 raise ValueError(f"{lane}: retained target/missing-response counts changed")
             attempts, successful, missing = counts
             grids = sorted(result_root.glob("*.grid.json"))
+            envelopes = sorted(result_root.glob("*.request-envelope.json"))
             eligibility = sorted(result_root.glob("eligibility-*.eligibility.json"))
             markers = sorted(result_root.glob("*.complete.json"))
-            if len(grids) != 1 or len(eligibility) != 1 or not markers:
+            if (
+                len(grids) != 1
+                or len(envelopes) != 1
+                or len(eligibility) != 1
+                or not markers
+            ):
                 raise ValueError(f"{lane}: completed Runner artifact inventory changed")
             completed_rows += 1
             target_attempts += attempts
@@ -824,6 +830,12 @@ def validate_completion(
                 for marker in markers
             )
             metric_evidence[lane] = {
+                "grid": metric_grids[-1],
+                "request_envelope": _descriptor(
+                    envelopes[0], label=f"{lane} request envelope"
+                ),
+                "eligibility_plan": metric_eligibility_plans[-1],
+                "completion_markers": metric_completion_markers[-len(markers):],
                 "level1": row["level1"],
                 "status_rows": completion["status_rows"],
             }

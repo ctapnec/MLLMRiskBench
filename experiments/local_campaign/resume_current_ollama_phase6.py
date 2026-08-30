@@ -150,7 +150,7 @@ def run(
     project = _canonical_dir(project_root, label="project checkout")
     if _tracked_checkout_commit(project) != expected_commit:
         raise ValueError("project checkout differs from the failed Phase 6 revision")
-    if python.is_symlink() or not python.is_file() or not os.access(python, os.X_OK):
+    if not python.is_file() or not os.access(python, os.X_OK):
         raise ValueError("recovery Python is not one executable regular file")
     runner = _canonical_dir(runner_root, label="thesis Runner root")
     if control_root.exists() or control_root.is_symlink():
@@ -299,14 +299,21 @@ def _validate_launches(value: object, *, lane: str, lane_root: Path) -> list[dic
 
 def _metric_artifacts(
     *, lane: str, result_root: Path
-) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
     grids = sorted(result_root.glob("*.grid.json"))
+    envelopes = sorted(result_root.glob("*.request-envelope.json"))
     eligibility = sorted(result_root.glob("eligibility-*.eligibility.json"))
     markers = sorted(result_root.glob("*.complete.json"))
-    if len(grids) != 1 or len(eligibility) != 1 or not markers:
+    if (
+        len(grids) != 1
+        or len(envelopes) != 1
+        or len(eligibility) != 1
+        or not markers
+    ):
         raise ValueError(f"{lane}: recovered Runner artifact inventory changed")
     return (
         _descriptor(grids[0], label=f"{lane} recovered measured grid"),
+        _descriptor(envelopes[0], label=f"{lane} recovered request envelope"),
         _descriptor(eligibility[0], label=f"{lane} recovered eligibility plan"),
         [_descriptor(marker, label=f"{lane} recovered completion marker") for marker in markers],
     )
@@ -467,7 +474,9 @@ def validate_recovery_completion(
             missing,
         ):
             raise ValueError(f"{lane}: recovered Level 1 counts changed")
-        _metric_artifacts(lane=lane, result_root=result_root)
+        grid, envelope, eligibility, markers = _metric_artifacts(
+            lane=lane, result_root=result_root
+        )
         recovered_rows[lane] = dict(raw)
 
     result = copy.deepcopy(base)
@@ -482,6 +491,10 @@ def validate_recovery_completion(
         evidence = {
             "base_failure": base_failure,
             "recovery_completion": recovery_descriptor,
+            "grid": grid,
+            "request_envelope": envelope,
+            "eligibility_plan": eligibility,
+            "completion_markers": markers,
             "level1": row["level1"],
         }
         result["terminal_states"][lane] = "measured_complete"
@@ -500,7 +513,7 @@ def validate_recovery_completion(
     metric_eligibility: list[dict[str, Any]] = []
     metric_markers: list[dict[str, Any]] = []
     for lane in metric_lane_order:
-        grid, eligibility, markers = _metric_artifacts(
+        grid, _envelope, eligibility, markers = _metric_artifacts(
             lane=lane,
             result_root=_canonical_dir(
                 Path(result["metric_roots"][lane]), label=f"{lane} metric result root"

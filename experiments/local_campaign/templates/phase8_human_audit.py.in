@@ -35,6 +35,9 @@ from experiments.local_campaign.current_ollama import (
     CURRENT_OLLAMA_RUNNABLE_LANES,
     CURRENT_OLLAMA_TYPED_TERMINAL_LANES,
 )
+from experiments.local_campaign.vllm_stability_phase6 import (
+    UNIT_LAYOUT as VLLM_STABILITY_UNIT_LAYOUT,
+)
 from experiments.local_campaign.ollama_static_terminal import (
     OLLAMA_STATIC_TERMINAL_DISPOSITION,
     OLLAMA_STATIC_TERMINAL_LANES,
@@ -6517,6 +6520,10 @@ def validate_frozen_phase7_oracle_api(oracle: Any) -> None:
             ("completion_path", keyword_only),
             ("runner_root", keyword_only),
         ),
+        "validate_vllm_stability_completion": (
+            ("completion_path", positional),
+            ("runner_root", keyword_only),
+        ),
         "validate_phase6_campaign_terminal_inventory": (
             ("value", positional),
         ),
@@ -6530,6 +6537,7 @@ def validate_frozen_phase7_oracle_api(oracle: Any) -> None:
             ("seven", keyword_only),
             ("followon", keyword_only),
             ("current_ollama", keyword_only),
+            ("vllm_stability", keyword_only),
         ),
     }
     for name, expected_parameters in expected_api.items():
@@ -6717,6 +6725,13 @@ def replay_frozen_phase7_oracle(
             ),
             runner_root=runner_root,
         )
+        oracle_vllm_stability = oracle.validate_vllm_stability_completion(
+            descriptor_file(
+                inputs["vllm_stability"]["completion"],
+                label="Phase 7 oracle vLLM stability completion",
+            ),
+            runner_root=runner_root,
+        )
         oracle_campaign = oracle.build_phase6_campaign_terminal_inventory(
             gate5_rows=oracle_manifest["lanes"],
             gate5_manifest=gate5_manifest_path,
@@ -6727,6 +6742,7 @@ def replay_frozen_phase7_oracle(
             seven=oracle_seven,
             followon=oracle_followon,
             current_ollama=oracle_current_ollama,
+            vllm_stability=oracle_vllm_stability,
         )
     except Phase8Error:
         raise
@@ -6746,6 +6762,7 @@ def replay_frozen_phase7_oracle(
         or oracle_followon != inputs.get("followon")
         or oracle_seven != inputs.get("seven_output_policy_amendment")
         or oracle_current_ollama != inputs.get("current_ollama")
+        or oracle_vllm_stability != inputs.get("vllm_stability")
         or oracle_campaign != inputs.get("campaign_terminal_inventory")
     ):
         raise Phase8Error("Phase 7 frozen semantic replay differs from its input")
@@ -7249,6 +7266,7 @@ def validate_phase7_human_sampling_view(
     seven: Mapping[str, Any],
     followon: Mapping[str, Any],
     current_ollama: Mapping[str, Any],
+    vllm_stability: Mapping[str, Any],
 ) -> tuple[Path, dict[str, Any]]:
     """Revalidate the sampling-only union without reading failed sibling roots."""
 
@@ -7257,7 +7275,8 @@ def validate_phase7_human_sampling_view(
         "view_root", "included_core_lanes", "included_amendment_lanes",
         "amendment_result_roots", "included_followon_lanes",
         "followon_result_roots", "included_current_ollama_lanes",
-        "current_ollama_result_roots", "regular_files_copied", "logical_bytes",
+        "current_ollama_result_roots", "included_vllm_stability_lanes",
+        "vllm_stability_result_roots", "regular_files_copied", "logical_bytes",
         "source_files_modified", "permitted_view_outputs", "file_inventory",
         "file_inventory_sha256",
     }
@@ -7268,6 +7287,7 @@ def validate_phase7_human_sampling_view(
         seven=seven,
         followon=followon,
         current_ollama=current_ollama,
+        vllm_stability=vllm_stability,
     )
     inventory = value.get("file_inventory") if isinstance(value, dict) else None
     view_root = checked_dir(expected_view_root, label="Phase 7 human sampling view")
@@ -7275,7 +7295,7 @@ def validate_phase7_human_sampling_view(
     if (
         not isinstance(value, dict)
         or set(value) != fields
-        or value.get("schema") != "ura-phase7-human-audit-sampling-view/3"
+        or value.get("schema") != "ura-phase7-human-audit-sampling-view/4"
         or value.get("status") != "complete"
         or value.get("core_view_receipt") != dict(core_view_receipt)
         or value.get("source_runner_root") != str(runner_root)
@@ -7289,6 +7309,10 @@ def validate_phase7_human_sampling_view(
         != contract["current_ollama_lanes"]
         or value.get("current_ollama_result_roots")
         != contract["current_ollama_roots"]
+        or value.get("included_vllm_stability_lanes")
+        != contract["vllm_stability_lanes"]
+        or value.get("vllm_stability_result_roots")
+        != contract["vllm_stability_roots"]
         or value.get("source_files_modified") is not False
         or value.get("permitted_view_outputs") != []
         or not isinstance(inventory, list)
@@ -7470,6 +7494,7 @@ def phase7_sampling_lane_contract(
     seven: Mapping[str, Any],
     followon: Mapping[str, Any],
     current_ollama: Mapping[str, Any],
+    vllm_stability: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Return the exact successful Phase 7 sampling union and its strata."""
 
@@ -7596,6 +7621,12 @@ def phase7_sampling_lane_contract(
         states={"measured_complete", "failed", "unavailable"},
         label="current Ollama cohort",
     )
+    vllm_stability_lanes = amendment_lanes(
+        vllm_stability,
+        expected_lanes=tuple(row[0] for row in VLLM_STABILITY_UNIT_LAYOUT),
+        states={"measured_complete"},
+        label="vLLM stability cohort",
+    )
     if not lane_order or len(set(lane_order)) != len(lane_order):
         raise Phase8Error("Phase 7 successful sampling lane inventory is invalid")
     revision_strata = {
@@ -7620,6 +7651,11 @@ def phase7_sampling_lane_contract(
         "current_ollama_roots": {
             lane: current_ollama["metric_roots"][lane]
             for lane in current_ollama_lanes
+        },
+        "vllm_stability_lanes": vllm_stability_lanes,
+        "vllm_stability_roots": {
+            lane: vllm_stability["metric_roots"][lane]
+            for lane in vllm_stability_lanes
         },
         "revision_strata": revision_strata,
         "source_conformance_strata": source_strata,
@@ -7690,10 +7726,13 @@ def validate_phase7_completion(
         "current_ollama_terminal_states",
         "current_ollama_metric_revision_strata",
         "current_ollama_target_execution",
+        "vllm_stability_terminal_states",
+        "vllm_stability_metric_revision_strata",
+        "vllm_stability_target_execution",
     }
     if (
         set(value) != expected_fields
-        or value.get("schema") != "ura-phase7-analysis-completion/1"
+        or value.get("schema") != "ura-phase7-analysis-completion/2"
         or value.get("status") not in {"complete", "complete_with_explicit_limitations"}
         or not UTC_RE.fullmatch(str(value.get("started_at_utc", "")))
         or not UTC_RE.fullmatch(str(value.get("completed_at_utc", "")))
@@ -7757,6 +7796,7 @@ def validate_phase7_completion(
         "seven_output_policy_amendment",
         "followon",
         "current_ollama",
+        "vllm_stability",
         "campaign_terminal_inventory",
         "analysis_contract",
         "bound_artifacts",
@@ -7764,7 +7804,7 @@ def validate_phase7_completion(
     }
     if (
         set(inputs) != input_fields
-        or inputs.get("schema") != "ura-phase7-analysis-inputs/1"
+        or inputs.get("schema") != "ura-phase7-analysis-inputs/2"
         or inputs.get("inventory_complete") is not True
         or inputs.get("scope")
         != "all_local_phase7_read_only_analysis_over_phase6_lifecycle"
@@ -7779,6 +7819,7 @@ def validate_phase7_completion(
     seven = inputs.get("seven_output_policy_amendment")
     followon = inputs.get("followon")
     current_ollama = inputs.get("current_ollama")
+    vllm_stability = inputs.get("vllm_stability")
     campaign_inventory = inputs.get("campaign_terminal_inventory")
     if not all(
         isinstance(item, dict)
@@ -7787,6 +7828,7 @@ def validate_phase7_completion(
             seven,
             followon,
             current_ollama,
+            vllm_stability,
             campaign_inventory,
         )
     ):
@@ -9238,6 +9280,37 @@ def validate_phase7_completion(
             for revision in current_ollama_strata
         },
     }
+    vllm_stability_states = vllm_stability.get("terminal_states")
+    vllm_stability_strata = vllm_stability.get("revision_strata")
+    vllm_stability_metric_lanes = vllm_stability.get("metric_lane_order")
+    vllm_stability_lane_order = [row[0] for row in VLLM_STABILITY_UNIT_LAYOUT]
+    if (
+        vllm_stability_states
+        != {lane: "measured_complete" for lane in vllm_stability_lane_order}
+        or vllm_stability_metric_lanes != vllm_stability_lane_order
+        or not isinstance(vllm_stability_strata, dict)
+        or list(vllm_stability_strata.values()) != [vllm_stability_lane_order]
+        or value.get("vllm_stability_terminal_states") != vllm_stability_states
+        or value.get("vllm_stability_metric_revision_strata")
+        != vllm_stability_strata
+        or value.get("vllm_stability_target_execution")
+        != vllm_stability.get("target_execution")
+    ):
+        raise Phase8Error("Phase 7 vLLM stability lifecycle partition differs")
+    vllm_stability_status_names = {
+        "vllm-stability-lifecycle",
+        *{
+            f"vllm-stability-metric-inputs-{revision[:12]}"
+            for revision in vllm_stability_strata
+        },
+    }
+    phase7_metric_lanes = [
+        *measured_lanes,
+        *current_ollama_metric_lanes,
+        *vllm_stability_metric_lanes,
+    ]
+    if len(set(phase7_metric_lanes)) != len(phase7_metric_lanes):
+        raise Phase8Error("Phase 7 metric lane union contains a duplicate")
     sampling_contract = phase7_sampling_lane_contract(
         runner_root=runner_root,
         runner=runner,
@@ -9245,6 +9318,7 @@ def validate_phase7_completion(
         seven=seven,
         followon=followon,
         current_ollama=current_ollama,
+        vllm_stability=vllm_stability,
     )
     stratum_status_names = {
         "metric-stratum-"
@@ -9280,6 +9354,7 @@ def validate_phase7_completion(
         *followon_status_names,
         *seven_status_names,
         *current_ollama_status_names,
+        *vllm_stability_status_names,
         *stratum_status_names,
     }
     if (
@@ -9293,6 +9368,7 @@ def validate_phase7_completion(
             + len(followon_status_names)
             + len(seven_status_names)
             + len(current_ollama_status_names)
+            + len(vllm_stability_status_names)
             + len(stratum_status_names)
         )
         or any(
@@ -9360,7 +9436,7 @@ def validate_phase7_completion(
         runner_view,
         expected_source_root=runner_root,
         expected_view_root=control / "read-only-runner-view",
-        expected_measured_lanes=measured_lanes,
+        expected_measured_lanes=phase7_metric_lanes,
     )
     audit_runner_view_root = runner_view_root
     audit_runner_view_receipt = value["runner_input_view"]
@@ -9383,6 +9459,7 @@ def validate_phase7_completion(
             seven=seven,
             followon=followon,
             current_ollama=current_ollama,
+            vllm_stability=vllm_stability,
         )
     )
     if observed_sampling_contract != sampling_contract:
@@ -9806,12 +9883,13 @@ def validate_phase7_completion(
         "core_runner_view": runner_view_root,
         "core_runner_view_receipt": value["runner_input_view"],
         "core_runner_view_value": runner_view,
-        "core_runner_view_lanes": measured_lanes,
+        "core_runner_view_lanes": phase7_metric_lanes,
         "runner": runner,
         "canonical_recoveries": recoveries,
         "seven": seven,
         "followon": followon,
         "current_ollama": current_ollama,
+        "vllm_stability": vllm_stability,
     }
     support["sampling_index_receipt"] = value["human_audit_sampling_index"]
     support["sampling_index_value"] = sampling_index
@@ -9985,9 +10063,10 @@ def revalidate_bound_audit_runner_view(
     seven: Mapping[str, Any] | None = None,
     followon: Mapping[str, Any] | None = None,
     current_ollama: Mapping[str, Any] | None = None,
+    vllm_stability: Mapping[str, Any] | None = None,
 ) -> Path:
     if isinstance(receipt, dict) and receipt.get("schema") == (
-        "ura-phase7-human-audit-sampling-view/3"
+        "ura-phase7-human-audit-sampling-view/4"
     ):
         if (
             core_view_receipt is None
@@ -9996,6 +10075,7 @@ def revalidate_bound_audit_runner_view(
             or seven is None
             or followon is None
             or current_ollama is None
+            or vllm_stability is None
         ):
             raise Phase8Error("human sampling view revalidation inputs are absent")
         view, contract = validate_phase7_human_sampling_view(
@@ -10008,6 +10088,7 @@ def revalidate_bound_audit_runner_view(
             seven=seven,
             followon=followon,
             current_ollama=current_ollama,
+            vllm_stability=vllm_stability,
         )
         if list(measured_lanes) != contract["lane_order"]:
             raise Phase8Error("human sampling view lane partition changed")
@@ -10124,6 +10205,7 @@ def build_input_manifest(args: argparse.Namespace) -> dict[str, Any]:
         seven=phase7_support["seven"],
         followon=phase7_support["followon"],
         current_ollama=phase7_support["current_ollama"],
+        vllm_stability=phase7_support["vllm_stability"],
     )
     capacity = plan_phase8_capacity(
         common_available_unique_clusters=common_available,
@@ -11289,6 +11371,7 @@ def semantic_revalidate(inputs: Mapping[str, Any]) -> dict[str, Any]:
         seven=support["seven"],
         followon=support["followon"],
         current_ollama=support["current_ollama"],
+        vllm_stability=support["vllm_stability"],
     )
     capacity = plan_phase8_capacity(
         common_available_unique_clusters=common_available,
@@ -11800,6 +11883,7 @@ def _bound_qualification_runner_view(inputs: Mapping[str, Any]) -> Path:
         seven=support["seven"],
         followon=support["followon"],
         current_ollama=support["current_ollama"],
+        vllm_stability=support["vllm_stability"],
     )
 
 
@@ -12513,6 +12597,7 @@ def execute_preparation(control_root: Path, attempt_root: Path) -> int:
             seven=support["seven"],
             followon=support["followon"],
             current_ollama=support["current_ollama"],
+            vllm_stability=support["vllm_stability"],
         )
 
     common_argv = [
@@ -16799,7 +16884,7 @@ def self_test() -> int:
             "measured_evidence_admitted": False,
         }
         phase7_input: dict[str, Any] = {
-            "schema": "ura-phase7-analysis-inputs/1",
+            "schema": "ura-phase7-analysis-inputs/2",
             "inventory_complete": True,
             "scope": "all_local_phase7_read_only_analysis_over_phase6_lifecycle",
             "controller_payload": descriptor(phase7_source),
@@ -16918,6 +17003,9 @@ def self_test() -> int:
         }
         phase7_input["current_ollama"] = {
             "gate5": descriptor(phase7_generic),
+            "completion": descriptor(phase7_generic),
+        }
+        phase7_input["vllm_stability"] = {
             "completion": descriptor(phase7_generic),
         }
         phase7_input["campaign_terminal_inventory"] = {
@@ -17268,7 +17356,7 @@ def self_test() -> int:
             ),
         )
         phase7_completion = {
-            "schema": "ura-phase7-analysis-completion/1",
+            "schema": "ura-phase7-analysis-completion/2",
             "status": "complete_with_explicit_limitations",
             "started_at_utc": "2026-08-22T00:00:00Z",
             "completed_at_utc": "2026-08-22T00:00:01Z",
@@ -17567,6 +17655,16 @@ def self_test() -> int:
             oracle_calls.append("current_ollama")
             return phase7_input["current_ollama"]
 
+        def recording_vllm_stability(
+            completion_path: Path,
+            *,
+            runner_root: Path,
+        ) -> Mapping[str, Any]:
+            if completion_path != phase7_generic or runner_root != expected_current_ollama_runner_root:
+                raise AssertionError("recording oracle vLLM stability arguments differ")
+            oracle_calls.append("vllm_stability")
+            return phase7_input["vllm_stability"]
+
         def recording_campaign(
             *,
             gate5_rows: Sequence[Mapping[str, Any]],
@@ -17578,6 +17676,7 @@ def self_test() -> int:
             seven: Mapping[str, Any],
             followon: Mapping[str, Any],
             current_ollama: Mapping[str, Any],
+            vllm_stability: Mapping[str, Any],
         ) -> Mapping[str, Any]:
             if {
                 "gate5_rows": rows,
@@ -17589,6 +17688,7 @@ def self_test() -> int:
                 "seven": phase7_input["seven_output_policy_amendment"],
                 "followon": phase7_input["followon"],
                 "current_ollama": phase7_input["current_ollama"],
+                "vllm_stability": phase7_input["vllm_stability"],
             } != {
                 "gate5_rows": list(gate5_rows),
                 "gate5_manifest": gate5_manifest,
@@ -17599,6 +17699,7 @@ def self_test() -> int:
                 "seven": seven,
                 "followon": followon,
                 "current_ollama": current_ollama,
+                "vllm_stability": vllm_stability,
             }:
                 raise AssertionError("recording oracle campaign arguments differ")
             oracle_calls.append("campaign")
@@ -17621,6 +17722,7 @@ def self_test() -> int:
             validate_followon_inventory=recording_followon,
             validate_seven_output_policy_inventory=recording_seven,
             validate_current_ollama_completion=recording_current_ollama,
+            validate_vllm_stability_completion=recording_vllm_stability,
             validate_phase6_campaign_terminal_inventory=(
                 recording_validate_campaign
             ),
@@ -17666,6 +17768,7 @@ def self_test() -> int:
             "followon",
             "seven",
             "current_ollama",
+            "vllm_stability",
             "campaign",
         ]
         if loader_calls != [project_root] or oracle_calls != expected_oracle_calls:
@@ -17748,6 +17851,21 @@ def self_test() -> int:
                     else value
                 )
 
+            def mismatched_vllm_stability(
+                completion_path: Path,
+                *,
+                runner_root: Path,
+            ) -> Mapping[str, Any]:
+                value = recording_vllm_stability(
+                    completion_path,
+                    runner_root=runner_root,
+                )
+                return (
+                    with_snapshot_mismatch(value, kind)
+                    if kind == "vllm_stability"
+                    else value
+                )
+
             return types.SimpleNamespace(
                 gate5_inventory_profile=recording_profile,
                 validate_gate5=mismatched_gate5,
@@ -17760,6 +17878,7 @@ def self_test() -> int:
                 validate_followon_inventory=recording_followon,
                 validate_seven_output_policy_inventory=recording_seven,
                 validate_current_ollama_completion=mismatched_current_ollama,
+                validate_vllm_stability_completion=mismatched_vllm_stability,
                 validate_phase6_campaign_terminal_inventory=(
                     recording_validate_campaign
                 ),
@@ -17774,6 +17893,7 @@ def self_test() -> int:
             "native",
             "runner",
             "current_ollama",
+            "vllm_stability",
         ):
             candidate_oracle = mismatch_oracle(mismatch_kind)
             rejected(
@@ -17864,6 +17984,7 @@ def self_test() -> int:
                     "seven": phase7_input["seven_output_policy_amendment"],
                     "followon": phase7_input["followon"],
                     "current_ollama": phase7_input["current_ollama"],
+                    "vllm_stability": phase7_input["vllm_stability"],
                 }
 
             def fixture_view(**kwargs: Any) -> Path:

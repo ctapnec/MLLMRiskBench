@@ -176,12 +176,14 @@ def _terminal_inventory() -> dict[str, object]:
         ("canonical", 46, "measured_complete", "1" * 64, "a" * 64),
         (
             "output_policy_amendment",
-            7,
+            4,
             "measured_complete",
             "2" * 64,
             "b" * 64,
         ),
         ("followon_prepared", 3, "measured_complete", "3" * 64, "c" * 64),
+        ("current_ollama", 14, "measured_complete", "5" * 64, "d" * 64),
+        ("vllm_stability", 7, "measured_complete", "6" * 64, "e" * 64),
         ("native", 9, "run", "4" * 64, "not_applicable"),
     )
     rows: list[dict[str, object]] = []
@@ -206,7 +208,7 @@ def _terminal_inventory() -> dict[str, object]:
             project_strata.setdefault(revision, []).append(key)
             source_strata.setdefault(source, []).append(key)
     return {
-        "schema": "ura-phase6-campaign-terminal-inventory/1",
+        "schema": "ura-phase6-campaign-terminal-inventory/2",
         "status": "complete",
         "cohort_order": [row[0] for row in cohorts],
         "cohort_counts": {row[0]: row[1] for row in cohorts},
@@ -465,7 +467,7 @@ def _sealed_chain(
     )
     campaign_inventory_value = _terminal_inventory()
     inputs = {
-        "schema": "ura-phase7-analysis-inputs/1",
+        "schema": "ura-phase7-analysis-inputs/2",
         "inventory_complete": True,
         "scope": "all_local_phase7_read_only_analysis_over_phase6_lifecycle",
         "code_identity": {"expected_commit": COMMIT, "framework_lock_id": input_lock},
@@ -501,6 +503,24 @@ def _sealed_chain(
             "revision_strata": {"2" * 64: ["seven-lane"]},
             "source_conformance_sha256": "b" * 64,
         },
+        "current_ollama": {
+            "terminal_states": {"current-lane": "measured_complete"},
+            "revision_strata": {"5" * 64: ["current-lane"]},
+            "target_execution": {
+                "target_attempts": 1,
+                "successful_target_generations": 1,
+                "missing_responses": 0,
+            },
+        },
+        "vllm_stability": {
+            "terminal_states": {"vllm-lane": "measured_complete"},
+            "revision_strata": {"6" * 64: ["vllm-lane"]},
+            "target_execution": {
+                "target_attempts": 1,
+                "successful_target_generations": 1,
+                "missing_responses": 0,
+            },
+        },
         "campaign_terminal_inventory": campaign_inventory_value,
         "runner": {
             "lifecycle_lane_order": ["core-lane", "extended-lane"],
@@ -531,7 +551,7 @@ def _sealed_chain(
 
     prepare_result = {
         "status": "prepared",
-        "schema": "ura-phase7-analysis-inputs/1",
+        "schema": "ura-phase7-analysis-inputs/2",
         "output": (
             str(watcher / "wrong-input.json")
             if mutation == "prepare_result_output"
@@ -543,7 +563,7 @@ def _sealed_chain(
         "runner_lanes": 2,
         "metric_runner_lanes": 2,
         "native_outcomes": {"native-lane": "run"},
-        "campaign_terminal_rows": 65,
+        "campaign_terminal_rows": 83,
         "campaign_terminal_status": "complete",
         "authorization_required_before_launch": True,
     }
@@ -633,12 +653,24 @@ def _sealed_chain(
     level1_third = (
         analysis / "lifecycle-strata" / f"{'3' * 12}-{'c' * 12}" / "level1-evidence.json"
     )
+    level1_fourth = (
+        analysis / "lifecycle-strata" / f"{'5' * 12}-{'d' * 12}" / "level1-evidence.json"
+    )
+    level1_fifth = (
+        analysis / "lifecycle-strata" / f"{'6' * 12}-{'e' * 12}" / "level1-evidence.json"
+    )
     level2 = analysis / "metric-strata" / f"{'1' * 12}-{'a' * 12}" / "level2-report.json"
     level2_second = (
         analysis / "metric-strata" / f"{'2' * 12}-{'b' * 12}" / "level2-report.json"
     )
     level2_third = (
         analysis / "metric-strata" / f"{'3' * 12}-{'c' * 12}" / "level2-report.json"
+    )
+    level2_fourth = (
+        analysis / "metric-strata" / f"{'5' * 12}-{'d' * 12}" / "level2-report.json"
+    )
+    level2_fifth = (
+        analysis / "metric-strata" / f"{'6' * 12}-{'e' * 12}" / "level2-report.json"
     )
     _level1(
         level1,
@@ -647,12 +679,16 @@ def _sealed_chain(
     )
     _level1(level1_second, revision="2" * 64, source="b" * 64)
     _level1(level1_third, revision="3" * 64, source="c" * 64)
+    _level1(level1_fourth, revision="5" * 64, source="d" * 64)
+    _level1(level1_fifth, revision="6" * 64, source="e" * 64)
     _level2(
         level2,
         revision="9" * 64 if mutation == "level2_scope_revision" else "1" * 64,
     )
     _level2(level2_second, revision="2" * 64)
     _level2(level2_third, revision="3" * 64)
+    _level2(level2_fourth, revision="5" * 64)
+    _level2(level2_fifth, revision="6" * 64)
     statuses = {
         "level1-evidence": "complete",
         "level2-report": "complete_with_limitations" if limited else "complete",
@@ -667,9 +703,13 @@ def _sealed_chain(
             level1,
             level1_second,
             level1_third,
+            level1_fourth,
+            level1_fifth,
             level2,
             level2_second,
             level2_third,
+            level2_fourth,
+            level2_fifth,
             campaign_inventory,
         )
     ]
@@ -708,7 +748,7 @@ def _sealed_chain(
     )
     controller.update(
         {
-            "schema": "ura-phase7-analysis-completion/1",
+            "schema": "ura-phase7-analysis-completion/2",
             "status": completion_status,
             "inventory_complete": True,
             "input_manifest": _descriptor(control_input),
@@ -737,6 +777,24 @@ def _sealed_chain(
                 else {"seven-lane": "measured_complete"}
             ),
             "seven_output_policy_metric_revision_strata": {"2" * 64: ["seven-lane"]},
+            "current_ollama_terminal_states": inputs["current_ollama"][
+                "terminal_states"
+            ],
+            "current_ollama_metric_revision_strata": inputs["current_ollama"][
+                "revision_strata"
+            ],
+            "current_ollama_target_execution": inputs["current_ollama"][
+                "target_execution"
+            ],
+            "vllm_stability_terminal_states": inputs["vllm_stability"][
+                "terminal_states"
+            ],
+            "vllm_stability_metric_revision_strata": inputs["vllm_stability"][
+                "revision_strata"
+            ],
+            "vllm_stability_target_execution": inputs["vllm_stability"][
+                "target_execution"
+            ],
             "target_calls": 0,
             "judge_calls": 0,
             "provider_http_attempts": 0,
@@ -812,17 +870,21 @@ def test_phase7_watcher_chain_binds_reports_and_rejects_mutated_output(
     assert bundle is not None
     assert [report.kind for report in bundle.reports] == [
         "terminal_inventory",
-        "level1", "level1", "level1",
-        "level2", "level2", "level2",
+        "level1", "level1", "level1", "level1", "level1",
+        "level2", "level2", "level2", "level2", "level2",
     ]
     assert [report.display_name for report in bundle.reports] == [
         "campaign-terminal-inventory.json",
         "lifecycle-strata/111111111111-aaaaaaaaaaaa/level1-evidence.json",
         "lifecycle-strata/222222222222-bbbbbbbbbbbb/level1-evidence.json",
         "lifecycle-strata/333333333333-cccccccccccc/level1-evidence.json",
+        "lifecycle-strata/555555555555-dddddddddddd/level1-evidence.json",
+        "lifecycle-strata/666666666666-eeeeeeeeeeee/level1-evidence.json",
         "metric-strata/111111111111-aaaaaaaaaaaa/level2-report.json",
         "metric-strata/222222222222-bbbbbbbbbbbb/level2-report.json",
         "metric-strata/333333333333-cccccccccccc/level2-report.json",
+        "metric-strata/555555555555-dddddddddddd/level2-report.json",
+        "metric-strata/666666666666-eeeeeeeeeeee/level2-report.json",
     ]
     assert bundle.expected_commit == COMMIT
     phase6_completion = json.loads(
@@ -914,8 +976,8 @@ def test_stats_links_sealed_phase7_reports_to_watcher_campaign(
     assert registration is not None
     assert [report.kind for report in registration.reports] == [
         "terminal_inventory",
-        "level1", "level1", "level1",
-        "level2", "level2", "level2",
+        "level1", "level1", "level1", "level1", "level1",
+        "level2", "level2", "level2", "level2", "level2",
     ]
     app = RigWebApp(
         results_root=results,
@@ -943,21 +1005,25 @@ def test_stats_links_sealed_phase7_reports_to_watcher_campaign(
     assert "Registered external analysis" in detail_text
     assert "does not grant thesis-evidence authority" in detail_text
     assert "Campaign terminal rows" in detail_text
-    assert "65 terminal campaign rows; 0 failure rows" in detail_text
+    assert "83 terminal campaign rows; 0 failure rows" in detail_text
     assert "Rows by cohort" in detail_text
     assert "Rows by terminal state" in detail_text
     assert "Failure accounting" in detail_text
     assert "canonical" in detail_text and ">46<" in detail_text
-    assert "output policy amendment" in detail_text and ">7<" in detail_text
+    assert "output policy amendment" in detail_text and ">4<" in detail_text
     assert "followon prepared" in detail_text and ">3<" in detail_text
+    assert "current ollama" in detail_text and ">14<" in detail_text
+    assert "vllm stability" in detail_text and ">7<" in detail_text
     assert "native" in detail_text and ">9<" in detail_text
     assert "1" * 64 in detail_text
     assert "a" * 64 in detail_text
     assert "0 complete cells" not in detail_text
     assert "lifecycle-strata/111111111111-aaaaaaaaaaaa/level1-evidence.json" in detail_text
     assert "lifecycle-strata/333333333333-cccccccccccc/level1-evidence.json" in detail_text
+    assert "lifecycle-strata/666666666666-eeeeeeeeeeee/level1-evidence.json" in detail_text
     assert "metric-strata/111111111111-aaaaaaaaaaaa/level2-report.json" in detail_text
     assert "metric-strata/333333333333-cccccccccccc/level2-report.json" in detail_text
+    assert "metric-strata/666666666666-eeeeeeeeeeee/level2-report.json" in detail_text
     assert "refusal_rate" in detail_text
     assert "class='barchart'" in detail_text
     assert "Open full job record" in detail_text

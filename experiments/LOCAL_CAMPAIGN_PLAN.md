@@ -595,7 +595,9 @@ each lane with the exact stored argv, run IDs, call-budget ledger and original
 checkpoint. Sealed cells are call-free and checkpointed attempts are restored;
 the controller counts the judgment checkpoint once and does not also count its
 mirrored response checkpoint. It writes a separate source-bound recovery
-completion and never edits the immutable base completion.
+completion and never edits the immutable base completion. The recovery accepts
+the standard `.venv/bin/python` symlink only when it resolves to an executable
+regular file, so resumption stays in the original isolated environment.
 
 Only the four affected GraySwan identities are re-attested and canaried in their
 targeted Gate 5 amendment. The historical GraySwan rows keep their immutable
@@ -879,6 +881,10 @@ fully recovered, and overlays its Level-1 counts and Runner artifacts without
 repeating or replacing the immutable base completion. The Level-2 export keeps
 rules-only and cascade (rules+guardrail) evaluator modes as separate
 compatibility keys.
+The exact seven-unit Runner 2.25 vLLM stability completion is another required
+input. Phase 7 admits its 7,199 rows as a separate retry/output-policy stratum,
+retains missing responses in stability accounting, and forbids pooling them
+with the completed Runner 2.24 Qwen text and Crescendo evidence.
 Only successful measured lanes enter those metric and Level-2 views; failed and
 partial lanes remain visible in Level-1 lifecycle evidence rather than being
 silently dropped or replaced by Gate 5 preflight eligibility.

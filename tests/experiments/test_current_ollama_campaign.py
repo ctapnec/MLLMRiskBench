@@ -157,12 +157,15 @@ def test_prospective_controllers_use_only_the_current_ollama_roster() -> None:
     for name in (
         "phase5_ollama_workflow.sh.in",
         "phase6_native_diagnostics.sh.in",
-        "phase7_analysis.py.in",
-        "phase8_human_audit.py.in",
     ):
         source = (templates / name).read_text(encoding="utf-8")
         assert "mollysama/" not in source
         assert "CURRENT_OLLAMA_NATIVE_ROLES" in source or name.startswith("phase5_")
+    # The analysis controllers retain exact historical evidence identities,
+    # including superseded RWKV rows, but use the separate current roster.
+    for name in ("phase7_analysis.py.in", "phase8_human_audit.py.in"):
+        source = (templates / name).read_text(encoding="utf-8")
+        assert "CURRENT_OLLAMA_NATIVE_ROLES" in source
     native = (templates / "phase6_native_diagnostics.sh.in").read_text(encoding="utf-8")
     assert "the exact local Ollama roster has no tool-call capability" not in native
     assert "set(expected_models) != set(EXPECTED_MODELS)" in native
@@ -498,9 +501,12 @@ def test_current_ollama_recovery_reuses_exact_state_argv_and_checkpoint(
     gate5.write_text("{}\n", encoding="ascii")
     base_completion = base_control / "completion.json"
     base_completion.write_text("{}\n", encoding="ascii")
-    python = tmp_path / "python"
-    python.write_text("fixture\n", encoding="ascii")
-    python.chmod(0o700)
+    python_target = tmp_path / "python-real"
+    python_target.write_text("fixture\n", encoding="ascii")
+    python_target.chmod(0o700)
+    python = tmp_path / "venv" / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    python.symlink_to(python_target)
     (result_root / "sealed.complete.json").write_text(
         json.dumps({"n_responses": 2}), encoding="utf-8"
     )
@@ -589,6 +595,7 @@ def test_current_ollama_recovery_is_required_and_overlaid_for_phase7(
     result_root = runner_root / lane
     result_root.mkdir(parents=True)
     _create_json(result_root / "fixture.grid.json", {})
+    _create_json(result_root / "fixture.request-envelope.json", {})
     _create_json(result_root / "eligibility-fixture.eligibility.json", {})
     _create_json(result_root / "fixture.complete.json", {"n_responses": 5})
 
@@ -812,6 +819,7 @@ def test_current_ollama_phase7_input_retains_missing_and_failed_rows(
         if lane == complete_lane:
             result_root.mkdir()
             _create_json(result_root / "fixture.grid.json", {})
+            _create_json(result_root / "fixture.request-envelope.json", {})
             _create_json(result_root / "eligibility-fixture.eligibility.json", {})
             _create_json(result_root / "fixture.complete.json", {})
             level1 = lane_root / "level1.json"

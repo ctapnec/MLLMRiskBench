@@ -440,6 +440,9 @@ def validate_completion(
     sources: set[str] = set()
     metric_roots: dict[str, str] = {}
     metric_evidence: dict[str, dict[str, object]] = {}
+    metric_grids: list[dict[str, object]] = []
+    metric_eligibility_plans: list[dict[str, object]] = []
+    metric_completion_markers: list[dict[str, object]] = []
     total_successful = 0
     total_missing = 0
     for unit_id, source_lane, corpus, selected_records in UNIT_LAYOUT:
@@ -484,6 +487,17 @@ def validate_completion(
             or level1_path != expected_unit_root / "level1.json"
         ):
             raise ValueError(f"{unit_id} controller artifact placement changed")
+        grids = sorted(result_root.glob("*.grid.json"))
+        envelopes = sorted(result_root.glob("*.request-envelope.json"))
+        eligibility = sorted(result_root.glob("eligibility-*.eligibility.json"))
+        markers = sorted(result_root.glob("*.complete.json"))
+        if (
+            len(grids) != 1
+            or len(envelopes) != 1
+            or len(eligibility) != 1
+            or not markers
+        ):
+            raise ValueError(f"{unit_id} completed Runner artifact inventory changed")
         state = _load_json(state_path, label=f"{unit_id} state")
         argv = state.get("runner_argv")
         if (
@@ -508,7 +522,21 @@ def validate_completion(
         revisions.add(revision)
         sources.add(source)
         metric_roots[unit_id] = str(result_root)
+        metric_grids.append(_descriptor(grids[0], label=f"{unit_id} measured grid"))
+        metric_eligibility_plans.append(
+            _descriptor(eligibility[0], label=f"{unit_id} eligibility plan")
+        )
+        metric_completion_markers.extend(
+            _descriptor(marker, label=f"{unit_id} completion marker")
+            for marker in markers
+        )
         metric_evidence[unit_id] = {
+            "grid": metric_grids[-1],
+            "request_envelope": _descriptor(
+                envelopes[0], label=f"{unit_id} request envelope"
+            ),
+            "eligibility_plan": metric_eligibility_plans[-1],
+            "completion_markers": metric_completion_markers[-len(markers):],
             "state": dict(result["state"]),
             "level1": dict(result["level1"]),
         }
@@ -532,9 +560,14 @@ def validate_completion(
         "runner_code_version": "ura-runner/2.25",
         "output_policy_stratum": "provider_neutral_retry_1_retain_failed_output",
         "unit_order": expected_order,
+        "terminal_states": {lane: "measured_complete" for lane in expected_order},
         "metric_lane_order": expected_order,
         "metric_roots": metric_roots,
         "metric_evidence": metric_evidence,
+        "metric_grids": metric_grids,
+        "metric_eligibility_plans": metric_eligibility_plans,
+        "metric_completion_markers": metric_completion_markers,
+        "revision_strata": {next(iter(revisions)): expected_order},
         "project_revision_receipt_sha256": next(iter(revisions)),
         "source_conformance_sha256": next(iter(sources)),
         "target_execution": dict(target_execution),

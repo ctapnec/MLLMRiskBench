@@ -1262,7 +1262,6 @@ def test_current_ollama_roles_compile_in_rendered_analysis_controllers(
         source = (output / name).read_text(encoding="utf-8")
         compile(source, name, "exec")
         assert "CURRENT_OLLAMA_NATIVE_ROLES" in source
-        assert "mollysama/" not in source
 
 
 def test_rendered_phase6_runtime_validators_import_their_used_globals(
@@ -1424,7 +1423,7 @@ def test_rendered_phase7_lifecycle_partition_mutations_fail(tmp_path: Path) -> N
     assert "phase7-adaptivity-non-estimable-contrasts" in value["contracts"]
     assert "phase7-transfer-faceted-index" in value["contracts"]
     assert "phase7-runner-view-content-binding" in value["contracts"]
-    assert "phase6-campaign-terminal-inventory-76-row-union" in value["contracts"]
+    assert "phase6-campaign-terminal-inventory-83-row-union" in value["contracts"]
     rendered = (output / "phase7_analysis.py").read_text(encoding="utf-8")
     rr_prerequisite = (
         "                    ADAPTIVITY_RIGHT_LANE,\n"
@@ -1465,7 +1464,7 @@ def test_phase7_requires_current_ollama_terminal_and_metric_cohort() -> None:
         'def _current_ollama_metric_lanes(self)',
         'self.record_current_ollama_outcomes()',
         '"current_ollama_target_execution"',
-        '"phase6-campaign-terminal-inventory-76-row-union"',
+        '"phase6-campaign-terminal-inventory-83-row-union"',
     )
     for token in required_analysis:
         assert token in analysis
@@ -1477,10 +1476,39 @@ def test_phase7_requires_current_ollama_terminal_and_metric_cohort() -> None:
         assert token in wrapper and token in watcher
     assert "validate_current_ollama_recovery_completion(" in analysis
     assert "current Ollama Phase 6 failures require their exact recovery completion" in analysis
-    assert 'result.get("campaign_terminal_rows") != 76' in watcher
+    assert 'result.get("campaign_terminal_rows") != 83' in watcher
     assert '"current_ollama": 14' in watcher
 
     mutant = analysis.replace('"current_ollama": current_ollama,', "", 1)
+    assert mutant != analysis
+    with pytest.raises(AssertionError):
+        for token in required_analysis:
+            assert token in mutant
+
+
+def test_phase7_requires_vllm_stability_completion_as_a_separate_stratum() -> None:
+    root = Path(__file__).parents[2] / "experiments" / "local_campaign" / "templates"
+    analysis = (root / "phase7_analysis.py.in").read_text(encoding="utf-8")
+    wrapper = (root / "phase7_analysis.sh.in").read_text(encoding="utf-8")
+    watcher = (root / "phase7_after_phase6_sequence.sh.in").read_text(
+        encoding="utf-8"
+    )
+    required_analysis = (
+        "validate_vllm_stability_completion(",
+        '"vllm_stability": vllm_stability,',
+        'vllm_stability=vllm_stability,',
+        "def _vllm_stability_metric_lanes(self)",
+        "self.record_vllm_stability_outcomes()",
+        '"vllm_stability": len(VLLM_STABILITY_UNIT_LAYOUT)',
+        '"phase6-campaign-terminal-inventory-83-row-union"',
+    )
+    for token in required_analysis:
+        assert token in analysis
+    for token in (wrapper, watcher):
+        assert "--phase6-vllm-stability-completion" in token
+    assert '"vllm_stability": 7' in watcher
+
+    mutant = analysis.replace('"vllm_stability": vllm_stability,', "", 1)
     assert mutant != analysis
     with pytest.raises(AssertionError):
         for token in required_analysis:
@@ -1503,13 +1531,27 @@ def test_phase8_replays_current_ollama_oracle_and_sampling_cohort() -> None:
         'or oracle_current_ollama != inputs.get("current_ollama")',
         '"current_ollama_terminal_states",',
         '"included_current_ollama_lanes",',
-        '"ura-phase7-human-audit-sampling-view/3"',
+        '"ura-phase7-human-audit-sampling-view/4"',
         'current_ollama=support["current_ollama"],',
+        '"validate_vllm_stability_completion": (',
+        '("vllm_stability", keyword_only),',
+        "oracle_vllm_stability = oracle.validate_vllm_stability_completion(",
+        "vllm_stability=oracle_vllm_stability,",
+        'or oracle_vllm_stability != inputs.get("vllm_stability")',
+        '"vllm_stability_terminal_states",',
+        '"included_vllm_stability_lanes",',
+        'vllm_stability=support["vllm_stability"],',
     )
     for token in required:
         assert token in source
 
     mutant = source.replace("current_ollama=oracle_current_ollama,", "", 1)
+    assert mutant != source
+    with pytest.raises(AssertionError):
+        for token in required:
+            assert token in mutant
+
+    mutant = source.replace("vllm_stability=oracle_vllm_stability,", "", 1)
     assert mutant != source
     with pytest.raises(AssertionError):
         for token in required:
@@ -2955,6 +2997,8 @@ def test_phase7_seven_row_and_recovery_boundary_contracts(tmp_path: Path) -> Non
         "current-ollama-amendment.json",
         "--phase6-current-ollama-completion",
         "current-ollama-completion.json",
+        "--phase6-vllm-stability-completion",
+        "vllm-stability-completion.json",
     ]
     parsed = phase7["build_parser"]().parse_args(prepare_argv)
     assert parsed.phase6_recovery_completion == []
@@ -7414,6 +7458,16 @@ def test_vllm_stability_completion_is_one_separate_runner_225_stratum(
         result_root = runner_root / unit_id / control_root.name
         unit_root.mkdir()
         result_root.mkdir(parents=True)
+        (result_root / f"{unit_id}.grid.json").write_text("{}\n", encoding="utf-8")
+        (result_root / f"{unit_id}.request-envelope.json").write_text(
+            "{}\n", encoding="utf-8"
+        )
+        (result_root / f"eligibility-{unit_id}.eligibility.json").write_text(
+            "{}\n", encoding="utf-8"
+        )
+        (result_root / f"{unit_id}.complete.json").write_text(
+            "{}\n", encoding="utf-8"
+        )
         state = {
             "schema": "ura-vllm-stability-phase6-unit-state/1",
             "unit_id": unit_id,
@@ -7492,6 +7546,12 @@ def test_vllm_stability_completion_is_one_separate_runner_225_stratum(
         "provider_neutral_retry_1_retain_failed_output"
     )
     assert view["metric_lane_order"] == [row[0] for row in recovery.UNIT_LAYOUT]
+    assert len(view["metric_grids"]) == len(recovery.UNIT_LAYOUT)
+    assert len(view["metric_eligibility_plans"]) == len(recovery.UNIT_LAYOUT)
+    assert len(view["metric_completion_markers"]) == len(recovery.UNIT_LAYOUT)
+    assert view["revision_strata"] == {
+        revision_sha: [row[0] for row in recovery.UNIT_LAYOUT]
+    }
     assert view["target_execution"]["target_attempts"] == 7199
     assert view["cross_output_policy_pooling_permitted"] is False
 

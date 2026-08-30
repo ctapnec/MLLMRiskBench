@@ -230,7 +230,8 @@ bash ~/.ura-controller-active/launch_phase7_watcher.sh \
   --phase6-followon-completion <absolute-follow-on-completion.json> \
   --current-ollama-gate5-amendment <absolute-current-Ollama-amendment.json> \
   --phase6-current-ollama-completion <absolute-current-Ollama-completion.json> \
-  --phase6-current-ollama-recovery-completion <absolute-current-Ollama-recovery-completion.json>
+  --phase6-current-ollama-recovery-completion <absolute-current-Ollama-recovery-completion.json> \
+  --phase6-vllm-stability-completion <absolute-vLLM-stability-completion.json>
 ```
 
 The launcher returns after starting the watcher in the exact detached tmux
@@ -242,6 +243,9 @@ Pass `--phase6-current-ollama-recovery-completion` only when the base current
 Ollama completion has failed lanes. The watcher waits for that exact recovery;
 Phase 7 rejects an omitted, partial, failed, or unrelated recovery and consumes
 the base completion plus recovered Level-1 evidence as one revision stratum.
+The vLLM stability completion is always required and contributes only its seven
+fresh Runner 2.25 units; completed Runner 2.24 Qwen text and Crescendo lanes are
+not repeated and remain in their historical output-policy stratum.
 
 Targeted Runner-output recovery is deliberately outside `launch_chain`. It is
 available only through the generated
@@ -387,7 +391,9 @@ profile. Identity, provenance, residency, seal, budget and wall-time failures
 remain hard failures. An older partial current-Ollama lane is resumed by
 `resume_current_ollama_phase6` with its exact stored argv, sealed cells and
 checkpoint; the separate recovery completion binds the controller source and
-does not rewrite the base Phase 6 completion.
+does not rewrite the base Phase 6 completion. Its interpreter may be the normal
+`.venv/bin/python` symlink when that path resolves to an executable regular
+file, preserving the isolated project environment used by the original lane.
 
 The core cohort records `bridge-nanogcg`, `bridge-ideator`, and `t3mp3st` as
 `unavailable` only because their prepared artifacts are assigned to a separate
@@ -409,7 +415,7 @@ one for NanoGCG, eight for IDEATOR v2, and 50 for T3MP3ST. The generated
 `phase5_followon_prepared.sh` converts only a fully validated three-lane input
 into the separate Gate 5 amendment, and `phase6_followon_prepared.sh` derives
 the typed `measured_complete`, `partial`, or `failed` lifecycle from the exact
-Runner roots. The 62-row Phase 7 campaign union requires the amendment and
+Runner roots. The 83-row Phase 7 campaign union requires the amendment and
 completion as one exact pair. It retains all three terminal states, emits
 metric inputs only for
 independently validated successful Runner roots and partitions those inputs by
