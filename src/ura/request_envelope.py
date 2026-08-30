@@ -18,7 +18,8 @@ from .project_revision import validate_project_revision_binding
 from .sampling import effective_sampling_policy
 
 
-REQUEST_ENVELOPE_SCHEMA = "ura-request-envelope/3"
+REQUEST_ENVELOPE_SCHEMA = "ura-request-envelope/4"
+_REQUEST_ENVELOPE_SCHEMA_V3 = "ura-request-envelope/3"
 _REQUEST_ENVELOPE_SCHEMA_V2 = "ura-request-envelope/2"
 _LEGACY_REQUEST_ENVELOPE_SCHEMA = "ura-request-envelope/1"
 REQUEST_ERROR_SCHEMA = "ura-request-error/1"
@@ -43,12 +44,20 @@ _REQUEST_FIELDS_V2 = frozenset({
     "approximate_common_metrics",
     "hosted_judge_data_transfer_acknowledged",
 })
-_REQUEST_FIELDS = frozenset({
+_REQUEST_FIELDS_V3 = frozenset({
     *_REQUEST_FIELDS_V2,
     "target_answer_retries",
 })
+_REQUEST_FIELDS = frozenset({
+    *_REQUEST_FIELDS_V3,
+    "recovery_selection",
+})
 _REQUEST_FIELDS_V2_WITH_SAMPLING_POLICY = frozenset({
     *_REQUEST_FIELDS_V2,
+    "sampling_policy",
+})
+_REQUEST_FIELDS_V3_WITH_SAMPLING_POLICY = frozenset({
+    *_REQUEST_FIELDS_V3,
     "sampling_policy",
 })
 _REQUEST_FIELDS_WITH_SAMPLING_POLICY = frozenset({
@@ -56,7 +65,7 @@ _REQUEST_FIELDS_WITH_SAMPLING_POLICY = frozenset({
     "sampling_policy",
 })
 # Sampling-policy omission retains one exact inventory per schema. The validator
-# accepts immutable /1 and /2 artifacts without adding the /3 retry field.
+# accepts immutable /1 through /3 artifacts without adding newer fields.
 _BINDING_FIELDS = frozenset({
     "project_revision", "harness_source", "driver_source",
 })
@@ -82,6 +91,11 @@ _FAILURE_FIELDS = frozenset({
 _EXECUTION_FIELDS = frozenset({"execution_started", "provider_calls_started"})
 _CALL_CAP_FIELDS = frozenset({
     "target", "judge", "http_attempts", "deadline_seconds",
+})
+_RECOVERY_SELECTION_FIELDS = frozenset({
+    "schema", "sha256", "bytes", "corpus", "completed_prefix_count",
+    "selected_datapoint_ids_sha256", "completed_prefix_ids_sha256",
+    "remaining_datapoint_ids_sha256",
 })
 _ERROR_PHASES = frozenset({
     "configuration_preflight",
@@ -217,6 +231,7 @@ def build_request_envelope(
     request_value.setdefault("approximate_common_metrics", False)
     request_value.setdefault("hosted_judge_data_transfer_acknowledged", False)
     request_value.setdefault("target_answer_retries", 1)
+    request_value.setdefault("recovery_selection", None)
     request_fields = (
         _REQUEST_FIELDS_WITH_SAMPLING_POLICY
         if "sampling_policy" in request_value
@@ -272,6 +287,7 @@ def validate_request_envelope(value: object) -> dict[str, Any]:
     schema = envelope["schema"]
     if schema not in {
         REQUEST_ENVELOPE_SCHEMA,
+        _REQUEST_ENVELOPE_SCHEMA_V3,
         _REQUEST_ENVELOPE_SCHEMA_V2,
         _LEGACY_REQUEST_ENVELOPE_SCHEMA,
     } or envelope["status"] != "fixed_before_source_materialization":
@@ -292,6 +308,12 @@ def validate_request_envelope(value: object) -> dict[str, Any]:
             _REQUEST_FIELDS_V2_WITH_SAMPLING_POLICY
             if isinstance(request_value, dict) and "sampling_policy" in request_value
             else _REQUEST_FIELDS_V2
+        )
+    elif schema == _REQUEST_ENVELOPE_SCHEMA_V3:
+        request_fields = (
+            _REQUEST_FIELDS_V3_WITH_SAMPLING_POLICY
+            if isinstance(request_value, dict) and "sampling_policy" in request_value
+            else _REQUEST_FIELDS_V3
         )
     elif schema == REQUEST_ENVELOPE_SCHEMA:
         request_fields = (
@@ -343,13 +365,46 @@ def validate_request_envelope(value: object) -> dict[str, Any]:
     _integer(request["limit"], "request limit")
     _integer(request["max_queries"], "request max_queries", minimum=1)
     _integer(request["max_turns"], "request max_turns", minimum=1)
-    if schema == REQUEST_ENVELOPE_SCHEMA:
+    if schema in {_REQUEST_ENVELOPE_SCHEMA_V3, REQUEST_ENVELOPE_SCHEMA}:
         retries = _integer(
             request["target_answer_retries"],
             "request target_answer_retries",
         )
         if retries > 10:
             raise ValueError("request target_answer_retries must be <= 10")
+    if schema == REQUEST_ENVELOPE_SCHEMA:
+        recovery = request["recovery_selection"]
+        if recovery is not None:
+            recovery = _strict_object(
+                recovery,
+                _RECOVERY_SELECTION_FIELDS,
+                "request recovery selection",
+            )
+            if recovery["schema"] != "ura-recovery-completed-prefix/1":
+                raise ValueError("request recovery selection schema is unsupported")
+            _nonblank(recovery["corpus"], "request recovery selection corpus")
+            if recovery["corpus"] not in arms or len(arms) != 1:
+                raise ValueError(
+                    "request recovery selection requires its one logical source arm"
+                )
+            _integer(
+                recovery["completed_prefix_count"],
+                "request recovery completed_prefix_count",
+                minimum=1,
+            )
+            for field in (
+                "sha256",
+                "selected_datapoint_ids_sha256",
+                "completed_prefix_ids_sha256",
+                "remaining_datapoint_ids_sha256",
+            ):
+                if not isinstance(recovery[field], str) or _HEX64.fullmatch(
+                    recovery[field]
+                ) is None:
+                    raise ValueError(f"request recovery selection {field} is invalid")
+            _integer(
+                recovery["bytes"], "request recovery selection bytes", minimum=1
+            )
     if not isinstance(request["dry_run"], bool) or (
         schema != _LEGACY_REQUEST_ENVELOPE_SCHEMA
         and (

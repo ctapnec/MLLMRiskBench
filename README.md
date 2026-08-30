@@ -414,7 +414,7 @@ not reduced to generated prompts and replayed as if that reproduced the native
 experiment.
 
 Before configuration loading or corpus conversion, `run_matrix` writes a strict,
-content-addressed `ura-request-envelope/3`. It fixes the operator-selected
+content-addressed `ura-request-envelope/4`. It fixes the operator-selected
 requested-target x logical-source-arm x attacker universe as prospective
 whole-arm request units; it does not invent source-policy or modality strata.
 Pre-materialization failures after that boundary use bound
@@ -427,8 +427,9 @@ acknowledged live hosted judge and false for dry, no-call, rules-only, or local-
 judge paths. This records an operator acknowledgement, not proof of privacy
 approval or a provider retention guarantee.
 Version 3 additionally binds `target_answer_retries`, including the default of
-one retry, while retained version-1 and version-2 artifacts remain immutable and
-readable without inferred fields.
+one retry. Version 4 adds an optional content-bound recovery selection. Retained
+version-1 through version-3 artifacts remain immutable and readable without
+inferred fields.
 
 For each source instance and model, the planner admits only the exact
 attacker-produced target-input combinations declared prospectively for every
@@ -464,6 +465,9 @@ rate denominators, shown in missing-response coverage and followed by the next
 assigned row. The Build page exposes the same 0 through 10 control and Stats
 charts the failed-output rate. Identity/seal drift and explicit call/time caps
 remain terminal.
+This is one provider-neutral Runner policy: hosted targets, local vLLM and local
+Ollama use the same selected retry count, accounting, checkpoint and stability
+categories.
 
 Acquire a multi-model Ollama roster with
 `python -m experiments.local_campaign.ollama_acquire` in a named tmux session.

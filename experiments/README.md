@@ -376,7 +376,8 @@ response artifacts remain authoritative.
   that retry checkpoints the row as a model-stability failed output and
   continues the assigned population. It is missing-response coverage, not a
   decided safety label. Projections and caps cover all allowed attempts;
-  identity/seal drift remains terminal.
+  identity/seal drift remains terminal. The policy is implemented once in
+  Runner and applies identically to hosted, vLLM and Ollama targets.
 - A live receipt matches one exact requested/base-resolved route, secret-free
   route configuration, execution scope, modality combination and observation
   time. Text+image is not a substitute for text. Synthetic live text and

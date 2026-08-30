@@ -7223,3 +7223,116 @@ def test_local_call_controllers_gate_targets_on_readiness_receipts() -> None:
     assert changed_rr != rr_amendment
     with pytest.raises(AssertionError):
         assert_rr_amendment_contract(changed_rr)
+
+
+def test_vllm_stability_phase6_schedules_only_missing_runner_225_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from experiments.local_campaign import vllm_stability_phase6 as recovery
+
+    historical = {
+        "schema": "ura-phase6-failed-lane-recovery-completion/1",
+        "status": "complete_with_failures",
+        "expected_commit": recovery.HISTORICAL_COMMIT,
+        "lane_terminal_states": dict(recovery.EXPECTED_STATES),
+        "lane_results": {lane: {} for lane in recovery.COMPLETED_LANES},
+        "lane_failures": {
+            lane: {}
+            for lane in recovery.PRE_RUNNER_LANES | {recovery.PARTIAL_LANE}
+        },
+        "unrelated_passed_work_repeated": False,
+        "paid_provider_calls": 0,
+    }
+    recovery.validate_historical_completion(historical)
+
+    def spec(lane: str, corpora: list[str], counts: list[int]) -> dict[str, object]:
+        return {
+            "lane_id": lane,
+            "expected_corpora": corpora,
+            "approved_caps": {"target_calls": sum(counts)},
+            "_arms": {
+                corpus: {
+                    "logical_source_arm": corpus,
+                    "selected_records": count,
+                }
+                for corpus, count in zip(corpora, counts)
+            },
+            "base_argv": [
+                "--project-revision",
+                "/old/receipt.json",
+                "--project-revision-sha256",
+                "a" * 64,
+                "--corpora",
+                ",".join(corpora),
+            ],
+        }
+
+    specs = {
+        "local-qwen3-vl-image-primary-100": spec(
+            "local-qwen3-vl-image-primary-100", ["qwen_image"], [12]
+        ),
+        "gptgeochat-qwen3-vl": spec(
+            "gptgeochat-qwen3-vl", ["gptgeochat_release"], [20]
+        ),
+        "local-llava-base-image-primary-100": spec(
+            "local-llava-base-image-primary-100", ["llava_image"], [11]
+        ),
+        recovery.PARTIAL_LANE: spec(
+            recovery.PARTIAL_LANE,
+            list(recovery.TEXT_SUFFIX_CORPORA),
+            [1854, 450, 100, 450],
+        ),
+    }
+    monkeypatch.setattr(recovery, "_projection_arms", lambda row: row["_arms"])
+    monkeypatch.setattr(
+        recovery,
+        "_airbench_recovery",
+        lambda completion, row: (
+            {
+                "schema": recovery.PREFIX_SCHEMA,
+                "corpus": "airbench_full",
+                "completed_prefix_count": 1039,
+                "selected_datapoint_ids_sha256": "b" * 64,
+                "completed_prefix_ids_sha256": "c" * 64,
+                "remaining_datapoint_ids_sha256": "d" * 64,
+            },
+            Path("/retained/old-text-root"),
+        ),
+    )
+
+    units, _old_root = recovery.build_units(historical, specs)
+
+    assert [unit.unit_id for unit in units] == [
+        "vllm-stability-qwen3-vl-image-primary-100",
+        "vllm-stability-gptgeochat-qwen3-vl",
+        "vllm-stability-llava-base-image-primary-100",
+        "vllm-stability-llava-base-airbench-suffix",
+        "vllm-stability-llava-base-xstest-full",
+        "vllm-stability-llava-base-simplesafetytests-full",
+        "vllm-stability-llava-base-decodingtrust-stereotype",
+    ]
+    assert not ({unit.source_lane for unit in units} & recovery.COMPLETED_LANES)
+    assert units[3].selected_records == 815
+    assert sum(unit.selected_records for unit in units[3:]) == 1815
+
+    argv = recovery._base_argv(
+        units[3],
+        project_revision=Path("/new/receipt.json"),
+        project_revision_sha256="e" * 64,
+    )
+    assert recovery._option(argv, "--target-answer-retries") == "1"
+    assert recovery._option(argv, "--corpora") == "airbench_full"
+    with_recovery = [
+        *argv,
+        "--recovery-completed-prefix",
+        "/prefix.json",
+        "--recovery-completed-prefix-sha256",
+        "f" * 64,
+    ]
+    assert recovery._without_recovery_selection(with_recovery) == argv
+
+    historical["lane_terminal_states"]["local-qwen3-vl-text-primary-100"] = (
+        "failed"
+    )
+    with pytest.raises(ValueError, match="terminal partition changed"):
+        recovery.validate_historical_completion(historical)

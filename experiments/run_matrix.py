@@ -3699,6 +3699,116 @@ def load_corpus_with_audit(
     return selected, audit
 
 
+_RECOVERY_PREFIX_FIELDS = frozenset({
+    "schema",
+    "corpus",
+    "completed_prefix_count",
+    "selected_datapoint_ids_sha256",
+    "completed_prefix_ids_sha256",
+    "remaining_datapoint_ids_sha256",
+})
+
+
+def load_recovery_completed_prefix(
+    path_value: str,
+    expected_sha256: str,
+) -> tuple[dict[str, object] | None, dict[str, object] | None]:
+    """Load one exact recovery-only completed-prefix selection."""
+
+    if bool(path_value) != bool(expected_sha256):
+        raise ValueError(
+            "--recovery-completed-prefix and its SHA-256 must be provided together"
+        )
+    if not path_value:
+        return None, None
+    value, artifact = _read_content_addressed_json(
+        path_value,
+        expected_sha256,
+        flag_name="--recovery-completed-prefix",
+        max_bytes=1024 * 1024,
+    )
+    if not isinstance(value, dict) or set(value) != _RECOVERY_PREFIX_FIELDS:
+        raise ValueError("recovery completed-prefix field inventory changed")
+    if value.get("schema") != "ura-recovery-completed-prefix/1":
+        raise ValueError("recovery completed-prefix schema is unsupported")
+    corpus = value.get("corpus")
+    count = value.get("completed_prefix_count")
+    if not isinstance(corpus, str) or not corpus.strip() or corpus != corpus.strip():
+        raise ValueError("recovery completed-prefix corpus is invalid")
+    if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+        raise ValueError("recovery completed-prefix count must be positive")
+    for field in (
+        "selected_datapoint_ids_sha256",
+        "completed_prefix_ids_sha256",
+        "remaining_datapoint_ids_sha256",
+    ):
+        digest = value.get(field)
+        if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+            raise ValueError(f"recovery completed-prefix {field} is invalid")
+    binding = {
+        "schema": value["schema"],
+        "sha256": artifact["sha256"],
+        "bytes": artifact["bytes"],
+        "corpus": corpus,
+        "completed_prefix_count": count,
+        "selected_datapoint_ids_sha256": value["selected_datapoint_ids_sha256"],
+        "completed_prefix_ids_sha256": value["completed_prefix_ids_sha256"],
+        "remaining_datapoint_ids_sha256": value["remaining_datapoint_ids_sha256"],
+    }
+    return value, binding
+
+
+def apply_recovery_completed_prefix(
+    name: str,
+    corpus: list[DataPoint],
+    audit: dict[str, object],
+    recovery: dict[str, object] | None,
+) -> tuple[list[DataPoint], dict[str, object]]:
+    """Exclude only an exactly bound durable prefix from one selected corpus."""
+
+    if recovery is None:
+        return corpus, audit
+    if recovery["corpus"] != name:
+        raise ValueError("recovery completed-prefix corpus does not match selection")
+    selected_ids = [datapoint.id for datapoint in corpus]
+    if _sha256_json(selected_ids) != recovery["selected_datapoint_ids_sha256"]:
+        raise ValueError("recovery selected datapoint identity changed")
+    count = int(recovery["completed_prefix_count"])
+    if count >= len(corpus):
+        raise ValueError("recovery completed prefix leaves no unfinished row")
+    prefix_ids = selected_ids[:count]
+    remaining_ids = selected_ids[count:]
+    if _sha256_json(prefix_ids) != recovery["completed_prefix_ids_sha256"]:
+        raise ValueError("recovery completed-prefix identity changed")
+    if _sha256_json(remaining_ids) != recovery["remaining_datapoint_ids_sha256"]:
+        raise ValueError("recovery remaining-row identity changed")
+    selected_indices = audit.get("selected_indices")
+    if not isinstance(selected_indices, list) or len(selected_indices) != len(corpus):
+        raise ValueError("recovery sampling audit selected-index inventory changed")
+    remaining = corpus[count:]
+    remaining_indices = selected_indices[count:]
+    remaining_cluster_ids = [
+        _cluster_key(index, row)
+        for index, row in zip(remaining_indices, remaining)
+    ]
+    audit = {
+        **audit,
+        "pre_recovery_selected_records": len(corpus),
+        "pre_recovery_selected_datapoint_ids_sha256": _sha256_json(selected_ids),
+        "recovery_completed_prefix": dict(recovery),
+        "selected_records": len(remaining),
+        "selected_indices": remaining_indices,
+        "selected_ids": remaining_ids,
+        "selected_converted_corpus_sha256": canonical_converted_corpus_sha256(
+            remaining
+        ),
+        "selected_cluster_ids": list(dict.fromkeys(remaining_cluster_ids)),
+        "selected_clusters": len(set(remaining_cluster_ids)),
+        "selection_method": "content_bound_never_completed_suffix_v1",
+    }
+    return remaining, audit
+
+
 def _resolve_model_selection(
     names: list[str], api_registry_path: Path, local_registry_path: Path,
 ) -> tuple[list[str], list[str]]:
@@ -4073,6 +4183,19 @@ def build_parser() -> argparse.ArgumentParser:
             "or symbol-only target answer (default: 1); exhausted attempts are "
             "retained as model-stability missing responses"
         ),
+    )
+    ap.add_argument(
+        "--recovery-completed-prefix",
+        default="",
+        help=(
+            "content-bound recovery selection for one corpus; excludes only an "
+            "exact durable completed prefix from a fresh output-policy stratum"
+        ),
+    )
+    ap.add_argument(
+        "--recovery-completed-prefix-sha256",
+        default="",
+        help="exact byte digest paired with --recovery-completed-prefix",
     )
     ap.add_argument(
         "--group",
@@ -4552,6 +4675,25 @@ def _main(argv=None) -> int:
     ):
         if len(set(_values)) != len(_values):
             ap.error(f"{_label} entries must be unique")
+    try:
+        recovery_completed_prefix, recovery_selection_binding = (
+            load_recovery_completed_prefix(
+                args.recovery_completed_prefix,
+                args.recovery_completed_prefix_sha256,
+            )
+        )
+    except (OSError, UnicodeError, ValueError) as exc:
+        ap.error(str(exc))
+    if recovery_completed_prefix is not None and (
+        corpora != [recovery_completed_prefix["corpus"]]
+        or args.dry_run
+        or args.attestation_probe
+        or args.diagnostic_canary
+    ):
+        ap.error(
+            "--recovery-completed-prefix requires its one real corpus and is "
+            "valid only for acquisition preflight, preflight, or measured recovery"
+        )
     if args.attestation_probe and (
         len(model_specs) != 1
         or len(corpora) != 1
@@ -4635,6 +4777,7 @@ def _main(argv=None) -> int:
             "max_queries": args.max_queries,
             "max_turns": args.max_turns,
             "target_answer_retries": args.target_answer_retries,
+            "recovery_selection": recovery_selection_binding,
             "defense": args.defense,
             "defense_guard": args.defense_guard,
             "group_keys": group_keys,
@@ -4692,6 +4835,7 @@ def _main(argv=None) -> int:
             args.model_acquisition_plan,
             args.model_acquisition_receipt,
             args.model_acquisition_store,
+            args.recovery_completed_prefix,
             *args.live_attestation,
         ]
         configured_paths.extend(
@@ -5348,6 +5492,12 @@ def _main(argv=None) -> int:
                 source_instance=source_instances[corpus_name],
                 exclude_tool_conditioned=args.exclude_tool_conditioned,
             )
+            corpus, sampling_audit = apply_recovery_completed_prefix(
+                corpus_name,
+                corpus,
+                sampling_audit,
+                recovery_completed_prefix,
+            )
             if not corpus:
                 raise ValueError(
                     "requested corpus has no executable rows after excluding "
@@ -5674,6 +5824,8 @@ def _main(argv=None) -> int:
             **sampling_policy_binding,
             "max_queries": args.max_queries,
             "max_turns": args.max_turns,
+            "target_answer_retries": args.target_answer_retries,
+            "recovery_selection": recovery_selection_binding,
             "call_caps": {
                 "target": args.max_total_target_calls or None,
                 "judge": args.max_total_judge_calls or None,
@@ -6054,6 +6206,7 @@ def _main(argv=None) -> int:
                                     args.approximate_common_metrics
                                 ),
                                 "target_answer_retries": args.target_answer_retries,
+                                "recovery_selection": recovery_selection_binding,
                             },
                         )
                     except Exception as exc:  # noqa: BLE001 - audit all cells
@@ -6279,6 +6432,7 @@ def _main(argv=None) -> int:
         "max_queries": args.max_queries,
         "max_turns": args.max_turns,
         "target_answer_retries": args.target_answer_retries,
+        "recovery_selection": recovery_selection_binding,
         "global_call_budget": {
             "max_target_calls": args.max_total_target_calls or None,
             "max_judge_calls": args.max_total_judge_calls or None,
@@ -6706,6 +6860,7 @@ def _main(argv=None) -> int:
                         "sample_seed": args.sample_seed,
                         **sampling_policy_binding,
                         "sampling_audit": sampling_audit,
+                        "recovery_selection": recovery_selection_binding,
                         "source_conformance_artifact": (
                             _content_artifact_identity(
                                 source_conformance_artifact

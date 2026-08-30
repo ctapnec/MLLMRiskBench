@@ -466,9 +466,10 @@ evaluator. If the retry also fails, the row is checkpointed as
 remaining assigned population continues. Stats reports this missing-response
 coverage separately from decided security rates. Projections reserve the target
 and transport upper bounds for both attempts. Exact identity, seals, fixed
-configuration, durable caps and operator wall-time limits remain terminal;
-neither condition permits altered stops, generation caps, checkpoint identity
-or decoding.
+configuration, durable caps and operator wall-time limits remain terminal; none
+permits altered stops, generation caps, checkpoint identity or decoding. The
+selected retry count and failed-output behavior are provider-neutral across
+hosted, vLLM and Ollama targets.
 
 A targeted amendment must re-attest and canary the four affected GraySwan lane
 identities under the current Runner before measured execution. Those identities
@@ -1280,7 +1281,7 @@ that target output and source/reference grading
 context will leave the rig; it does not prove approval or provider deletion.
 Never pass it to `rig_check`, `--dry-run`, rules-only judging, or a local LLM
 judge because those paths perform no hosted-judge data transfer.
-Before configuration loading, `ura-request-envelope/3` copies this decision to
+Before configuration loading, `ura-request-envelope/4` copies this decision to
 the required Boolean
 `request.hosted_judge_data_transfer_acknowledged`; a no-transfer path records
 false rather than omitting the field.
@@ -4165,7 +4166,7 @@ directory rather than mixing conditions. Within a `run_matrix` invocation the
 driver replaces its preliminary plan with the final plan. The Level-1 validator
 rejects duplicate request identities, and every supplied grid must still bind
 the exact plan descriptor and experiment condition.
-`run_matrix` already wrote each `ura-request-envelope/3` before config/source
+`run_matrix` already wrote each `ura-request-envelope/4` before config/source
 materialization. Level-1 discovers those files and any bound
 `ura-request-error/1` automatically from the measured result tree and plan
 siblings; there is no extra request-manifest setup or CLI argument.

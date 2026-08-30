@@ -130,6 +130,7 @@ def test_envelope_fixes_only_exact_requested_whole_arm_cross_product() -> None:
     assert envelope["limitations"]["source_strata_materialized"] is False
     assert envelope["limitations"]["compatibility_evaluated"] is False
     assert envelope["request"]["target_answer_retries"] == 1
+    assert envelope["request"]["recovery_selection"] is None
 
 
 def test_envelope_defaults_retry_once_and_rejects_out_of_range_values() -> None:
@@ -153,6 +154,101 @@ def test_envelope_defaults_retry_once_and_rejects_out_of_range_values() -> None:
                 harness_source=harness,
                 driver_source=driver,
             )
+
+
+def test_recovery_selection_is_bound_and_requires_its_one_source_arm() -> None:
+    project, harness, driver = _source_bindings()
+    recovery = {
+        "schema": "ura-recovery-completed-prefix/1",
+        "sha256": "c" * 64,
+        "bytes": 321,
+        "corpus": "airbench_full",
+        "completed_prefix_count": 1039,
+        "selected_datapoint_ids_sha256": "d" * 64,
+        "completed_prefix_ids_sha256": "e" * 64,
+        "remaining_datapoint_ids_sha256": "f" * 64,
+    }
+    request = {
+        **_request(),
+        "logical_source_arms": ["airbench_full"],
+        "recovery_selection": recovery,
+    }
+
+    envelope = build_request_envelope(
+        request=request,
+        project_revision=project,
+        harness_source=harness,
+        driver_source=driver,
+    )
+
+    assert envelope["request"]["recovery_selection"] == recovery
+    with pytest.raises(ValueError, match="one logical source arm"):
+        build_request_envelope(
+            request={**request, "logical_source_arms": ["airbench_full", "xstest_full"]},
+            project_revision=project,
+            harness_source=harness,
+            driver_source=driver,
+        )
+
+
+def test_recovery_completed_prefix_keeps_only_exact_unfinished_suffix(
+    tmp_path: Path,
+) -> None:
+    corpus = run_matrix.synth_corpus(5)
+    selected_ids = [row.id for row in corpus]
+
+    def digest(value: object) -> str:
+        return hashlib.sha256(json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")).hexdigest()
+
+    value = {
+        "schema": "ura-recovery-completed-prefix/1",
+        "corpus": "synth",
+        "completed_prefix_count": 3,
+        "selected_datapoint_ids_sha256": digest(selected_ids),
+        "completed_prefix_ids_sha256": digest(selected_ids[:3]),
+        "remaining_datapoint_ids_sha256": digest(selected_ids[3:]),
+    }
+    path = tmp_path / "recovery-prefix.json"
+    raw = json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n"
+    path.write_text(raw, encoding="utf-8")
+    loaded, binding = run_matrix.load_recovery_completed_prefix(
+        str(path), hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    )
+    audit = {
+        "selected_indices": list(range(5)),
+        "selected_ids": selected_ids,
+        "selected_records": 5,
+        "selected_cluster_ids": selected_ids,
+        "selected_clusters": 5,
+        "selected_converted_corpus_sha256": "historical",
+    }
+
+    remaining, recovered_audit = run_matrix.apply_recovery_completed_prefix(
+        "synth", corpus, audit, loaded
+    )
+
+    assert [row.id for row in remaining] == selected_ids[3:]
+    assert recovered_audit["selected_indices"] == [3, 4]
+    assert recovered_audit["selected_records"] == 2
+    assert recovered_audit["selection_method"] == (
+        "content_bound_never_completed_suffix_v1"
+    )
+    assert binding == {
+        **value,
+        "sha256": hashlib.sha256(raw.encode("utf-8")).hexdigest(),
+        "bytes": len(raw.encode("utf-8")),
+    }
+
+    changed = list(corpus)
+    changed[3], changed[4] = changed[4], changed[3]
+    with pytest.raises(ValueError, match="selected datapoint identity changed"):
+        run_matrix.apply_recovery_completed_prefix("synth", changed, audit, loaded)
 
 
 def test_request_envelope_rejects_unbound_row_exclusion_switch() -> None:
@@ -240,6 +336,7 @@ def test_legacy_v1_envelope_remains_readable_without_relabeling() -> None:
     del envelope["request"]["approximate_common_metrics"]
     del envelope["request"]["hosted_judge_data_transfer_acknowledged"]
     del envelope["request"]["target_answer_retries"]
+    del envelope["request"]["recovery_selection"]
     _refresh_envelope_id(envelope)
 
     validated = validate_request_envelope(envelope)
@@ -253,6 +350,7 @@ def test_legacy_v2_envelope_remains_readable_without_retry_relabeling() -> None:
     envelope = copy.deepcopy(_envelope())
     envelope["schema"] = "ura-request-envelope/2"
     del envelope["request"]["target_answer_retries"]
+    del envelope["request"]["recovery_selection"]
     _refresh_envelope_id(envelope)
 
     validated = validate_request_envelope(envelope)
@@ -260,6 +358,19 @@ def test_legacy_v2_envelope_remains_readable_without_retry_relabeling() -> None:
     assert validated == envelope
     assert validated["schema"] == "ura-request-envelope/2"
     assert "target_answer_retries" not in validated["request"]
+
+
+def test_legacy_v3_envelope_remains_readable_without_recovery_relabeling() -> None:
+    envelope = copy.deepcopy(_envelope())
+    envelope["schema"] = "ura-request-envelope/3"
+    del envelope["request"]["recovery_selection"]
+    _refresh_envelope_id(envelope)
+
+    validated = validate_request_envelope(envelope)
+
+    assert validated == envelope
+    assert validated["schema"] == "ura-request-envelope/3"
+    assert validated["request"]["target_answer_retries"] == 1
 
 
 def test_envelope_rejects_missing_units_and_source_binding_substitution() -> None:

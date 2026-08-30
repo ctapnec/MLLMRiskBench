@@ -109,7 +109,7 @@ removes the path and persists `response_artifact_identity` or
 ## Prospective request envelope and early failures
 
 Before planning exists, `run_matrix` emits strict
-`ura-request-envelope/3` as
+`ura-request-envelope/4` as
 `<envelope_id>.request-envelope.json`. Its exact top-level
 fields are `schema`, `status`, `envelope_id`, `request`, `bindings`,
 `execution_units`, and `limitations`. `request` fixes execution purpose,
@@ -138,9 +138,12 @@ only judging, and a local LLM judge.
 
 Version 3 requires integer `request.target_answer_retries` in 0 through 10 and
 records the CLI default `1`. It is the number of additional target calls allowed
-after a deterministically unusable answer. Version-1 and version-2 envelopes
-remain readable with their exact historical field inventories; validators do
-not add or infer the version-3 retry field.
+after a deterministically unusable answer. Version 4 adds nullable
+`request.recovery_selection`. A non-null value binds one exact
+`ura-recovery-completed-prefix/1` artifact, its byte identity, its single source
+arm, the completed-prefix count, and selected/prefix/remaining datapoint-ID
+digests. Version-1 through version-3 envelopes remain readable with their exact
+historical field inventories; validators do not add or infer newer fields.
 
 The envelope is created after basic CLI/axis validation but before selected
 config loading, source-conformance input loading, or conversion. It is a

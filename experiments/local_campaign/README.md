@@ -29,6 +29,20 @@ base argv, prepared-attack selection, approved caps or Phase 7 validator differs
 from the tier bound to that lane. Optional limit-0 execution is a separate
 cohort and is not emitted by this bounded chain.
 
+`vllm_stability_phase6.py` is the focused post-campaign continuation for the
+retained Runner 2.24 vLLM gaps. It validates the exact historical completion,
+keeps completed Qwen text and Crescendo lanes untouched, and creates seven
+fresh Runner 2.25 units: the three conditions that failed before measured
+Runner execution, the 815-row never-completed AirBench suffix, and the three
+later LLaVA text arms that never started. The AirBench exclusion is bound by a
+create-only `ura-recovery-completed-prefix/1` artifact and request-envelope
+`/4`; it is not a checkpoint import. Every new unit binds
+`--target-answer-retries 1`, receives a fresh attestation, one-cluster canary,
+no-call projection and zero-download acquisition receipt, and retains exhausted
+unusable answers as model-stability missing responses. Phase 7 must keep this
+Runner 2.25 output-policy stratum distinct from the historical Runner 2.24
+rows.
+
 Each current measured lane also binds `--deadline-seconds 86400` and
 `measured_lane_wall_time_seconds=86400`. The Runner value gates call starts and
 does not interrupt an in-flight call; the controller value permits termination

@@ -416,13 +416,14 @@ expected_envelope_request = {
     "hosted_judge_data_transfer_acknowledged": False, "judge_model": None,
     "judges": ["rules", "guardrail"], "limit": 1,
     "logical_source_arms": ["jailbreakbench_benign"], "max_queries": 1,
-    "max_turns": 1, "target_answer_retries": 1, "quantization": "",
+    "max_turns": 1, "target_answer_retries": 1, "recovery_selection": None,
+    "quantization": "",
     "requested_target_keys": ["vllm:Qwen/Qwen3-VL-8B-Instruct"],
     "sample_seed": 0, "seeds": [0], "selected_attackers": ["replay"],
 }
 project_binding = envelope["bindings"]["project_revision"]
 if (
-    envelope["schema"] != "ura-request-envelope/3"
+    envelope["schema"] != "ura-request-envelope/4"
     or envelope["request"] != expected_envelope_request
     or project_binding["expected_commit"] != commit
     or project_binding["observed_commit"] != commit

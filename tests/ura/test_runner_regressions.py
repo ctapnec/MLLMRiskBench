@@ -6566,6 +6566,54 @@ def test_runner_retries_one_unusable_answer_by_default_then_scores_recovery() ->
     assert runner.responses[0].raw["model_stability_retry_count"] == 1
 
 
+def test_runner_answer_retry_policy_is_local_provider_independent() -> None:
+    class EmptyThenAnswer(_RecordingTarget):
+        def __init__(self, backend: str) -> None:
+            super().__init__()
+            self.backend = backend
+
+        def generate(
+            self, dialog: list[DialogTurn], *, seed: int | None = None
+        ) -> Response:
+            self._dialogs.append(list(dialog))
+            self._seeds.append(seed)
+            empty = len(self._dialogs) == 1
+            return Response(
+                attempt_id="placeholder",
+                target=self.name,
+                output_turns=(
+                    []
+                    if empty
+                    else [DialogTurn(role="assistant", content="usable answer")]
+                ),
+                raw={
+                    "backend": self.backend,
+                    "empty_completion_observed": empty,
+                    "target_sampling_control": "seeded",
+                    "requested_seed": seed,
+                },
+            )
+
+    observations: list[tuple[str, int, str, str, int]] = []
+    for backend in ("vllm", "ollama"):
+        target = EmptyThenAnswer(backend)
+        runner = _runner(_FloodAttacker(), target)
+        judgments, _manifest = runner.run([_datapoint(backend)])
+        response = runner.responses[0]
+        observations.append((
+            backend,
+            len(target._dialogs),
+            judgments[0].label,
+            response.raw["model_stability_status"],
+            response.raw["model_stability_retry_count"],
+        ))
+
+    assert observations == [
+        ("vllm", 2, "safe", "recovered_after_retry", 1),
+        ("ollama", 2, "safe", "recovered_after_retry", 1),
+    ]
+
+
 def test_runner_retains_exhausted_answer_failures_and_completes_population() -> None:
     class AlwaysUnusable(_RecordingTarget):
         def generate(

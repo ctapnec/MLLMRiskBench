@@ -658,6 +658,15 @@ policy. A fresh Runner 2.25 cohort instead binds
 recovered and later-revision strata remain explicit until read-only analysis
 validates each population.
 
+Before Gate 6 closes, every retained local vLLM failure is partitioned by the
+boundary it reached. A lane that failed before measured Runner execution is run
+as a complete first measured Runner 2.25 condition. A lane with a durable
+measured prefix receives a content-bound continuation containing only its
+never-completed rows. Completed lanes are not repeated. Every such condition
+uses the same configured answer retry and model-stability accounting as Ollama,
+while its revision and output-policy stratum remains explicit in Phase 7 rather
+than being silently pooled with historical Runner evidence.
+
 ## 7. Phase 6: bounded measured local lanes (sized by projections and canaries)
 
 **Source-record inventory, which is NOT the row count.** The figures below are
