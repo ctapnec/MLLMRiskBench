@@ -7389,3 +7389,113 @@ def test_vllm_stability_phase6_registers_its_tmux_job_lifecycle() -> None:
     assert "tmux_socket=args.tmux_socket" in source
     assert "tmux_session=args.tmux_session" in source
     assert 'parser.add_argument("--tmux-session", required=True)' in source
+
+
+def test_vllm_stability_completion_is_one_separate_runner_225_stratum(
+    tmp_path: Path,
+) -> None:
+    from experiments.local_campaign import vllm_stability_phase6 as recovery
+
+    runner_root = tmp_path / "runs" / "thesis" / "runner"
+    control_root = (
+        tmp_path / "runs" / "engineering" / "phase6-vllm-stability-fixture"
+    )
+    runner_root.mkdir(parents=True)
+    (control_root / "units").mkdir(parents=True)
+    historical = tmp_path / "historical-completion.json"
+    historical.write_text("{}\n", encoding="utf-8")
+    revision_sha = "e" * 64
+    source_sha = "f" * 64
+    results: dict[str, object] = {}
+    selected_total = 0
+    for unit_id, source_lane, corpus, selected_records in recovery.UNIT_LAYOUT:
+        selected_total += selected_records
+        unit_root = control_root / "units" / unit_id
+        result_root = runner_root / unit_id / control_root.name
+        unit_root.mkdir()
+        result_root.mkdir(parents=True)
+        state = {
+            "schema": "ura-vllm-stability-phase6-unit-state/1",
+            "unit_id": unit_id,
+            "source_lane": source_lane,
+            "corpus": corpus,
+            "selected_records": selected_records,
+            "target_answer_retries": 1,
+            "target_call_cap": selected_records * 2,
+            "attestation": {},
+            "projection": {},
+            "result_root": str(result_root),
+            "runner_argv": [
+                "--project-revision-sha256",
+                revision_sha,
+                "--source-conformance-sha256",
+                source_sha,
+                "--target-answer-retries",
+                "1",
+            ],
+        }
+        state_path = unit_root / "state.json"
+        state_path.write_text(json.dumps(state) + "\n", encoding="utf-8")
+        level1_path = unit_root / "level1.json"
+        level1_path.write_text("{}\n", encoding="utf-8")
+        results[unit_id] = {
+            "status": "complete",
+            "unit_id": unit_id,
+            "source_lane": source_lane,
+            "corpus": corpus,
+            "selected_records": selected_records,
+            "target_answer_retries": 1,
+            "target_call_cap": selected_records * 2,
+            "target_attempts": selected_records,
+            "successful_target_generations": selected_records,
+            "missing_responses": 0,
+            "result_root": str(result_root),
+            "state": recovery._descriptor(state_path, label=f"{unit_id} state"),
+            "level1": recovery._descriptor(
+                level1_path, label=f"{unit_id} Level 1 evidence"
+            ),
+        }
+    completion = {
+        "schema": recovery.SCHEMA,
+        "status": "complete",
+        "controller_exit_code": 0,
+        "completed_at_utc": "2026-08-31T00:00:00Z",
+        "expected_commit": "a" * 40,
+        "runner_code_version": "ura-runner/2.25",
+        "target_answer_retries": 1,
+        "historical_completion": recovery._descriptor(
+            historical, label="historical completion"
+        ),
+        "historical_completed_lanes_excluded": sorted(recovery.COMPLETED_LANES),
+        "unit_order": [row[0] for row in recovery.UNIT_LAYOUT],
+        "unit_results": results,
+        "unit_failures": {},
+        "target_execution": {
+            "target_attempts": selected_total,
+            "successful_target_generations": selected_total,
+            "missing_responses": 0,
+        },
+        "model_stability_accounting": (
+            "provider_neutral_retry_then_retain_failed_output_as_missing_response"
+        ),
+        "no_completed_rows_repeated": True,
+        "cross_output_policy_pooling_permitted": False,
+        "paid_provider_calls": 0,
+    }
+    completion_path = control_root / "completion.json"
+    completion_path.write_text(json.dumps(completion) + "\n", encoding="utf-8")
+
+    view = recovery.validate_completion(completion_path, runner_root=runner_root)
+
+    assert view["runner_code_version"] == "ura-runner/2.25"
+    assert view["output_policy_stratum"] == (
+        "provider_neutral_retry_1_retain_failed_output"
+    )
+    assert view["metric_lane_order"] == [row[0] for row in recovery.UNIT_LAYOUT]
+    assert view["target_execution"]["target_attempts"] == 7199
+    assert view["cross_output_policy_pooling_permitted"] is False
+
+    completion["cross_output_policy_pooling_permitted"] = True
+    completion_path.write_text(json.dumps(completion) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="completion contract changed"):
+        recovery.validate_completion(completion_path, runner_root=runner_root)

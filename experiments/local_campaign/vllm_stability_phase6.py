@@ -60,6 +60,50 @@ TEXT_SUFFIX_CORPORA = (
     "simplesafetytests_full",
     "decodingtrust_stereotype",
 )
+UNIT_LAYOUT = (
+    (
+        "vllm-stability-qwen3-vl-image-primary-100",
+        "local-qwen3-vl-image-primary-100",
+        None,
+        1632,
+    ),
+    (
+        "vllm-stability-gptgeochat-qwen3-vl",
+        "gptgeochat-qwen3-vl",
+        None,
+        2020,
+    ),
+    (
+        "vllm-stability-llava-base-image-primary-100",
+        "local-llava-base-image-primary-100",
+        None,
+        1632,
+    ),
+    (
+        "vllm-stability-llava-base-airbench-suffix",
+        PARTIAL_LANE,
+        "airbench_full",
+        815,
+    ),
+    (
+        "vllm-stability-llava-base-xstest-full",
+        PARTIAL_LANE,
+        "xstest_full",
+        100,
+    ),
+    (
+        "vllm-stability-llava-base-simplesafetytests-full",
+        PARTIAL_LANE,
+        "simplesafetytests_full",
+        100,
+    ),
+    (
+        "vllm-stability-llava-base-decodingtrust-stereotype",
+        PARTIAL_LANE,
+        "decodingtrust_stereotype",
+        900,
+    ),
+)
 HEX40 = re.compile(r"[0-9a-f]{40}\Z")
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 
@@ -299,6 +343,203 @@ def _airbench_recovery(
         "remaining_datapoint_ids_sha256": _sha256_json(remaining_ids),
     }
     return recovery, result_root
+
+
+def validate_completion(
+    completion_path: Path,
+    *,
+    runner_root: Path,
+) -> dict[str, Any]:
+    """Validate the exact all-complete Runner 2.25 continuation for Phase 7."""
+
+    completion_path = completion_path.resolve(strict=True)
+    runner_root = runner_root.resolve(strict=True)
+    completion = _load_json(completion_path, label="vLLM stability completion")
+    fields = {
+        "schema",
+        "status",
+        "controller_exit_code",
+        "completed_at_utc",
+        "expected_commit",
+        "runner_code_version",
+        "target_answer_retries",
+        "historical_completion",
+        "historical_completed_lanes_excluded",
+        "unit_order",
+        "unit_results",
+        "unit_failures",
+        "target_execution",
+        "model_stability_accounting",
+        "no_completed_rows_repeated",
+        "cross_output_policy_pooling_permitted",
+        "paid_provider_calls",
+    }
+    expected_order = [row[0] for row in UNIT_LAYOUT]
+    if (
+        set(completion) != fields
+        or completion.get("schema") != SCHEMA
+        or completion.get("status") != "complete"
+        or completion.get("controller_exit_code") != 0
+        or HEX40.fullmatch(str(completion.get("expected_commit", ""))) is None
+        or completion.get("runner_code_version") != "ura-runner/2.25"
+        or completion.get("target_answer_retries") != 1
+        or completion.get("historical_completed_lanes_excluded")
+        != sorted(COMPLETED_LANES)
+        or completion.get("unit_order") != expected_order
+        or completion.get("unit_failures") != {}
+        or completion.get("model_stability_accounting")
+        != "provider_neutral_retry_then_retain_failed_output_as_missing_response"
+        or completion.get("no_completed_rows_repeated") is not True
+        or completion.get("cross_output_policy_pooling_permitted") is not False
+        or completion.get("paid_provider_calls") != 0
+        or re.fullmatch(
+            r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z",
+            str(completion.get("completed_at_utc", "")),
+        )
+        is None
+    ):
+        raise ValueError("vLLM stability completion contract changed")
+    _validate_descriptor(
+        completion.get("historical_completion"),
+        label="vLLM stability historical completion",
+    )
+    results = completion.get("unit_results")
+    if not isinstance(results, dict) or list(results) != expected_order:
+        raise ValueError("vLLM stability result inventory changed")
+
+    result_fields = {
+        "status",
+        "unit_id",
+        "source_lane",
+        "corpus",
+        "selected_records",
+        "target_answer_retries",
+        "target_call_cap",
+        "target_attempts",
+        "successful_target_generations",
+        "missing_responses",
+        "result_root",
+        "state",
+        "level1",
+    }
+    state_fields = {
+        "schema",
+        "unit_id",
+        "source_lane",
+        "corpus",
+        "selected_records",
+        "target_answer_retries",
+        "target_call_cap",
+        "attestation",
+        "projection",
+        "result_root",
+        "runner_argv",
+    }
+    control_root = completion_path.parent
+    revisions: set[str] = set()
+    sources: set[str] = set()
+    metric_roots: dict[str, str] = {}
+    metric_evidence: dict[str, dict[str, object]] = {}
+    total_successful = 0
+    total_missing = 0
+    for unit_id, source_lane, corpus, selected_records in UNIT_LAYOUT:
+        result = results.get(unit_id)
+        if not isinstance(result, dict) or set(result) != result_fields:
+            raise ValueError(f"{unit_id} result contract changed")
+        successful = result.get("successful_target_generations")
+        missing = result.get("missing_responses")
+        if (
+            result.get("status") != "complete"
+            or result.get("unit_id") != unit_id
+            or result.get("source_lane") != source_lane
+            or result.get("corpus") != corpus
+            or result.get("selected_records") != selected_records
+            or result.get("target_answer_retries") != 1
+            or result.get("target_call_cap") != selected_records * 2
+            or result.get("target_attempts") != selected_records
+            or isinstance(successful, bool)
+            or not isinstance(successful, int)
+            or successful < 0
+            or isinstance(missing, bool)
+            or not isinstance(missing, int)
+            or missing < 0
+            or successful + missing != selected_records
+        ):
+            raise ValueError(f"{unit_id} result accounting changed")
+        result_root = Path(str(result.get("result_root", "")))
+        expected_root = runner_root / unit_id / control_root.name
+        if (
+            not result_root.is_absolute()
+            or result_root.is_symlink()
+            or result_root.resolve(strict=True) != expected_root
+        ):
+            raise ValueError(f"{unit_id} result root changed")
+        state_path = _validate_descriptor(result.get("state"), label=f"{unit_id} state")
+        level1_path = _validate_descriptor(
+            result.get("level1"), label=f"{unit_id} Level 1 evidence"
+        )
+        expected_unit_root = control_root / "units" / unit_id
+        if (
+            state_path != expected_unit_root / "state.json"
+            or level1_path != expected_unit_root / "level1.json"
+        ):
+            raise ValueError(f"{unit_id} controller artifact placement changed")
+        state = _load_json(state_path, label=f"{unit_id} state")
+        argv = state.get("runner_argv")
+        if (
+            set(state) != state_fields
+            or state.get("schema") != "ura-vllm-stability-phase6-unit-state/1"
+            or state.get("unit_id") != unit_id
+            or state.get("source_lane") != source_lane
+            or state.get("corpus") != corpus
+            or state.get("selected_records") != selected_records
+            or state.get("target_answer_retries") != 1
+            or state.get("target_call_cap") != selected_records * 2
+            or state.get("result_root") != str(result_root)
+            or not isinstance(argv, list)
+            or any(not isinstance(item, str) for item in argv)
+            or _option(argv, "--target-answer-retries") != "1"
+        ):
+            raise ValueError(f"{unit_id} measured state changed")
+        revision = _option(argv, "--project-revision-sha256")
+        source = _option(argv, "--source-conformance-sha256")
+        if HEX64.fullmatch(revision) is None or HEX64.fullmatch(source) is None:
+            raise ValueError(f"{unit_id} project/source stratum changed")
+        revisions.add(revision)
+        sources.add(source)
+        metric_roots[unit_id] = str(result_root)
+        metric_evidence[unit_id] = {
+            "state": dict(result["state"]),
+            "level1": dict(result["level1"]),
+        }
+        total_successful += successful
+        total_missing += missing
+
+    target_execution = completion.get("target_execution")
+    if (
+        not isinstance(target_execution, dict)
+        or set(target_execution)
+        != {"target_attempts", "successful_target_generations", "missing_responses"}
+        or target_execution.get("target_attempts") != sum(row[3] for row in UNIT_LAYOUT)
+        or target_execution.get("successful_target_generations") != total_successful
+        or target_execution.get("missing_responses") != total_missing
+        or len(revisions) != 1
+        or len(sources) != 1
+    ):
+        raise ValueError("vLLM stability aggregate accounting or stratum changed")
+    return {
+        "completion": _descriptor(completion_path, label="vLLM stability completion"),
+        "runner_code_version": "ura-runner/2.25",
+        "output_policy_stratum": "provider_neutral_retry_1_retain_failed_output",
+        "unit_order": expected_order,
+        "metric_lane_order": expected_order,
+        "metric_roots": metric_roots,
+        "metric_evidence": metric_evidence,
+        "project_revision_receipt_sha256": next(iter(revisions)),
+        "source_conformance_sha256": next(iter(sources)),
+        "target_execution": dict(target_execution),
+        "cross_output_policy_pooling_permitted": False,
+    }
 
 
 def build_units(
