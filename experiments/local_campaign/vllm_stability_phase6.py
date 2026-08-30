@@ -866,6 +866,7 @@ def _run_unit(
     scope: str,
     recovery_path: Path | None,
     recovery_sha256: str | None,
+    state_schema: str = "ura-vllm-stability-phase6-unit-state/1",
 ) -> dict[str, Any]:
     unit_root = control_root / "units" / unit.unit_id
     unit_root.mkdir(parents=True, mode=0o700)
@@ -876,7 +877,7 @@ def _run_unit(
     )
     if unit.recovery is not None:
         if recovery_path is None or recovery_sha256 is None:
-            raise ValueError("AirBench recovery artifact is missing")
+            raise ValueError("completed-prefix recovery artifact is missing")
         base.extend((
             "--recovery-completed-prefix",
             str(recovery_path),
@@ -995,7 +996,7 @@ def _run_unit(
         timeout=86400,
     )
     state = {
-        "schema": "ura-vllm-stability-phase6-unit-state/1",
+        "schema": state_schema,
         "unit_id": unit.unit_id,
         "source_lane": unit.source_lane,
         "corpus": unit.corpus,

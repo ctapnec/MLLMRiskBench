@@ -894,6 +894,177 @@ def test_current_ollama_stability_publishes_tmux_job_lifecycle() -> None:
     assert 'parser.add_argument("--tmux-session", required=True)' in source
     assert '"target_answer_retries": 1' in source
     assert '"no_completed_rows_repeated": True' in source
+    assert "state_schema=UNIT_STATE_SCHEMA" in source
+
+
+def test_current_ollama_stability_completion_is_a_separate_runner_225_stratum(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner_root = tmp_path / "runs" / "thesis" / "runner"
+    control_root = (
+        tmp_path / "runs" / "engineering" / "phase6-ollama-stability-fixture"
+    )
+    runner_root.mkdir(parents=True)
+    (control_root / "units").mkdir(parents=True)
+    inputs = {}
+    for name in ("gate5", "base", "recovery"):
+        path = tmp_path / f"{name}.json"
+        path.write_text("{}\n", encoding="utf-8")
+        inputs[name] = path
+    units = [
+        phase6_stability.Unit(
+            unit_id=unit_id,
+            source_lane=lane,
+            corpus=corpus,
+            spec={},
+            selected_records=remaining,
+            recovery=None,
+        )
+        for unit_id, lane, corpus, remaining, _prefix
+        in phase6_stability.EXPECTED_LAYOUT
+    ]
+    durable = {
+        "ollama-gemma4-12b-text-primary-50": 880,
+        "ollama-gemma4-12b-image-primary-50": 503,
+        "ollama-ministral3-14b-image-primary-50": 528,
+    }
+    monkeypatch.setattr(
+        phase6_stability,
+        "validate_failed_recovery",
+        lambda **_kwargs: {"gate5": {}, "base": {}},
+    )
+    monkeypatch.setattr(
+        phase6_stability,
+        "build_units",
+        lambda **_kwargs: (units, durable),
+    )
+    revision_sha = "e" * 64
+    source_sha = "f" * 64
+    results: dict[str, object] = {}
+    for unit in units:
+        unit_root = control_root / "units" / unit.unit_id
+        result_root = runner_root / unit.unit_id / control_root.name
+        unit_root.mkdir()
+        result_root.mkdir(parents=True)
+        for name in (
+            f"{unit.unit_id}.grid.json",
+            f"{unit.unit_id}.request-envelope.json",
+            f"eligibility-{unit.unit_id}.eligibility.json",
+            f"{unit.unit_id}.complete.json",
+        ):
+            (result_root / name).write_text("{}\n", encoding="utf-8")
+        state = {
+            "schema": phase6_stability.UNIT_STATE_SCHEMA,
+            "unit_id": unit.unit_id,
+            "source_lane": unit.source_lane,
+            "corpus": unit.corpus,
+            "selected_records": unit.selected_records,
+            "target_answer_retries": 1,
+            "target_call_cap": unit.selected_records * 2,
+            "attestation": {},
+            "projection": {},
+            "result_root": str(result_root),
+            "runner_argv": [
+                "--project-revision-sha256",
+                revision_sha,
+                "--source-conformance-sha256",
+                source_sha,
+                "--target-answer-retries",
+                "1",
+                "--corpora",
+                unit.corpus,
+            ],
+        }
+        state_path = unit_root / "state.json"
+        state_path.write_text(json.dumps(state) + "\n", encoding="utf-8")
+        level1 = unit_root / "level1.json"
+        level1.write_text("{}\n", encoding="utf-8")
+        results[unit.unit_id] = {
+            "status": "complete",
+            "unit_id": unit.unit_id,
+            "source_lane": unit.source_lane,
+            "corpus": unit.corpus,
+            "selected_records": unit.selected_records,
+            "target_answer_retries": 1,
+            "target_call_cap": unit.selected_records * 2,
+            "target_attempts": unit.selected_records,
+            "successful_target_generations": unit.selected_records,
+            "missing_responses": 0,
+            "result_root": str(result_root),
+            "state": phase6_stability._descriptor(
+                state_path, label=f"{unit.unit_id} state"
+            ),
+            "level1": phase6_stability._descriptor(
+                level1, label=f"{unit.unit_id} Level 1"
+            ),
+        }
+    order = [unit.unit_id for unit in units]
+    selected_total = sum(unit.selected_records for unit in units)
+    launch = {
+        "schema": "ura-current-ollama-stability-phase6-launch/1",
+        "started_at_utc": "2026-08-31T00:00:00Z",
+        "expected_commit": "a" * 40,
+        "execution_scope_id": "fixture-local-ollama",
+        "target_answer_retries": 1,
+        "gate5": phase6_stability._descriptor(inputs["gate5"], label="gate5"),
+        "base_completion": phase6_stability._descriptor(
+            inputs["base"], label="base"
+        ),
+        "failed_recovery_completion": phase6_stability._descriptor(
+            inputs["recovery"], label="recovery"
+        ),
+        "historical_durable_rows": durable,
+        "unit_order": order,
+        "selected_missing_rows": selected_total,
+        "no_completed_rows_repeated": True,
+        "paid_provider_calls": 0,
+    }
+    launch_path = control_root / "launch.json"
+    launch_path.write_text(json.dumps(launch) + "\n", encoding="utf-8")
+    completion = {
+        "schema": phase6_stability.SCHEMA,
+        "status": "complete",
+        "controller_exit_code": 0,
+        "completed_at_utc": "2026-08-31T00:01:00Z",
+        "expected_commit": "a" * 40,
+        "runner_code_version": phase6_stability.RUNNER_CODE_VERSION,
+        "target_answer_retries": 1,
+        "launch": phase6_stability._descriptor(launch_path, label="launch"),
+        "unit_order": order,
+        "unit_results": results,
+        "unit_failures": {},
+        "historical_durable_rows": durable,
+        "selected_missing_rows": selected_total,
+        "target_execution": {
+            "target_attempts": selected_total,
+            "successful_target_generations": selected_total,
+            "missing_responses": 0,
+        },
+        "model_stability_accounting": (
+            "provider_neutral_retry_then_retain_failed_output_as_missing_response"
+        ),
+        "no_completed_rows_repeated": True,
+        "cross_output_policy_pooling_permitted": False,
+        "paid_provider_calls": 0,
+    }
+    completion_path = control_root / "completion.json"
+    completion_path.write_text(json.dumps(completion) + "\n", encoding="utf-8")
+
+    view = phase6_stability.validate_completion(
+        completion_path, runner_root=runner_root
+    )
+
+    assert view["metric_lane_order"] == order
+    assert view["target_execution"]["target_attempts"] == 1684
+    assert view["historical_durable_rows"] == durable
+    assert view["cross_output_policy_pooling_permitted"] is False
+
+    completion["cross_output_policy_pooling_permitted"] = True
+    completion_path.write_text(json.dumps(completion) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="completion contract changed"):
+        phase6_stability.validate_completion(
+            completion_path, runner_root=runner_root
+        )
 
 
 def test_current_ollama_stability_binds_exact_durable_prefix(tmp_path: Path) -> None:

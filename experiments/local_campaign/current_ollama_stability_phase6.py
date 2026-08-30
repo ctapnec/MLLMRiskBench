@@ -41,6 +41,7 @@ from experiments.local_campaign.vllm_stability_phase6 import (
     Unit,
     _canonical,
     _create_json,
+    _option,
     _project_python,
     _run_unit,
     _sha256_json,
@@ -49,6 +50,7 @@ from experiments.local_campaign.vllm_stability_phase6 import (
 
 
 SCHEMA = "ura-current-ollama-stability-phase6/1"
+UNIT_STATE_SCHEMA = "ura-current-ollama-stability-phase6-unit-state/1"
 RUNNER_CODE_VERSION = "ura-runner/2.25"
 FAILED_LANES = (
     "ollama-gemma4-12b-text-primary-50",
@@ -473,6 +475,296 @@ def build_units(
     return units, durable_by_lane
 
 
+def validate_completion(
+    completion_path: Path,
+    *,
+    runner_root: Path,
+) -> dict[str, Any]:
+    """Validate the exact all-complete Runner 2.25 Ollama continuation."""
+
+    completion_path = completion_path.resolve(strict=True)
+    runner_root = runner_root.resolve(strict=True)
+    control_root = completion_path.parent
+    completion = _load_json(
+        completion_path, label="current Ollama stability completion"
+    )
+    fields = {
+        "schema",
+        "status",
+        "controller_exit_code",
+        "completed_at_utc",
+        "expected_commit",
+        "runner_code_version",
+        "target_answer_retries",
+        "launch",
+        "unit_order",
+        "unit_results",
+        "unit_failures",
+        "historical_durable_rows",
+        "selected_missing_rows",
+        "target_execution",
+        "model_stability_accounting",
+        "no_completed_rows_repeated",
+        "cross_output_policy_pooling_permitted",
+        "paid_provider_calls",
+    }
+    if (
+        set(completion) != fields
+        or completion.get("schema") != SCHEMA
+        or completion.get("status") != "complete"
+        or completion.get("controller_exit_code") != 0
+        or HEX40.fullmatch(str(completion.get("expected_commit", ""))) is None
+        or completion.get("runner_code_version") != RUNNER_CODE_VERSION
+        or completion.get("target_answer_retries") != 1
+        or completion.get("unit_failures") != {}
+        or completion.get("model_stability_accounting")
+        != "provider_neutral_retry_then_retain_failed_output_as_missing_response"
+        or completion.get("no_completed_rows_repeated") is not True
+        or completion.get("cross_output_policy_pooling_permitted") is not False
+        or completion.get("paid_provider_calls") != 0
+        or re.fullmatch(
+            r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z",
+            str(completion.get("completed_at_utc", "")),
+        )
+        is None
+    ):
+        raise ValueError("current Ollama stability completion contract changed")
+
+    launch_path = _validate_descriptor(
+        completion.get("launch"), label="current Ollama stability launch"
+    )
+    if launch_path != control_root / "launch.json":
+        raise ValueError("current Ollama stability launch placement changed")
+    launch = _load_json(launch_path, label="current Ollama stability launch")
+    launch_fields = {
+        "schema",
+        "started_at_utc",
+        "expected_commit",
+        "execution_scope_id",
+        "target_answer_retries",
+        "gate5",
+        "base_completion",
+        "failed_recovery_completion",
+        "historical_durable_rows",
+        "unit_order",
+        "selected_missing_rows",
+        "no_completed_rows_repeated",
+        "paid_provider_calls",
+    }
+    if (
+        set(launch) != launch_fields
+        or launch.get("schema") != "ura-current-ollama-stability-phase6-launch/1"
+        or launch.get("expected_commit") != completion.get("expected_commit")
+        or launch.get("target_answer_retries") != 1
+        or not isinstance(launch.get("execution_scope_id"), str)
+        or not launch["execution_scope_id"].strip()
+        or launch.get("no_completed_rows_repeated") is not True
+        or launch.get("paid_provider_calls") != 0
+    ):
+        raise ValueError("current Ollama stability launch contract changed")
+    gate5_path = _validate_descriptor(
+        launch.get("gate5"), label="current Ollama stability Gate 5"
+    )
+    base_path = _validate_descriptor(
+        launch.get("base_completion"),
+        label="current Ollama stability base completion",
+    )
+    recovery_path = _validate_descriptor(
+        launch.get("failed_recovery_completion"),
+        label="current Ollama stability failed recovery",
+    )
+    historical = validate_failed_recovery(
+        gate5_path=gate5_path,
+        base_completion=base_path,
+        recovery_completion=recovery_path,
+        runner_root=runner_root,
+    )
+    units, durable = build_units(
+        gate5=historical["gate5"], base=historical["base"]
+    )
+    expected_order = [unit.unit_id for unit in units]
+    selected_by_unit = {unit.unit_id: unit.selected_records for unit in units}
+    selected_total = sum(selected_by_unit.values())
+    if (
+        completion.get("unit_order") != expected_order
+        or completion.get("historical_durable_rows") != durable
+        or completion.get("selected_missing_rows") != selected_total
+        or launch.get("unit_order") != expected_order
+        or launch.get("historical_durable_rows") != durable
+        or launch.get("selected_missing_rows") != selected_total
+    ):
+        raise ValueError("current Ollama stability population changed")
+
+    results = completion.get("unit_results")
+    if not isinstance(results, dict) or list(results) != expected_order:
+        raise ValueError("current Ollama stability result inventory changed")
+    result_fields = {
+        "status",
+        "unit_id",
+        "source_lane",
+        "corpus",
+        "selected_records",
+        "target_answer_retries",
+        "target_call_cap",
+        "target_attempts",
+        "successful_target_generations",
+        "missing_responses",
+        "result_root",
+        "state",
+        "level1",
+    }
+    state_fields = {
+        "schema",
+        "unit_id",
+        "source_lane",
+        "corpus",
+        "selected_records",
+        "target_answer_retries",
+        "target_call_cap",
+        "attestation",
+        "projection",
+        "result_root",
+        "runner_argv",
+    }
+    units_by_id = {unit.unit_id: unit for unit in units}
+    revisions: set[str] = set()
+    sources: set[str] = set()
+    metric_roots: dict[str, str] = {}
+    metric_evidence: dict[str, dict[str, object]] = {}
+    metric_grids: list[dict[str, object]] = []
+    metric_eligibility_plans: list[dict[str, object]] = []
+    metric_completion_markers: list[dict[str, object]] = []
+    total_successful = 0
+    total_missing = 0
+    for unit_id in expected_order:
+        unit = units_by_id[unit_id]
+        selected = selected_by_unit[unit_id]
+        result = results.get(unit_id)
+        successful = result.get("successful_target_generations") if isinstance(result, dict) else None
+        missing = result.get("missing_responses") if isinstance(result, dict) else None
+        if (
+            not isinstance(result, dict)
+            or set(result) != result_fields
+            or result.get("status") != "complete"
+            or result.get("unit_id") != unit_id
+            or result.get("source_lane") != unit.source_lane
+            or result.get("corpus") != unit.corpus
+            or result.get("selected_records") != selected
+            or result.get("target_answer_retries") != 1
+            or result.get("target_call_cap") != selected * 2
+            or result.get("target_attempts") != selected
+            or isinstance(successful, bool)
+            or not isinstance(successful, int)
+            or successful < 0
+            or isinstance(missing, bool)
+            or not isinstance(missing, int)
+            or missing < 0
+            or successful + missing != selected
+        ):
+            raise ValueError(f"{unit_id}: stability result accounting changed")
+        result_root = Path(str(result.get("result_root", "")))
+        expected_root = runner_root / unit_id / control_root.name
+        if (
+            not result_root.is_absolute()
+            or result_root.is_symlink()
+            or result_root.resolve(strict=True) != expected_root
+        ):
+            raise ValueError(f"{unit_id}: stability result root changed")
+        state_path = _validate_descriptor(result.get("state"), label=f"{unit_id} state")
+        level1_path = _validate_descriptor(
+            result.get("level1"), label=f"{unit_id} Level 1 evidence"
+        )
+        unit_root = control_root / "units" / unit_id
+        if state_path != unit_root / "state.json" or level1_path != unit_root / "level1.json":
+            raise ValueError(f"{unit_id}: controller artifact placement changed")
+        state = _load_json(state_path, label=f"{unit_id} state")
+        argv = state.get("runner_argv")
+        if (
+            set(state) != state_fields
+            or state.get("schema") != UNIT_STATE_SCHEMA
+            or state.get("unit_id") != unit_id
+            or state.get("source_lane") != unit.source_lane
+            or state.get("corpus") != unit.corpus
+            or state.get("selected_records") != selected
+            or state.get("target_answer_retries") != 1
+            or state.get("target_call_cap") != selected * 2
+            or state.get("result_root") != str(result_root)
+            or not isinstance(argv, list)
+            or any(not isinstance(item, str) for item in argv)
+            or _option(argv, "--target-answer-retries") != "1"
+            or _option(argv, "--corpora") != unit.corpus
+        ):
+            raise ValueError(f"{unit_id}: measured state changed")
+        revision = _option(argv, "--project-revision-sha256")
+        source = _option(argv, "--source-conformance-sha256")
+        if HEX64.fullmatch(revision) is None or HEX64.fullmatch(source) is None:
+            raise ValueError(f"{unit_id}: project/source stratum changed")
+        grids = sorted(result_root.glob("*.grid.json"))
+        envelopes = sorted(result_root.glob("*.request-envelope.json"))
+        eligibility = sorted(result_root.glob("eligibility-*.eligibility.json"))
+        markers = sorted(result_root.glob("*.complete.json"))
+        if len(grids) != 1 or len(envelopes) != 1 or len(eligibility) != 1 or not markers:
+            raise ValueError(f"{unit_id}: completed Runner artifact inventory changed")
+        revisions.add(revision)
+        sources.add(source)
+        metric_roots[unit_id] = str(result_root)
+        grid = _descriptor(grids[0], label=f"{unit_id} measured grid")
+        plan = _descriptor(eligibility[0], label=f"{unit_id} eligibility plan")
+        completion_markers = [
+            _descriptor(marker, label=f"{unit_id} completion marker")
+            for marker in markers
+        ]
+        metric_grids.append(grid)
+        metric_eligibility_plans.append(plan)
+        metric_completion_markers.extend(completion_markers)
+        metric_evidence[unit_id] = {
+            "grid": grid,
+            "request_envelope": _descriptor(
+                envelopes[0], label=f"{unit_id} request envelope"
+            ),
+            "eligibility_plan": plan,
+            "completion_markers": completion_markers,
+            "state": dict(result["state"]),
+            "level1": dict(result["level1"]),
+        }
+        total_successful += successful
+        total_missing += missing
+
+    target_execution = completion.get("target_execution")
+    if (
+        not isinstance(target_execution, dict)
+        or set(target_execution)
+        != {"target_attempts", "successful_target_generations", "missing_responses"}
+        or target_execution.get("target_attempts") != selected_total
+        or target_execution.get("successful_target_generations") != total_successful
+        or target_execution.get("missing_responses") != total_missing
+        or len(revisions) != 1
+        or len(sources) != 1
+    ):
+        raise ValueError("current Ollama stability aggregate accounting changed")
+    return {
+        "completion": _descriptor(
+            completion_path, label="current Ollama stability completion"
+        ),
+        "runner_code_version": RUNNER_CODE_VERSION,
+        "output_policy_stratum": "provider_neutral_retry_1_retain_failed_output",
+        "unit_order": expected_order,
+        "terminal_states": {unit_id: "measured_complete" for unit_id in expected_order},
+        "metric_lane_order": expected_order,
+        "metric_roots": metric_roots,
+        "metric_evidence": metric_evidence,
+        "metric_grids": metric_grids,
+        "metric_eligibility_plans": metric_eligibility_plans,
+        "metric_completion_markers": metric_completion_markers,
+        "revision_strata": {next(iter(revisions)): expected_order},
+        "project_revision_receipt_sha256": next(iter(revisions)),
+        "source_conformance_sha256": next(iter(sources)),
+        "historical_durable_rows": durable,
+        "target_execution": dict(target_execution),
+        "cross_output_policy_pooling_permitted": False,
+    }
+
+
 def run(args: argparse.Namespace) -> int:
     if HEX40.fullmatch(args.expected_commit) is None:
         raise ValueError("expected commit must be one lowercase Git object ID")
@@ -575,6 +867,7 @@ def run(args: argparse.Namespace) -> int:
                 scope=args.execution_scope_id,
                 recovery_path=recovery_path,
                 recovery_sha256=recovery_sha,
+                state_schema=UNIT_STATE_SCHEMA,
             )
         except (
             KeyError,
