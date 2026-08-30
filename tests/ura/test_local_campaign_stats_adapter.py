@@ -183,6 +183,13 @@ def _terminal_inventory() -> dict[str, object]:
         ),
         ("followon_prepared", 3, "measured_complete", "3" * 64, "c" * 64),
         ("current_ollama", 14, "measured_complete", "5" * 64, "d" * 64),
+        (
+            "current_ollama_stability",
+            14,
+            "measured_complete",
+            "7" * 64,
+            "f" * 64,
+        ),
         ("vllm_stability", 7, "measured_complete", "6" * 64, "e" * 64),
         ("native", 9, "run", "4" * 64, "not_applicable"),
     )
@@ -208,7 +215,7 @@ def _terminal_inventory() -> dict[str, object]:
             project_strata.setdefault(revision, []).append(key)
             source_strata.setdefault(source, []).append(key)
     return {
-        "schema": "ura-phase6-campaign-terminal-inventory/2",
+        "schema": "ura-phase6-campaign-terminal-inventory/3",
         "status": "complete",
         "cohort_order": [row[0] for row in cohorts],
         "cohort_counts": {row[0]: row[1] for row in cohorts},
@@ -467,7 +474,7 @@ def _sealed_chain(
     )
     campaign_inventory_value = _terminal_inventory()
     inputs = {
-        "schema": "ura-phase7-analysis-inputs/2",
+        "schema": "ura-phase7-analysis-inputs/3",
         "inventory_complete": True,
         "scope": "all_local_phase7_read_only_analysis_over_phase6_lifecycle",
         "code_identity": {"expected_commit": COMMIT, "framework_lock_id": input_lock},
@@ -506,6 +513,19 @@ def _sealed_chain(
         "current_ollama": {
             "terminal_states": {"current-lane": "measured_complete"},
             "revision_strata": {"5" * 64: ["current-lane"]},
+            "target_execution": {
+                "target_attempts": 1,
+                "successful_target_generations": 1,
+                "missing_responses": 0,
+            },
+        },
+        "current_ollama_stability": {
+            "terminal_states": {
+                "current-stability-lane": "measured_complete"
+            },
+            "revision_strata": {
+                "7" * 64: ["current-stability-lane"]
+            },
             "target_execution": {
                 "target_attempts": 1,
                 "successful_target_generations": 1,
@@ -551,7 +571,7 @@ def _sealed_chain(
 
     prepare_result = {
         "status": "prepared",
-        "schema": "ura-phase7-analysis-inputs/2",
+        "schema": "ura-phase7-analysis-inputs/3",
         "output": (
             str(watcher / "wrong-input.json")
             if mutation == "prepare_result_output"
@@ -563,7 +583,7 @@ def _sealed_chain(
         "runner_lanes": 2,
         "metric_runner_lanes": 2,
         "native_outcomes": {"native-lane": "run"},
-        "campaign_terminal_rows": 83,
+        "campaign_terminal_rows": 97,
         "campaign_terminal_status": "complete",
         "authorization_required_before_launch": True,
     }
@@ -748,7 +768,7 @@ def _sealed_chain(
     )
     controller.update(
         {
-            "schema": "ura-phase7-analysis-completion/2",
+            "schema": "ura-phase7-analysis-completion/3",
             "status": completion_status,
             "inventory_complete": True,
             "input_manifest": _descriptor(control_input),
@@ -786,6 +806,15 @@ def _sealed_chain(
             "current_ollama_target_execution": inputs["current_ollama"][
                 "target_execution"
             ],
+            "current_ollama_stability_terminal_states": inputs[
+                "current_ollama_stability"
+            ]["terminal_states"],
+            "current_ollama_stability_metric_revision_strata": inputs[
+                "current_ollama_stability"
+            ]["revision_strata"],
+            "current_ollama_stability_target_execution": inputs[
+                "current_ollama_stability"
+            ]["target_execution"],
             "vllm_stability_terminal_states": inputs["vllm_stability"][
                 "terminal_states"
             ],
@@ -1005,7 +1034,7 @@ def test_stats_links_sealed_phase7_reports_to_watcher_campaign(
     assert "Registered external analysis" in detail_text
     assert "does not grant thesis-evidence authority" in detail_text
     assert "Campaign terminal rows" in detail_text
-    assert "83 terminal campaign rows; 0 failure rows" in detail_text
+    assert "97 terminal campaign rows; 0 failure rows" in detail_text
     assert "Rows by cohort" in detail_text
     assert "Rows by terminal state" in detail_text
     assert "Failure accounting" in detail_text
@@ -1013,6 +1042,7 @@ def test_stats_links_sealed_phase7_reports_to_watcher_campaign(
     assert "output policy amendment" in detail_text and ">4<" in detail_text
     assert "followon prepared" in detail_text and ">3<" in detail_text
     assert "current ollama" in detail_text and ">14<" in detail_text
+    assert "current ollama stability" in detail_text and ">14<" in detail_text
     assert "vllm stability" in detail_text and ">7<" in detail_text
     assert "native" in detail_text and ">9<" in detail_text
     assert "1" * 64 in detail_text

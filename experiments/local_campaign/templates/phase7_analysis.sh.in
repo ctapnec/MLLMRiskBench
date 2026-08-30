@@ -19,6 +19,7 @@ usage() {
     '    --current-ollama-gate5-amendment ABSOLUTE_PATH \' \
     '    --phase6-current-ollama-completion ABSOLUTE_PATH \' \
     '    [--phase6-current-ollama-recovery-completion ABSOLUTE_PATH] \' \
+    '    --phase6-current-ollama-stability-completion ABSOLUTE_PATH \' \
     '    --phase6-vllm-stability-completion ABSOLUTE_PATH' \
     '' \
     'Launch only the exact operator-authorized input manifest:' \
@@ -65,6 +66,7 @@ followon_completion=''
 current_ollama_amendment=''
 current_ollama_completion=''
 current_ollama_recovery_completion=''
+current_ollama_stability_completion=''
 vllm_stability_completion=''
 input_manifest=''
 authorized_sha=''
@@ -152,6 +154,11 @@ while (( $# )); do
       current_ollama_recovery_completion="$2"
       shift 2
       ;;
+    --phase6-current-ollama-stability-completion)
+      [[ $# -ge 2 && -z "$current_ollama_stability_completion" ]] || usage
+      current_ollama_stability_completion="$2"
+      shift 2
+      ;;
     --phase6-vllm-stability-completion)
       [[ $# -ge 2 && -z "$vllm_stability_completion" ]] || usage
       vllm_stability_completion="$2"
@@ -180,7 +187,8 @@ if [[ "$mode" == 'self-test' ]]; then
   [[ -z "$followon_amendment" && -z "$followon_completion" ]] || usage
   [[ -z "$current_ollama_amendment" && -z "$current_ollama_completion" && \
       -z "$current_ollama_recovery_completion" ]] || usage
-  [[ -z "$vllm_stability_completion" ]] || usage
+  [[ -z "$current_ollama_stability_completion" && \
+      -z "$vllm_stability_completion" ]] || usage
   [[ -z "$input_manifest" && -z "$authorized_sha" ]] || usage
   exec "$PY" "$PAYLOAD_SOURCE" contract-self-test
 fi
@@ -191,6 +199,7 @@ if [[ "$mode" == 'prepare' ]]; then
   [[ -n "$seven_amendment" && -n "$seven_completion" ]] || usage
   [[ -n "$followon_amendment" && -n "$followon_completion" ]] || usage
   [[ -n "$current_ollama_amendment" && -n "$current_ollama_completion" ]] || usage
+  [[ -n "$current_ollama_stability_completion" ]] || usage
   [[ -n "$vllm_stability_completion" ]] || usage
   [[ -z "$input_manifest" && -z "$authorized_sha" ]] || usage
   recovery_args=()
@@ -220,6 +229,8 @@ if [[ "$mode" == 'prepare' ]]; then
     --current-ollama-gate5-amendment "$current_ollama_amendment" \
     --phase6-current-ollama-completion "$current_ollama_completion" \
     "${current_ollama_recovery_args[@]}" \
+    --phase6-current-ollama-stability-completion \
+    "$current_ollama_stability_completion" \
     --phase6-vllm-stability-completion "$vllm_stability_completion"
 fi
 
@@ -231,7 +242,8 @@ fi
 [[ -z "$followon_amendment" && -z "$followon_completion" ]] || usage
 [[ -z "$current_ollama_amendment" && -z "$current_ollama_completion" && \
     -z "$current_ollama_recovery_completion" ]] || usage
-[[ -z "$vllm_stability_completion" ]] || usage
+[[ -z "$current_ollama_stability_completion" && \
+    -z "$vllm_stability_completion" ]] || usage
 [[ "$authorized_sha" =~ ^[0-9a-f]{64}$ ]] || usage
 
 INPUT_MANIFEST="$($PY - "$input_manifest" "$authorized_sha" "$PAYLOAD_SOURCE" <<'PY'
