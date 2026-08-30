@@ -558,6 +558,22 @@ def test_current_ollama_recovery_reuses_exact_state_argv_and_checkpoint(
 
     monkeypatch.setattr(phase6_recovery, "_run_exact", complete_exact)
     monkeypatch.setattr(phase6_recovery, "_level1_counts", level1)
+    lifecycle: list[tuple[str, dict[str, object]]] = []
+    monkeypatch.setattr(
+        phase6_recovery,
+        "start_child_controller",
+        lambda **kwargs: lifecycle.append(("start", kwargs)),
+    )
+    monkeypatch.setattr(
+        phase6_recovery,
+        "publish_target_execution",
+        lambda **kwargs: lifecycle.append(("target", kwargs)),
+    )
+    monkeypatch.setattr(
+        phase6_recovery,
+        "finish_child_controller",
+        lambda **kwargs: lifecycle.append(("finish", kwargs)),
+    )
 
     assert phase6_recovery.run(
         gate5_path=gate5,
@@ -566,6 +582,9 @@ def test_current_ollama_recovery_reuses_exact_state_argv_and_checkpoint(
         control_root=control,
         project_root=project,
         python=python,
+        work_root=tmp_path,
+        tmux_socket="default",
+        tmux_session="ura-recovery-fixture",
         wait_seconds=1,
         poll_seconds=1,
         max_lane_launches=1,
@@ -578,6 +597,11 @@ def test_current_ollama_recovery_reuses_exact_state_argv_and_checkpoint(
     assert row["final_completed_responses"] == 5
     assert row["final_checkpointed_responses"] == 0
     assert row["missing_responses"] == 1
+    assert [event for event, _ in lifecycle] == ["start", "target", "finish"]
+    assert lifecycle[0][1]["target_execution"] is True
+    assert lifecycle[1][1]["target_attempts"] == 5
+    assert lifecycle[1][1]["successful_target_generations"] == 4
+    assert lifecycle[2][1]["exit_code"] == 0
 
 
 def test_current_ollama_recovery_is_required_and_overlaid_for_phase7(

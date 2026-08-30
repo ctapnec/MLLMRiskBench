@@ -597,7 +597,9 @@ the controller counts the judgment checkpoint once and does not also count its
 mirrored response checkpoint. It writes a separate source-bound recovery
 completion and never edits the immutable base completion. The recovery accepts
 the standard `.venv/bin/python` symlink only when it resolves to an executable
-regular file, so resumption stays in the original isolated environment.
+regular file, so resumption stays in the original isolated environment. Its
+exact tmux-owned lifecycle is published to Jobs without granting evidence
+authority or rewriting either completion.
 
 Only the four affected GraySwan identities are re-attested and canaried in their
 targeted Gate 5 amendment. The historical GraySwan rows keep their immutable

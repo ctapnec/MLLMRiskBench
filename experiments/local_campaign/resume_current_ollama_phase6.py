@@ -35,6 +35,11 @@ from experiments.local_campaign.current_ollama_phase6 import (
     _strict_object,
     validate_completion,
 )
+from experiments.local_campaign.console_events import (
+    finish_child_controller,
+    publish_target_execution,
+    start_child_controller,
+)
 
 
 SCHEMA = "ura-current-ollama-phase6-recovery/1"
@@ -129,6 +134,9 @@ def run(
     control_root: Path,
     project_root: Path,
     python: Path,
+    work_root: Path,
+    tmux_socket: str,
+    tmux_session: str,
     wait_seconds: int,
     poll_seconds: int,
     max_lane_launches: int,
@@ -157,6 +165,17 @@ def run(
         raise FileExistsError("recovery control root must be create-only")
     control_root.mkdir(mode=0o700)
     (control_root / "lanes").mkdir(mode=0o700)
+    start_child_controller(
+        work_root=work_root,
+        control_root=control_root,
+        campaign_id=control_root.name,
+        release_commit=expected_commit,
+        evidence_class="measured_local_current_ollama_recovery",
+        hard_stop_hours=336,
+        tmux_socket=tmux_socket,
+        tmux_session=tmux_session,
+        target_execution=True,
+    )
 
     failed_lanes = [lane for lane, state in base["terminal_states"].items() if state == "failed"]
     rows: list[dict[str, Any]] = []
@@ -265,7 +284,25 @@ def run(
     )
     _create_json(control_root / "completion.json", body)
     (control_root / ".exit").write_text("0\n" if failures == 0 else "1\n", encoding="ascii")
-    return 0 if failures == 0 else 1
+    exit_code = 0 if failures == 0 else 1
+    publish_target_execution(
+        work_root=work_root,
+        control_root=control_root,
+        target_attempts=sum(
+            row["target_attempts"] for row in rows if row["target_attempts"] is not None
+        ),
+        successful_target_generations=sum(
+            row["successful_target_generations"]
+            for row in rows
+            if row["successful_target_generations"] is not None
+        ),
+    )
+    finish_child_controller(
+        work_root=work_root,
+        control_root=control_root,
+        exit_code=exit_code,
+    )
+    return exit_code
 
 
 def _nonnegative_int(value: object, *, label: str) -> int:
@@ -547,6 +584,9 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--control-root", type=Path, required=True)
     result.add_argument("--project-root", type=Path, required=True)
     result.add_argument("--python", type=Path, required=True)
+    result.add_argument("--work-root", type=Path, required=True)
+    result.add_argument("--tmux-socket", default="default")
+    result.add_argument("--tmux-session", required=True)
     result.add_argument("--wait-seconds", type=int, default=86_400)
     result.add_argument("--poll-seconds", type=int, default=60)
     result.add_argument("--max-lane-launches", type=int, default=1)
@@ -563,6 +603,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             control_root=args.control_root,
             project_root=args.project_root,
             python=args.python,
+            work_root=args.work_root,
+            tmux_socket=args.tmux_socket,
+            tmux_session=args.tmux_session,
             wait_seconds=args.wait_seconds,
             poll_seconds=args.poll_seconds,
             max_lane_launches=args.max_lane_launches,

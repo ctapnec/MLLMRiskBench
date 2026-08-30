@@ -394,6 +394,8 @@ checkpoint; the separate recovery completion binds the controller source and
 does not rewrite the base Phase 6 completion. Its interpreter may be the normal
 `.venv/bin/python` symlink when that path resolves to an executable regular
 file, preserving the isolated project environment used by the original lane.
+The controller publishes its exact tmux-owned running and terminal lifecycle to
+Jobs; that operational record does not alter the separate recovery evidence.
 
 The core cohort records `bridge-nanogcg`, `bridge-ideator`, and `t3mp3st` as
 `unavailable` only because their prepared artifacts are assigned to a separate
