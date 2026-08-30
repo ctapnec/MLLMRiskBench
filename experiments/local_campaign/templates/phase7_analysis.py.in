@@ -16556,6 +16556,8 @@ def execute(args: argparse.Namespace) -> int:
 
 def contract_self_test() -> int:
     rejected: list[str] = []
+    if CAMPAIGN_TOTAL_ROWS != 97:
+        raise Phase7Error("Phase 7 campaign terminal row count changed")
 
     def must_fail(label: str, action: Any) -> None:
         try:

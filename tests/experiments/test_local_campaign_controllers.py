@@ -1465,6 +1465,7 @@ def test_phase7_requires_current_ollama_terminal_and_metric_cohort() -> None:
         'self.record_current_ollama_outcomes()',
         '"current_ollama_target_execution"',
         '"phase6-campaign-terminal-inventory-97-row-union"',
+        "if CAMPAIGN_TOTAL_ROWS != 97:",
     )
     for token in required_analysis:
         assert token in analysis
