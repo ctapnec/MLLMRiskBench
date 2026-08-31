@@ -10,6 +10,7 @@ import re
 import subprocess
 from typing import Any, Sequence
 
+from experiments.finalize_recovered_trails import SCHEMA as FINALIZATION_SCHEMA
 from experiments.local_campaign.console_events import (
     finish_child_controller,
     publish_target_execution,
@@ -165,6 +166,50 @@ def validate_partial_completion(
             or (unit_root / "measured-acquisition").exists()
         ):
             raise ValueError(f"{unit_id}: canary-only failure changed")
+    failed_descriptor = _descriptor(
+        failed_path, label="failed stability completion"
+    )
+    partial_descriptor = _descriptor(
+        completion_path, label="partial stability continuation"
+    )
+    for unit_id, result in results.items():
+        unit = unit_by_id[unit_id]
+        if unit_id in INHERITED_UNITS:
+            owning_root = failed_root
+            state_schema = UNIT_STATE_SCHEMA
+            evidence_completion = failed_descriptor
+        else:
+            owning_root = root
+            state_schema = CONTINUATION_STATE_SCHEMA
+            evidence_completion = partial_descriptor
+        validated = _validate_metric_result(
+            result,
+            logical_lane=unit_id,
+            physical_unit=unit_id,
+            source_lane=unit.source_lane,
+            corpus=unit.corpus,
+            selected_records=unit.selected_records,
+            runner_root=runner_root,
+            control_root=owning_root,
+            state_schema=state_schema,
+            completion=evidence_completion,
+        )
+        if unit_id in TEXT_FINALIZATION_UNITS:
+            receipt_path = _validate_descriptor(
+                finalizations[unit_id], label=f"{unit_id} finalization"
+            )
+            receipt = _load_json(
+                receipt_path, label=f"{unit_id} finalization"
+            )
+            if (
+                receipt.get("schema") != FINALIZATION_SCHEMA
+                or receipt.get("status") != "complete"
+                or receipt.get("target_calls") != 0
+                or receipt.get("judge_calls") != 0
+                or receipt.get("attempts") != unit.selected_records
+                or receipt.get("output_root") != validated["root"]
+            ):
+                raise ValueError(f"{unit_id}: finalization receipt changed")
     attempted = sum(int(row["target_attempts"]) for row in results.values())
     successful = sum(
         int(row["successful_target_generations"]) for row in results.values()
