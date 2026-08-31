@@ -206,6 +206,19 @@ def _write_rows(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
             )
 
 
+def _copy_regular_tree(source: Path, destination: Path) -> None:
+    """Copy a supporting artifact tree without following any link."""
+
+    for candidate in (source, *source.rglob("*")):
+        if candidate.is_symlink() or (
+            not candidate.is_dir() and not candidate.is_file()
+        ):
+            raise ValueError(
+                f"failed root contains a non-regular supporting entry: {candidate}"
+            )
+    shutil.copytree(source, destination, symlinks=False)
+
+
 def finalize(
     *,
     source_root: Path,
@@ -322,7 +335,12 @@ def finalize(
     out_root.mkdir(mode=0o700)
     try:
         for source in source_root.iterdir():
-            if source.is_symlink() or not source.is_file():
+            if source.is_symlink():
+                raise ValueError(f"failed root contains a symlink: {source}")
+            if source.is_dir():
+                _copy_regular_tree(source, out_root / source.name)
+                continue
+            if not source.is_file():
                 raise ValueError(f"failed root contains a non-regular entry: {source}")
             if (
                 source.name.endswith(".error.json")
