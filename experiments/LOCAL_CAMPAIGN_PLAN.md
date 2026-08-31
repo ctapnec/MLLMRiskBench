@@ -1073,9 +1073,13 @@ environment defaults on the Run page. The exclusion is standalone-dry-run-only;
 every preflight, acquisition, attestation, canary, or measured route must reject
 it.
 Direct Phase 5 through Phase 7 controllers must appear
-through their exact engineering marker/task-event records, and every Phase 6
-measured child must have a resolvable external Job/Stats detail route whose
-artifact root equals that child's one declared `--out` directory.
+through their exact engineering marker/task-event records. Every Phase 6
+measured child started after per-child registration became active must have a
+resolvable external Job/Stats detail route whose artifact root equals that
+child's one declared `--out` directory. The already-running `bd2faf4`
+continuation remains the explicit pre-registration exception described above:
+one truthful parent route with separately browsable unit artifacts and no
+retrospectively fabricated child starts.
 
 ## 11. Schedule and effort (estimate, to be replaced by observed values)
 

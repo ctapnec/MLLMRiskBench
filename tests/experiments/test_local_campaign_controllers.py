@@ -7645,6 +7645,21 @@ def test_external_measured_docs_match_owning_session_semantics() -> None:
         with pytest.raises(AssertionError):
             assert_contract(changed)
 
+    plan = documents[2].read_text(encoding="utf-8")
+    flattened_plan = " ".join(plan.split())
+    assert "started after per-child registration became active" in flattened_plan
+    assert "explicit pre-registration exception" in flattened_plan
+    assert "no retrospectively fabricated child starts" in flattened_plan
+    changed_plan = plan.replace(
+        "started after per-child registration became active", "started", 1
+    )
+    assert changed_plan != plan
+    with pytest.raises(AssertionError):
+        changed_flattened = " ".join(changed_plan.split())
+        assert (
+            "started after per-child registration became active" in changed_flattened
+        )
+
 
 def test_vllm_stability_run_unit_registers_measured_child_before_runner(
     tmp_path: Path,
