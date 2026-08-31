@@ -651,8 +651,10 @@ Each Phase 6 measured Runner child separately creates one
 `ura-external-measured-job/2` registration immediately before `run_matrix` and
 one create-only terminal record after it returns. The start binds the exact
 sanitized argv, one canonical Runner output root, the project commit, framework
-lock, generic admission digest and a unique private tmux socket/session for that invocation,
-not the longer-lived parent controller. Jobs and Stats can then resolve
+lock, generic admission digest and the exact owning tmux socket/session for that
+invocation. A sequential controller may name its own session while it
+synchronously owns the child; a separately launched child names its
+child-specific session. Jobs and Stats can then resolve
 the child and validate only its explicitly owned artifact root. Rig Web does not
 insert the child into sqlite, own its process or offer Stop; the registration is
 operational visibility, not evidence, and stays explicitly external operational

@@ -7621,6 +7621,30 @@ def test_vllm_stability_phase6_registers_its_tmux_job_lifecycle() -> None:
     assert 'parser.add_argument("--tmux-session", required=True)' in source
 
 
+def test_external_measured_docs_match_owning_session_semantics() -> None:
+    root = Path(__file__).parents[2]
+    documents = (
+        root / "README.md",
+        root / "experiments" / "RUN_AND_RETURN.md",
+    )
+
+    def assert_contract(value: str) -> None:
+        flattened = " ".join(value.split())
+        assert "exact owning tmux socket/session" in flattened
+        assert "synchronously owns the child" in flattened
+        assert "separately launched child names its child-specific session" in flattened
+        assert "rather than the parent controller" not in flattened
+        assert "not the longer-lived parent controller" not in flattened
+
+    for path in documents:
+        source = path.read_text(encoding="utf-8")
+        assert_contract(source)
+        changed = source.replace("exact owning tmux", "unique private tmux", 1)
+        assert changed != source
+        with pytest.raises(AssertionError):
+            assert_contract(changed)
+
+
 def test_vllm_stability_run_unit_registers_measured_child_before_runner(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

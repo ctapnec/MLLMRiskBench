@@ -916,8 +916,10 @@ Measured controllers can also register each externally owned `run_matrix`
 invocation under the fixed `external-measured-jobs-v2` registry immediately
 before the call and write one create-only terminal event afterwards. Each registration binds
 the exact sanitized argument vector, Runner output root, project commit,
-framework-lock identity, a generic admission digest, and a unique private tmux
-socket/session for that invocation rather than the parent controller. Start
+framework-lock identity, a generic admission digest, and the exact owning tmux
+socket/session for that invocation. A sequential controller may name its own
+session while it synchronously owns the child; a separately launched child names
+its child-specific session. Start
 publication begins only after signal cleanup owns that prospective identity,
 and terminal publication is time-bounded.
 These rows receive normal detail routes and per-job artifact usage/report
