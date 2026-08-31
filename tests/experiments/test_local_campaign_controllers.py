@@ -7572,6 +7572,38 @@ def test_vllm_stability_phase6_reads_retained_projection_descriptor(
         })
 
 
+def test_vllm_child_jobs_bind_the_formal_gate5_manifest_digest() -> None:
+    from experiments.local_campaign import vllm_stability_phase6 as recovery
+
+    digest = "a" * 64
+    spec = {"lane_id": "lane-fixture", "gate5": {"manifest_sha256": digest}}
+    assert recovery._gate5_manifest_sha256(spec) == digest
+
+    with pytest.raises(ValueError, match="Gate 5 manifest digest changed"):
+        recovery._gate5_manifest_sha256({"lane_id": "lane-fixture", "gate5": {}})
+
+    stability_source = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "vllm_stability_phase6.py"
+    ).read_text(encoding="utf-8")
+    input_recovery_source = (
+        Path(__file__).parents[2]
+        / "experiments"
+        / "local_campaign"
+        / "vllm_input_recovery_phase6.py"
+    ).read_text(encoding="utf-8")
+    assert stability_source.count(
+        "admission_sha256=_gate5_manifest_sha256(unit.spec),"
+    ) == 1
+    assert input_recovery_source.count(
+        "admission_sha256=_gate5_manifest_sha256(unit.spec),"
+    ) == 1
+    assert "admission_sha256=args.historical_completion_sha256" not in stability_source
+    assert "admission_sha256=args.failed_completion_sha256" not in input_recovery_source
+
+
 def test_vllm_stability_phase6_registers_its_tmux_job_lifecycle() -> None:
     source = (
         Path(__file__).parents[2]

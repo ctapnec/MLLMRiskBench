@@ -284,6 +284,16 @@ def _projection_arms(spec: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
     return result
 
 
+def _gate5_manifest_sha256(spec: Mapping[str, Any]) -> str:
+    """Return the formal Gate 5 manifest digest bound by one lane spec."""
+
+    gate5 = spec.get("gate5")
+    digest = gate5.get("manifest_sha256") if isinstance(gate5, dict) else None
+    if not isinstance(digest, str) or HEX64.fullmatch(digest) is None:
+        raise ValueError(f"{spec.get('lane_id')} Gate 5 manifest digest changed")
+    return digest
+
+
 def _historical_specs(completion: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
     specs: dict[str, dict[str, Any]] = {}
     failures = completion["lane_failures"]
@@ -1197,7 +1207,7 @@ def run(args: argparse.Namespace) -> int:
                 recovery_sha256=prefix_sha if unit.recovery is not None else None,
                 expected_commit=args.expected_commit,
                 framework_lock_id=framework_lock_id,
-                admission_sha256=args.historical_completion_sha256,
+                admission_sha256=_gate5_manifest_sha256(unit.spec),
                 tmux_socket=args.tmux_socket,
                 tmux_session=args.tmux_session,
             )
