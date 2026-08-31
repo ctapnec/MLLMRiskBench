@@ -1487,7 +1487,7 @@ def test_phase7_requires_current_ollama_terminal_and_metric_cohort() -> None:
             assert token in mutant
 
 
-def test_phase7_requires_vllm_stability_completion_as_a_separate_stratum() -> None:
+def test_phase7_requires_vllm_failure_and_input_recovery_as_separate_strata() -> None:
     root = Path(__file__).parents[2] / "experiments" / "local_campaign" / "templates"
     analysis = (root / "phase7_analysis.py.in").read_text(encoding="utf-8")
     wrapper = (root / "phase7_analysis.sh.in").read_text(encoding="utf-8")
@@ -1496,6 +1496,9 @@ def test_phase7_requires_vllm_stability_completion_as_a_separate_stratum() -> No
     )
     required_analysis = (
         "validate_vllm_stability_completion(",
+        "vllm_input_recovery_phase6 import (",
+        'vllm_stability.get("input_recovery_completion")',
+        'vllm_stability["metric_project_revision_receipt_sha256"][lane]',
         '"vllm_stability": vllm_stability,',
         'vllm_stability=vllm_stability,',
         "def _vllm_stability_metric_lanes(self)",
@@ -1507,6 +1510,7 @@ def test_phase7_requires_vllm_stability_completion_as_a_separate_stratum() -> No
         assert token in analysis
     for token in (wrapper, watcher):
         assert "--phase6-vllm-stability-completion" in token
+        assert "--phase6-vllm-input-recovery-completion" in token
     assert '"vllm_stability": 7' in watcher
 
     mutant = analysis.replace('"vllm_stability": vllm_stability,', "", 1)
@@ -1599,6 +1603,7 @@ def test_phase8_replays_current_ollama_oracle_and_sampling_cohort() -> None:
         '"validate_vllm_stability_completion": (',
         '("vllm_stability", keyword_only),',
         "oracle_vllm_stability = oracle.validate_vllm_stability_completion(",
+        'inputs["vllm_stability"]["input_recovery_completion"]',
         "vllm_stability=oracle_vllm_stability,",
         'or oracle_vllm_stability != inputs.get("vllm_stability")',
         '"vllm_stability_terminal_states",',
@@ -3063,6 +3068,10 @@ def test_phase7_seven_row_and_recovery_boundary_contracts(tmp_path: Path) -> Non
         "current-ollama-completion.json",
         "--phase6-vllm-stability-completion",
         "vllm-stability-completion.json",
+        "--phase6-current-ollama-stability-completion",
+        "current-ollama-stability-completion.json",
+        "--phase6-vllm-input-recovery-completion",
+        "vllm-input-recovery-completion.json",
     ]
     parsed = phase7["build_parser"]().parse_args(prepare_argv)
     assert parsed.phase6_recovery_completion == []

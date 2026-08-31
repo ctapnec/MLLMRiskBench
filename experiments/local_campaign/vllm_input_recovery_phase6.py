@@ -33,6 +33,7 @@ from experiments.local_campaign.vllm_stability_phase6 import (
     _create_json,
     _historical_specs,
     _load_json,
+    _option,
     _project_python,
     _run_unit,
     _sha256_json,
@@ -55,6 +56,34 @@ RECOVERY_RECORDS = SELECTED_RECORDS - COMPLETED_PREFIX_RECORDS
 RECOVERY_UNIT = "vllm-input-recovery-gptgeochat-qwen3-vl-suffix"
 HEX40 = re.compile(r"[0-9a-f]{40}\Z")
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
+RESULT_FIELDS = {
+    "status",
+    "unit_id",
+    "source_lane",
+    "corpus",
+    "selected_records",
+    "target_answer_retries",
+    "target_call_cap",
+    "target_attempts",
+    "successful_target_generations",
+    "missing_responses",
+    "result_root",
+    "state",
+    "level1",
+}
+STATE_FIELDS = {
+    "schema",
+    "unit_id",
+    "source_lane",
+    "corpus",
+    "selected_records",
+    "target_answer_retries",
+    "target_call_cap",
+    "attestation",
+    "projection",
+    "result_root",
+    "runner_argv",
+}
 
 
 def _canonical_root(value: object, *, label: str) -> Path:
@@ -304,6 +333,367 @@ def build_recovery_prefix(
         "completed_prefix_ids_sha256": _sha256_json(completed_ids),
         "remaining_datapoint_ids_sha256": _sha256_json(remaining_ids),
     }, result_root
+
+
+def _validate_metric_result(
+    result: object,
+    *,
+    logical_lane: str,
+    physical_unit: str,
+    source_lane: str,
+    corpus: str | None,
+    selected_records: int,
+    runner_root: Path,
+    control_root: Path,
+    state_schema: str,
+    completion: Mapping[str, object],
+) -> dict[str, Any]:
+    if not isinstance(result, dict) or set(result) != RESULT_FIELDS:
+        raise ValueError(f"{physical_unit} metric result contract changed")
+    successful = result.get("successful_target_generations")
+    missing = result.get("missing_responses")
+    if (
+        result.get("status") != "complete"
+        or result.get("unit_id") != physical_unit
+        or result.get("source_lane") != source_lane
+        or result.get("corpus") != corpus
+        or result.get("selected_records") != selected_records
+        or result.get("target_answer_retries") != 1
+        or result.get("target_call_cap") != selected_records * 2
+        or result.get("target_attempts") != selected_records
+        or isinstance(successful, bool)
+        or not isinstance(successful, int)
+        or successful < 0
+        or isinstance(missing, bool)
+        or not isinstance(missing, int)
+        or missing < 0
+        or successful + missing != selected_records
+    ):
+        raise ValueError(f"{physical_unit} metric accounting changed")
+
+    result_root = Path(str(result.get("result_root", "")))
+    expected_root = runner_root / physical_unit / control_root.name
+    if (
+        not result_root.is_absolute()
+        or result_root.is_symlink()
+        or result_root.resolve(strict=True) != expected_root
+    ):
+        raise ValueError(f"{physical_unit} metric result root changed")
+    state_path = _validate_descriptor(
+        result.get("state"), label=f"{physical_unit} state"
+    )
+    level1_path = _validate_descriptor(
+        result.get("level1"), label=f"{physical_unit} Level 1 evidence"
+    )
+    expected_unit_root = control_root / "units" / physical_unit
+    if (
+        state_path != expected_unit_root / "state.json"
+        or level1_path != expected_unit_root / "level1.json"
+    ):
+        raise ValueError(f"{physical_unit} controller artifact placement changed")
+
+    grids = sorted(result_root.glob("*.grid.json"))
+    envelopes = sorted(result_root.glob("*.request-envelope.json"))
+    eligibility = sorted(result_root.glob("eligibility-*.eligibility.json"))
+    markers = sorted(result_root.glob("*.complete.json"))
+    if (
+        len(grids) != 1
+        or len(envelopes) != 1
+        or len(eligibility) != 1
+        or not markers
+    ):
+        raise ValueError(f"{physical_unit} completed Runner artifacts changed")
+
+    state = _load_json(state_path, label=f"{physical_unit} state")
+    argv = state.get("runner_argv")
+    if (
+        set(state) != STATE_FIELDS
+        or state.get("schema") != state_schema
+        or state.get("unit_id") != physical_unit
+        or state.get("source_lane") != source_lane
+        or state.get("corpus") != corpus
+        or state.get("selected_records") != selected_records
+        or state.get("target_answer_retries") != 1
+        or state.get("target_call_cap") != selected_records * 2
+        or state.get("result_root") != str(result_root)
+        or not isinstance(argv, list)
+        or any(not isinstance(item, str) for item in argv)
+        or _option(argv, "--target-answer-retries") != "1"
+    ):
+        raise ValueError(f"{physical_unit} measured state changed")
+    revision = _option(argv, "--project-revision-sha256")
+    source = _option(argv, "--source-conformance-sha256")
+    if HEX64.fullmatch(revision) is None or HEX64.fullmatch(source) is None:
+        raise ValueError(f"{physical_unit} project/source stratum changed")
+    evidence = {
+        "completion": dict(completion),
+        "physical_unit_id": physical_unit,
+        "logical_lane_id": logical_lane,
+        "grid": _descriptor(grids[0], label=f"{physical_unit} measured grid"),
+        "request_envelope": _descriptor(
+            envelopes[0], label=f"{physical_unit} request envelope"
+        ),
+        "eligibility_plan": _descriptor(
+            eligibility[0], label=f"{physical_unit} eligibility plan"
+        ),
+        "completion_markers": [
+            _descriptor(marker, label=f"{physical_unit} completion marker")
+            for marker in markers
+        ],
+        "state": dict(result["state"]),
+        "level1": dict(result["level1"]),
+    }
+    return {
+        "revision": revision,
+        "source": source,
+        "root": str(result_root),
+        "evidence": evidence,
+        "grid": evidence["grid"],
+        "eligibility_plan": evidence["eligibility_plan"],
+        "completion_markers": evidence["completion_markers"],
+        "successful": successful,
+        "missing": missing,
+    }
+
+
+def validate_phase7_completion(
+    recovery_completion_path: Path,
+    *,
+    runner_root: Path,
+) -> dict[str, Any]:
+    """Validate the failed Runner 2.25 campaign plus its Runner 2.26 suffix."""
+
+    recovery_completion_path = recovery_completion_path.resolve(strict=True)
+    runner_root = runner_root.resolve(strict=True)
+    recovery_completion = _load_json(
+        recovery_completion_path,
+        label="vLLM input-recovery completion",
+    )
+    fields = {
+        "schema",
+        "status",
+        "controller_exit_code",
+        "completed_at_utc",
+        "expected_commit",
+        "runner_code_version",
+        "target_answer_retries",
+        "failed_completion",
+        "recovery_selection",
+        "unit_order",
+        "unit_results",
+        "unit_failures",
+        "target_execution",
+        "input_compatibility_accounting",
+        "model_stability_accounting",
+        "no_completed_rows_repeated",
+        "cross_runner_or_input_policy_pooling_permitted",
+        "paid_provider_calls",
+    }
+    if (
+        set(recovery_completion) != fields
+        or recovery_completion.get("schema") != SCHEMA
+        or recovery_completion.get("status") != "complete"
+        or recovery_completion.get("controller_exit_code") != 0
+        or HEX40.fullmatch(str(recovery_completion.get("expected_commit", "")))
+        is None
+        or recovery_completion.get("runner_code_version") != "ura-runner/2.26"
+        or recovery_completion.get("target_answer_retries") != 1
+        or recovery_completion.get("unit_order") != [RECOVERY_UNIT]
+        or recovery_completion.get("unit_failures") != {}
+        or recovery_completion.get("input_compatibility_accounting")
+        != "typed_missing_response_without_retry_or_policy_judge"
+        or recovery_completion.get("model_stability_accounting")
+        != "provider_neutral_retry_then_retain_failed_output_as_missing_response"
+        or recovery_completion.get("no_completed_rows_repeated") is not True
+        or recovery_completion.get(
+            "cross_runner_or_input_policy_pooling_permitted"
+        )
+        is not False
+        or recovery_completion.get("paid_provider_calls") != 0
+        or re.fullmatch(
+            r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z",
+            str(recovery_completion.get("completed_at_utc", "")),
+        )
+        is None
+    ):
+        raise ValueError("vLLM input-recovery completion contract changed")
+
+    failed_path = _validate_descriptor(
+        recovery_completion.get("failed_completion"),
+        label="vLLM failed stability completion",
+    )
+    failed_descriptor = dict(recovery_completion["failed_completion"])
+    failed, failed_root = validate_failed_completion(
+        failed_path,
+        str(failed_descriptor["sha256"]),
+    )
+    expected_prefix, failed_prefix_root = build_recovery_prefix(failed_root)
+    recovery_selection_path = _validate_descriptor(
+        recovery_completion.get("recovery_selection"),
+        label="GPTGeoChat recovery selection",
+    )
+    recovery_control_root = recovery_completion_path.parent
+    if (
+        recovery_control_root.is_symlink()
+        or recovery_control_root.resolve(strict=True) != recovery_control_root
+        or recovery_control_root.parent.name != "engineering"
+        or recovery_selection_path
+        != recovery_control_root / "inputs/gptgeochat-completed-prefix.json"
+        or _load_json(recovery_selection_path, label="GPTGeoChat recovery selection")
+        != expected_prefix
+    ):
+        raise ValueError("GPTGeoChat recovery selection changed")
+
+    failed_results = failed.get("unit_results")
+    recovery_results = recovery_completion.get("unit_results")
+    if (
+        not isinstance(failed_results, dict)
+        or not isinstance(recovery_results, dict)
+        or set(recovery_results) != {RECOVERY_UNIT}
+    ):
+        raise ValueError("vLLM recovery metric result inventory changed")
+
+    failed_completion_descriptor = _descriptor(
+        failed_path, label="vLLM failed stability completion"
+    )
+    recovery_descriptor = _descriptor(
+        recovery_completion_path, label="vLLM input-recovery completion"
+    )
+    metric_roots: dict[str, str] = {}
+    metric_evidence: dict[str, dict[str, object]] = {}
+    metric_grids: list[dict[str, object]] = []
+    metric_eligibility_plans: list[dict[str, object]] = []
+    metric_completion_markers: list[dict[str, object]] = []
+    revision_strata: dict[str, list[str]] = {}
+    revision_by_lane: dict[str, str] = {}
+    sources: set[str] = set()
+    total_successful = 0
+    total_missing = 0
+
+    for unit_id, source_lane, corpus, selected_records in UNIT_LAYOUT:
+        if unit_id == FAILED_UNIT:
+            continue
+        validated = _validate_metric_result(
+            failed_results.get(unit_id),
+            logical_lane=unit_id,
+            physical_unit=unit_id,
+            source_lane=source_lane,
+            corpus=corpus,
+            selected_records=selected_records,
+            runner_root=runner_root,
+            control_root=failed_root,
+            state_schema="ura-vllm-stability-phase6-unit-state/1",
+            completion=failed_completion_descriptor,
+        )
+        revision = str(validated["revision"])
+        revision_strata.setdefault(revision, []).append(unit_id)
+        revision_by_lane[unit_id] = revision
+        sources.add(str(validated["source"]))
+        metric_roots[unit_id] = str(validated["root"])
+        metric_evidence[unit_id] = dict(validated["evidence"])
+        metric_grids.append(dict(validated["grid"]))
+        metric_eligibility_plans.append(dict(validated["eligibility_plan"]))
+        metric_completion_markers.extend(validated["completion_markers"])
+        total_successful += int(validated["successful"])
+        total_missing += int(validated["missing"])
+
+    recovery_validated = _validate_metric_result(
+        recovery_results.get(RECOVERY_UNIT),
+        logical_lane=FAILED_UNIT,
+        physical_unit=RECOVERY_UNIT,
+        source_lane=SOURCE_LANE,
+        corpus=CORPUS,
+        selected_records=RECOVERY_RECORDS,
+        runner_root=runner_root,
+        control_root=recovery_control_root,
+        state_schema="ura-vllm-input-recovery-phase6-unit-state/1",
+        completion=recovery_descriptor,
+    )
+    recovery_revision = str(recovery_validated["revision"])
+    recovery_source = str(recovery_validated["source"])
+    recovery_state_path = _validate_descriptor(
+        recovery_results[RECOVERY_UNIT]["state"],
+        label="GPTGeoChat recovery state",
+    )
+    recovery_argv = _load_json(
+        recovery_state_path, label="GPTGeoChat recovery state"
+    )["runner_argv"]
+    if (
+        _option(recovery_argv, "--recovery-completed-prefix")
+        != str(recovery_selection_path)
+        or _option(recovery_argv, "--recovery-completed-prefix-sha256")
+        != str(recovery_completion["recovery_selection"]["sha256"])
+    ):
+        raise ValueError("GPTGeoChat recovery argv selection changed")
+    if recovery_revision in revision_strata or len(revision_strata) != 1:
+        raise ValueError("vLLM failed and recovery revisions are not separate")
+    revision_strata[recovery_revision] = [FAILED_UNIT]
+    revision_by_lane[FAILED_UNIT] = recovery_revision
+    sources.add(recovery_source)
+    metric_roots[FAILED_UNIT] = str(recovery_validated["root"])
+    metric_evidence[FAILED_UNIT] = dict(recovery_validated["evidence"])
+    metric_grids.append(dict(recovery_validated["grid"]))
+    metric_eligibility_plans.append(dict(recovery_validated["eligibility_plan"]))
+    metric_completion_markers.extend(recovery_validated["completion_markers"])
+    total_successful += int(recovery_validated["successful"])
+    total_missing += int(recovery_validated["missing"])
+
+    target_execution = recovery_completion.get("target_execution")
+    if (
+        target_execution
+        != {
+            "target_attempts": RECOVERY_RECORDS,
+            "successful_target_generations": recovery_validated["successful"],
+            "missing_responses": recovery_validated["missing"],
+        }
+        or len(sources) != 1
+    ):
+        raise ValueError("vLLM input-recovery aggregate accounting changed")
+    logical_order = [row[0] for row in UNIT_LAYOUT]
+    metric_target_attempts = sum(
+        row[3] for row in UNIT_LAYOUT if row[0] != FAILED_UNIT
+    ) + RECOVERY_RECORDS
+    if total_successful + total_missing != metric_target_attempts:
+        raise ValueError("vLLM Phase 7 metric coverage changed")
+    return {
+        "completion": failed_completion_descriptor,
+        "input_recovery_completion": recovery_descriptor,
+        "runner_code_version": "ura-runner/2.25+ura-runner/2.26",
+        "output_policy_stratum": (
+            "runner_225_completed_units_plus_runner_226_input_recovery"
+        ),
+        "unit_order": logical_order,
+        "terminal_states": {lane: "measured_complete" for lane in logical_order},
+        "lifecycle_transitions": {
+            FAILED_UNIT: [
+                "runner_225_failed_after_375_durable_rows",
+                "runner_226_missing_only_suffix_complete",
+            ]
+        },
+        "failed_prefix_lifecycle": {
+            "physical_unit_id": FAILED_UNIT,
+            "durable_rows": COMPLETED_PREFIX_RECORDS,
+            "result_root": str(failed_prefix_root),
+            "included_in_metric_evidence": False,
+            "pooling_with_recovery_permitted": False,
+        },
+        "metric_lane_order": logical_order,
+        "metric_roots": metric_roots,
+        "metric_evidence": metric_evidence,
+        "metric_grids": metric_grids,
+        "metric_eligibility_plans": metric_eligibility_plans,
+        "metric_completion_markers": metric_completion_markers,
+        "revision_strata": revision_strata,
+        "metric_project_revision_receipt_sha256": revision_by_lane,
+        "project_revision_receipt_sha256": next(iter(revision_strata)),
+        "source_conformance_sha256": next(iter(sources)),
+        "target_execution": {
+            "target_attempts": metric_target_attempts,
+            "successful_target_generations": total_successful,
+            "missing_responses": total_missing,
+        },
+        "cross_output_policy_pooling_permitted": False,
+    }
 
 
 def run(args: argparse.Namespace) -> int:

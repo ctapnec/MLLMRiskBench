@@ -586,6 +586,12 @@ target attempts per intended call under the default. Exact model identity,
 seals, fixed configuration, durable budgets and operator wall-time limits remain
 fail-closed. Neither a length-capped answer nor a failed output authorizes altered
 stops, generation caps, decoding configuration or checkpoint identity.
+Runner 2.26 separately retains a deterministic target-input incompatibility,
+including an exact vLLM prompt-length rejection, as a typed missing response.
+The unchanged input is not answer-retried, policy judges are not queried, and
+the remaining selected population continues. This is input-compatibility
+coverage, not model-stability failure; identity, seals, configuration, budget,
+and unrelated validation or transport failures remain terminal.
 
 An older Runner may already have stopped a lane before this policy was
 available. `experiments.local_campaign.resume_current_ollama_phase6` handles
@@ -657,7 +663,7 @@ original checkpoint inventory, selects only attempt identities without a durable
 response/judgment record, and publishes an explicit merged coverage inventory.
 It never reruns or relabels the already paid completed rows, and same-revision
 recovery retains the original argv rather than claiming the later answer-retry
-policy. A fresh Runner 2.25 cohort instead binds
+policy. A fresh current Runner cohort instead binds
 `--target-answer-retries 1` in its request, projection and caps. Original,
 recovered and later-revision strata remain explicit until read-only analysis
 validates each population.
@@ -665,7 +671,7 @@ validates each population.
 If that exact-argv recovery reaches a terminal zero-progress state because the
 old result root retains an open circuit, it is not relaunched again. The current
 Ollama stability continuation validates the immutable base and failed recovery,
-then schedules exactly 14 fresh per-corpus Runner 2.25 units covering only the
+then schedules exactly 14 fresh per-corpus Runner 2.26 units covering only the
 1,684 never-completed rows. Content-bound prefix selectors exclude the 430
 completed Gemma AirBench rows, two completed Gemma MLLMGuard-privacy rows and
 27 completed Ministral MLLMGuard-privacy rows; nine complete Gemma text cells
@@ -690,6 +696,17 @@ and 7,199 selected rows: 1,632 Qwen3-VL image rows, 2,020 GPTGeoChat-Qwen rows,
 XSTest rows, 100 SimpleSafetyTests rows and 900 DecodingTrust stereotype rows.
 Completed Qwen3-VL text, completed Crescendo and the 1,039 durable LLaVA
 AirBench prefix are not part of this call inventory.
+
+That seven-unit controller later retained 375 complete GPTGeoChat-Qwen rows and
+then stopped the unit when one rendered multimodal prompt contained 12,290
+tokens against the prospectively bound 12,288-token vLLM context cap. The
+controller continued to later units, so neither its completed rows nor sibling
+units are restarted. After it terminalizes,
+`experiments.local_campaign.vllm_input_recovery_phase6` validates that exact
+prefix and schedules only the 1,645 never-completed GPTGeoChat rows under Runner
+2.26 with the unchanged model/configuration. Later context-limit rejections are
+retained as input-compatibility missing responses. The Runner 2.25 prefix and
+Runner 2.26 suffix remain separate, non-poolable strata.
 
 The continuation controller binds its named tmux session to the existing Jobs
 lifecycle and publishes terminal target-attempt and successful-generation
@@ -893,15 +910,17 @@ core, recovery, GraySwan RR and follow-on inputs. When that Phase 6 completion
 contains a failed readiness-admitted lane, Phase 7 additionally requires the
 exact checkpoint-recovery completion, validates every originally failed lane as
 its immutable terminal outcome, and then requires the separate 14-unit Runner
-2.25 current-Ollama stability completion for the remaining 1,684 rows. The
+2.26 current-Ollama stability completion for the remaining 1,684 rows. The
 historical 1,911 durable rows and fresh stability units retain separate
 retry/output-policy strata and are never pooled. The Level-2 export keeps
 rules-only and cascade (rules+guardrail) evaluator modes as separate
 compatibility keys.
-The exact seven-unit Runner 2.25 vLLM stability completion is another required
-input. Phase 7 admits its 7,199 rows as a separate retry/output-policy stratum,
-retains missing responses in stability accounting, and forbids pooling them
-with the completed Runner 2.24 Qwen text and Crescendo evidence.
+The exact terminal seven-unit Runner 2.25 vLLM stability completion and the
+one-unit Runner 2.26 GPTGeoChat input recovery are required together. Phase 7
+uses the six completed Runner 2.25 units and the 1,645-row Runner 2.26 suffix as
+separate metric strata, retains the 375-row failed-unit prefix as lifecycle
+evidence, and forbids pooling across either boundary or with completed Runner
+2.24 Qwen text and Crescendo evidence.
 The exact Phase 6 campaign terminal inventory contains 97 logical rows: 46
 canonical, four output-policy amendment, three follow-on, 14 historical
 current-Ollama, 14 current-Ollama stability, seven vLLM stability and nine

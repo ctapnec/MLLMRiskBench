@@ -38,7 +38,8 @@ from experiments.local_campaign.current_ollama import (
 from experiments.local_campaign.current_ollama_stability_phase6 import (
     EXPECTED_LAYOUT as CURRENT_OLLAMA_STABILITY_LAYOUT,
 )
-from experiments.local_campaign.vllm_stability_phase6 import (
+from experiments.local_campaign.vllm_input_recovery_phase6 import (
+    FAILED_UNIT as VLLM_STABILITY_RECOVERED_LANE,
     UNIT_LAYOUT as VLLM_STABILITY_UNIT_LAYOUT,
 )
 from experiments.local_campaign.ollama_static_terminal import (
@@ -6766,8 +6767,8 @@ def replay_frozen_phase7_oracle(
         )
         oracle_vllm_stability = oracle.validate_vllm_stability_completion(
             descriptor_file(
-                inputs["vllm_stability"]["completion"],
-                label="Phase 7 oracle vLLM stability completion",
+                inputs["vllm_stability"]["input_recovery_completion"],
+                label="Phase 7 oracle vLLM input-recovery completion",
             ),
             runner_root=runner_root,
         )
@@ -9395,12 +9396,25 @@ def validate_phase7_completion(
     vllm_stability_strata = vllm_stability.get("revision_strata")
     vllm_stability_metric_lanes = vllm_stability.get("metric_lane_order")
     vllm_stability_lane_order = [row[0] for row in VLLM_STABILITY_UNIT_LAYOUT]
+    vllm_stability_stratum_lanes = (
+        [lane for lanes in vllm_stability_strata.values() for lane in lanes]
+        if isinstance(vllm_stability_strata, dict)
+        and all(isinstance(lanes, list) for lanes in vllm_stability_strata.values())
+        else []
+    )
     if (
         vllm_stability_states
         != {lane: "measured_complete" for lane in vllm_stability_lane_order}
         or vllm_stability_metric_lanes != vllm_stability_lane_order
         or not isinstance(vllm_stability_strata, dict)
-        or list(vllm_stability_strata.values()) != [vllm_stability_lane_order]
+        or len(vllm_stability_strata) != 2
+        or len(vllm_stability_stratum_lanes) != len(vllm_stability_lane_order)
+        or set(vllm_stability_stratum_lanes) != set(vllm_stability_lane_order)
+        or sum(
+            lanes == [VLLM_STABILITY_RECOVERED_LANE]
+            for lanes in vllm_stability_strata.values()
+        )
+        != 1
         or value.get("vllm_stability_terminal_states") != vllm_stability_states
         or value.get("vllm_stability_metric_revision_strata")
         != vllm_stability_strata
@@ -17141,6 +17155,7 @@ def self_test() -> int:
         }
         phase7_input["vllm_stability"] = {
             "completion": descriptor(phase7_generic),
+            "input_recovery_completion": descriptor(phase7_generic),
         }
         phase7_input["campaign_terminal_inventory"] = {
             "schema": "ura-phase6-campaign-terminal-inventory-self-test/1",

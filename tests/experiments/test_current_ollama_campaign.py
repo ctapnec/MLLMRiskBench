@@ -897,7 +897,7 @@ def test_current_ollama_stability_publishes_tmux_job_lifecycle() -> None:
     assert "state_schema=UNIT_STATE_SCHEMA" in source
 
 
-def test_current_ollama_stability_completion_is_a_separate_runner_225_stratum(
+def test_current_ollama_stability_completion_is_a_separate_runner_226_stratum(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     runner_root = tmp_path / "runs" / "thesis" / "runner"

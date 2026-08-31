@@ -6,7 +6,7 @@ source-native evaluators. Experiments and the human audit are still pending.
 Preflight, dry-run, diagnostic-canary, and bounded transport-probe artifacts are
 diagnostics, not thesis results.
 
-The maintained artifact contract is Runner `ura-runner/2.25` with unified schema
+The maintained artifact contract is Runner `ura-runner/2.26` with unified schema
 `1.5`. Runner 2.19/schema 1.4 artifacts remain runtime-free legacy
 compatibility only; do not combine them with the current measured cohort.
 
@@ -470,6 +470,12 @@ configuration, durable caps and operator wall-time limits remain terminal; none
 permits altered stops, generation caps, checkpoint identity or decoding. The
 selected retry count and failed-output behavior are provider-neutral across
 hosted, vLLM and Ollama targets.
+Runner 2.26 separately retains an exact deterministic target-input rejection as
+`target_input_status=incompatible`. It makes no answer retry for the unchanged
+input, does not query the policy judge, records missing-response coverage, and
+continues the selected population. Do not relabel this as model instability: no
+model output was produced. Other validation, identity, seal, configuration,
+budget, and transport failures stay terminal.
 
 The retained local-campaign vLLM gaps are scheduled by
 `python -m experiments.local_campaign.vllm_stability_phase6`. The controller
@@ -483,20 +489,36 @@ required `--tmux-session` and optional `--tmux-socket` bind the controller to
 the existing Jobs lifecycle record; terminal target-attempt and successful-
 generation counts are published from the completed unit inventory.
 
+If that retained Runner 2.25 controller terminalizes after the observed
+GPTGeoChat prompt-length rejection, run
+`python -m experiments.local_campaign.vllm_input_recovery_phase6`. It validates
+the exact 375-row durable prefix, applies one content-bound completed-prefix
+selector, and runs only the 1,645 never-completed GPTGeoChat rows under Runner
+2.26. The unchanged 12,288-token route configuration is retained. Any later
+context-limit rejection is a typed input-compatibility missing response; the
+375-row Runner 2.25 prefix and Runner 2.26 suffix are never pooled.
+
 An exact old-Runner current-Ollama recovery can be terminal yet make no progress
 when its retained result root has an open circuit. Do not repeat that argv loop
 or clear the historical circuit in place. Run
 `python -m experiments.local_campaign.current_ollama_stability_phase6` with the
 exact Gate 5 amendment, base completion, failed recovery completion and current
 project-revision receipt. It validates all three historical inputs and creates
-14 fresh per-corpus Runner 2.25 units for exactly 1,684 missing rows. The three
+14 fresh per-corpus Runner 2.26 units for exactly 1,684 missing rows. The three
 partial corpora use content-bound completed-prefix selectors; fully completed
 cells are not called again. The new controller publishes its named tmux
 lifecycle to Jobs and retains the old and new output policies as non-poolable
 strata.
 
-Phase 7 requires both that current-Ollama stability completion and the exact
-seven-unit vLLM stability completion. Its plan-owned terminal inventory has 97
+Phase 7 requires that current-Ollama stability completion, the exact terminal
+seven-unit vLLM stability completion, and its one-unit GPTGeoChat input recovery.
+The six completed Runner 2.25 units and one Runner 2.26 missing-only suffix are
+separate metric strata; the failed 375-row prefix remains lifecycle evidence.
+Pass the terminal controller through `--phase6-vllm-stability-completion` and
+the create-only suffix completion through
+`--phase6-vllm-input-recovery-completion`; the validator requires the latter to
+bind the former byte-for-byte.
+Its plan-owned terminal inventory still has 97 logical
 rows: 46 canonical, four output-policy amendment, three follow-on, 14
 historical current-Ollama, 14 current-Ollama stability, seven vLLM stability
 and nine native. The analysis self-test, Phase 8 frozen replay and Stats adapter

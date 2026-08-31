@@ -176,7 +176,7 @@ completed-prefix recovery selection for one source arm. Retained version-1
 through version-3 envelopes validate without relabeling or inferred fields.
 
 After the whole request passes admission and before the first generation call,
-Runner 2.25 writes a content-addressed `ura-lane-projection/2`. The artifact
+Runner 2.26 writes a content-addressed `ura-lane-projection/2`. The artifact
 binds the exact experiment condition and eligibility descriptor, selected
 record/cluster/source-policy counts, deterministic sampling identities,
 selected physical input-media bytes, and the conservative complete-grid target,
@@ -263,6 +263,14 @@ admission cap independently of generation `max_tokens`. Omission uses the
 checkpoint's native context; an explicit integer in 1..1,000,000 must be at least
 `max_tokens`, is passed at engine construction, and is retained in normalized
 execution provenance.
+
+The target boundary keeps output stability separate from input compatibility.
+Runner 2.26 retains an exact deterministic target-input rejection, such as a
+vLLM prompt exceeding the admitted context cap, as a typed missing response. It
+does not retry that unchanged input, does not query policy judges, and continues
+the admitted population. The sealed private-execution boundary exposes only the
+safe typed disposition and bounded reason; unrelated third-party exceptions,
+identity drift, seal failures, and mutable configuration remain terminal.
 
 Every Hugging Face model is admitted through one sealed acquisition boundary.
 `collect_run_requirements` projects the five supported roles (vLLM target,

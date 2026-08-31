@@ -43,11 +43,19 @@ unusable answers as model-stability missing responses. Phase 7 must keep this
 Runner 2.25 output-policy stratum distinct from the historical Runner 2.24
 rows.
 
+`vllm_input_recovery_phase6.py` handles the deterministic GPTGeoChat context
+rejection found in the retained seven-unit Runner 2.25 continuation. It binds
+the exact 375-row durable prefix and schedules only the 1,645 never-completed
+rows under Runner 2.26 with the same model and 12,288-token context setting.
+Context-limit rejections are input-compatibility missing responses, not model-
+stability failures; they receive no unchanged-input retry or policy-judge call.
+The old prefix and new suffix remain non-poolable strata.
+
 `current_ollama_stability_phase6.py` handles the corresponding old-Runner
 current-Ollama boundary when exact-argv recovery is terminal with unchanged
 durable counts because the retained circuit is open. It validates the exact
 Gate 5, base and failed-recovery bytes, omits every completed cell, binds the
-three partial-corpus prefixes and runs 14 fresh Runner 2.25 per-corpus units for
+three partial-corpus prefixes and runs 14 fresh Runner 2.26 per-corpus units for
 the remaining 1,684 rows. Its Jobs lifecycle is operational only. Phase 7 must
 retain these units separately from the 1,911 durable historical rows and must
 not pool their output-policy strata.
@@ -241,7 +249,8 @@ bash ~/.ura-controller-active/launch_phase7_watcher.sh \
   --phase6-current-ollama-completion <absolute-current-Ollama-completion.json> \
   --phase6-current-ollama-recovery-completion <absolute-current-Ollama-recovery-completion.json> \
   --phase6-current-ollama-stability-completion <absolute-current-Ollama-stability-completion.json> \
-  --phase6-vllm-stability-completion <absolute-vLLM-stability-completion.json>
+  --phase6-vllm-stability-completion <absolute-terminal-vLLM-stability-completion.json> \
+  --phase6-vllm-input-recovery-completion <absolute-vLLM-input-recovery-completion.json>
 ```
 
 The launcher returns after starting the watcher in the exact detached tmux
@@ -253,11 +262,14 @@ Pass `--phase6-current-ollama-recovery-completion` only when the base current
 Ollama completion has failed lanes. The watcher waits for that exact recovery;
 Phase 7 rejects an omitted or unrelated recovery and preserves its terminal
 partition. The separate current-Ollama stability completion is always required
-for this retained campaign. It contributes the 14 fresh Runner 2.25 per-corpus
+for this retained campaign. It contributes the 14 fresh Runner 2.26 per-corpus
 units without relabeling or pooling the 1,911 durable old-Runner rows.
-The vLLM stability completion is always required and contributes only its seven
-fresh Runner 2.25 units; completed Runner 2.24 Qwen text and Crescendo lanes are
-not repeated and remain in their historical output-policy stratum.
+The terminal vLLM stability completion and its input-recovery completion are
+required together. Six completed Runner 2.25 units and the Runner 2.26
+GPTGeoChat suffix form seven logical metric lanes in separate revision strata.
+The failed unit's 375-row prefix remains lifecycle evidence and is never pooled
+with the suffix. Completed Runner 2.24 Qwen text and Crescendo lanes are not
+repeated and remain in their historical output-policy stratum.
 
 Targeted Runner-output recovery is deliberately outside `launch_chain`. It is
 available only through the generated
@@ -383,7 +395,7 @@ Gemma 4 12B Instruct Q4_K_M, Ministral 3 14B Instruct 2512 Q4_K_M,
 DeepSeek-R1 Distill Qwen 32B Q4_K_M, and GPT-OSS 20B in its native MXFP4
 representation, each bound to its acquired digest. Gemma 4 and
 Ministral 3 admit text and image lanes; the other two admit text lanes only.
-The current Runner 2.25 contract retains nonempty length-capped text with its
+The current Runner 2.26 contract retains nonempty length-capped text with its
 terminal reason and makes one additional answer attempt by default for an
 empty, structurally malformed, binary/control-like, symbol-only or transport-
 failed answer. Exhaustion becomes typed model-stability missing-response

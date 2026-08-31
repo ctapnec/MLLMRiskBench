@@ -43,9 +43,9 @@ from experiments.local_campaign.current_ollama_stability_phase6 import (
     EXPECTED_LAYOUT as CURRENT_OLLAMA_STABILITY_LAYOUT,
     validate_completion as validate_current_ollama_stability_completion,
 )
-from experiments.local_campaign.vllm_stability_phase6 import (
+from experiments.local_campaign.vllm_input_recovery_phase6 import (
     UNIT_LAYOUT as VLLM_STABILITY_UNIT_LAYOUT,
-    validate_completion as validate_vllm_stability_completion,
+    validate_phase7_completion as validate_vllm_stability_completion,
 )
 from experiments.local_campaign.ollama_static_terminal import (
     OLLAMA_STATIC_TERMINAL_DISPOSITION,
@@ -10855,7 +10855,7 @@ def build_phase6_campaign_terminal_inventory(
     for lane in vllm_stability["unit_order"]:
         append(
             "vllm_stability", lane, "measured_complete",
-            vllm_stability["project_revision_receipt_sha256"],
+            vllm_stability["metric_project_revision_receipt_sha256"][lane],
             vllm_stability["source_conformance_sha256"],
             {
                 "completion": vllm_stability["completion"],
@@ -12030,9 +12030,16 @@ def build_input_manifest(args: argparse.Namespace) -> dict[str, Any]:
         runner_root=runner_root,
     )
     vllm_stability = validate_vllm_stability_completion(
-        Path(args.phase6_vllm_stability_completion),
+        Path(args.phase6_vllm_input_recovery_completion),
         runner_root=runner_root,
     )
+    if descriptor_file(
+        vllm_stability.get("completion"),
+        label="terminal vLLM stability completion",
+    ) != Path(args.phase6_vllm_stability_completion).resolve(strict=True):
+        raise Phase7Error(
+            "vLLM input recovery does not bind the supplied terminal completion"
+        )
     campaign_inventory = build_phase6_campaign_terminal_inventory(
         gate5_rows=gate5["lanes"],
         gate5_manifest=gate5_manifest,
@@ -13207,8 +13214,8 @@ class AnalysisController:
             raise Phase7Error("authorized vLLM stability snapshot is invalid")
         validated_vllm_stability = validate_vllm_stability_completion(
             descriptor_file(
-                vllm_stability.get("completion"),
-                label="authorized vLLM stability completion",
+                vllm_stability.get("input_recovery_completion"),
+                label="authorized vLLM input-recovery completion",
             ),
             runner_root=runner_root,
         )
@@ -15668,7 +15675,7 @@ class AnalysisController:
             )
 
     def record_vllm_stability_outcomes(self) -> None:
-        """Retain the fresh Runner 2.25 continuation as one separate stratum."""
+        """Retain completed Runner 2.25 units and the Runner 2.26 suffix."""
 
         current = self.inputs["vllm_stability"]
         lifecycle_output = self.analysis / "vllm-stability" / "lifecycle.json"
@@ -15678,6 +15685,9 @@ class AnalysisController:
             "unit_order": current["unit_order"],
             "runner_code_version": current["runner_code_version"],
             "output_policy_stratum": current["output_policy_stratum"],
+            "input_recovery_completion": current["input_recovery_completion"],
+            "lifecycle_transitions": current["lifecycle_transitions"],
+            "failed_prefix_lifecycle": current["failed_prefix_lifecycle"],
             "target_execution": current["target_execution"],
             "missing_responses_retained": True,
             "historical_completed_lanes_repeated": False,
@@ -15687,7 +15697,7 @@ class AnalysisController:
         self.status(
             "vllm-stability-lifecycle",
             "complete",
-            detail="fresh vLLM retry-policy continuation retained separately",
+            detail="vLLM failure and missing-only recovery retained separately",
             outputs=(lifecycle_output,),
         )
         for revision, lanes in current["revision_strata"].items():
@@ -18758,6 +18768,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--phase6-current-ollama-stability-completion", required=True
     )
     prepare_parser.add_argument("--phase6-vllm-stability-completion", required=True)
+    prepare_parser.add_argument(
+        "--phase6-vllm-input-recovery-completion", required=True
+    )
     execute_parser = subparsers.add_parser("execute")
     execute_parser.add_argument("--launch", required=True)
     subparsers.add_parser("contract-self-test")

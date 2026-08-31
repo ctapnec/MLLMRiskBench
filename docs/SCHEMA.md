@@ -593,6 +593,14 @@ an executed cell:
   remain blocked. The normalized selected config retains the resolved precision
   and this opt-in. It also retains `max_model_len` when declared, so its selected
   subset hash and grid/run provenance bind the context/KV admission setting.
+  Runner 2.26 records a deterministic rejected input with empty
+  `output_turns`, `empty_completion_observed=true`,
+  `target_input_status=incompatible`, a typed input category/error, and
+  `target_identity_observed=false`. This is missing-response coverage rather
+  than `model_stability_status=failed_output`: no model output existed. The
+  associated policy stages are unqueried `model_nonresponse` rows. An unchanged
+  deterministic incompatible input is not answer-retried, while the remaining
+  selected population continues.
   Ollama uses a narrower shape: an `ollama:<model-tag>` entry requires the exact
   64-hex digest returned by the daemon's `/api/tags` inventory and a unique
   explicit modality list containing `text` and optionally `image`. It forbids
