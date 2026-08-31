@@ -6537,7 +6537,9 @@ def test_runner_rejects_mismatched_and_unreported_target_outputs() -> None:
             _runner(_FloodAttacker(), BadTarget(mode)).run([_datapoint()])
 
 
-def test_runner_retries_one_unusable_answer_by_default_then_scores_recovery() -> None:
+def test_runner_retries_one_unusable_answer_by_default_then_scores_recovery(
+    tmp_path: Path,
+) -> None:
     class SymbolThenAnswer(_RecordingTarget):
         def generate(
             self, dialog: list[DialogTurn], *, seed: int | None = None
@@ -6569,6 +6571,28 @@ def test_runner_retries_one_unusable_answer_by_default_then_scores_recovery() ->
         "symbol_only_output"
     )
     assert runner.responses[0].raw["model_stability_retry_count"] == 1
+    trail_path = tmp_path / "recovered-after-retry.trails.jsonl"
+    runner.save_trails(trail_path)
+    rows = [
+        json.loads(line)
+        for line in trail_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert rows
+    assert all(
+        row["model_stability_status"] == "recovered_after_retry"
+        and row["model_stability_category"] == "symbol_only_output"
+        and row["model_stability_retry_count"] == 1
+        for row in rows
+    )
+    runner_module.validate_persisted_judgment_trails(
+        {attempt.id: attempt for attempt in runner.attempts},
+        {response.attempt_id: response for response in runner.responses},
+        {judgment.attempt_id: judgment for judgment in runner.judgments},
+        rows,
+        {"run": {"approximate_common_metrics": False}},
+        ["binary"],
+    )
 
 
 def test_runner_answer_retry_policy_is_local_provider_independent() -> None:

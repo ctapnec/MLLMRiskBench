@@ -7982,6 +7982,74 @@ def test_vllm_stability_attestation_probe_uses_local_guardrail() -> None:
     assert recovery._option(argv, "--guardrail-device") == "cuda:1"
 
 
+def test_vllm_stability_attestation_advances_after_one_model_nonresponse(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from experiments.local_campaign import vllm_stability_phase6 as recovery
+
+    work_root = tmp_path / "work"
+    unit_root = work_root / "runs/engineering/controller/units/probe-fixture"
+    unit_root.mkdir(parents=True)
+    unit = recovery.Unit(
+        unit_id="probe-fixture",
+        source_lane="local-llava-base-image-primary-100",
+        corpus=None,
+        spec={"modality": "image"},
+        selected_records=1,
+    )
+    base = [
+        "--project-revision", "/revision.json",
+        "--project-revision-sha256", "a" * 64,
+        "--local", "vllm:llava-hf/llava-v1.6-mistral-7b-hf",
+        "--local-config", "/local.json",
+        "--local-config-sha256", "b" * 64,
+        "--source-config", "/source.json",
+        "--source-config-sha256", "c" * 64,
+        "--source-conformance", "/conformance.json",
+        "--source-conformance-sha256", "d" * 64,
+        "--group", "model,source",
+    ]
+    monkeypatch.setattr(recovery, "_acquisition_args", lambda *args, **kwargs: [])
+    probe_seeds: list[int] = []
+
+    def fake_run(
+        argv: Sequence[str],
+        *,
+        log: Path,
+        timeout: int,
+        allow_failure: bool = False,
+    ) -> int:
+        del timeout
+        log.write_text("fixture\n", encoding="utf-8")
+        if "experiments.run_matrix" in argv:
+            probe_seeds.append(int(recovery._option(argv, "--sample-seed")))
+            return 0
+        if "--probe-root" in argv:
+            seed = int(log.name.split("seed-")[1].split(".")[0])
+            if seed == 0:
+                assert allow_failure
+                return 1
+            Path(recovery._option(argv, "--out")).write_text(
+                '{"schema":"fixture"}\n', encoding="utf-8"
+            )
+            return 0
+        return 0
+
+    monkeypatch.setattr(recovery, "_run", fake_run)
+    attestation = recovery._derive_attestation(
+        unit,
+        base=base,
+        python=Path("/fixture/python"),
+        unit_root=unit_root,
+        work_root=work_root,
+        scope="scope-fixture",
+    )
+
+    assert probe_seeds == [0, 1]
+    assert "seed-1" in attestation["path"]
+
+
 def test_vllm_stability_phase6_accepts_standard_venv_python_symlink(
     tmp_path: Path,
 ) -> None:

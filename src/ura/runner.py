@@ -758,6 +758,30 @@ class Runner:
                         for item in raw_trail
                         if item.raw.get("cascade_role") == "authoritative"
                     )
+            # The final judgment and every retained cascade stage describe the
+            # same target response.  Carry response-quality outcome fields onto
+            # all stages before stamping so a successful retry remains both
+            # judgeable and exactly provenance-valid when trails are persisted.
+            response_outcome = {
+                field: response.raw.get(field)
+                for field in (
+                    "model_stability_status",
+                    "model_stability_category",
+                    "model_stability_error_type",
+                    "model_stability_retry_count",
+                    "target_input_status",
+                    "target_input_category",
+                    "target_input_error_type",
+                )
+                if response.raw.get(field) is not None
+            }
+            if response_outcome:
+                raw_trail = [
+                    item.model_copy(update={
+                        "raw": {**item.raw, **response_outcome}
+                    })
+                    for item in raw_trail
+                ]
             trail = [self._stamp_judgment(j, run_id) for j in raw_trail]
             final = _attach_strongreject_shadow(final, trail)
             target_modalities = tuple(

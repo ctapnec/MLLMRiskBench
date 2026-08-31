@@ -110,6 +110,7 @@ UNIT_LAYOUT = (
 )
 HEX40 = re.compile(r"[0-9a-f]{40}\Z")
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
+ATTESTATION_PROBE_SEEDS = (0, 1, 2, 3, 4)
 
 
 @dataclass(frozen=True)
@@ -755,7 +756,12 @@ def _without_recovery_selection(argv: Sequence[str]) -> list[str]:
 
 
 def _probe_args(
-    unit: Unit, *, base: Sequence[str], out: Path, scope: str
+    unit: Unit,
+    *,
+    base: Sequence[str],
+    out: Path,
+    scope: str,
+    sample_seed: int = 0,
 ) -> list[str]:
     base = list(base)
     modality = unit.spec.get("modality")
@@ -801,7 +807,7 @@ def _probe_args(
         "--limit",
         "1",
         "--sample-seed",
-        "0",
+        str(sample_seed),
         "--seeds",
         "0",
         "--max-queries",
@@ -837,52 +843,81 @@ def _derive_attestation(
 ) -> dict[str, Any]:
     root = work_root / "runs/thesis/attestation" / unit_root.parent.parent.name / unit.unit_id
     root.mkdir(parents=True, mode=0o700)
-    probe_root = root / "probe"
-    probe_args = _probe_args(unit, base=base, out=probe_root, scope=scope)
-    acquisition_root = unit_root / "probe-acquisition"
-    acquisition_root.mkdir(mode=0o700)
-    acquisition = _acquisition_args(
-        probe_args,
-        python=python,
-        lane_root=acquisition_root,
-        timeout=3600,
+    failed_seeds: list[int] = []
+    for sample_seed in ATTESTATION_PROBE_SEEDS:
+        suffix = f"seed-{sample_seed}"
+        probe_root = root / f"probe-{suffix}"
+        probe_args = _probe_args(
+            unit,
+            base=base,
+            out=probe_root,
+            scope=scope,
+            sample_seed=sample_seed,
+        )
+        acquisition_root = unit_root / f"probe-acquisition-{suffix}"
+        acquisition_root.mkdir(mode=0o700)
+        acquisition = _acquisition_args(
+            probe_args,
+            python=python,
+            lane_root=acquisition_root,
+            timeout=3600,
+        )
+        _run(
+            (
+                str(python),
+                "-m",
+                "experiments.run_matrix",
+                *probe_args,
+                *acquisition,
+            ),
+            log=unit_root / f"probe.{suffix}.run.log",
+            timeout=3600,
+        )
+        receipt = root / f"{unit.unit_id}.{suffix}.live-attestation.json"
+        derived = _run(
+            (
+                str(python),
+                "-m",
+                "experiments.live_attestation",
+                "--probe-root",
+                str(probe_root),
+                "--execution-scope-id",
+                scope,
+                "--out",
+                str(receipt),
+            ),
+            log=unit_root / f"probe.{suffix}.derive.log",
+            timeout=600,
+            allow_failure=True,
+        )
+        if derived != 0:
+            failed_seeds.append(sample_seed)
+            continue
+        digest = hashlib.sha256(
+            _stable_file(receipt, label="live attestation")
+        ).hexdigest()
+        _run(
+            (
+                str(python),
+                "-m",
+                "experiments.live_attestation",
+                "--validate",
+                str(receipt),
+                "--sha256",
+                digest,
+            ),
+            log=unit_root / f"probe.{suffix}.validate.log",
+            timeout=600,
+        )
+        return {
+            "path": str(receipt),
+            "sha256": digest,
+            "bytes": receipt.stat().st_size,
+        }
+    raise RuntimeError(
+        "live attestation found no realized target identity across probe seeds "
+        + ",".join(str(seed) for seed in failed_seeds)
     )
-    _run(
-        (str(python), "-m", "experiments.run_matrix", *probe_args, *acquisition),
-        log=unit_root / "probe.run.log",
-        timeout=3600,
-    )
-    receipt = root / f"{unit.unit_id}.live-attestation.json"
-    _run(
-        (
-            str(python),
-            "-m",
-            "experiments.live_attestation",
-            "--probe-root",
-            str(probe_root),
-            "--execution-scope-id",
-            scope,
-            "--out",
-            str(receipt),
-        ),
-        log=unit_root / "probe.derive.log",
-        timeout=600,
-    )
-    digest = hashlib.sha256(_stable_file(receipt, label="live attestation")).hexdigest()
-    _run(
-        (
-            str(python),
-            "-m",
-            "experiments.live_attestation",
-            "--validate",
-            str(receipt),
-            "--sha256",
-            digest,
-        ),
-        log=unit_root / "probe.validate.log",
-        timeout=600,
-    )
-    return {"path": str(receipt), "sha256": digest, "bytes": receipt.stat().st_size}
 
 
 def _one_file(root: Path, pattern: str, *, label: str) -> Path:
