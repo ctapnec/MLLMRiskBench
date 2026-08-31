@@ -208,6 +208,10 @@ _CONTROLLER_FIELDS = {
     "current_ollama_stability_terminal_states",
     "current_ollama_stability_metric_revision_strata",
     "current_ollama_stability_target_execution",
+    "current_ollama_population_alignment_terminal_states",
+    "current_ollama_population_alignment_metric_revision_strata",
+    "current_ollama_population_alignment_target_execution",
+    "current_ollama_population_alignment",
     "vllm_stability_terminal_states",
     "vllm_stability_metric_revision_strata",
     "vllm_stability_target_execution",
@@ -240,13 +244,14 @@ _INVENTORY_FIELDS = {
     "human_labels_consumed",
 }
 
-_LOCAL_TERMINAL_INVENTORY_SCHEMA = "ura-phase6-campaign-terminal-inventory/3"
+_LOCAL_TERMINAL_INVENTORY_SCHEMA = "ura-phase6-campaign-terminal-inventory/4"
 _LOCAL_TERMINAL_INVENTORY_COHORTS = (
     "canonical",
     "output_policy_amendment",
     "followon_prepared",
     "current_ollama",
     "current_ollama_stability",
+    "current_ollama_population_alignment",
     "vllm_stability",
     "native",
 )
@@ -256,6 +261,7 @@ _LOCAL_TERMINAL_INVENTORY_COHORT_COUNTS = {
     "followon_prepared": 3,
     "current_ollama": 14,
     "current_ollama_stability": 14,
+    "current_ollama_population_alignment": 12,
     "vllm_stability": 7,
     "native": 9,
 }
@@ -277,6 +283,7 @@ _LOCAL_TERMINAL_INVENTORY_STATES = {
     "followon_prepared": {"measured_complete", "partial", "failed"},
     "current_ollama": {"measured_complete", "failed", "unavailable"},
     "current_ollama_stability": {"measured_complete"},
+    "current_ollama_population_alignment": {"measured_complete"},
     "vllm_stability": {"measured_complete"},
     "native": {"run", "failed", "unavailable", "not-selected"},
 }
@@ -303,8 +310,8 @@ def _validate_local_campaign_terminal_inventory(
         != list(_LOCAL_TERMINAL_INVENTORY_COHORTS)
         or document.get("cohort_counts")
         != _LOCAL_TERMINAL_INVENTORY_COHORT_COUNTS
-        or len(rows) != 97
-        or len(document["row_order"]) != 97
+        or len(rows) != 109
+        or len(document["row_order"]) != 109
         or document.get("cross_revision_pooling_permitted") is not False
         or document.get("cross_source_pooling_permitted") is not False
     ):
@@ -833,7 +840,7 @@ def load_local_campaign_stats_bundle(
         if (
             set(prepare) != _PREPARE_RESULT_FIELDS
             or prepare.get("status") != "prepared"
-            or prepare.get("schema") != "ura-phase7-analysis-inputs/3"
+            or prepare.get("schema") != "ura-phase7-analysis-inputs/4"
             or prepare.get("output") != str(watcher_root / "phase7-inputs.json")
             or prepare.get("sha256") != input_sha
             or type(prepare.get("bytes")) is not int
@@ -845,7 +852,7 @@ def load_local_campaign_stats_bundle(
             or type(prepare.get("metric_runner_lanes")) is not int
             or not 0 <= prepare["metric_runner_lanes"] <= prepare["runner_lanes"]
             or not isinstance(prepare.get("native_outcomes"), Mapping)
-            or prepare.get("campaign_terminal_rows") != 97
+            or prepare.get("campaign_terminal_rows") != 109
             or prepare.get("campaign_terminal_status")
             not in {"complete", "complete_with_failures"}
             or prepare.get("authorization_required_before_launch") is not True
@@ -912,7 +919,7 @@ def load_local_campaign_stats_bundle(
         )
         if (
             set(controller) != _CONTROLLER_FIELDS
-            or controller.get("schema") != "ura-phase7-analysis-completion/3"
+            or controller.get("schema") != "ura-phase7-analysis-completion/4"
             or controller.get("status") != watcher.get("status")
             or not isinstance(statuses, dict)
             or not statuses
@@ -1066,6 +1073,9 @@ def load_local_campaign_stats_bundle(
         seven_inputs = inputs.get("seven_output_policy_amendment")
         current_ollama_inputs = inputs.get("current_ollama")
         current_ollama_stability_inputs = inputs.get("current_ollama_stability")
+        current_ollama_alignment_inputs = inputs.get(
+            "current_ollama_population_alignment"
+        )
         vllm_stability_inputs = inputs.get("vllm_stability")
         followon_states = (
             followon_inputs.get("terminal_states")
@@ -1087,7 +1097,7 @@ def load_local_campaign_stats_bundle(
             else None
         )
         if (
-            inputs.get("schema") != "ura-phase7-analysis-inputs/3"
+            inputs.get("schema") != "ura-phase7-analysis-inputs/4"
             or inputs.get("inventory_complete") is not True
             or inputs.get("scope") != "all_local_phase7_read_only_analysis_over_phase6_lifecycle"
             or code_identity
@@ -1139,6 +1149,21 @@ def load_local_campaign_stats_bundle(
             != current_ollama_stability_inputs.get("revision_strata")
             or controller.get("current_ollama_stability_target_execution")
             != current_ollama_stability_inputs.get("target_execution")
+            or not isinstance(current_ollama_alignment_inputs, Mapping)
+            or controller.get(
+                "current_ollama_population_alignment_terminal_states"
+            )
+            != current_ollama_alignment_inputs.get("terminal_states")
+            or controller.get(
+                "current_ollama_population_alignment_metric_revision_strata"
+            )
+            != current_ollama_alignment_inputs.get("revision_strata")
+            or controller.get(
+                "current_ollama_population_alignment_target_execution"
+            )
+            != current_ollama_alignment_inputs.get("target_execution")
+            or controller.get("current_ollama_population_alignment")
+            != current_ollama_alignment_inputs.get("population_alignment")
             or not isinstance(vllm_stability_inputs, Mapping)
             or controller.get("vllm_stability_terminal_states")
             != vllm_stability_inputs.get("terminal_states")

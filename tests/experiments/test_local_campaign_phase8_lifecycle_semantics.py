@@ -1009,7 +1009,7 @@ def test_phase8_rejects_count_preserving_independent_view_substitution(
         }
     ]
     receipt = {
-        "schema": "ura-phase7-runner-input-view/3",
+        "schema": "ura-phase7-runner-input-view/4",
         "status": "complete",
         "source_runner_root": str(source_root.resolve()),
         "view_root": str(view_root.resolve()),
