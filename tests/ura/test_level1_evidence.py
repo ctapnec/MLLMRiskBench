@@ -451,6 +451,8 @@ def test_level1_reads_exact_pre_runtime_replay_plan_grid_and_cell(
         "records": artifact[4],
         "counts": legacy_plan["counts"],
     }
+    grid["request"].pop("target_answer_retries")
+    grid["request"].pop("recovery_selection")
     grid["request"].pop("engine_runtime_config_artifact")
     grid["request"].pop("engine_runtimes")
     grid.pop("engine_runtime_close")
