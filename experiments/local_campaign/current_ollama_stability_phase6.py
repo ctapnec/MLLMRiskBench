@@ -485,6 +485,15 @@ def validate_completion(
 
     completion_path = completion_path.resolve(strict=True)
     runner_root = runner_root.resolve(strict=True)
+    schema = _load_json(
+        completion_path, label="current Ollama stability completion"
+    ).get("schema")
+    if schema == "ura-current-ollama-stability-continuation-phase6/1":
+        from experiments.local_campaign.current_ollama_stability_continuation_phase6 import (
+            validate_completion as validate_continuation,
+        )
+
+        return validate_continuation(completion_path, runner_root=runner_root)
     control_root = completion_path.parent
     completion = _load_json(
         completion_path, label="current Ollama stability completion"

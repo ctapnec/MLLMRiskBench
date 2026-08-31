@@ -10952,7 +10952,12 @@ def build_phase6_campaign_terminal_inventory(
     for lane in current_ollama_stability["unit_order"]:
         append(
             "current_ollama_stability", lane, "measured_complete",
-            current_ollama_stability["project_revision_receipt_sha256"],
+            current_ollama_stability.get(
+                "metric_project_revision_receipt_sha256", {}
+            ).get(
+                lane,
+                current_ollama_stability["project_revision_receipt_sha256"],
+            ),
             current_ollama_stability["source_conformance_sha256"],
             {
                 "completion": current_ollama_stability["completion"],

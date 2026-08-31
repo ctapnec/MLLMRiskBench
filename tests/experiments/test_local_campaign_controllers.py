@@ -8050,6 +8050,31 @@ def test_vllm_stability_attestation_advances_after_one_model_nonresponse(
     assert "seed-1" in attestation["path"]
 
 
+def test_current_ollama_stability_continuation_reuses_only_completed_work() -> None:
+    from experiments.local_campaign import (
+        current_ollama_stability_continuation_phase6 as continuation,
+    )
+
+    assert len(continuation.TEXT_FINALIZATION_UNITS) == 4
+    assert len(continuation.NEW_IMAGE_UNITS) == 5
+    assert len(continuation.INHERITED_UNITS) == 5
+    assert not (
+        set(continuation.TEXT_FINALIZATION_UNITS)
+        & set(continuation.NEW_IMAGE_UNITS)
+    )
+    assert not (
+        set(continuation.TEXT_FINALIZATION_UNITS)
+        & set(continuation.INHERITED_UNITS)
+    )
+    assert not set(continuation.NEW_IMAGE_UNITS) & set(continuation.INHERITED_UNITS)
+    source = Path(continuation.__file__).read_text(encoding="utf-8")
+    assert "finalize_recovered_trails(" in source
+    assert "if unit_id in INHERITED_UNITS:" in source
+    assert "results[unit_id] = old_results[unit_id]" in source
+    assert "if unit_id in TEXT_FINALIZATION_UNITS:" in source
+    assert "continuation_selected_attempts" in source
+
+
 def test_vllm_stability_phase6_accepts_standard_venv_python_symlink(
     tmp_path: Path,
 ) -> None:
