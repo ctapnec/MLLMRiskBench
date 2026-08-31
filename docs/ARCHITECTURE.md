@@ -129,7 +129,7 @@ requires real eligible Attempt-Response evidence for each delivered
 combination. Tags without byte-backed delivery, setup-only turns, and input-side
 defense blocks do not count.
 
-Runner 2.20 plans a path-free attacker-input contract for every selected
+Runner 2.26 plans a path-free attacker-input contract for every selected
 attacker x datapoint x seed before constructing target or model-backed defense
 engines. Eligibility, modality coverage, attestation keys, and lane identity use
 the attacker-produced target-call combinations. Immediately before each budget
@@ -363,7 +363,7 @@ fails before framework, snapshot, model, or target construction. Stage 1 admits
 only attributable precomputed-suffix replay and explicitly records
 `framework_execution=not_invoked`.
 
-This material evidence change advances the current contracts to Runner 2.20,
+This material evidence change advances the current contracts to Runner 2.26,
 unified schema 1.5, `ura-eligibility-plan/3`, and
 `ura-level1-evidence/3`. Exact Runner 2.19/schema 1.4 non-runtime artifacts stay
 readable through an explicit empty-runtime normalization; no legacy artifact is
@@ -379,7 +379,7 @@ forbids every vLLM-only fit, quantization, topology, parameter, output, and
 context field. The pulled artifact fixes precision. The adapter uses the
 daemon's HTTP API through the Python standard library, with no Ollama Python SDK
 dependency.
-Runner 2.20 local vLLM/Ollama adapters use the shared deterministic rendered-
+Runner 2.26 local vLLM/Ollama adapters use the shared deterministic rendered-
 dialog fingerprint as the non-blank `Response.attempt_id` placeholder required
 at target-return validation. Runner replaces that transport-local value with the
 canonical Attempt ID and run ID before judgment, checkpointing, or persistence.

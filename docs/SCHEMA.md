@@ -2,7 +2,7 @@
 
 `ura.data_models` is the typed Pydantic v2 contract shared by converters,
 attackers, targets, judges, persistence, and analysis. `SCHEMA_VERSION = "1.5"`
-is stamped on datapoints, checkpoints, and manifests. Runner 2.20 rejects mixed
+is stamped on datapoints, checkpoints, and manifests. Runner 2.26 rejects mixed
 schema versions and duplicate datapoint IDs before a target call.
 
 The 1.5 transition introduces isolated-engine identities and verified closing
@@ -35,7 +35,7 @@ that split controls ASR and FRR denominators.
 
 ## Prospective attacker-input contracts
 
-Runner 2.20 requires every Runner-eligible adapter to produce one
+Runner 2.26 requires every Runner-eligible adapter to produce one
 `ura-attacker-input-contract/1` for each selected datapoint and seed. The
 contract binds the source channel combination, every prospective target-call
 combination, policy-evaluation scope, and turn-count semantics before an engine

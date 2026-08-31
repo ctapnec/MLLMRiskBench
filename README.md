@@ -363,7 +363,7 @@ unused orphaned `datasets 2.14.7` installation. This verifies the environment
 and UI/admission prerequisites, not model inference; no provider/model call was
 made.
 
-Runner 2.20 makes that prerequisite machine-checked. A bounded non-dry
+Runner 2.26 makes that prerequisite machine-checked. A bounded non-dry
 `--attestation-probe` grid is converted by `experiments.live_attestation` into a
 content-addressed `ura-live-attestation/2` receipt. An ordinary measured grid
 must supply the exact receipt bytes and digest, the same operator-declared

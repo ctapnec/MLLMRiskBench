@@ -18,10 +18,30 @@ def test_current_runner_contract_docs_match_code_version() -> None:
         _ROOT / "experiments" / "RUN_AND_RETURN.md",
     )
 
-    assert CODE_VERSION == "ura-runner/2.25"
+    assert CODE_VERSION == "ura-runner/2.26"
     for path in documents:
         text = path.read_text(encoding="utf-8")
         assert text.count(expected) == 1, path
+
+
+def test_maintained_docs_do_not_name_the_superseded_runner_as_current() -> None:
+    documents = (
+        _ROOT / "README.md",
+        _ROOT / "experiments" / "RUN_AND_RETURN.md",
+        _ROOT / "docs" / "ARCHITECTURE.md",
+        _ROOT / "docs" / "SCHEMA.md",
+    )
+    for path in documents:
+        text = path.read_text(encoding="utf-8")
+        assert "Runner 2.20" not in text, path
+        assert "Runner 2.26" in text, path
+        mutant = text.replace("Runner 2.26", "Runner 2.20", 1)
+        assert mutant != text
+        assert "Runner 2.20" in mutant
+
+    metrics = (_ROOT / "docs" / "METRICS.md").read_text(encoding="utf-8")
+    assert "`ura-request-envelope/1` through `/6`" in metrics
+    assert "discovering `ura-request-envelope/3` artifacts" not in metrics
 
 
 def test_campaign_plan_keeps_checkpoint_recovery_on_original_runner() -> None:

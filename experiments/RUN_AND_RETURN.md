@@ -1750,7 +1750,7 @@ the effective condition and response provenance. A changed value therefore
 requires a new plan, projection, attestation, and canary; it never silently
 rewrites an existing cohort.
 
-Runner 2.20 local adapters construct each vLLM/Ollama `Response` with the same
+Runner 2.26 local adapters construct each vLLM/Ollama `Response` with the same
 deterministic dialog-fingerprint placeholder used by hosted adapters: the first
 16 lowercase SHA-256 hex characters over ordered rendered roles, content, and
 media identities. This only satisfies transport-local response linkage. Runner
