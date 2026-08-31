@@ -267,7 +267,12 @@ or surrogate without changing the intended execution purpose. A preflight plan
 includes `--preflight-only`; a diagnostic-canary plan includes
 `--diagnostic-canary` without `--preflight-only`; a measured plan includes
 neither. Those purpose-specific request envelopes require separate plans. The
-dedicated `experiments.model_acquire` controller verifies or transfers the
+plan-only path may create its declared `--out` directory to retain sealed
+project, source, attestation and request-envelope copies. A create-only
+controller therefore checks that child is absent immediately before planning,
+then accepts only the directory materialized by its own successful plan call;
+it does not misclassify that controlled materialization as a pre-existing run.
+The dedicated `experiments.model_acquire` controller verifies or transfers the
 planned bytes and writes a sealed receipt. The subsequent preflight, canary or
 measured process accepts only that exact plan, receipt, and private managed-store
 locator, rehashes every snapshot immediately around model construction,

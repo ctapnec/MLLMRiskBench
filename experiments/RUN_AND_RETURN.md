@@ -1574,6 +1574,12 @@ python -m experiments.run_matrix "${EXACT_LANE_ARGS[@]}" \
   --model-acquisition-plan-dir "$URA_MODEL_PLANS" \
   --out "$URA_STATE/model-acquisition/planning-output"
 
+# Plan-only may create the declared --out directory with sealed project,
+# source, attestation and request-envelope copies. Check create-only absence
+# immediately before the plan call. If the exact measured controller reuses
+# that --out value, accept only the directory created by this successful call;
+# do not treat controlled plan materialization as a pre-existing measured run.
+
 # Copy plan_id/plan_sha256 and its create-only filename from that output.
 export URA_MODEL_PLAN='<absolute acquisition-plan-*.plan.json>'
 export URA_MODEL_PLAN_SHA256='<64 lowercase hex printed by plan-only>'
