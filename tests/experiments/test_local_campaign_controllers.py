@@ -3069,6 +3069,44 @@ def test_phase7_followon_uses_its_retained_historical_revision() -> None:
         phase8.index("oracle_seven =", phase8.index("oracle_followon ="))
     ]
     assert "code_identity=" not in oracle_call
+    def assert_frozen_followon_api(value: str) -> None:
+        frozen_api = value[
+            value.index('"validate_followon_inventory": (') :
+            value.index('"validate_seven_output_policy_inventory": (')
+        ]
+        assert frozen_api.count("keyword_only") == 3
+        assert '("code_identity", keyword_only)' not in frozen_api
+
+    assert_frozen_followon_api(phase8)
+    changed_phase8 = phase8.replace(
+        '            ("gate5_promotion", keyword_only),\n        ),\n'
+        '        "validate_seven_output_policy_inventory": (',
+        '            ("gate5_promotion", keyword_only),\n'
+        '            ("code_identity", keyword_only),\n        ),\n'
+        '        "validate_seven_output_policy_inventory": (',
+        1,
+    )
+    assert changed_phase8 != phase8
+    with pytest.raises(AssertionError):
+        assert_frozen_followon_api(changed_phase8)
+
+    def assert_recording_followon_api(value: str) -> None:
+        start = value.index("        def recording_followon(")
+        end = value.index("        ) -> Mapping[str, Any]:", start)
+        recording_api = value[start:end]
+        assert "code_identity" not in recording_api
+
+    assert_recording_followon_api(phase8)
+    changed_recording = phase8.replace(
+        "            gate5_promotion: Path,\n        ) -> Mapping[str, Any]:",
+        "            gate5_promotion: Path,\n"
+        "            code_identity: Mapping[str, Any],\n"
+        "        ) -> Mapping[str, Any]:",
+        1,
+    )
+    assert changed_recording != phase8
+    with pytest.raises(AssertionError):
+        assert_recording_followon_api(changed_recording)
 
     changed = source.replace(
         'request.get("project_revision") != retained_project_revision',

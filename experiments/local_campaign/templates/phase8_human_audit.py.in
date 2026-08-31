@@ -6509,7 +6509,6 @@ def validate_frozen_phase7_oracle_api(oracle: Any) -> None:
             ("amendment_path", keyword_only),
             ("completion_path", keyword_only),
             ("gate5_promotion", keyword_only),
-            ("code_identity", keyword_only),
         ),
         "validate_seven_output_policy_inventory": (
             ("amendment_path", keyword_only),
@@ -17868,13 +17867,11 @@ def self_test() -> int:
             amendment_path: Path,
             completion_path: Path,
             gate5_promotion: Path,
-            code_identity: Mapping[str, Any],
         ) -> Mapping[str, Any]:
             if (
                 amendment_path != phase7_generic
                 or completion_path != phase7_generic
                 or gate5_promotion != gate_promotion
-                or code_identity != phase7_input["code_identity"]
             ):
                 raise AssertionError("recording oracle follow-on arguments differ")
             oracle_calls.append("followon")
