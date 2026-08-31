@@ -283,6 +283,25 @@ def test_lane_canary_allows_zero_results_only_for_all_abstentions(
     _with_content_id(empty)
     assert validate_lane_canary_summary(empty) == empty
 
+    newline_empty = copy.deepcopy(empty)
+    newline_descriptor = newline_empty["artifact_storage"]["core_by_role"]["results"]
+    newline_descriptor.update({
+        "sha256": hashlib.sha256(b"\n").hexdigest(),
+        "bytes": 1,
+        "records": 0,
+    })
+    newline_empty["artifact_storage"]["core_artifact_bytes"] += 1
+    _with_content_id(newline_empty)
+    assert validate_lane_canary_summary(newline_empty) == newline_empty
+
+    noncanonical_empty = copy.deepcopy(newline_empty)
+    noncanonical_empty["artifact_storage"]["core_by_role"]["results"][
+        "sha256"
+    ] = hashlib.sha256(b"x").hexdigest()
+    _with_content_id(noncanonical_empty)
+    with pytest.raises(ValueError, match="empty core results descriptor"):
+        validate_lane_canary_summary(noncanonical_empty)
+
     forged_decision = copy.deepcopy(empty)
     forged_decision["decision_support"].update({
         "decided": 1,

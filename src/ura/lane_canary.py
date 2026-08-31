@@ -873,12 +873,15 @@ def validate_lane_canary_summary(value: object) -> dict[str, Any]:
     result_bytes = _integer(
         core["results"].get("bytes"), "core results bytes"
     )
-    if (result_records == 0) != (result_bytes == 0):
+    if result_records == 0:
+        empty_encodings = {
+            (0, hashlib.sha256(b"").hexdigest()),
+            (1, hashlib.sha256(b"\n").hexdigest()),
+        }
+        if (result_bytes, core["results"].get("sha256")) not in empty_encodings:
+            raise ValueError("empty core results descriptor is not canonical")
+    elif result_bytes == 0:
         raise ValueError("core result record/byte counts do not reconcile")
-    if result_records == 0 and core["results"].get("sha256") != hashlib.sha256(
-        b""
-    ).hexdigest():
-        raise ValueError("empty core results descriptor has the wrong digest")
     if _integer(storage.get("core_artifact_bytes"), "core artifact bytes") != sum(
         item["bytes"] for item in core_descriptors
     ):
