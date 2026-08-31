@@ -73,6 +73,17 @@ def _one_file(root: Path, pattern: str, *, label: str) -> Path:
     return matches[0]
 
 
+def _one_full_checkpoint(root: Path) -> Path:
+    matches = [
+        path
+        for path in sorted(root.glob(f"{CORPUS}--*.checkpoint.jsonl"))
+        if not path.name.endswith(".responses.checkpoint.jsonl")
+    ]
+    if len(matches) != 1 or matches[0].is_symlink() or not matches[0].is_file():
+        raise ValueError("failed GPTGeoChat requires exactly one full checkpoint")
+    return matches[0]
+
+
 def _jsonl_rows(path: Path, *, label: str) -> list[Mapping[str, Any]]:
     rows: list[Mapping[str, Any]] = []
     for raw in _stable_file(path, label=label).splitlines():
@@ -258,11 +269,7 @@ def build_recovery_prefix(
         f"{CORPUS}--*.responses.checkpoint.jsonl",
         label="failed GPTGeoChat response checkpoint",
     )
-    full_checkpoint = _one_file(
-        result_root,
-        f"{CORPUS}--*.checkpoint.jsonl",
-        label="failed GPTGeoChat full checkpoint",
-    )
+    full_checkpoint = _one_full_checkpoint(result_root)
     manifest = _load_json(manifest_path, label="failed GPTGeoChat manifest")
     config = manifest.get("config")
     run = config.get("run") if isinstance(config, dict) else None

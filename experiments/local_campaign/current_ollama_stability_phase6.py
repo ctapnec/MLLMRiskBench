@@ -1,9 +1,9 @@
-"""Run only the never-completed current-Ollama rows under Runner 2.25.
+"""Run only the never-completed current-Ollama rows under Runner 2.26.
 
 The retained Runner 2.24 cohort is immutable. Its exact-argv recovery remains
 terminal evidence, but an open durable circuit prevents it from advancing. This
 controller validates that zero-progress boundary, excludes every completed row,
-and creates fresh per-corpus Runner 2.25 conditions for only the missing suffix
+and creates fresh per-corpus Runner 2.26 conditions for only the missing suffix
 or never-started population.
 """
 
@@ -51,7 +51,7 @@ from experiments.local_campaign.vllm_stability_phase6 import (
 
 SCHEMA = "ura-current-ollama-stability-phase6/1"
 UNIT_STATE_SCHEMA = "ura-current-ollama-stability-phase6-unit-state/1"
-RUNNER_CODE_VERSION = "ura-runner/2.25"
+RUNNER_CODE_VERSION = "ura-runner/2.26"
 FAILED_LANES = (
     "ollama-gemma4-12b-text-primary-50",
     "ollama-gemma4-12b-image-primary-50",
@@ -480,7 +480,7 @@ def validate_completion(
     *,
     runner_root: Path,
 ) -> dict[str, Any]:
-    """Validate the exact all-complete Runner 2.25 Ollama continuation."""
+    """Validate the exact all-complete Runner 2.26 Ollama continuation."""
 
     completion_path = completion_path.resolve(strict=True)
     runner_root = runner_root.resolve(strict=True)
