@@ -678,15 +678,18 @@ def _runtime_args(
         argv = _replace_option(argv, "--corpora", corpus)
         argv = _replace_option(argv, "--limit", "1")
         argv.append("--diagnostic-canary")
+    if not preflight:
+        argv.extend((
+            "--execution-scope-id",
+            scope,
+            "--live-attestation",
+            str(attestation["path"]),
+            "--live-attestation-sha256",
+            str(attestation["sha256"]),
+            "--live-attestation-max-age-hours",
+            "24",
+        ))
     argv.extend((
-        "--execution-scope-id",
-        scope,
-        "--live-attestation",
-        str(attestation["path"]),
-        "--live-attestation-sha256",
-        str(attestation["sha256"]),
-        "--live-attestation-max-age-hours",
-        "24",
         "--max-total-target-calls",
         str(target_cap),
         "--max-total-judge-calls",

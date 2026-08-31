@@ -7446,6 +7446,37 @@ def test_vllm_stability_phase6_schedules_only_missing_runner_225_work(
         recovery.validate_historical_completion(historical)
 
 
+def test_vllm_stability_preflight_omits_measured_attestation_scope() -> None:
+    from experiments.local_campaign import vllm_stability_phase6 as recovery
+
+    base = ["--corpora", "synth", "--limit", "100"]
+    attestation = {"path": "/attestation.json", "sha256": "a" * 64}
+    preflight = recovery._runtime_args(
+        base,
+        out=Path("/preflight"),
+        scope="scope-fixture",
+        attestation=attestation,
+        target_cap=200,
+        preflight=True,
+    )
+    measured = recovery._runtime_args(
+        base,
+        out=Path("/measured"),
+        scope="scope-fixture",
+        attestation=attestation,
+        target_cap=200,
+    )
+
+    assert "--preflight-only" in preflight
+    assert "--execution-scope-id" not in preflight
+    assert not any(item.startswith("--live-attestation") for item in preflight)
+    assert "--preflight-only" not in measured
+    assert recovery._option(measured, "--execution-scope-id") == "scope-fixture"
+    assert recovery._option(measured, "--live-attestation") == "/attestation.json"
+    assert recovery._option(measured, "--live-attestation-sha256") == "a" * 64
+    assert recovery._option(measured, "--live-attestation-max-age-hours") == "24"
+
+
 def test_vllm_stability_phase6_reads_retained_projection_descriptor(
     tmp_path: Path,
 ) -> None:
