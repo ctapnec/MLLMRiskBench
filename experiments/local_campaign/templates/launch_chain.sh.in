@@ -423,7 +423,7 @@ expected_envelope_request = {
 }
 project_binding = envelope["bindings"]["project_revision"]
 if (
-    envelope["schema"] != "ura-request-envelope/4"
+    envelope["schema"] != "ura-request-envelope/5"
     or envelope["request"] != expected_envelope_request
     or project_binding["expected_commit"] != commit
     or project_binding["observed_commit"] != commit

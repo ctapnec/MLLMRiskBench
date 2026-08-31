@@ -239,10 +239,15 @@ full arm.
 Population tiers. A prospective amendment dated 24 August 2026, fixed after
 source inventory and diagnostic feasibility work but before any measured Phase
 6 call, replaces the earlier assumption that every all-local lane must exhaust
-its converted corpus. The measured local cohort has two tiers: core static,
-classification, Crescendo and eligible defense lanes use `--limit 100`; the
-Runner-safe bridge and Ollama lanes use `--limit 50`. Both use
-`--sample-seed 0 --seeds 0`. The current measured population cohort uses
+its converted corpus. The measured local cohort has two tiers: comparable
+vLLM/Ollama static, classification, Crescendo and eligible defense lanes use
+`--limit 100`; Runner-safe bridge lanes use `--limit 50`. Both use
+`--sample-seed 0 --seeds 0`. A 31 August population-alignment correction keeps
+the completed Ollama limit-50 prefix immutable and schedules only its exact
+content-bound 51-100 suffix. The correction was fixed before extension calls
+and was triggered by the cross-provider population mismatch, not by model
+outcomes. Historical and continuation Runner strata are not rate-pooled. The
+current measured population cohort uses
 `--sample-seed 0` only. `--sample-seed 1` is a separately projected future cohort
 that requires its own selection-bound projections, acquisition envelopes, Gate
 5 caps, output roots and analysis stratum before any calls; it is never appended

@@ -18,7 +18,8 @@ from .project_revision import validate_project_revision_binding
 from .sampling import effective_sampling_policy
 
 
-REQUEST_ENVELOPE_SCHEMA = "ura-request-envelope/4"
+REQUEST_ENVELOPE_SCHEMA = "ura-request-envelope/5"
+_REQUEST_ENVELOPE_SCHEMA_V4 = "ura-request-envelope/4"
 _REQUEST_ENVELOPE_SCHEMA_V3 = "ura-request-envelope/3"
 _REQUEST_ENVELOPE_SCHEMA_V2 = "ura-request-envelope/2"
 _LEGACY_REQUEST_ENVELOPE_SCHEMA = "ura-request-envelope/1"
@@ -92,10 +93,17 @@ _EXECUTION_FIELDS = frozenset({"execution_started", "provider_calls_started"})
 _CALL_CAP_FIELDS = frozenset({
     "target", "judge", "http_attempts", "deadline_seconds",
 })
-_RECOVERY_SELECTION_FIELDS = frozenset({
+_RECOVERY_SELECTION_V1_FIELDS = frozenset({
     "schema", "sha256", "bytes", "corpus", "completed_prefix_count",
     "selected_datapoint_ids_sha256", "completed_prefix_ids_sha256",
     "remaining_datapoint_ids_sha256",
+})
+_RECOVERY_SELECTION_V2_FIELDS = frozenset({
+    "schema", "sha256", "bytes", "corpora",
+})
+_RECOVERY_PREFIX_ENTRY_FIELDS = frozenset({
+    "completed_prefix_count", "selected_datapoint_ids_sha256",
+    "completed_prefix_ids_sha256", "remaining_datapoint_ids_sha256",
 })
 _ERROR_PHASES = frozenset({
     "configuration_preflight",
@@ -175,7 +183,76 @@ def _integer(value: object, label: str, *, minimum: int = 0) -> int:
     return value
 
 
+def _recovery_prefix_entry(value: object, label: str) -> dict[str, Any]:
+    entry = _strict_object(value, _RECOVERY_PREFIX_ENTRY_FIELDS, label)
+    _integer(entry["completed_prefix_count"], f"{label} count", minimum=1)
+    for field in (
+        "selected_datapoint_ids_sha256",
+        "completed_prefix_ids_sha256",
+        "remaining_datapoint_ids_sha256",
+    ):
+        if not isinstance(entry[field], str) or _HEX64.fullmatch(entry[field]) is None:
+            raise ValueError(f"{label} {field} is invalid")
+    return entry
 
+
+def _validate_recovery_selection(
+    value: object,
+    *,
+    arms: list[str],
+    allow_multi_arm: bool,
+) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError("request recovery selection must be one object")
+    schema = value.get("schema")
+    if schema == "ura-recovery-completed-prefix/1":
+        recovery = _strict_object(
+            value,
+            _RECOVERY_SELECTION_V1_FIELDS,
+            "request recovery selection",
+        )
+        corpus = _nonblank(recovery["corpus"], "request recovery selection corpus")
+        if corpus not in arms or len(arms) != 1:
+            raise ValueError(
+                "request recovery selection requires its one logical source arm"
+            )
+        _recovery_prefix_entry(
+            {field: recovery[field] for field in _RECOVERY_PREFIX_ENTRY_FIELDS},
+            "request recovery selection",
+        )
+    elif schema == "ura-recovery-completed-prefix/2" and allow_multi_arm:
+        recovery = _strict_object(
+            value,
+            _RECOVERY_SELECTION_V2_FIELDS,
+            "request recovery selection",
+        )
+        corpora = recovery["corpora"]
+        if (
+            not isinstance(corpora, dict)
+            or not corpora
+            or set(corpora) != set(arms)
+            or any(
+                not isinstance(name, str)
+                or not name.strip()
+                or name != name.strip()
+                for name in corpora
+            )
+        ):
+            raise ValueError(
+                "request recovery selection must bind every logical source arm"
+            )
+        for corpus, entry in corpora.items():
+            _recovery_prefix_entry(
+                entry, f"request recovery selection corpus {corpus}"
+            )
+    else:
+        raise ValueError("request recovery selection schema is unsupported")
+    if not isinstance(recovery["sha256"], str) or _HEX64.fullmatch(
+        recovery["sha256"]
+    ) is None:
+        raise ValueError("request recovery selection sha256 is invalid")
+    _integer(recovery["bytes"], "request recovery selection bytes", minimum=1)
+    return recovery
 
 def _harness_source_binding(value: object) -> dict[str, Any]:
     source = _strict_object(value, _HARNESS_SOURCE_FIELDS, "harness source")
@@ -287,6 +364,7 @@ def validate_request_envelope(value: object) -> dict[str, Any]:
     schema = envelope["schema"]
     if schema not in {
         REQUEST_ENVELOPE_SCHEMA,
+        _REQUEST_ENVELOPE_SCHEMA_V4,
         _REQUEST_ENVELOPE_SCHEMA_V3,
         _REQUEST_ENVELOPE_SCHEMA_V2,
         _LEGACY_REQUEST_ENVELOPE_SCHEMA,
@@ -315,7 +393,7 @@ def validate_request_envelope(value: object) -> dict[str, Any]:
             if isinstance(request_value, dict) and "sampling_policy" in request_value
             else _REQUEST_FIELDS_V3
         )
-    elif schema == REQUEST_ENVELOPE_SCHEMA:
+    elif schema in {_REQUEST_ENVELOPE_SCHEMA_V4, REQUEST_ENVELOPE_SCHEMA}:
         request_fields = (
             _REQUEST_FIELDS_WITH_SAMPLING_POLICY
             if isinstance(request_value, dict) and "sampling_policy" in request_value
@@ -365,45 +443,24 @@ def validate_request_envelope(value: object) -> dict[str, Any]:
     _integer(request["limit"], "request limit")
     _integer(request["max_queries"], "request max_queries", minimum=1)
     _integer(request["max_turns"], "request max_turns", minimum=1)
-    if schema in {_REQUEST_ENVELOPE_SCHEMA_V3, REQUEST_ENVELOPE_SCHEMA}:
+    if schema in {
+        _REQUEST_ENVELOPE_SCHEMA_V3,
+        _REQUEST_ENVELOPE_SCHEMA_V4,
+        REQUEST_ENVELOPE_SCHEMA,
+    }:
         retries = _integer(
             request["target_answer_retries"],
             "request target_answer_retries",
         )
         if retries > 10:
             raise ValueError("request target_answer_retries must be <= 10")
-    if schema == REQUEST_ENVELOPE_SCHEMA:
+    if schema in {_REQUEST_ENVELOPE_SCHEMA_V4, REQUEST_ENVELOPE_SCHEMA}:
         recovery = request["recovery_selection"]
         if recovery is not None:
-            recovery = _strict_object(
+            _validate_recovery_selection(
                 recovery,
-                _RECOVERY_SELECTION_FIELDS,
-                "request recovery selection",
-            )
-            if recovery["schema"] != "ura-recovery-completed-prefix/1":
-                raise ValueError("request recovery selection schema is unsupported")
-            _nonblank(recovery["corpus"], "request recovery selection corpus")
-            if recovery["corpus"] not in arms or len(arms) != 1:
-                raise ValueError(
-                    "request recovery selection requires its one logical source arm"
-                )
-            _integer(
-                recovery["completed_prefix_count"],
-                "request recovery completed_prefix_count",
-                minimum=1,
-            )
-            for field in (
-                "sha256",
-                "selected_datapoint_ids_sha256",
-                "completed_prefix_ids_sha256",
-                "remaining_datapoint_ids_sha256",
-            ):
-                if not isinstance(recovery[field], str) or _HEX64.fullmatch(
-                    recovery[field]
-                ) is None:
-                    raise ValueError(f"request recovery selection {field} is invalid")
-            _integer(
-                recovery["bytes"], "request recovery selection bytes", minimum=1
+                arms=arms,
+                allow_multi_arm=schema == REQUEST_ENVELOPE_SCHEMA,
             )
     if not isinstance(request["dry_run"], bool) or (
         schema != _LEGACY_REQUEST_ENVELOPE_SCHEMA

@@ -10,6 +10,7 @@ import pytest
 from experiments import run_matrix
 from experiments.level1_evidence import (
     _condition_from_plan,
+    _condition_values,
     _bind_live_attestations,
     _approximate_decision_state,
     _decision_state,
@@ -550,6 +551,32 @@ def test_condition_projection_binds_current_retry_and_recovery_fields() -> None:
     )
     with pytest.raises(ValueError, match="target_answer_retries"):
         _condition_from_plan(plan)
+
+
+def test_condition_projection_accepts_multi_arm_recovery_with_retry() -> None:
+    condition, _bindings = _conditions(dry_run=False)
+    entry = {
+        "completed_prefix_count": 50,
+        "selected_datapoint_ids_sha256": "a" * 64,
+        "completed_prefix_ids_sha256": "b" * 64,
+        "remaining_datapoint_ids_sha256": "c" * 64,
+    }
+    condition["values"]["recovery_selection"] = {
+        "schema": "ura-recovery-completed-prefix/2",
+        "sha256": "d" * 64,
+        "bytes": 900,
+        "corpora": {"arm-a": dict(entry), "arm-b": dict(entry)},
+    }
+
+    values = _condition_values(condition["values"])
+
+    assert values["target_answer_retries"] == 1
+    assert values["recovery_selection"]["schema"] == (
+        "ura-recovery-completed-prefix/2"
+    )
+    del condition["values"]["target_answer_retries"]
+    with pytest.raises(ValueError, match="fields are incomplete"):
+        _condition_values(condition["values"])
 
 
 def test_condition_projection_rejects_project_revision_drift() -> None:

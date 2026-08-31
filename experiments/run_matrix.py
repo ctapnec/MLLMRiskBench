@@ -3707,13 +3707,39 @@ _RECOVERY_PREFIX_FIELDS = frozenset({
     "completed_prefix_ids_sha256",
     "remaining_datapoint_ids_sha256",
 })
+_RECOVERY_MULTI_PREFIX_FIELDS = frozenset({"schema", "corpora"})
+_RECOVERY_PREFIX_ENTRY_FIELDS = frozenset({
+    "completed_prefix_count",
+    "selected_datapoint_ids_sha256",
+    "completed_prefix_ids_sha256",
+    "remaining_datapoint_ids_sha256",
+})
+
+
+def _validate_recovery_prefix_entry(
+    value: object, *, label: str
+) -> dict[str, object]:
+    if not isinstance(value, dict) or set(value) != _RECOVERY_PREFIX_ENTRY_FIELDS:
+        raise ValueError(f"{label} field inventory changed")
+    count = value.get("completed_prefix_count")
+    if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+        raise ValueError(f"{label} count must be positive")
+    for field in (
+        "selected_datapoint_ids_sha256",
+        "completed_prefix_ids_sha256",
+        "remaining_datapoint_ids_sha256",
+    ):
+        digest = value.get(field)
+        if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+            raise ValueError(f"{label} {field} is invalid")
+    return value
 
 
 def load_recovery_completed_prefix(
     path_value: str,
     expected_sha256: str,
 ) -> tuple[dict[str, object] | None, dict[str, object] | None]:
-    """Load one exact recovery-only completed-prefix selection."""
+    """Load one exact single- or multi-corpus completed-prefix selection."""
 
     if bool(path_value) != bool(expected_sha256):
         raise ValueError(
@@ -3727,34 +3753,54 @@ def load_recovery_completed_prefix(
         flag_name="--recovery-completed-prefix",
         max_bytes=1024 * 1024,
     )
-    if not isinstance(value, dict) or set(value) != _RECOVERY_PREFIX_FIELDS:
-        raise ValueError("recovery completed-prefix field inventory changed")
-    if value.get("schema") != "ura-recovery-completed-prefix/1":
+    if not isinstance(value, dict):
+        raise ValueError("recovery completed-prefix must be one object")
+    schema = value.get("schema")
+    if schema == "ura-recovery-completed-prefix/1":
+        if set(value) != _RECOVERY_PREFIX_FIELDS:
+            raise ValueError("recovery completed-prefix field inventory changed")
+        corpus = value.get("corpus")
+        if not isinstance(corpus, str) or not corpus.strip() or corpus != corpus.strip():
+            raise ValueError("recovery completed-prefix corpus is invalid")
+        entry = _validate_recovery_prefix_entry(
+            {field: value[field] for field in _RECOVERY_PREFIX_ENTRY_FIELDS},
+            label="recovery completed-prefix",
+        )
+        binding = {
+            "schema": schema,
+            "sha256": artifact["sha256"],
+            "bytes": artifact["bytes"],
+            "corpus": corpus,
+            **entry,
+        }
+    elif schema == "ura-recovery-completed-prefix/2":
+        if set(value) != _RECOVERY_MULTI_PREFIX_FIELDS:
+            raise ValueError("recovery multi-prefix field inventory changed")
+        corpora = value.get("corpora")
+        if not isinstance(corpora, dict) or not corpora:
+            raise ValueError("recovery multi-prefix corpus inventory is empty")
+        normalized: dict[str, dict[str, object]] = {}
+        for corpus, item in corpora.items():
+            if (
+                not isinstance(corpus, str)
+                or not corpus.strip()
+                or corpus != corpus.strip()
+            ):
+                raise ValueError("recovery multi-prefix corpus is invalid")
+            normalized[corpus] = dict(
+                _validate_recovery_prefix_entry(
+                    item,
+                    label=f"recovery completed-prefix corpus {corpus}",
+                )
+            )
+        binding = {
+            "schema": schema,
+            "sha256": artifact["sha256"],
+            "bytes": artifact["bytes"],
+            "corpora": normalized,
+        }
+    else:
         raise ValueError("recovery completed-prefix schema is unsupported")
-    corpus = value.get("corpus")
-    count = value.get("completed_prefix_count")
-    if not isinstance(corpus, str) or not corpus.strip() or corpus != corpus.strip():
-        raise ValueError("recovery completed-prefix corpus is invalid")
-    if isinstance(count, bool) or not isinstance(count, int) or count < 1:
-        raise ValueError("recovery completed-prefix count must be positive")
-    for field in (
-        "selected_datapoint_ids_sha256",
-        "completed_prefix_ids_sha256",
-        "remaining_datapoint_ids_sha256",
-    ):
-        digest = value.get(field)
-        if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
-            raise ValueError(f"recovery completed-prefix {field} is invalid")
-    binding = {
-        "schema": value["schema"],
-        "sha256": artifact["sha256"],
-        "bytes": artifact["bytes"],
-        "corpus": corpus,
-        "completed_prefix_count": count,
-        "selected_datapoint_ids_sha256": value["selected_datapoint_ids_sha256"],
-        "completed_prefix_ids_sha256": value["completed_prefix_ids_sha256"],
-        "remaining_datapoint_ids_sha256": value["remaining_datapoint_ids_sha256"],
-    }
     return value, binding
 
 
@@ -3768,19 +3814,33 @@ def apply_recovery_completed_prefix(
 
     if recovery is None:
         return corpus, audit
-    if recovery["corpus"] != name:
-        raise ValueError("recovery completed-prefix corpus does not match selection")
+    schema = recovery.get("schema")
+    if schema == "ura-recovery-completed-prefix/1":
+        if recovery["corpus"] != name:
+            raise ValueError("recovery completed-prefix corpus does not match selection")
+        entry = recovery
+        audit_recovery = dict(recovery)
+    elif schema == "ura-recovery-completed-prefix/2":
+        corpora = recovery.get("corpora")
+        if not isinstance(corpora, dict) or name not in corpora:
+            raise ValueError("recovery multi-prefix corpus does not match selection")
+        entry = corpora[name]
+        if not isinstance(entry, dict):
+            raise ValueError("recovery multi-prefix entry changed")
+        audit_recovery = {"schema": schema, "corpus": name, **entry}
+    else:
+        raise ValueError("recovery completed-prefix schema is unsupported")
     selected_ids = [datapoint.id for datapoint in corpus]
-    if _sha256_json(selected_ids) != recovery["selected_datapoint_ids_sha256"]:
+    if _sha256_json(selected_ids) != entry["selected_datapoint_ids_sha256"]:
         raise ValueError("recovery selected datapoint identity changed")
-    count = int(recovery["completed_prefix_count"])
+    count = int(entry["completed_prefix_count"])
     if count >= len(corpus):
         raise ValueError("recovery completed prefix leaves no unfinished row")
     prefix_ids = selected_ids[:count]
     remaining_ids = selected_ids[count:]
-    if _sha256_json(prefix_ids) != recovery["completed_prefix_ids_sha256"]:
+    if _sha256_json(prefix_ids) != entry["completed_prefix_ids_sha256"]:
         raise ValueError("recovery completed-prefix identity changed")
-    if _sha256_json(remaining_ids) != recovery["remaining_datapoint_ids_sha256"]:
+    if _sha256_json(remaining_ids) != entry["remaining_datapoint_ids_sha256"]:
         raise ValueError("recovery remaining-row identity changed")
     selected_indices = audit.get("selected_indices")
     if not isinstance(selected_indices, list) or len(selected_indices) != len(corpus):
@@ -3795,7 +3855,7 @@ def apply_recovery_completed_prefix(
         **audit,
         "pre_recovery_selected_records": len(corpus),
         "pre_recovery_selected_datapoint_ids_sha256": _sha256_json(selected_ids),
-        "recovery_completed_prefix": dict(recovery),
+        "recovery_completed_prefix": audit_recovery,
         "selected_records": len(remaining),
         "selected_indices": remaining_indices,
         "selected_ids": remaining_ids,
@@ -4188,8 +4248,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--recovery-completed-prefix",
         default="",
         help=(
-            "content-bound recovery selection for one corpus; excludes only an "
-            "exact durable completed prefix from a fresh output-policy stratum"
+            "content-bound recovery selection for one or every requested corpus; "
+            "excludes only exact durable completed prefixes from a fresh "
+            "output-policy stratum"
         ),
     )
     ap.add_argument(
@@ -4684,16 +4745,25 @@ def _main(argv=None) -> int:
         )
     except (OSError, UnicodeError, ValueError) as exc:
         ap.error(str(exc))
-    if recovery_completed_prefix is not None and (
-        corpora != [recovery_completed_prefix["corpus"]]
-        or args.dry_run
-        or args.attestation_probe
-        or args.diagnostic_canary
-    ):
-        ap.error(
-            "--recovery-completed-prefix requires its one real corpus and is "
-            "valid only for acquisition preflight, preflight, or measured recovery"
+    if recovery_completed_prefix is not None:
+        recovery_schema = recovery_completed_prefix.get("schema")
+        recovery_corpora = (
+            [recovery_completed_prefix["corpus"]]
+            if recovery_schema == "ura-recovery-completed-prefix/1"
+            else list(recovery_completed_prefix.get("corpora", {}))
         )
+        if (
+            set(corpora) != set(recovery_corpora)
+            or len(corpora) != len(recovery_corpora)
+            or args.dry_run
+            or args.attestation_probe
+            or args.diagnostic_canary
+        ):
+            ap.error(
+                "--recovery-completed-prefix requires its exact real corpus "
+                "inventory and is valid only for acquisition preflight, preflight, "
+                "or measured recovery"
+            )
     if args.attestation_probe and (
         len(model_specs) != 1
         or len(corpora) != 1

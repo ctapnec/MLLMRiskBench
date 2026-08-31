@@ -414,7 +414,7 @@ not reduced to generated prompts and replayed as if that reproduced the native
 experiment.
 
 Before configuration loading or corpus conversion, `run_matrix` writes a strict,
-content-addressed `ura-request-envelope/4`. It fixes the operator-selected
+content-addressed `ura-request-envelope/5`. It fixes the operator-selected
 requested-target x logical-source-arm x attacker universe as prospective
 whole-arm request units; it does not invent source-policy or modality strata.
 Pre-materialization failures after that boundary use bound
@@ -427,9 +427,10 @@ acknowledged live hosted judge and false for dry, no-call, rules-only, or local-
 judge paths. This records an operator acknowledgement, not proof of privacy
 approval or a provider retention guarantee.
 Version 3 additionally binds `target_answer_retries`, including the default of
-one retry. Version 4 adds an optional content-bound recovery selection. Retained
-version-1 through version-3 artifacts remain immutable and readable without
-inferred fields.
+one retry. Version 4 adds an optional single-arm content-bound recovery
+selection. Version 5 retains the retry field and permits one content-bound
+recovery selector to cover every requested arm. Retained version-1 through
+version-4 artifacts remain immutable and readable without inferred fields.
 
 For each source instance and model, the planner admits only the exact
 attacker-produced target-input combinations declared prospectively for every
@@ -660,7 +661,9 @@ prefix, which is contained in the 100-cluster prefix. Logical-arm identity
 contributes to seed derivation and gives each arm an independently scoped
 ordering. The current
 pre-measurement local campaign fixes seed 0 and uses 100 clusters per source arm
-for core lanes and 50 for extended bridge/Ollama lanes. The cap is applied per
+for comparable vLLM and Ollama model lanes and 50 for extended bridge lanes.
+The retained first Ollama cohort used the nested 50-cluster prefix; its
+content-bound continuation runs only clusters 51-100. The cap is applied per
 logical source arm and is not within-arm risk stratification; reports retain
 exact achieved support and row fanout. Explicit `--limit 0` returns the exact
 full arm. The framework supports full-set execution for local and hosted targets

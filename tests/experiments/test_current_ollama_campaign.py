@@ -6,11 +6,15 @@ import inspect
 import json
 import re
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Sequence
 
 import pytest
 
 from experiments.local_campaign import current_ollama_phase6 as phase6
+from experiments.local_campaign import (
+    current_ollama_population_alignment_phase6 as phase6_alignment,
+)
 from experiments.local_campaign import current_ollama_stability_phase6 as phase6_stability
 from experiments.local_campaign import resume_current_ollama_phase6 as phase6_recovery
 
@@ -895,6 +899,95 @@ def test_current_ollama_stability_publishes_tmux_job_lifecycle() -> None:
     assert '"target_answer_retries": 1' in source
     assert '"no_completed_rows_repeated": True' in source
     assert "state_schema=UNIT_STATE_SCHEMA" in source
+
+
+def test_current_ollama_alignment_uses_the_common_limit_100_population(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gate5_rows: list[dict[str, object]] = []
+    selected_100: dict[str, tuple[list[object], dict[str, object]]] = {}
+    old_selected: dict[str, dict[str, dict[str, object]]] = {}
+    expected_delta = 0
+    for index, lane in enumerate(CURRENT_OLLAMA_RUNNABLE_LANES):
+        if lane.startswith("rjudge-"):
+            mode, modality = "rjudge", "text"
+        elif lane.startswith("gptgeochat-"):
+            mode, modality = "gptgeochat", "image"
+        elif "-image-" in lane:
+            mode, modality = "static", "image"
+        else:
+            mode, modality = "static", "text"
+        full = phase6_alignment.EXPECTED_FULL_BY_MODE[(mode, modality)]
+        prefix = phase6_alignment.EXPECTED_PREFIX_BY_MODE[(mode, modality)]
+        corpus = f"fixture_arm_{index}"
+        ids = [f"{corpus}-{row}" for row in range(full)]
+        selected_100[corpus] = (
+            [SimpleNamespace(id=item) for item in ids],
+            {"full_converted_corpus_sha256": "f" * 64},
+        )
+        old_selected[lane] = {
+            corpus: {
+                "selected_records": prefix,
+                "selected_datapoint_ids_sha256": phase6_alignment._sha256_json(
+                    ids[:prefix]
+                ),
+                "limit": 50,
+                "sample_seed": 0,
+                "full_converted_corpus_sha256": "f" * 64,
+            }
+        }
+        gate5_rows.append({
+            "lane_id": lane,
+            "metric_mode": mode,
+            "modality": modality,
+            "selection": {"corpora": [corpus], "limit": 50, "sample_seed": 0},
+            "base_argv": [
+                "--corpora",
+                corpus,
+                "--limit",
+                "50",
+                "--sample-seed",
+                "0",
+                "--target-answer-retries",
+                "1",
+            ],
+        })
+        expected_delta += full - prefix
+
+    monkeypatch.setattr(
+        phase6_alignment,
+        "_selected_100",
+        lambda _gate5, _specs: selected_100,
+    )
+    monkeypatch.setattr(
+        phase6_alignment,
+        "_old_selected_corpora",
+        lambda spec: old_selected[str(spec["lane_id"])],
+    )
+    units = phase6_alignment.build_alignment_units({"lanes": gate5_rows})
+
+    assert len(units) == 12
+    assert expected_delta == phase6_alignment.EXPECTED_EXTENSION_ROWS == 11_600
+    assert sum(item.unit.selected_records for item in units) == 11_600
+    assert all(
+        phase6_alignment._option(item.unit.spec["base_argv"], "--limit") == "100"
+        and phase6_alignment._option(
+            item.unit.spec["base_argv"], "--sample-seed"
+        ) == "0"
+        and phase6_alignment._option(
+            item.unit.spec["base_argv"], "--target-answer-retries"
+        ) == "1"
+        and item.recovery["schema"] == "ura-recovery-completed-prefix/2"
+        for item in units
+    )
+
+    first_lane = str(gate5_rows[0]["lane_id"])
+    first_corpus = next(iter(old_selected[first_lane]))
+    old_selected[first_lane][first_corpus][
+        "selected_datapoint_ids_sha256"
+    ] = "0" * 64
+    with pytest.raises(ValueError, match="limit-50 prefix changed"):
+        phase6_alignment.build_alignment_units({"lanes": gate5_rows})
 
 
 def test_current_ollama_stability_completion_is_a_separate_runner_226_stratum(

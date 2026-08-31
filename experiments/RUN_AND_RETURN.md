@@ -510,6 +510,18 @@ cells are not called again. The new controller publishes its named tmux
 lifecycle to Jobs and retains the old and new output policies as non-poolable
 strata.
 
+The retained current-Ollama cohort used limit 50 while comparable vLLM model
+lanes used limit 100. Do not treat those populations as quantity-matched. After
+the 1,684-row stability continuation completes the holes within the old prefix,
+run the population-alignment controller. It uses the same seed-0 nested sampler,
+proves the retained limit-50 IDs are the exact prefix of the limit-100
+selection, and executes only clusters 51 through 100. Across the 12 comparable
+Ollama lanes this adds 11,600 intended rows: 1,909 static-text rows per model,
+807 static-image rows per vision model, 50 R-Judge rows per model and 1,075
+GPTGeoChat rows per vision model. Its no-call projections and canaries must all
+pass before the first extension target call. The old prefix and new extension
+remain separate Runner strata; completed prefix rows are never called again.
+
 Phase 7 requires that current-Ollama stability completion, the exact terminal
 seven-unit vLLM stability completion, and its one-unit GPTGeoChat input recovery.
 The six completed Runner 2.25 units and one Runner 2.26 missing-only suffix are
@@ -518,10 +530,11 @@ Pass the terminal controller through `--phase6-vllm-stability-completion` and
 the create-only suffix completion through
 `--phase6-vllm-input-recovery-completion`; the validator requires the latter to
 bind the former byte-for-byte.
-Its plan-owned terminal inventory still has 97 logical
-rows: 46 canonical, four output-policy amendment, three follow-on, 14
-historical current-Ollama, 14 current-Ollama stability, seven vLLM stability
-and nine native. The analysis self-test, Phase 8 frozen replay and Stats adapter
+Its plan-owned terminal inventory has 109 logical rows after population
+alignment: 46 canonical, four output-policy amendment, three follow-on, 14
+historical current-Ollama, 14 current-Ollama stability, 12 current-Ollama
+population-extension, seven vLLM stability and nine native. The analysis
+self-test, Phase 8 frozen replay and Stats adapter
 all reject an omitted cohort, a changed terminal state or any cross-policy
 pooling. These counts describe this local campaign only; they are not generic
 Runner phases or product defaults.
@@ -540,8 +553,11 @@ representation. All four receive bounded text and R-Judge projections and
 canaries. Gemma 4 and Ministral 3 also
 receive physical-image and GPTGeoChat projections and canaries. The DeepSeek and
 GPT-OSS GPTGeoChat pairs are typed unavailable because those exact models are
-text-only. The amendment derives its exact inventory counts before approval and
-does not rewrite the historical 46-row profile. Malformed protocol, transport,
+text-only. The retained first cohort is the immutable limit-50 prefix. The
+population-alignment amendment separately projects the same seed-0 selections
+at limit 100 and runs only the content-bound non-overlapping suffix. It derives
+its exact inventory counts before approval and does not rewrite the historical
+46-row profile. Malformed protocol, transport,
 identity, provenance, residency, timeout, and backend failures remain hard
 failures.
 Acquire that exact multi-model Ollama roster in a named tmux session with
@@ -1336,7 +1352,7 @@ that target output and source/reference grading
 context will leave the rig; it does not prove approval or provider deletion.
 Never pass it to `rig_check`, `--dry-run`, rules-only judging, or a local LLM
 judge because those paths perform no hosted-judge data transfer.
-Before configuration loading, `ura-request-envelope/4` copies this decision to
+Before configuration loading, `ura-request-envelope/5` copies this decision to
 the required Boolean
 `request.hosted_judge_data_transfer_acknowledged`; a no-transfer path records
 false rather than omitting the field.
@@ -3395,7 +3411,9 @@ Each exact measured Runner child is then registered as an existing
 independently and gives the resulting `ura-followon-phase6-outcomes/2` to
 `phase6_followon_prepared.sh`. Its final `ura-followon-phase6-completion/2` is
 the Phase 7 input; the operational Jobs registration does not replace that
-scientific validation. The measured plan-only pass creates one deterministic
+scientific validation. NanoGCG and IDEATOR therefore publish
+`ura-external-measured-job/2` start/terminal records around their exact Runner
+invocations. The measured plan-only pass creates one deterministic
 request envelope under the future output root. The controller verifies that it
 is the only entry, deletes that file and empty root, and therefore presents an
 absent create-only result root to Gate 5 and the later measured child.
@@ -4221,7 +4239,7 @@ directory rather than mixing conditions. Within a `run_matrix` invocation the
 driver replaces its preliminary plan with the final plan. The Level-1 validator
 rejects duplicate request identities, and every supplied grid must still bind
 the exact plan descriptor and experiment condition.
-`run_matrix` already wrote each `ura-request-envelope/4` before config/source
+`run_matrix` already wrote each `ura-request-envelope/5` before config/source
 materialization. Level-1 discovers those files and any bound
 `ura-request-error/1` automatically from the measured result tree and plan
 siblings; there is no extra request-manifest setup or CLI argument.

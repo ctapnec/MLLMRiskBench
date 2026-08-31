@@ -1,7 +1,7 @@
 """Join planning, execution, and decision evidence without pooling their units.
 
 The Level-1 artifact is an accounting surface, not a safety score.  A prospective
-``ura-request-envelope/4`` fixes whole-arm request units before source loading;
+``ura-request-envelope/5`` fixes whole-arm request units before source loading;
 after selected corpora materialize, ``ura-eligibility-plan/3`` names their exact
 planning strata.  Bound early failures remain request-unit evidence only because
 their modality/source strata cannot be reconstructed honestly.
@@ -413,47 +413,79 @@ def _condition_values(value: object) -> dict[str, Any]:
     if "recovery_selection" in value:
         recovery = value["recovery_selection"]
         if recovery is not None:
-            recovery_fields = {
-                "schema",
-                "sha256",
-                "bytes",
-                "corpus",
+            if not isinstance(recovery, dict):
+                raise ValueError("experiment condition recovery_selection is incomplete")
+            schema = recovery.get("schema")
+            entry_fields = {
                 "completed_prefix_count",
                 "selected_datapoint_ids_sha256",
                 "completed_prefix_ids_sha256",
                 "remaining_datapoint_ids_sha256",
             }
-            if not isinstance(recovery, dict) or set(recovery) != recovery_fields:
-                raise ValueError("experiment condition recovery_selection is incomplete")
-            if recovery["schema"] != "ura-recovery-completed-prefix/1":
+            if schema == "ura-recovery-completed-prefix/1":
+                expected = {"schema", "sha256", "bytes", "corpus", *entry_fields}
+                if set(recovery) != expected:
+                    raise ValueError(
+                        "experiment condition recovery_selection is incomplete"
+                    )
+                if (
+                    not isinstance(recovery["corpus"], str)
+                    or not recovery["corpus"].strip()
+                ):
+                    raise ValueError(
+                        "experiment condition recovery_selection corpus is invalid"
+                    )
+                entries = [recovery]
+            elif schema == "ura-recovery-completed-prefix/2":
+                if set(recovery) != {"schema", "sha256", "bytes", "corpora"}:
+                    raise ValueError(
+                        "experiment condition recovery_selection is incomplete"
+                    )
+                corpora = recovery["corpora"]
+                if not isinstance(corpora, dict) or not corpora:
+                    raise ValueError(
+                        "experiment condition recovery_selection corpora are invalid"
+                    )
+                if any(
+                    not isinstance(name, str)
+                    or not name.strip()
+                    or not isinstance(entry, dict)
+                    or set(entry) != entry_fields
+                    for name, entry in corpora.items()
+                ):
+                    raise ValueError(
+                        "experiment condition recovery_selection corpora are invalid"
+                    )
+                entries = list(corpora.values())
+            else:
                 raise ValueError(
                     "experiment condition recovery_selection schema is invalid"
                 )
-            if (
-                not isinstance(recovery["corpus"], str)
-                or not recovery["corpus"].strip()
-            ):
+            if not isinstance(recovery["sha256"], str) or _HEX64.fullmatch(
+                recovery["sha256"]
+            ) is None:
                 raise ValueError(
-                    "experiment condition recovery_selection corpus is invalid"
+                    "experiment condition recovery_selection sha256 is invalid"
                 )
-            for field in (
-                "sha256",
-                "selected_datapoint_ids_sha256",
-                "completed_prefix_ids_sha256",
-                "remaining_datapoint_ids_sha256",
-            ):
-                if not isinstance(recovery[field], str) or _HEX64.fullmatch(
-                    recovery[field]
-                ) is None:
+            item = recovery["bytes"]
+            if isinstance(item, bool) or not isinstance(item, int) or item < 1:
+                raise ValueError(
+                    "experiment condition recovery_selection bytes is invalid"
+                )
+            for entry in entries:
+                count = entry["completed_prefix_count"]
+                if isinstance(count, bool) or not isinstance(count, int) or count < 1:
                     raise ValueError(
-                        f"experiment condition recovery_selection {field} is invalid"
+                        "experiment condition recovery_selection count is invalid"
                     )
-            for field in ("bytes", "completed_prefix_count"):
-                item = recovery[field]
-                if isinstance(item, bool) or not isinstance(item, int) or item < 1:
-                    raise ValueError(
-                        f"experiment condition recovery_selection {field} is invalid"
-                    )
+                for field in entry_fields - {"completed_prefix_count"}:
+                    if not isinstance(entry[field], str) or _HEX64.fullmatch(
+                        entry[field]
+                    ) is None:
+                        raise ValueError(
+                            "experiment condition recovery_selection "
+                            f"{field} is invalid"
+                        )
     call_caps = value["call_caps"]
     expected_caps = {"target", "judge", "http_attempts", "deadline_seconds"}
     if not isinstance(call_caps, dict) or set(call_caps) != expected_caps:

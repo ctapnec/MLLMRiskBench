@@ -329,7 +329,7 @@ def test_documented_hosted_judge_commands_ack_only_live_transfer() -> None:
         ]
     local_destination = "runs/thesis/runner/local-qwen3-vl-text-core100"
     local_position = runbook.index(local_destination)
-    local_context = runbook[max(0, local_position - 800) : local_position]
+    local_context = runbook[max(0, local_position - 1_400) : local_position]
     assert "--ack-hosted-judge-data-transfer" not in local_context
     assert "--judges rules,guardrail" in local_context
     assert '--limit "$URA_LOCAL_CORE_CLUSTER_LIMIT"' in local_context
@@ -344,7 +344,7 @@ def test_core_docs_describe_request_endpoint_and_execution_config_contracts() ->
     )
     for path in paths:
         document = path.read_text(encoding="utf-8")
-        assert "ura-request-envelope/4" in document, path
+        assert "ura-request-envelope/5" in document, path
         assert "hosted_judge_data_transfer_acknowledged" in document, path
         assert "ura-builder-selected-api-config/1" in document, path
         assert "endpoint_identity" in document, path
@@ -556,9 +556,8 @@ def test_runbook_lanes_use_the_level2_grouping_and_bounded_population_tiers() ->
     assert "scores through local stages only" in protocol_flat
     assert "rules-only cascade is not a general scoring mode" in protocol_flat
     readme_flat = flattened["README"]
-    assert (
-        "100 clusters per source arm for core lanes and 50 for extended" in readme_flat
-    )
+    assert "100 clusters per source arm for comparable vLLM and Ollama" in readme_flat
+    assert "50 for extended bridge lanes" in readme_flat
 
     sampling_contract = (
         "equal per-arm cap",

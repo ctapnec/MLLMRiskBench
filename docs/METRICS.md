@@ -22,14 +22,16 @@ The independent unit is the source prompt/intent cluster. Repeats, variants,
 models, turns, and judgments derived from one cluster remain dependent and do
 not increase the nominal cluster count.
 
-For the prospectively amended local campaign, `--limit 100` defines the core
-cohort and `--limit 50` the extended bridge/Ollama cohort, both at sample seed
-0. The cap is applied independently within each logical source arm and retains
-all sibling rows. It is therefore source-arm capped, not proportional or
-within-arm risk-stratified. Reports state selected, completed, evaluable,
-decided and abstained cluster support plus exact risk/policy coverage. Different
-limits remain different sampling strata; an optional `--limit 0` full-corpus
-replication is not pooled with either bounded tier.
+For the amended local campaign, `--limit 100` defines comparable vLLM and
+Ollama model populations, while `--limit 50` defines the extended bridge
+cohort; all use sample seed 0. The retained first Ollama cohort is the exact
+nested 50-cluster prefix, and a content-bound continuation supplies only
+clusters 51-100. The cap is applied independently within each logical source
+arm and retains all sibling rows. It is therefore source-arm capped, not
+proportional or within-arm risk-stratified. Reports state selected, completed,
+evaluable, decided and abstained cluster support plus exact risk/policy
+coverage. Historical and continuation Runner strata are not rate-pooled. An
+optional `--limit 0` full-corpus replication is a separate cohort.
 
 ## Cross-suite metric-family ontology
 

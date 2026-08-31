@@ -155,7 +155,7 @@ This is planning evidence only: it is not a live
 attestation, attempted/completed-cell record, or scientific result.
 
 At the earlier boundary, after basic argument/axis validation but before config
-or source materialization, `run_matrix` writes `ura-request-envelope/4`. Its
+or source materialization, `run_matrix` writes `ura-request-envelope/5`. Its
 units are exactly requested target x logical source arm x attacker. A bound
 `ura-request-error/1` may then record a configuration, source-integrity,
 conversion, empty-corpus, or diagnostic-admission failure at whole-request,

@@ -419,8 +419,8 @@ cannot share a process with a local target).
 
 **Prospective bounded-sampling amendment (24 August 2026).** Before any Phase 6
 measured lane started, the local programme replaced its earlier exhaustive-local
-assumption with two measured population tiers. Core lanes use `--limit 100
---sample-seed 0 --seeds 0`; extended Runner-safe bridge and Ollama lanes use
+assumption with two measured population tiers. Core model-comparison lanes use
+`--limit 100 --sample-seed 0 --seeds 0`; extended Runner-safe bridge lanes use
 `--limit 50 --sample-seed 0 --seeds 0`. The amendment was fixed from source
 inventories, no-call projections and diagnostic feasibility, not from measured
 benchmark outcomes. `--limit N` is an equal per-arm cap applied independently
@@ -614,12 +614,14 @@ targeted Gate 5 amendment. The historical GraySwan rows keep their immutable
 `local-llava-rr-image-primary-100`, `rjudge-llava-rr` and
 `gptgeochat-llava-rr`. Their limit-100, sample-seed-0 selections and caps match
 the corresponding LLaVA-base rows. A separate additive Ollama amendment replaces
-the superseded RWKV tasks with the four exact current models. It uses limit 50,
-sample seed 0 for bounded text and source-classification lanes, adds image and
-GPTGeoChat lanes only for Gemma 4 and Ministral 3, and derives its own exact row
-counts from the retained projections before authorization. It does not rewrite
-the already sealed 46-row historical profile. Every Ollama request in this
-amendment binds `num_ctx=8192` and `num_predict=512`. The first value prevents
+the superseded RWKV tasks with the four exact current models. Its retained first
+cohort used limit 50 and sample seed 0 for bounded text and source-classification
+lanes, with image and GPTGeoChat lanes only for Gemma 4 and Ministral 3. The
+population-alignment amendment completes the same nested seed-0 prefix to limit
+100 for every comparable Ollama lane. It does not rewrite the already sealed
+46-row historical profile or repeat a completed limit-50 row. Every Ollama
+request in these amendments binds `num_ctx=8192` and `num_predict=512`. The
+first value prevents
 the 32B DeepSeek condition from allocating its full 131,072-token native context
 and spilling nearly half of a short-prompt canary to CPU while the scoring guard
 is resident; the second is an output cap, not a reason to discard observed
@@ -681,6 +683,23 @@ policy strata, with no cross-policy pooling. This continuation may run after a
 vLLM continuation has terminalized, but never concurrently with it on the two-
 GPU rig.
 
+**Ollama population-alignment amendment (31 August 2026).** Review of the
+planned population sizes, before the current-Ollama stability continuation or
+Phase 7 analysis started, found that the retained Ollama limit-50 cohort was not
+quantity-matched to the vLLM limit-100 model-comparison cohort. This is a design
+defect, not a model-outcome trigger. After the 1,684-row stability continuation
+fills the holes inside the first 50-cluster prefix, a separate controller must
+project and execute only clusters 51 through 100 for all 12 comparable Ollama
+lanes. The nested seed-0 policy adds 1,909 static-text rows per model, 807
+static-image rows per vision model, 50 R-Judge rows per model and 1,075
+GPTGeoChat rows per vision model: 11,600 intended calls in total. The controller
+must prove that each old limit-50 datapoint-ID digest is the exact prefix of its
+limit-100 selection, bind the remaining-row digest, run the no-call projection
+and diagnostic canary before measured calls, and reject any overlap. Historical
+prefix and new extension artifacts remain distinct Runner strata; Phase 7 may
+report their combined population coverage but must not pool their rates across
+revision or output-policy boundaries.
+
 Before Gate 6 closes, every retained local vLLM failure is partitioned by the
 boundary it reached. A lane that failed before measured Runner execution is run
 as a complete first measured Runner 2.25 condition. A lane with a durable
@@ -741,21 +760,23 @@ do not replace the new content-bound Gate 5 projections.
 | Crescendo, Qwen3-VL | core 100 | 700 conversations across seven arms | 2,800 at four turns |
 | local guard defense, if runnable | core 100 | 3,854 | 3,854 |
 | five runnable bridge lanes plus HarmBench replay combined | extended 50 | 850 source selections before per-method expansion | 1,750 |
-| four admitted Ollama static text lanes combined | extended 50 | 7,780 | 7,780 |
-| four Ollama R-Judge lanes combined | extended 50 | 200 | 200 |
-| two admitted Ollama static image lanes combined | extended 50 | 1,650 | 1,650 |
-| two Ollama GPTGeoChat lanes combined | extended 50 | 1,890 | 1,890 |
+| four admitted Ollama static text lanes combined | aligned core 100 | 15,416 | 15,416 |
+| four Ollama R-Judge lanes combined | aligned core 100 | 400 | 400 |
+| two admitted Ollama static image lanes combined | aligned core 100 | 3,264 | 3,264 |
+| two Ollama GPTGeoChat lanes combined | aligned core 100 | 4,040 | 4,040 |
 
 The total below counts each `per target` core group for the two planned core
 targets, then adds the single Qwen3-VL Crescendo lane and the combined bridge
 and Ollama groups shown above.
 
-The bounded design contains 31,282 intended target calls when the local defense
-is typed unavailable, or 35,136 when it is runnable. A new complete projection
-under the default one-retry policy therefore reserves at most 62,564 or 70,272
-target attempts respectively. The current-Ollama cohort contains 11,520 intended
-calls across its 12 runnable lanes and reserves at most 23,040 attempts under
-the new policy; the
+The population-aligned bounded design contains 42,882 intended target calls when
+the local defense is typed unavailable, or 46,736 when it is runnable. A new
+complete projection under the default one-retry policy therefore reserves at
+most 85,764 or 93,472 target attempts respectively. The aligned current-Ollama
+population contains 23,120 intended calls across its 12 runnable lanes and
+reserves at most 46,240 attempts under the new policy. The retained limit-50
+prefix and the non-overlapping extension keep their own exact caps and Runner
+strata; the
 DeepSeek-R1 Distill and GPT-OSS GPTGeoChat pairs are separate typed-unavailable
 rows and contribute no calls. Model-judge and provider HTTP caps remain zero in
 this local campaign. Local scoring and defense-guard evaluations are accounted
@@ -921,10 +942,12 @@ uses the six completed Runner 2.25 units and the 1,645-row Runner 2.26 suffix as
 separate metric strata, retains the 375-row failed-unit prefix as lifecycle
 evidence, and forbids pooling across either boundary or with completed Runner
 2.24 Qwen text and Crescendo evidence.
-The exact Phase 6 campaign terminal inventory contains 97 logical rows: 46
-canonical, four output-policy amendment, three follow-on, 14 historical
-current-Ollama, 14 current-Ollama stability, seven vLLM stability and nine
-native. The contract self-test rejects any other count or cohort partition.
+The exact Phase 6 campaign terminal inventory before population alignment
+contains 97 logical rows: 46 canonical, four output-policy amendment, three
+follow-on, 14 historical current-Ollama, 14 current-Ollama stability, seven
+vLLM stability and nine native. The population-alignment amendment adds 12
+logical Ollama extension rows, giving 109. The contract self-test rejects any
+other count or cohort partition.
 Only successful measured lanes enter those metric and Level-2 views; failed and
 partial lanes remain visible in Level-1 lifecycle evidence rather than being
 silently dropped or replaced by Gate 5 preflight eligibility.

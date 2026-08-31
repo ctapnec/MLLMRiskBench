@@ -22,9 +22,12 @@ the explicit persistent caches under `$URA_WORK/framework-venvs/.cache`; cache
 contents are never campaign admission evidence.
 
 The current rendered campaign implements the prospective 24 August 2026 local
-sampling amendment: core measured lanes use limit 100 and extended bridge/Ollama
-lanes use limit 50, both with sample seed 0. These are plan-owned controller and
-Gate bindings, not generic Runner defaults. A render must fail if its projection,
+sampling amendment: comparable vLLM and Ollama model lanes use limit 100 and
+extended bridge lanes use limit 50, all with sample seed 0. The retained first
+Ollama cohort stopped at limit 50; its population-alignment continuation proves
+that exact selection is the limit-100 prefix and runs only clusters 51-100.
+These are plan-owned controller and Gate bindings, not generic Runner defaults.
+A render must fail if its projection,
 base argv, prepared-attack selection, approved caps or Phase 7 validator differs
 from the tier bound to that lane. Optional limit-0 execution is a separate
 cohort and is not emitted by this bounded chain.
@@ -59,6 +62,15 @@ three partial-corpus prefixes and runs 14 fresh Runner 2.26 per-corpus units for
 the remaining 1,684 rows. Its Jobs lifecycle is operational only. Phase 7 must
 retain these units separately from the 1,911 durable historical rows and must
 not pool their output-policy strata.
+
+`current_ollama_population_alignment_phase6.py` runs only after that retained
+limit-50 population is complete. It applies the same source arms, limit 100,
+sample seed 0, evaluator policy and configurable default of one retry used by
+the comparable vLLM lanes. Its content-bound multi-arm selector proves and
+excludes every completed limit-50 prefix, leaving exactly 11,600 new rows across
+12 Ollama lanes. The combined Ollama population is 23,120 rows. Historical and
+continuation Runner strata remain separate even though their coverage forms one
+matched population.
 
 Each current measured lane also binds `--deadline-seconds 86400` and
 `measured_lane_wall_time_seconds=86400`. The Runner value gates call starts and
@@ -406,12 +418,14 @@ observed output for the selected evaluator.
 A targeted amendment re-attests and canaries the four GraySwan identities. The
 older GraySwan `-full` terminal identities are not rewritten; the current
 GraySwan rows instead use limit 100 and sample seed 0 matched to the LLaVA-base
-rows. The additive Ollama amendment uses limit 50 and sample seed 0, projects
-four text and R-Judge targets, adds static-image and GPTGeoChat lanes for the two
-multimodal targets, and records the two text-only GPTGeoChat pairs as typed
-unavailable. Its exact inventory counts are derived from its retained
-projections before authorization rather than modifying the sealed historical
-profile. Identity, provenance, residency, seal, budget and wall-time failures
+rows. The additive Ollama amendment first retained a limit-50, sample-seed-0
+cohort. The population-alignment continuation extends each compatible lane to
+the same limit-100 population as vLLM without rerunning any completed row. It
+covers four text and R-Judge targets, adds static-image and GPTGeoChat lanes for
+the two multimodal targets, and records the two text-only GPTGeoChat pairs as
+typed unavailable. Exact inventory counts are derived from the retained
+projections and content-bound selected IDs rather than modifying the sealed
+historical profile. Identity, provenance, residency, seal, budget and wall-time failures
 remain hard failures. An older partial current-Ollama lane is resumed by
 `resume_current_ollama_phase6` with its exact stored argv, sealed cells and
 checkpoint; the separate recovery completion binds the controller source and

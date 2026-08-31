@@ -109,7 +109,7 @@ removes the path and persists `response_artifact_identity` or
 ## Prospective request envelope and early failures
 
 Before planning exists, `run_matrix` emits strict
-`ura-request-envelope/4` as
+`ura-request-envelope/5` as
 `<envelope_id>.request-envelope.json`. Its exact top-level
 fields are `schema`, `status`, `envelope_id`, `request`, `bindings`,
 `execution_units`, and `limitations`. `request` fixes execution purpose,
@@ -142,8 +142,12 @@ after a deterministically unusable answer. Version 4 adds nullable
 `request.recovery_selection`. A non-null value binds one exact
 `ura-recovery-completed-prefix/1` artifact, its byte identity, its single source
 arm, the completed-prefix count, and selected/prefix/remaining datapoint-ID
-digests. Version-1 through version-3 envelopes remain readable with their exact
-historical field inventories; validators do not add or infer newer fields.
+digests. Version 5 retains the required retry count and recovery field and also
+accepts `ura-recovery-completed-prefix/2`, which binds the same three digests and
+positive completed-prefix count independently for every source arm in one
+multi-arm request. Version-1 through version-4 envelopes remain readable with
+their exact historical field inventories; validators do not add or infer newer
+fields or accept the multi-arm selector under version 4.
 
 The envelope is created after basic CLI/axis validation but before selected
 config loading, source-conformance input loading, or conversion. It is a
@@ -189,10 +193,10 @@ logical source arm, selected source stratum and item digest, exact modality,
 attacker, execution/metric mode, evaluator/reference mode, disposition, and
 failed gates. The artifact self-validates its content-derived `plan_id`.
 Its `bindings.experiment_conditions.values` preserves the exact condition shape
-from the request-envelope generation that produced it. Current version-4
+from the request-envelope generation that produced it. Current version-5
 requests therefore carry both `target_answer_retries` and nullable
-`recovery_selection`; retained version-2 and version-3 condition shapes remain
-readable without inferred fields. Level 1 validates the exact field inventory,
+`recovery_selection`; retained version-2 through version-4 condition shapes
+remain readable without inferred fields. Level 1 validates the exact field inventory,
 types and content ID, then requires retry/recovery field presence and values to
 match the bound request envelope before accepting the plan or grid.
 
