@@ -20,16 +20,6 @@ def _response() -> Response:
             "model_stability_category": "empty_output",
             "model_stability_error_type": "TargetAnswerError",
             "model_stability_retry_count": 1,
-            "judge_stage_bindings": [
-                {
-                    "stage": 0,
-                    "judge": "rules",
-                    "model_stability_status": None,
-                    "model_stability_category": None,
-                    "model_stability_error_type": None,
-                    "model_stability_retry_count": None,
-                }
-            ],
         },
     )
 
@@ -46,6 +36,16 @@ def _judgment() -> Judgment:
             "model_stability_category": "empty_output",
             "model_stability_error_type": "TargetAnswerError",
             "model_stability_retry_count": 1,
+            "judge_stage_bindings": [
+                {
+                    "stage": 0,
+                    "judge": "rules",
+                    "model_stability_status": None,
+                    "model_stability_category": None,
+                    "model_stability_error_type": None,
+                    "model_stability_retry_count": None,
+                }
+            ],
         },
     )
 
