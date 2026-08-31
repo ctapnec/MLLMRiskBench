@@ -8072,6 +8072,8 @@ def test_current_ollama_stability_continuation_reuses_only_completed_work() -> N
     assert "if unit_id in INHERITED_UNITS:" in source
     assert "results[unit_id] = old_results[unit_id]" in source
     assert "if unit_id in TEXT_FINALIZATION_UNITS:" in source
+    assert "set(results) != set(INHERITED_UNITS)" in source
+    assert "tuple(results) != INHERITED_UNITS" not in source
     assert "continuation_selected_attempts" in source
 
 

@@ -136,9 +136,9 @@ def _failed_inputs(
         order != expected
         or failed.get("unit_order") != list(expected)
         or not isinstance(results, dict)
-        or tuple(results) != INHERITED_UNITS
+        or set(results) != set(INHERITED_UNITS)
         or not isinstance(failures, dict)
-        or tuple(failures) != TEXT_FINALIZATION_UNITS + NEW_IMAGE_UNITS
+        or set(failures) != set(TEXT_FINALIZATION_UNITS + NEW_IMAGE_UNITS)
     ):
         raise ValueError("failed stability terminal unit partition changed")
     for unit_id in TEXT_FINALIZATION_UNITS:
@@ -268,7 +268,10 @@ def _validate_completion_value(
     if not isinstance(results, dict) or list(results) != expected_order:
         raise ValueError("stability continuation result order changed")
     finalizations = completion.get("finalizations")
-    if not isinstance(finalizations, dict) or tuple(finalizations) != TEXT_FINALIZATION_UNITS:
+    if (
+        not isinstance(finalizations, dict)
+        or set(finalizations) != set(TEXT_FINALIZATION_UNITS)
+    ):
         raise ValueError("stability continuation finalization inventory changed")
 
     failed_descriptor = _descriptor(failed_path, label="failed stability completion")
