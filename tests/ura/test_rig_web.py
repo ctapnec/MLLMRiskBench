@@ -3608,9 +3608,10 @@ def test_dashboard_shows_presence_only_pipeline(tmp_path: Path) -> None:
     assert "+1 archived" in text
     assert "presence never asserts validity" in text
     # The stage node links into the artifact browser; the stage file list
-    # names both the current and the archived receipt as links.
+    # names both the non-archived and archived receipt as links.
     assert "/artifacts?path=thesis/project-revision" in text
-    assert "1 current, 1 archived" in text
+    assert "1 non-archived, 1 archived" in text
+    assert "filesystem placement only" in text
     # The suggested-next-step card is presence-derived and says so.
     assert "Suggested next step" in text
     assert "file presence only" in text
@@ -3948,6 +3949,33 @@ def test_jobs_date_window_filters_campaign_markers_before_recent_cap(
     assert "campaign-00" in text
     assert "campaign-20" not in text
     assert "1 additional retained engineering campaign was omitted" not in text
+    app.close()
+
+
+def test_dashboard_names_and_lists_the_bound_source_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = _app(tmp_path)
+    thesis = app.results_root / "thesis"
+    thesis.mkdir(parents=True, exist_ok=True)
+    historical = thesis / "source-conformance.json"
+    historical.write_text("{}", encoding="utf-8")
+    current = thesis / "source-conformance-current-45arm.json"
+    current.write_text('{"schema":"fixture-current"}', encoding="utf-8")
+    current_sha = hashlib.sha256(current.read_bytes()).hexdigest()
+    monkeypatch.setenv("URA_SOURCE_CONFORMANCE_MANIFEST", str(current))
+    monkeypatch.setenv("URA_SOURCE_CONFORMANCE_SHA256", current_sha)
+
+    status, _, body = app.handle("GET", "/")
+    assert status == 200
+    text = body.decode("utf-8")
+    assert "Source receipts: 2 non-archived" in text
+    assert "thesis/source-conformance-current-45arm.json" in text
+    assert "thesis/source-conformance.json" in text
+    assert "Source receipt" in text
+    assert "Source receipt SHA-256" in text
+    assert current_sha in text
     app.close()
 
 

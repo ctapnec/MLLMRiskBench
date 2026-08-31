@@ -152,6 +152,8 @@ class DashboardMixin:
             ("Pinned revision", "REF_URA"),
             ("Revision receipt", "URA_PROJECT_REVISION_MANIFEST"),
             ("Receipt SHA-256", "URA_PROJECT_REVISION_SHA256"),
+            ("Source receipt", "URA_SOURCE_CONFORMANCE_MANIFEST"),
+            ("Source receipt SHA-256", "URA_SOURCE_CONFORMANCE_SHA256"),
             ("Corpora root", "URA_CORPORA"),
         ):
             value = os.environ.get(name, "")

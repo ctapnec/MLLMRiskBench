@@ -39,7 +39,14 @@ from .ui import (
     _page_tabpanel,
 )
 
-from .artifacts import _PIPELINE_STAGES, artifact_inventory, _pipeline_svg, Job, run_kind
+from .artifacts import (
+    _PIPELINE_STAGES,
+    _STAGE_PATHS_SHOWN,
+    Job,
+    _pipeline_svg,
+    artifact_inventory,
+    run_kind,
+)
 from .campaigns import EngineeringCampaign
 from .external_measured import ExternalMeasuredJob
 
@@ -258,6 +265,29 @@ class PagesMixin:
             campaign for campaign in campaigns if campaign.status_tag == "partial"
         ]
         counts, truncated = artifact_inventory(self.results_root)
+        source_receipt_value = os.environ.get("URA_SOURCE_CONFORMANCE_MANIFEST", "")
+        if source_receipt_value:
+            try:
+                results_root = self.results_root.resolve()
+                source_receipt = Path(source_receipt_value).resolve(strict=True)
+                if not source_receipt.is_file():
+                    raise ValueError("configured source receipt is not a file")
+                source_relative = source_receipt.relative_to(results_root).as_posix()
+            except (OSError, ValueError):
+                pass
+            else:
+                source_stage = counts["Source receipts"]
+                scanner_already_counts = source_receipt.name.casefold().endswith(
+                    "source-conformance.json"
+                )
+                if not scanner_already_counts:
+                    if "superseded" in source_relative.split("/"):
+                        source_stage.superseded += 1
+                    else:
+                        source_stage.count += 1
+                if source_relative not in source_stage.paths:
+                    source_stage.paths.insert(0, source_relative)
+                    del source_stage.paths[_STAGE_PATHS_SHOWN:]
         disk_html = "<p class='note'>disk usage unavailable</p>"
         try:
             usage = shutil.disk_usage(self.results_root)
@@ -520,7 +550,7 @@ class PagesMixin:
             total = stage.count + stage.superseded
             if total > len(stage.paths):
                 items += f"<li class='note'>first {len(stage.paths)} of {total} shown</li>"
-            summary = f"{html.escape(label)}: {stage.count} current"
+            summary = f"{html.escape(label)}: {stage.count} non-archived"
             if stage.superseded:
                 summary += f", {stage.superseded} archived"
             stage_sections.append(
@@ -559,9 +589,11 @@ class PagesMixin:
             + "<p class='note'>Click a stage to browse its files. Counts are "
             "retained-file presence under the results root only; presence "
             "never asserts validity, authorization, or measurement status. "
+            "“non-archived” describes filesystem placement only and does not "
+            "identify the active binding, which is shown separately below. "
             "“archived” counts files under a "
             "<code>superseded/</code> directory (kept as history, not "
-            "current - for example an earlier pin's revision receipt)."
+            "active - for example an earlier pin's revision receipt)."
             + (
                 " Inventory scan truncated at its entry cap; counts are a lower bound."
                 if truncated
