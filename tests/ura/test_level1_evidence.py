@@ -579,6 +579,37 @@ def test_condition_projection_accepts_multi_arm_recovery_with_retry() -> None:
         _condition_values(condition["values"])
 
 
+def test_condition_projection_accepts_noncontiguous_completed_selection() -> None:
+    condition, _bindings = _conditions(dry_run=False)
+    completed = ["row-1", "row-3"]
+    condition["values"]["recovery_selection"] = {
+        "schema": "ura-recovery-completed-selection/1",
+        "sha256": "d" * 64,
+        "bytes": 900,
+        "corpora": {
+            "arm-a": {
+                "completed_record_count": 2,
+                "selected_datapoint_ids_sha256": "a" * 64,
+                "completed_datapoint_ids": completed,
+                "completed_datapoint_ids_sha256": canonical_json_sha256(completed),
+                "remaining_datapoint_ids_sha256": "c" * 64,
+            }
+        },
+    }
+
+    values = _condition_values(condition["values"])
+
+    assert values["target_answer_retries"] == 1
+    assert values["recovery_selection"]["schema"] == (
+        "ura-recovery-completed-selection/1"
+    )
+    condition["values"]["recovery_selection"]["corpora"]["arm-a"][
+        "completed_datapoint_ids_sha256"
+    ] = "0" * 64
+    with pytest.raises(ValueError, match="completed IDs are invalid"):
+        _condition_values(condition["values"])
+
+
 def test_condition_projection_rejects_project_revision_drift() -> None:
     _condition, bindings = _conditions()
     corpora = {"synth-arm": synth_corpus(1)}

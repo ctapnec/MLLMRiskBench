@@ -906,6 +906,7 @@ def test_current_ollama_alignment_uses_the_common_limit_100_population(
 ) -> None:
     gate5_rows: list[dict[str, object]] = []
     selected_100: dict[str, tuple[list[object], dict[str, object]]] = {}
+    selected_50: dict[str, tuple[list[object], dict[str, object]]] = {}
     old_selected: dict[str, dict[str, dict[str, object]]] = {}
     expected_delta = 0
     for index, lane in enumerate(CURRENT_OLLAMA_RUNNABLE_LANES):
@@ -921,15 +922,20 @@ def test_current_ollama_alignment_uses_the_common_limit_100_population(
         prefix = phase6_alignment.EXPECTED_PREFIX_BY_MODE[(mode, modality)]
         corpus = f"fixture_arm_{index}"
         ids = [f"{corpus}-{row}" for row in range(full)]
+        ids_50 = ids[full - prefix:]
         selected_100[corpus] = (
             [SimpleNamespace(id=item) for item in ids],
+            {"full_converted_corpus_sha256": "f" * 64},
+        )
+        selected_50[corpus] = (
+            [SimpleNamespace(id=item) for item in ids_50],
             {"full_converted_corpus_sha256": "f" * 64},
         )
         old_selected[lane] = {
             corpus: {
                 "selected_records": prefix,
                 "selected_datapoint_ids_sha256": phase6_alignment._sha256_json(
-                    ids[:prefix]
+                    sorted(ids_50)
                 ),
                 "limit": 50,
                 "sample_seed": 0,
@@ -961,6 +967,11 @@ def test_current_ollama_alignment_uses_the_common_limit_100_population(
     )
     monkeypatch.setattr(
         phase6_alignment,
+        "_selected_50",
+        lambda _gate5, _specs: selected_50,
+    )
+    monkeypatch.setattr(
+        phase6_alignment,
         "_old_selected_corpora",
         lambda spec: old_selected[str(spec["lane_id"])],
     )
@@ -977,9 +988,14 @@ def test_current_ollama_alignment_uses_the_common_limit_100_population(
         and phase6_alignment._option(
             item.unit.spec["base_argv"], "--target-answer-retries"
         ) == "1"
-        and item.recovery["schema"] == "ura-recovery-completed-prefix/2"
+        and item.recovery["schema"] == "ura-recovery-completed-selection/1"
         for item in units
     )
+    first = units[0]
+    first_corpus = next(iter(first.recovery["corpora"]))
+    assert first.recovery["corpora"][first_corpus][
+        "completed_datapoint_ids"
+    ] == sorted(row.id for row in selected_50[first_corpus][0])
 
     first_lane = str(gate5_rows[0]["lane_id"])
     first_corpus = next(iter(old_selected[first_lane]))

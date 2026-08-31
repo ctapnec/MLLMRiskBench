@@ -109,7 +109,7 @@ removes the path and persists `response_artifact_identity` or
 ## Prospective request envelope and early failures
 
 Before planning exists, `run_matrix` emits strict
-`ura-request-envelope/5` as
+`ura-request-envelope/6` as
 `<envelope_id>.request-envelope.json`. Its exact top-level
 fields are `schema`, `status`, `envelope_id`, `request`, `bindings`,
 `execution_units`, and `limitations`. `request` fixes execution purpose,
@@ -145,9 +145,15 @@ arm, the completed-prefix count, and selected/prefix/remaining datapoint-ID
 digests. Version 5 retains the required retry count and recovery field and also
 accepts `ura-recovery-completed-prefix/2`, which binds the same three digests and
 positive completed-prefix count independently for every source arm in one
-multi-arm request. Version-1 through version-4 envelopes remain readable with
+multi-arm request. Version 6 also accepts
+`ura-recovery-completed-selection/1`. Each arm binds the full selected-ID digest,
+the exact retained ID list and digest, its positive record count, and the
+remaining-ID digest. This represents nested samples whose selected sets are
+monotone but whose emitted rows return to source order, so the retained set need
+not be a contiguous list prefix. Version-1 through version-5 envelopes remain readable with
 their exact historical field inventories; validators do not add or infer newer
-fields or accept the multi-arm selector under version 4.
+fields, accept the multi-arm prefix selector under version 4, or accept the
+completed-selection selector before version 6.
 
 The envelope is created after basic CLI/axis validation but before selected
 config loading, source-conformance input loading, or conversion. It is a

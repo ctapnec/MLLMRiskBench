@@ -414,7 +414,7 @@ not reduced to generated prompts and replayed as if that reproduced the native
 experiment.
 
 Before configuration loading or corpus conversion, `run_matrix` writes a strict,
-content-addressed `ura-request-envelope/5`. It fixes the operator-selected
+content-addressed `ura-request-envelope/6`. It fixes the operator-selected
 requested-target x logical-source-arm x attacker universe as prospective
 whole-arm request units; it does not invent source-policy or modality strata.
 Pre-materialization failures after that boundary use bound
@@ -429,8 +429,11 @@ approval or a provider retention guarantee.
 Version 3 additionally binds `target_answer_retries`, including the default of
 one retry. Version 4 adds an optional single-arm content-bound recovery
 selection. Version 5 retains the retry field and permits one content-bound
-recovery selector to cover every requested arm. Retained version-1 through
-version-4 artifacts remain immutable and readable without inferred fields.
+completed-prefix selector to cover every requested arm. Version 6 also binds a
+multi-arm completed-selection artifact for nested samples whose retained rows
+are a noncontiguous subset after source-order restoration. Retained version-1
+through version-5 artifacts remain immutable and readable without inferred
+fields.
 
 For each source instance and model, the planner admits only the exact
 attacker-produced target-input combinations declared prospectively for every

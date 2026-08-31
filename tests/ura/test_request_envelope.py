@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from experiments import run_matrix
+from ura.eligibility import canonical_json_sha256
 from ura.project_revision import diagnostic_project_revision_binding
 from ura.request_envelope import (
     REQUEST_ENVELOPE_SCHEMA,
@@ -191,7 +192,7 @@ def test_recovery_selection_is_bound_and_requires_its_one_source_arm() -> None:
         )
 
 
-def test_v5_multi_arm_recovery_keeps_required_retry_policy() -> None:
+def test_v6_multi_arm_recovery_keeps_required_retry_policy() -> None:
     project, harness, driver = _source_bindings()
     entry = {
         "completed_prefix_count": 50,
@@ -223,7 +224,7 @@ def test_v5_multi_arm_recovery_keeps_required_retry_policy() -> None:
         driver_source=driver,
     )
 
-    assert envelope["schema"] == "ura-request-envelope/5"
+    assert envelope["schema"] == "ura-request-envelope/6"
     assert envelope["request"]["target_answer_retries"] == 1
     assert envelope["request"]["recovery_selection"] == recovery
 
@@ -233,11 +234,57 @@ def test_v5_multi_arm_recovery_keeps_required_retry_policy() -> None:
     with pytest.raises(ValueError, match="invalid field inventory"):
         validate_request_envelope(missing_retry)
 
+    retained_v5 = copy.deepcopy(envelope)
+    retained_v5["schema"] = "ura-request-envelope/5"
+    _refresh_envelope_id(retained_v5)
+    assert validate_request_envelope(retained_v5)["schema"] == (
+        "ura-request-envelope/5"
+    )
+
     retained_v4 = copy.deepcopy(envelope)
     retained_v4["schema"] = "ura-request-envelope/4"
     _refresh_envelope_id(retained_v4)
     with pytest.raises(ValueError, match="schema is unsupported"):
         validate_request_envelope(retained_v4)
+
+
+def test_v6_binds_noncontiguous_completed_selection_and_v5_rejects_it() -> None:
+    project, harness, driver = _source_bindings()
+    completed = ["row-1", "row-3"]
+    recovery = {
+        "schema": "ura-recovery-completed-selection/1",
+        "sha256": "c" * 64,
+        "bytes": 654,
+        "corpora": {
+            "airbench_full": {
+                "completed_record_count": len(completed),
+                "selected_datapoint_ids_sha256": "d" * 64,
+                "completed_datapoint_ids": completed,
+                "completed_datapoint_ids_sha256": canonical_json_sha256(completed),
+                "remaining_datapoint_ids_sha256": "f" * 64,
+            }
+        },
+    }
+    envelope = build_request_envelope(
+        request={
+            **_request(),
+            "logical_source_arms": ["airbench_full"],
+            "recovery_selection": recovery,
+        },
+        project_revision=project,
+        harness_source=harness,
+        driver_source=driver,
+    )
+
+    assert envelope["schema"] == "ura-request-envelope/6"
+    assert envelope["request"]["target_answer_retries"] == 1
+    assert envelope["request"]["recovery_selection"] == recovery
+
+    retained_v5 = copy.deepcopy(envelope)
+    retained_v5["schema"] = "ura-request-envelope/5"
+    _refresh_envelope_id(retained_v5)
+    with pytest.raises(ValueError, match="schema is unsupported"):
+        validate_request_envelope(retained_v5)
 
 
 def test_recovery_completed_prefix_keeps_only_exact_unfinished_suffix(
@@ -362,6 +409,79 @@ def test_multi_corpus_recovery_keeps_each_exact_unfinished_suffix(
     with pytest.raises(ValueError, match="completed-prefix identity changed"):
         run_matrix.apply_recovery_completed_prefix(
             "source-b", corpus, audit, changed
+        )
+
+
+def test_completed_selection_keeps_only_noncontiguous_unfinished_rows(
+    tmp_path: Path,
+) -> None:
+    corpus = run_matrix.synth_corpus(5)
+    selected_ids = [row.id for row in corpus]
+
+    def digest(value: object) -> str:
+        return hashlib.sha256(json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")).hexdigest()
+
+    completed_ids = [selected_ids[1], selected_ids[3]]
+    remaining_ids = [selected_ids[0], selected_ids[2], selected_ids[4]]
+    entry = {
+        "completed_record_count": 2,
+        "selected_datapoint_ids_sha256": digest(selected_ids),
+        "completed_datapoint_ids": completed_ids,
+        "completed_datapoint_ids_sha256": digest(completed_ids),
+        "remaining_datapoint_ids_sha256": digest(remaining_ids),
+    }
+    value = {
+        "schema": "ura-recovery-completed-selection/1",
+        "corpora": {"synth": entry},
+    }
+    path = tmp_path / "recovery-selection.json"
+    raw = json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n"
+    path.write_text(raw, encoding="utf-8")
+    loaded, binding = run_matrix.load_recovery_completed_prefix(
+        str(path), hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    )
+    audit = {
+        "selected_indices": list(range(5)),
+        "selected_ids": selected_ids,
+        "selected_records": 5,
+        "selected_cluster_ids": selected_ids,
+        "selected_clusters": 5,
+        "selected_converted_corpus_sha256": "historical",
+    }
+
+    remaining, recovered_audit = run_matrix.apply_recovery_completed_prefix(
+        "synth", corpus, audit, loaded
+    )
+
+    assert [row.id for row in remaining] == remaining_ids
+    assert recovered_audit["selected_indices"] == [0, 2, 4]
+    assert recovered_audit["selected_records"] == 3
+    assert recovered_audit["selection_method"] == (
+        "content_bound_never_completed_selection_v1"
+    )
+    assert recovered_audit["recovery_completed_selection"] == {
+        "schema": "ura-recovery-completed-selection/1",
+        "corpus": "synth",
+        **entry,
+    }
+    assert binding == {
+        "schema": "ura-recovery-completed-selection/1",
+        "sha256": hashlib.sha256(raw.encode("utf-8")).hexdigest(),
+        "bytes": len(raw.encode("utf-8")),
+        "corpora": value["corpora"],
+    }
+
+    changed = copy.deepcopy(loaded)
+    changed["corpora"]["synth"]["completed_datapoint_ids"][0] = "unknown"
+    with pytest.raises(ValueError, match="exact unfinished set"):
+        run_matrix.apply_recovery_completed_prefix(
+            "synth", corpus, audit, changed
         )
 
 

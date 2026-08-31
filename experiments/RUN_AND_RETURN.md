@@ -514,8 +514,10 @@ The retained current-Ollama cohort used limit 50 while comparable vLLM model
 lanes used limit 100. Do not treat those populations as quantity-matched. After
 the 1,684-row stability continuation completes the holes within the old prefix,
 run the population-alignment controller. It uses the same seed-0 nested sampler,
-proves the retained limit-50 IDs are the exact prefix of the limit-100
-selection, and executes only clusters 51 through 100. Across the 12 comparable
+proves the retained limit-50 IDs are an exact subset of the limit-100
+selection, and executes only the content-bound set difference. The sampler's
+cluster order is nested, while emitted rows return to source order, so the
+retained datapoint list is not assumed to be a contiguous prefix. Across the 12 comparable
 Ollama lanes this adds 11,600 intended rows: 1,909 static-text rows per model,
 807 static-image rows per vision model, 50 R-Judge rows per model and 1,075
 GPTGeoChat rows per vision model. Its no-call projections and canaries must all
@@ -1352,7 +1354,7 @@ that target output and source/reference grading
 context will leave the rig; it does not prove approval or provider deletion.
 Never pass it to `rig_check`, `--dry-run`, rules-only judging, or a local LLM
 judge because those paths perform no hosted-judge data transfer.
-Before configuration loading, `ura-request-envelope/5` copies this decision to
+Before configuration loading, `ura-request-envelope/6` copies this decision to
 the required Boolean
 `request.hosted_judge_data_transfer_acknowledged`; a no-transfer path records
 false rather than omitting the field.
@@ -4239,7 +4241,7 @@ directory rather than mixing conditions. Within a `run_matrix` invocation the
 driver replaces its preliminary plan with the final plan. The Level-1 validator
 rejects duplicate request identities, and every supplied grid must still bind
 the exact plan descriptor and experiment condition.
-`run_matrix` already wrote each `ura-request-envelope/5` before config/source
+`run_matrix` already wrote each `ura-request-envelope/6` before config/source
 materialization. Level-1 discovers those files and any bound
 `ura-request-error/1` automatically from the measured result tree and plan
 siblings; there is no extra request-manifest setup or CLI argument.

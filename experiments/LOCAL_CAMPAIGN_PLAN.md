@@ -693,8 +693,9 @@ project and execute only clusters 51 through 100 for all 12 comparable Ollama
 lanes. The nested seed-0 policy adds 1,909 static-text rows per model, 807
 static-image rows per vision model, 50 R-Judge rows per model and 1,075
 GPTGeoChat rows per vision model: 11,600 intended calls in total. The controller
-must prove that each old limit-50 datapoint-ID digest is the exact prefix of its
-limit-100 selection, bind the remaining-row digest, run the no-call projection
+must prove that each old limit-50 datapoint-ID digest identifies an exact subset
+of its limit-100 selection, bind the retained ID set and remaining-row digest,
+run the no-call projection
 and diagnostic canary before measured calls, and reject any overlap. Historical
 prefix and new extension artifacts remain distinct Runner strata; Phase 7 may
 report their combined population coverage but must not pool their rates across

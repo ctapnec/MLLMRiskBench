@@ -155,7 +155,7 @@ This is planning evidence only: it is not a live
 attestation, attempted/completed-cell record, or scientific result.
 
 At the earlier boundary, after basic argument/axis validation but before config
-or source materialization, `run_matrix` writes `ura-request-envelope/5`. Its
+or source materialization, `run_matrix` writes `ura-request-envelope/6`. Its
 units are exactly requested target x logical source arm x attacker. A bound
 `ura-request-error/1` may then record a configuration, source-integrity,
 conversion, empty-corpus, or diagnostic-admission failure at whole-request,
@@ -172,8 +172,12 @@ local-judge requests retain false. It does not certify privacy review or
 provider retention behavior.
 Version 3 also binds `request.target_answer_retries`; the default is one
 additional answer attempt. Version 4 binds an optional content-addressed exact
-completed-prefix recovery selection for one source arm. Retained version-1
-through version-3 envelopes validate without relabeling or inferred fields.
+completed-prefix recovery selection for one source arm. Version 5 permits the
+same prefix contract across multiple arms. Version 6 additionally binds an
+exact completed-ID selection across multiple arms, allowing Runner to execute
+only the set difference when the nested sampler restores selected rows to source
+order. Retained version-1 through version-5 envelopes validate without
+relabeling or inferred fields.
 
 After the whole request passes admission and before the first generation call,
 Runner 2.26 writes a content-addressed `ura-lane-projection/2`. The artifact

@@ -3714,6 +3714,14 @@ _RECOVERY_PREFIX_ENTRY_FIELDS = frozenset({
     "completed_prefix_ids_sha256",
     "remaining_datapoint_ids_sha256",
 })
+_RECOVERY_MULTI_SELECTION_FIELDS = frozenset({"schema", "corpora"})
+_RECOVERY_SELECTION_ENTRY_FIELDS = frozenset({
+    "completed_record_count",
+    "selected_datapoint_ids_sha256",
+    "completed_datapoint_ids",
+    "completed_datapoint_ids_sha256",
+    "remaining_datapoint_ids_sha256",
+})
 
 
 def _validate_recovery_prefix_entry(
@@ -3735,11 +3743,43 @@ def _validate_recovery_prefix_entry(
     return value
 
 
+def _validate_recovery_selection_entry(
+    value: object, *, label: str
+) -> dict[str, object]:
+    if not isinstance(value, dict) or set(value) != _RECOVERY_SELECTION_ENTRY_FIELDS:
+        raise ValueError(f"{label} field inventory changed")
+    count = value.get("completed_record_count")
+    if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+        raise ValueError(f"{label} count must be positive")
+    completed = value.get("completed_datapoint_ids")
+    if (
+        not isinstance(completed, list)
+        or len(completed) != count
+        or any(
+            not isinstance(item, str) or not item or item != item.strip()
+            for item in completed
+        )
+        or len(set(completed)) != len(completed)
+    ):
+        raise ValueError(f"{label} completed datapoint IDs are invalid")
+    for field in (
+        "selected_datapoint_ids_sha256",
+        "completed_datapoint_ids_sha256",
+        "remaining_datapoint_ids_sha256",
+    ):
+        digest = value.get(field)
+        if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+            raise ValueError(f"{label} {field} is invalid")
+    if _sha256_json(completed) != value["completed_datapoint_ids_sha256"]:
+        raise ValueError(f"{label} completed datapoint identity changed")
+    return value
+
+
 def load_recovery_completed_prefix(
     path_value: str,
     expected_sha256: str,
 ) -> tuple[dict[str, object] | None, dict[str, object] | None]:
-    """Load one exact single- or multi-corpus completed-prefix selection."""
+    """Load one exact completed-prefix or completed-ID-set selection."""
 
     if bool(path_value) != bool(expected_sha256):
         raise ValueError(
@@ -3799,6 +3839,32 @@ def load_recovery_completed_prefix(
             "bytes": artifact["bytes"],
             "corpora": normalized,
         }
+    elif schema == "ura-recovery-completed-selection/1":
+        if set(value) != _RECOVERY_MULTI_SELECTION_FIELDS:
+            raise ValueError("recovery completed-selection field inventory changed")
+        corpora = value.get("corpora")
+        if not isinstance(corpora, dict) or not corpora:
+            raise ValueError("recovery completed-selection corpus inventory is empty")
+        normalized = {}
+        for corpus, item in corpora.items():
+            if (
+                not isinstance(corpus, str)
+                or not corpus.strip()
+                or corpus != corpus.strip()
+            ):
+                raise ValueError("recovery completed-selection corpus is invalid")
+            normalized[corpus] = dict(
+                _validate_recovery_selection_entry(
+                    item,
+                    label=f"recovery completed-selection corpus {corpus}",
+                )
+            )
+        binding = {
+            "schema": schema,
+            "sha256": artifact["sha256"],
+            "bytes": artifact["bytes"],
+            "corpora": normalized,
+        }
     else:
         raise ValueError("recovery completed-prefix schema is unsupported")
     return value, binding
@@ -3810,7 +3876,7 @@ def apply_recovery_completed_prefix(
     audit: dict[str, object],
     recovery: dict[str, object] | None,
 ) -> tuple[list[DataPoint], dict[str, object]]:
-    """Exclude only an exactly bound durable prefix from one selected corpus."""
+    """Exclude only an exactly bound durable prefix or completed ID set."""
 
     if recovery is None:
         return corpus, audit
@@ -3828,25 +3894,50 @@ def apply_recovery_completed_prefix(
         if not isinstance(entry, dict):
             raise ValueError("recovery multi-prefix entry changed")
         audit_recovery = {"schema": schema, "corpus": name, **entry}
+        completed_ids: list[str] | None = None
+    elif schema == "ura-recovery-completed-selection/1":
+        corpora = recovery.get("corpora")
+        if not isinstance(corpora, dict) or name not in corpora:
+            raise ValueError("recovery completed-selection corpus does not match selection")
+        entry = corpora[name]
+        if not isinstance(entry, dict):
+            raise ValueError("recovery completed-selection entry changed")
+        audit_recovery = {"schema": schema, "corpus": name, **entry}
+        completed_value = entry.get("completed_datapoint_ids")
+        if not isinstance(completed_value, list):
+            raise ValueError("recovery completed-selection IDs changed")
+        completed_ids = list(completed_value)
     else:
         raise ValueError("recovery completed-prefix schema is unsupported")
     selected_ids = [datapoint.id for datapoint in corpus]
     if _sha256_json(selected_ids) != entry["selected_datapoint_ids_sha256"]:
         raise ValueError("recovery selected datapoint identity changed")
-    count = int(entry["completed_prefix_count"])
-    if count >= len(corpus):
-        raise ValueError("recovery completed prefix leaves no unfinished row")
-    prefix_ids = selected_ids[:count]
-    remaining_ids = selected_ids[count:]
-    if _sha256_json(prefix_ids) != entry["completed_prefix_ids_sha256"]:
-        raise ValueError("recovery completed-prefix identity changed")
+    if schema == "ura-recovery-completed-selection/1":
+        if len(set(selected_ids)) != len(selected_ids):
+            raise ValueError("recovery selected datapoint IDs are not unique")
+        completed_set = set(completed_ids or [])
+        if len(completed_set) >= len(corpus) or not completed_set.issubset(selected_ids):
+            raise ValueError("recovery completed selection leaves no exact unfinished set")
+        remaining_positions = [
+            index for index, item in enumerate(selected_ids) if item not in completed_set
+        ]
+        remaining_ids = [selected_ids[index] for index in remaining_positions]
+    else:
+        count = int(entry["completed_prefix_count"])
+        if count >= len(corpus):
+            raise ValueError("recovery completed prefix leaves no unfinished row")
+        prefix_ids = selected_ids[:count]
+        remaining_ids = selected_ids[count:]
+        if _sha256_json(prefix_ids) != entry["completed_prefix_ids_sha256"]:
+            raise ValueError("recovery completed-prefix identity changed")
+        remaining_positions = list(range(count, len(corpus)))
     if _sha256_json(remaining_ids) != entry["remaining_datapoint_ids_sha256"]:
         raise ValueError("recovery remaining-row identity changed")
     selected_indices = audit.get("selected_indices")
     if not isinstance(selected_indices, list) or len(selected_indices) != len(corpus):
         raise ValueError("recovery sampling audit selected-index inventory changed")
-    remaining = corpus[count:]
-    remaining_indices = selected_indices[count:]
+    remaining = [corpus[index] for index in remaining_positions]
+    remaining_indices = [selected_indices[index] for index in remaining_positions]
     remaining_cluster_ids = [
         _cluster_key(index, row)
         for index, row in zip(remaining_indices, remaining)
@@ -3855,7 +3946,11 @@ def apply_recovery_completed_prefix(
         **audit,
         "pre_recovery_selected_records": len(corpus),
         "pre_recovery_selected_datapoint_ids_sha256": _sha256_json(selected_ids),
-        "recovery_completed_prefix": audit_recovery,
+        (
+            "recovery_completed_selection"
+            if schema == "ura-recovery-completed-selection/1"
+            else "recovery_completed_prefix"
+        ): audit_recovery,
         "selected_records": len(remaining),
         "selected_indices": remaining_indices,
         "selected_ids": remaining_ids,
@@ -3864,7 +3959,11 @@ def apply_recovery_completed_prefix(
         ),
         "selected_cluster_ids": list(dict.fromkeys(remaining_cluster_ids)),
         "selected_clusters": len(set(remaining_cluster_ids)),
-        "selection_method": "content_bound_never_completed_suffix_v1",
+        "selection_method": (
+            "content_bound_never_completed_selection_v1"
+            if schema == "ura-recovery-completed-selection/1"
+            else "content_bound_never_completed_suffix_v1"
+        ),
     }
     return remaining, audit
 

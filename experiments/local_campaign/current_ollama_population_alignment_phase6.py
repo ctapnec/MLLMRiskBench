@@ -173,6 +173,29 @@ def _selected_100(
     }
 
 
+def _selected_50(
+    gate5: Mapping[str, Any], specs: Sequence[Mapping[str, Any]]
+) -> dict[str, tuple[list[Any], dict[str, object]]]:
+    arms: set[str] = set()
+    for spec in specs:
+        selection = spec.get("selection")
+        corpora = selection.get("corpora") if isinstance(selection, dict) else None
+        if not isinstance(corpora, list):
+            raise ValueError(f"{spec.get('lane_id')}: retained selection changed")
+        arms.update(corpus for corpus in corpora if isinstance(corpus, str))
+    ordered_arms = sorted(arms)
+    instances = _source_instances(gate5, ordered_arms)
+    return {
+        corpus: run_matrix.load_corpus_with_audit(
+            corpus,
+            50,
+            0,
+            source_instance=instances[corpus],
+        )
+        for corpus in ordered_arms
+    }
+
+
 def build_alignment_units(gate5: Mapping[str, Any]) -> list[AlignmentUnit]:
     rows = gate5.get("lanes")
     if (
@@ -183,6 +206,7 @@ def build_alignment_units(gate5: Mapping[str, Any]) -> list[AlignmentUnit]:
         raise ValueError("Ollama alignment Gate 5 lane inventory changed")
     specs = [dict(row) for row in rows if isinstance(row, dict)]
     selected_100 = _selected_100(gate5, specs)
+    selected_50 = _selected_50(gate5, specs)
     units: list[AlignmentUnit] = []
     for spec in specs:
         old_lane = str(spec["lane_id"])
@@ -213,6 +237,8 @@ def build_alignment_units(gate5: Mapping[str, Any]) -> list[AlignmentUnit]:
         for corpus in corpora:
             rows_100, audit_100 = selected_100[corpus]
             ids_100 = [row.id for row in rows_100]
+            rows_50, audit_50 = selected_50[corpus]
+            ids_50 = [row.id for row in rows_50]
             old = old_selected[corpus]
             old_count = old.get("selected_records")
             old_ids_sha = old.get("selected_datapoint_ids_sha256")
@@ -226,11 +252,19 @@ def build_alignment_units(gate5: Mapping[str, Any]) -> list[AlignmentUnit]:
                 or old.get("sample_seed") != 0
                 or old.get("full_converted_corpus_sha256")
                 != audit_100.get("full_converted_corpus_sha256")
-                or old_count > len(ids_100)
-                or _sha256_json(ids_100[:old_count]) != old_ids_sha
+                or audit_50.get("full_converted_corpus_sha256")
+                != audit_100.get("full_converted_corpus_sha256")
+                or old_count != len(ids_50)
+                or _sha256_json(sorted(ids_50)) != old_ids_sha
+                or len(set(ids_50)) != len(ids_50)
+                or len(set(ids_100)) != len(ids_100)
+                or not set(ids_50).issubset(ids_100)
             ):
                 raise ValueError(f"{old_lane}/{corpus}: limit-50 prefix changed")
-            delta = len(ids_100) - old_count
+            completed_ids = sorted(ids_50)
+            completed = set(completed_ids)
+            remaining_ids = [item for item in ids_100 if item not in completed]
+            delta = len(remaining_ids)
             full_records += len(ids_100)
             prefix_records += old_count
             extension_records += delta
@@ -243,12 +277,11 @@ def build_alignment_units(gate5: Mapping[str, Any]) -> list[AlignmentUnit]:
                 continue
             extension_corpora.append(corpus)
             recovery_corpora[corpus] = {
-                "completed_prefix_count": old_count,
+                "completed_record_count": old_count,
                 "selected_datapoint_ids_sha256": _sha256_json(ids_100),
-                "completed_prefix_ids_sha256": old_ids_sha,
-                "remaining_datapoint_ids_sha256": _sha256_json(
-                    ids_100[old_count:]
-                ),
+                "completed_datapoint_ids": completed_ids,
+                "completed_datapoint_ids_sha256": old_ids_sha,
+                "remaining_datapoint_ids_sha256": _sha256_json(remaining_ids),
             }
         if (
             full_records != EXPECTED_FULL_BY_MODE[mode_key]
@@ -278,7 +311,7 @@ def build_alignment_units(gate5: Mapping[str, Any]) -> list[AlignmentUnit]:
             "selected_records": extension_records,
         }
         recovery = {
-            "schema": "ura-recovery-completed-prefix/2",
+            "schema": "ura-recovery-completed-selection/1",
             "corpora": recovery_corpora,
         }
         units.append(
@@ -506,11 +539,13 @@ def validate_completion(
         selector_path = _validate_descriptor(
             row.get("recovery_selection"), label=f"{lane} recovery selection"
         )
-        if selector_path != control_root / "inputs" / f"{lane}.prefixes.json":
+        if selector_path != (
+            control_root / "inputs" / f"{lane}.completed-selection.json"
+        ):
             raise ValueError(f"{lane}: recovery selection placement changed")
         selector = _load_json(selector_path, label=f"{lane} recovery selection")
         if (
-            selector.get("schema") != "ura-recovery-completed-prefix/2"
+            selector.get("schema") != "ura-recovery-completed-selection/1"
             or set(selector.get("corpora", {})) != set(row.get("corpora", []))
         ):
             raise ValueError(f"{lane}: recovery selection changed")
@@ -547,12 +582,12 @@ def validate_completion(
         envelope, _descriptor_value = load_request_envelope_file(envelopes[0])
         request = envelope["request"]
         if (
-            envelope.get("schema") != "ura-request-envelope/5"
+            envelope.get("schema") != "ura-request-envelope/6"
             or request.get("target_answer_retries") != 1
             or request.get("limit") != 100
             or set(request.get("logical_source_arms", [])) != set(row["corpora"])
             or request.get("recovery_selection", {}).get("schema")
-            != "ura-recovery-completed-prefix/2"
+            != "ura-recovery-completed-selection/1"
         ):
             raise ValueError(f"{lane}: request retry/recovery binding changed")
         revisions.add(str(validated["revision"]))
@@ -647,7 +682,7 @@ def run(args: argparse.Namespace) -> int:
     selectors: dict[str, tuple[Path, str]] = {}
     for item in units:
         lane = item.unit.unit_id
-        path = inputs / f"{lane}.prefixes.json"
+        path = inputs / f"{lane}.completed-selection.json"
         _create_json(path, item.recovery)
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         selectors[lane] = (path, digest)

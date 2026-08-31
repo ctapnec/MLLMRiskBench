@@ -1,7 +1,7 @@
 """Join planning, execution, and decision evidence without pooling their units.
 
 The Level-1 artifact is an accounting surface, not a safety score.  A prospective
-``ura-request-envelope/5`` fixes whole-arm request units before source loading;
+``ura-request-envelope/6`` fixes whole-arm request units before source loading;
 after selected corpora materialize, ``ura-eligibility-plan/3`` names their exact
 planning strata.  Bound early failures remain request-unit evidence only because
 their modality/source strata cannot be reconstructed honestly.
@@ -422,6 +422,13 @@ def _condition_values(value: object) -> dict[str, Any]:
                 "completed_prefix_ids_sha256",
                 "remaining_datapoint_ids_sha256",
             }
+            selection_entry_fields = {
+                "completed_record_count",
+                "selected_datapoint_ids_sha256",
+                "completed_datapoint_ids",
+                "completed_datapoint_ids_sha256",
+                "remaining_datapoint_ids_sha256",
+            }
             if schema == "ura-recovery-completed-prefix/1":
                 expected = {"schema", "sha256", "bytes", "corpus", *entry_fields}
                 if set(recovery) != expected:
@@ -457,6 +464,27 @@ def _condition_values(value: object) -> dict[str, Any]:
                         "experiment condition recovery_selection corpora are invalid"
                     )
                 entries = list(corpora.values())
+            elif schema == "ura-recovery-completed-selection/1":
+                if set(recovery) != {"schema", "sha256", "bytes", "corpora"}:
+                    raise ValueError(
+                        "experiment condition recovery_selection is incomplete"
+                    )
+                corpora = recovery["corpora"]
+                if not isinstance(corpora, dict) or not corpora:
+                    raise ValueError(
+                        "experiment condition recovery_selection corpora are invalid"
+                    )
+                if any(
+                    not isinstance(name, str)
+                    or not name.strip()
+                    or not isinstance(entry, dict)
+                    or set(entry) != selection_entry_fields
+                    for name, entry in corpora.items()
+                ):
+                    raise ValueError(
+                        "experiment condition recovery_selection corpora are invalid"
+                    )
+                entries = list(corpora.values())
             else:
                 raise ValueError(
                     "experiment condition recovery_selection schema is invalid"
@@ -473,6 +501,40 @@ def _condition_values(value: object) -> dict[str, Any]:
                     "experiment condition recovery_selection bytes is invalid"
                 )
             for entry in entries:
+                if schema == "ura-recovery-completed-selection/1":
+                    count = entry["completed_record_count"]
+                    completed = entry["completed_datapoint_ids"]
+                    if (
+                        isinstance(count, bool)
+                        or not isinstance(count, int)
+                        or count < 1
+                        or not isinstance(completed, list)
+                        or len(completed) != count
+                        or any(
+                            not isinstance(value, str) or not value.strip()
+                            for value in completed
+                        )
+                        or len(set(completed)) != len(completed)
+                        or canonical_json_sha256(completed)
+                        != entry["completed_datapoint_ids_sha256"]
+                    ):
+                        raise ValueError(
+                            "experiment condition recovery_selection completed IDs "
+                            "are invalid"
+                        )
+                    digest_fields = selection_entry_fields - {
+                        "completed_record_count",
+                        "completed_datapoint_ids",
+                    }
+                    for field in digest_fields:
+                        if not isinstance(entry[field], str) or _HEX64.fullmatch(
+                            entry[field]
+                        ) is None:
+                            raise ValueError(
+                                "experiment condition recovery_selection "
+                                f"{field} is invalid"
+                            )
+                    continue
                 count = entry["completed_prefix_count"]
                 if isinstance(count, bool) or not isinstance(count, int) or count < 1:
                     raise ValueError(
@@ -1893,7 +1955,7 @@ def _bind_request_lifecycle(
         return [], [], {
             "status": "not_supplied",
             "counts": None,
-            "reason": "no ura-request-envelope/2, /3, or /4 artifacts were supplied",
+            "reason": "no ura-request-envelope/2 through /6 artifacts were supplied",
         }
     envelopes: dict[str, dict[str, Any]] = {}
     descriptors: dict[str, dict[str, Any]] = {}
@@ -2607,7 +2669,7 @@ def build_level1_evidence(
         "scope": {
             "fixed_universe": (
                 "prospective whole-arm request units from supplied "
-                "ura-request-envelope/2 or /3 artifacts, plus exact materialized "
+                "ura-request-envelope/2 through /6 artifacts, plus exact materialized "
                 "planning "
                 "strata from supplied ura-eligibility-plan/3 artifacts "
                 "(or exact runtime-free legacy /2 artifacts)"
