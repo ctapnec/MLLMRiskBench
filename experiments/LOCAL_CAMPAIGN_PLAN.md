@@ -854,6 +854,13 @@ framework lock and complete terminal inventory. Adoption makes no target call
 and never invokes the child wrapper again; any changed or unregistered identity
 fails instead of being treated as reusable evidence.
 
+If repinning has moved that exact historical project-revision receipt into the
+fixed sibling `project-revision/superseded/` directory, the current-Ollama
+campaign validator may read only the same filename with the descriptor's exact
+byte count and digest while retaining the original logical locator for argv
+comparison. An existing, symlinked, missing or content-different candidate does
+not fall through to another receipt.
+
 Every core and extended measured lane runs in its own process group under the
 Gate 5 24-hour lane wall-time ceiling. Core lanes are terminated and reaped on
 that ceiling before the controller continues to the next lane; the extended

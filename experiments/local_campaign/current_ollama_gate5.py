@@ -167,7 +167,12 @@ def _descriptor(path: Path, *, label: str) -> dict[str, object]:
     }
 
 
-def _descriptor_file(value: object, *, label: str) -> Path:
+def _descriptor_file(
+    value: object,
+    *,
+    label: str,
+    allow_superseded_project_revision: bool = False,
+) -> Path:
     if not isinstance(value, dict) or set(value) != {"path", "sha256", "bytes"}:
         raise ValueError(f"{label} is not one file descriptor")
     raw_path = value.get("path")
@@ -183,7 +188,14 @@ def _descriptor_file(value: object, *, label: str) -> Path:
     ):
         raise ValueError(f"{label} descriptor is malformed")
     path = Path(raw_path)
-    payload = _stable_file(path, label=label)
+    content_path = path
+    if (
+        allow_superseded_project_revision
+        and not path.exists()
+        and not path.is_symlink()
+    ):
+        content_path = path.parent / "superseded" / path.name
+    payload = _stable_file(content_path, label=label)
     if len(payload) != size or hashlib.sha256(payload).hexdigest() != digest:
         raise ValueError(f"{label} descriptor content changed")
     return path
@@ -836,8 +848,17 @@ def validate_amendment(path: Path, *, expected_commit: str | None = None) -> dic
     ):
         raise ValueError("current Ollama amendment lane rows changed")
     bound_files = {
-        field: _descriptor_file(value.get(field), label=field)
-        for field in ("project_revision", "source_config", "source_conformance")
+        "project_revision": _descriptor_file(
+            value.get("project_revision"),
+            label="project_revision",
+            allow_superseded_project_revision=True,
+        ),
+        "source_config": _descriptor_file(
+            value.get("source_config"), label="source_config"
+        ),
+        "source_conformance": _descriptor_file(
+            value.get("source_conformance"), label="source_conformance"
+        ),
     }
     readiness = value.get("readiness")
     if not isinstance(readiness, dict) or set(readiness) != set(CURRENT_OLLAMA_BY_LABEL):

@@ -541,6 +541,13 @@ all reject an omitted cohort, a changed terminal state or any cross-policy
 pooling. These counts describe this local campaign only; they are not generic
 Runner phases or product defaults.
 
+Repinning may archive the older project-revision receipt named by the retained
+current-Ollama Gate 5 artifact. Its campaign validator accepts only the exact
+same filename under the fixed sibling `project-revision/superseded/` directory
+when the original locator is absent, and verifies the descriptor byte count and
+digest before use. It retains the original locator for historical argv
+comparison and never substitutes the current receipt.
+
 A targeted amendment must re-attest and canary the four affected GraySwan lane
 identities under the current Runner before measured execution. Those identities
 use the limit-100, sample-seed-0 selections and caps from their matching

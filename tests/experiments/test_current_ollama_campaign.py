@@ -35,6 +35,7 @@ from experiments.local_campaign.current_ollama import (
 )
 from experiments.local_campaign.current_ollama_gate5 import (
     _base_argv,
+    _descriptor_file as _gate5_descriptor_file,
     _expected_dispositions,
     _has_exact_lane_inventory,
     _lane_contract,
@@ -109,6 +110,41 @@ def test_current_ollama_gate5_binds_bounded_context_and_output_caps(
     path.write_text(json.dumps(config), encoding="utf-8")
     with pytest.raises(ValueError, match="exact local configuration changed"):
         _validate_local_config(path, model_label=model.label)
+
+
+def test_current_ollama_gate5_accepts_only_the_content_identical_archived_project_receipt(
+    tmp_path: Path,
+) -> None:
+    receipt_root = tmp_path / "project-revision"
+    archived = receipt_root / "superseded" / "project-revision-old.json"
+    archived.parent.mkdir(parents=True)
+    payload = b'{"schema":"ura-project-revision/1"}\n'
+    archived.write_bytes(payload)
+    original = receipt_root / archived.name
+    descriptor = {
+        "path": str(original),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "bytes": len(payload),
+    }
+
+    assert _gate5_descriptor_file(
+        descriptor,
+        label="project_revision",
+        allow_superseded_project_revision=True,
+    ) == original
+    with pytest.raises(ValueError, match="canonical regular file"):
+        _gate5_descriptor_file(descriptor, label="project_revision")
+
+    archived.write_bytes(payload + b" ")
+    with pytest.raises(ValueError, match="descriptor content changed"):
+        _gate5_descriptor_file(
+            descriptor,
+            label="project_revision",
+            allow_superseded_project_revision=True,
+        )
+
+    source = inspect.getsource(validate_amendment)
+    assert "allow_superseded_project_revision=True" in source
 
 
 @pytest.mark.parametrize(
