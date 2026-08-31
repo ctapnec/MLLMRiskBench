@@ -83,6 +83,15 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _log_contains(path: Path, text: str) -> bool:
+    return (
+        path.is_file()
+        and not path.is_symlink()
+        and 0 < path.stat().st_size <= 16 * 1024 * 1024
+        and text in path.read_text(encoding="utf-8", errors="strict")
+    )
+
+
 def _failed_inputs(
     completion_path: Path,
     completion_sha256: str,
@@ -142,12 +151,16 @@ def _failed_inputs(
     ):
         raise ValueError("failed stability terminal unit partition changed")
     for unit_id in TEXT_FINALIZATION_UNITS:
-        if "model_stability_status differs" not in str(
-            failures[unit_id].get("error", "")
+        if not _log_contains(
+            failed_root / "units" / unit_id / "measured.run.log",
+            "model_stability_status differs from its retained stage projection",
         ):
             raise ValueError(f"{unit_id}: failed for an unrelated reason")
     for unit_id in NEW_IMAGE_UNITS:
-        if "probe" not in str(failures[unit_id].get("error", "")):
+        if not _log_contains(
+            failed_root / "units" / unit_id / "probe.derive.log",
+            "lacks a provider/runtime resolved_model",
+        ):
             raise ValueError(f"{unit_id}: pre-measured failure changed")
     return failed, failed_root, units, durable
 

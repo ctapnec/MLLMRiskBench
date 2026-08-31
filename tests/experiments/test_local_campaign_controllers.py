@@ -8074,6 +8074,8 @@ def test_current_ollama_stability_continuation_reuses_only_completed_work() -> N
     assert "if unit_id in TEXT_FINALIZATION_UNITS:" in source
     assert "set(results) != set(INHERITED_UNITS)" in source
     assert "tuple(results) != INHERITED_UNITS" not in source
+    assert '"model_stability_status differs from its retained stage projection"' in source
+    assert '"lacks a provider/runtime resolved_model"' in source
     assert "continuation_selected_attempts" in source
 
 
