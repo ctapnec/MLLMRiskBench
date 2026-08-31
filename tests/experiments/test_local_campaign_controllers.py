@@ -7666,7 +7666,7 @@ def test_vllm_stability_completion_is_one_separate_runner_225_stratum(
         "controller_exit_code": 0,
         "completed_at_utc": "2026-08-31T00:00:00Z",
         "expected_commit": "a" * 40,
-        "runner_code_version": "ura-runner/2.26",
+        "runner_code_version": "ura-runner/2.25",
         "target_answer_retries": 1,
         "historical_completion": recovery._descriptor(
             historical, label="historical completion"
@@ -7692,7 +7692,7 @@ def test_vllm_stability_completion_is_one_separate_runner_225_stratum(
 
     view = recovery.validate_completion(completion_path, runner_root=runner_root)
 
-    assert view["runner_code_version"] == "ura-runner/2.26"
+    assert view["runner_code_version"] == "ura-runner/2.25"
     assert view["output_policy_stratum"] == (
         "provider_neutral_retry_1_retain_failed_output"
     )
