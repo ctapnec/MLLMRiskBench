@@ -677,6 +677,13 @@ def _cell(
             "cascade_policy": "first_confident_with_full_shadow_trail",
             "stage_queried": True,
             "policy_evaluation_status": "evaluated",
+            "model_stability_status": None,
+            "model_stability_category": None,
+            "model_stability_error_type": None,
+            "model_stability_retry_count": None,
+            "target_input_status": None,
+            "target_input_category": None,
+            "target_input_error_type": None,
             "metric_authority": None,
             "required_metric": None,
         }
@@ -717,6 +724,13 @@ def _cell(
             "cascade_policy": "first_confident_with_full_shadow_trail",
             "stage_queried": True,
             "policy_evaluation_status": "evaluated",
+            "model_stability_status": None,
+            "model_stability_category": None,
+            "model_stability_error_type": None,
+            "model_stability_retry_count": None,
+            "target_input_status": None,
+            "target_input_category": None,
+            "target_input_error_type": None,
             "metric_authority": None,
             "required_metric": None,
             "risk_category": raw["risk_category"],
@@ -1903,6 +1917,66 @@ def test_loader_rejects_stale_runner_version(tmp_path: Path) -> None:
             policy_label="policy",
             multiplicity_family="family",
             minimum_cell_n=1,
+        )
+
+
+def test_loader_accepts_only_an_exact_caller_bound_historical_version(
+    tmp_path: Path,
+) -> None:
+    cells = _paired_model_grid(tmp_path)
+    historical_version = ("ura-runner/2.24", "1.5")
+    historical_omissions = (
+        figure_results._CALLER_BOUND_HISTORICAL_TRAIL_OMISSIONS[
+            historical_version
+        ]
+    )
+    for cell in cells:
+        manifest = json.loads(cell["paths"]["manifest"].read_text(encoding="utf-8"))
+        manifest["code_version"], manifest["schema_version"] = historical_version
+        cell["paths"]["manifest"].write_text(
+            json.dumps(manifest), encoding="utf-8"
+        )
+        marker = json.loads(cell["marker"].read_text(encoding="utf-8"))
+        marker["code_version"], marker["schema_version"] = historical_version
+        cell["marker"].write_text(json.dumps(marker), encoding="utf-8")
+        trails = [
+            json.loads(line)
+            for line in cell["paths"]["trails"].read_text(
+                encoding="utf-8"
+            ).splitlines()
+            if line.strip()
+        ]
+        for row in trails:
+            for field in historical_omissions:
+                row.pop(field)
+        _write_jsonl(cell["paths"]["trails"], trails)
+        _refresh_marker(cell)
+
+    with pytest.raises(ValueError, match="current runner/schema"):
+        figure_results._load_cells(tmp_path)
+    assert len(
+        figure_results._load_cells(
+            tmp_path, _expected_artifact_version=historical_version
+        )
+    ) == len(cells)
+    with pytest.raises(ValueError, match="caller-bound historical artifact version"):
+        figure_results._load_cells(
+            tmp_path,
+            _expected_artifact_version=("ura-runner/2.23", "1.5"),
+        )
+
+    trail_path = cells[0]["paths"]["trails"]
+    trails = [
+        json.loads(line)
+        for line in trail_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    trails[0]["model_stability_status"] = None
+    _write_jsonl(trail_path, trails)
+    _refresh_marker(cells[0])
+    with pytest.raises(ValueError, match="post-version stage field"):
+        figure_results._load_cells(
+            tmp_path, _expected_artifact_version=historical_version
         )
 
 

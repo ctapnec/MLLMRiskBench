@@ -61,6 +61,7 @@ from experiments.local_campaign.ollama_static_terminal import (
     validate_gate5_terminal_rows,
 )
 from ura.eligibility import validate_eligibility_plan
+from ura.project_revision import load_project_revision_file, project_revision_binding
 
 
 INPUT_SCHEMA = "ura-phase7-analysis-inputs/4"
@@ -415,6 +416,7 @@ FOLLOWON_PAIR_OPTIONS = {
     "--corpora", "--source-config", "--source-config-sha256",
     "--source-conformance", "--source-conformance-sha256", "--limit",
     "--sample-seed", "--seeds", "--max-queries", "--max-turns", "--group",
+    "--dtype",
     "--project-revision", "--project-revision-sha256",
     "--max-total-target-calls", "--max-total-judge-calls",
     "--max-total-http-attempts", "--deadline-seconds", "--out",
@@ -444,6 +446,17 @@ EXPECTED_SOURCE_CONFORMANCE_MANIFEST = (
 EXPECTED_SOURCE_CONFORMANCE_SHA256 = (
     "@@SOURCE_RECEIPT_SHA256@@"
 )
+RETAINED_FOLLOWON_CODE_IDENTITIES = {
+    "a980cd820c83d46d2cc0500d55c5832a99577461": {
+        "framework_lock_id": (
+            "49581308fb249f808ed21735c6badcfa9664156cc66aa14fa1490d6b28ccd406"
+        ),
+        "project_revision_sha256": (
+            "e409fff51da054c800b972d4388bec68a8f6af2e604c0c9929d5e353c3e68c72"
+        ),
+        "runner_artifact_version": ("ura-runner/2.24", "1.5"),
+    },
+}
 EXPECTED_SOURCE_PORTFOLIO = {
     "rows": 45,
     "admitted": 44,
@@ -8305,12 +8318,38 @@ def _followon_argv_options(argv: object, *, lane: str) -> dict[str, str | bool]:
     return result
 
 
+def _followon_artifact_file(value: object, *, kind: str, label: str) -> Path:
+    core_fields = {"path", "sha256", "bytes"}
+    expected_fields = core_fields
+    if kind == "projection":
+        expected_fields = core_fields | {"file"}
+    elif kind == "request_envelope":
+        expected_fields = core_fields | {"envelope_id", "file"}
+    elif kind not in {"eligibility", "canary_summary"}:
+        raise Phase7Error(f"{label} has an unknown artifact kind")
+    if not isinstance(value, dict) or set(value) != expected_fields:
+        raise Phase7Error(f"{label} has an invalid artifact descriptor")
+    path = descriptor_file(
+        {field: value[field] for field in core_fields}, label=label
+    )
+    if kind in {"projection", "request_envelope"} and value.get("file") != path.name:
+        raise Phase7Error(f"{label} file identity changed")
+    if kind == "request_envelope":
+        envelope_id = value.get("envelope_id")
+        if (
+            not isinstance(envelope_id, str)
+            or not envelope_id
+            or path.name != f"{envelope_id}.request-envelope.json"
+        ):
+            raise Phase7Error(f"{label} envelope identity changed")
+    return path
+
+
 def validate_followon_inventory(
     *,
     amendment_path: Path,
     completion_path: Path,
     gate5_promotion: Path,
-    code_identity: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Revalidate the separate three-lane follow-on lifecycle and metric partition."""
 
@@ -8332,17 +8371,25 @@ def validate_followon_inventory(
         "core_gate5_mutated": False,
         "metric_admission": "successful_runner_lifecycle_only",
     }
+    retained_identity = RETAINED_FOLLOWON_CODE_IDENTITIES.get(
+        str(amendment.get("expected_commit"))
+    )
     if (
         set(amendment) != amendment_fields
         or amendment.get("schema") != FOLLOWON_AMENDMENT_SCHEMA
         or amendment.get("status") != "authorized"
-        or amendment.get("expected_commit") != code_identity["expected_commit"]
-        or amendment.get("framework_lock_id") != code_identity["framework_lock_id"]
+        or retained_identity is None
+        or amendment.get("framework_lock_id")
+        != retained_identity["framework_lock_id"]
         or amendment.get("lane_order") != list(FOLLOWON_LANES)
         or amendment.get("policy") != expected_policy
         or amendment.get("parent_gate5_promotion") != descriptor(gate5_promotion)
     ):
         raise Phase7Error("follow-on Gate 5 amendment identity or policy changed")
+    code_identity = {
+        "expected_commit": str(amendment["expected_commit"]),
+        "framework_lock_id": str(amendment["framework_lock_id"]),
+    }
     parent_promotion = strict_object(gate5_promotion)
     descriptor_file(amendment.get("runnote"), label="follow-on Gate 5 RUNNOTE")
     if amendment.get("runnote") != parent_promotion.get("canonical_runnote"):
@@ -8356,6 +8403,7 @@ def validate_followon_inventory(
     ):
         raise Phase7Error("follow-on Gate 5 lane inventory changed")
     amendment_by_lane: dict[str, dict[str, Any]] = {}
+    retained_project_revision: dict[str, Any] | None = None
     amendment_row_fields = {
         "lane_id", "selection", "canary_selection", "preparations", "projection",
         "eligibility", "request_envelope", "canary_summary", "measured_argv",
@@ -8391,7 +8439,9 @@ def validate_followon_inventory(
         for field in (
             "projection", "eligibility", "request_envelope", "canary_summary"
         ):
-            descriptor_file(row.get(field), label=f"{lane} follow-on {field}")
+            _followon_artifact_file(
+                row.get(field), kind=field, label=f"{lane} follow-on {field}"
+            )
         preparations = row.get("preparations")
         if (
             not isinstance(preparations, dict)
@@ -8412,6 +8462,7 @@ def validate_followon_inventory(
             "--max-queries": str(spec["max_queries"]),
             "--max-turns": str(spec["max_turns"]),
             "--judges": "rules,guardrail",
+            "--dtype": "auto",
             "--guardrail-model": EXPECTED_GUARDRAIL_MODEL,
             "--guardrail-revision": EXPECTED_GUARDRAIL_REVISION,
             "--guardrail-device": EXPECTED_GUARDRAIL_DEVICE,
@@ -8440,18 +8491,50 @@ def validate_followon_inventory(
         )
         bound_paths: dict[str, Path] = {}
         for path_option, sha_option in file_pairs:
-            path = checked_file(str(options[path_option]), label=f"{lane} {path_option}")
+            declared_path = Path(str(options[path_option]))
+            candidate_path = declared_path
+            if path_option == "--project-revision" and not declared_path.is_file():
+                candidate_path = Path(str(row["result_root"])) / declared_path.name
+            path = checked_file(str(candidate_path), label=f"{lane} {path_option}")
             if sha256_file(path) != options[sha_option]:
                 raise Phase7Error(f"{lane}: follow-on measured argv digest changed")
             bound_paths[path_option] = path
+        try:
+            project_receipt, project_descriptor = load_project_revision_file(
+                bound_paths["--project-revision"],
+                str(options["--project-revision-sha256"]),
+                Path.cwd() / "experiments" / "run_matrix.py",
+                recheck_checkout=False,
+            )
+            project_binding = project_revision_binding(
+                project_receipt, project_descriptor
+            )
+        except (OSError, TypeError, ValueError) as exc:
+            raise Phase7Error(
+                f"{lane}: retained follow-on project revision is invalid: {exc}"
+            ) from exc
+        if (
+            project_binding.get("expected_commit")
+            != code_identity["expected_commit"]
+            or project_binding.get("observed_commit")
+            != code_identity["expected_commit"]
+            or project_binding.get("sha256")
+            != retained_identity["project_revision_sha256"]
+        ):
+            raise Phase7Error(
+                f"{lane}: retained follow-on project revision identity changed"
+            )
+        if retained_project_revision is None:
+            retained_project_revision = project_binding
+        elif retained_project_revision != project_binding:
+            raise Phase7Error(
+                f"{lane}: follow-on lanes use different project revisions"
+            )
         if (
             bound_paths["--local-config"]
             != (Path.cwd() / "experiments" / "local-qwen3-vl.json").resolve(strict=True)
             or bound_paths["--source-config"]
             != (Path.cwd() / "experiments" / "source-instances.json").resolve(strict=True)
-            or bound_paths["--project-revision"]
-            != Path(EXPECTED_PROJECT_REVISION_MANIFEST).resolve(strict=True)
-            or options["--project-revision-sha256"] != EXPECTED_PROJECT_REVISION_SHA256
             or bound_paths["--source-conformance"]
             != Path(EXPECTED_SOURCE_CONFORMANCE_MANIFEST).resolve(strict=True)
             or options["--source-conformance-sha256"]
@@ -8670,7 +8753,12 @@ def validate_followon_inventory(
         if sorted([*root.rglob("*.grid.lock"), *root.rglob("*.cell.lock"), *root.rglob("*.error.json")]):
             raise Phase7Error(f"{lane}: successful follow-on root is locked or failed")
         try:
-            cells = _load_cells(root)
+            cells = _load_cells(
+                root,
+                _expected_artifact_version=retained_identity[
+                    "runner_artifact_version"
+                ],
+            )
         except (KeyError, OSError, TypeError, ValueError) as exc:
             raise Phase7Error(
                 f"{lane}: successful follow-on root is not validated Runner evidence: {exc}"
@@ -8682,8 +8770,9 @@ def validate_followon_inventory(
             raise Phase7Error(f"{lane}: successful follow-on Runner inventory is ambiguous")
         grid = strict_object(grids[0])
         measured_envelope = strict_object(envelopes[0])
-        gate5_envelope_path = descriptor_file(
+        gate5_envelope_path = _followon_artifact_file(
             amendment_by_lane[lane]["request_envelope"],
+            kind="request_envelope",
             label=f"{lane} Gate 5 request envelope",
         )
         gate5_envelope = strict_object(gate5_envelope_path)
@@ -8708,6 +8797,10 @@ def validate_followon_inventory(
         request = grid.get("request")
         spec = FOLLOWON_SPECS[lane]
         argv = amendment_by_lane[lane]["measured_argv"]
+        resolved_models = request.get("models") if isinstance(request, dict) else None
+        expected_model_prefix = (
+            f"{_followon_argv_option(argv, '--local', lane=lane)}@"
+        )
         expected_budget = {
             "max_target_calls": spec["target_calls"],
             "max_judge_calls": None,
@@ -8722,7 +8815,11 @@ def validate_followon_inventory(
             or request.get("execution_purpose") != "measured_run"
             or request.get("dry_run") is not False
             or request.get("attestation_probe") is not False
-            or request.get("models") != ["vllm:Qwen/Qwen3-VL-8B-Instruct"]
+            or not isinstance(resolved_models, list)
+            or len(resolved_models) != 1
+            or not isinstance(resolved_models[0], str)
+            or not resolved_models[0].startswith(expected_model_prefix)
+            or resolved_models != cells[0]["manifest"]["models"]
             or request.get("corpora") != [spec["corpus"]]
             or request.get("attackers") != [spec["attacker"]]
             or request.get("judges") != ["rules", "guardrail"]
@@ -8756,12 +8853,13 @@ def validate_followon_inventory(
             != sum(len(cell["attempts"]) for cell in cells)
             or evidence.get("completed_records") != spec["target_calls"]
             or evidence.get("project_revision") != request.get("project_revision")
+            or request.get("project_revision") != retained_project_revision
         ):
             raise Phase7Error(f"{lane}: follow-on metric evidence binding changed")
         revision = request["project_revision"].get("sha256")
         if (
             not isinstance(revision, str)
-            or revision != EXPECTED_PROJECT_REVISION_SHA256
+            or revision != retained_identity["project_revision_sha256"]
         ):
             raise Phase7Error(f"{lane}: follow-on project-revision receipt changed")
         revision_strata.setdefault(revision, []).append(lane)
@@ -8784,7 +8882,9 @@ def validate_followon_inventory(
         "revision_strata": {
             revision: revision_strata[revision] for revision in sorted(revision_strata)
         },
-        "project_revision_receipt_sha256": EXPECTED_PROJECT_REVISION_SHA256,
+        "project_revision_receipt_sha256": retained_identity[
+            "project_revision_sha256"
+        ],
         "project_revision_commit": code_identity["expected_commit"],
         "source_conformance_sha256": EXPECTED_SOURCE_CONFORMANCE_SHA256,
         "cross_revision_pooling_permitted": False,
@@ -9456,7 +9556,6 @@ def validate_seven_output_policy_inventory(
                 or request_source.get("sha256") != source_conformance["sha256"]
             ):
                 raise Phase7Error(f"{lane}: seven-row measured request changed")
-            project_binding = request["project_revision"]
             request_descriptor = validate_measured_request_envelope_artifact(
                 envelopes[0], lane=lane, spec=spec,
                 expected_project_binding=seven_project_binding,
@@ -12021,7 +12120,6 @@ def build_input_manifest(args: argparse.Namespace) -> dict[str, Any]:
         amendment_path=Path(args.followon_gate5_amendment),
         completion_path=Path(args.phase6_followon_completion),
         gate5_promotion=gate5_promotion,
-        code_identity=analysis_code_identity,
     )
     if not args.current_ollama_gate5_amendment or not args.phase6_current_ollama_completion:
         raise Phase7Error(
@@ -13189,7 +13287,6 @@ class AnalysisController:
                 followon.get("completion"), label="authorized follow-on completion"
             ),
             gate5_promotion=gate5_promotion_path,
-            code_identity=code,
         )
         if validated_followon != followon:
             raise Phase7Error("authorized follow-on semantic snapshot changed")

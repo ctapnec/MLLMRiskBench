@@ -117,6 +117,17 @@ _HUMAN_AUDIT_SELECTION_POLICY = {
     "without_replacement": True,
     "whole_cluster": True,
 }
+_CALLER_BOUND_HISTORICAL_TRAIL_OMISSIONS = {
+    ("ura-runner/2.24", "1.5"): frozenset({
+        "model_stability_status",
+        "model_stability_category",
+        "model_stability_error_type",
+        "model_stability_retry_count",
+        "target_input_status",
+        "target_input_category",
+        "target_input_error_type",
+    }),
+}
 
 
 def _valid_sha256(value: Any) -> bool:
@@ -649,6 +660,7 @@ def _canonical_response_digest(response: Response) -> str:
 def _validate_trails(
     trails: list[dict[str, Any]], *, attempts: dict[str, Attempt], responses: dict[str, Response],
     judgments: dict[str, Judgment], manifest: RunManifest, path: Path,
+    omitted_projection_fields: frozenset[str] = frozenset(),
 ) -> None:
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for line_number, row in enumerate(trails, 1):
@@ -725,7 +737,13 @@ def _validate_trails(
         if len(authorities) != 1 or authorities[0].get("cascade_confident") is not True:
             raise ValueError(f"trail must have one confident authority for {attempt_id!r}")
     validate_persisted_judgment_trails(
-        attempts, responses, judgments, trails, manifest.config, manifest.judges
+        attempts,
+        responses,
+        judgments,
+        trails,
+        manifest.config,
+        manifest.judges,
+        omitted_projection_fields=omitted_projection_fields,
     )
 
 
@@ -781,6 +799,7 @@ def _validate_cell(
     *,
     allow_diagnostic_dry_run: bool = False,
     allow_diagnostic_canary: bool = False,
+    expected_artifact_version: tuple[str, str] | None = None,
 ) -> dict[str, Any]:
     marker = _read_object(marker_path)
     if marker.get("status") != "complete" or marker.get("format_version") != 2:
@@ -810,13 +829,32 @@ def _validate_cell(
     run = manifest.config.get("run")
     if not isinstance(run, dict):
         raise ValueError(f"manifest lacks config.run: {resolved['manifest']}")
+    current_code_version = CODE_VERSION
+    current_schema_version = SCHEMA_VERSION
+    omitted_projection_fields: frozenset[str] = frozenset()
+    if expected_artifact_version is not None:
+        omissions = _CALLER_BOUND_HISTORICAL_TRAIL_OMISSIONS.get(
+            expected_artifact_version
+        )
+        if omissions is None:
+            raise ValueError(
+                "requested caller-bound historical artifact version is not admitted"
+            )
+        artifact_version = (manifest.code_version, manifest.schema_version)
+        if artifact_version != expected_artifact_version:
+            raise ValueError(
+                "completed cell version differs from its exact caller-bound "
+                "artifact version"
+            )
+        current_code_version, current_schema_version = expected_artifact_version
+        omitted_projection_fields = omissions
     try:
         legacy_runtime_free = validate_engine_runtime_artifact_version(
             attacker=run.get("attacker"),
             code_version=manifest.code_version,
             schema_version=manifest.schema_version,
-            current_code_version=CODE_VERSION,
-            current_schema_version=SCHEMA_VERSION,
+            current_code_version=current_code_version,
+            current_schema_version=current_schema_version,
         )
         runtime_identity, runtime_close = validate_cell_engine_runtime_marker(
             attacker=run.get("attacker"),
@@ -1021,6 +1059,7 @@ def _validate_cell(
         judgments=judgments_by_id,
         manifest=manifest,
         path=resolved["trails"],
+        omitted_projection_fields=omitted_projection_fields,
     )
     identity_summary = _validate_realized_identity_inventory(
         manifest,
@@ -1193,7 +1232,10 @@ def _reject_duplicate_realized_target_arms(cells: list[dict[str, Any]]) -> None:
 
 
 def _load_cells(
-    root: Path, *, _allow_diagnostic_canary: bool = False,
+    root: Path,
+    *,
+    _allow_diagnostic_canary: bool = False,
+    _expected_artifact_version: tuple[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     allowlist = _grid_allowlist(
         root, allow_diagnostic_canary=_allow_diagnostic_canary
@@ -1204,6 +1246,7 @@ def _load_cells(
             allowlist[marker],
             allow_diagnostic_dry_run=_allow_diagnostic_canary,
             allow_diagnostic_canary=_allow_diagnostic_canary,
+            expected_artifact_version=_expected_artifact_version,
         )
         for marker in sorted(allowlist)
     ]

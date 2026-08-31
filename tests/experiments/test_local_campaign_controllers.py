@@ -2497,6 +2497,7 @@ def test_phase7_native_adoption_revalidates_only_whitelisted_history() -> None:
         assert "RETAINED_NATIVE_OLLAMA_MODELS_BY_COMMIT.get(" in native
         assert "expected_native_models" in native
         assert "recheck_checkout=False" in native
+        assert "EXPECTED_PROJECT_REVISION_MANIFEST = (" in source
         assert "native_project_path.parent != expected_project_root" in native
         assert "!= EXPECTED_PROJECT_REVISION_SHA256" not in native
 
@@ -2505,6 +2506,14 @@ def test_phase7_native_adoption_revalidates_only_whitelisted_history() -> None:
     assert mutated != native
     with pytest.raises(AssertionError):
         assert "recheck_checkout=False" in mutated
+    missing_constant = source.replace(
+        "EXPECTED_PROJECT_REVISION_MANIFEST = (",
+        "REMOVED_PROJECT_REVISION_MANIFEST = (",
+        1,
+    )
+    assert missing_constant != source
+    with pytest.raises(AssertionError):
+        assert "EXPECTED_PROJECT_REVISION_MANIFEST = (" in missing_constant
 
 
 def test_phase6_failure_sealers_create_missing_runner_parent() -> None:
@@ -2997,6 +3006,119 @@ def test_phase7_llava_pair_uses_separate_seven_row_prerequisites(
     )[0]
     assert "llava_runner = llava_comparison_runner(" in boundary_body
     assert "value, runner=llava_runner, corpus=corpus" in boundary_body
+
+
+def test_phase7_followon_uses_its_retained_historical_revision() -> None:
+    source = _template_source("phase7_analysis.py.in")
+    phase8 = _template_source("phase8_human_audit.py.in")
+
+    def assert_artifact_contract(value: str) -> None:
+        start = value.index("def _followon_artifact_file(")
+        end = value.index("\ndef validate_followon_inventory(", start)
+        block = value[start:end]
+        assert 'expected_fields = core_fields | {"file"}' in block
+        assert (
+            'expected_fields = core_fields | {"envelope_id", "file"}' in block
+        )
+        assert 'value.get("file") != path.name' in block
+        assert 'f"{envelope_id}.request-envelope.json"' in block
+
+    def assert_contract(value: str) -> None:
+        assert '"runner_artifact_version": ("ura-runner/2.24", "1.5")' in value
+        start = value.index("def validate_followon_inventory(")
+        end = value.index("\ndef validate_seven_output_policy_inventory(", start)
+        block = value[start:end]
+        assert "code_identity: Mapping[str, Any]" not in block.split(") ->", 1)[0]
+        assert "RETAINED_FOLLOWON_CODE_IDENTITIES.get(" in block
+        assert "load_project_revision_file(" in block
+        assert "recheck_checkout=False" in block
+        assert (
+            'if path_option == "--project-revision" and not declared_path.is_file():'
+            in block
+        )
+        assert (
+            'candidate_path = Path(str(row["result_root"])) / declared_path.name'
+            in block
+        )
+        assert (
+            'request.get("project_revision") != retained_project_revision'
+            in block
+        )
+        assert '"--dtype": "auto"' in block
+        assert 'resolved_models != cells[0]["manifest"]["models"]' in block
+        assert 'resolved_models[0].startswith(expected_model_prefix)' in block
+        assert "EXPECTED_PROJECT_REVISION_MANIFEST" not in block
+        assert "EXPECTED_PROJECT_REVISION_SHA256" not in block
+        assert (
+            '"project_revision_receipt_sha256": retained_identity[' in block
+        )
+
+    assert_artifact_contract(source)
+    assert_contract(source)
+    assert "a980cd820c83d46d2cc0500d55c5832a99577461" in source
+    assert "e409fff51da054c800b972d4388bec68a8f6af2e604c0c9929d5e353c3e68c72" in source
+    assert '"runner_artifact_version": ("ura-runner/2.24", "1.5")' in source
+    assert (
+        '_expected_artifact_version=retained_identity[\n'
+        '                    "runner_artifact_version"\n'
+        "                ]"
+        in source
+    )
+    oracle_call = phase8[
+        phase8.index("oracle_followon = oracle.validate_followon_inventory(") :
+        phase8.index("oracle_seven =", phase8.index("oracle_followon ="))
+    ]
+    assert "code_identity=" not in oracle_call
+
+    changed = source.replace(
+        'request.get("project_revision") != retained_project_revision',
+        'request.get("project_revision") != request.get("project_revision")',
+        1,
+    )
+    assert changed != source
+    with pytest.raises(AssertionError):
+        assert_contract(changed)
+
+    changed = source.replace(
+        'resolved_models != cells[0]["manifest"]["models"]',
+        "resolved_models != resolved_models",
+        1,
+    )
+    assert changed != source
+    with pytest.raises(AssertionError):
+        assert_contract(changed)
+
+    changed = source.replace(
+        '"runner_artifact_version": ("ura-runner/2.24", "1.5")',
+        '"runner_artifact_version": ("ura-runner/2.26", "1.5")',
+        1,
+    )
+    assert changed != source
+    with pytest.raises(AssertionError):
+        assert_contract(changed)
+
+    changed = source.replace(
+        'candidate_path = Path(str(row["result_root"])) / declared_path.name',
+        "candidate_path = declared_path",
+        1,
+    )
+    assert changed != source
+    with pytest.raises(AssertionError):
+        assert_contract(changed)
+
+    changed = source.replace(
+        'expected_fields = core_fields | {"envelope_id", "file"}',
+        'expected_fields = core_fields | {"file"}',
+        1,
+    )
+    assert changed != source
+    with pytest.raises(AssertionError):
+        assert_artifact_contract(changed)
+
+    changed = source.replace('            "--dtype": "auto",\n', "", 1)
+    assert changed != source
+    with pytest.raises(AssertionError):
+        assert_contract(changed)
 
 
 def test_phase7_seven_row_and_recovery_boundary_contracts(tmp_path: Path) -> None:

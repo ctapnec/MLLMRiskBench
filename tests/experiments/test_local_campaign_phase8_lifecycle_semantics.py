@@ -1129,6 +1129,19 @@ def test_phase8_frozen_replay_uses_current_identity_for_native_only(
         "amendment": artifact("seven-amendment.json", {}),
         "completion": artifact("seven-completion.json", {}),
     }
+    current_ollama = {
+        "gate5": artifact("current-ollama-gate5.json", {}),
+        "completion": artifact("current-ollama-completion.json", {}),
+    }
+    current_ollama_stability = {
+        "completion": artifact("current-ollama-stability.json", {})
+    }
+    current_ollama_alignment = {
+        "completion": artifact("current-ollama-alignment.json", {})
+    }
+    vllm_stability = {
+        "input_recovery_completion": artifact("vllm-stability.json", {})
+    }
     recoveries = {"completion_order": [recovery_completion]}
     campaign = {"fixture": "campaign"}
     inputs = {
@@ -1136,6 +1149,10 @@ def test_phase8_frozen_replay_uses_current_identity_for_native_only(
         "canonical_recoveries": recoveries,
         "followon": followon,
         "seven_output_policy_amendment": seven,
+        "current_ollama": current_ollama,
+        "current_ollama_stability": current_ollama_stability,
+        "current_ollama_population_alignment": current_ollama_alignment,
+        "vllm_stability": vllm_stability,
         "campaign_terminal_inventory": campaign,
     }
     observed: dict[str, object] = {}
@@ -1169,7 +1186,7 @@ def test_phase8_frozen_replay_uses_current_identity_for_native_only(
         return runner
 
     def validate_followon_inventory(**kwargs):
-        observed["followon"] = kwargs["code_identity"]
+        observed["followon"] = tuple(sorted(kwargs))
         return followon
 
     def validate_recoveries(_paths, **kwargs):
@@ -1196,6 +1213,18 @@ def test_phase8_frozen_replay_uses_current_identity_for_native_only(
         validate_phase6_recovery_completions=validate_recoveries,
         validate_followon_inventory=validate_followon_inventory,
         validate_seven_output_policy_inventory=validate_seven,
+        validate_current_ollama_completion=(
+            lambda **_kwargs: current_ollama
+        ),
+        validate_current_ollama_stability_completion=(
+            lambda *_args, **_kwargs: current_ollama_stability
+        ),
+        validate_current_ollama_alignment_completion=(
+            lambda *_args, **_kwargs: current_ollama_alignment
+        ),
+        validate_vllm_stability_completion=(
+            lambda *_args, **_kwargs: vllm_stability
+        ),
         build_phase6_campaign_terminal_inventory=lambda **_kwargs: campaign,
     )
     phase8.replay_frozen_phase7_oracle(
@@ -1216,7 +1245,7 @@ def test_phase8_frozen_replay_uses_current_identity_for_native_only(
         "extended": historical,
         "native": current,
         "runner": historical,
-        "followon": current,
+        "followon": ("amendment_path", "completion_path", "gate5_promotion"),
     }
     assert observed_provenance == {
         "recoveries": expected_provenance,

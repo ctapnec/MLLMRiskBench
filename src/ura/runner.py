@@ -4504,6 +4504,8 @@ def validate_persisted_judgment_trails(
     trails: list[dict[str, Any]],
     config: dict[str, Any],
     expected_judges: list[str],
+    *,
+    omitted_projection_fields: frozenset[str] = frozenset(),
 ) -> None:
     """Bind persisted trail call state to responses and final judgments."""
 
@@ -4526,6 +4528,16 @@ def validate_persisted_judgment_trails(
     ):
         raise ValueError("manifest judge inventory is invalid")
 
+    def retained_projection(judgment: Judgment) -> dict[str, Any]:
+        projection = judgment_trail_projection(judgment)
+        if omitted_projection_fields - projection.keys():
+            raise ValueError("unknown historical judge-trail projection omission")
+        return {
+            field: value
+            for field, value in projection.items()
+            if field not in omitted_projection_fields
+        }
+
     for response in responses.values():
         validate_response_refusal_state(response)
     grouped: dict[str, list[dict[str, Any]]] = {}
@@ -4538,6 +4550,8 @@ def validate_persisted_judgment_trails(
         if attempt_id not in judgments:
             raise ValueError("judge trail has invalid final-judgment lineage")
         context = f"judge trail for attempt {attempt_id!r}"
+        if omitted_projection_fields & row.keys():
+            raise ValueError(f"{context} contains a post-version stage field")
         grouped.setdefault(attempt_id, []).append(row)
         final = judgments[attempt_id]
         attempt = attempts[attempt_id]
@@ -4642,7 +4656,7 @@ def validate_persisted_judgment_trails(
         if not valid_state:
             raise ValueError(f"{context} contradicts immutable Attempt policy state")
         if row.get("cascade_role") == "authoritative":
-            expected = judgment_trail_projection(final)
+            expected = retained_projection(final)
             _require_exact_trail_projection(
                 expected, row, context=f"{context} authoritative"
             )
@@ -4654,7 +4668,7 @@ def validate_persisted_judgment_trails(
                 raise ValueError(
                     f"{context} lacks the final StrongREJECT stage binding"
                 )
-            canonical_fields = judgment_trail_projection(final).keys()
+            canonical_fields = retained_projection(final).keys()
             if binding.keys() != canonical_fields:
                 raise ValueError(
                     f"{context} StrongREJECT stage binding field inventory is invalid"
@@ -4767,9 +4781,7 @@ def validate_persisted_judgment_trails(
                     f"judge trail for attempt {attempt_id!r} lacks its complete "
                     "final stage binding"
                 )
-            canonical_fields = judgment_trail_projection(
-                judgments[attempt_id]
-            ).keys()
+            canonical_fields = retained_projection(judgments[attempt_id]).keys()
             for stage, (binding, row, expected_judge) in enumerate(
                 zip(bindings, ordered, expected_judges)
             ):

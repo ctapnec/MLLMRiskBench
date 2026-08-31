@@ -56,6 +56,10 @@ EXPECTED_COMMIT = "@@EXPECTED_COMMIT@@"
 EXPECTED_FRAMEWORK_LOCK = (
     "@@FRAMEWORK_LOCK_SHA256@@"
 )
+EXPECTED_PROJECT_REVISION_MANIFEST = (
+    "@@PROJECT_ROOT@@/runs/thesis/project-revision/"
+    "@@PROJECT_RECEIPT_NAME@@"
+)
 EXPECTED_PROJECT_REVISION_SHA256 = (
     "@@PROJECT_RECEIPT_SHA256@@"
 )
@@ -6721,7 +6725,6 @@ def replay_frozen_phase7_oracle(
                 label="Phase 7 oracle follow-on completion",
             ),
             gate5_promotion=gate5_promotion_path,
-            code_identity=inputs["code_identity"],
         )
         oracle_seven = oracle.validate_seven_output_policy_inventory(
             amendment_path=descriptor_file(
@@ -8032,10 +8035,6 @@ def validate_phase7_completion(
     gate5_observations = {
         field: descriptor_bytes(gate5[field], label=f"Phase 7 Gate 5 {field}")
         for field in ("manifest", "canonical_runnote", "promotion_receipt")
-    }
-    gate5_paths = {
-        field: observation[0]
-        for field, observation in gate5_observations.items()
     }
     if (
         sha256_bytes(gate5_observations["manifest"][1]) != manifest_sha
