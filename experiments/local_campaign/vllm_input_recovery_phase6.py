@@ -457,13 +457,13 @@ def _validate_metric_result(
 
 
 def validate_phase7_completion(
-    recovery_completion_path: Path,
+    completion_path: Path,
     *,
     runner_root: Path,
 ) -> dict[str, Any]:
     """Validate the failed Runner 2.25 campaign plus its Runner 2.26 suffix."""
 
-    recovery_completion_path = recovery_completion_path.resolve(strict=True)
+    recovery_completion_path = completion_path.resolve(strict=True)
     runner_root = runner_root.resolve(strict=True)
     recovery_completion = _load_json(
         recovery_completion_path,
