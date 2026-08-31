@@ -683,6 +683,20 @@ policy strata, with no cross-policy pooling. This continuation may run after a
 vLLM continuation has terminalized, but never concurrently with it on the two-
 GPU rig.
 
+The first 14-unit invocation is itself immutable if a later aggregate check
+fails. When complete recovered answers were final-scored but their persisted
+judge-stage projections retained null stability fields, four fully executed
+Gemma text units could not publish completion even though all intended calls,
+responses, judgments and checkpoints existed. The exact follow-up controller
+therefore finalizes those units from their durable artifacts with zero target
+and judge calls, inherits the five already complete Ministral image units, and
+launches only the five Gemma image units that stopped before measured Runner
+execution. It accepts only the exact terminal log causes. Fresh image identity
+derivation uses deterministic seeds 0 through 4 so one probe nonresponse cannot
+stand in for the 2-of-5 readiness gate; every resulting receipt remains fully
+validated. The old failed controller, zero-call finalizations and new image
+units remain separately attributable and no completed row is repeated.
+
 **Ollama population-alignment amendment (31 August 2026).** Review of the
 planned population sizes, before the current-Ollama stability continuation or
 Phase 7 analysis started, found that the retained Ollama limit-50 cohort was not

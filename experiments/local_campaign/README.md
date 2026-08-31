@@ -63,6 +63,17 @@ the remaining 1,684 rows. Its Jobs lifecycle is operational only. Phase 7 must
 retain these units separately from the 1,911 durable historical rows and must
 not pool their output-policy strata.
 
+`current_ollama_stability_continuation_phase6.py` handles only the narrower
+case in which that fresh controller has already made every call for some units
+but aggregate validation finds stale recovered-answer fields in their persisted
+judge-stage trails. It binds the exact failed completion and terminal logs,
+inherits complete units, finalizes fully executed affected units through
+`finalize_recovered_trails.py` with zero target and judge calls, and launches
+only units that stopped before measured execution. Identity derivation tries
+the fixed seed sequence 0 through 4 so one probe nonresponse is not treated as
+a failed readiness gate. The completion remains a distinct output-policy and
+project-revision stratum for Phase 7.
+
 `current_ollama_population_alignment_phase6.py` runs only after that retained
 limit-50 population is complete. It applies the same source arms, limit 100,
 sample seed 0, evaluator policy and configurable default of one retry used by

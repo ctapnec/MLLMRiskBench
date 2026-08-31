@@ -510,9 +510,22 @@ cells are not called again. The new controller publishes its named tmux
 lifecycle to Jobs and retains the old and new output policies as non-poolable
 strata.
 
+If that fresh controller later terminalizes only because recovered-answer
+stability fields differ between an otherwise complete final judgment and its
+persisted stage trail, do not rerun its target calls. Use
+`python -m experiments.local_campaign.current_ollama_stability_continuation_phase6`
+with the exact failed completion and digest. The controller binds the real
+terminal logs, inherits already complete units, uses the narrow
+`finalize_recovered_trails` path for fully executed affected units with zero
+target and judge calls, and launches only units that never entered measured
+Runner execution. A fresh image identity probe uses deterministic seeds 0
+through 4 and retains every failed probe; it does not weaken the resulting
+attestation or retry an unchanged measured input. Any unrelated terminal cause
+is rejected rather than treated as reusable evidence.
+
 The retained current-Ollama cohort used limit 50 while comparable vLLM model
 lanes used limit 100. Do not treat those populations as quantity-matched. After
-the 1,684-row stability continuation completes the holes within the old prefix,
+the validated stability completion closes the holes within the old prefix,
 run the population-alignment controller. It uses the same seed-0 nested sampler,
 proves the retained limit-50 IDs are an exact subset of the limit-100
 selection, and executes only the content-bound set difference. The sampler's

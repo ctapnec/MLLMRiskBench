@@ -259,6 +259,41 @@ cohort whose target, judge and HTTP caps cover the complete grid.
 Current-campaign policy authorizes full mode only for all-local replication, not
 as a substitute for either bounded measured tier.
 
+Prospective hosted breadth uses the same seed-0 whole-cluster sampler, source
+instances, rendered inputs, attack configurations and source-policy strata as
+the compatible local cohort, but each target keeps its pre-registered positive
+per-arm limit:
+
+| Hosted target condition | Per-arm limit |
+|---|---:|
+| Claude Fable 5 | 5 |
+| Claude Opus 5 | 10 |
+| Claude Sonnet 5 | 50 |
+| Claude Haiku 4.5 | 100 |
+| GPT-5.6 Sol | 5 |
+| GPT-5.6 Terra | 20 |
+| GPT-5.6 Luna | 100 |
+| GPT-5.5 | 100 |
+| Kimi K3 | 100 |
+| DeepSeek V4-Pro | 100 |
+
+Every condition requires a fresh no-call projection and a bounded text and, if
+declared, image readiness canary before measurement. A target without an
+attested media route retains the corresponding media rows as typed structural
+`N/A`; it is not given captions in place of images and is not silently replaced
+by another model from the same provider. The default one-retry policy reserves
+at most two target transport attempts for every intended call. Provider budget
+entries are reporting metadata rather than execution admission, so the exact
+target, judge, HTTP and deadline caps must fit both the projection and the
+separately recorded prepaid ceiling before any paid call. Prices and observed
+token usage are effective-dated run evidence, not fixed protocol constants.
+R-Judge and GPTGeoChat retain their source-authoritative parsers and are not
+also assigned a common LLM-judge label. A Claude Haiku target condition cannot
+use Claude Haiku as its own comparison judge; it requires an independently
+pre-registered judge condition or remains outside that judge comparison.
+The effective-dated planning arithmetic is retained separately in
+`HOSTED_CAMPAIGN_COST_ASSESSMENT.md`; it is not an authorization artifact.
+
 The limit is an equal cap applied independently to every logical source arm,
 not a proportional or risk-stratified sample. Every row in a selected source
 prompt/intent cluster is retained. The sampling audit records the full-corpus
