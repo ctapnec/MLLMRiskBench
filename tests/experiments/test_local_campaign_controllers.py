@@ -7626,6 +7626,7 @@ def test_external_measured_docs_match_owning_session_semantics() -> None:
     documents = (
         root / "README.md",
         root / "experiments" / "RUN_AND_RETURN.md",
+        root / "experiments" / "LOCAL_CAMPAIGN_PLAN.md",
     )
 
     def assert_contract(value: str) -> None:

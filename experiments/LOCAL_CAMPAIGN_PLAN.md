@@ -886,9 +886,11 @@ engineering log outside the Runner inventory.
 Immediately before each real measured `run_matrix` child, the controller also
 creates one fixed-child operational registration binding the exact sanitized
 argument vector, Runner root, project revision, framework lock, approved Gate 5
-digest and a unique private tmux socket/session for that invocation rather than
-the parent controller; it creates the matching terminal record after
-the child returns. Jobs and Stats use that explicit ownership to display the
+digest and the exact owning tmux socket/session. A sequential controller may
+name its own session while it synchronously owns the child; a separately
+launched child names its child-specific session. The controller creates the
+matching terminal record after the child returns. Jobs and Stats use that
+explicit ownership to display the
 lane and completion-bound usage from its validated artifacts. The console
 neither launches nor stops these external children, and the registration and
 its terminal record remain explicitly external operational and non-thesis even
