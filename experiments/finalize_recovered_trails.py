@@ -408,7 +408,7 @@ def finalize(
             {**out_paths, "complete": completion_path},
             manifest,
             required,
-            grid["request"]["model_acquisition"],
+            grid["request"]["model_acquisition_execution"],
         )
 
         repaired_cell = {
