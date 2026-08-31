@@ -732,6 +732,14 @@ The continuation controller binds its named tmux session to the existing Jobs
 lifecycle and publishes terminal target-attempt and successful-generation
 counts. This registration makes the campaign operationally visible; it does not
 replace or authorize the measured Runner artifacts.
+The already-running `bd2faf4` continuation predates per-child registration and
+therefore remains truthfully visible as one parent engineering job whose unit
+artifacts are browsable; no retrospective child start record is fabricated.
+Every later recovery, current-Ollama stability and population-alignment
+controller publishes the generic external-measured start record immediately
+before each measured `run_matrix` child and its terminal record immediately
+afterward. Those rows bind the child's exact Runner output root and remain
+operational metadata rather than scientific admission.
 
 ## 7. Phase 6: bounded measured local lanes (sized by projections and canaries)
 

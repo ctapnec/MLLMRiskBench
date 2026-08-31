@@ -467,6 +467,12 @@ metric inputs only for
 independently validated successful Runner roots and partitions those inputs by
 project revision. Zero successful follow-on lanes is an explicit limitation,
 not a controller failure.
+New recovery, current-Ollama stability and population-alignment controllers
+also create one generic external-measured Jobs registration immediately before
+each measured Runner child and terminalize it immediately afterward. An older
+controller that already began without those start records remains one parent
+engineering job with browsable unit artifacts; never invent a retrospective
+start time to make it look like a separately registered child.
 The generated `followon_prepared_controller.py` is the tracked operator path
 between those two validators. It accepts only canonical prepared NanoGCG,
 IDEATOR v2 and T3MP3ST artifacts plus the retained parent Gate 5 RUNNOTE and
