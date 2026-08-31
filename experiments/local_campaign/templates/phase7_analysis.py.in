@@ -43,6 +43,10 @@ from experiments.local_campaign.current_ollama_stability_phase6 import (
     EXPECTED_LAYOUT as CURRENT_OLLAMA_STABILITY_LAYOUT,
     validate_completion as validate_current_ollama_stability_completion,
 )
+from experiments.local_campaign.current_ollama_population_alignment_phase6 import (
+    ALIGNMENT_LANES as CURRENT_OLLAMA_ALIGNMENT_LANES,
+    validate_completion as validate_current_ollama_alignment_completion,
+)
 from experiments.local_campaign.vllm_input_recovery_phase6 import (
     UNIT_LAYOUT as VLLM_STABILITY_UNIT_LAYOUT,
     validate_phase7_completion as validate_vllm_stability_completion,
@@ -59,17 +63,17 @@ from experiments.local_campaign.ollama_static_terminal import (
 from ura.eligibility import validate_eligibility_plan
 
 
-INPUT_SCHEMA = "ura-phase7-analysis-inputs/3"
+INPUT_SCHEMA = "ura-phase7-analysis-inputs/4"
 LAUNCH_SCHEMA = "ura-phase7-analysis-launch/1"
-COMPLETION_SCHEMA = "ura-phase7-analysis-completion/3"
+COMPLETION_SCHEMA = "ura-phase7-analysis-completion/4"
 STATUS_SCHEMA = "ura-phase7-analysis-status/1"
-RUNNER_VIEW_SCHEMA = "ura-phase7-runner-input-view/3"
+RUNNER_VIEW_SCHEMA = "ura-phase7-runner-input-view/4"
 LIFECYCLE_RUNNER_VIEW_SCHEMA = "ura-phase7-lifecycle-runner-input-view/2"
 FOLLOWON_AMENDMENT_SCHEMA = "ura-followon-gate5-amendment/2"
 FOLLOWON_COMPLETION_SCHEMA = "ura-followon-phase6-completion/2"
 FOLLOWON_VIEW_SCHEMA = "ura-phase7-followon-input-view/1"
-HUMAN_AUDIT_VIEW_SCHEMA = "ura-phase7-human-audit-sampling-view/5"
-PHASE6_CAMPAIGN_INVENTORY_SCHEMA = "ura-phase6-campaign-terminal-inventory/3"
+HUMAN_AUDIT_VIEW_SCHEMA = "ura-phase7-human-audit-sampling-view/6"
+PHASE6_CAMPAIGN_INVENTORY_SCHEMA = "ura-phase6-campaign-terminal-inventory/4"
 SEVEN_AMENDMENT_SCHEMA = "ura-gate5-seven-output-policy-amendment/1"
 SEVEN_COMPLETION_SCHEMA = "ura-seven-output-policy-amendment-completion/1"
 SEVEN_AMENDMENT_LANES = (
@@ -347,6 +351,7 @@ CAMPAIGN_COHORTS = (
     "followon_prepared",
     "current_ollama",
     "current_ollama_stability",
+    "current_ollama_population_alignment",
     "vllm_stability",
     "native",
 )
@@ -359,6 +364,7 @@ CAMPAIGN_COHORT_COUNTS = {
         + len(CURRENT_OLLAMA_TYPED_TERMINAL_LANES)
     ),
     "current_ollama_stability": len(CURRENT_OLLAMA_STABILITY_LAYOUT),
+    "current_ollama_population_alignment": len(CURRENT_OLLAMA_ALIGNMENT_LANES),
     "vllm_stability": len(VLLM_STABILITY_UNIT_LAYOUT),
     "native": 9,
 }
@@ -372,6 +378,7 @@ CAMPAIGN_TERMINAL_STATES = {
     "followon_prepared": {"measured_complete", "partial", "failed"},
     "current_ollama": {"measured_complete", "failed", "unavailable"},
     "current_ollama_stability": {"measured_complete"},
+    "current_ollama_population_alignment": {"measured_complete"},
     "vllm_stability": {"measured_complete"},
     "native": {"run", "failed", "unavailable", "not-selected"},
 }
@@ -10654,6 +10661,7 @@ def build_phase6_campaign_terminal_inventory(
     followon: Mapping[str, Any],
     current_ollama: Mapping[str, Any],
     current_ollama_stability: Mapping[str, Any],
+    current_ollama_population_alignment: Mapping[str, Any],
     vllm_stability: Mapping[str, Any],
 ) -> dict[str, Any]:
     validate_phase6_recovery_transitions(recoveries=recoveries, runner=runner)
@@ -10850,6 +10858,18 @@ def build_phase6_campaign_terminal_inventory(
             {
                 "completion": current_ollama_stability["completion"],
                 **current_ollama_stability["metric_evidence"][lane],
+            },
+        )
+    for lane in current_ollama_population_alignment["unit_order"]:
+        append(
+            "current_ollama_population_alignment", lane, "measured_complete",
+            current_ollama_population_alignment[
+                "project_revision_receipt_sha256"
+            ],
+            current_ollama_population_alignment["source_conformance_sha256"],
+            {
+                "completion": current_ollama_population_alignment["completion"],
+                **current_ollama_population_alignment["metric_evidence"][lane],
             },
         )
     for lane in vllm_stability["unit_order"]:
@@ -12029,6 +12049,12 @@ def build_input_manifest(args: argparse.Namespace) -> dict[str, Any]:
         Path(args.phase6_current_ollama_stability_completion),
         runner_root=runner_root,
     )
+    current_ollama_population_alignment = (
+        validate_current_ollama_alignment_completion(
+            Path(args.phase6_current_ollama_population_alignment_completion),
+            runner_root=runner_root,
+        )
+    )
     vllm_stability = validate_vllm_stability_completion(
         Path(args.phase6_vllm_input_recovery_completion),
         runner_root=runner_root,
@@ -12051,6 +12077,9 @@ def build_input_manifest(args: argparse.Namespace) -> dict[str, Any]:
         followon=followon,
         current_ollama=current_ollama,
         current_ollama_stability=current_ollama_stability,
+        current_ollama_population_alignment=(
+            current_ollama_population_alignment
+        ),
         vllm_stability=vllm_stability,
     )
 
@@ -12105,6 +12134,9 @@ def build_input_manifest(args: argparse.Namespace) -> dict[str, Any]:
         "followon": followon,
         "current_ollama": current_ollama,
         "current_ollama_stability": current_ollama_stability,
+        "current_ollama_population_alignment": (
+            current_ollama_population_alignment
+        ),
         "vllm_stability": vllm_stability,
         "campaign_terminal_inventory": campaign_inventory,
         "analysis_contract": {
@@ -12121,6 +12153,7 @@ def build_input_manifest(args: argparse.Namespace) -> dict[str, Any]:
             "missingness_and_decision_coverage_required": True,
             "current_ollama_missing_responses_retained": True,
             "current_ollama_stability_missing_responses_retained": True,
+            "current_ollama_population_alignment_matches_limit_100": True,
             "vllm_stability_missing_responses_retained": True,
             "source_parser_classification_kept_out_of_common_metrics": True,
             "failed_phase6_lanes_excluded_from_metric_and_level2_views": True,
@@ -12277,6 +12310,7 @@ class AnalysisController:
             "followon",
             "current_ollama",
             "current_ollama_stability",
+            "current_ollama_population_alignment",
             "vllm_stability",
             "campaign_terminal_inventory",
             "analysis_contract",
@@ -12308,6 +12342,7 @@ class AnalysisController:
             "missingness_and_decision_coverage_required",
             "current_ollama_missing_responses_retained",
             "current_ollama_stability_missing_responses_retained",
+            "current_ollama_population_alignment_matches_limit_100",
             "vllm_stability_missing_responses_retained",
             "source_parser_classification_kept_out_of_common_metrics",
             "failed_phase6_lanes_excluded_from_metric_and_level2_views",
@@ -12333,6 +12368,7 @@ class AnalysisController:
                     "missingness_and_decision_coverage_required",
                     "current_ollama_missing_responses_retained",
                     "current_ollama_stability_missing_responses_retained",
+                    "current_ollama_population_alignment_matches_limit_100",
                     "vllm_stability_missing_responses_retained",
                     "source_parser_classification_kept_out_of_common_metrics",
                     "failed_phase6_lanes_excluded_from_metric_and_level2_views",
@@ -13209,6 +13245,26 @@ class AnalysisController:
             raise Phase7Error(
                 "authorized current Ollama stability semantic snapshot changed"
             )
+        current_ollama_alignment = value.get(
+            "current_ollama_population_alignment"
+        )
+        if not isinstance(current_ollama_alignment, dict):
+            raise Phase7Error(
+                "authorized current Ollama population alignment is invalid"
+            )
+        validated_current_ollama_alignment = (
+            validate_current_ollama_alignment_completion(
+                descriptor_file(
+                    current_ollama_alignment.get("completion"),
+                    label="authorized Ollama population-alignment completion",
+                ),
+                runner_root=runner_root,
+            )
+        )
+        if validated_current_ollama_alignment != current_ollama_alignment:
+            raise Phase7Error(
+                "authorized Ollama population-alignment snapshot changed"
+            )
         vllm_stability = value.get("vllm_stability")
         if not isinstance(vllm_stability, dict):
             raise Phase7Error("authorized vLLM stability snapshot is invalid")
@@ -13232,6 +13288,9 @@ class AnalysisController:
             followon=validated_followon,
             current_ollama=validated_current_ollama,
             current_ollama_stability=validated_current_ollama_stability,
+            current_ollama_population_alignment=(
+                validated_current_ollama_alignment
+            ),
             vllm_stability=validated_vllm_stability,
         )
         if validated_campaign != value.get("campaign_terminal_inventory"):
@@ -13405,6 +13464,19 @@ class AnalysisController:
                 label=f"current Ollama stability lifecycle {lane}",
             )
             add(f"current-ollama-stability-{lane}", root, "measured_complete")
+        current_ollama_alignment = self.inputs[
+            "current_ollama_population_alignment"
+        ]
+        for lane in current_ollama_alignment["unit_order"]:
+            root = self._representable_lifecycle_root(
+                current_ollama_alignment["metric_roots"][lane],
+                label=f"current Ollama population alignment lifecycle {lane}",
+            )
+            add(
+                f"current-ollama-population-alignment-{lane}",
+                root,
+                "measured_complete",
+            )
         vllm_stability = self.inputs["vllm_stability"]
         for lane in vllm_stability["unit_order"]:
             root = self._representable_lifecycle_root(
@@ -13570,11 +13642,22 @@ class AnalysisController:
             raise Phase7Error("current Ollama stability metric lane order changed")
         return list(lanes)
 
+    def _current_ollama_alignment_metric_lanes(self) -> list[str]:
+        lanes = self.inputs["current_ollama_population_alignment"].get(
+            "metric_lane_order"
+        )
+        if lanes != list(CURRENT_OLLAMA_ALIGNMENT_LANES):
+            raise Phase7Error(
+                "current Ollama population-alignment lane order changed"
+            )
+        return list(lanes)
+
     def _all_metric_lanes(self) -> list[str]:
         lanes = [
             *self.inputs["runner"]["metric_lane_order"],
             *self._current_ollama_metric_lanes(),
             *self._current_ollama_stability_metric_lanes(),
+            *self._current_ollama_alignment_metric_lanes(),
             *self._vllm_stability_metric_lanes(),
         ]
         if len(set(lanes)) != len(lanes):
@@ -13586,6 +13669,9 @@ class AnalysisController:
             *self.inputs["runner"]["metric_eligibility_plans"],
             *self.inputs["current_ollama"]["metric_eligibility_plans"],
             *self.inputs["current_ollama_stability"]["metric_eligibility_plans"],
+            *self.inputs["current_ollama_population_alignment"][
+                "metric_eligibility_plans"
+            ],
             *self.inputs["vllm_stability"]["metric_eligibility_plans"],
         ]
 
@@ -13594,6 +13680,9 @@ class AnalysisController:
             *self.inputs["runner"]["metric_completion_markers"],
             *self.inputs["current_ollama"]["metric_completion_markers"],
             *self.inputs["current_ollama_stability"]["metric_completion_markers"],
+            *self.inputs["current_ollama_population_alignment"][
+                "metric_completion_markers"
+            ],
             *self.inputs["vllm_stability"]["metric_completion_markers"],
         ]
 
@@ -13613,6 +13702,14 @@ class AnalysisController:
         return checked_dir(
             self.inputs["current_ollama_stability"]["metric_roots"].get(lane),
             label=f"{lane} current Ollama stability sampling root",
+        )
+
+    def _current_ollama_alignment_sampling_root(self, lane: str) -> Path:
+        return checked_dir(
+            self.inputs["current_ollama_population_alignment"]["metric_roots"].get(
+                lane
+            ),
+            label=f"{lane} current Ollama population-alignment sampling root",
         )
 
     def _followon_metric_lanes(self) -> list[str]:
@@ -13667,6 +13764,7 @@ class AnalysisController:
             *self._followon_metric_lanes(),
             *self._current_ollama_metric_lanes(),
             *self._current_ollama_stability_metric_lanes(),
+            *self._current_ollama_alignment_metric_lanes(),
             *self._vllm_stability_metric_lanes(),
         ]
         if len(set(lanes)) != len(lanes):
@@ -13719,6 +13817,16 @@ class AnalysisController:
                 if lane in by_lane:
                     raise Phase7Error(
                         "current Ollama stability sampling lane is duplicated"
+                )
+                by_lane[lane] = revision
+        current_ollama_alignment = self.inputs[
+            "current_ollama_population_alignment"
+        ]
+        for revision, lanes in current_ollama_alignment["revision_strata"].items():
+            for lane in lanes:
+                if lane in by_lane:
+                    raise Phase7Error(
+                        "current Ollama population-alignment lane is duplicated"
                     )
                 by_lane[lane] = revision
         vllm_stability = self.inputs["vllm_stability"]
@@ -13764,6 +13872,13 @@ class AnalysisController:
             by_lane[lane] = current_ollama_stability[
                 "source_conformance_sha256"
             ]
+        current_ollama_alignment = self.inputs[
+            "current_ollama_population_alignment"
+        ]
+        for lane in self._current_ollama_alignment_metric_lanes():
+            by_lane[lane] = current_ollama_alignment[
+                "source_conformance_sha256"
+            ]
         vllm_stability = self.inputs["vllm_stability"]
         for lane in self._vllm_stability_metric_lanes():
             by_lane[lane] = vllm_stability["source_conformance_sha256"]
@@ -13790,6 +13905,8 @@ class AnalysisController:
             "current_ollama_result_roots",
             "included_current_ollama_stability_lanes",
             "current_ollama_stability_result_roots",
+            "included_current_ollama_alignment_lanes",
+            "current_ollama_alignment_result_roots",
             "included_vllm_stability_lanes",
             "vllm_stability_result_roots", "regular_files_copied", "logical_bytes",
             "source_files_modified", "permitted_view_outputs", "file_inventory",
@@ -13829,6 +13946,15 @@ class AnalysisController:
             != {
                 lane: self.inputs["current_ollama_stability"]["metric_roots"][lane]
                 for lane in self._current_ollama_stability_metric_lanes()
+            }
+            or receipt.get("included_current_ollama_alignment_lanes")
+            != self._current_ollama_alignment_metric_lanes()
+            or receipt.get("current_ollama_alignment_result_roots")
+            != {
+                lane: self.inputs["current_ollama_population_alignment"][
+                    "metric_roots"
+                ][lane]
+                for lane in self._current_ollama_alignment_metric_lanes()
             }
             or receipt.get("included_vllm_stability_lanes")
             != self._vllm_stability_metric_lanes()
@@ -13954,6 +14080,19 @@ class AnalysisController:
                         "current Ollama stability sampling source path collides"
                     )
                 sources[destination] = (path, self.runner_root)
+        for lane in self._current_ollama_alignment_metric_lanes():
+            root = self._current_ollama_alignment_sampling_root(lane)
+            prefix = root.relative_to(self.runner_root).as_posix()
+            for relative, path in _regular_tree_files(
+                root,
+                label=f"{lane} exact Ollama population-alignment root",
+            ).items():
+                destination = f"{prefix}/{relative}"
+                if destination in sources:
+                    raise Phase7Error(
+                        "Ollama population-alignment source path collides"
+                    )
+                sources[destination] = (path, self.runner_root)
         for lane in self._vllm_stability_metric_lanes():
             root = self._vllm_stability_sampling_root(lane)
             prefix = root.relative_to(self.runner_root).as_posix()
@@ -14021,6 +14160,15 @@ class AnalysisController:
             "current_ollama_stability_result_roots": {
                 lane: self.inputs["current_ollama_stability"]["metric_roots"][lane]
                 for lane in self._current_ollama_stability_metric_lanes()
+            },
+            "included_current_ollama_alignment_lanes": (
+                self._current_ollama_alignment_metric_lanes()
+            ),
+            "current_ollama_alignment_result_roots": {
+                lane: self.inputs["current_ollama_population_alignment"][
+                    "metric_roots"
+                ][lane]
+                for lane in self._current_ollama_alignment_metric_lanes()
             },
             "included_vllm_stability_lanes": self._vllm_stability_metric_lanes(),
             "vllm_stability_result_roots": {
@@ -14667,6 +14815,17 @@ class AnalysisController:
                     self._current_ollama_stability_sampling_root(lane),
                     revision,
                     current_ollama_stability["source_conformance_sha256"],
+                )
+        current_ollama_alignment = self.inputs[
+            "current_ollama_population_alignment"
+        ]
+        for revision, lanes in current_ollama_alignment["revision_strata"].items():
+            for lane in lanes:
+                add(
+                    lane,
+                    self._current_ollama_alignment_sampling_root(lane),
+                    revision,
+                    current_ollama_alignment["source_conformance_sha256"],
                 )
         vllm_stability = self.inputs["vllm_stability"]
         for revision, lanes in vllm_stability["revision_strata"].items():
@@ -15674,6 +15833,68 @@ class AnalysisController:
                 outputs=(output,),
             )
 
+    def record_current_ollama_alignment_outcomes(self) -> None:
+        """Retain the matched Ollama 51-100 extension as a separate stratum."""
+
+        current = self.inputs["current_ollama_population_alignment"]
+        lifecycle_output = (
+            self.analysis / "current-ollama-population-alignment" / "lifecycle.json"
+        )
+        lifecycle_value = {
+            "schema": "ura-phase7-current-ollama-population-alignment-view/1",
+            "status": "validated",
+            "unit_order": current["unit_order"],
+            "runner_code_version": current["runner_code_version"],
+            "population_alignment": current["population_alignment"],
+            "target_execution": current["target_execution"],
+            "target_answer_retries": 1,
+            "historical_completed_rows_repeated": False,
+            "cross_revision_pooling_permitted": False,
+        }
+        write_new(lifecycle_output, canonical(lifecycle_value))
+        self.status(
+            "current-ollama-population-alignment-lifecycle",
+            "complete",
+            detail="Ollama clusters 51-100 retained as a separate Runner stratum",
+            outputs=(lifecycle_output,),
+        )
+        for revision, lanes in current["revision_strata"].items():
+            output = (
+                self.analysis
+                / "current-ollama-population-alignment"
+                / "metric-inputs"
+                / f"{revision}.json"
+            )
+            value = {
+                "schema": (
+                    "ura-phase7-current-ollama-population-alignment-metric-inputs/1"
+                ),
+                "status": "validated",
+                "project_revision_sha256": revision,
+                "source_conformance_sha256": current[
+                    "source_conformance_sha256"
+                ],
+                "lane_order": lanes,
+                "result_roots": {
+                    lane: current["metric_roots"][lane] for lane in lanes
+                },
+                "metric_evidence": {
+                    lane: current["metric_evidence"][lane] for lane in lanes
+                },
+                "cross_revision_pooling_permitted": False,
+                "cross_source_pooling_permitted": False,
+            }
+            write_new(output, canonical(value))
+            self.status(
+                f"current-ollama-population-alignment-metric-inputs-{revision[:12]}",
+                "complete",
+                detail=(
+                    "Ollama population-extension roots retained in one "
+                    "revision stratum"
+                ),
+                outputs=(output,),
+            )
+
     def record_vllm_stability_outcomes(self) -> None:
         """Retain completed Runner 2.25 units and the Runner 2.26 suffix."""
 
@@ -16201,6 +16422,17 @@ class AnalysisController:
                 for revision in current_ollama_stability["revision_strata"]
             },
         }
+        current_ollama_alignment = self.inputs[
+            "current_ollama_population_alignment"
+        ]
+        current_ollama_alignment_statuses = {
+            "current-ollama-population-alignment-lifecycle",
+            *{
+                "current-ollama-population-alignment-metric-inputs-"
+                f"{revision[:12]}"
+                for revision in current_ollama_alignment["revision_strata"]
+            },
+        }
         vllm_stability = self.inputs["vllm_stability"]
         vllm_stability_statuses = {
             "vllm-stability-lifecycle",
@@ -16234,6 +16466,7 @@ class AnalysisController:
             *seven_statuses,
             *current_statuses,
             *current_ollama_stability_statuses,
+            *current_ollama_alignment_statuses,
             *vllm_stability_statuses,
             *stratum_statuses,
         }
@@ -16242,8 +16475,8 @@ class AnalysisController:
         ) + len(failed_runner_lanes) + len(followon_statuses) + len(
             seven_statuses
         ) + len(current_statuses) + len(current_ollama_stability_statuses) + len(
-            vllm_stability_statuses
-        ) + len(stratum_statuses)
+            current_ollama_alignment_statuses
+        ) + len(vllm_stability_statuses) + len(stratum_statuses)
         if set(self.statuses) != expected or len(expected) != expected_count:
             raise Phase7Error(
                 "Phase 7 completion inventory differs: "
@@ -16389,6 +16622,18 @@ class AnalysisController:
         completion["current_ollama_stability_target_execution"] = (
             current_ollama_stability["target_execution"]
         )
+        completion["current_ollama_population_alignment_metric_revision_strata"] = (
+            current_ollama_alignment["revision_strata"]
+        )
+        completion["current_ollama_population_alignment_terminal_states"] = (
+            current_ollama_alignment["terminal_states"]
+        )
+        completion["current_ollama_population_alignment_target_execution"] = (
+            current_ollama_alignment["target_execution"]
+        )
+        completion["current_ollama_population_alignment"] = (
+            current_ollama_alignment["population_alignment"]
+        )
         completion["vllm_stability_metric_revision_strata"] = vllm_stability[
             "revision_strata"
         ]
@@ -16419,6 +16664,7 @@ class AnalysisController:
         self.record_followon_outcomes()
         self.record_current_ollama_outcomes()
         self.record_current_ollama_stability_outcomes()
+        self.record_current_ollama_alignment_outcomes()
         self.record_vllm_stability_outcomes()
         self.run_level1()
         self.run_metric_strata()
@@ -16566,7 +16812,7 @@ def execute(args: argparse.Namespace) -> int:
 
 def contract_self_test() -> int:
     rejected: list[str] = []
-    if CAMPAIGN_TOTAL_ROWS != 97:
+    if CAMPAIGN_TOTAL_ROWS != 109:
         raise Phase7Error("Phase 7 campaign terminal row count changed")
 
     def must_fail(label: str, action: Any) -> None:
@@ -17364,7 +17610,14 @@ def contract_self_test() -> int:
         current_ollama_fixture_lanes = [
             row[0] for row in CURRENT_OLLAMA_STABILITY_LAYOUT
         ]
-        for lane in [*current_ollama_fixture_lanes, *vllm_fixture_lanes]:
+        current_ollama_alignment_fixture_lanes = list(
+            CURRENT_OLLAMA_ALIGNMENT_LANES
+        )
+        for lane in [
+            *current_ollama_fixture_lanes,
+            *current_ollama_alignment_fixture_lanes,
+            *vllm_fixture_lanes,
+        ]:
             fixture_root = source_root / lane
             fixture_root.mkdir()
             (fixture_root / "cell.manifest.json").write_bytes(
@@ -17380,6 +17633,9 @@ def contract_self_test() -> int:
             "current_ollama_stability": {
                 "metric_lane_order": current_ollama_fixture_lanes
             },
+            "current_ollama_population_alignment": {
+                "metric_lane_order": current_ollama_alignment_fixture_lanes
+            },
             "vllm_stability": {"metric_lane_order": vllm_fixture_lanes},
         }
         view_controller.runner_view = temp / "view"
@@ -17394,6 +17650,7 @@ def contract_self_test() -> int:
             included_measured_lanes=[
                 "lane-a",
                 *current_ollama_fixture_lanes,
+                *current_ollama_alignment_fixture_lanes,
                 *vllm_fixture_lanes,
             ],
         )
@@ -18589,6 +18846,7 @@ def contract_self_test() -> int:
             "followon_prepared": "measured_complete",
             "current_ollama": "measured_complete",
             "current_ollama_stability": "measured_complete",
+            "current_ollama_population_alignment": "measured_complete",
             "vllm_stability": "measured_complete",
             "native": "run",
         }[cohort]
@@ -18727,7 +18985,7 @@ def contract_self_test() -> int:
                         "phase7-metric-boundary-derivation",
                         "phase7-all-abstained-proxy-boundary",
                         "phase7-proxy-condition-realization-counts",
-                        "phase6-campaign-terminal-inventory-97-row-union",
+                        "phase6-campaign-terminal-inventory-109-row-union",
                         "phase6-campaign-terminal-early-failure-independence",
                         "source-conformance-45-row-portfolio",
                     }
@@ -18766,6 +19024,10 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_parser.add_argument("--phase6-current-ollama-recovery-completion")
     prepare_parser.add_argument(
         "--phase6-current-ollama-stability-completion", required=True
+    )
+    prepare_parser.add_argument(
+        "--phase6-current-ollama-population-alignment-completion",
+        required=True,
     )
     prepare_parser.add_argument("--phase6-vllm-stability-completion", required=True)
     prepare_parser.add_argument(

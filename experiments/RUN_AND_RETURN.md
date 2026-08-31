@@ -533,7 +533,7 @@ bind the former byte-for-byte.
 Its plan-owned terminal inventory has 109 logical rows after population
 alignment: 46 canonical, four output-policy amendment, three follow-on, 14
 historical current-Ollama, 14 current-Ollama stability, 12 current-Ollama
-population-extension, seven vLLM stability and nine native. The analysis
+population-alignment, seven vLLM stability and nine native. The analysis
 self-test, Phase 8 frozen replay and Stats adapter
 all reject an omitted cohort, a changed terminal state or any cross-policy
 pooling. These counts describe this local campaign only; they are not generic

@@ -946,7 +946,8 @@ The exact Phase 6 campaign terminal inventory before population alignment
 contains 97 logical rows: 46 canonical, four output-policy amendment, three
 follow-on, 14 historical current-Ollama, 14 current-Ollama stability, seven
 vLLM stability and nine native. The population-alignment amendment adds 12
-logical Ollama extension rows, giving 109. The contract self-test rejects any
+current-Ollama population-alignment logical extension rows, giving 109. The
+contract self-test rejects any
 other count or cohort partition.
 Only successful measured lanes enter those metric and Level-2 views; failed and
 partial lanes remain visible in Level-1 lifecycle evidence rather than being

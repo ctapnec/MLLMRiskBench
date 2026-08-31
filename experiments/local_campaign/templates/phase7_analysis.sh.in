@@ -20,6 +20,7 @@ usage() {
     '    --phase6-current-ollama-completion ABSOLUTE_PATH \' \
     '    [--phase6-current-ollama-recovery-completion ABSOLUTE_PATH] \' \
     '    --phase6-current-ollama-stability-completion ABSOLUTE_PATH \' \
+    '    --phase6-current-ollama-population-alignment-completion ABSOLUTE_PATH \' \
     '    --phase6-vllm-stability-completion ABSOLUTE_PATH \' \
     '    --phase6-vllm-input-recovery-completion ABSOLUTE_PATH' \
     '' \
@@ -68,6 +69,7 @@ current_ollama_amendment=''
 current_ollama_completion=''
 current_ollama_recovery_completion=''
 current_ollama_stability_completion=''
+current_ollama_population_alignment_completion=''
 vllm_stability_completion=''
 vllm_input_recovery_completion=''
 input_manifest=''
@@ -161,6 +163,11 @@ while (( $# )); do
       current_ollama_stability_completion="$2"
       shift 2
       ;;
+    --phase6-current-ollama-population-alignment-completion)
+      [[ $# -ge 2 && -z "$current_ollama_population_alignment_completion" ]] || usage
+      current_ollama_population_alignment_completion="$2"
+      shift 2
+      ;;
     --phase6-vllm-stability-completion)
       [[ $# -ge 2 && -z "$vllm_stability_completion" ]] || usage
       vllm_stability_completion="$2"
@@ -195,6 +202,7 @@ if [[ "$mode" == 'self-test' ]]; then
   [[ -z "$current_ollama_amendment" && -z "$current_ollama_completion" && \
       -z "$current_ollama_recovery_completion" ]] || usage
   [[ -z "$current_ollama_stability_completion" && \
+      -z "$current_ollama_population_alignment_completion" && \
       -z "$vllm_stability_completion" && \
       -z "$vllm_input_recovery_completion" ]] || usage
   [[ -z "$input_manifest" && -z "$authorized_sha" ]] || usage
@@ -208,6 +216,7 @@ if [[ "$mode" == 'prepare' ]]; then
   [[ -n "$followon_amendment" && -n "$followon_completion" ]] || usage
   [[ -n "$current_ollama_amendment" && -n "$current_ollama_completion" ]] || usage
   [[ -n "$current_ollama_stability_completion" ]] || usage
+  [[ -n "$current_ollama_population_alignment_completion" ]] || usage
   [[ -n "$vllm_stability_completion" ]] || usage
   [[ -n "$vllm_input_recovery_completion" ]] || usage
   [[ -z "$input_manifest" && -z "$authorized_sha" ]] || usage
@@ -240,6 +249,8 @@ if [[ "$mode" == 'prepare' ]]; then
     "${current_ollama_recovery_args[@]}" \
     --phase6-current-ollama-stability-completion \
     "$current_ollama_stability_completion" \
+    --phase6-current-ollama-population-alignment-completion \
+    "$current_ollama_population_alignment_completion" \
     --phase6-vllm-stability-completion "$vllm_stability_completion" \
     --phase6-vllm-input-recovery-completion \
     "$vllm_input_recovery_completion"
@@ -254,6 +265,7 @@ fi
 [[ -z "$current_ollama_amendment" && -z "$current_ollama_completion" && \
     -z "$current_ollama_recovery_completion" ]] || usage
 [[ -z "$current_ollama_stability_completion" && \
+    -z "$current_ollama_population_alignment_completion" && \
     -z "$vllm_stability_completion" && \
     -z "$vllm_input_recovery_completion" ]] || usage
 [[ "$authorized_sha" =~ ^[0-9a-f]{64}$ ]] || usage

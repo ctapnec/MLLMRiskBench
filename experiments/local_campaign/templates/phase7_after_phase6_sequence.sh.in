@@ -50,6 +50,7 @@ CURRENT_OLLAMA_AMENDMENT=''
 CURRENT_OLLAMA_COMPLETION=''
 CURRENT_OLLAMA_RECOVERY_COMPLETION=''
 CURRENT_OLLAMA_STABILITY_COMPLETION=''
+CURRENT_OLLAMA_ALIGNMENT_COMPLETION=''
 VLLM_STABILITY_COMPLETION=''
 VLLM_INPUT_RECOVERY_COMPLETION=''
 WATCHER_ARGS=("$@")
@@ -105,6 +106,11 @@ while (( $# )); do
       CURRENT_OLLAMA_STABILITY_COMPLETION="$2"
       shift 2
       ;;
+    --phase6-current-ollama-population-alignment-completion)
+      [[ $# -ge 2 && -z "$CURRENT_OLLAMA_ALIGNMENT_COMPLETION" ]] || exit 2
+      CURRENT_OLLAMA_ALIGNMENT_COMPLETION="$2"
+      shift 2
+      ;;
     --phase6-vllm-stability-completion)
       [[ $# -ge 2 && -z "$VLLM_STABILITY_COMPLETION" ]] || exit 2
       VLLM_STABILITY_COMPLETION="$2"
@@ -123,6 +129,7 @@ done
 [[ -n "$FOLLOWON_AMENDMENT" && -n "$FOLLOWON_COMPLETION" ]] || exit 2
 [[ -n "$CURRENT_OLLAMA_AMENDMENT" && -n "$CURRENT_OLLAMA_COMPLETION" ]] || exit 2
 [[ -n "$CURRENT_OLLAMA_STABILITY_COMPLETION" ]] || exit 2
+[[ -n "$CURRENT_OLLAMA_ALIGNMENT_COMPLETION" ]] || exit 2
 [[ -n "$VLLM_STABILITY_COMPLETION" ]] || exit 2
 [[ -n "$VLLM_INPUT_RECOVERY_COMPLETION" ]] || exit 2
 case "$PHASE6_SEQUENCE_COMPLETION" in
@@ -145,6 +152,12 @@ fi
 case "$CURRENT_OLLAMA_STABILITY_COMPLETION" in
   /*/completion.json)
     CURRENT_OLLAMA_STABILITY_ROOT="${CURRENT_OLLAMA_STABILITY_COMPLETION%/completion.json}"
+    ;;
+  *) exit 2 ;;
+esac
+case "$CURRENT_OLLAMA_ALIGNMENT_COMPLETION" in
+  /*/completion.json)
+    CURRENT_OLLAMA_ALIGNMENT_ROOT="${CURRENT_OLLAMA_ALIGNMENT_COMPLETION%/completion.json}"
     ;;
   *) exit 2 ;;
 esac
@@ -522,6 +535,8 @@ if [[ -n "$CURRENT_OLLAMA_RECOVERY_ROOT" ]]; then
 fi
 printf 'PHASE7_WATCHER_WAITING_FOR_CURRENT_OLLAMA_STABILITY=%s\n' \
   "$CURRENT_OLLAMA_STABILITY_ROOT"
+printf 'PHASE7_WATCHER_WAITING_FOR_CURRENT_OLLAMA_ALIGNMENT=%s\n' \
+  "$CURRENT_OLLAMA_ALIGNMENT_ROOT"
 printf 'PHASE7_WATCHER_WAITING_FOR_VLLM_STABILITY=%s\n' \
   "$VLLM_STABILITY_ROOT"
 printf 'PHASE7_WATCHER_WAITING_FOR_VLLM_INPUT_RECOVERY=%s\n' \
@@ -534,6 +549,7 @@ if [[ -n "$CURRENT_OLLAMA_RECOVERY_ROOT" ]]; then
 fi
 phase6_terminal_seen='no'
 current_ollama_stability_terminal_seen='no'
+current_ollama_alignment_terminal_seen='no'
 vllm_stability_terminal_seen='no'
 vllm_input_recovery_terminal_seen='no'
 while true; do
@@ -558,6 +574,12 @@ while true; do
         ! -L "$CURRENT_OLLAMA_STABILITY_COMPLETION" ]]; then
     current_ollama_stability_terminal_seen='yes'
   fi
+  if [[ -f "$CURRENT_OLLAMA_ALIGNMENT_ROOT/.exit" && \
+        ! -L "$CURRENT_OLLAMA_ALIGNMENT_ROOT/.exit" && \
+        -f "$CURRENT_OLLAMA_ALIGNMENT_COMPLETION" && \
+        ! -L "$CURRENT_OLLAMA_ALIGNMENT_COMPLETION" ]]; then
+    current_ollama_alignment_terminal_seen='yes'
+  fi
   if [[ -f "$VLLM_STABILITY_ROOT/.exit" && \
         ! -L "$VLLM_STABILITY_ROOT/.exit" && \
         -f "$VLLM_STABILITY_COMPLETION" && \
@@ -574,6 +596,7 @@ while true; do
         "$current_ollama_terminal_seen" = 'yes' && \
         "$current_ollama_recovery_terminal_seen" = 'yes' && \
         "$current_ollama_stability_terminal_seen" = 'yes' && \
+        "$current_ollama_alignment_terminal_seen" = 'yes' && \
         "$vllm_stability_terminal_seen" = 'yes' && \
         "$vllm_input_recovery_terminal_seen" = 'yes' ]]; then
     break
@@ -588,6 +611,7 @@ test "$phase6_terminal_seen" = 'yes'
 test "$current_ollama_terminal_seen" = 'yes'
 test "$current_ollama_recovery_terminal_seen" = 'yes'
 test "$current_ollama_stability_terminal_seen" = 'yes'
+test "$current_ollama_alignment_terminal_seen" = 'yes'
 test "$vllm_stability_terminal_seen" = 'yes'
 test "$vllm_input_recovery_terminal_seen" = 'yes'
 controller_hard_stop_check await-phase6
@@ -989,6 +1013,8 @@ bash "$WRAPPER" --prepare-input-manifest "$INPUT_MANIFEST" \
   "${CURRENT_OLLAMA_RECOVERY_ARGS[@]}" \
   --phase6-current-ollama-stability-completion \
   "$CURRENT_OLLAMA_STABILITY_COMPLETION" \
+  --phase6-current-ollama-population-alignment-completion \
+  "$CURRENT_OLLAMA_ALIGNMENT_COMPLETION" \
   --phase6-vllm-stability-completion "$VLLM_STABILITY_COMPLETION" \
   --phase6-vllm-input-recovery-completion \
   "$VLLM_INPUT_RECOVERY_COMPLETION" \
@@ -1109,7 +1135,7 @@ if (
     not isinstance(result, dict)
     or set(result) != expected_fields
     or result.get("status") != "prepared"
-    or result.get("schema") != "ura-phase7-analysis-inputs/3"
+    or result.get("schema") != "ura-phase7-analysis-inputs/4"
     or result.get("output") != str(input_path)
     or result.get("sha256") != digest
     or type(result.get("bytes")) is not int
@@ -1119,7 +1145,7 @@ if (
     or type(result.get("runner_lanes")) is not int
     or type(result.get("metric_runner_lanes")) is not int
     or not isinstance(result.get("native_outcomes"), dict)
-    or result.get("campaign_terminal_rows") != 97
+    or result.get("campaign_terminal_rows") != 109
     or result.get("campaign_terminal_status")
     not in {"complete", "complete_with_failures"}
     or result.get("authorization_required_before_launch") is not True
@@ -1136,7 +1162,7 @@ expected_controller = {
     "bytes": len(payload_bytes),
 }
 if (
-    manifest.get("schema") != "ura-phase7-analysis-inputs/3"
+    manifest.get("schema") != "ura-phase7-analysis-inputs/4"
     or manifest.get("inventory_complete") is not True
     or manifest.get("code_identity")
     != {
@@ -1354,6 +1380,10 @@ expected_fields = {
     "current_ollama_stability_terminal_states",
     "current_ollama_stability_metric_revision_strata",
     "current_ollama_stability_target_execution",
+    "current_ollama_population_alignment_terminal_states",
+    "current_ollama_population_alignment_metric_revision_strata",
+    "current_ollama_population_alignment_target_execution",
+    "current_ollama_population_alignment",
     "vllm_stability_metric_revision_strata",
     "vllm_stability_terminal_states",
     "vllm_stability_target_execution",
@@ -1370,7 +1400,7 @@ expected_fields = {
 if (
     not isinstance(completion, dict)
     or set(completion) != expected_fields
-    or completion.get("schema") != "ura-phase7-analysis-completion/3"
+    or completion.get("schema") != "ura-phase7-analysis-completion/4"
     or completion.get("status")
     not in {"complete", "complete_with_explicit_limitations"}
     or completion.get("inventory_complete") is not True
@@ -1467,7 +1497,7 @@ campaign_inventory = strict_json_loads(campaign_inventory_path.read_bytes())
 if (
     not isinstance(campaign_inventory, dict)
     or campaign_inventory.get("schema")
-    != "ura-phase6-campaign-terminal-inventory/3"
+    != "ura-phase6-campaign-terminal-inventory/4"
     or campaign_inventory.get("status")
     not in {"complete", "complete_with_failures"}
     or campaign_inventory.get("all_rows_terminal") is not True
@@ -1477,9 +1507,10 @@ if (
     != {"canonical": 46, "output_policy_amendment": 4,
         "followon_prepared": 3, "current_ollama": 14,
         "current_ollama_stability": 14,
+        "current_ollama_population_alignment": 12,
         "vllm_stability": 7, "native": 9}
     or not isinstance(campaign_inventory.get("rows"), list)
-    or len(campaign_inventory["rows"]) != 97
+    or len(campaign_inventory["rows"]) != 109
 ):
     raise SystemExit("campaign terminal inventory changed")
 for index, artifact in enumerate(artifacts):
@@ -1512,6 +1543,9 @@ expected_followon_strata = followon.get("revision_strata")
 seven = input_manifest.get("seven_output_policy_amendment")
 current_ollama = input_manifest.get("current_ollama")
 current_ollama_stability = input_manifest.get("current_ollama_stability")
+current_ollama_alignment = input_manifest.get(
+    "current_ollama_population_alignment"
+)
 vllm_stability = input_manifest.get("vllm_stability")
 if (
     completion.get("followon_terminal_states") != expected_followon_states
@@ -1536,6 +1570,16 @@ if (
     != current_ollama_stability.get("revision_strata")
     or completion.get("current_ollama_stability_target_execution")
     != current_ollama_stability.get("target_execution")
+    or not isinstance(current_ollama_alignment, dict)
+    or completion.get("current_ollama_population_alignment_terminal_states")
+    != current_ollama_alignment.get("terminal_states")
+    or completion.get(
+        "current_ollama_population_alignment_metric_revision_strata"
+    ) != current_ollama_alignment.get("revision_strata")
+    or completion.get("current_ollama_population_alignment_target_execution")
+    != current_ollama_alignment.get("target_execution")
+    or completion.get("current_ollama_population_alignment")
+    != current_ollama_alignment.get("population_alignment")
     or not isinstance(vllm_stability, dict)
     or completion.get("vllm_stability_metric_revision_strata")
     != vllm_stability.get("revision_strata")
