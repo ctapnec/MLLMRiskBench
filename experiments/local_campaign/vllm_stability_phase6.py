@@ -1022,6 +1022,8 @@ def _run_unit(
         work_root / "runs/thesis/runner" / unit.unit_id / control_root.name
     )
     result_root.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+    if result_root.exists() or result_root.is_symlink():
+        raise FileExistsError("measured result root is not fresh")
     measured_args = _runtime_args(
         base,
         out=result_root,
@@ -1037,9 +1039,12 @@ def _run_unit(
         lane_root=measured_acquisition_root,
         timeout=86400,
     )
-    if result_root.exists() or result_root.is_symlink():
-        raise FileExistsError("measured result root is not fresh")
-    result_root.mkdir(mode=0o700)
+    if result_root.is_symlink() or (
+        result_root.exists() and not result_root.is_dir()
+    ):
+        raise FileExistsError("measured acquisition created an invalid result root")
+    if not result_root.exists():
+        result_root.mkdir(mode=0o700)
     state = {
         "schema": state_schema,
         "unit_id": unit.unit_id,

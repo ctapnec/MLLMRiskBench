@@ -7853,7 +7853,20 @@ def test_vllm_stability_run_unit_registers_measured_child_before_runner(
         "_runtime_args",
         lambda base, *, out, **kwargs: ["--out", str(out)],
     )
-    monkeypatch.setattr(recovery, "_acquisition_args", lambda *args, **kwargs: [])
+    def fake_acquisition_args(
+        measured: Sequence[str], **kwargs: object
+    ) -> list[str]:
+        del kwargs
+        result_root = Path(measured[measured.index("--out") + 1])
+        if "runner" in result_root.parts:
+            result_root.mkdir()
+            (
+                result_root
+                / "request-envelope-fixture.request-envelope.json"
+            ).write_text("{}\n", encoding="utf-8")
+        return []
+
+    monkeypatch.setattr(recovery, "_acquisition_args", fake_acquisition_args)
 
     def fake_run(
         argv: Sequence[str],
