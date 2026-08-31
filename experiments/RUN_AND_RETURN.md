@@ -523,6 +523,16 @@ through 4 and retains every failed probe; it does not weaken the resulting
 attestation or retry an unchanged measured input. Any unrelated terminal cause
 is rejected rather than treated as reusable evidence.
 
+If that continuation terminal retains only the historical zero-record canary
+newline rejection, run
+`python -m experiments.local_campaign.current_ollama_stability_canary_recovery_phase6`
+with its exact completion and digest. The recovery inherits every completed
+unit and revalidates each existing canary into a new summary without repeating
+the canary target call. It derives the fresh revision-bound identity
+attestation, then projects and executes only populations that never entered
+measured Runner. Any other failure cause, prior measured state, or changed
+canary artifact is rejected.
+
 The retained current-Ollama cohort used limit 50 while comparable vLLM model
 lanes used limit 100. Do not treat those populations as quantity-matched. After
 the validated stability completion closes the holes within the old prefix,
@@ -1427,6 +1437,43 @@ confirmed.
 Every funded row remains subject to the section 8 gates: a lane that fails
 its attestation probe or canary is removed, never substituted.
 
+### 5.1a Budget-fitted hosted and Haiku amendment (1 September 2026)
+
+The campaign run after the all-local plan supersedes the broader 13 August
+roster for that future execution only. It may consume no more than 50 percent
+of each configured provider budget, including Haiku judging charged to
+Anthropic. Paid targets and Haiku judging use one application attempt,
+`--target-answer-retries 0`, with provider SDK retries disabled. Use seed 0
+and the normal nested whole-cluster sampler with these per-target limits:
+Fable 1, Opus 3, Sonnet 5, Haiku 10, Sol 2, Terra 5, Luna 20, GPT-5.5 1, Kimi
+K3 3 and DeepSeek V4-Pro 20. DeepSeek
+may run only in the reviewed off-peak price window. Google and other candidate
+routes are outside this funded amendment.
+
+Before any paid call, derive each exact no-call population independently and
+measure the provider-token canary. Reserve exactly one attempt per target or
+judge call. If a
+provider would exceed Anthropic USD 50, OpenAI USD 20, Moonshot USD 7.50 or
+DeepSeek USD 5, reduce and reseal only the affected prospective limit before
+any target output exists. Never increase or outcome-select a limit later.
+
+After local completion, create a content-bound zero-target Haiku selector for
+at most 2,000 eligible local outputs and another for at most 2,000 hosted
+outputs. The two selectors use deterministic balanced round-robin sampling
+across target, modality, source arm, attacker, risk, expected behavior and
+output-policy/revision strata. They preserve original judgments and exclude
+missing responses plus source-authoritative R-Judge/GPTGeoChat rows from judge
+calls. Haiku target rows may be judged by Haiku under the operator's explicit
+decision, but must be labelled same-model and non-independent. Under the
+central assumption the combined 4,000 calls use 8.0 million input and 1.024
+million output tokens and cost USD 13.12 standard or USD 6.56 Batch.
+
+Do not emulate this re-adjudication with `run_matrix`: that would risk target
+regeneration. Use the dedicated immutable zero-target path after it has focused
+regression, mutation and rig validation. Its analysis publishes separate API-
+selected, local-selected and matched-input-intersection tables and diagrams.
+These are selected-cohort results, never full-corpus estimates.
+
 ### 5.2 Bounded lane sampling (prospective amendment, 24 August 2026)
 
 The 13 August design bounded paid hosted routes but assumed that every local
@@ -2249,6 +2296,13 @@ the model-acquisition environment variables at the matching plan and receipt
 before each command. Never reuse the rehearsal plan for the canary or append
 `--diagnostic-canary` only after plan derivation; exact admission rejects that
 purpose mismatch before any model call.
+
+For a target that already passed the applicable text or image readiness gate,
+an exact all-abstention canary is retained model-stability diagnostic evidence;
+it does not stop the assigned measured population. The validator accepts the
+canonical zero-record JSONL writer outputs of either zero bytes or one terminal
+newline. It continues to reject malformed files, nonzero unexpected bytes,
+binding drift and irreconcilable record or byte counts.
 
 The static full-cascade pattern is:
 

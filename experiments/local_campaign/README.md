@@ -73,6 +73,17 @@ only units that stopped before measured execution. Identity derivation tries
 the fixed seed sequence 0 through 4 so one probe nonresponse is not treated as
 a failed readiness gate. The completion remains a distinct output-policy and
 project-revision stratum for Phase 7.
+After readiness, a whole-cluster all-abstention diagnostic canary is retained
+as model-stability evidence and does not cancel the assigned measured
+population. Its zero-record JSONL is canonical as either zero bytes or the
+writer's single terminal newline; any other accounting mismatch still fails.
+
+`current_ollama_stability_canary_recovery_phase6.py` accepts only a terminal
+continuation whose remaining failures are that exact historical zero-record
+validator mismatch. It inherits every completed unit, revalidates each retained
+canary into a new summary with zero repeated canary target calls, obtains the
+fresh revision-bound identity attestation, and executes only populations that
+never reached measured Runner. Completed measured rows are not repeated.
 
 `current_ollama_population_alignment_phase6.py` runs only after that retained
 limit-50 population is complete. It applies the same source arms, limit 100,

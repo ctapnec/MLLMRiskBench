@@ -7945,6 +7945,134 @@ def test_vllm_stability_run_unit_registers_measured_child_before_runner(
     )
 
 
+def test_vllm_stability_run_unit_revalidates_canary_without_target_replay(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from experiments.local_campaign import vllm_stability_phase6 as recovery
+
+    work_root = tmp_path / "work"
+    control_root = work_root / "runs/engineering/phase6-canary-recovery"
+    (control_root / "units").mkdir(parents=True)
+    (work_root / "runs/thesis/runner").mkdir(parents=True)
+    old_canary = (
+        work_root
+        / "runs/engineering/old-controller/units/recovery-unit/canary"
+    )
+    old_canary.mkdir(parents=True)
+    (old_canary / "eligibility-fixture.eligibility.json").write_text(
+        "{}\n", encoding="utf-8"
+    )
+    unit = recovery.Unit(
+        unit_id="recovery-unit",
+        source_lane="source-fixture",
+        corpus="corpus-fixture",
+        spec={},
+        selected_records=1,
+    )
+    monkeypatch.setattr(recovery, "_base_argv", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        recovery,
+        "_derive_attestation",
+        lambda *args, **kwargs: {"path": "/attestation", "sha256": "a" * 64},
+    )
+    monkeypatch.setattr(
+        recovery,
+        "_runtime_args",
+        lambda base, *, out, **kwargs: ["--out", str(out)],
+    )
+
+    def fake_acquisition_args(
+        measured: Sequence[str], **kwargs: object
+    ) -> list[str]:
+        del kwargs
+        result_root = Path(measured[measured.index("--out") + 1])
+        if "runner" in result_root.parts:
+            result_root.mkdir()
+            (result_root / "request-envelope-fixture.request-envelope.json").write_text(
+                "{}\n", encoding="utf-8"
+            )
+        return []
+
+    monkeypatch.setattr(recovery, "_acquisition_args", fake_acquisition_args)
+    logs: list[str] = []
+
+    def fake_run(
+        argv: Sequence[str],
+        *,
+        log: Path,
+        timeout: int,
+        allow_failure: bool = False,
+    ) -> int:
+        del argv, timeout, allow_failure
+        logs.append(log.name)
+        log.write_text("ok\n", encoding="utf-8")
+        if log.name == "preflight.run.log":
+            preflight_root = log.parent / "preflight"
+            preflight_root.mkdir()
+            (preflight_root / "lane-projection-fixture.lane-projection.json").write_text(
+                "{}\n", encoding="utf-8"
+            )
+        return 0
+
+    monkeypatch.setattr(recovery, "_run", fake_run)
+
+    def fake_level1_counts(*, lane_root: Path, **kwargs: object) -> tuple[int, int, int]:
+        del kwargs
+        (lane_root / "level1.json").write_text("{}\n", encoding="utf-8")
+        return 1, 1, 0
+
+    monkeypatch.setattr(recovery, "_level1_counts", fake_level1_counts)
+    result = recovery._run_unit(
+        unit,
+        python=Path("/fixture/python"),
+        work_root=work_root,
+        control_root=control_root,
+        project_revision=Path("/fixture/revision.json"),
+        project_revision_sha256="b" * 64,
+        scope="scope-fixture",
+        recovery_path=None,
+        recovery_sha256=None,
+        expected_commit="c" * 40,
+        framework_lock_id="d" * 64,
+        admission_sha256="e" * 64,
+        tmux_socket="ura-fixture",
+        tmux_session="ura-fixture",
+        validated_canary_root=old_canary,
+    )
+
+    assert result["status"] == "complete"
+    assert "canary.validate.log" in logs
+    assert "canary.run.log" not in logs
+    assert not (control_root / "units/recovery-unit/canary").exists()
+
+
+def test_current_ollama_canary_recovery_inherits_completed_rows() -> None:
+    from experiments.local_campaign import (
+        current_ollama_stability_canary_recovery_phase6 as recovery,
+    )
+
+    source = Path(recovery.__file__).read_text(encoding="utf-8")
+
+    def assert_contract(candidate: str) -> None:
+        assert 'results[unit_id] = partial["results"][unit_id]' in candidate
+        assert "if unit_id not in recovered_set:" in candidate
+        assert "validated_canary_root=" in candidate
+        assert '"diagnostic_canary_target_calls_repeated": 0' in candidate
+        assert "not set(failures) <= set(NEW_IMAGE_UNITS)" in candidate
+        assert "CANARY_ERROR not in canary_log.read_text" in candidate
+
+    assert_contract(source)
+    changed = source.replace(
+        'results[unit_id] = partial["results"][unit_id]',
+        'results[unit_id] = _run_unit(unit)',
+        1,
+    )
+    assert changed != source
+    with pytest.raises(AssertionError):
+        assert_contract(changed)
+
+
 def test_vllm_stability_attestation_probe_uses_local_guardrail() -> None:
     from experiments.local_campaign import vllm_stability_phase6 as recovery
 

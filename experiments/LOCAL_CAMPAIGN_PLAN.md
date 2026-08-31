@@ -6,6 +6,12 @@ operating plan for the rig, not thesis evidence. It complements, and never
 replaces, the operator runbook [`RUN_AND_RETURN.md`](RUN_AND_RETURN.md): every
 command below is a runbook command (section numbers in brackets) restricted to
 local, unpaid resources. Nothing in this plan makes a hosted-provider call.
+After Phase 7 seals the local inventory, the separate
+[`HOSTED_CAMPAIGN_PLAN.md`](HOSTED_CAMPAIGN_PLAN.md) may evaluate API models
+only on content-bound compatible subsets of inputs already used here and may
+select retained local outputs for bounded Haiku re-adjudication. That follow-on
+is not another local phase, cannot change any local selection or result, and
+has independent provider-budget and transfer gates.
 The forward runtime inventory was amended on 25 August 2026 to admit T3MP3ST
 at an exact source commit, increasing the managed inventory from 15 to 16. The
 dated readiness snapshot below remains a historical record of what was found on
@@ -696,6 +702,17 @@ derivation uses deterministic seeds 0 through 4 so one probe nonresponse cannot
 stand in for the 2-of-5 readiness gate; every resulting receipt remains fully
 validated. The old failed controller, zero-call finalizations and new image
 units remain separately attributable and no completed row is repeated.
+Once the exact model has passed that readiness gate, a diagnostic canary whose
+entire evaluable population abstains records model-stability evidence but does
+not veto its assigned measured population. Both canonical zero-record JSONL
+encodings, zero bytes and one terminal newline, are valid; any other byte or
+record-accounting mismatch remains terminal.
+If the retained continuation terminal contains only the historical newline-
+encoding rejection, the canary-recovery controller inherits every completed
+unit, revalidates the retained canaries with zero repeated canary target calls,
+and schedules only populations that never reached measured Runner. A fresh
+revision-bound identity attestation is still required; no completed measured
+row is repeated.
 
 **Ollama population-alignment amendment (31 August 2026).** Review of the
 planned population sizes, before the current-Ollama stability continuation or

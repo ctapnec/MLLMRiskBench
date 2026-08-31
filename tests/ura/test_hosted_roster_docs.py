@@ -589,6 +589,58 @@ def test_runbook_lanes_use_the_level2_grouping_and_bounded_population_tiers() ->
             assert_sampling_contract(mutated)
 
 
+def test_hosted_follow_on_is_a_no_retry_local_input_subset() -> None:
+    plan = (_ROOT / "experiments" / "HOSTED_CAMPAIGN_PLAN.md").read_text(
+        encoding="utf-8"
+    )
+    protocol = (_ROOT / "experiments" / "PROTOCOL.md").read_text(
+        encoding="utf-8"
+    )
+    runbook = (_ROOT / "experiments" / "RUN_AND_RETURN.md").read_text(
+        encoding="utf-8"
+    )
+    cost = (
+        _ROOT / "experiments" / "HOSTED_CAMPAIGN_COST_ASSESSMENT.md"
+    ).read_text(encoding="utf-8")
+    combined = "\n".join((plan, protocol, runbook, cost))
+    required = (
+        "target_answer_retries is 0",
+        "--target-answer-retries 0",
+        "provider SDK retries are disabled",
+        "at most 50 percent",
+        "2,000 selected local",
+        "2,000 selected hosted",
+        "same_model_judge=true",
+        "matched-input intersection",
+        "full-corpus estimates",
+        "target calls 0",
+        "USD 13.12 standard",
+    )
+
+    def assert_contract(value: str) -> None:
+        for token in required:
+            assert token in value
+        for target, limit in (
+            ("Claude Fable 5", 1),
+            ("Claude Opus 5", 3),
+            ("Claude Sonnet 5", 5),
+            ("Claude Haiku 4.5", 10),
+            ("GPT-5.6 Sol", 2),
+            ("GPT-5.6 Terra", 5),
+            ("GPT-5.6 Luna", 20),
+            ("GPT-5.5", 1),
+            ("Kimi K3", 3),
+            ("DeepSeek V4-Pro", 20),
+        ):
+            assert f"| {target} | {limit} |" in value
+
+    assert_contract(combined)
+    changed = combined.replace("target_answer_retries is 0", "retry enabled", 1)
+    assert changed != combined
+    with pytest.raises(AssertionError):
+        assert_contract(changed)
+
+
 def test_follow_on_runbook_keeps_purpose_and_media_contracts() -> None:
     runbook = (_ROOT / "experiments" / "RUN_AND_RETURN.md").read_text(
         encoding="utf-8"

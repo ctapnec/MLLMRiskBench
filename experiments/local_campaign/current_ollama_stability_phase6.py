@@ -494,6 +494,12 @@ def validate_completion(
         )
 
         return validate_continuation(completion_path, runner_root=runner_root)
+    if schema == "ura-current-ollama-stability-canary-recovery-phase6/1":
+        from experiments.local_campaign.current_ollama_stability_canary_recovery_phase6 import (
+            validate_completion as validate_canary_recovery,
+        )
+
+        return validate_canary_recovery(completion_path, runner_root=runner_root)
     control_root = completion_path.parent
     completion = _load_json(
         completion_path, label="current Ollama stability completion"

@@ -944,6 +944,7 @@ def _run_unit(
     tmux_socket: str,
     tmux_session: str,
     state_schema: str = "ura-vllm-stability-phase6-unit-state/1",
+    validated_canary_root: Path | None = None,
 ) -> dict[str, Any]:
     unit_root = control_root / "units" / unit.unit_id
     unit_root.mkdir(parents=True, mode=0o700)
@@ -971,35 +972,43 @@ def _run_unit(
         scope=scope,
     )
 
-    canary_base = _without_recovery_selection(base)
-    canary_root = unit_root / "canary"
-    canary_args = _runtime_args(
-        canary_base,
-        out=canary_root,
-        scope=scope,
-        attestation=attestation,
-        target_cap=target_cap,
-        canary=True,
-    )
-    canary_acquisition_root = unit_root / "canary-acquisition"
-    canary_acquisition_root.mkdir(mode=0o700)
-    canary_acquisition = _acquisition_args(
-        canary_args,
-        python=python,
-        lane_root=canary_acquisition_root,
-        timeout=86400,
-    )
-    _run(
-        (
-            str(python),
-            "-m",
-            "experiments.run_matrix",
-            *canary_args,
-            *canary_acquisition,
-        ),
-        log=unit_root / "canary.run.log",
-        timeout=86400,
-    )
+    if validated_canary_root is None:
+        canary_base = _without_recovery_selection(base)
+        canary_root = unit_root / "canary"
+        canary_args = _runtime_args(
+            canary_base,
+            out=canary_root,
+            scope=scope,
+            attestation=attestation,
+            target_cap=target_cap,
+            canary=True,
+        )
+        canary_acquisition_root = unit_root / "canary-acquisition"
+        canary_acquisition_root.mkdir(mode=0o700)
+        canary_acquisition = _acquisition_args(
+            canary_args,
+            python=python,
+            lane_root=canary_acquisition_root,
+            timeout=86400,
+        )
+        _run(
+            (
+                str(python),
+                "-m",
+                "experiments.run_matrix",
+                *canary_args,
+                *canary_acquisition,
+            ),
+            log=unit_root / "canary.run.log",
+            timeout=86400,
+        )
+        canary_summary_root = canary_root
+    else:
+        canary_root = validated_canary_root.resolve(strict=True)
+        if canary_root.is_symlink() or canary_root.parent.parent.name != "units":
+            raise ValueError("reused diagnostic canary root changed")
+        canary_summary_root = unit_root / "reused-canary-summary"
+        canary_summary_root.mkdir(mode=0o700)
     eligibility = _one_file(
         canary_root, "eligibility-*.eligibility.json", label="diagnostic canary"
     )
@@ -1013,7 +1022,7 @@ def _run_unit(
             "--eligibility",
             str(eligibility),
             "--out-dir",
-            str(canary_root),
+            str(canary_summary_root),
         ),
         log=unit_root / "canary.validate.log",
         timeout=3600,

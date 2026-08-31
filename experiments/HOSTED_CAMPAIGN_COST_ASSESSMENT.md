@@ -3,10 +3,15 @@
 Status: planning only, 1 September 2026. This document authorizes no provider
 call and reports no hosted-model result.
 
+The executable gate sequence and exact local-input subset rule are in
+[`HOSTED_CAMPAIGN_PLAN.md`](HOSTED_CAMPAIGN_PLAN.md).
+
 The proposed hosted breadth cohort uses the same seed-0 whole-cluster
 selection, source instances, rendered inputs, attacks and source-policy strata
-as the compatible local campaign. Its positive per-arm limits are fixed in
-`PROTOCOL.md`. A target receives only modalities declared by its exact route;
+as the compatible local campaign. Its budget-fitted positive per-arm limits are
+fixed in `PROTOCOL.md`. The larger limits below are retained only as the
+superseded requested-cost baseline. A target receives only modalities declared
+by its exact route;
 an incompatible media lane is typed `N/A`, not captioned or silently assigned
 to a different model.
 
@@ -43,12 +48,12 @@ The central planning scenario assumes, per target call:
 - no cache hit; and
 - one successful retained output per intended call.
 
-Each Haiku judgment assumes 2,000 input and 256 output tokens. The configured
-answer policy permits one retry after an unusable output. The retry-reserved
-target ceiling is therefore twice the first-pass target estimate if every
-initial answer consumes the same tokens and fails. Judging does not double:
-only one retained usable output per intended row is judged, and an exhausted
-missing response receives no policy-judge call.
+Each Haiku judgment assumes 2,000 input and 256 output tokens. The original
+requested-cost table retains a doubled retry sensitivity column so the earlier
+question remains reproducible. The budget-fitted execution plan does not use
+that reserve: paid targets and Haiku judging make exactly one application
+attempt, target answer retries are 0, and provider SDK retries are disabled. An
+exhausted missing response receives no policy-judge call.
 
 This is not a monetary hard ceiling. Images have provider-specific tokenization,
 reasoning models may bill more output than the 512-token planning value, and
@@ -56,7 +61,7 @@ most configured routes permit up to 4,096 output tokens. Exact caps must be
 derived from provider-token canaries and the no-call population projection
 before authorization.
 
-## Per-condition estimate
+## Original requested per-condition estimate, superseded
 
 | Target condition | Limit | Target calls | First-pass target USD | Retry-reserved target USD | Haiku-eligible calls | Haiku judge USD | Haiku Batch judge USD |
 |---|---:|---:|---:|---:|---:|---:|---:|
@@ -71,10 +76,10 @@ before authorization.
 | Kimi K3 | 100 | 12,215 | 167.1012 | 334.2024 | 10,095 | 33.1116 | 16.5558 |
 | DeepSeek V4-Pro, text-compatible | 100 | 8,563 | 19.9840 off-peak | 39.9680 off-peak | 8,463 | 27.7586 | 13.8793 |
 
-Claude Haiku judging its own target outputs is a same-model dependency and is
-not an admissible judge-comparison condition. The raw arithmetic is retained
-only to make the requested total reproducible. That target row requires an
-independent judge or exclusion from the Haiku-judged comparison.
+Claude Haiku judging its own target outputs is a same-model dependency. It is
+allowed in the prospective selected cohort by explicit operator decision, but
+must be labelled non-independent and may not support an independent-judge
+claim. The raw arithmetic is retained to make both totals reproducible.
 
 Excluding invalid Haiku self-judgment:
 
@@ -84,6 +89,11 @@ Excluding invalid Haiku self-judgment:
 - Batch Haiku judge total: USD 81.1702;
 - first-pass targets plus standard valid judging: USD 923.7055; and
 - first-pass targets plus Batch valid judging: USD 842.5353.
+
+Including the explicitly allowed but non-independent Haiku self-judgment, the
+original requested scenario has USD 195.4519 standard or USD 97.7261 Batch
+judge cost, and USD 956.8171 or USD 859.0913 respectively including first-pass
+targets.
 
 ## Configured budget fit
 
@@ -100,6 +110,44 @@ judge does not close that gap. A measured hosted plan must either add funds or
 prospectively reduce limits/arms before its projections and acquisition/request
 envelopes are sealed. A cap is never raised or a subset changed after outcomes
 are observed.
+
+### Budget-fitted execution plan
+
+The retained execution plan therefore replaces the larger requested breadth
+scenario with per-target nested-prefix limits. It keeps the same seed, arms and
+compatible modalities while reducing only the prospective cluster prefix:
+
+| Provider | Target | Limit | One-attempt planning allocation |
+|---|---|---:|---:|
+| Anthropic | Claude Fable 5 | 1 | within shared USD 32 target ceiling |
+| Anthropic | Claude Opus 5 | 3 | within shared USD 32 target ceiling |
+| Anthropic | Claude Sonnet 5 | 5 | within shared USD 32 target ceiling |
+| Anthropic | Claude Haiku 4.5 | 10 | within shared USD 32 target ceiling |
+| OpenAI | GPT-5.6 Sol | 2 | within shared USD 19 target ceiling |
+| OpenAI | GPT-5.6 Terra | 5 | within shared USD 19 target ceiling |
+| OpenAI | GPT-5.6 Luna | 20 | within shared USD 19 target ceiling |
+| OpenAI | GPT-5.5 | 1 | within shared USD 19 target ceiling |
+| Moonshot | Kimi K3 | 3 | USD 7 ceiling |
+| DeepSeek | DeepSeek V4-Pro | 20 | USD 5 off-peak ceiling |
+
+Each provider may use at most 50 percent of its configured budget: Anthropic
+USD 50, OpenAI USD 20, Moonshot USD 7.50 and DeepSeek USD 5. The Anthropic share
+reserves at most USD 32 for one-attempt targets and USD 14 for Haiku
+judging, leaving at least USD 4 planning margin. OpenAI keeps USD 19 for
+one-attempt execution and at least USD 1 margin; Moonshot keeps USD 7 plus
+USD 0.50 margin; DeepSeek keeps USD 5 and may run only in the
+reviewed off-peak window. These are monetary ceilings, not permission to spend.
+Exact no-call population projections and provider-token canaries must fit
+beneath them before acquisition. If they do not, the affected limit or judging
+population is reduced and resealed before any output is observed.
+
+Paid targets and Haiku judging use exactly one application attempt and provider
+SDK retries are disabled. Counts for limits 1, 2 and 3 are deliberately not
+interpolated into evidence.
+The rig must derive their exact whole-cluster populations with the normal
+no-call projector. The central token assumptions indicate that this schedule
+fits the stated one-attempt allocations, but only those exact projections
+and provider-token canaries can authorize execution.
 
 Anthropic Batch gives a 50 percent input/output discount and is appropriate for
 post-hoc judging of immutable retained responses. Adaptive target trajectories
@@ -122,6 +170,28 @@ and former completion by content identity, make zero target calls, preserve the
 original judgments, and record the new judge/model identity and transfer
 acknowledgement. The current Runner does not yet expose that general post-hoc
 path; a naive rerun would risk regenerating targets and is not authorized.
+
+The budget-fitted cohort selects at most 2,000 eligible local outputs and at
+most 2,000 eligible hosted outputs. Seed-0 balanced round-robin
+sampling spans target, modality, source arm, attacker, risk, expected behavior
+and output-policy/revision strata. Missing responses remain in coverage
+statistics but require no judge call. Source-authoritative R-Judge and
+GPTGeoChat decisions are excluded. Haiku's own target outputs are included by
+explicit operator decision and labelled same-model, non-independent evidence.
+Under the central 2,000-input/256-output assumption, 4,000 judgments use 8.0
+million input and 1.024 million output tokens and cost USD 13.12 standard or
+USD 6.56 with Batch pricing, within the USD 14 judging allocation. Exact
+retained-output token counts may reduce the selected population before its
+immutable selector is sealed; they may not change it after judgments are
+observed.
+
+The later comparison is a selected-cohort analysis, not a full-corpus estimate.
+It publishes separate API-selected and local-selected tables plus a matched-
+input intersection wherever the same rendered input identity exists in both.
+Its diagrams cover judgment outcomes with uncertainty, response/missingness,
+model stability, modality/source/attack composition, and billed token/cost
+usage. Same-model Haiku judging is visually and textually distinguished; no
+unmatched or different-revision rate is silently pooled.
 
 ## Pricing sources
 
