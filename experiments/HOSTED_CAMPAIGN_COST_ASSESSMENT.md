@@ -52,7 +52,8 @@ Each Haiku judgment assumes 2,000 input and 256 output tokens. The original
 requested-cost table retains a doubled retry sensitivity column so the earlier
 question remains reproducible. The budget-fitted execution plan does not use
 that reserve: paid targets and Haiku judging make exactly one application
-attempt, target answer retries are 0, and provider SDK retries are disabled. An
+attempt, target answer retries and harness transport retries are 0, and
+provider SDK retries are disabled. An
 exhausted missing response receives no policy-judge call.
 
 This is not a monetary hard ceiling. Images have provider-specific tokenization,
@@ -141,8 +142,9 @@ Exact no-call population projections and provider-token canaries must fit
 beneath them before acquisition. If they do not, the affected limit or judging
 population is reduced and resealed before any output is observed.
 
-Paid targets and Haiku judging use exactly one application attempt and provider
-SDK retries are disabled. Counts for limits 1, 2 and 3 are deliberately not
+Paid targets and Haiku judging use exactly one application attempt; target
+answer retries and harness transport retries are 0, and provider SDK retries
+are disabled. Counts for limits 1, 2 and 3 are deliberately not
 interpolated into evidence.
 The rig must derive their exact whole-cluster populations with the normal
 no-call projector. The central token assumptions indicate that this schedule

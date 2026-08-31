@@ -1443,7 +1443,8 @@ The campaign run after the all-local plan supersedes the broader 13 August
 roster for that future execution only. It may consume no more than 50 percent
 of each configured provider budget, including Haiku judging charged to
 Anthropic. Paid targets and Haiku judging use one application attempt,
-`--target-answer-retries 0`, with provider SDK retries disabled. Use seed 0
+`--target-answer-retries 0`, with harness transport retries and provider SDK
+retries disabled. Use seed 0
 and the normal nested whole-cluster sampler with these per-target limits:
 Fable 1, Opus 3, Sonnet 5, Haiku 10, Sol 2, Terra 5, Luna 20, GPT-5.5 1, Kimi
 K3 3 and DeepSeek V4-Pro 20. DeepSeek

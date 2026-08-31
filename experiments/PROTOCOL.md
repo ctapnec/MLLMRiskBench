@@ -281,7 +281,8 @@ These budget-fitted limits supersede the larger planning scenario without
 changing the seed, sampler or compatible arm inventory. They are prospective
 and were fixed before hosted target outputs were observed. Paid target and
 Haiku judge calls use exactly one application attempt with
-`--target-answer-retries 0`; provider SDK retries are disabled. The complete
+`--target-answer-retries 0`; harness transport retries and provider SDK retries
+are disabled. The complete
 follow-on may use at most 50 percent of each configured provider budget. Exact
 no-call projections may only reduce a condition before acquisition and execution if
 the provider-token canary shows that its registered monetary ceiling would be
@@ -305,8 +306,8 @@ declared, image readiness canary before measurement. A target without an
 attested media route retains the corresponding media rows as typed structural
 `N/A`; it is not given captions in place of images and is not silently replaced
 by another model from the same provider. Unlike the local stability campaign,
-this paid cohort uses no answer retry and reserves one target transport attempt
-per intended call. Provider budget
+this paid cohort uses no answer or harness transport retry and reserves one
+target transport attempt per intended call. Provider budget
 entries are reporting metadata rather than execution admission, so the exact
 target, judge, HTTP and deadline caps must fit both the projection and the
 separately recorded prepaid ceiling before any paid call. Prices and observed

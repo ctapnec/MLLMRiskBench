@@ -1330,9 +1330,9 @@ def test_generic_anthropic_terminal_states_fail_closed() -> None:
     assert response.output_turns[0].content == "complete"
     assert response.raw["response_id"] == "msg-generic-1"
     assert response.raw["resolved_model"] == "claude-generic-20260801"
-    assert target.max_transport_attempts_per_call == 3
+    assert target.max_transport_attempts_per_call == 1
     assert response.raw["transport_attempt_count"] == 1
-    assert response.raw["generation"]["max_retries"] == 2
+    assert response.raw["generation"]["max_retries"] == 0
 
     _install_anthropic_fixture(
         target, _anthropic_result(text="partial", stop_reason="max_tokens")
@@ -1388,9 +1388,9 @@ def test_generic_openai_chat_terminal_states_fail_closed() -> None:
     assert response.raw["target_sampling_control"] == (
         "provider_seed_requested_best_effort"
     )
-    assert target.max_transport_attempts_per_call == 3
+    assert target.max_transport_attempts_per_call == 1
     assert response.raw["transport_attempt_count"] == 1
-    assert response.raw["generation"]["max_retries"] == 2
+    assert response.raw["generation"]["max_retries"] == 0
 
     _install_chat_fixture(
         target, _chat_result(content="partial", finish_reason="length")
@@ -1425,6 +1425,8 @@ def test_openai_compatible_response_retains_only_hashed_endpoint_identity() -> N
 
     response = target.generate([DialogTurn(role="user", content="request")])
 
+    assert target.max_transport_attempts_per_call == 1
+    assert response.raw["generation"]["max_retries"] == 0
     assert response.raw["endpoint_identity"] == (
         canonical_https_endpoint_identity(endpoint)
     )
@@ -1473,9 +1475,9 @@ def test_generic_gemini_terminal_states_fail_closed() -> None:
     response = target.generate([DialogTurn(role="user", content="request")])
     assert response.raw["response_id"] == "gemini-response-1"
     assert response.raw["finish_reason"] == "STOP"
-    assert target.max_transport_attempts_per_call == 3
+    assert target.max_transport_attempts_per_call == 1
     assert response.raw["transport_attempt_count"] == 1
-    assert response.raw["generation"]["max_retries"] == 2
+    assert response.raw["generation"]["max_retries"] == 0
 
     _install_gemini_fixture(
         target, _gemini_result(text="partial", finish_reason="MAX_TOKENS")

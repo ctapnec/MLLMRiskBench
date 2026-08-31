@@ -605,6 +605,7 @@ def test_hosted_follow_on_is_a_no_retry_local_input_subset() -> None:
     combined = "\n".join((plan, protocol, runbook, cost))
     required = (
         "target_answer_retries is 0",
+        "harness transport max_retries is 0",
         "--target-answer-retries 0",
         "provider SDK retries are disabled",
         "at most 50 percent",

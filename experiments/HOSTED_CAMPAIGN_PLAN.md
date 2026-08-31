@@ -19,7 +19,8 @@ judge condition to hosted and local retained outputs.
   sealed local campaign and its hosted route declares that modality.
 - Incompatible modalities are N/A. They are never captioned or transformed.
 - Paid targets and Haiku judging use exactly one application attempt.
-  target_answer_retries is 0 and provider SDK retries are disabled.
+  target_answer_retries is 0, harness transport max_retries is 0, and provider
+  SDK retries are disabled.
 - Missing responses remain selected-population and stability evidence but
   receive no Haiku call.
 
