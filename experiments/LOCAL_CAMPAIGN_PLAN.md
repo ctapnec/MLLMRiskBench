@@ -1105,7 +1105,7 @@ retrospectively fabricated child starts.
 | 3 models | 1-3 h | 0.5 h |
 | 4 attestations | 1 h | 0.5 h |
 | 5 projections/canaries | 2-4 h | 2 h |
-| 6 measured lanes | bounded inference; observed wall time to be reported, with 31,282 or 35,136 intended calls and a new-policy conservative ceiling of 62,564 or 70,272 attempts | periodic |
+| 6 measured lanes | bounded inference; observed wall time to be reported, with 42,882 intended calls in the population-aligned design and a retry-1 conservative ceiling of 85,764 transport attempts | periodic |
 | 7 analysis | 2-4 h | 2 h |
 | 8 human audit | rater-dependent | rater-dependent |
 
