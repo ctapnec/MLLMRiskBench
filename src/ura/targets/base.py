@@ -24,6 +24,24 @@ class TargetAnswerError(RuntimeError):
         self.category = category
 
 
+class TargetInputError(RuntimeError):
+    """One admitted target input could not be executed by the selected route.
+
+    This is neither a model answer nor an identity/seal failure. The Runner
+    retains the row as a typed missing response without retrying a deterministic
+    incompatibility, then continues the admitted population.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        category: str = "input_incompatible",
+    ) -> None:
+        super().__init__(message)
+        self.category = category
+
+
 class TargetIntegrityError(RuntimeError):
     """A target violated admitted identity or fixed execution provenance."""
 
@@ -81,6 +99,7 @@ REGISTRY = TargetRegistry()
 __all__ = [
     "BaseTarget",
     "TargetAnswerError",
+    "TargetInputError",
     "TargetIntegrityError",
     "TargetRegistry",
     "REGISTRY",

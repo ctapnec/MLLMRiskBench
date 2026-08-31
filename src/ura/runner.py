@@ -62,7 +62,12 @@ from .model_identity import (
     validate_https_endpoint_identity,
 )
 from .strict_json import strict_json_loads
-from .targets.base import BaseTarget, TargetAnswerError, TargetIntegrityError
+from .targets.base import (
+    BaseTarget,
+    TargetAnswerError,
+    TargetInputError,
+    TargetIntegrityError,
+)
 from .targets.guarded import GUARDED_BLOCK_TEMPLATE_ID, GUARDED_BLOCK_TEXT
 from .targets.api import (
     _logical_media_root_alias,
@@ -73,7 +78,7 @@ from .targets.api import (
 from .modality_coverage import declared_target_combinations
 
 #: Bumped when the orchestration semantics change (recorded in every manifest).
-CODE_VERSION = "ura-runner/2.25"
+CODE_VERSION = "ura-runner/2.26"
 _MAX_SCORED_MEDIA_BYTES = 25 * 1024 * 1024
 #: Video releases legitimately exceed the image/audio bound (Video-SafetyBench
 #: ships ~44 MiB MP4s); mirrors DEFAULT_MAX_VIDEO_ASSET_BYTES converter-side.
@@ -667,6 +672,7 @@ class Runner:
                 )
             elif (
                 response.raw.get("model_stability_status") == "failed_output"
+                or response.raw.get("target_input_status") == "incompatible"
                 or (
                     response.raw.get("empty_completion_observed") is True
                     and not (
@@ -761,6 +767,7 @@ class Runner:
                 source_metrics.evaluate_source_response(datapoint, response)
                 if attempt.params["policy_evaluable_turn"] is True
                 and response.raw.get("model_stability_status") != "failed_output"
+                and response.raw.get("target_input_status") != "incompatible"
                 else None
             )
             final = self._annotate(
@@ -919,7 +926,7 @@ class Runner:
     def _model_nonresponse_outcome(
         self, datapoint: DataPoint, response: Response
     ) -> tuple[Judgment, list[Judgment]]:
-        """Retain a successful target call that emitted no assistant content."""
+        """Retain one typed missing response without querying policy judges."""
 
         required_metric = (
             datapoint.meta.get("required_metric")
@@ -951,6 +958,16 @@ class Runner:
                         "model_stability_retry_count"
                     ),
                 })
+            if response.raw.get("target_input_status") == "incompatible":
+                raw.update({
+                    "target_input_status": "incompatible",
+                    "target_input_category": response.raw.get(
+                        "target_input_category"
+                    ),
+                    "target_input_error_type": response.raw.get(
+                        "target_input_error_type"
+                    ),
+                })
             if required_metric is not None:
                 raw["required_metric"] = required_metric
             trail.append(Judgment(
@@ -959,7 +976,10 @@ class Runner:
                 label="not_applicable",
                 score=0.0,
                 rationale=(
-                    "target call completed without substantive assistant output; "
+                    "target input was incompatible and produced no assistant output; "
+                    "policy judge not queried"
+                    if response.raw.get("target_input_status") == "incompatible"
+                    else "target call completed without substantive assistant output; "
                     "policy judge not queried"
                 ),
                 raw=raw,
@@ -1146,6 +1166,35 @@ class Runner:
                             reserved=http_exposure, observed=observed
                         )
                 raise ExternalCallFailure("target_call", exc) from exc
+            except TargetInputError as input_error:
+                audit = _safe_call_audit(getattr(input_error, "call_audit", None))
+                observed = audit.get("transport_attempt_count")
+                if (
+                    isinstance(observed, bool)
+                    or not isinstance(observed, int)
+                    or observed < 0
+                ):
+                    observed = http_exposure
+                response = Response(
+                    attempt_id=attempt.id,
+                    target=self.target.name,
+                    output_turns=[],
+                    raw={
+                        "empty_completion_observed": True,
+                        "target_input_status": "incompatible",
+                        "target_input_category": input_error.category,
+                        "target_input_error_type": type(input_error).__name__,
+                        "target_input_reason": str(input_error)[:500],
+                        "target_identity_observed": False,
+                        "transport_attempt_count": observed,
+                        "logical_call_count": 1,
+                        **({"call_audit": audit} if audit else {}),
+                        "requested_seed": attempt.seed,
+                        "target_sampling_control": "not_observed_input_incompatible",
+                    },
+                )
+                call_route = "input_incompatible"
+                break
             except TargetAnswerError as caught:
                 answer_error = caught
             except Exception as exc:
@@ -1724,6 +1773,17 @@ class Runner:
                     "model_stability_retry_count"
                 ),
             })
+        input_status = response.raw.get("target_input_status")
+        if input_status is not None:
+            provenance.update({
+                "target_input_status": input_status,
+                "target_input_category": response.raw.get(
+                    "target_input_category"
+                ),
+                "target_input_error_type": response.raw.get(
+                    "target_input_error_type"
+                ),
+            })
         merged = {**judgment.raw, **provenance}
         return judgment.model_copy(update={"raw": merged, "run_id": run_id})
 
@@ -1822,7 +1882,10 @@ class Runner:
 
         if self.expected_target_identity is None:
             return
-        if response.raw.get("model_stability_status") == "failed_output":
+        if (
+            response.raw.get("model_stability_status") == "failed_output"
+            or response.raw.get("target_input_status") == "incompatible"
+        ):
             # A failed output is coverage evidence, not a realized-identity
             # observation. The exact admitted route remains bound by the live
             # attestation without fabricating identity fields for this row.
@@ -1982,6 +2045,7 @@ class Runner:
             and policy_evaluable
             and (
                 response.raw.get("model_stability_status") == "failed_output"
+                or response.raw.get("target_input_status") == "incompatible"
                 or not declared_source_metric_only
             )
         )
@@ -4328,6 +4392,9 @@ def judgment_trail_projection(judgment: Judgment) -> dict[str, Any]:
         "model_stability_category": raw.get("model_stability_category"),
         "model_stability_error_type": raw.get("model_stability_error_type"),
         "model_stability_retry_count": raw.get("model_stability_retry_count"),
+        "target_input_status": raw.get("target_input_status"),
+        "target_input_category": raw.get("target_input_category"),
+        "target_input_error_type": raw.get("target_input_error_type"),
         "metric_authority": raw.get("metric_authority"),
         "required_metric": raw.get("required_metric"),
         "run_id": judgment.run_id,
@@ -4505,6 +4572,8 @@ def validate_persisted_judgment_trails(
             responses[attempt_id].raw.get("empty_completion_observed") is True
             and (
                 response_stability == "failed_output"
+                or responses[attempt_id].raw.get("target_input_status")
+                == "incompatible"
                 or not (planning_eligible is False and not approximate_enabled)
             )
         )
@@ -5077,7 +5146,10 @@ def validate_planned_realized_identities(
         for response in responses:
             if _planned_input_defense_block(run, components, response):
                 continue
-            if response.raw.get("model_stability_status") == "failed_output":
+            if (
+                response.raw.get("model_stability_status") == "failed_output"
+                or response.raw.get("target_input_status") == "incompatible"
+            ):
                 continue
             if not realized_identity_matches(
                 expected_target, _target_identity_snapshot(response)
@@ -5882,6 +5954,30 @@ def validate_response_refusal_state(response: Response) -> None:
                 value = response.raw.get(field)
                 if not isinstance(value, str) or not value.strip():
                     raise ValueError(f"failed target output lacks {field}")
+    input_status = response.raw.get("target_input_status")
+    input_fields = (
+        "target_input_category",
+        "target_input_error_type",
+        "target_input_reason",
+    )
+    if input_status is None:
+        if any(response.raw.get(field) is not None for field in input_fields):
+            raise ValueError("target input detail lacks its incompatibility status")
+    elif input_status != "incompatible":
+        raise ValueError("target input compatibility status is invalid")
+    else:
+        if (
+            not empty_completion
+            or stability is not None
+            or response.raw.get("target_identity_observed") is not False
+        ):
+            raise ValueError(
+                "incompatible target input must be a non-stability missing response"
+            )
+        for field in input_fields:
+            value = response.raw.get(field)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"incompatible target input lacks {field}")
 
 
 def _write_jsonl_rows(records: list[dict[str, Any]], path: Path) -> None:

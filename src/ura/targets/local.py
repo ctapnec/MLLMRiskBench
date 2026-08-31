@@ -35,7 +35,13 @@ from ..ollama_security import (
     read_bounded_response,
     remaining_seconds,
 )
-from .base import REGISTRY, BaseTarget, TargetAnswerError, TargetIntegrityError
+from .base import (
+    REGISTRY,
+    BaseTarget,
+    TargetAnswerError,
+    TargetInputError,
+    TargetIntegrityError,
+)
 
 _ROLE_MAP = {
     "system": "system",
@@ -66,6 +72,11 @@ MAX_OLLAMA_NUM_PREDICT = 25_000
 VLLM_IN_PROCESS_EXECUTION_MODE = "in_process"
 _VLLM_MULTIPROCESSING_ENV = "VLLM_ENABLE_V1_MULTIPROCESSING"
 _VLLM_ENVIRONMENT_LOCK = threading.RLock()
+_VLLM_CONTEXT_LIMIT_ERROR = re.compile(
+    r"(?:decoder )?prompt \(length (?P<length>[0-9]+)\) is longer than the "
+    r"maximum model length of (?P<limit>[0-9]+)",
+    re.IGNORECASE,
+)
 OLLAMA_FORBIDDEN_LOCAL_CONFIG_FIELDS = frozenset({
     "revision",
     "tensor_parallel_size",
@@ -266,6 +277,25 @@ class LocalTargetOutputError(RuntimeError):
 
 class LocalTargetAnswerError(LocalTargetOutputError, TargetAnswerError):
     """One local inference call produced no usable answer."""
+
+
+class LocalTargetInputError(LocalTargetOutputError, TargetInputError):
+    """One local input was rejected before model generation could begin."""
+
+
+def _vllm_context_limit_failure(exc: Exception) -> tuple[int, int] | None:
+    """Return only safe numeric context facts for one exact vLLM rejection."""
+
+    if type(exc).__name__ != "VLLMValidationError":
+        return None
+    matched = _VLLM_CONTEXT_LIMIT_ERROR.search(str(exc))
+    if matched is None:
+        return None
+    length = int(matched.group("length"))
+    limit = int(matched.group("limit"))
+    if limit < 1 or length <= limit:
+        return None
+    return length, limit
 
 
 def _tree_sha256(path: Path) -> str:
@@ -889,21 +919,42 @@ class VLLMTarget(BaseTarget):
             sampling_kwargs["seed"] = int(seed)
         sampling = SamplingParams(**sampling_kwargs)
 
+        def chat_once() -> Any:
+            try:
+                return llm.chat(messages, sampling)  # type: ignore[attr-defined]
+            except Exception as exc:
+                context_failure = _vllm_context_limit_failure(exc)
+                if context_failure is None:
+                    raise
+                return {"vllm_context_limit_failure": context_failure}
+
         t0 = time.perf_counter()
         if self._model_runtime is not None:
             outputs = self._model_runtime.private_execution(
                 self._managed_model_role,
-                lambda: llm.chat(messages, sampling),  # type: ignore[attr-defined]
+                chat_once,
             )
         else:
             from ..model_acquisition_runtime import private_model_execution
 
             outputs = private_model_execution(
-                lambda: llm.chat(messages, sampling),  # type: ignore[attr-defined]
+                chat_once,
                 role=self._managed_model_role,
                 private_values=(Path(self._runtime_model).expanduser(),),
             )
         latency_ms = (time.perf_counter() - t0) * 1000.0
+
+        if (
+            isinstance(outputs, dict)
+            and set(outputs) == {"vllm_context_limit_failure"}
+            and isinstance(outputs["vllm_context_limit_failure"], tuple)
+            and len(outputs["vllm_context_limit_failure"]) == 2
+        ):
+            length, limit = outputs["vllm_context_limit_failure"]
+            raise LocalTargetInputError(
+                f"vLLM prompt length {length} exceeds admitted context limit {limit}",
+                category="context_limit_exceeded",
+            )
 
         text, tokens, finish_reason, stop_reason = self._extract(outputs)
         empty_completion_observed = not bool(text.strip())

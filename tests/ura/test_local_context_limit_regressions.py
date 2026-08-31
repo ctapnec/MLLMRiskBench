@@ -17,7 +17,9 @@ from ura.converters.synth import synth_corpus
 from ura.data_models import Attempt, DialogTurn
 from ura.judges.base import JudgeCascade
 from ura.judges.rules import RuleJudge
+from ura.model_acquisition_runtime import private_model_execution
 from ura.runner import CODE_VERSION, Runner, _component_config
+from ura.targets.base import TargetInputError
 from ura.targets.local import (
     DEFAULT_OLLAMA_NUM_CTX,
     DEFAULT_OLLAMA_NUM_PREDICT,
@@ -32,7 +34,7 @@ REVISION = "6" * 40
 
 
 def test_current_runner_version_includes_local_context_contract() -> None:
-    assert CODE_VERSION == "ura-runner/2.25"
+    assert CODE_VERSION == "ura-runner/2.26"
 
 
 def _rig_hardware() -> dict[str, object]:
@@ -408,6 +410,60 @@ def test_vllm_successful_empty_completion_is_typed_model_nonresponse(
     assert response.raw["backend"] == "vllm"
     assert response.raw["finish_reason"] == "stop"
     assert response.raw["empty_completion_observed"] is True
+
+
+def test_vllm_context_rejection_survives_sealed_execution_as_typed_input(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    private = tmp_path / "private-model-snapshot"
+
+    class VLLMValidationError(ValueError):
+        pass
+
+    class FakeRuntime:
+        @staticmethod
+        def private_execution(role: str, callback):
+            return private_model_execution(
+                callback,
+                role=role,
+                private_values=(private,),
+            )
+
+    class FakeSamplingParams:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+    class RejectingLLM:
+        @staticmethod
+        def chat(_messages: object, _sampling: object) -> list[object]:
+            raise VLLMValidationError(
+                "The decoder prompt (length 12290) is longer than the maximum "
+                f"model length of 12288; private={private}"
+            )
+
+    monkeypatch.setitem(
+        sys.modules,
+        "vllm",
+        SimpleNamespace(SamplingParams=FakeSamplingParams),
+    )
+    target = VLLMTarget(
+        SPEC.split(":", 1)[1],
+        revision=REVISION,
+        modality_support=("text", "image"),
+        max_model_len=12288,
+        model_runtime=FakeRuntime(),
+    )
+    monkeypatch.setattr(target, "_engine", lambda: RejectingLLM())
+
+    with pytest.raises(TargetInputError) as caught:
+        target.generate([DialogTurn(role="user", content="probe")], seed=7)
+
+    assert caught.value.category == "context_limit_exceeded"
+    assert str(caught.value) == (
+        "vLLM prompt length 12290 exceeds admitted context limit 12288"
+    )
+    assert str(private) not in str(caught.value)
 
 
 def test_ollama_uses_the_same_nonblank_deterministic_attempt_placeholder(

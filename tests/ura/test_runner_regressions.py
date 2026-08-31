@@ -78,7 +78,12 @@ from ura.source_conformance import (
     observed_arm_conformance,
 )
 from ura.targets.api import MockTarget
-from ura.targets.base import BaseTarget, TargetAnswerError, TargetIntegrityError
+from ura.targets.base import (
+    BaseTarget,
+    TargetAnswerError,
+    TargetInputError,
+    TargetIntegrityError,
+)
 from ura.targets.guarded import GuardedTarget
 
 
@@ -6667,6 +6672,68 @@ def test_runner_keeps_target_integrity_failure_terminal_without_retry() -> None:
 
     assert raised.value.phase == "target_call"
     assert len(target._dialogs) == 1
+
+
+def test_runner_retains_input_incompatibility_without_retry_and_continues() -> None:
+    class IncompatibleTarget(_RecordingTarget):
+        def generate(
+            self, dialog: list[DialogTurn], *, seed: int | None = None
+        ) -> Response:
+            self._dialogs.append(list(dialog))
+            self._seeds.append(seed)
+            raise TargetInputError(
+                "prompt length exceeds the admitted route context",
+                category="context_limit_exceeded",
+            )
+
+    target = IncompatibleTarget()
+    judge = _ConfidentBinaryJudge()
+    runner = Runner(
+        _FloodAttacker(),
+        target,
+        JudgeCascade([judge]),
+        AttackBudget(max_queries=1, max_turns=1, seed=0),
+        [0],
+    )
+    corpus = [
+        _datapoint(f"incompatible-{index}").model_copy(update={
+            "source": "rjudge",
+            "expected_behavior": "safe_answer",
+            "meta": {
+                "common_metrics_eligible": False,
+                "required_metric": "rjudge_safety_judgment",
+                "reference_label": "safe",
+            },
+        })
+        for index in range(3)
+    ]
+
+    judgments, _manifest = runner.run(corpus)
+
+    assert len(target._dialogs) == 3
+    assert len(runner.attempts) == len(runner.responses) == len(judgments) == 3
+    assert judge.calls == 0
+    assert all(response.output_turns == [] for response in runner.responses)
+    assert all(
+        response.raw["target_input_status"] == "incompatible"
+        and response.raw["target_input_category"] == "context_limit_exceeded"
+        and response.raw["target_identity_observed"] is False
+        and response.raw["target_call_route"] == "input_incompatible"
+        and "model_stability_status" not in response.raw
+        for response in runner.responses
+    )
+    assert all(
+        judgment.label == "not_applicable"
+        and judgment.raw["policy_evaluation_status"] == "model_nonresponse"
+        and judgment.raw["stage_queried"] is False
+        and judgment.raw["target_input_status"] == "incompatible"
+        and judgment.raw["target_input_category"] == "context_limit_exceeded"
+        and judgment.raw["required_metric"] == "rjudge_safety_judgment"
+        and judgment.raw["source_evaluation"] is None
+        and "model_stability_status" not in judgment.raw
+        for judgment in judgments
+    )
+    assert runner.aggregate(judgments, []) == []
 
 
 def test_runner_retains_typed_empty_completion_without_querying_judges(
