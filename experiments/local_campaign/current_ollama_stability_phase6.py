@@ -41,6 +41,7 @@ from experiments.local_campaign.vllm_stability_phase6 import (
     Unit,
     _canonical,
     _create_json,
+    _framework_lock_id,
     _option,
     _project_python,
     _run_unit,
@@ -867,6 +868,11 @@ def run(args: argparse.Namespace) -> int:
                 scope=args.execution_scope_id,
                 recovery_path=recovery_path,
                 recovery_sha256=recovery_sha,
+                expected_commit=args.expected_commit,
+                framework_lock_id=_framework_lock_id(),
+                admission_sha256=args.gate5_amendment_sha256,
+                tmux_socket=args.tmux_socket,
+                tmux_session=args.tmux_session,
                 state_schema=UNIT_STATE_SCHEMA,
             )
         except (

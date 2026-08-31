@@ -10,6 +10,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+from typing import Sequence
 
 import pytest
 
@@ -7586,6 +7587,117 @@ def test_vllm_stability_phase6_registers_its_tmux_job_lifecycle() -> None:
     assert "tmux_socket=args.tmux_socket" in source
     assert "tmux_session=args.tmux_session" in source
     assert 'parser.add_argument("--tmux-session", required=True)' in source
+
+
+def test_vllm_stability_run_unit_registers_measured_child_before_runner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from experiments.local_campaign import vllm_stability_phase6 as recovery
+    from experiments.rig_web_app.external_measured import (
+        load_external_measured_job,
+    )
+
+    work_root = tmp_path / "work"
+    control_root = work_root / "runs" / "engineering" / "phase6-child-jobs"
+    (control_root / "units").mkdir(parents=True)
+    (work_root / "runs" / "thesis" / "runner").mkdir(parents=True)
+    unit = recovery.Unit(
+        unit_id="vllm-child-fixture",
+        source_lane="source-fixture",
+        corpus="corpus-fixture",
+        spec={},
+        selected_records=1,
+    )
+
+    monkeypatch.setattr(recovery, "_base_argv", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        recovery,
+        "_derive_attestation",
+        lambda *args, **kwargs: {"path": "/attestation", "sha256": "a" * 64},
+    )
+    monkeypatch.setattr(
+        recovery,
+        "_runtime_args",
+        lambda base, *, out, **kwargs: ["--out", str(out)],
+    )
+    monkeypatch.setattr(recovery, "_acquisition_args", lambda *args, **kwargs: [])
+
+    def fake_run(
+        argv: Sequence[str],
+        *,
+        log: Path,
+        timeout: int,
+        allow_failure: bool = False,
+    ) -> int:
+        del argv, timeout
+        log.write_text("ok\n", encoding="utf-8")
+        if log.name == "canary.run.log":
+            canary_root = log.parent / "canary"
+            canary_root.mkdir()
+            (canary_root / "eligibility-fixture.eligibility.json").write_text(
+                "{}\n", encoding="utf-8"
+            )
+        if log.name == "preflight.run.log":
+            preflight_root = log.parent / "preflight"
+            preflight_root.mkdir()
+            (preflight_root / "lane-projection-fixture.lane-projection.json").write_text(
+                "{}\n", encoding="utf-8"
+            )
+        if log.name == "measured.run.log":
+            running = load_external_measured_job(
+                work_root / "runs",
+                recovery._external_job_id(control_root, unit.unit_id),
+                probe_session=False,
+            )
+            assert running is not None
+            assert running.state == "running"
+            assert running.exit_code is None
+        return 0 if allow_failure else 0
+
+    monkeypatch.setattr(recovery, "_run", fake_run)
+
+    def fake_level1_counts(*, lane_root: Path, **kwargs: object) -> tuple[int, int, int]:
+        del kwargs
+        (lane_root / "level1.json").write_text("{}\n", encoding="utf-8")
+        return 1, 1, 0
+
+    monkeypatch.setattr(recovery, "_level1_counts", fake_level1_counts)
+
+    result = recovery._run_unit(
+        unit,
+        python=Path("/fixture/python"),
+        work_root=work_root,
+        control_root=control_root,
+        project_revision=Path("/fixture/revision.json"),
+        project_revision_sha256="b" * 64,
+        scope="scope-fixture",
+        recovery_path=None,
+        recovery_sha256=None,
+        expected_commit="c" * 40,
+        framework_lock_id="d" * 64,
+        admission_sha256="e" * 64,
+        tmux_socket="ura-fixture",
+        tmux_session="ura-fixture",
+    )
+
+    job = load_external_measured_job(
+        work_root / "runs",
+        recovery._external_job_id(control_root, unit.unit_id),
+        probe_session=False,
+    )
+    assert result["status"] == "complete"
+    assert job is not None
+    assert job.state == "complete"
+    assert job.exit_code == 0
+    assert job.out_dir == (
+        work_root
+        / "runs"
+        / "thesis"
+        / "runner"
+        / unit.unit_id
+        / control_root.name
+    )
 
 
 def test_vllm_stability_attestation_probe_uses_local_guardrail() -> None:

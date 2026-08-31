@@ -34,6 +34,10 @@ from experiments.local_campaign.console_events import (
     publish_target_execution,
     start_child_controller,
 )
+from experiments.rig_web_app.external_measured import (
+    register_external_measured_start,
+    register_external_measured_terminal,
+)
 
 
 SCHEMA = "ura-vllm-stability-phase6/1"
@@ -120,6 +124,20 @@ class Unit:
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _framework_lock_id() -> str:
+    value = os.environ.get("URA_FRAMEWORK_LOCK_ID", "")
+    if HEX64.fullmatch(value) is None:
+        raise ValueError("URA_FRAMEWORK_LOCK_ID must be one lowercase 64-hex digest")
+    return value
+
+
+def _external_job_id(control_root: Path, unit_id: str) -> str:
+    token = hashlib.sha256(
+        f"{control_root.name}\0{unit_id}".encode("utf-8")
+    ).hexdigest()[:16]
+    return f"external-{control_root.name[:40]}-{unit_id[:48]}-{token}"
 
 
 def _project_python(project_root: Path, candidate: Path) -> Path:
@@ -875,6 +893,11 @@ def _run_unit(
     scope: str,
     recovery_path: Path | None,
     recovery_sha256: str | None,
+    expected_commit: str,
+    framework_lock_id: str,
+    admission_sha256: str,
+    tmux_socket: str,
+    tmux_session: str,
     state_schema: str = "ura-vllm-stability-phase6-unit-state/1",
 ) -> dict[str, Any]:
     unit_root = control_root / "units" / unit.unit_id
@@ -1004,6 +1027,9 @@ def _run_unit(
         lane_root=measured_acquisition_root,
         timeout=86400,
     )
+    if result_root.exists() or result_root.is_symlink():
+        raise FileExistsError("measured result root is not fresh")
+    result_root.mkdir(mode=0o700)
     state = {
         "schema": state_schema,
         "unit_id": unit.unit_id,
@@ -1018,16 +1044,43 @@ def _run_unit(
         "runner_argv": [*measured_args, *measured_acquisition],
     }
     _create_json(unit_root / "state.json", state)
-    rc = _run(
-        (
-            str(python),
-            "-m",
-            "experiments.run_matrix",
-            *state["runner_argv"],
-        ),
-        log=unit_root / "measured.run.log",
-        timeout=86400,
-        allow_failure=True,
+    job_id = _external_job_id(control_root, unit.unit_id)
+    register_external_measured_start(
+        work_root / "runs",
+        job_id=job_id,
+        command="run_matrix",
+        run_kind_name="measured",
+        sanitized_argv=state["runner_argv"],
+        out_dir=result_root,
+        expected_commit=expected_commit,
+        framework_lock_id=framework_lock_id,
+        admission_sha256=admission_sha256,
+        tmux_socket=tmux_socket,
+        tmux_session=tmux_session,
+    )
+    try:
+        rc = _run(
+            (
+                str(python),
+                "-m",
+                "experiments.run_matrix",
+                *state["runner_argv"],
+            ),
+            log=unit_root / "measured.run.log",
+            timeout=86400,
+            allow_failure=True,
+        )
+    except BaseException as exc:
+        try:
+            register_external_measured_terminal(
+                work_root / "runs", job_id=job_id, exit_code=125
+            )
+        except BaseException as terminal_exc:
+            raise terminal_exc from exc
+        raise
+    terminal_rc = rc if isinstance(rc, int) and 0 <= rc <= 255 else 125
+    register_external_measured_terminal(
+        work_root / "runs", job_id=job_id, exit_code=terminal_rc
     )
     if rc:
         raise RuntimeError(f"Runner exited {rc}; see {unit_root / 'measured.run.log'}")
@@ -1129,6 +1182,7 @@ def run(args: argparse.Namespace) -> int:
 
     results: dict[str, Any] = {}
     failures: dict[str, Any] = {}
+    framework_lock_id = _framework_lock_id()
     for unit in units:
         try:
             results[unit.unit_id] = _run_unit(
@@ -1141,6 +1195,11 @@ def run(args: argparse.Namespace) -> int:
                 scope=args.execution_scope_id,
                 recovery_path=prefix_path if unit.recovery is not None else None,
                 recovery_sha256=prefix_sha if unit.recovery is not None else None,
+                expected_commit=args.expected_commit,
+                framework_lock_id=framework_lock_id,
+                admission_sha256=args.historical_completion_sha256,
+                tmux_socket=args.tmux_socket,
+                tmux_session=args.tmux_session,
             )
         except (
             KeyError,

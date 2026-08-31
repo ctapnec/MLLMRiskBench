@@ -31,6 +31,7 @@ from experiments.local_campaign.vllm_stability_phase6 import (
     UNIT_LAYOUT,
     Unit,
     _create_json,
+    _framework_lock_id,
     _historical_specs,
     _load_json,
     _option,
@@ -789,6 +790,11 @@ def run(args: argparse.Namespace) -> int:
             scope=args.execution_scope_id,
             recovery_path=prefix_path,
             recovery_sha256=prefix_sha,
+            expected_commit=args.expected_commit,
+            framework_lock_id=_framework_lock_id(),
+            admission_sha256=args.failed_completion_sha256,
+            tmux_socket=args.tmux_socket,
+            tmux_session=args.tmux_session,
             state_schema="ura-vllm-input-recovery-phase6-unit-state/1",
         )
     except (
