@@ -140,6 +140,45 @@ def repair_recovered_trail_rows(
     return corrected, len(repaired_attempts)
 
 
+def repair_recovered_judgments(
+    responses: Mapping[str, Response],
+    judgments: Mapping[str, Judgment],
+) -> tuple[dict[str, Judgment], int]:
+    """Repair the final record's embedded projections for recovered retries."""
+
+    corrected: dict[str, Judgment] = {}
+    repaired = 0
+    for attempt_id, judgment in judgments.items():
+        if attempt_id not in responses:
+            raise ValueError("final judgment lacks exact response lineage")
+        response = responses[attempt_id]
+        if response.raw.get("model_stability_status") != "recovered_after_retry":
+            corrected[attempt_id] = judgment
+            continue
+        outcome = {field: response.raw.get(field) for field in _OUTCOME_FIELDS}
+        if any(judgment.raw.get(field) != value for field, value in outcome.items()):
+            raise ValueError("recovered response/final judgment outcome differs")
+        raw = dict(judgment.raw)
+        bindings = raw.get("judge_stage_bindings")
+        if not isinstance(bindings, list) or not bindings or any(
+            not isinstance(binding, dict) for binding in bindings
+        ):
+            raise ValueError("recovered final judgment lacks ordered stage bindings")
+        raw["judge_stage_bindings"] = [
+            {**binding, **outcome} for binding in bindings
+        ]
+        strongreject = raw.get("strongreject_stage_binding")
+        if strongreject is not None:
+            if not isinstance(strongreject, dict):
+                raise ValueError("recovered final judgment has invalid rubric binding")
+            raw["strongreject_stage_binding"] = {**strongreject, **outcome}
+        corrected[attempt_id] = judgment.model_copy(update={"raw": raw})
+        repaired += 1
+    if repaired < 1:
+        raise ValueError("failed cell contains no recovered retry judgment to repair")
+    return corrected, repaired
+
+
 def _write_json_new(path: Path, value: object) -> None:
     with path.open("x", encoding="utf-8", newline="\n") as handle:
         json.dump(
@@ -263,13 +302,18 @@ def finalize(
             raise ValueError("failed trail has an unrelated validation error") from exc
     else:
         raise ValueError("failed trail no longer reproduces its retained error")
-    corrected_trails, repaired_attempts = repair_recovered_trail_rows(
-        trail_rows, responses_by_id, judgments_by_id
+    corrected_judgments, repaired_judgments = repair_recovered_judgments(
+        responses_by_id, judgments_by_id
     )
+    corrected_trails, repaired_attempts = repair_recovered_trail_rows(
+        trail_rows, responses_by_id, corrected_judgments
+    )
+    if repaired_judgments != repaired_attempts:
+        raise ValueError("recovered judgment/trail repair populations differ")
     validate_persisted_judgment_trails(
         attempts_by_id,
         responses_by_id,
-        judgments_by_id,
+        corrected_judgments,
         corrected_trails,
         manifest.config,
         manifest.judges,
@@ -285,11 +329,20 @@ def finalize(
                 or source.name.endswith(".checkpoint.jsonl")
                 or source.name.endswith(".complete.json")
                 or source.name.endswith(".lock")
+                or source.name.endswith(".parquet")
             ):
                 continue
             shutil.copyfile(source, out_root / source.name)
         repaired_trail_path = out_root / source_paths["trails"].name
         _write_rows(repaired_trail_path, corrected_trails)
+        repaired_judgment_path = out_root / source_paths["judgments"].name
+        _write_rows(
+            repaired_judgment_path,
+            [
+                corrected_judgments[row.attempt_id].model_dump(mode="json")
+                for row in judgments
+            ],
+        )
 
         out_paths = {
             name: out_root / path.name
