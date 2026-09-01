@@ -1529,6 +1529,7 @@ def test_phase7_requires_current_ollama_stability_as_a_separate_stratum() -> Non
         encoding="utf-8"
     )
     required = (
+        "current_ollama_stability_canary_recovery_phase6 import (",
         "validate_current_ollama_stability_completion(",
         '"current_ollama_stability": current_ollama_stability,',
         "current_ollama_stability=current_ollama_stability,",
@@ -1544,6 +1545,15 @@ def test_phase7_requires_current_ollama_stability_as_a_separate_stratum() -> Non
     assert '"current_ollama_stability": 14' in watcher
     mutant = analysis.replace(
         '"current_ollama_stability": current_ollama_stability,', "", 1
+    )
+    assert mutant != analysis
+    with pytest.raises(AssertionError):
+        for token in required:
+            assert token in mutant
+    mutant = analysis.replace(
+        "current_ollama_stability_canary_recovery_phase6 import (",
+        "current_ollama_stability_phase6 import (",
+        1,
     )
     assert mutant != analysis
     with pytest.raises(AssertionError):
