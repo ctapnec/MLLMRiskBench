@@ -1045,11 +1045,25 @@ def test_current_ollama_alignment_uses_the_common_limit_100_population(
 
     def assert_result_membership(candidate: str) -> None:
         assert "set(results) != set(ALIGNMENT_LANES)" in candidate
+        assert (
+            "current_ollama_stability_canary_recovery_phase6 import ("
+            in candidate
+        )
+        assert 'completion.get("partial_completion")' in candidate
+        assert 'partial.get("failed_completion")' in candidate
 
     assert_result_membership(source)
     changed = source.replace(
         "set(results) != set(ALIGNMENT_LANES)",
         "list(results) != list(ALIGNMENT_LANES)",
+        1,
+    )
+    assert changed != source
+    with pytest.raises(AssertionError):
+        assert_result_membership(changed)
+    changed = source.replace(
+        "current_ollama_stability_canary_recovery_phase6 import (",
+        "current_ollama_stability_phase6 import (",
         1,
     )
     assert changed != source

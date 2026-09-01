@@ -37,9 +37,11 @@ from experiments.local_campaign.current_ollama_phase6 import (
     _strict_object,
     validate_completion as validate_base_completion,
 )
+from experiments.local_campaign.current_ollama_stability_canary_recovery_phase6 import (
+    validate_completion as validate_stability_completion,
+)
 from experiments.local_campaign.current_ollama_stability_phase6 import (
     FAILED_LANES,
-    validate_completion as validate_stability_completion,
 )
 from experiments.local_campaign.vllm_input_recovery_phase6 import (
     _validate_metric_result,
@@ -352,8 +354,18 @@ def _validate_prefix_complete(
         stability_path, runner_root=runner_root
     )
     completion = _load_json(stability_path, label="Ollama stability completion")
+    partial_path = _validate_descriptor(
+        completion.get("partial_completion"),
+        label="Ollama stability partial continuation",
+    )
+    partial = _load_json(partial_path, label="Ollama stability partial continuation")
+    failed_path = _validate_descriptor(
+        partial.get("failed_completion"),
+        label="failed Ollama stability completion",
+    )
+    failed = _load_json(failed_path, label="failed Ollama stability completion")
     launch_path = _validate_descriptor(
-        completion.get("launch"), label="Ollama stability launch"
+        failed.get("launch"), label="Ollama stability launch"
     )
     launch = _load_json(launch_path, label="Ollama stability launch")
     if launch.get("gate5") != _descriptor(gate5_path, label="retained Ollama Gate 5"):
