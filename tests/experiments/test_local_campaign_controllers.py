@@ -8064,6 +8064,7 @@ def test_current_ollama_canary_recovery_inherits_completed_rows() -> None:
         assert "validated = _validate_metric_result(" in candidate
         assert 'receipt.get("schema") != FINALIZATION_SCHEMA' in candidate
         assert "python = _project_python(project_root, args.python)" in candidate
+        assert "set(results) != set(order)" in candidate
 
     assert_contract(source)
     changed = source.replace(
@@ -8085,6 +8086,14 @@ def test_current_ollama_canary_recovery_inherits_completed_rows() -> None:
     changed = source.replace(
         'receipt.get("schema") != FINALIZATION_SCHEMA',
         "False",
+        1,
+    )
+    assert changed != source
+    with pytest.raises(AssertionError):
+        assert_contract(changed)
+    changed = source.replace(
+        "set(results) != set(order)",
+        "list(results) != order",
         1,
     )
     assert changed != source

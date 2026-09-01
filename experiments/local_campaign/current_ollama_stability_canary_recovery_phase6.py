@@ -317,7 +317,7 @@ def validate_completion(
         or completion.get("failed_completion")
         != partial["completion"]["failed_completion"]
         or not isinstance(results, dict)
-        or list(results) != order
+        or set(results) != set(order)
     ):
         raise ValueError("canary recovery population changed")
     canaries = completion.get("revalidated_canaries")
