@@ -2,7 +2,7 @@
 
 `ura.data_models` is the typed Pydantic v2 contract shared by converters,
 attackers, targets, judges, persistence, and analysis. `SCHEMA_VERSION = "1.5"`
-is stamped on datapoints, checkpoints, and manifests. Runner 2.26 rejects mixed
+is stamped on datapoints, checkpoints, and manifests. Runner 2.27 rejects mixed
 schema versions and duplicate datapoint IDs before a target call.
 
 The 1.5 transition introduces isolated-engine identities and verified closing
@@ -615,9 +615,17 @@ an executed cell:
   64-hex digest returned by the daemon's `/api/tags` inventory and a unique
   explicit modality list containing `text` and optionally `image`. It forbids
   vLLM-only revision, parameter, multi-GPU, tensor-parallel, memory-utilization,
-  output/context-limit, quantization, and unknown-fit fields. Its pulled
+  output/context-limit, quantization, and unknown-fit fields. It additionally
+  binds `think` as a boolean or one of `low`, `medium`, and `high`; omission
+  normalizes to `false`. Its pulled
   artifact fixes precision. The adapter uses the daemon HTTP API via the Python
   standard library and does not require an Ollama Python SDK.
+  Runner 2.27 also derives a hosted-only `stop_on_failed_output` execution
+  policy from the already-bound API target type. This is recorded in the grid
+  run configuration rather than changing request-envelope schemas `/1` through
+  `/6`: hosted targets require zero answer retries, and their first retained
+  failed output or transport/network failure opens the global `paid_provider`
+  circuit before another paid call.
 
 - Hugging Face model bytes are a separate immutable evidence family, not part
   of `--local-config`. `ura-model-acquisition-selection/1` retains path-free

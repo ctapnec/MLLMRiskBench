@@ -773,7 +773,9 @@ def test_real_corpus_runs_directly_and_records_source_identity(
     assert len(api_artifact["sha256"]) == 64
 
 
-def test_matrix_requires_real_target_and_judge_for_real_runs(tmp_path: Path) -> None:
+def test_matrix_requires_real_target_and_judge_for_real_runs(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     with pytest.raises(SystemExit):
         run_matrix.main(["--judges", "rules", "--out", str(tmp_path / "none")])
     with pytest.raises(SystemExit):
@@ -782,6 +784,19 @@ def test_matrix_requires_real_target_and_judge_for_real_runs(tmp_path: Path) -> 
             "--judges", "rules,llm",
             "--out", str(tmp_path / "mock-judge"),
         ])
+    capsys.readouterr()
+    with pytest.raises(SystemExit):
+        run_matrix.main([
+            "--dry-run",
+            "--api", "anthropic:account-model",
+            "--judges", "rules",
+            "--corpora", "synth",
+            "--limit", "1",
+            "--out", str(tmp_path / "hosted-retry"),
+        ])
+    assert "paid hosted targets require --target-answer-retries 0" in (
+        capsys.readouterr().err
+    )
 
 
 @pytest.mark.parametrize("group", ["model,model", "model,not_a_dimension"])
@@ -6679,6 +6694,44 @@ def test_runner_retains_exhausted_answer_failures_and_completes_population() -> 
         and judgment.raw["model_stability_retry_count"] == 1
         for judgment in judgments
     )
+
+
+def test_paid_output_gate_stops_after_one_durable_failed_response() -> None:
+    class AlwaysEmpty(_RecordingTarget):
+        def generate(
+            self, dialog: list[DialogTurn], *, seed: int | None = None
+        ) -> Response:
+            self._dialogs.append(list(dialog))
+            self._seeds.append(seed)
+            raise TargetAnswerError("fixture target produced no usable answer")
+
+    target = AlwaysEmpty()
+    checkpoints: list[dict[str, object]] = []
+    response_checkpoints: list[dict[str, object]] = []
+    runner = Runner(
+        _FloodAttacker(),
+        target,
+        JudgeCascade([RuleJudge()]),
+        AttackBudget(max_queries=1, max_turns=1, seed=0),
+        [0],
+        target_answer_retries=0,
+        stop_on_failed_output=True,
+    )
+
+    with pytest.raises(
+        runner_module.RetainedFailedOutputStop,
+        match="stopped for operator investigation",
+    ):
+        runner.run(
+            [_datapoint(f"paid-empty-{index}") for index in range(3)],
+            on_record=checkpoints.append,
+            on_response=response_checkpoints.append,
+        )
+
+    assert len(target._dialogs) == 1
+    assert len(runner.attempts) == len(runner.responses) == len(runner.judgments) == 1
+    assert len(checkpoints) == len(response_checkpoints) == 1
+    assert runner.responses[0].raw["model_stability_status"] == "failed_output"
 
 
 def test_runner_retains_verified_identity_when_answer_retries_exhausted() -> None:

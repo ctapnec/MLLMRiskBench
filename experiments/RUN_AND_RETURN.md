@@ -6,7 +6,7 @@ source-native evaluators. Experiments and the human audit are still pending.
 Preflight, dry-run, diagnostic-canary, and bounded transport-probe artifacts are
 diagnostics, not thesis results.
 
-The maintained artifact contract is Runner `ura-runner/2.26` with unified schema
+The maintained artifact contract is Runner `ura-runner/2.27` with unified schema
 `1.5`. Runner 2.19/schema 1.4 artifacts remain runtime-free legacy
 compatibility only; do not combine them with the current measured cohort.
 
@@ -477,7 +477,12 @@ one answer retry for vLLM and Ollama. The budget-fitted hosted campaign pins
 answer, harness transport and provider SDK retries to 0, so paid targets and
 Haiku judgments receive exactly one application attempt. Build sets and locks
 the answer-retry field to 0 whenever a hosted target is selected, and server
-validation rejects a nonzero submitted value.
+validation rejects a nonzero submitted value. The first durably retained failed
+hosted-target output, or any hosted target transport/network failure, opens the
+global `paid_provider` circuit before another paid call can start. Classify a
+provider-completed empty response separately from interrupted transport, resolve
+the cause, derive a fresh bound plan and explicitly reset the circuit. Never
+resume paid execution automatically.
 Runner 2.26 separately retains an exact deterministic target-input rejection as
 `target_input_status=incompatible`. It makes no answer retry for the unchanged
 input, does not query the policy judge, records missing-response coverage, and
@@ -1467,7 +1472,10 @@ roster for that future execution only. It may consume no more than 50 percent
 of each configured provider budget, including Haiku judging charged to
 Anthropic. Paid targets and Haiku judging use one application attempt,
 `--target-answer-retries 0`, with harness transport retries and provider SDK
-retries disabled. Use seed 0
+retries disabled. The first retained failed hosted-target output or target transport/network
+failure opens the global `paid_provider` circuit before another paid call. The
+operator must classify and resolve the failure before a fresh bound plan and
+explicit circuit reset; there is no automatic paid resumption. Use seed 0
 and the normal nested whole-cluster sampler with these per-target limits:
 Fable 1, Opus 3, Sonnet 5, Haiku 10, Sol 2, Terra 5, Luna 20, GPT-5.5 1, Kimi
 K3 3 and DeepSeek V4-Pro 20. DeepSeek

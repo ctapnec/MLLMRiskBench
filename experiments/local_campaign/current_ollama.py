@@ -29,6 +29,7 @@ class CurrentOllamaModel:
     digest: str
     quantization: str
     modalities: tuple[str, ...]
+    think: bool | str
     roles: tuple[str, ...]
 
     @property
@@ -43,6 +44,7 @@ CURRENT_OLLAMA_MODELS = (
         digest="4eb23ef187e2c5462566d6a1d3bbbc2f1346d0b4327cbb66d58fffbcc9b2b05c",
         quantization="Q4_K_M",
         modalities=("text", "image"),
+        think=False,
         roles=("target", "native_primary"),
     ),
     CurrentOllamaModel(
@@ -51,6 +53,7 @@ CURRENT_OLLAMA_MODELS = (
         digest="4760c35aeb9d9e9c6174c2492562c0b999e80a222804fd96b1915ab72bbcdcf7",
         quantization="Q4_K_M",
         modalities=("text", "image"),
+        think=False,
         roles=("target", "native_secondary"),
     ),
     CurrentOllamaModel(
@@ -59,6 +62,7 @@ CURRENT_OLLAMA_MODELS = (
         digest="edba8017331d15236e57480eb45406c0d721db77a4cdcf234df500fc2ad3960c",
         quantization="Q4_K_M",
         modalities=("text",),
+        think=False,
         roles=("target", "native_auditor"),
     ),
     CurrentOllamaModel(
@@ -67,6 +71,7 @@ CURRENT_OLLAMA_MODELS = (
         digest="17052f91a42e97930aa6e28a6c6c06a983e6a58dbb00434885a0cf5313e376f7",
         quantization="MXFP4",
         modalities=("text",),
+        think="low",
         roles=("target", "native_judge"),
     ),
 )
@@ -76,6 +81,9 @@ CURRENT_OLLAMA_BY_LABEL: Mapping[str, CurrentOllamaModel] = MappingProxyType(
 )
 CURRENT_OLLAMA_BY_TAG: Mapping[str, CurrentOllamaModel] = MappingProxyType(
     {model.tag: model for model in CURRENT_OLLAMA_MODELS}
+)
+CURRENT_OLLAMA_BY_SPEC: Mapping[str, CurrentOllamaModel] = MappingProxyType(
+    {model.spec: model for model in CURRENT_OLLAMA_MODELS}
 )
 CURRENT_OLLAMA_TEXT_MODELS = CURRENT_OLLAMA_MODELS
 CURRENT_OLLAMA_IMAGE_MODELS = tuple(

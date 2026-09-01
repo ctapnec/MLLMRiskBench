@@ -178,6 +178,7 @@ from ura.runner import (                              # noqa: E402
     CODE_VERSION,
     ExternalCallFailure,
     GlobalCallBudget,
+    RetainedFailedOutputStop,
     Runner,
     _component_config,
     _harness_source_identity,
@@ -1725,7 +1726,7 @@ def _load_local_config(
         if not isinstance(config, dict) or set(config) - {
             "revision", "digest", "modalities", "tensor_parallel_size",
             "gpu_memory_utilization", "max_tokens", "max_model_len",
-            "num_ctx", "num_predict",
+            "num_ctx", "num_predict", "think",
             "parameter_count_b",
             "multi_gpu_compatible", "quantization", "allow_unknown_fit",
         }:
@@ -1894,6 +1895,7 @@ def _load_local_config(
                 OLLAMA_FORBIDDEN_LOCAL_CONFIG_FIELDS,
                 validate_ollama_num_ctx,
                 validate_ollama_num_predict,
+                validate_ollama_think,
             )
 
             if (
@@ -1905,7 +1907,9 @@ def _load_local_config(
                     f"Ollama config {spec!r} requires digest and forbids vLLM fields"
                 )
             unsupported = sorted(
-                set(config) - {"digest", "modalities", "num_ctx", "num_predict"}
+                set(config) - {
+                    "digest", "modalities", "num_ctx", "num_predict", "think"
+                }
             )
             if unsupported:
                 raise ValueError(
@@ -1918,6 +1922,9 @@ def _load_local_config(
                 )
                 config["num_predict"] = validate_ollama_num_predict(
                     config.get("num_predict", DEFAULT_OLLAMA_NUM_PREDICT)
+                )
+                config["think"] = validate_ollama_think(
+                    config.get("think", False)
                 )
             except ValueError as exc:
                 raise ValueError(f"Ollama config {spec!r} {exc}") from exc
@@ -2941,6 +2948,7 @@ def build_target(
                 modality_support=modalities,
                 num_ctx=int(local_identity["num_ctx"]),
                 num_predict=int(local_identity["num_predict"]),
+                think=local_identity["think"],
             )
             target.validate_research_identity()
             return target
@@ -4800,6 +4808,8 @@ def _main(argv=None) -> int:
     }
     if len(set(api_specs)) != len(api_specs):
         ap.error("--api specs must be unique")
+    if api_specs and args.target_answer_retries != 0:
+        ap.error("paid hosted targets require --target-answer-retries 0")
     if len(set(local_specs)) != len(local_specs):
         ap.error("--local specs must be unique")
     if len(local_specs) > 1:
@@ -6361,6 +6371,7 @@ def _main(argv=None) -> int:
                                 "synthetic" if args.dry_run else "measured"
                             ),
                             target_answer_retries=args.target_answer_retries,
+                            stop_on_failed_output=spec in api_specs,
                         ).plan_manifest(
                             corpus,
                             started_at=run_started,
@@ -6375,6 +6386,7 @@ def _main(argv=None) -> int:
                                     args.approximate_common_metrics
                                 ),
                                 "target_answer_retries": args.target_answer_retries,
+                                "stop_on_failed_output": spec in api_specs,
                                 "recovery_selection": recovery_selection_binding,
                             },
                         )
@@ -6748,7 +6760,7 @@ def _main(argv=None) -> int:
 
     def blocking_circuit(spec: str) -> tuple[str, dict[str, object]] | None:
         target_key = f"target:{persisted_model_specs[spec]}"
-        for key in ("budget", "judge", target_key):
+        for key in ("budget", "judge", "paid_provider", target_key):
             if key in circuits:
                 return key, circuits[key]
         return None
@@ -7018,6 +7030,7 @@ def _main(argv=None) -> int:
                             "synthetic" if args.dry_run else "measured"
                         ),
                         target_answer_retries=args.target_answer_retries,
+                        stop_on_failed_output=spec in api_specs,
                     )
                     cell_config = {
                         "grid_id": grid_id,
@@ -7107,6 +7120,7 @@ def _main(argv=None) -> int:
                             args.approximate_common_metrics
                         ),
                         "target_answer_retries": args.target_answer_retries,
+                        "stop_on_failed_output": spec in api_specs,
                         "attestation_probe": bool(args.attestation_probe),
                         "live_attestation": live_attestation_projection,
                         "expected_target_identity": (
@@ -7368,12 +7382,16 @@ def _main(argv=None) -> int:
                     n_errors += 1
                     if isinstance(exc, BudgetExhausted):
                         open_circuit("budget", exc)
+                    elif isinstance(exc, RetainedFailedOutputStop):
+                        open_circuit("paid_provider", exc)
                     elif isinstance(exc, ExternalCallFailure):
                         target_failure = exc.phase != "judge_call"
                         open_circuit(
-                            "judge" if not target_failure else (
-                                f"target:{persisted_model_specs[spec]}"
-                            ),
+                            "judge"
+                            if not target_failure
+                            else "paid_provider"
+                            if spec in api_specs
+                            else f"target:{persisted_model_specs[spec]}",
                             exc,
                             model_spec=spec if target_failure else None,
                         )
@@ -7637,28 +7655,26 @@ def main(argv=None) -> int:
         raise RuntimeError("an isolated engine runtime selection is already active")
     if _ACTIVE_MODEL_COMPONENTS:
         raise RuntimeError("a model component lifecycle is already active")
-    prior_sigterm: object | None = None
-    installed_sigterm = False
+    prior_signal_handlers: dict[int, object] = {}
     cleanup_failures: list[str] = []
     deferred_cleanup_interrupt: BaseException | None = None
-    pending_sigterm: int | None = None
+    pending_signal: int | None = None
     execution_active = False
     result: int | None = None
     if os.name == "posix":
         try:
-            prior_sigterm = signal.getsignal(signal.SIGTERM)
-
             def terminate(signum: int, _frame: object) -> None:
-                nonlocal execution_active, pending_sigterm
-                pending_sigterm = signum
+                nonlocal execution_active, pending_signal
+                pending_signal = signum
                 if execution_active:
-                    # Mark execution inactive before unwinding. A later SIGTERM
+                    # Mark execution inactive before unwinding. A later signal
                     # is then recorded without interrupting bounded teardown.
                     execution_active = False
                     raise _EngineRuntimeTermination(signum)
 
-            signal.signal(signal.SIGTERM, terminate)
-            installed_sigterm = True
+            for owned_signal in (signal.SIGTERM, signal.SIGINT):
+                prior_signal_handlers[owned_signal] = signal.getsignal(owned_signal)
+                signal.signal(owned_signal, terminate)
         except ValueError:
             # Library callers may run a no-call matrix from a non-main thread.
             # Only the process main thread can own POSIX signal dispatch.
@@ -7666,12 +7682,12 @@ def main(argv=None) -> int:
     try:
         try:
             execution_active = True
-            if pending_sigterm is not None:
-                raise _EngineRuntimeTermination(pending_sigterm)
+            if pending_signal is not None:
+                raise _EngineRuntimeTermination(pending_signal)
             try:
                 result = _main(argv)
             except _EngineRuntimeTermination as exc:
-                pending_sigterm = exc.signum
+                pending_signal = exc.signum
                 result = 128 + exc.signum
             finally:
                 execution_active = False
@@ -7693,19 +7709,19 @@ def main(argv=None) -> int:
                     if selection is not None:
                         selection.abort()
                 finally:
-                    if installed_sigterm:
-                        signal.signal(signal.SIGTERM, prior_sigterm)
+                    for owned_signal, prior_handler in prior_signal_handlers.items():
+                        signal.signal(owned_signal, prior_handler)
             if deferred_cleanup_interrupt is not None:
                 raise deferred_cleanup_interrupt
     except _EngineRuntimeTermination as exc:
         # A signal can land while execution is transitioning into its outer
         # finally. Teardown has completed by the time it reaches this handler.
-        pending_sigterm = exc.signum
+        pending_signal = exc.signum
         result = 128 + exc.signum
     if result is None:  # pragma: no cover - defensive lifecycle invariant
         raise RuntimeError("matrix lifecycle returned no process status")
-    if pending_sigterm is not None:
-        return 128 + pending_sigterm
+    if pending_signal is not None:
+        return 128 + pending_signal
     # A teardown failure cannot retroactively replace an already-persisted
     # partial/error result. A nominally successful process does fail closed so
     # an operator never mistakes leaked GPU/process state for a clean exit.

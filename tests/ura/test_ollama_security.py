@@ -109,6 +109,36 @@ def _target_with_sequence(
     return target, calls
 
 
+def test_chat_request_binds_explicit_thinking_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = OllamaTarget(
+        "fixture:latest", model_digest=_DIGEST_A, think="low", timeout=2.0
+    )
+    observed: dict[str, object] = {}
+
+    def bounded(request, *, purpose, deadline):
+        observed.update(json.loads(request.data))
+        assert purpose == "chat response"
+        assert deadline > 0
+        return _chat()
+
+    monkeypatch.setattr(target, "_bounded_json_request", bounded)
+
+    value = target._chat_http(
+        [{"role": "user", "content": "probe"}], seed=7
+    )
+
+    assert value == _chat()
+    assert observed["think"] == "low"
+    assert observed["options"] == {
+        "temperature": 0.0,
+        "num_ctx": 8192,
+        "num_predict": 512,
+        "seed": 7,
+    }
+
+
 def test_target_transaction_exclusively_controls_and_releases_residency(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

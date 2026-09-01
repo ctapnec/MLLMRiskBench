@@ -614,6 +614,10 @@ def test_hosted_follow_on_is_a_no_retry_local_input_subset() -> None:
         "harness transport max_retries is 0",
         "--target-answer-retries 0",
         "provider SDK retries are disabled",
+        "global `paid_provider` circuit",
+        "before another paid call",
+        "transport or network failure",
+        "There is no automatic paid resumption",
         "Build sets and locks",
         "at most 50 percent",
         "2,000 selected local",
@@ -655,6 +659,12 @@ def test_hosted_follow_on_is_a_no_retry_local_input_subset() -> None:
     assert changed != combined
     with pytest.raises(AssertionError):
         assert_contract(changed)
+    changed_plan = plan.replace(
+        "global `paid_provider` circuit", "per-row continuation"
+    )
+    assert changed_plan != plan
+    with pytest.raises(AssertionError):
+        assert "global `paid_provider` circuit" in changed_plan
 
 
 def test_follow_on_runbook_keeps_purpose_and_media_contracts() -> None:

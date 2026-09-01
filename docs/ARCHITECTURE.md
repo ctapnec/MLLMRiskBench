@@ -276,6 +276,16 @@ the admitted population. The sealed private-execution boundary exposes only the
 safe typed disposition and bounded reason; unrelated third-party exceptions,
 identity drift, seal failures, and mutable configuration remain terminal.
 
+Runner 2.27 binds an explicit Ollama thinking policy in every local route:
+boolean disabled/enabled where supported, or low/medium/high for models with a
+graded control. Separate daemon `message.thinking` output is never used as the
+final answer and is not persisted as reasoning text. The adapter records only
+whether it was observed and rejects thinking output when the bound policy is
+disabled. Local vLLM and Ollama exhausted-answer handling remains one shared
+Runner policy. A hosted target instead requires zero answer retries; its first
+retained failed output or target transport/network failure opens the global
+`paid_provider` circuit before another paid call.
+
 Every Hugging Face model is admitted through one sealed acquisition boundary.
 `collect_run_requirements` projects the five supported roles (vLLM target,
 local vLLM LLM judge, scoring Guardrail, defense Guardrail, and NanoGCG
@@ -368,6 +378,10 @@ unified schema 1.5, `ura-eligibility-plan/3`, and
 `ura-level1-evidence/3`. Exact Runner 2.19/schema 1.4 non-runtime artifacts stay
 readable through an explicit empty-runtime normalization; no legacy artifact is
 allowed to attest runtime-backed framework execution.
+
+The later output-policy and paid-spend stop changes advance executable code to
+Runner 2.27 without changing unified schema 1.5 or the byte contracts of retained
+Runner 2.19 through 2.26 artifacts.
 
 An Ollama entry instead identifies a tag present in the live loopback daemon
 after a successful pull or discovery transaction. Rig Web may Start, Stop, and

@@ -110,7 +110,7 @@ def test_gptgeochat_recovery_rejects_nonprefix_completed_rows(
 
 
 def test_input_recovery_contract_is_one_runner_226_missing_only_unit() -> None:
-    assert recovery.CODE_VERSION == "ura-runner/2.26"
+    assert recovery.RUNNER_CODE_VERSION == "ura-runner/2.26"
     assert recovery.RECOVERY_UNIT == (
         "vllm-input-recovery-gptgeochat-qwen3-vl-suffix"
     )

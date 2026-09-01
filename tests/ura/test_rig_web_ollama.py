@@ -1255,6 +1255,7 @@ def test_builder_uses_only_exact_live_rows_and_ignores_catalog_only_overlap(
         "modalities": ["text", "image"],
         "num_ctx": 8192,
         "num_predict": 512,
+        "think": False,
     }
     generated = builder._materialize_selected_local_config(
         ["ollama:granite:latest"], require_live_ollama=True
@@ -1265,6 +1266,7 @@ def test_builder_uses_only_exact_live_rows_and_ignores_catalog_only_overlap(
             "modalities": ["text", "image"],
             "num_ctx": 8192,
             "num_predict": 512,
+            "think": False,
         }
     }
 

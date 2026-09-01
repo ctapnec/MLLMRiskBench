@@ -23,6 +23,10 @@ judge condition to hosted and local retained outputs.
   SDK retries are disabled.
 - Missing responses remain selected-population and stability evidence but
   receive no Haiku call.
+- The first retained failed target output opens the global `paid_provider`
+  circuit before another paid call can start. A transport or network failure
+  opens the same circuit. The retained row is diagnostic evidence, not
+  permission to continue spending.
 
 For local arm a, let L_local(a) be its sealed limit and L_t the hosted target
 limit. Hosted selection uses the first min(L_t, L_local(a)) clusters from the
@@ -101,9 +105,14 @@ routes are typed failed or N/A and are never silently substituted.
 
 ## A3 - Measured hosted subset
 
-Execute only the A1 selectors with zero answer retries. Each row checkpoints
-independently. Empty, malformed, binary/control-like or symbol-only output is a
-model-stability missing response and does not stop the remaining population.
+Execute only the A1 selectors with zero answer retries. Each completed row
+checkpoints independently. Empty, malformed, binary/control-like or symbol-only
+output is durably retained as a model-stability missing response, then the
+global `paid_provider` circuit stops the grid before another paid call. A
+transport or network exception opens the same circuit without inventing a
+completed response. The operator must classify provider-completed empty output
+separately from interrupted transport, resolve the route, derive a fresh bound
+plan, and explicitly reset the circuit. There is no automatic paid resumption.
 Identity, budget, request-binding or artifact drift still fails closed.
 
 Gate A3: every intended row is complete or typed missing, no non-subset input
@@ -159,8 +168,11 @@ are not analysis sources.
 
 ## Stop conditions
 
-Stop only the affected hosted condition for identity drift, provider-budget
-exhaustion, invalid transfer acknowledgement, deterministic route
-incompatibility or irreconcilable artifacts. Refusals, vague or length-capped
-answers, and typed missing responses are results. No paid call starts until the
+Stop the paid grid on the first target transport/network failure or first
+durably retained failed target output, and stop the affected hosted condition
+for identity drift, provider-budget exhaustion, invalid transfer
+acknowledgement, deterministic route incompatibility or irreconcilable
+artifacts. Refusals, vague answers and length-capped answers with substantive
+text are results. A typed missing response is retained, but it opens the global
+`paid_provider` circuit for investigation. No paid call starts until the
 operator separately launches this follow-on after the local campaign.

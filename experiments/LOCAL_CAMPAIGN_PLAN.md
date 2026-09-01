@@ -909,6 +909,45 @@ framework lock and complete terminal inventory. Adoption makes no target call
 and never invokes the child wrapper again; any changed or unregistered identity
 fails instead of being treated as reusable evidence.
 
+### 7.1 Runner 2.27 failed-output recovery amendment
+
+The 1 September current-Ollama population run exposed a serving-condition
+confound rather than an intrinsic one-third model failure rate. The adapter did
+not send an explicit Ollama `think` control and ignored the daemon's separate
+`message.thinking` field. At the controlled durable stop, 2,772 of 8,229 rows
+were retained as failed output. Every exhausted empty row from the
+thinking-capable Gemma, GPT-OSS and DeepSeek routes consumed the full 512-token
+completion allowance; Ministral did not show that pattern. The stopped
+DeepSeek unit also has 1,021 selected rows that were never attempted. A separate
+structure-only audit found 20 genuine two-token empty LLaVA outputs and 230
+Qwen3-VL context-limit incompatibilities. No prompt or response text was printed
+by either audit.
+
+Runner 2.27 binds Ollama thinking explicitly. Gemma, Ministral and DeepSeek use
+`think=false`; GPT-OSS uses its supported `think=low` condition. The adapter
+reads final content separately, retains no reasoning text, records only whether
+thinking output was observed and rejects a daemon that violates a disabled
+policy. Local vLLM and Ollama still use one configurable Runner answer-retry
+policy, set to one retry in this campaign.
+
+`failed_output_recovery_phase6` derives one completed-ID selector from the exact
+durable attempt/response pairs of each affected unit. It schedules 3,793 Ollama
+rows: the 2,772 failed outputs plus the 1,021 never-attempted DeepSeek rows. It
+also schedules the 20 genuine LLaVA failed outputs, for 3,813 measured recovery
+rows in six fresh Runner 2.27 units. It excludes every usable first response,
+every response recovered after retry, and all 230 deterministic Qwen3-VL input
+incompatibilities. Old rows stay immutable lifecycle evidence. Only the old
+successful rows and their fresh recovery rows form the eventual complete
+selected population, and their Runner/output-policy/revision strata remain
+separate until an explicitly justified sensitivity view combines estimates.
+Diagnostic attestation/canary calls remain diagnostic and cannot be counted as
+population rows.
+
+Interactive shutdown owns SIGINT as well as SIGTERM. Runner records the signal,
+finishes model and framework teardown, restores both prior handlers and then
+returns the conventional signal status. Gate 6 requires an empty Ollama `/api/ps`
+inventory and idle baseline GPU memory after any interrupted local lane.
+
 If repinning has moved that exact historical project-revision receipt into the
 fixed sibling `project-revision/superseded/` directory, the current-Ollama
 campaign validator may read only the same filename with the descriptor's exact
@@ -1011,7 +1050,9 @@ The exact Phase 6 campaign terminal inventory before population alignment
 contains 97 logical rows: 46 canonical, four output-policy amendment, three
 follow-on, 14 historical current-Ollama, 14 current-Ollama stability, seven
 vLLM stability and nine native. The population-alignment amendment adds 12
-current-Ollama population-alignment logical extension rows, giving 109. The
+current-Ollama population-alignment logical extension rows, giving 109. The six
+Runner 2.27 failed-output recovery units give a final terminal inventory of 115.
+The
 contract self-test rejects any
 other count or cohort partition.
 Only successful measured lanes enter those metric and Level-2 views; failed and

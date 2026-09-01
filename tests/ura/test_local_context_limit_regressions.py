@@ -24,6 +24,7 @@ from ura.targets.local import (
     DEFAULT_OLLAMA_NUM_CTX,
     DEFAULT_OLLAMA_NUM_PREDICT,
     MAX_VLLM_MODEL_LEN,
+    LocalTargetAnswerError,
     OllamaTarget,
     VLLMTarget,
 )
@@ -34,7 +35,7 @@ REVISION = "6" * 40
 
 
 def test_current_runner_version_includes_local_context_contract() -> None:
-    assert CODE_VERSION == "ura-runner/2.26"
+    assert CODE_VERSION == "ura-runner/2.27"
 
 
 def _rig_hardware() -> dict[str, object]:
@@ -555,6 +556,45 @@ def test_ollama_retains_successful_empty_completion_as_typed_nonresponse(
     assert response.raw["done_reason"] == "stop"
 
 
+def test_ollama_disabled_thinking_rejects_daemon_policy_drift(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    digest = "a" * 64
+    target = OllamaTarget("fixture:latest", model_digest=digest, think=False)
+    monkeypatch.setattr(
+        target, "_verify_daemon_identity", lambda *, deadline=None: digest
+    )
+    monkeypatch.setattr(
+        target, "_verify_pre_generation_residency", lambda *, deadline: "empty"
+    )
+    monkeypatch.setattr(
+        target,
+        "_chat",
+        lambda _messages, *, seed=None, deadline=None: {
+            "model": "fixture:latest",
+            "message": {
+                "role": "assistant",
+                "content": "",
+                "thinking": "unexpected separate reasoning",
+            },
+            "done": True,
+            "done_reason": "length",
+        },
+    )
+
+    def release(*, deadline: float) -> str:
+        del deadline
+        target._residency_owned = False
+        return "unload"
+
+    monkeypatch.setattr(target, "_release_owned_residency", release)
+    with pytest.raises(LocalTargetAnswerError) as caught:
+        target.generate([DialogTurn(role="user", content="probe")], seed=7)
+
+    assert caught.value.category == "thinking_control_mismatch"
+    assert target._residency_owned is False
+
+
 def test_ollama_config_forbids_vllm_context_cap(tmp_path: Path) -> None:
     spec = "ollama:fixture:latest"
     path = tmp_path / "ollama.json"
@@ -612,6 +652,7 @@ def test_ollama_local_config_binds_context_and_output_caps(
             "modalities": ["text"],
             "num_ctx": 8192,
             "num_predict": 768,
+            "think": "low",
         }}),
         encoding="utf-8",
     )
@@ -619,12 +660,14 @@ def test_ollama_local_config_binds_context_and_output_caps(
     loaded, _artifact = run_matrix._load_local_config(str(path), [spec])
     assert loaded[spec]["num_ctx"] == 8192
     assert loaded[spec]["num_predict"] == 768
+    assert loaded[spec]["think"] == "low"
     target = run_matrix.build_target(spec, local_identity=loaded[spec])
     assert target._sampling_options() == {
         "temperature": 0.0,
         "num_ctx": 8192,
         "num_predict": 768,
     }
+    assert target.think == "low"
 
     default_path = tmp_path / "ollama-default-caps.json"
     default_path.write_text(
@@ -634,6 +677,7 @@ def test_ollama_local_config_binds_context_and_output_caps(
     defaults, _artifact = run_matrix._load_local_config(str(default_path), [spec])
     assert defaults[spec]["num_ctx"] == DEFAULT_OLLAMA_NUM_CTX
     assert defaults[spec]["num_predict"] == DEFAULT_OLLAMA_NUM_PREDICT
+    assert defaults[spec]["think"] is False
 
 
 @pytest.mark.parametrize(
@@ -642,6 +686,7 @@ def test_ollama_local_config_binds_context_and_output_caps(
         ("num_ctx", True, "num_ctx must be an integer"),
         ("num_ctx", 0, "num_ctx must be an integer"),
         ("num_predict", 0, "num_predict must be an integer"),
+        ("think", "extreme", "think must be boolean"),
     ),
 )
 def test_ollama_local_config_rejects_invalid_execution_caps(

@@ -88,7 +88,7 @@ OLLAMA_FORBIDDEN_LOCAL_CONFIG_FIELDS = frozenset({
     "quantization",
     "allow_unknown_fit",
 })
-VLLM_FORBIDDEN_LOCAL_CONFIG_FIELDS = frozenset({"num_ctx", "num_predict"})
+VLLM_FORBIDDEN_LOCAL_CONFIG_FIELDS = frozenset({"num_ctx", "num_predict", "think"})
 _OLLAMA_RESERVED_CONSTRUCTOR_OPTIONS = (
     OLLAMA_FORBIDDEN_LOCAL_CONFIG_FIELDS
     | {"digest", "modalities", "multi_gpu_support_basis", "dtype"}
@@ -207,6 +207,16 @@ def validate_ollama_num_predict(value: object) -> int:
             f"1..{MAX_OLLAMA_NUM_PREDICT}"
         )
     return value
+
+
+def validate_ollama_think(value: object) -> bool | str:
+    """Return one explicit Ollama thinking policy or reject it."""
+
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str) and value in {"low", "medium", "high"}:
+        return value
+    raise ValueError("think must be boolean or one of low, medium, high")
 
 
 def _strict_bounded_json_bytes(data: bytes) -> Any:
@@ -1061,6 +1071,7 @@ class OllamaTarget(BaseTarget):
         temperature: float = 0.0,
         num_ctx: int = DEFAULT_OLLAMA_NUM_CTX,
         num_predict: int = DEFAULT_OLLAMA_NUM_PREDICT,
+        think: bool | str = False,
         timeout: float = 300.0,
         modality_support: tuple[str, ...] = ("text",),
         media_roots: Optional[Iterable[str | Path]] = None,
@@ -1087,6 +1098,7 @@ class OllamaTarget(BaseTarget):
         self.temperature = temperature
         self.num_ctx = validate_ollama_num_ctx(num_ctx)
         self.num_predict = validate_ollama_num_predict(num_predict)
+        self.think = validate_ollama_think(think)
         self.timeout = timeout
         self._monotonic: Callable[[], float] = time.monotonic
         self._sleep: Callable[[float], None] = time.sleep
@@ -1526,6 +1538,17 @@ class OllamaTarget(BaseTarget):
                     raise LocalTargetAnswerError(
                         "Ollama returned a non-text completion"
                     )
+                thinking = message.get("thinking", "")
+                if not isinstance(thinking, str):
+                    raise LocalTargetAnswerError(
+                        "Ollama returned a non-text thinking field"
+                    )
+                thinking_observed = bool(thinking.strip())
+                if self.think is False and thinking_observed:
+                    raise LocalTargetAnswerError(
+                        "Ollama returned thinking output when think=false",
+                        category="thinking_control_mismatch",
+                    )
                 empty_completion_observed = not bool(text.strip())
                 tokens = self._token_counts(data)
                 post_digest = self._verify_daemon_identity(deadline=deadline)
@@ -1592,7 +1615,9 @@ class OllamaTarget(BaseTarget):
                     "temperature": self.temperature,
                     "num_ctx": self.num_ctx,
                     "num_predict": self.num_predict,
+                    "think": self.think,
                 },
+                "thinking_output_observed": thinking_observed,
             },
         )
 
@@ -1619,6 +1644,7 @@ class OllamaTarget(BaseTarget):
                 "model": self.model,
                 "messages": messages,
                 "options": self._sampling_options(seed),
+                "think": self.think,
                 "stream": False,
             }
         ).encode("utf-8")
@@ -1781,6 +1807,7 @@ __all__ = [
     "make_ollama_target",
     "validate_ollama_num_ctx",
     "validate_ollama_num_predict",
+    "validate_ollama_think",
     "validate_vllm_max_model_len",
     "validate_vllm_max_tokens",
 ]

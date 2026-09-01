@@ -201,6 +201,13 @@ class BuilderModelsMixin:
                     "modalities": list(modalities),
                     "num_ctx": DEFAULT_OLLAMA_NUM_CTX,
                     "num_predict": DEFAULT_OLLAMA_NUM_PREDICT,
+                    "think": (
+                        "low"
+                        if spec.startswith("ollama:gpt-oss:")
+                        and isinstance(model.get("capabilities"), list)
+                        and "thinking" in model["capabilities"]
+                        else False
+                    ),
                 }
         for spec, entry in configured.items():
             if isinstance(entry, dict):
@@ -329,6 +336,20 @@ class BuilderModelsMixin:
             raise ValueError(f"local target {spec!r} {exc}") from exc
 
     @staticmethod
+    def _local_ollama_think(
+        spec: str, entry: Mapping[str, object]
+    ) -> bool | str:
+        """Validate the request-bound Ollama thinking policy."""
+
+        from ura.targets.local import validate_ollama_think  # noqa: PLC0415
+
+        default: bool | str = "low" if spec.startswith("ollama:gpt-oss:") else False
+        try:
+            return validate_ollama_think(entry.get("think", default))
+        except ValueError as exc:
+            raise ValueError(f"local target {spec!r} {exc}") from exc
+
+    @staticmethod
     def _local_gpu_memory_utilization(
         spec: str, entry: Mapping[str, object]
     ) -> float:
@@ -405,6 +426,7 @@ class BuilderModelsMixin:
         BuilderModelsMixin._validated_local_modalities(spec, entry)
         BuilderModelsMixin._local_ollama_num_ctx(spec, entry)
         BuilderModelsMixin._local_ollama_num_predict(spec, entry)
+        BuilderModelsMixin._local_ollama_think(spec, entry)
 
     def _selected_local_config_payload(
         self,
@@ -447,6 +469,7 @@ class BuilderModelsMixin:
             "max_model_len",
             "num_ctx",
             "num_predict",
+            "think",
             "parameter_count_b",
             "multi_gpu_compatible",
             "quantization",
@@ -490,6 +513,7 @@ class BuilderModelsMixin:
                     ),
                     "num_ctx": self._local_ollama_num_ctx(spec, entry),
                     "num_predict": self._local_ollama_num_predict(spec, entry),
+                    "think": self._local_ollama_think(spec, entry),
                 }
                 continue
             from ura.targets.local import (  # noqa: PLC0415

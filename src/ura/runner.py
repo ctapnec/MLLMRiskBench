@@ -78,7 +78,7 @@ from .targets.api import (
 from .modality_coverage import declared_target_combinations
 
 #: Bumped when the orchestration semantics change (recorded in every manifest).
-CODE_VERSION = "ura-runner/2.26"
+CODE_VERSION = "ura-runner/2.27"
 _MAX_SCORED_MEDIA_BYTES = 25 * 1024 * 1024
 #: Video releases legitimately exceed the image/audio bound (Video-SafetyBench
 #: ships ~44 MiB MP4s); mirrors DEFAULT_MAX_VIDEO_ASSET_BYTES converter-side.
@@ -116,6 +116,25 @@ class ExternalCallFailure(RuntimeError):
         self.cause_type = type(cause).__name__
         self.call_audit = _safe_call_audit(call_audit or getattr(cause, "call_audit", None))
         super().__init__(f"{phase} failed ({self.cause_type}): {cause}")
+
+
+class RetainedFailedOutputStop(RuntimeError):
+    """Stop a paid grid after one durably retained unusable target output."""
+
+    phase = "target_output_gate"
+
+    def __init__(self, response: Response) -> None:
+        self.call_audit = {
+            "transport_attempt_count": _transport_attempt_count(response.raw),
+            "logical_call_count": int(response.raw.get("logical_call_count", 1)),
+            "error_type": str(
+                response.raw.get("model_stability_error_type", "TargetAnswerError")
+            )[:512],
+        }
+        super().__init__(
+            "paid target produced no usable final answer; the retained row is "
+            "durable and the grid is stopped for operator investigation"
+        )
 
 
 class GlobalCallBudget:
@@ -319,6 +338,7 @@ class Runner:
         approximate_common_metrics: bool = False,
         approximate_evidence_class: approximate_metrics.ApproximateEvidenceClass = "measured",
         target_answer_retries: int = 1,
+        stop_on_failed_output: bool = False,
     ) -> None:
         self.attacker = attacker
         self.target = target
@@ -342,6 +362,9 @@ class Runner:
         ):
             raise ValueError("target_answer_retries must be an integer in [0, 10]")
         self.target_answer_retries = target_answer_retries
+        if not isinstance(stop_on_failed_output, bool):
+            raise ValueError("stop_on_failed_output must be boolean")
+        self.stop_on_failed_output = stop_on_failed_output
 
         target_evidence_class = getattr(target, "evidence_class", "measured")
         if target_evidence_class not in {"measured", "synthetic"}:
@@ -871,6 +894,11 @@ class Runner:
             # A judge transport overrun is raised only after the complete bundle
             # is durable, so resume cannot repeat the paid judge call.
             self.call_budget.raise_if_overrun()
+        if (
+            self.stop_on_failed_output
+            and response.raw.get("model_stability_status") == "failed_output"
+        ):
+            raise RetainedFailedOutputStop(response)
         return response
 
     def _non_evaluable_setup_outcome(
@@ -6388,6 +6416,7 @@ def _safe_call_audit(value: Any) -> dict[str, Any]:
 
 __all__ = [
     "Runner", "CODE_VERSION", "BudgetExhausted", "ExternalCallFailure",
+    "RetainedFailedOutputStop",
     "GlobalCallBudget", "judgment_trail_projection", "realized_identity_summary",
     "validate_persisted_judgment_trails",
     "validate_planned_realized_identities",

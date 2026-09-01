@@ -43,10 +43,9 @@ from experiments.local_campaign.vllm_stability_phase6 import (
     _validate_descriptor,
     validate_historical_completion,
 )
-from ura.runner import CODE_VERSION
-
-
+from ura.runner import CODE_VERSION as CURRENT_RUNNER_CODE_VERSION
 SCHEMA = "ura-vllm-input-recovery-phase6/1"
+RUNNER_CODE_VERSION = "ura-runner/2.26"
 FAILED_SCHEMA = "ura-vllm-stability-phase6/1"
 FAILED_COMMIT = "bd2faf4e98febfdda01e99bdd6042673f7564bc8"
 FAILED_UNIT = "vllm-stability-gptgeochat-qwen3-vl"
@@ -699,8 +698,10 @@ def validate_phase7_completion(
 
 
 def run(args: argparse.Namespace) -> int:
-    if CODE_VERSION != "ura-runner/2.26":
-        raise ValueError("GPTGeoChat input recovery requires Runner 2.26")
+    if CURRENT_RUNNER_CODE_VERSION != RUNNER_CODE_VERSION:
+        raise ValueError(
+            "GPTGeoChat input recovery is retained historical Runner 2.26 code"
+        )
     if HEX40.fullmatch(args.expected_commit) is None:
         raise ValueError("expected commit must be one lowercase Git object ID")
     project_root = args.project_root.resolve(strict=True)
@@ -750,7 +751,7 @@ def run(args: argparse.Namespace) -> int:
         "started_at_utc": _utc_now(),
         "expected_commit": args.expected_commit,
         "execution_scope_id": args.execution_scope_id,
-        "runner_code_version": CODE_VERSION,
+        "runner_code_version": RUNNER_CODE_VERSION,
         "target_answer_retries": 1,
         "failed_completion": _descriptor(
             args.failed_completion,
@@ -822,7 +823,7 @@ def run(args: argparse.Namespace) -> int:
         "controller_exit_code": 0 if not failures else 1,
         "completed_at_utc": _utc_now(),
         "expected_commit": args.expected_commit,
-        "runner_code_version": CODE_VERSION,
+        "runner_code_version": RUNNER_CODE_VERSION,
         "target_answer_retries": 1,
         "failed_completion": launch["failed_completion"],
         "recovery_selection": launch["recovery_selection"],

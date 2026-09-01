@@ -495,7 +495,11 @@ campaign selects zero answer retries and disables harness transport and SDK
 retries, giving each target and Haiku judgment exactly one application attempt.
 Build sets and locks the answer-retry field to zero for a hosted target, and its
 server validation rejects a nonzero submitted value; local-only selection keeps
-the configurable default of one.
+the configurable default of one. The first retained failed hosted-target output
+or target transport/network failure opens the global `paid_provider` circuit
+before another paid call can start. The operator distinguishes a completed
+empty provider response from interrupted transport before any explicit fresh
+plan and circuit reset; the campaign never resumes paid spending automatically.
 Runner 2.26 also distinguishes a deterministic route input incompatibility from
 model stability. For example, an exact vLLM prompt-length rejection is retained
 as `target_input_status=incompatible`, receives no answer retry or policy-judge
@@ -748,7 +752,7 @@ Runner `RunManifest`; the URA revision that performed their import is retained
 in the return-package/importer context rather than relabelled as an upstream
 native field.
 
-Runner `ura-runner/2.26` writes unified schema `1.5`. Runner 2.19/schema 1.4
+Runner `ura-runner/2.27` writes unified schema `1.5`. Runner 2.19/schema 1.4
 artifacts remain readable only as runtime-free legacy compatibility and are not
 mixed into the current measured cohort. Immutable planning/source
 stratum identity is stored separately from adaptive per-turn evaluation

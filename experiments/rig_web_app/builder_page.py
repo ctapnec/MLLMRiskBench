@@ -723,6 +723,7 @@ class BuilderPageMixin:
                 known_quant_issues: dict[str, str] = {}
                 context_limit = None
                 generation_limit = None
+                thinking_control: bool | str | None = None
                 if private_identity_unavailable:
                     local_config_error = (
                         "private explicit checkpoint has no durable digest identity"
@@ -735,6 +736,9 @@ class BuilderPageMixin:
                             runtime_value, entry
                         )
                         generation_limit = self._local_ollama_num_predict(
+                            runtime_value, entry
+                        )
+                        thinking_control = self._local_ollama_think(
                             runtime_value, entry
                         )
                     except ValueError as exc:
@@ -824,6 +828,12 @@ class BuilderPageMixin:
                     context_text = f"context cap {context_limit:,} tokens"
                     if generation_limit is not None:
                         context_text += f" / output cap {generation_limit:,} tokens"
+                    if thinking_control is not None:
+                        context_text += (
+                            " / thinking disabled"
+                            if thinking_control is False
+                            else f" / thinking {thinking_control}"
+                        )
                 else:
                     context_text = "native model context"
                 # A known non-fit stays disabled. Unknown fit is an explicit UI
@@ -1026,11 +1036,13 @@ class BuilderPageMixin:
             problems: list[str] = []
             context_limit = None
             generation_limit = None
+            thinking_control: bool | str | None = None
             live_entry = live_ollama_by_spec.get(value)
             try:
                 self._validate_ollama_local_entry(value, entry)
                 context_limit = self._local_ollama_num_ctx(value, entry)
                 generation_limit = self._local_ollama_num_predict(value, entry)
+                thinking_control = self._local_ollama_think(value, entry)
             except ValueError as exc:
                 problems.append(str(exc))
             manual = value in explicit_local
@@ -1094,6 +1106,13 @@ class BuilderPageMixin:
                     f"; context cap {context_limit:,} tokens / output cap "
                     f"{generation_limit:,} tokens"
                     if context_limit is not None and generation_limit is not None
+                    else ""
+                )
+                + (
+                    "; thinking disabled"
+                    if thinking_control is False
+                    else f"; thinking {html.escape(str(thinking_control))}"
+                    if thinking_control is not None
                     else ""
                 )
                 + (" - " + html.escape(error) if error else "")
@@ -2412,7 +2431,8 @@ class BuilderPageMixin:
                 "--target-answer-retries",
                 "additional attempts for empty, malformed, binary/control-like, "
                 "or symbol-only output; exhausted answers remain model-stability "
-                "missing responses; local default 1, paid hosted target 0",
+                "missing responses; local default 1; paid hosted target 0 and "
+                "its first failed output or transport failure stops the paid grid",
                 default="1",
                 kind="number",
             )

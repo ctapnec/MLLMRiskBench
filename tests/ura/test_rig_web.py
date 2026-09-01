@@ -1143,6 +1143,7 @@ def test_builder_page_renders_full_surface(tmp_path: Path) -> None:
     assert "id='sample-limit-range'" in text
     assert "id='prepared-ideator'" in text
     assert "addatt" in text  # repeatable receipt rows
+    assert "first failed output or transport failure stops the paid grid" in text
 
 
 def test_attacker_registry_parity_and_full_inventory() -> None:
@@ -3198,6 +3199,7 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
     assert "digest pinned" in ollama_row
     assert "precision is fixed by the pulled Ollama artifact" in ollama_row
     assert "context cap 8,192 tokens / output cap 512 tokens" in ollama_row
+    assert "thinking disabled" in ollama_row
     assert "data-compatible" not in ollama_row
     assert "data-params-b" not in ollama_row
     assert "precision-badge" not in ollama_row
@@ -3211,6 +3213,7 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
             "modalities": ["text"],
             "num_ctx": 8192,
             "num_predict": 512,
+            "think": False,
         }
     }
     from experiments.rig_web_app.ollama_service import OllamaService  # noqa: PLC0415

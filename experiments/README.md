@@ -5,7 +5,7 @@ validity rules, then execute [RUN_AND_RETURN.md](RUN_AND_RETURN.md). A dry run,
 partial artifact family, source conversion, model-name assumption, native prompt
 export, or synthetic figure is not a measured thesis result.
 
-The maintained execution contract is Runner `ura-runner/2.26` with unified
+The maintained execution contract is Runner `ura-runner/2.27` with unified
 schema `1.5`. Runner 2.19/schema 1.4 artifacts remain runtime-free legacy
 compatibility only and are not mixed into the current measured cohort.
 Ignored local/rig engineering logs are operational diagnostics, not committed
@@ -385,7 +385,11 @@ response artifacts remain authoritative.
   hosted campaign instead pins target, harness transport and provider SDK
   retries to 0, so every paid target and Haiku judgment has one attempt. Build
   sets and locks the answer-retry field to 0 whenever a hosted target is
-  selected; server validation rejects a nonzero submitted value.
+  selected; server validation rejects a nonzero submitted value. The first
+  retained failed hosted-target output or target transport/network failure
+  opens the global `paid_provider` circuit before another paid call. An operator
+  must classify and resolve it before a fresh bound plan and explicit circuit
+  reset; paid execution never resumes automatically.
 - Hub acquisition is conditional on the selected resources, not on the mere
   existence of a local target. Static lanes with Hub-backed assets retain the
   exact plan/receipt/store chain. Ollama R-Judge and GPTGeoChat lanes over

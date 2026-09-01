@@ -103,23 +103,27 @@ def test_cleanup_failure_still_closes_every_independent_component(
     assert run_matrix._ACTIVE_MODEL_COMPONENTS == []
 
 
-def test_sigterm_during_cleanup_is_deferred_until_all_teardown_finishes(
+@pytest.mark.parametrize("interrupt_name", ["SIGTERM", "SIGINT"])
+def test_posix_signal_during_cleanup_is_deferred_until_all_teardown_finishes(
     monkeypatch: pytest.MonkeyPatch,
+    interrupt_name: str,
 ) -> None:
     events: list[str] = []
-    installed_handlers: list[object] = []
-    prior_handler = object()
+    installed_handlers: dict[int, object] = {}
+    prior_handlers: dict[int, object] = {}
     sigterm = run_matrix.signal.SIGTERM
+    sigint = run_matrix.signal.SIGINT
+    interrupt = getattr(run_matrix.signal, interrupt_name)
 
     def install_handler(signum: int, handler: object) -> None:
-        assert signum == sigterm
-        installed_handlers.append(handler)
+        assert signum in {sigterm, sigint}
+        installed_handlers[signum] = handler
 
     monkeypatch.setattr(run_matrix, "os", SimpleNamespace(name="posix"))
     monkeypatch.setattr(
         run_matrix.signal,
         "getsignal",
-        lambda signum: prior_handler if signum == sigterm else None,
+        lambda signum: prior_handlers.setdefault(signum, object()),
     )
     monkeypatch.setattr(run_matrix.signal, "signal", install_handler)
 
@@ -134,9 +138,9 @@ def test_sigterm_during_cleanup_is_deferred_until_all_teardown_finishes(
     class SignalledComponent:
         def close(self) -> None:
             events.append("signalled-close-start")
-            handler = installed_handlers[0]
+            handler = installed_handlers[interrupt]
             assert callable(handler)
-            handler(sigterm, None)
+            handler(interrupt, None)
             events.append("signalled-close-end")
 
     def successful(_argv: object) -> int:
@@ -147,14 +151,14 @@ def test_sigterm_during_cleanup_is_deferred_until_all_teardown_finishes(
 
     monkeypatch.setattr(run_matrix, "_main", successful)
 
-    assert run_matrix.main([]) == 128 + sigterm
+    assert run_matrix.main([]) == 128 + interrupt
     assert events == [
         "signalled-close-start",
         "signalled-close-end",
         "older-close",
         "selection-abort",
     ]
-    assert installed_handlers[-1] is prior_handler
+    assert installed_handlers == prior_handlers
     assert run_matrix._ACTIVE_MODEL_COMPONENTS == []
     assert run_matrix._ACTIVE_ENGINE_RUNTIME_SELECTION is None
 
