@@ -1895,6 +1895,15 @@ class BuilderValidationMixin:
         target_answer_retries = require_int("target_answer_retries")
         if target_answer_retries is not None and not 0 <= target_answer_retries <= 10:
             errors["target_answer_retries"] = "must be an integer in [0, 10]"
+        elif (
+            target_answer_retries is not None
+            and target_answer_retries != 0
+            and api
+        ):
+            errors["target_answer_retries"] = (
+                "paid hosted targets allow one application attempt only; set "
+                "additional answer retries to 0"
+            )
         if ideator_requirements is not None:
             available_pairs, selected_pairs = ideator_requirements
             effective_max_queries = 4 if max_queries_value is None else max_queries_value

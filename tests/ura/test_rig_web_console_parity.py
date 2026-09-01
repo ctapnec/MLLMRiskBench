@@ -418,6 +418,8 @@ def test_builder_sampling_control_and_local_wall_time_keep_cli_semantics(
     try:
         fresh = app.handle("GET", "/build")[2].decode("utf-8")
         assert "name='target_answer_retries' value='1'" in fresh
+        assert "syncHostedRetryPolicy" in _BUILDER_SCRIPT
+        assert "input.value='0';input.readOnly=true" in _BUILDER_SCRIPT
         selected = app._build_page(
             prefill={
                 **_DRY_BASE,
@@ -522,6 +524,19 @@ def test_builder_sampling_control_and_local_wall_time_keep_cli_semantics(
                 **_DRY_BASE,
                 "target_answer_retries": allowed,
             })
+        hosted_retry = app._validate_builder({
+            **_DRY_BASE,
+            "api": "anthropic:claude-opus-5",
+            "target_answer_retries": "1",
+        })
+        assert "one application attempt only" in hosted_retry[
+            "target_answer_retries"
+        ]
+        assert "target_answer_retries" not in app._validate_builder({
+            **_DRY_BASE,
+            "api": "anthropic:claude-opus-5",
+            "target_answer_retries": "0",
+        })
         assert "integer in [0, 10]" in app._validate_builder({
             **_DRY_BASE,
             "target_answer_retries": "11",

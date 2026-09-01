@@ -379,7 +379,9 @@ response artifacts remain authoritative.
   identity/seal drift remains terminal. The policy is implemented once in
   Runner and applies identically to vLLM and Ollama targets. The budget-fitted
   hosted campaign instead pins target, harness transport and provider SDK
-  retries to 0, so every paid target and Haiku judgment has one attempt.
+  retries to 0, so every paid target and Haiku judgment has one attempt. Build
+  sets and locks the answer-retry field to 0 whenever a hosted target is
+  selected; server validation rejects a nonzero submitted value.
 - A live receipt matches one exact requested/base-resolved route, secret-free
   route configuration, execution scope, modality combination and observation
   time. Text+image is not a substitute for text. Synthetic live text and

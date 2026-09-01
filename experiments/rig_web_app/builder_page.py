@@ -2412,7 +2412,7 @@ class BuilderPageMixin:
                 "--target-answer-retries",
                 "additional attempts for empty, malformed, binary/control-like, "
                 "or symbol-only output; exhausted answers remain model-stability "
-                "missing responses",
+                "missing responses; local default 1, paid hosted target 0",
                 default="1",
                 kind="number",
             )

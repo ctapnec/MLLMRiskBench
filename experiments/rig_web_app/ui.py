@@ -717,6 +717,12 @@ function syncIdeatorPairLimit(){
  var requested=parseInt(raw,10);var selected=requested===0?available:Math.min(requested,available);
  status.textContent=selected+' selected of '+available+' verified pairs in manifest order'+
  (requested>available?' (requested limit exceeds the inventory)':'')+'.';}
+function syncHostedRetryPolicy(){
+ var input=form.elements.namedItem('target_answer_retries');if(!input){return;}
+ var hosted=checkedKind('api','data-model').length>0;
+ if(hosted){input.value='0';input.readOnly=true;
+ input.title='Paid hosted targets use one application attempt.';}
+ else{input.readOnly=false;input.removeAttribute('title');}}
 var samplePanel=document.getElementById('sample-size-control');
 var sampleRange=document.getElementById('sample-limit-range');
 var sampleNumber=document.getElementById('sample-limit-number');
@@ -898,6 +904,7 @@ if(out){out.textContent=value;}}
 function refresh(){rememberPickerSelection();updateUnknownPrecisionBadges();
 applyScope();applyPreparedFields();
 syncIdeatorPairLimit();
+syncHostedRetryPolicy();
 syncSampleSizeControl();
 updateSelectionSummaries();
 // live preview

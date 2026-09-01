@@ -471,7 +471,9 @@ permits altered stops, generation caps, checkpoint identity or decoding. The
 failed-output mechanism is provider-neutral. The current local campaign pins
 one answer retry for vLLM and Ollama. The budget-fitted hosted campaign pins
 answer, harness transport and provider SDK retries to 0, so paid targets and
-Haiku judgments receive exactly one application attempt.
+Haiku judgments receive exactly one application attempt. Build sets and locks
+the answer-retry field to 0 whenever a hosted target is selected, and server
+validation rejects a nonzero submitted value.
 Runner 2.26 separately retains an exact deterministic target-input rejection as
 `target_input_status=incompatible`. It makes no answer retry for the unchanged
 input, does not query the policy judge, records missing-response coverage, and

@@ -470,16 +470,20 @@ and requires the configured minimum correct counts. It produces engineering
 admission evidence, not a safety metric. A failed model is recorded and any
 replacement is admitted as a new exact model condition.
 Once admitted, a generative model's assigned evaluation does not terminate for
-one empty or deterministically unusable answer. Runner defaults to one retry
-after the initial call (`--target-answer-retries 1`). An exhausted row is
+one empty or deterministically unusable answer. The local campaign uses one
+retry after the initial call (`--target-answer-retries 1`). An exhausted row is
 checkpointed as a model-stability failed output, excluded from decided security-
 rate denominators, shown in missing-response coverage and followed by the next
 assigned row. The Build page exposes the same 0 through 10 control and Stats
 charts the failed-output rate. Identity/seal drift and explicit call/time caps
 remain terminal.
-This is one provider-neutral Runner policy: hosted targets, local vLLM and local
-Ollama use the same selected retry count, accounting, checkpoint and stability
-categories.
+The detector, accounting, checkpoint and stability categories are
+provider-neutral, but retry count is an experiment condition. The funded hosted
+campaign selects zero answer retries and disables harness transport and SDK
+retries, giving each target and Haiku judgment exactly one application attempt.
+Build sets and locks the answer-retry field to zero for a hosted target, and its
+server validation rejects a nonzero submitted value; local-only selection keeps
+the configurable default of one.
 Runner 2.26 also distinguishes a deterministic route input incompatibility from
 model stability. For example, an exact vLLM prompt-length rejection is retained
 as `target_input_status=incompatible`, receives no answer retry or policy-judge

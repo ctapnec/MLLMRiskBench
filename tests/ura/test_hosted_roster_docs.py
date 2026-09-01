@@ -602,12 +602,19 @@ def test_hosted_follow_on_is_a_no_retry_local_input_subset() -> None:
     cost = (
         _ROOT / "experiments" / "HOSTED_CAMPAIGN_COST_ASSESSMENT.md"
     ).read_text(encoding="utf-8")
-    combined = "\n".join((plan, protocol, runbook, cost))
+    project_readme = (_ROOT / "README.md").read_text(encoding="utf-8")
+    experiment_readme = (_ROOT / "experiments" / "README.md").read_text(
+        encoding="utf-8"
+    )
+    combined = "\n".join(
+        (plan, protocol, runbook, cost, project_readme, experiment_readme)
+    )
     required = (
         "target_answer_retries is 0",
         "harness transport max_retries is 0",
         "--target-answer-retries 0",
         "provider SDK retries are disabled",
+        "Build sets and locks",
         "at most 50 percent",
         "2,000 selected local",
         "2,000 selected hosted",
@@ -624,6 +631,7 @@ def test_hosted_follow_on_is_a_no_retry_local_input_subset() -> None:
         assert "There is no retry reserve" in value
         assert "Retry-reserved target USD" not in value
         assert "retry-use model-stability rates" not in value
+        assert "use the same selected retry count" not in value
         for target, limit in (
             ("Claude Fable 5", 1),
             ("Claude Opus 5", 3),
