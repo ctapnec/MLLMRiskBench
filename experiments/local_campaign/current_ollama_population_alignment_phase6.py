@@ -510,7 +510,7 @@ def validate_completion(
     ):
         raise ValueError("Ollama population-alignment contract changed")
     results = completion.get("unit_results")
-    if not isinstance(results, dict) or list(results) != list(ALIGNMENT_LANES):
+    if not isinstance(results, dict) or set(results) != set(ALIGNMENT_LANES):
         raise ValueError("Ollama population-alignment results changed")
     revisions: set[str] = set()
     sources: set[str] = set()

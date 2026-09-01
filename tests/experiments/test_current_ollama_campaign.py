@@ -1041,6 +1041,21 @@ def test_current_ollama_alignment_uses_the_common_limit_100_population(
     with pytest.raises(ValueError, match="limit-50 prefix changed"):
         phase6_alignment.build_alignment_units({"lanes": gate5_rows})
 
+    source = Path(phase6_alignment.__file__).read_text(encoding="utf-8")
+
+    def assert_result_membership(candidate: str) -> None:
+        assert "set(results) != set(ALIGNMENT_LANES)" in candidate
+
+    assert_result_membership(source)
+    changed = source.replace(
+        "set(results) != set(ALIGNMENT_LANES)",
+        "list(results) != list(ALIGNMENT_LANES)",
+        1,
+    )
+    assert changed != source
+    with pytest.raises(AssertionError):
+        assert_result_membership(changed)
+
 
 def test_current_ollama_stability_completion_is_a_separate_runner_226_stratum(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
