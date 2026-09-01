@@ -578,16 +578,20 @@ population coverage and retains separate revision strata for all rates.
 
 Phase 7 requires that current-Ollama stability completion, the exact terminal
 seven-unit vLLM stability completion, and its one-unit GPTGeoChat input recovery.
+It also requires the terminal six failed-output recovery units through
+`--phase6-failed-output-recovery-completion`.
 The six completed Runner 2.25 units and one Runner 2.26 missing-only suffix are
 separate metric strata; the failed 375-row prefix remains lifecycle evidence.
 Pass the terminal controller through `--phase6-vllm-stability-completion` and
 the create-only suffix completion through
 `--phase6-vllm-input-recovery-completion`; the validator requires the latter to
 bind the former byte-for-byte.
-Its plan-owned terminal inventory has 109 logical rows after population
-alignment: 46 canonical, four output-policy amendment, three follow-on, 14
+Its plan-owned terminal inventory has 115 logical rows after population
+alignment and failed-output recovery: 46 canonical, four output-policy
+amendment, three follow-on, 14
 historical current-Ollama, 14 current-Ollama stability, 12 current-Ollama
-population-alignment, seven vLLM stability and nine native. The analysis
+population-alignment, six failed-output recovery, seven vLLM stability and nine
+native. The analysis
 self-test, Phase 8 frozen replay and Stats adapter
 all reject an omitted cohort, a changed terminal state or any cross-policy
 pooling. These counts describe this local campaign only; they are not generic

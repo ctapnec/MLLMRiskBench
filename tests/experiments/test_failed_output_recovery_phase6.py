@@ -5,10 +5,24 @@ import json
 import pytest
 
 from experiments.local_campaign.failed_output_recovery_phase6 import (
+    EXPECTED_RECOVERY_COUNTS,
+    EXPECTED_RECOVERY_ROWS,
+    EXPECTED_UNIT_ORDER,
+    ORIGINAL_UNIT_ORDER,
     _durable_outcomes,
     build_completed_selection,
 )
 from ura.data_models import SCHEMA_VERSION
+
+
+def test_phase7_recovery_inventory_is_the_exact_six_unit_proof() -> None:
+    assert len(ORIGINAL_UNIT_ORDER) == len(EXPECTED_UNIT_ORDER) == 6
+    assert EXPECTED_RECOVERY_COUNTS == (1223, 555, 323, 18, 1674, 20)
+    assert EXPECTED_RECOVERY_ROWS == 3813
+    assert EXPECTED_UNIT_ORDER == tuple(
+        f"failed-output-recovery-{index:02d}-{original[:52]}"
+        for index, original in enumerate(ORIGINAL_UNIT_ORDER, 1)
+    )
 
 
 def test_selector_replays_only_failed_and_never_attempted_rows() -> None:

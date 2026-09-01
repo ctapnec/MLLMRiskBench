@@ -197,6 +197,13 @@ def _terminal_inventory() -> dict[str, object]:
             "7" * 64,
             "f" * 64,
         ),
+        (
+            "failed_output_recovery",
+            6,
+            "measured_complete",
+            "8" * 64,
+            "9" * 64,
+        ),
         ("vllm_stability", 7, "measured_complete", "6" * 64, "e" * 64),
         ("native", 9, "run", "4" * 64, "not_applicable"),
     )
@@ -222,7 +229,7 @@ def _terminal_inventory() -> dict[str, object]:
             project_strata.setdefault(revision, []).append(key)
             source_strata.setdefault(source, []).append(key)
     return {
-        "schema": "ura-phase6-campaign-terminal-inventory/4",
+        "schema": "ura-phase6-campaign-terminal-inventory/5",
         "status": "complete",
         "cohort_order": [row[0] for row in cohorts],
         "cohort_counts": {row[0]: row[1] for row in cohorts},
@@ -481,7 +488,7 @@ def _sealed_chain(
     )
     campaign_inventory_value = _terminal_inventory()
     inputs = {
-        "schema": "ura-phase7-analysis-inputs/4",
+        "schema": "ura-phase7-analysis-inputs/5",
         "inventory_complete": True,
         "scope": "all_local_phase7_read_only_analysis_over_phase6_lifecycle",
         "code_identity": {"expected_commit": COMMIT, "framework_lock_id": input_lock},
@@ -557,6 +564,19 @@ def _sealed_chain(
                 "extension_rows": 11600,
             },
         },
+        "failed_output_recovery": {
+            "terminal_states": {
+                "failed-output-recovery-lane": "measured_complete"
+            },
+            "revision_strata": {
+                "8" * 64: ["failed-output-recovery-lane"]
+            },
+            "target_execution": {
+                "target_attempts": 1,
+                "successful_target_generations": 1,
+                "missing_responses": 0,
+            },
+        },
         "vllm_stability": {
             "terminal_states": {"vllm-lane": "measured_complete"},
             "revision_strata": {"6" * 64: ["vllm-lane"]},
@@ -596,7 +616,7 @@ def _sealed_chain(
 
     prepare_result = {
         "status": "prepared",
-        "schema": "ura-phase7-analysis-inputs/4",
+        "schema": "ura-phase7-analysis-inputs/5",
         "output": (
             str(watcher / "wrong-input.json")
             if mutation == "prepare_result_output"
@@ -608,7 +628,7 @@ def _sealed_chain(
         "runner_lanes": 2,
         "metric_runner_lanes": 2,
         "native_outcomes": {"native-lane": "run"},
-        "campaign_terminal_rows": 109,
+        "campaign_terminal_rows": 115,
         "campaign_terminal_status": "complete",
         "authorization_required_before_launch": True,
     }
@@ -803,7 +823,7 @@ def _sealed_chain(
     )
     controller.update(
         {
-            "schema": "ura-phase7-analysis-completion/4",
+            "schema": "ura-phase7-analysis-completion/5",
             "status": completion_status,
             "inventory_complete": True,
             "input_manifest": _descriptor(control_input),
@@ -866,6 +886,15 @@ def _sealed_chain(
                     "population_alignment"
                 ]
             ),
+            "failed_output_recovery_terminal_states": inputs[
+                "failed_output_recovery"
+            ]["terminal_states"],
+            "failed_output_recovery_metric_revision_strata": inputs[
+                "failed_output_recovery"
+            ]["revision_strata"],
+            "failed_output_recovery_target_execution": inputs[
+                "failed_output_recovery"
+            ]["target_execution"],
             "vllm_stability_terminal_states": inputs["vllm_stability"][
                 "terminal_states"
             ],
@@ -951,7 +980,9 @@ def test_phase7_watcher_chain_binds_reports_and_rejects_mutated_output(
     assert [report.kind for report in bundle.reports] == [
         "terminal_inventory",
         "level1", "level1", "level1", "level1", "level1", "level1",
+        "level1",
         "level2", "level2", "level2", "level2", "level2", "level2",
+        "level2",
     ]
     assert [report.display_name for report in bundle.reports] == [
         "campaign-terminal-inventory.json",
@@ -961,12 +992,14 @@ def test_phase7_watcher_chain_binds_reports_and_rejects_mutated_output(
         "lifecycle-strata/555555555555-dddddddddddd/level1-evidence.json",
         "lifecycle-strata/666666666666-eeeeeeeeeeee/level1-evidence.json",
         "lifecycle-strata/777777777777-ffffffffffff/level1-evidence.json",
+        "lifecycle-strata/888888888888-999999999999/level1-evidence.json",
         "metric-strata/111111111111-aaaaaaaaaaaa/level2-report.json",
         "metric-strata/222222222222-bbbbbbbbbbbb/level2-report.json",
         "metric-strata/333333333333-cccccccccccc/level2-report.json",
         "metric-strata/555555555555-dddddddddddd/level2-report.json",
         "metric-strata/666666666666-eeeeeeeeeeee/level2-report.json",
         "metric-strata/777777777777-ffffffffffff/level2-report.json",
+        "metric-strata/888888888888-999999999999/level2-report.json",
     ]
     assert bundle.expected_commit == COMMIT
     phase6_completion = json.loads(
@@ -1088,7 +1121,7 @@ def test_stats_links_sealed_phase7_reports_to_watcher_campaign(
     assert "Registered external analysis" in detail_text
     assert "does not grant thesis-evidence authority" in detail_text
     assert "Campaign terminal rows" in detail_text
-    assert "109 terminal campaign rows; 0 failure rows" in detail_text
+    assert "115 terminal campaign rows; 0 failure rows" in detail_text
     assert "Rows by cohort" in detail_text
     assert "Rows by terminal state" in detail_text
     assert "Failure accounting" in detail_text
@@ -1098,6 +1131,7 @@ def test_stats_links_sealed_phase7_reports_to_watcher_campaign(
     assert "current ollama" in detail_text and ">14<" in detail_text
     assert "current ollama stability" in detail_text and ">14<" in detail_text
     assert "current ollama population alignment" in detail_text and ">12<" in detail_text
+    assert "failed output recovery" in detail_text and ">6<" in detail_text
     assert "vllm stability" in detail_text and ">7<" in detail_text
     assert "native" in detail_text and ">9<" in detail_text
     assert "1" * 64 in detail_text

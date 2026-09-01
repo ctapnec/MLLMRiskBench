@@ -890,7 +890,7 @@ def test_phase8_rejects_structural_mixed_proxy_partition_defects(
 def test_phase8_capacity_reserves_exact_twenty_disjoint_clusters(
     phase8: ModuleType,
 ) -> None:
-    assert phase8.INPUT_SCHEMA == "ura-phase8-human-audit-inputs/3"
+    assert phase8.INPUT_SCHEMA == "ura-phase8-human-audit-inputs/5"
     exact = phase8.plan_phase8_capacity(
         common_available_unique_clusters=21,
         source_task_available_unique_clusters=1,

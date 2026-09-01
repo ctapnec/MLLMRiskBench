@@ -70,6 +70,49 @@ HEX40 = re.compile(r"[0-9a-f]{40}\Z")
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 DEEPSEEK_UNIT = "ollama-deepseek-r1-distill-32b-text-primary-100-extension"
 LLAVA_UNIT = "vllm-stability-llava-base-airbench-suffix"
+ORIGINAL_UNIT_ORDER = (
+    "ollama-gemma4-12b-text-primary-100-extension",
+    "ollama-gemma4-12b-image-primary-100-extension",
+    "ollama-gpt-oss-20b-text-primary-100-extension",
+    "ollama-ministral3-14b-image-primary-100-extension",
+    DEEPSEEK_UNIT,
+    LLAVA_UNIT,
+)
+EXPECTED_RECOVERY_COUNTS = (1223, 555, 323, 18, 1674, 20)
+EXPECTED_UNIT_ORDER = tuple(
+    f"failed-output-recovery-{index:02d}-{original[:52]}"
+    for index, original in enumerate(ORIGINAL_UNIT_ORDER, 1)
+)
+EXPECTED_RECOVERY_ROWS = sum(EXPECTED_RECOVERY_COUNTS)
+RESULT_FIELDS = {
+    "status",
+    "unit_id",
+    "source_lane",
+    "corpus",
+    "selected_records",
+    "target_answer_retries",
+    "target_call_cap",
+    "target_attempts",
+    "successful_target_generations",
+    "missing_responses",
+    "result_root",
+    "state",
+    "level1",
+    "original_unit_id",
+}
+STATE_FIELDS = {
+    "schema",
+    "unit_id",
+    "source_lane",
+    "corpus",
+    "selected_records",
+    "target_answer_retries",
+    "target_call_cap",
+    "attestation",
+    "projection",
+    "result_root",
+    "runner_argv",
+}
 
 
 def _utc_now() -> str:
@@ -442,12 +485,7 @@ def _prepare_units(
         raise ValueError("Ollama base result inventory changed")
 
     sources: list[tuple[Unit, Path, bool, str]] = []
-    for original in (
-        "ollama-gemma4-12b-text-primary-100-extension",
-        "ollama-gemma4-12b-image-primary-100-extension",
-        "ollama-gpt-oss-20b-text-primary-100-extension",
-        "ollama-ministral3-14b-image-primary-100-extension",
-    ):
+    for original in ORIGINAL_UNIT_ORDER[:4]:
         state_path = _validate_descriptor(
             results[original]["state"], label=f"{original} source state"
         )
@@ -504,6 +542,314 @@ def _prepare_units(
             (unit, selector, digest, snapshot, hub_required, original)
         )
     return prepared
+
+
+def _validate_metric_result(
+    result: object,
+    *,
+    physical_unit: str,
+    original_unit: str,
+    selected_records: int,
+    runner_root: Path,
+    control_root: Path,
+    completion: Mapping[str, object],
+) -> dict[str, Any]:
+    if not isinstance(result, dict) or set(result) != RESULT_FIELDS:
+        raise ValueError(f"{physical_unit} recovery result contract changed")
+    successful = result.get("successful_target_generations")
+    missing = result.get("missing_responses")
+    source_lane = result.get("source_lane")
+    corpus = result.get("corpus")
+    if (
+        result.get("status") != "complete"
+        or result.get("unit_id") != physical_unit
+        or result.get("original_unit_id") != original_unit
+        or not isinstance(source_lane, str)
+        or not source_lane
+        or (corpus is not None and not isinstance(corpus, str))
+        or result.get("selected_records") != selected_records
+        or result.get("target_answer_retries") != 1
+        or result.get("target_call_cap") != selected_records * 2
+        or result.get("target_attempts") != selected_records
+        or isinstance(successful, bool)
+        or not isinstance(successful, int)
+        or successful < 0
+        or isinstance(missing, bool)
+        or not isinstance(missing, int)
+        or missing < 0
+        or successful + missing != selected_records
+    ):
+        raise ValueError(f"{physical_unit} recovery accounting changed")
+
+    result_root = Path(str(result.get("result_root", "")))
+    expected_root = runner_root / physical_unit / control_root.name
+    if (
+        not result_root.is_absolute()
+        or result_root.is_symlink()
+        or result_root.resolve(strict=True) != expected_root
+    ):
+        raise ValueError(f"{physical_unit} recovery result root changed")
+    state_path = _validate_descriptor(
+        result.get("state"), label=f"{physical_unit} state"
+    )
+    level1_path = _validate_descriptor(
+        result.get("level1"), label=f"{physical_unit} Level 1 evidence"
+    )
+    expected_unit_root = control_root / "units" / physical_unit
+    if (
+        state_path != expected_unit_root / "state.json"
+        or level1_path != expected_unit_root / "level1.json"
+    ):
+        raise ValueError(f"{physical_unit} recovery artifact placement changed")
+
+    grids = sorted(result_root.glob("*.grid.json"))
+    envelopes = sorted(result_root.glob("*.request-envelope.json"))
+    eligibility = sorted(result_root.glob("eligibility-*.eligibility.json"))
+    markers = sorted(result_root.glob("*.complete.json"))
+    if (
+        len(grids) != 1
+        or len(envelopes) != 1
+        or len(eligibility) != 1
+        or not markers
+    ):
+        raise ValueError(f"{physical_unit} completed Runner artifacts changed")
+
+    state = _load_json(state_path, label=f"{physical_unit} state")
+    argv = state.get("runner_argv")
+    if (
+        set(state) != STATE_FIELDS
+        or state.get("schema") != UNIT_STATE_SCHEMA
+        or state.get("unit_id") != physical_unit
+        or state.get("source_lane") != source_lane
+        or state.get("corpus") != corpus
+        or state.get("selected_records") != selected_records
+        or state.get("target_answer_retries") != 1
+        or state.get("target_call_cap") != selected_records * 2
+        or state.get("result_root") != str(result_root)
+        or not isinstance(argv, list)
+        or any(not isinstance(item, str) for item in argv)
+        or _option(argv, "--target-answer-retries") != "1"
+    ):
+        raise ValueError(f"{physical_unit} measured state changed")
+    selector_path = Path(_option(argv, "--recovery-completed-prefix"))
+    selector_sha = _option(argv, "--recovery-completed-prefix-sha256")
+    expected_selector = control_root / "inputs" / f"{physical_unit}.json"
+    if (
+        selector_path != expected_selector
+        or hashlib.sha256(
+            _stable_file(selector_path, label=f"{physical_unit} recovery selector")
+        ).hexdigest()
+        != selector_sha
+    ):
+        raise ValueError(f"{physical_unit} recovery selector binding changed")
+    selector = _load_json(selector_path, label=f"{physical_unit} recovery selector")
+    corpora = selector.get("corpora") if isinstance(selector, dict) else None
+    if (
+        selector.get("schema") != "ura-recovery-completed-selection/1"
+        or not isinstance(corpora, dict)
+        or not corpora
+    ):
+        raise ValueError(f"{physical_unit} recovery selector contract changed")
+    revision = _option(argv, "--project-revision-sha256")
+    source = _option(argv, "--source-conformance-sha256")
+    if HEX64.fullmatch(revision) is None or HEX64.fullmatch(source) is None:
+        raise ValueError(f"{physical_unit} project/source stratum changed")
+    evidence = {
+        "completion": dict(completion),
+        "physical_unit_id": physical_unit,
+        "original_unit_id": original_unit,
+        "grid": _descriptor(grids[0], label=f"{physical_unit} measured grid"),
+        "request_envelope": _descriptor(
+            envelopes[0], label=f"{physical_unit} request envelope"
+        ),
+        "eligibility_plan": _descriptor(
+            eligibility[0], label=f"{physical_unit} eligibility plan"
+        ),
+        "completion_markers": [
+            _descriptor(marker, label=f"{physical_unit} completion marker")
+            for marker in markers
+        ],
+        "state": dict(result["state"]),
+        "level1": dict(result["level1"]),
+    }
+    return {
+        "revision": revision,
+        "source": source,
+        "root": str(result_root),
+        "evidence": evidence,
+        "grid": evidence["grid"],
+        "eligibility_plan": evidence["eligibility_plan"],
+        "completion_markers": evidence["completion_markers"],
+        "successful": successful,
+        "missing": missing,
+    }
+
+
+def validate_phase7_completion(
+    completion_path: Path,
+    *,
+    runner_root: Path,
+) -> dict[str, Any]:
+    """Validate the exact six Runner 2.27 recovery strata for Phase 7."""
+
+    resolved = completion_path.resolve(strict=True)
+    runner_root = runner_root.resolve(strict=True)
+    completion = _load_json(resolved, label="failed-output recovery completion")
+    fields = {
+        "schema",
+        "status",
+        "controller_exit_code",
+        "completed_at_utc",
+        "expected_commit",
+        "runner_code_version",
+        "target_answer_retries",
+        "launch",
+        "input_snapshot",
+        "unit_order",
+        "unit_results",
+        "unit_failures",
+        "target_execution",
+        "successful_rows_repeated",
+        "input_incompatible_rows_retried",
+        "cross_revision_pooling_permitted",
+        "paid_provider_calls",
+    }
+    if (
+        set(completion) != fields
+        or completion.get("schema") != SCHEMA
+        or completion.get("status") != "complete"
+        or completion.get("controller_exit_code") != 0
+        or HEX40.fullmatch(str(completion.get("expected_commit", ""))) is None
+        or completion.get("runner_code_version") != "ura-runner/2.27"
+        or completion.get("target_answer_retries") != 1
+        or completion.get("unit_order") != list(EXPECTED_UNIT_ORDER)
+        or completion.get("unit_failures") != {}
+        or completion.get("successful_rows_repeated") != 0
+        or completion.get("input_incompatible_rows_retried") != 0
+        or completion.get("cross_revision_pooling_permitted") is not False
+        or completion.get("paid_provider_calls") != 0
+    ):
+        raise ValueError("failed-output recovery completion contract changed")
+    control_root = resolved.parent
+    if (
+        control_root.is_symlink()
+        or control_root.resolve(strict=True) != control_root
+        or control_root.parent.name != "engineering"
+    ):
+        raise ValueError("failed-output recovery control root is not canonical")
+    launch_path = _validate_descriptor(
+        completion.get("launch"), label="failed-output recovery launch"
+    )
+    snapshot_path = _validate_descriptor(
+        completion.get("input_snapshot"), label="failed-output recovery snapshot"
+    )
+    launch = _load_json(launch_path, label="failed-output recovery launch")
+    snapshot = _load_json(snapshot_path, label="failed-output recovery snapshot")
+    if (
+        launch_path != control_root / "launch.json"
+        or snapshot_path != control_root / "input-snapshot.json"
+        or launch.get("schema") != LAUNCH_SCHEMA
+        or launch.get("runner_code_version") != "ura-runner/2.27"
+        or launch.get("target_answer_retries") != 1
+        or launch.get("unit_order") != list(EXPECTED_UNIT_ORDER)
+        or launch.get("recovery_records") != EXPECTED_RECOVERY_ROWS
+        or launch.get("successful_rows_repeated") != 0
+        or launch.get("input_incompatible_rows_retried") != 0
+        or launch.get("paid_provider_calls") != 0
+        or snapshot.get("schema") != SNAPSHOT_SCHEMA
+        or snapshot.get("recovery_records") != EXPECTED_RECOVERY_ROWS
+        or snapshot.get("successful_rows_repeated") != 0
+        or snapshot.get("input_incompatible_rows_retried") != 0
+        or not isinstance(snapshot.get("units"), dict)
+        or set(snapshot["units"]) != set(EXPECTED_UNIT_ORDER)
+    ):
+        raise ValueError("failed-output recovery launch or snapshot changed")
+
+    results = completion.get("unit_results")
+    if not isinstance(results, dict) or set(results) != set(EXPECTED_UNIT_ORDER):
+        raise ValueError("failed-output recovery result inventory changed")
+    completion_descriptor = _descriptor(
+        resolved, label="failed-output recovery completion"
+    )
+    metric_roots: dict[str, str] = {}
+    metric_evidence: dict[str, dict[str, object]] = {}
+    metric_grids: list[dict[str, object]] = []
+    metric_eligibility_plans: list[dict[str, object]] = []
+    metric_completion_markers: list[dict[str, object]] = []
+    revisions: set[str] = set()
+    sources: set[str] = set()
+    successful = 0
+    missing = 0
+    for physical, original, selected in zip(
+        EXPECTED_UNIT_ORDER,
+        ORIGINAL_UNIT_ORDER,
+        EXPECTED_RECOVERY_COUNTS,
+        strict=True,
+    ):
+        snapshot_unit = snapshot["units"].get(physical)
+        summary = snapshot_unit.get("summary") if isinstance(snapshot_unit, dict) else None
+        if (
+            not isinstance(snapshot_unit, dict)
+            or snapshot_unit.get("original_unit_id") != original
+            or not isinstance(summary, dict)
+            or summary.get("recovery_records") != selected
+        ):
+            raise ValueError(f"{physical} input snapshot changed")
+        validated = _validate_metric_result(
+            results.get(physical),
+            physical_unit=physical,
+            original_unit=original,
+            selected_records=selected,
+            runner_root=runner_root,
+            control_root=control_root,
+            completion=completion_descriptor,
+        )
+        revisions.add(str(validated["revision"]))
+        sources.add(str(validated["source"]))
+        metric_roots[physical] = str(validated["root"])
+        metric_evidence[physical] = dict(validated["evidence"])
+        metric_grids.append(dict(validated["grid"]))
+        metric_eligibility_plans.append(dict(validated["eligibility_plan"]))
+        metric_completion_markers.extend(validated["completion_markers"])
+        successful += int(validated["successful"])
+        missing += int(validated["missing"])
+    target_execution = completion.get("target_execution")
+    if (
+        target_execution
+        != {
+            "target_attempts": EXPECTED_RECOVERY_ROWS,
+            "successful_target_generations": successful,
+            "missing_responses": missing,
+        }
+        or successful + missing != EXPECTED_RECOVERY_ROWS
+        or len(revisions) != 1
+        or len(sources) != 1
+    ):
+        raise ValueError("failed-output recovery aggregate accounting changed")
+    revision = next(iter(revisions))
+    return {
+        "completion": completion_descriptor,
+        "runner_code_version": "ura-runner/2.27",
+        "output_policy_stratum": "runner_227_failed_output_recovery",
+        "unit_order": list(EXPECTED_UNIT_ORDER),
+        "original_unit_order": list(ORIGINAL_UNIT_ORDER),
+        "terminal_states": {
+            unit: "measured_complete" for unit in EXPECTED_UNIT_ORDER
+        },
+        "metric_lane_order": list(EXPECTED_UNIT_ORDER),
+        "metric_roots": metric_roots,
+        "metric_evidence": metric_evidence,
+        "metric_grids": metric_grids,
+        "metric_eligibility_plans": metric_eligibility_plans,
+        "metric_completion_markers": metric_completion_markers,
+        "revision_strata": {revision: list(EXPECTED_UNIT_ORDER)},
+        "project_revision_receipt_sha256": revision,
+        "source_conformance_sha256": next(iter(sources)),
+        "target_execution": dict(target_execution),
+        "successful_rows_repeated": 0,
+        "input_incompatible_rows_retried": 0,
+        "cross_revision_pooling_permitted": False,
+    }
 
 
 def run(args: argparse.Namespace) -> int:

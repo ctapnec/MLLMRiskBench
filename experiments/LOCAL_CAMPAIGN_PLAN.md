@@ -1051,7 +1051,8 @@ contains 97 logical rows: 46 canonical, four output-policy amendment, three
 follow-on, 14 historical current-Ollama, 14 current-Ollama stability, seven
 vLLM stability and nine native. The population-alignment amendment adds 12
 current-Ollama population-alignment logical extension rows, giving 109. The six
-Runner 2.27 failed-output recovery units give a final terminal inventory of 115.
+failed-output recovery units use Runner 2.27 and give a final terminal inventory
+of 115.
 The
 contract self-test rejects any
 other count or cohort partition.
