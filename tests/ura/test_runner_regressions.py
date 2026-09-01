@@ -6681,6 +6681,47 @@ def test_runner_retains_exhausted_answer_failures_and_completes_population() -> 
     )
 
 
+def test_runner_retains_verified_identity_when_answer_retries_exhausted() -> None:
+    class VerifiedEmptyTarget(_RecordingTarget):
+        def generate(
+            self, dialog: list[DialogTurn], *, seed: int | None = None
+        ) -> Response:
+            self._dialogs.append(list(dialog))
+            self._seeds.append(seed)
+            return Response(
+                attempt_id="placeholder",
+                target=self.name,
+                output_turns=[],
+                raw={
+                    "backend": "ollama",
+                    "model": "fixture-model",
+                    "resolved_model": "fixture-model",
+                    "model_digest": "a" * 64,
+                    "verified_model_digest": "a" * 64,
+                    "model_identity_verified": True,
+                    "empty_completion_observed": True,
+                    "target_sampling_control": "local_seed",
+                    "requested_seed": seed,
+                },
+            )
+
+    target = VerifiedEmptyTarget()
+    runner = _runner(_FloodAttacker(), target)
+
+    _judgments, manifest = runner.run([_datapoint("verified-empty")])
+
+    assert len(target._dialogs) == 2
+    response = runner.responses[0]
+    assert response.raw["model_stability_status"] == "failed_output"
+    assert response.raw["target_identity_observed"] is True
+    assert response.raw["resolved_model"] == "fixture-model"
+    assert response.raw["model_digest"] == "a" * 64
+    realized = manifest.config["realized_identities"]["target"]
+    assert realized["observations"] == 1
+    assert realized["snapshot"]["resolved_model"] == "fixture-model"
+    assert realized["snapshot"]["model_digest"] == "a" * 64
+
+
 def test_runner_keeps_target_integrity_failure_terminal_without_retry() -> None:
     class DriftedIdentity(_RecordingTarget):
         def generate(

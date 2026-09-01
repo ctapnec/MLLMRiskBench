@@ -1155,6 +1155,7 @@ class Runner:
         """Query the target and guarantee the response is linked to the attempt."""
         http_exposure = _target_http_exposure(self.target)
         failures: list[dict[str, Any]] = []
+        failed_identity: Optional[dict[str, str]] = None
         for call_number in range(1, self.target_answer_retries + 2):
             if self.call_budget is not None:
                 self.call_budget.charge_target(http_exposure=http_exposure)
@@ -1167,6 +1168,11 @@ class Runner:
                 quality_failure = _obvious_model_output_failure(response)
                 if quality_failure is None:
                     if failures:
+                        _merge_identity_snapshot(
+                            failed_identity,
+                            _target_identity_snapshot(response),
+                            context="target answer retry",
+                        )
                         response = response.model_copy(update={
                             "raw": {
                                 **response.raw,
@@ -1179,6 +1185,11 @@ class Runner:
                         })
                     break
                 category, reason = quality_failure
+                failed_identity = _merge_identity_snapshot(
+                    failed_identity,
+                    _target_identity_snapshot(response),
+                    context="target answer retry",
+                )
                 answer_error = TargetAnswerError(reason, category=category)
                 failed_response = response
             except TargetIntegrityError as exc:
@@ -1255,6 +1266,11 @@ class Runner:
                         reserved=http_exposure, observed=observed
                     )
                 continue
+            retained_identity = {
+                key: value
+                for key, value in (failed_identity or {}).items()
+                if key != "target"
+            }
             response = Response(
                 attempt_id=attempt.id,
                 target=self.target.name,
@@ -1271,7 +1287,8 @@ class Runner:
                     "model_stability_reason": str(answer_error)[:500],
                     "model_stability_retry_count": len(failures) - 1,
                     "model_stability_failures": failures,
-                    "target_identity_observed": False,
+                    "target_identity_observed": bool(retained_identity),
+                    **retained_identity,
                     "transport_attempt_count": observed,
                     "logical_call_count": 1,
                     **({"call_audit": audit} if audit else {}),
@@ -5984,8 +6001,15 @@ def validate_response_refusal_state(response: Response) -> None:
         ):
             raise ValueError("target model-stability retry accounting is invalid")
         if stability == "failed_output":
-            if not empty_completion or response.raw.get("target_identity_observed") is not False:
+            identity_observed = response.raw.get("target_identity_observed")
+            if not empty_completion or type(identity_observed) is not bool:
                 raise ValueError("failed target output must be a typed missing response")
+            if identity_observed and not strong_realized_model_identity_keys(
+                _target_identity_snapshot(response)
+            ):
+                raise ValueError(
+                    "failed target output claims an unverified target identity"
+                )
             for field in ("model_stability_category", "model_stability_error_type"):
                 value = response.raw.get(field)
                 if not isinstance(value, str) or not value.strip():
