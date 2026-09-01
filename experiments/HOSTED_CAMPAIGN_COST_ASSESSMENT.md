@@ -48,13 +48,11 @@ The central planning scenario assumes, per target call:
 - no cache hit; and
 - one successful retained output per intended call.
 
-Each Haiku judgment assumes 2,000 input and 256 output tokens. The original
-requested-cost table retains a doubled retry sensitivity column so the earlier
-question remains reproducible. The budget-fitted execution plan does not use
-that reserve: paid targets and Haiku judging make exactly one application
-attempt, target answer retries and harness transport retries are 0, and
-provider SDK retries are disabled. An
-exhausted missing response receives no policy-judge call.
+Each Haiku judgment assumes 2,000 input and 256 output tokens. Paid targets and
+Haiku judging make exactly one application attempt: target answer retries and
+harness transport retries are 0, and provider SDK retries are disabled. There
+is no retry reserve in either the cost estimate or the executable campaign. A
+missing response receives no policy-judge call.
 
 This is not a monetary hard ceiling. Images have provider-specific tokenization,
 reasoning models may bill more output than the 512-token planning value, and
@@ -64,18 +62,18 @@ before authorization.
 
 ## Original requested per-condition estimate, superseded
 
-| Target condition | Limit | Target calls | First-pass target USD | Retry-reserved target USD | Haiku-eligible calls | Haiku judge USD | Haiku Batch judge USD |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| Claude Fable 5 | 5 | 663 | 30.2328 | 60.4656 | 593 | 1.9450 | 0.9725 |
-| Claude Opus 5 | 10 | 1,354 | 30.8712 | 61.7424 | 1,199 | 3.9327 | 1.9664 |
-| Claude Sonnet 5 | 50 | 6,974 | 95.4043 | 190.8086 | 5,979 | 19.6111 | 9.8056 |
-| Claude Haiku 4.5 | 100 | 12,215 | 55.7004 | 111.4008 | 10,095 | 33.1116 raw | 16.5558 raw |
-| GPT-5.6 Sol | 5 | 663 | 12.0931 | 24.1862 | 593 | 1.9450 | 0.9725 |
-| GPT-5.6 Terra | 20 | 2,742 | 27.8148 | 55.6297 | 2,382 | 7.8130 | 3.9065 |
-| GPT-5.6 Luna | 100 | 12,215 | 12.3909 | 24.7818 | 10,095 | 33.1116 | 16.5558 |
-| GPT-5.5 | 100 | 12,215 | 309.7724 | 619.5448 | 10,095 | 33.1116 | 16.5558 |
-| Kimi K3 | 100 | 12,215 | 167.1012 | 334.2024 | 10,095 | 33.1116 | 16.5558 |
-| DeepSeek V4-Pro, text-compatible | 100 | 8,563 | 19.9840 off-peak | 39.9680 off-peak | 8,463 | 27.7586 | 13.8793 |
+| Target condition | Limit | Target calls | One-attempt target USD | Haiku-eligible calls | Haiku judge USD | Haiku Batch judge USD |
+|---|---:|---:|---:|---:|---:|---:|
+| Claude Fable 5 | 5 | 663 | 30.2328 | 593 | 1.9450 | 0.9725 |
+| Claude Opus 5 | 10 | 1,354 | 30.8712 | 1,199 | 3.9327 | 1.9664 |
+| Claude Sonnet 5 | 50 | 6,974 | 95.4043 | 5,979 | 19.6111 | 9.8056 |
+| Claude Haiku 4.5 | 100 | 12,215 | 55.7004 | 10,095 | 33.1116 raw | 16.5558 raw |
+| GPT-5.6 Sol | 5 | 663 | 12.0931 | 593 | 1.9450 | 0.9725 |
+| GPT-5.6 Terra | 20 | 2,742 | 27.8148 | 2,382 | 7.8130 | 3.9065 |
+| GPT-5.6 Luna | 100 | 12,215 | 12.3909 | 10,095 | 33.1116 | 16.5558 |
+| GPT-5.5 | 100 | 12,215 | 309.7724 | 10,095 | 33.1116 | 16.5558 |
+| Kimi K3 | 100 | 12,215 | 167.1012 | 10,095 | 33.1116 | 16.5558 |
+| DeepSeek V4-Pro, text-compatible | 100 | 8,563 | 19.9840 off-peak | 8,463 | 27.7586 | 13.8793 |
 
 Claude Haiku judging its own target outputs is a same-model dependency. It is
 allowed in the prospective selected cohort by explicit operator decision, but
@@ -84,16 +82,15 @@ claim. The raw arithmetic is retained to make both totals reproducible.
 
 Excluding invalid Haiku self-judgment:
 
-- first-pass target total: USD 761.3652;
-- retry-reserved target total: USD 1,522.7304;
+- one-attempt target total: USD 761.3652;
 - standard Haiku judge total: USD 162.3403;
 - Batch Haiku judge total: USD 81.1702;
-- first-pass targets plus standard valid judging: USD 923.7055; and
-- first-pass targets plus Batch valid judging: USD 842.5353.
+- one-attempt targets plus standard valid judging: USD 923.7055; and
+- one-attempt targets plus Batch valid judging: USD 842.5353.
 
 Including the explicitly allowed but non-independent Haiku self-judgment, the
 original requested scenario has USD 195.4519 standard or USD 97.7261 Batch
-judge cost, and USD 956.8171 or USD 859.0913 respectively including first-pass
+judge cost, and USD 956.8171 or USD 859.0913 respectively including one-attempt
 targets.
 
 ## Configured budget fit
@@ -103,7 +100,7 @@ The rig budget registry records Anthropic USD 100, OpenAI USD 40, Moonshot USD
 reporting only; Runner admission is enforced by the exact sampling, target,
 judge, HTTP and deadline caps.
 
-Under the central first-pass scenario, target costs alone are USD 212.2087 for
+Under the central one-attempt scenario, target costs alone are USD 212.2087 for
 the four Anthropic targets, USD 362.0712 for the four OpenAI targets, USD
 167.1012 for Kimi K3 and USD 19.9840 off-peak for DeepSeek V4-Pro. The requested
 matrix therefore does not fit the configured prepaid balances. Even a Batch

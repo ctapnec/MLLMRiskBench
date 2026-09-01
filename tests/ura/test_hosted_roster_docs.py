@@ -621,6 +621,9 @@ def test_hosted_follow_on_is_a_no_retry_local_input_subset() -> None:
     def assert_contract(value: str) -> None:
         for token in required:
             assert token in value
+        assert "There is no retry reserve" in value
+        assert "Retry-reserved target USD" not in value
+        assert "retry-use model-stability rates" not in value
         for target, limit in (
             ("Claude Fable 5", 1),
             ("Claude Opus 5", 3),
@@ -637,6 +640,10 @@ def test_hosted_follow_on_is_a_no_retry_local_input_subset() -> None:
 
     assert_contract(combined)
     changed = combined.replace("target_answer_retries is 0", "retry enabled", 1)
+    assert changed != combined
+    with pytest.raises(AssertionError):
+        assert_contract(changed)
+    changed = combined.replace("There is no retry reserve", "Retry reserve enabled", 1)
     assert changed != combined
     with pytest.raises(AssertionError):
         assert_contract(changed)

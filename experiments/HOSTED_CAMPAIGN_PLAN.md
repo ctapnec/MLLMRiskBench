@@ -144,7 +144,7 @@ diagrams cover:
 
 1. selected, answered, missing and judged counts by target/modality;
 2. Haiku outcome rates with cluster-aware uncertainty;
-3. failed-output and retry-use model-stability rates;
+3. failed-output model-stability rates and one-attempt response coverage;
 4. source-arm, attack/framework, risk and behavior composition;
 5. matched-input model contrasts where support exists; and
 6. billed input/output tokens and cost against each 50 percent provider cap.

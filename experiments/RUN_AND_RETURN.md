@@ -468,8 +468,10 @@ coverage separately from decided security rates. Projections reserve the target
 and transport upper bounds for both attempts. Exact identity, seals, fixed
 configuration, durable caps and operator wall-time limits remain terminal; none
 permits altered stops, generation caps, checkpoint identity or decoding. The
-selected retry count and failed-output behavior are provider-neutral across
-hosted, vLLM and Ollama targets.
+failed-output mechanism is provider-neutral. The current local campaign pins
+one answer retry for vLLM and Ollama. The budget-fitted hosted campaign pins
+answer, harness transport and provider SDK retries to 0, so paid targets and
+Haiku judgments receive exactly one application attempt.
 Runner 2.26 separately retains an exact deterministic target-input rejection as
 `target_input_status=incompatible`. It makes no answer retry for the unchanged
 input, does not query the policy judge, records missing-response coverage, and
