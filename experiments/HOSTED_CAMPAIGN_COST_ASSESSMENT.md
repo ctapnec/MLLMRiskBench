@@ -50,9 +50,9 @@ The central planning scenario assumes, per target call:
 
 Each Haiku judgment assumes 2,000 input and 256 output tokens. Paid targets and
 Haiku judging make exactly one application attempt: target answer retries and
-harness transport retries are 0, and provider SDK retries are disabled. There
-is no retry reserve in either the cost estimate or the executable campaign. A
-missing response receives no policy-judge call.
+harness transport retries are 0, and provider SDK retries are disabled.
+There is no retry reserve in either the cost estimate or the executable
+campaign. A missing response receives no policy-judge call.
 
 This is not a monetary hard ceiling. Images have provider-specific tokenization,
 reasoning models may bill more output than the 512-token planning value, and
