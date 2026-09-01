@@ -7,7 +7,8 @@ Preflight, dry-run, diagnostic-canary, and bounded transport-probe artifacts are
 diagnostics, not thesis results.
 
 The maintained artifact contract is Runner `ura-runner/2.27` with unified schema
-`1.5`. Runner 2.19/schema 1.4 artifacts remain runtime-free legacy
+`1.5`. Runner 2.27 is the current executable contract used by this runbook.
+Runner 2.19/schema 1.4 artifacts remain runtime-free legacy
 compatibility only; do not combine them with the current measured cohort.
 
 Every `python -m experiments.*` command below can equivalently be started
