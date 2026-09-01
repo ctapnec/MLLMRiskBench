@@ -58,7 +58,8 @@ from experiments.local_campaign.vllm_stability_phase6 import (
     _validate_descriptor,
     build_units as build_vllm_units,
 )
-from ura.runner import CODE_VERSION
+from ura.data_models import Attempt, Response
+from ura.runner import CODE_VERSION, Runner
 
 
 SCHEMA = "ura-failed-output-recovery-phase6/1"
@@ -260,49 +261,9 @@ def _derive_selector(
     result_root = _canonical_result_root(
         state.get("result_root"), label="failed-output source result root"
     )
-    attempt_files = _active_jsonl(result_root, "attempts")
-    response_files = _active_jsonl(result_root, "responses")
-    attempts: dict[str, str] = {}
-    for path in attempt_files:
-        for row in _jsonl(path, label="failed-output attempts"):
-            attempt_id = row.get("id")
-            datapoint_id = row.get("datapoint_id")
-            if (
-                not isinstance(attempt_id, str)
-                or not attempt_id
-                or not isinstance(datapoint_id, str)
-                or not datapoint_id
-                or attempt_id in attempts
-                or datapoint_id in attempts.values()
-            ):
-                raise ValueError("failed-output attempt identity inventory changed")
-            attempts[attempt_id] = datapoint_id
-    outcomes: dict[str, str] = {}
-    for path in response_files:
-        for row in _jsonl(path, label="failed-output responses"):
-            attempt_id = row.get("attempt_id")
-            raw = row.get("raw")
-            if (
-                not isinstance(attempt_id, str)
-                or attempt_id not in attempts
-                or not isinstance(raw, dict)
-            ):
-                raise ValueError("failed-output response identity inventory changed")
-            datapoint_id = attempts[attempt_id]
-            if datapoint_id in outcomes:
-                raise ValueError("failed-output response datapoint is duplicated")
-            if raw.get("target_input_status") == "incompatible":
-                status = "input_incompatible"
-            else:
-                status_value = raw.get(
-                    "model_stability_status", "usable_first_response"
-                )
-                if not isinstance(status_value, str):
-                    raise ValueError("model-stability status is malformed")
-                status = status_value
-            outcomes[datapoint_id] = status
-    if set(attempts.values()) != set(outcomes):
-        raise ValueError("durable attempts and responses do not match exactly")
+    attempts, outcomes, attempt_files, response_files = _durable_outcomes(
+        result_root
+    )
 
     selected_ids = {
         corpus: [row.id for row in rows] for corpus, rows in selected_rows.items()
@@ -332,6 +293,76 @@ def _derive_selector(
         "summary": summary,
     }
     return selector, snapshot
+
+
+def _durable_outcomes(
+    result_root: Path,
+) -> tuple[dict[str, str], dict[str, str], list[Path], list[Path]]:
+    """Load terminal outcomes from final rows and pre-judging checkpoints."""
+
+    attempt_files = _active_jsonl(result_root, "attempts")
+    response_files = _active_jsonl(result_root, "responses")
+    attempts: dict[str, str] = {}
+    attempt_payloads: dict[str, dict[str, Any]] = {}
+
+    def register_attempt(payload: object) -> None:
+        attempt = Attempt.model_validate(payload)
+        dumped = attempt.model_dump(mode="json")
+        previous = attempt_payloads.get(attempt.id)
+        if previous is not None:
+            if previous != dumped:
+                raise ValueError("failed-output attempt identity inventory changed")
+            return
+        if attempt.datapoint_id in attempts.values():
+            raise ValueError("failed-output attempt identity inventory changed")
+        attempts[attempt.id] = attempt.datapoint_id
+        attempt_payloads[attempt.id] = dumped
+
+    for path in attempt_files:
+        for row in _jsonl(path, label="failed-output attempts"):
+            register_attempt(row)
+
+    checkpoint_records: dict[Path, dict[str, dict[str, Any]]] = {}
+    for path in response_files:
+        if not path.name.endswith(".responses.checkpoint.jsonl"):
+            continue
+        records = Runner.load_response_checkpoint(path)
+        checkpoint_records[path] = records
+        for record in records.values():
+            register_attempt(record.get("attempt"))
+
+    outcomes: dict[str, str] = {}
+
+    def register_response(payload: object) -> None:
+        response = Response.model_validate(payload)
+        attempt_id = response.attempt_id
+        if attempt_id not in attempts:
+            raise ValueError("failed-output response identity inventory changed")
+        datapoint_id = attempts[attempt_id]
+        if datapoint_id in outcomes:
+            raise ValueError("failed-output response datapoint is duplicated")
+        raw = response.raw
+        if raw.get("target_input_status") == "incompatible":
+            status = "input_incompatible"
+        else:
+            status_value = raw.get(
+                "model_stability_status", "usable_first_response"
+            )
+            if not isinstance(status_value, str):
+                raise ValueError("model-stability status is malformed")
+            status = status_value
+        outcomes[datapoint_id] = status
+
+    for path in response_files:
+        if path in checkpoint_records:
+            for record in checkpoint_records[path].values():
+                register_response(record.get("response"))
+        else:
+            for row in _jsonl(path, label="failed-output responses"):
+                register_response(row)
+    if set(attempts.values()) != set(outcomes):
+        raise ValueError("durable attempts and responses do not match exactly")
+    return attempts, outcomes, attempt_files, response_files
 
 
 def _ollama_config(control_root: Path, spec: str) -> tuple[Path, str]:
