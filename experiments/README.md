@@ -376,8 +376,12 @@ response artifacts remain authoritative.
   that retry checkpoints the row as a model-stability failed output and
   continues the assigned population. It is missing-response coverage, not a
   decided safety label. Projections and caps cover all allowed attempts;
-  identity/seal drift remains terminal. The policy is implemented once in
-  Runner and applies identically to vLLM and Ollama targets. The budget-fitted
+  identity/seal drift remains terminal. If the adapter verified a strong
+  runtime/model identity before answer validation failed, the retained missing
+  response preserves only that normalized identity and rejects retry drift, so
+  transport attestation does not depend on a usable answer. The policy is
+  implemented once in Runner and applies identically to vLLM and Ollama
+  targets. The budget-fitted
   hosted campaign instead pins target, harness transport and provider SDK
   retries to 0, so every paid target and Haiku judgment has one attempt. Build
   sets and locks the answer-retry field to 0 whenever a hosted target is

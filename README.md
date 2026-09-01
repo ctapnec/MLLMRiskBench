@@ -477,6 +477,12 @@ rate denominators, shown in missing-response coverage and followed by the next
 assigned row. The Build page exposes the same 0 through 10 control and Stats
 charts the failed-output rate. Identity/seal drift and explicit call/time caps
 remain terminal.
+If the adapter verified a strong runtime/model identity before detecting the
+unusable answer, Runner retains only that normalized identity in the missing-
+response row and checks it for drift across retries. This supports exact live-
+route attestation and recovery without treating the missing answer as safety
+evidence; a call that never established a strong identity remains explicitly
+unobserved.
 The detector, accounting, checkpoint and stability categories are
 provider-neutral, but retry count is an experiment condition. The funded hosted
 campaign selects zero answer retries and disables harness transport and SDK

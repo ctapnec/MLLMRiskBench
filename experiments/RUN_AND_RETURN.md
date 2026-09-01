@@ -468,7 +468,11 @@ coverage separately from decided security rates. Projections reserve the target
 and transport upper bounds for both attempts. Exact identity, seals, fixed
 configuration, durable caps and operator wall-time limits remain terminal; none
 permits altered stops, generation caps, checkpoint identity or decoding. The
-failed-output mechanism is provider-neutral. The current local campaign pins
+failed-output mechanism is provider-neutral. When a backend has already
+verified a strong runtime/model identity before answer validation fails, the
+missing-response artifact retains that normalized identity and compares it
+across the retry. This can satisfy route attestation without turning the absent
+answer into policy evidence. The current local campaign pins
 one answer retry for vLLM and Ollama. The budget-fitted hosted campaign pins
 answer, harness transport and provider SDK retries to 0, so paid targets and
 Haiku judgments receive exactly one application attempt. Build sets and locks

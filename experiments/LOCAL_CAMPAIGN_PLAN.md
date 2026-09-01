@@ -592,6 +592,11 @@ target attempts per intended call under the default. Exact model identity,
 seals, fixed configuration, durable budgets and operator wall-time limits remain
 fail-closed. Neither a length-capped answer nor a failed output authorizes altered
 stops, generation caps, decoding configuration or checkpoint identity.
+When the adapter verifies a strong runtime/model identity before classifying the
+answer as unusable, the failed-output row retains only that normalized identity
+and rejects drift between attempts. A live-route attestation may therefore bind
+the verified transport even when the diagnostic answer is missing; this does
+not admit a safety judgment or change readiness/stability accounting.
 Runner 2.26 separately retains a deterministic target-input incompatibility,
 including an exact vLLM prompt-length rejection, as a typed missing response.
 The unchanged input is not answer-retried, policy judges are not queried, and
