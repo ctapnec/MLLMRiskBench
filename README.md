@@ -279,6 +279,12 @@ locator, rehashes every snapshot immediately around model construction,
 and forces Hugging Face/Transformers/vLLM local-only offline policy. Explicit
 digest-sealed workstation checkpoints are the path-local exception and receive
 the same pre/post-load content check.
+An acquisition plan is required only when the selected condition actually has
+Hub-backed resources. A local Ollama target over an already-local R-Judge or
+GPTGeoChat source therefore omits the plan and receipt arguments; supplying a
+fabricated empty plan remains invalid. Campaign recovery binds this decision to
+the exact metric mode and still runs the ordinary no-call projection, diagnostic
+canary, request-envelope, attestation and measured validation.
 
 Rig Web presents those stages as `acquisition plan` (no model call), `model
 acquisition`, then the reviewed offline preflight/run. Its `model_download`
@@ -496,6 +502,12 @@ as `target_input_status=incompatible`, receives no answer retry or policy-judge
 call, counts as a missing response, and does not stop the remaining assigned
 population. Other validation, identity, seal, configuration, budget, and
 transport failures remain terminal.
+The Ollama limit-100 population controller records every independently failed
+unit and continues later units. Its recovery controller accepts only that exact
+terminal partition, rejects a failed unit that already has measured state, and
+runs only the never-measured units. Completed rows remain bound to their original
+revision; recovered rows form a separate revision stratum and Phase 7 forbids
+cross-revision rate pooling.
 
 Acquire a multi-model Ollama roster with
 `python -m experiments.local_campaign.ollama_acquire` in a named tmux session.

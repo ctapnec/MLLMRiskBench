@@ -555,6 +555,21 @@ GPTGeoChat rows per vision model. Its no-call projections and canaries must all
 pass before the first extension target call. The old prefix and new extension
 remain separate Runner strata; completed prefix rows are never called again.
 
+Static alignment units derive and acquire their exact Hub plan. R-Judge and
+GPTGeoChat units with an Ollama target and already-local source data pass no
+model-acquisition arguments; do not manufacture an empty plan. If the alignment
+completion is `complete_with_failures`, first validate it with
+`current_ollama_population_alignment_phase6.validate_completion(...,
+allow_incomplete=True)`. Then run
+`python -m experiments.local_campaign.current_ollama_population_alignment_recovery_phase6`
+in a named tmux session with the exact base completion and SHA-256, current
+project-revision receipt and SHA-256, fresh control root, scope, work root,
+project root and project virtual-environment interpreter. The controller selects
+only failed units, rejects any that reached measured state, reuses their exact
+completed-prefix selectors, and writes a separate recovery completion. Give that
+completion to Phase 7. The validator combines the two revisions only for
+population coverage and retains separate revision strata for all rates.
+
 Phase 7 requires that current-Ollama stability completion, the exact terminal
 seven-unit vLLM stability completion, and its one-unit GPTGeoChat input recovery.
 The six completed Runner 2.25 units and one Runner 2.26 missing-only suffix are

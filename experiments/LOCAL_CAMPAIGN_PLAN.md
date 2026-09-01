@@ -736,6 +736,17 @@ and diagnostic canary before measured calls, and reject any overlap. Historical
 prefix and new extension artifacts remain distinct Runner strata; Phase 7 may
 report their combined population coverage but must not pool their rates across
 revision or output-policy boundaries.
+Static alignment lanes retain their Hub acquisition plan because their selected
+source inventory contains Hub-backed resources. The Ollama R-Judge and
+GPTGeoChat lanes use already-local source data and a local daemon target, so
+they omit model-acquisition arguments; an empty acquisition plan is not created.
+If the controller seals `complete_with_failures`, the recovery controller must
+validate the exact base completion and select only its failed units. It refuses
+any selected unit with a measured state or Level-1 artifact, reuses the original
+content-bound limit-50 selector, derives a fresh revision-bound attestation, and
+runs the never-measured extension. Base and recovery revisions remain separate
+analysis strata, `no_completed_rows_repeated` stays true, and Phase 7 accepts the
+recovery completion only when their combined accounting is exactly 11,600 rows.
 
 Before Gate 6 closes, every retained local vLLM failure is partitioned by the
 boundary it reached. A lane that failed before measured Runner execution is run

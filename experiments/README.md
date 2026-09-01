@@ -386,6 +386,13 @@ response artifacts remain authoritative.
   retries to 0, so every paid target and Haiku judgment has one attempt. Build
   sets and locks the answer-retry field to 0 whenever a hosted target is
   selected; server validation rejects a nonzero submitted value.
+- Hub acquisition is conditional on the selected resources, not on the mere
+  existence of a local target. Static lanes with Hub-backed assets retain the
+  exact plan/receipt/store chain. Ollama R-Judge and GPTGeoChat lanes over
+  already-local inputs omit that chain and must not invent an empty plan. A
+  terminal population-alignment recovery selects only units that failed before
+  measured state, retains every completed row, and exposes old and recovered
+  revisions as separate Phase 7 strata.
 - A live receipt matches one exact requested/base-resolved route, secret-free
   route configuration, execution scope, modality combination and observation
   time. Text+image is not a substitute for text. Synthetic live text and
