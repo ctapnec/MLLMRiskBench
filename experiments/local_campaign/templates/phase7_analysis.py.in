@@ -47,7 +47,9 @@ from experiments.local_campaign.current_ollama_stability_phase6 import (
 )
 from experiments.local_campaign.current_ollama_population_alignment_phase6 import (
     ALIGNMENT_LANES as CURRENT_OLLAMA_ALIGNMENT_LANES,
-    validate_completion as validate_current_ollama_alignment_completion,
+)
+from experiments.local_campaign.current_ollama_population_alignment_recovery_phase6 import (
+    validate_phase7_completion as validate_current_ollama_alignment_completion,
 )
 from experiments.local_campaign.vllm_input_recovery_phase6 import (
     UNIT_LAYOUT as VLLM_STABILITY_UNIT_LAYOUT,

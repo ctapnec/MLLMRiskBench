@@ -945,6 +945,7 @@ def _run_unit(
     tmux_session: str,
     state_schema: str = "ura-vllm-stability-phase6-unit-state/1",
     validated_canary_root: Path | None = None,
+    hub_acquisition_required: bool = True,
 ) -> dict[str, Any]:
     unit_root = control_root / "units" / unit.unit_id
     unit_root.mkdir(parents=True, mode=0o700)
@@ -985,11 +986,15 @@ def _run_unit(
         )
         canary_acquisition_root = unit_root / "canary-acquisition"
         canary_acquisition_root.mkdir(mode=0o700)
-        canary_acquisition = _acquisition_args(
-            canary_args,
-            python=python,
-            lane_root=canary_acquisition_root,
-            timeout=86400,
+        canary_acquisition = (
+            _acquisition_args(
+                canary_args,
+                python=python,
+                lane_root=canary_acquisition_root,
+                timeout=86400,
+            )
+            if hub_acquisition_required
+            else []
         )
         _run(
             (
@@ -1039,11 +1044,15 @@ def _run_unit(
     )
     preflight_acquisition_root = unit_root / "preflight-acquisition"
     preflight_acquisition_root.mkdir(mode=0o700)
-    preflight_acquisition = _acquisition_args(
-        preflight_args,
-        python=python,
-        lane_root=preflight_acquisition_root,
-        timeout=86400,
+    preflight_acquisition = (
+        _acquisition_args(
+            preflight_args,
+            python=python,
+            lane_root=preflight_acquisition_root,
+            timeout=86400,
+        )
+        if hub_acquisition_required
+        else []
     )
     _run(
         (
@@ -1077,11 +1086,15 @@ def _run_unit(
     )
     measured_acquisition_root = unit_root / "measured-acquisition"
     measured_acquisition_root.mkdir(mode=0o700)
-    measured_acquisition = _acquisition_args(
-        measured_args,
-        python=python,
-        lane_root=measured_acquisition_root,
-        timeout=86400,
+    measured_acquisition = (
+        _acquisition_args(
+            measured_args,
+            python=python,
+            lane_root=measured_acquisition_root,
+            timeout=86400,
+        )
+        if hub_acquisition_required
+        else []
     )
     if result_root.is_symlink() or (
         result_root.exists() and not result_root.is_dir()

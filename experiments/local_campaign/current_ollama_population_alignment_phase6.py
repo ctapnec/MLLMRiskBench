@@ -116,6 +116,15 @@ ALIGNMENT_LANES = tuple(
 )
 
 
+def hub_acquisition_required(unit: Unit) -> bool:
+    """Return whether this exact campaign unit has Hub-backed resources."""
+
+    mode = unit.spec.get("metric_mode")
+    if mode not in {"static", "rjudge", "gptgeochat"}:
+        raise ValueError(f"{unit.unit_id}: unknown population-alignment metric mode")
+    return mode == "static"
+
+
 def _old_selected_corpora(spec: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
     projection = spec.get("projection")
     root_value = projection.get("root") if isinstance(projection, dict) else None
@@ -435,6 +444,7 @@ def validate_completion(
     completion_path: Path,
     *,
     runner_root: Path,
+    allow_incomplete: bool = False,
 ) -> dict[str, Any]:
     completion_path = completion_path.resolve(strict=True)
     runner_root = runner_root.resolve(strict=True)
@@ -461,19 +471,31 @@ def validate_completion(
         "cross_revision_pooling_permitted",
         "paid_provider_calls",
     }
+    failures = completion.get("unit_failures")
     if (
         set(completion) != fields
         or completion.get("schema") != SCHEMA
-        or completion.get("status") != "complete"
-        or completion.get("controller_exit_code") != 0
         or HEX40.fullmatch(str(completion.get("expected_commit", ""))) is None
         or completion.get("runner_code_version") != RUNNER_CODE_VERSION
         or completion.get("target_answer_retries") != 1
         or completion.get("unit_order") != list(ALIGNMENT_LANES)
-        or completion.get("unit_failures") != {}
         or completion.get("no_completed_rows_repeated") is not True
         or completion.get("cross_revision_pooling_permitted") is not False
         or completion.get("paid_provider_calls") != 0
+    ):
+        raise ValueError("Ollama population-alignment completion changed")
+    if allow_incomplete:
+        if (
+            completion.get("status") != "complete_with_failures"
+            or completion.get("controller_exit_code") != 1
+            or not isinstance(failures, dict)
+            or not failures
+        ):
+            raise ValueError("Ollama population-alignment failure partition changed")
+    elif (
+        completion.get("status") != "complete"
+        or completion.get("controller_exit_code") != 0
+        or failures != {}
     ):
         raise ValueError("Ollama population-alignment completion changed")
     launch_path = _validate_descriptor(
@@ -522,8 +544,43 @@ def validate_completion(
     ):
         raise ValueError("Ollama population-alignment contract changed")
     results = completion.get("unit_results")
-    if not isinstance(results, dict) or set(results) != set(ALIGNMENT_LANES):
+    if not isinstance(results, dict) or not isinstance(failures, dict):
         raise ValueError("Ollama population-alignment results changed")
+    result_lanes = set(results)
+    failure_lanes = set(failures)
+    if (
+        bool(result_lanes & failure_lanes)
+        or result_lanes | failure_lanes != set(ALIGNMENT_LANES)
+        or (not allow_incomplete and result_lanes != set(ALIGNMENT_LANES))
+    ):
+        raise ValueError("Ollama population-alignment terminal partition changed")
+    failure_fields = {
+        "status",
+        "unit_id",
+        "stage",
+        "error_type",
+        "error",
+        "target_answer_retries",
+    }
+    for lane in failure_lanes:
+        failure = failures[lane]
+        unit_root = control_root / "units" / lane
+        if (
+            not isinstance(failure, dict)
+            or set(failure) != failure_fields
+            or failure.get("status") != "failed"
+            or failure.get("unit_id") != lane
+            or failure.get("stage") != "gate5_or_measured"
+            or not isinstance(failure.get("error_type"), str)
+            or not isinstance(failure.get("error"), str)
+            or not failure["error"]
+            or failure.get("target_answer_retries") != 1
+            or (unit_root / "state.json").exists()
+            or (unit_root / "state.json").is_symlink()
+            or (unit_root / "level1.json").exists()
+            or (unit_root / "level1.json").is_symlink()
+        ):
+            raise ValueError(f"{lane}: failed alignment unit changed")
     revisions: set[str] = set()
     sources: set[str] = set()
     metric_roots: dict[str, str] = {}
@@ -562,6 +619,8 @@ def validate_completion(
             or set(selector.get("corpora", {})) != set(row.get("corpora", []))
         ):
             raise ValueError(f"{lane}: recovery selection changed")
+        if lane not in results:
+            continue
         validated = _validate_metric_result(
             results[lane],
             logical_lane=lane,
@@ -612,15 +671,20 @@ def validate_completion(
         metric_markers.extend(validated["completion_markers"])
         successful += int(validated["successful"])
         missing += int(validated["missing"])
+    expected_attempts = sum(
+        int(row["extension_records"])
+        for row in rows
+        if isinstance(row, dict) and row.get("lane_id") in result_lanes
+    )
     target_execution = completion.get("target_execution")
     if (
         target_execution
         != {
-            "target_attempts": EXPECTED_EXTENSION_ROWS,
+            "target_attempts": expected_attempts,
             "successful_target_generations": successful,
             "missing_responses": missing,
         }
-        or successful + missing != EXPECTED_EXTENSION_ROWS
+        or successful + missing != expected_attempts
         or len(revisions) != 1
         or len(sources) != 1
         or completion.get("population_alignment")
@@ -637,14 +701,23 @@ def validate_completion(
         ),
         "runner_code_version": RUNNER_CODE_VERSION,
         "unit_order": list(ALIGNMENT_LANES),
-        "terminal_states": {lane: "measured_complete" for lane in ALIGNMENT_LANES},
-        "metric_lane_order": list(ALIGNMENT_LANES),
+        "terminal_states": {
+            lane: "measured_complete" if lane in result_lanes else "failed"
+            for lane in ALIGNMENT_LANES
+        },
+        "metric_lane_order": [
+            lane for lane in ALIGNMENT_LANES if lane in result_lanes
+        ],
         "metric_roots": metric_roots,
         "metric_evidence": metric_evidence,
         "metric_grids": metric_grids,
         "metric_eligibility_plans": metric_eligibility,
         "metric_completion_markers": metric_markers,
-        "revision_strata": {next(iter(revisions)): list(ALIGNMENT_LANES)},
+        "revision_strata": {
+            next(iter(revisions)): [
+                lane for lane in ALIGNMENT_LANES if lane in result_lanes
+            ]
+        },
         "project_revision_receipt_sha256": next(iter(revisions)),
         "source_conformance_sha256": next(iter(sources)),
         "target_execution": dict(target_execution),
@@ -766,6 +839,7 @@ def run(args: argparse.Namespace) -> int:
                 tmux_socket=args.tmux_socket,
                 tmux_session=args.tmux_session,
                 state_schema=UNIT_STATE_SCHEMA,
+                hub_acquisition_required=hub_acquisition_required(unit),
             )
         except (
             KeyError,
