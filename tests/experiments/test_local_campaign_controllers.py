@@ -8063,11 +8063,20 @@ def test_current_ollama_canary_recovery_inherits_completed_rows() -> None:
         assert "CANARY_ERROR not in canary_log.read_text" in candidate
         assert "validated = _validate_metric_result(" in candidate
         assert 'receipt.get("schema") != FINALIZATION_SCHEMA' in candidate
+        assert "python = _project_python(project_root, args.python)" in candidate
 
     assert_contract(source)
     changed = source.replace(
         'results[unit_id] = partial["results"][unit_id]',
         'results[unit_id] = _run_unit(unit)',
+        1,
+    )
+    assert changed != source
+    with pytest.raises(AssertionError):
+        assert_contract(changed)
+    changed = source.replace(
+        "python = _project_python(project_root, args.python)",
+        "python = args.python.resolve(strict=True)",
         1,
     )
     assert changed != source

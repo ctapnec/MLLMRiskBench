@@ -37,6 +37,7 @@ from experiments.local_campaign.vllm_stability_phase6 import (
     _descriptor,
     _framework_lock_id,
     _load_json,
+    _project_python,
     _run_unit,
     _validate_descriptor,
 )
@@ -430,9 +431,7 @@ def run(args: argparse.Namespace) -> int:
     if HEX40.fullmatch(args.expected_commit) is None:
         raise ValueError("expected commit must be one lowercase Git object ID")
     project_root = args.project_root.resolve(strict=True)
-    python = args.python.resolve(strict=True)
-    if python.parent != project_root / ".venv" / "bin":
-        raise ValueError("Python must be in the project virtual environment")
+    python = _project_python(project_root, args.python)
     work_root = args.work_root.resolve(strict=True)
     control_root = args.control_root
     if control_root.exists() or control_root.is_symlink():
