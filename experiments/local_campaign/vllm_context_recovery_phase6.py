@@ -2,7 +2,7 @@
 
 The retained 12,288-token condition stays immutable. This controller verifies
 its typed context-limit outcomes, builds an exact completed-ID selector, and
-runs only those rows with native model context and the local maximum output.
+runs only those rows with vLLM's automatic GPU-fit context and maximum output.
 """
 
 from __future__ import annotations
@@ -55,14 +55,14 @@ from ura.data_models import Response
 from ura.runner import CODE_VERSION, Runner
 
 
-SCHEMA = "ura-vllm-context-recovery-phase6/1"
-LAUNCH_SCHEMA = "ura-vllm-context-recovery-phase6-launch/1"
-STATE_SCHEMA = "ura-vllm-context-recovery-phase6-unit-state/1"
-UNIT_ID = "vllm-context-recovery-gptgeochat-qwen3-vl-native-max"
+SCHEMA = "ura-vllm-context-recovery-phase6/2"
+LAUNCH_SCHEMA = "ura-vllm-context-recovery-phase6-launch/2"
+STATE_SCHEMA = "ura-vllm-context-recovery-phase6-unit-state/2"
+UNIT_ID = "vllm-context-recovery-gptgeochat-qwen3-vl-hardware-fit"
 SELECTED_RECORDS = 2020
 CONTEXT_RECOVERY_RECORDS = 230
 OLD_MAX_MODEL_LEN = 12288
-NEW_MAX_MODEL_LEN = None
+NEW_MAX_MODEL_LEN = -1
 NEW_MAX_TOKENS = None
 EXPECTED_PROMPT_MIN = 12290
 EXPECTED_PROMPT_MAX = 16705
@@ -132,7 +132,7 @@ def build_context_selection(
 
 
 def with_larger_context(config: Mapping[str, Any]) -> dict[str, Any]:
-    """Use native engine context and maximum output in one vLLM config."""
+    """Use vLLM automatic GPU-fit context and maximum output."""
 
     if len(config) != 1:
         raise ValueError("Qwen context recovery config must contain one model")
@@ -144,7 +144,7 @@ def with_larger_context(config: Mapping[str, Any]) -> dict[str, Any]:
     if value.get("max_tokens") != 4096:
         raise ValueError("Qwen completion allowance changed")
     updated = dict(value)
-    updated.pop("max_model_len")
+    updated["max_model_len"] = NEW_MAX_MODEL_LEN
     updated.pop("max_tokens")
     return {spec: updated}
 
@@ -332,7 +332,7 @@ def validate_completion(
     )
     if (
         selector_path != control_root / "inputs/gptgeochat-context-incompatible.json"
-        or config_path != control_root / "configs/qwen3-vl-native-max.json"
+        or config_path != control_root / "configs/qwen3-vl-hardware-fit.json"
         or amendment_path != control_root / "gate5-context-amendment.json"
         or _load_json(selector_path, label="vLLM context selector") != expected_selector
     ):
@@ -350,7 +350,7 @@ def validate_completion(
     if _load_json(config_path, label="larger-context config") != with_larger_context(
         json.loads(old_payload.decode("utf-8"))
     ):
-        raise ValueError("native-max config changed beyond context/output policy")
+        raise ValueError("hardware-fit config changed beyond context/output policy")
     amendment = _load_json(amendment_path, label="vLLM context Gate 5 amendment")
     if amendment != {
         "schema": "ura-gate5-corrective-context-amendment/1",
@@ -506,7 +506,7 @@ def run(args: argparse.Namespace) -> int:
     if hashlib.sha256(old_config_payload).hexdigest() != old_config_sha:
         raise ValueError("old Qwen local config digest changed")
     new_config = with_larger_context(json.loads(old_config_payload.decode("utf-8")))
-    config_path = control_root / "configs/qwen3-vl-native-max.json"
+    config_path = control_root / "configs/qwen3-vl-hardware-fit.json"
     _create_json(config_path, new_config)
     config_sha = hashlib.sha256(config_path.read_bytes()).hexdigest()
 

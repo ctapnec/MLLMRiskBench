@@ -144,7 +144,7 @@ def test_alignment_continuation_rebinds_explicit_thinking_policy(
     payload = json.loads(config_path.read_text(encoding="utf-8"))
 
     assert payload[model_spec]["think"] == expected_think
-    assert payload[model_spec]["num_ctx"] == "max"
+    assert payload[model_spec]["num_ctx"] == "fit"
     assert payload[model_spec]["num_predict"] == -1
     assert (
         unit_runner._option(  # noqa: SLF001

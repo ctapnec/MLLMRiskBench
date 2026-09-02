@@ -951,8 +951,18 @@ var approx=checkedName('approximate_common_metrics')?'enabled':'off';
 var defense=namedValue('defense','none');var defenseGuard=namedValue('defense_guard','rules');
 var scoringGuard=namedValue('guardrail_model','')?'configured':'not set';
 var defenseGuardrail=namedValue('defense_guardrail_model','')?'configured':'not set';
+var localJudge=jg.indexOf('llm')>=0&&Array.prototype.some.call(
+form.querySelectorAll(".modelbox[data-kind='local']"),
+function(b){return (b.getAttribute('data-model')||'')===judgeModelValue;});
+var responseConditioned=fw.some(function(name){return name.toLowerCase()==='crescendo';});
+var deferredLocalJudge=loc.length&&!checkedName('attestation_probe')&&
+!responseConditioned&&
+(jg.indexOf('guardrail')>=0||localJudge)&&
+(mode==='measured'||mode==='diagnostic_canary');
+var judgeSchedule=deferredLocalJudge?'post-factum after target GPU release':'inline';
 setBuildSummary('build-summary-evaluation','judges: '+selectionLabel(jg)+
-'; LLM model: '+judgeModel+'; approximate metrics: '+approx+'; defense: '+
+ '; schedule: '+judgeSchedule+'; LLM model: '+judgeModel+
+ '; approximate metrics: '+approx+'; defense: '+
 defense+' / '+defenseGuard+'; scoring guardrail: '+scoringGuard+
 '; defense guardrail: '+defenseGuardrail);
 var completeAtt=0;var incompleteAtt=0;

@@ -7,8 +7,8 @@ from experiments.local_campaign.local_truncation_recovery_phase6 import (
     _source_modality,
     _without_runtime_bindings,
     build_truncation_selection,
+    hardware_fit_local_config,
     length_ended_datapoint_ids,
-    native_max_local_config,
 )
 from experiments.local_campaign.local_truncation_recovery_execution_phase6 import (
     configure_units,
@@ -27,7 +27,7 @@ def _response(attempt_id: str, *, backend: str, reason: str) -> Response:
     )
 
 
-def test_native_max_config_changes_only_provider_context_and_output_policy() -> None:
+def test_hardware_fit_config_changes_only_provider_context_and_output_policy() -> None:
     vllm = {
         "vllm:Qwen/Qwen3-VL-8B-Instruct": {
             "revision": "a" * 40,
@@ -36,12 +36,13 @@ def test_native_max_config_changes_only_provider_context_and_output_policy() -> 
             "max_tokens": 4096,
         }
     }
-    assert native_max_local_config(
+    assert hardware_fit_local_config(
         vllm, expected_spec="vllm:Qwen/Qwen3-VL-8B-Instruct"
     ) == {
         "vllm:Qwen/Qwen3-VL-8B-Instruct": {
             "revision": "a" * 40,
             "modalities": ["text", "image"],
+            "max_model_len": -1,
         }
     }
     ollama = {
@@ -53,12 +54,12 @@ def test_native_max_config_changes_only_provider_context_and_output_policy() -> 
             "think": False,
         }
     }
-    assert native_max_local_config(
+    assert hardware_fit_local_config(
         ollama, expected_spec="ollama:gemma4:12b-it-q4_K_M"
     )["ollama:gemma4:12b-it-q4_K_M"] == {
         "digest": "b" * 64,
         "modalities": ["text", "image"],
-        "num_ctx": "max",
+        "num_ctx": "fit",
         "num_predict": -1,
         "think": False,
     }
@@ -155,7 +156,7 @@ def test_source_modality_comes_from_selected_rows() -> None:
     assert _source_modality({"image": [image]}) == "image"
 
 
-def test_execution_configures_exact_native_maximum_unit(tmp_path) -> None:
+def test_execution_configures_exact_hardware_fit_unit(tmp_path) -> None:
     spec = "ollama:deepseek-r1:32b-qwen-distill-q4_K_M"
     inventory = {
         "units": [
@@ -182,11 +183,11 @@ def test_execution_configures_exact_native_maximum_unit(tmp_path) -> None:
                     "schema": "ura-recovery-completed-selection/1",
                     "corpora": {"alpha": {"completed_datapoint_ids": ["done"]}},
                 },
-                "native_max_local_config": {
+                "hardware_fit_local_config": {
                     spec: {
                         "digest": "b" * 64,
                         "modalities": ["text"],
-                        "num_ctx": "max",
+                        "num_ctx": "fit",
                         "num_predict": -1,
                         "think": False,
                     }
@@ -212,6 +213,6 @@ def test_execution_configures_exact_native_maximum_unit(tmp_path) -> None:
     argv = unit.spec["base_argv"]
     config_path = argv[argv.index("--local-config") + 1]
     config = json.loads(Path(config_path).read_text(encoding="utf-8"))
-    assert config[spec]["num_ctx"] == "max"
+    assert config[spec]["num_ctx"] == "fit"
     assert config[spec]["num_predict"] == -1
     assert argv[argv.index("--target-answer-retries") + 1] == "1"

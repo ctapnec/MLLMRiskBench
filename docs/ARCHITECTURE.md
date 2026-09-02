@@ -262,9 +262,10 @@ then BitsAndBytes 4-bit on SM 7.0+. The exact quantization and card count remain
 a recorded execution condition; the estimate never substitutes for local-engine
 preflight. Expert/MoE-ambiguous names stay parameter/fit-unknown until an exact
 `parameter_count_b` is declared; their names never authorize a download or fit.
-An optional vLLM-only `max_model_len` sets the engine context and KV-cache
-admission cap independently of generation `max_tokens`. Omission uses the
-checkpoint's native context; an explicit integer in 1..1,000,000 must be at least
+The vLLM-only `max_model_len` sets the engine context and KV-cache allocation
+policy independently of generation `max_tokens`. Omission binds vLLM's `-1`
+automatic fit mode, which derives the model ceiling and reduces the allocation
+to current GPU capacity. An explicit integer in 1..1,000,000 must be at least
 `max_tokens`, is passed at engine construction, and is retained in normalized
 execution provenance.
 
@@ -382,6 +383,21 @@ allowed to attest runtime-backed framework execution.
 The later output-policy and paid-spend stop changes advance executable code to
 Runner 2.27 without changing unified schema 1.5 or the byte contracts of retained
 Runner 2.19 through 2.26 artifacts.
+
+Runner 2.28 adds hardware-fit context admission without changing unified schema
+1.5. vLLM uses its `-1` auto-fit mode. Ollama begins at the pinned model-native
+ceiling and halves that value with load-only probes until `/api/ps` proves the
+entire loaded runtime is GPU-resident. Only the accepted value reaches a real
+prompt; the requested policy, probes, and resolved allocation are retained.
+
+Runner 2.28 also separates GPU phases for response-independent local measured
+and diagnostic-canary cells. It completes the target-response checkpoint first,
+closes the target, then loads the model-backed scoring cascade and adjudicates
+those durable responses. The grid and run condition bind
+`judge_execution_schedule=post_factum_after_target_release`. This is same-run
+sequencing, not an unbound later re-adjudication. Crescendo remains inline
+because the verdict changes the following turn. A defense guard remains in the
+target phase because it changes the treatment being measured.
 
 An Ollama entry instead identifies a tag present in the live loopback daemon
 after a successful pull or discovery transaction. Rig Web may Start, Stop, and

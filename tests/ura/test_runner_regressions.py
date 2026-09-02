@@ -1663,6 +1663,7 @@ def test_local_probe_receipt_admits_measured_run_and_level1(
     assert probe_grid["request"]["models"] == [resolved_target]
     resolved_local_config = {
         **local_config,
+        "max_model_len": -1,
         "parameter_count_b": None,
         "multi_gpu_compatible": True,
         "multi_gpu_support_basis": "assumed",
@@ -6188,6 +6189,72 @@ def test_response_checkpoint_resumes_judging_without_rebilling_target(
     assert fresh_target._dialogs == []  # ZERO additional target calls on resume
     assert len(judgments) == 1
     assert resumed.responses[0].output_turns[0].content == "live reply 1"
+
+
+def test_post_factum_stage_releases_target_calls_before_judging(
+    tmp_path: Path,
+) -> None:
+    corpus = [_datapoint()]
+    sidecar = tmp_path / "post-factum.responses.checkpoint.jsonl"
+    target = _RecordingTarget()
+    judge = _ConfidentBinaryJudge()
+    budget = AttackBudget(max_queries=1, max_turns=1, seed=0)
+
+    collector = Runner(
+        _FloodAttacker(),
+        target,
+        JudgeCascade([judge]),
+        budget,
+        [0],
+        execution_stage="responses",
+    )
+    judgments, planned = collector.run(
+        corpus,
+        on_response=lambda record: Runner.append_checkpoint(sidecar, record),
+    )
+
+    assert judgments == []
+    assert len(target._dialogs) == 1
+    assert judge.calls == 0
+    response_records = Runner.load_response_checkpoint(
+        sidecar, expected_run_id=planned.run_id
+    )
+
+    adjudicator = Runner(
+        _FloodAttacker(),
+        target,
+        JudgeCascade([judge]),
+        budget,
+        [0],
+        execution_stage="judgments",
+    )
+    judged, manifest = adjudicator.run(
+        corpus,
+        manifest=planned,
+        response_records=response_records,
+    )
+
+    assert manifest.run_id == planned.run_id
+    assert len(target._dialogs) == 1
+    assert judge.calls == 1
+    assert len(judged) == 1
+
+
+def test_post_factum_judging_refuses_a_missing_response_before_target_call() -> None:
+    target = _RecordingTarget()
+    runner = Runner(
+        _FloodAttacker(),
+        target,
+        JudgeCascade([_ConfidentBinaryJudge()]),
+        AttackBudget(max_queries=1, max_turns=1, seed=0),
+        [0],
+        execution_stage="judgments",
+    )
+
+    with pytest.raises(ValueError, match="durable response for every planned attempt"):
+        runner.run([_datapoint()], response_records={})
+
+    assert target._dialogs == []
 
 
 def test_typed_guardrail_na_checkpoint_resume_makes_no_second_target_call() -> None:

@@ -2,7 +2,7 @@
 
 `ura.data_models` is the typed Pydantic v2 contract shared by converters,
 attackers, targets, judges, persistence, and analysis. `SCHEMA_VERSION = "1.5"`
-is stamped on datapoints, checkpoints, and manifests. Runner 2.27 rejects mixed
+is stamped on datapoints, checkpoints, and manifests. Runner 2.28 rejects mixed
 schema versions and duplicate datapoint IDs before a target call.
 
 The 1.5 transition introduces isolated-engine identities and verified closing
@@ -583,11 +583,11 @@ an executed cell:
 - `--local-config` binds an exact local specification to one immutable model
   revision or digest, declared modalities, parameter count, multi-GPU support,
   per-model quantization, tensor-parallel size, memory utilization, and output
-  bound. `max_tokens` is the generation bound. The optional vLLM-only
-  `max_model_len` is a distinct engine-context/KV-cache cap: omission uses the
-  checkpoint native context, while an explicit non-boolean integer in
-  1..1,000,000 is passed to vLLM engine construction and must be at least
-  `max_tokens`. It is forbidden for Ollama. A per-model quantization overrides
+  bound. `max_tokens` is the generation bound. The vLLM-only `max_model_len` is
+  a distinct engine-context/KV-cache policy: omission normalizes to vLLM's `-1`
+  automatic fit mode, while an explicit non-boolean integer in 1..1,000,000 is
+  passed to vLLM engine construction and must be at least `max_tokens`. It is
+  forbidden for Ollama. A per-model quantization overrides
   the command default, which overrides
   hardware-auto selection. Auto chooses the highest fitting supported precision:
   unquantized 16-bit, FP8 8-bit (minimum SM 7.5), then BitsAndBytes 4-bit
@@ -601,7 +601,7 @@ an executed cell:
   `fp8`, `bitsandbytes`, `awq`, or `gptq`. It permits an operator-owned load
   attempt only when estimated fit is unknown; hardware auto and known non-fit
   remain blocked. The normalized selected config retains the resolved precision
-  and this opt-in. It also retains `max_model_len` when declared, so its selected
+  and this opt-in. It also retains the resolved `max_model_len` policy, so its selected
   subset hash and grid/run provenance bind the context/KV admission setting.
   Runner 2.26 records a deterministic rejected input with empty
   `output_turns`, `empty_completion_observed=true`,
@@ -621,11 +621,23 @@ an executed cell:
   artifact fixes precision. The adapter uses the daemon HTTP API via the Python
   standard library and does not require an Ollama Python SDK.
   Runner 2.27 also derives a hosted-only `stop_on_failed_output` execution
-  policy from the already-bound API target type. This is recorded in the grid
-  run configuration rather than changing request-envelope schemas `/1` through
+  policy from the already-bound API target type. Runner 2.28 additionally binds
+  automatic GPU-fit context admission for local targets. Ollama `num_ctx="fit"`
+  uses load-only descending native-fraction probes and accepts only an exact
+  `/api/ps` row with `size_vram >= size`; vLLM uses its `-1` auto-fit mode. The
+  requested policy, resolved context, and Ollama probe trace are retained. This
+  is recorded in the grid run configuration rather than changing
+  request-envelope schemas `/1` through
   `/6`: hosted targets require zero answer retries, and their first retained
   failed output or transport/network failure opens the global `paid_provider`
   circuit before another paid call.
+  Response-independent local measured and diagnostic-canary runs with a
+  model-backed scoring stage additionally bind
+  `judge_execution_schedule=post_factum_after_target_release`. The response
+  checkpoint is completed while the target owns GPU capacity; the target is
+  then closed before the scoring model is loaded. Crescendo binds `inline`
+  because a verdict controls its trajectory. Defense guardrails also execute in
+  the target phase because they are part of the treatment.
 
 - Hugging Face model bytes are a separate immutable evidence family, not part
   of `--local-config`. `ura-model-acquisition-selection/1` retains path-free
@@ -832,8 +844,8 @@ requires an exact revision/digest. An unknown-fit row remains blocked under auto
 selecting `Include unknown fit` exposes an unknown-size row at every parameter
 maximum, while known sizes still obey the cap. An explicit per-model precision
 binds `allow_unknown_fit: true`, while known non-fit remains blocked. A vLLM row
-labels an explicit `max_model_len` context
-cap or native model context. Source-ineligible rows may also remain visible and
+labels an explicit `max_model_len` context cap or automatic maximum GPU-fit
+context. Source-ineligible rows may also remain visible and
 selectable with one custom hover/focus tooltip. Server validation rejects them
 before a subprocess by default. Eligible non-tool rows show `⚠ approximate
 opt-in`; the explicit opt-in admits only supplementary `approximate_*` response

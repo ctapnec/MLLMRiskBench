@@ -1791,6 +1791,7 @@ def _load_local_config(
                 )
             from ura.targets.local import (  # noqa: PLC0415
                 DEFAULT_VLLM_GENERATION_TOKENS,
+                DEFAULT_VLLM_MAX_MODEL_LEN,
                 validate_vllm_max_model_len,
                 validate_vllm_max_tokens,
             )
@@ -1802,18 +1803,22 @@ def _load_local_config(
                 except ValueError as exc:
                     raise ValueError(f"vLLM config {display_spec!r} {exc}") from exc
                 config["max_tokens"] = max_tokens
-            if "max_model_len" in config:
-                try:
-                    max_model_len = validate_vllm_max_model_len(
-                        config["max_model_len"]
-                    )
-                except ValueError as exc:
-                    raise ValueError(f"vLLM config {display_spec!r} {exc}") from exc
-                if max_tokens is not None and max_tokens > max_model_len:
-                    raise ValueError(
-                        f"vLLM config {display_spec!r} max_tokens must not exceed "
-                        "max_model_len"
-                    )
+            try:
+                max_model_len = validate_vllm_max_model_len(
+                    config.get("max_model_len", DEFAULT_VLLM_MAX_MODEL_LEN)
+                )
+            except ValueError as exc:
+                raise ValueError(f"vLLM config {display_spec!r} {exc}") from exc
+            config["max_model_len"] = max_model_len
+            if (
+                max_model_len > 0
+                and max_tokens is not None
+                and max_tokens > max_model_len
+            ):
+                raise ValueError(
+                    f"vLLM config {display_spec!r} max_tokens must not exceed "
+                    "max_model_len"
+                )
             allow_unknown_fit = config.get("allow_unknown_fit", False)
             if not isinstance(allow_unknown_fit, bool):
                 raise ValueError(
@@ -2926,6 +2931,7 @@ def build_target(
             if backend == "vllm":
                 from ura.targets.local import (
                     DEFAULT_VLLM_GENERATION_TOKENS,
+                    DEFAULT_VLLM_MAX_MODEL_LEN,
                     VLLMTarget,
                 )
                 kwargs: dict = {
@@ -2940,7 +2946,9 @@ def build_target(
                     "max_tokens": local_identity.get(
                         "max_tokens", DEFAULT_VLLM_GENERATION_TOKENS
                     ),
-                    "max_model_len": local_identity.get("max_model_len"),
+                    "max_model_len": local_identity.get(
+                        "max_model_len", DEFAULT_VLLM_MAX_MODEL_LEN
+                    ),
                 }
                 resolved_quantization = str(
                     local_identity.get("quantization") or quantization
@@ -4776,6 +4784,7 @@ def _main(argv=None) -> int:
     api_specs = [s.strip() for s in args.api.split(",") if s.strip()]
     local_specs = [s.strip() for s in args.local.split(",") if s.strip()]
     judge_names = [j.strip() for j in args.judges.split(",") if j.strip()]
+    attacker_names = [a.strip() for a in args.attackers.split(",") if a.strip()]
     local_judge_spec = (
         args.judge_model
         if (
@@ -4793,6 +4802,18 @@ def _main(argv=None) -> int:
         and "llm" in judge_names
         and args.judge_model != "mock"
         and local_judge_spec is None
+    )
+    deferred_local_judging = bool(
+        local_specs
+        and execution_purpose in {"diagnostic_canary", "measured_run"}
+        and not args.attestation_probe
+        and "crescendo" not in {name.lower() for name in attacker_names}
+        and ("guardrail" in judge_names or local_judge_spec is not None)
+    )
+    judge_execution_schedule = (
+        "post_factum_after_target_release"
+        if deferred_local_judging
+        else "inline"
     )
     if (
         execution_purpose == "measured_run"
@@ -4833,11 +4854,16 @@ def _main(argv=None) -> int:
         )
     if len(set(local_config_specs)) != len(local_config_specs):
         ap.error("the LLM judge must differ from every model under test")
-    if len(local_config_specs) > 1:
+    if len(local_config_specs) > 1 and not (
+        deferred_local_judging
+        and len(local_specs) == 1
+        and local_judge_spec is not None
+        and len(local_config_specs) == 2
+    ):
         ap.error(
             "a local target and a distinct local LLM judge cannot share one "
-            "process; run one local engine per process to avoid GPU engine "
-            "double-load conflicts"
+            "inline process; use a response-independent local lane so Runner "
+            "can release the target before loading the judge"
         )
     model_specs = ["mock"] if args.dry_run else (api_specs + local_specs)
     if len(set(model_specs)) != len(model_specs):
@@ -4845,7 +4871,6 @@ def _main(argv=None) -> int:
     if not model_specs:
         ap.error("a real run requires at least one --api or --local target; use --dry-run for mock")
 
-    attacker_names = [a.strip() for a in args.attackers.split(",") if a.strip()]
     corpora = [c.strip() for c in args.corpora.split(",") if c.strip()]
     if not attacker_names:
         ap.error("--attackers must contain at least one adapter name")
@@ -5991,6 +6016,7 @@ def _main(argv=None) -> int:
             "defense": args.defense,
             "defense_guard": args.defense_guard,
             "judges": judge_names,
+            "judge_execution_schedule": judge_execution_schedule,
             "judge_model": persisted_judge_model,
             "guardrail_model": (
                 args.guardrail_model if scoring_guardrail_selected else None
@@ -6595,6 +6621,7 @@ def _main(argv=None) -> int:
         },
         "local_config_artifact": local_config_artifact,
         "judges": judge_names,
+        "judge_execution_schedule": judge_execution_schedule,
         "judge_model": persisted_judge_model,
         "hosted_judge_data_transfer_acknowledged": bool(
             args.ack_hosted_judge_data_transfer
@@ -6839,31 +6866,36 @@ def _main(argv=None) -> int:
             if callable(preflight):
                 preflight()
             call_budget.raise_if_deadline_reached()
-        for target in prebuilt_targets.values():
-            call_budget.raise_if_deadline_reached()
-            base_preflight = getattr(target, "preflight_base", None)
-            if callable(base_preflight):
-                base_preflight()
-            call_budget.raise_if_deadline_reached()
-        if prebuilt_judge_target is not None:
-            call_budget.raise_if_deadline_reached()
-            base_preflight = getattr(prebuilt_judge_target, "preflight_base", None)
-            if callable(base_preflight):
-                base_preflight()
-            call_budget.raise_if_deadline_reached()
-        if shared_defense_guard is not None:
-            call_budget.raise_if_deadline_reached()
-            preflight = getattr(shared_defense_guard, "preflight", None)
-            if callable(preflight):
-                preflight()
-            call_budget.raise_if_deadline_reached()
-        # Reuse one loaded local model-backed judge cascade across cells.
-        for stage in planned_cascade.stages:
-            call_budget.raise_if_deadline_reached()
-            preflight = getattr(stage, "preflight", None)
-            if callable(preflight):
-                preflight()
-            call_budget.raise_if_deadline_reached()
+        if not deferred_local_judging:
+            for target in prebuilt_targets.values():
+                call_budget.raise_if_deadline_reached()
+                base_preflight = getattr(target, "preflight_base", None)
+                if callable(base_preflight):
+                    base_preflight()
+                call_budget.raise_if_deadline_reached()
+            if prebuilt_judge_target is not None and not args.attestation_probe:
+                call_budget.raise_if_deadline_reached()
+                base_preflight = getattr(
+                    prebuilt_judge_target, "preflight_base", None
+                )
+                if callable(base_preflight):
+                    base_preflight()
+                call_budget.raise_if_deadline_reached()
+            if shared_defense_guard is not None:
+                call_budget.raise_if_deadline_reached()
+                preflight = getattr(shared_defense_guard, "preflight", None)
+                if callable(preflight):
+                    preflight()
+                call_budget.raise_if_deadline_reached()
+            # An attestation probe makes no policy-judge call. Do not load an
+            # unused scoring model beside the target it is meant to attest.
+            if not args.attestation_probe:
+                for stage in planned_cascade.stages:
+                    call_budget.raise_if_deadline_reached()
+                    preflight = getattr(stage, "preflight", None)
+                    if callable(preflight):
+                        preflight()
+                    call_budget.raise_if_deadline_reached()
         # Reset only after every durable failure/recovery artifact has been
         # validated against the ledger. Otherwise reset could erase the sole
         # high-water evidence for a paid failed call.
@@ -6898,6 +6930,59 @@ def _main(argv=None) -> int:
         str(getattr(target, "name")): set()
         for target in prebuilt_targets.values()
     }
+
+    def close_components_now(components: list[object], *, role: str) -> None:
+        """Release one sequential GPU phase before the next model phase."""
+
+        seen: set[int] = set()
+        failures: list[str] = []
+        for component in reversed(components):
+            if component is None or id(component) in seen:
+                continue
+            seen.add(id(component))
+            close = getattr(component, "close", None)
+            if not callable(close):
+                continue
+            try:
+                close()
+            except Exception as exc:  # safe type-only lifecycle evidence
+                failures.append(type(exc).__name__)
+        if failures:
+            raise RuntimeError(
+                f"{role} component cleanup failed: {','.join(failures)}"
+            )
+
+    def target_phase_components(target: object) -> list[object]:
+        base = getattr(target, "base", None)
+        return [target, base, shared_defense_guard]
+
+    def scoring_phase_components() -> list[object]:
+        return [*planned_cascade.stages, prebuilt_judge_target]
+
+    def preflight_target_phase(target: object) -> None:
+        call_budget.raise_if_deadline_reached()
+        base_preflight = getattr(target, "preflight_base", None)
+        if callable(base_preflight):
+            base_preflight()
+        if shared_defense_guard is not None:
+            preflight = getattr(shared_defense_guard, "preflight", None)
+            if callable(preflight):
+                preflight()
+        call_budget.raise_if_deadline_reached()
+
+    def preflight_scoring_phase() -> None:
+        call_budget.raise_if_deadline_reached()
+        if prebuilt_judge_target is not None:
+            base_preflight = getattr(
+                prebuilt_judge_target, "preflight_base", None
+            )
+            if callable(base_preflight):
+                base_preflight()
+        for stage in planned_cascade.stages:
+            preflight = getattr(stage, "preflight", None)
+            if callable(preflight):
+                preflight()
+        call_budget.raise_if_deadline_reached()
     for corpus_name in corpora:
         corpus = loaded_corpora[corpus_name]
         sampling_audit = sampling_audits[corpus_name]
@@ -6966,6 +7051,8 @@ def _main(argv=None) -> int:
                 execution_started = False
                 cell_lock_acquired = False
                 cell_lock_conflict = False
+                target_phase_open = False
+                scoring_phase_open = False
                 cell_lock: Path | None = None
                 cell_lock_token: str | None = None
                 paths: dict[str, Path] = {}
@@ -7045,6 +7132,9 @@ def _main(argv=None) -> int:
                         ),
                         target_answer_retries=args.target_answer_retries,
                         stop_on_failed_output=spec in api_specs,
+                        execution_stage=(
+                            "responses" if deferred_local_judging else "full"
+                        ),
                     )
                     cell_config = {
                         "grid_id": grid_id,
@@ -7093,6 +7183,7 @@ def _main(argv=None) -> int:
                             }
                         ),
                         "judge_names": judge_names,
+                        "judge_execution_schedule": judge_execution_schedule,
                         "judge_model": persisted_judge_model,
                         "hosted_judge_data_transfer_acknowledged": bool(
                             args.ack_hosted_judge_data_transfer
@@ -7264,6 +7355,9 @@ def _main(argv=None) -> int:
                     resumed_responses = Runner.load_response_checkpoint(
                         paths["response_checkpoint"], expected_run_id=planned.run_id
                     )
+                    if deferred_local_judging:
+                        target_phase_open = True
+                        preflight_target_phase(target)
                     execution_started = True
                     judgments, manifest = runner.run(
                         corpus,
@@ -7280,6 +7374,61 @@ def _main(argv=None) -> int:
                             Runner.append_checkpoint(sidecar, record)
                         ),
                     )
+                    if deferred_local_judging:
+                        close_components_now(
+                            target_phase_components(target), role="target phase"
+                        )
+                        target_phase_open = False
+                        scoring_phase_open = True
+                        preflight_scoring_phase()
+                        resumed = Runner.load_checkpoint(
+                            paths["checkpoint"], expected_run_id=planned.run_id
+                        )
+                        resumed_responses = Runner.load_response_checkpoint(
+                            paths["response_checkpoint"],
+                            expected_run_id=planned.run_id,
+                        )
+                        runner = Runner(
+                            attacker,
+                            target,
+                            planned_cascade,
+                            AttackBudget(
+                                max_queries=args.max_queries,
+                                max_turns=args.max_turns,
+                                seed=seeds[0],
+                            ),
+                            seeds,
+                            call_budget=call_budget,
+                            expected_target_identity=attested_target_identities.get(
+                                requested_model_specs[spec]
+                            ),
+                            approximate_common_metrics=bool(
+                                args.approximate_common_metrics
+                            ),
+                            approximate_evidence_class=(
+                                "synthetic" if args.dry_run else "measured"
+                            ),
+                            target_answer_retries=args.target_answer_retries,
+                            stop_on_failed_output=spec in api_specs,
+                            execution_stage="judgments",
+                        )
+                        judgments, manifest = runner.run(
+                            corpus,
+                            started_at=run_started,
+                            env=run_env,
+                            run_config=cell_config,
+                            manifest=planned,
+                            resume_records=resumed,
+                            on_record=lambda record, checkpoint=paths["checkpoint"]: (
+                                Runner.append_checkpoint(checkpoint, record)
+                            ),
+                            response_records=resumed_responses,
+                            on_response=None,
+                        )
+                        close_components_now(
+                            scoring_phase_components(), role="scoring phase"
+                        )
+                        scoring_phase_open = False
                     results = runner.aggregate(judgments, group_keys=group_keys)
                     _record_executed_modality_evidence(
                         target.name, runner.attempts, runner.responses,
@@ -7474,11 +7623,26 @@ def _main(argv=None) -> int:
                         file=sys.stderr,
                     )
                 finally:
-                    if (
-                        cell_lock_acquired and cell_lock is not None
-                        and cell_lock_token is not None
-                    ):
-                        _release_artifact_lock(cell_lock, cell_lock_token)
+                    try:
+                        if deferred_local_judging:
+                            try:
+                                if target_phase_open:
+                                    close_components_now(
+                                        target_phase_components(target),
+                                        role="target phase",
+                                    )
+                            finally:
+                                if scoring_phase_open:
+                                    close_components_now(
+                                        scoring_phase_components(),
+                                        role="scoring phase",
+                                    )
+                    finally:
+                        if (
+                            cell_lock_acquired and cell_lock is not None
+                            and cell_lock_token is not None
+                        ):
+                            _release_artifact_lock(cell_lock, cell_lock_token)
 
     requested_cells = len(model_specs) * len(corpora) * len(attacker_names)
     if len(cell_statuses) != requested_cells:

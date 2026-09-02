@@ -24,6 +24,7 @@ from ura.targets.local import (
     DEFAULT_OLLAMA_NUM_CTX,
     DEFAULT_OLLAMA_NUM_PREDICT,
     DEFAULT_VLLM_GENERATION_TOKENS,
+    DEFAULT_VLLM_MAX_MODEL_LEN,
     MAX_VLLM_MODEL_LEN,
     LocalTargetAnswerError,
     OllamaTarget,
@@ -36,9 +37,10 @@ REVISION = "6" * 40
 
 
 def test_current_runner_version_includes_local_context_contract() -> None:
-    assert CODE_VERSION == "ura-runner/2.27"
+    assert CODE_VERSION == "ura-runner/2.28"
     assert DEFAULT_VLLM_GENERATION_TOKENS is None
-    assert DEFAULT_OLLAMA_NUM_CTX == "max"
+    assert DEFAULT_VLLM_MAX_MODEL_LEN == -1
+    assert DEFAULT_OLLAMA_NUM_CTX == "fit"
     assert DEFAULT_OLLAMA_NUM_PREDICT == -1
 
 
@@ -122,7 +124,7 @@ def test_qwen_context_cap_survives_loader_target_and_portable_identity(
     assert str(path.resolve()) not in json.dumps(target_config, sort_keys=True)
 
 
-def test_absent_context_cap_keeps_native_vllm_behavior_and_identity(
+def test_absent_context_cap_binds_vllm_hardware_fit_behavior_and_identity(
     tmp_path: Path,
 ) -> None:
     path = _write_config(tmp_path, _config(include_context_cap=False))
@@ -133,9 +135,9 @@ def test_absent_context_cap_keeps_native_vllm_behavior_and_identity(
     target = run_matrix.build_target(SPEC, local_identity=loaded[SPEC])
     target_config = _component_config(target)
 
-    assert "max_model_len" not in loaded[SPEC]
-    assert target.max_model_len is None
-    assert "max_model_len" not in target_config
+    assert loaded[SPEC]["max_model_len"] == -1
+    assert target.max_model_len == -1
+    assert target_config["max_model_len"] == -1
 
     capped = VLLMTarget(
         SPEC.split(":", 1)[1],
@@ -158,16 +160,16 @@ def test_absent_context_cap_keeps_native_vllm_behavior_and_identity(
             [0],
         ).plan_manifest(synth_corpus(1))
 
-    native_manifest = manifest_for(target)
+    fit_manifest = manifest_for(target)
     capped_manifest = manifest_for(capped)
-    assert native_manifest.run_id != capped_manifest.run_id
-    assert "max_model_len" not in native_manifest.config["components"]["target"]
+    assert fit_manifest.run_id != capped_manifest.run_id
+    assert fit_manifest.config["components"]["target"]["max_model_len"] == -1
     assert capped_manifest.config["components"]["target"]["max_model_len"] == 15360
 
 
 @pytest.mark.parametrize(
     "invalid",
-    [None, False, True, 0, -1, 1.5, "15360", MAX_VLLM_MODEL_LEN + 1],
+    [None, False, True, 0, -2, 1.5, "15360", MAX_VLLM_MODEL_LEN + 1],
 )
 def test_local_config_rejects_invalid_context_caps_before_target_construction(
     tmp_path: Path, invalid: object
@@ -176,7 +178,7 @@ def test_local_config_rejects_invalid_context_caps_before_target_construction(
     config["max_model_len"] = invalid
     path = _write_config(tmp_path, config)
 
-    with pytest.raises(ValueError, match="max_model_len must be an integer"):
+    with pytest.raises(ValueError, match="max_model_len must be -1"):
         run_matrix._load_local_config(
             str(path), [SPEC], hardware=_rig_hardware()
         )
@@ -225,7 +227,7 @@ def test_context_cap_is_not_a_generation_limit_alias(tmp_path: Path) -> None:
         )
 
 
-def test_vllm_engine_receives_only_explicit_context_cap(
+def test_vllm_engine_receives_explicit_or_hardware_fit_context_policy(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -255,7 +257,12 @@ def test_vllm_engine_receives_only_explicit_context_cap(
             assert "revision" not in kwargs
             assert "tokenizer_revision" not in kwargs
             engine_kwargs.append(kwargs)
-            self.llm_engine = SimpleNamespace(engine_core=InprocClient())
+            requested = kwargs.get("max_model_len")
+            resolved = 65_536 if requested == -1 else requested
+            self.llm_engine = SimpleNamespace(
+                engine_core=InprocClient(),
+                model_config=SimpleNamespace(max_model_len=resolved),
+            )
 
         def chat(self, _messages: object, _sampling: object) -> list[object]:
             completion = SimpleNamespace(
@@ -331,6 +338,7 @@ def test_vllm_engine_receives_only_explicit_context_cap(
     assert "stop_token_ids" not in sampling_kwargs[0]
     assert "ignore_eos" not in sampling_kwargs[0]
     assert response.raw["max_model_len"] == 15360
+    assert response.raw["requested_max_model_len"] == 15360
     assert response.raw["engine_core_execution_mode"] == "in_process"
     assert response.raw["generation"]["max_tokens"] == 4096
     assert response.attempt_id == repeated.attempt_id
@@ -360,18 +368,22 @@ def test_vllm_engine_receives_only_explicit_context_cap(
     assert linked.attempt_id == attempt.id
     assert linked.run_id == "run-fixture"
 
-    native = VLLMTarget(
+    hardware_fit = VLLMTarget(
         SPEC.split(":", 1)[1],
         revision=REVISION,
         modality_support=("text",),
         model_runtime=FakeRuntime(),
     )
-    native_response = native.generate([DialogTurn(role="user", content="probe")])
+    fit_response = hardware_fit.generate(
+        [DialogTurn(role="user", content="probe")]
+    )
     assert os.environ["VLLM_ENABLE_V1_MULTIPROCESSING"] == "operator-value"
-    assert "max_model_len" not in engine_kwargs[1]
+    assert engine_kwargs[1]["max_model_len"] == -1
     assert sampling_kwargs[-1]["max_tokens"] is None
-    assert native_response.raw["generation"]["max_tokens"] is None
-    assert "max_model_len" not in native_response.raw
+    assert fit_response.raw["generation"]["max_tokens"] is None
+    assert fit_response.raw["requested_max_model_len"] == -1
+    assert fit_response.raw["max_model_len"] == 65_536
+    assert fit_response.raw["max_model_len_policy"] == "hardware_fit"
 
 
 def test_vllm_length_capped_nonempty_completion_is_retained() -> None:
@@ -700,11 +712,11 @@ def test_ollama_local_config_binds_context_and_output_caps(
         encoding="utf-8",
     )
     defaults, _artifact = run_matrix._load_local_config(str(default_path), [spec])
-    assert defaults[spec]["num_ctx"] == "max"
+    assert defaults[spec]["num_ctx"] == "fit"
     assert defaults[spec]["num_predict"] == DEFAULT_OLLAMA_NUM_PREDICT
     assert defaults[spec]["think"] is False
     default_target = run_matrix.build_target(spec, local_identity=defaults[spec])
-    assert default_target.num_ctx == "max"
+    assert default_target.num_ctx == "fit"
     assert "num_ctx" not in default_target._sampling_options()
     assert default_target._sampling_options()["num_predict"] == -1
 
@@ -742,12 +754,104 @@ def test_ollama_native_max_context_is_resolved_once_from_pinned_model_metadata(
     }
 
 
+def test_ollama_hardware_fit_probes_down_to_largest_fully_gpu_resident_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = OllamaTarget("fixture:latest", model_digest="a" * 64)
+    probes: list[int] = []
+    unloads: list[int] = []
+
+    def resolve_native(*, deadline: float) -> int:
+        del deadline
+        assert target.num_ctx == "max"
+        return 131_072
+
+    def preload(candidate: int, *, deadline: float) -> dict[str, int]:
+        del deadline
+        probes.append(candidate)
+        target._residency_owned = True
+        size = 55_000 if candidate == 131_072 else 38_000
+        size_vram = 30_000 if candidate == 131_072 else size
+        return {
+            "size": size,
+            "size_vram": size_vram,
+            "context_length": candidate,
+        }
+
+    def unload(*, deadline: float) -> str:
+        del deadline
+        unloads.append(probes[-1])
+        target._residency_owned = False
+        return "unload"
+
+    monkeypatch.setattr(target, "_resolve_num_ctx", resolve_native)
+    monkeypatch.setattr(target, "_preload_context_candidate", preload)
+    monkeypatch.setattr(target, "_release_owned_residency", unload)
+
+    assert target._resolve_hardware_fit_context(deadline=1.0) == 65_536
+    assert probes == [131_072, 65_536]
+    assert unloads == [131_072]
+    assert target._resolved_num_ctx == 65_536
+    assert target._sampling_options()["num_ctx"] == 65_536
+    assert target._hardware_fit_attempts == [
+        {
+            "context_length": 131_072,
+            "size": 55_000,
+            "size_vram": 30_000,
+            "fully_gpu_resident": False,
+        },
+        {
+            "context_length": 65_536,
+            "size": 38_000,
+            "size_vram": 38_000,
+            "fully_gpu_resident": True,
+        },
+    ]
+
+
+def test_ollama_hardware_fit_revalidates_cached_context_after_unload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = OllamaTarget("fixture:latest", model_digest="a" * 64)
+    target._resolved_num_ctx = 65_536
+    target._hardware_fit_attempts = [{
+        "context_length": 131_072,
+        "size": 55_000,
+        "size_vram": 30_000,
+        "fully_gpu_resident": False,
+    }]
+    calls: list[int] = []
+
+    def preload(candidate: int, *, deadline: float) -> dict[str, int]:
+        del deadline
+        calls.append(candidate)
+        target._residency_owned = True
+        return {
+            "size": 38_000,
+            "size_vram": 38_000,
+            "context_length": candidate,
+        }
+
+    monkeypatch.setattr(target, "_preload_context_candidate", preload)
+
+    assert target._ensure_hardware_fit_context(
+        residency_prestate="empty", deadline=1.0
+    ) == 65_536
+    assert calls == [65_536]
+    assert target._hardware_fit_attempts == [{
+        "context_length": 65_536,
+        "size": 38_000,
+        "size_vram": 38_000,
+        "fully_gpu_resident": True,
+    }]
+
+
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     (
-        ("num_ctx", True, "num_ctx must be 'max' or an integer"),
-        ("num_ctx", 0, "num_ctx must be 'max' or an integer"),
-        ("num_ctx", "default", "num_ctx must be 'max' or an integer"),
+        ("num_ctx", True, "num_ctx must be 'fit', 'max', or an integer"),
+        ("num_ctx", 0, "num_ctx must be 'fit', 'max', or an integer"),
+        ("num_ctx", "default", "num_ctx must be 'fit', 'max', or an integer"),
         ("num_predict", -2, "num_predict must be -1 or an integer"),
         ("num_predict", 0, "num_predict must be -1 or an integer"),
         ("think", "extreme", "think must be boolean"),
@@ -867,7 +971,7 @@ def test_rig_web_rejects_invalid_curated_context_cap(tmp_path: Path) -> None:
     finally:
         app.close()
 
-    assert "max_model_len must be an integer" in errors["models"]
+    assert "max_model_len must be -1" in errors["models"]
 
 
 def test_rig_web_rejects_ollama_vllm_context_cap_before_render_or_strip(

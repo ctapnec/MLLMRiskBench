@@ -5,7 +5,7 @@ validity rules, then execute [RUN_AND_RETURN.md](RUN_AND_RETURN.md). A dry run,
 partial artifact family, source conversion, model-name assumption, native prompt
 export, or synthetic figure is not a measured thesis result.
 
-The maintained execution contract is Runner `ura-runner/2.27` with unified
+The maintained execution contract is Runner `ura-runner/2.28` with unified
 schema `1.5`. Runner 2.19/schema 1.4 artifacts remain runtime-free legacy
 compatibility only and are not mixed into the current measured cohort.
 Ignored local/rig engineering logs are operational diagnostics, not committed
@@ -58,11 +58,11 @@ product:
    `parameter_count_b` is supplied; no fit or download is inferred. Auto
    precision cannot launch an unknown-fit row. An explicit per-model precision
    creates the bound `allow_unknown_fit: true` operator opt-in, while a known
-   incompatibility remains blocked. The optional vLLM-only `max_model_len`
-   field separately caps engine context and KV-cache admission; it is not
-   generation `max_tokens`. Omission uses the checkpoint native context, while
-   an explicit integer in 1..1,000,000 must be at least `max_tokens`; the Build
-   row labels the explicit cap or native model context.
+   incompatibility remains blocked. The vLLM-only `max_model_len` field controls
+   engine context and KV-cache admission; it is not generation `max_tokens`.
+   Omission binds vLLM's `-1` automatic fit policy, while an explicit integer in
+   1..1,000,000 must be at least `max_tokens`; the Build row labels the explicit
+   cap or automatic maximum GPU-fit context.
    Every Hub-backed vLLM target, local LLM judge, scoring/defense Guardrail, and
    NanoGCG surrogate first passes the sealed model workflow. An exact public
    repo plus immutable 40-64-hex commit is planned without constructing a
@@ -85,8 +85,16 @@ product:
    unique explicit modality list containing `text` and optionally `image`. It
    forbids vLLM-only revision, parameter, topology, memory, output, context,
    quantization, and unknown-fit fields, so the UI provides no fit or precision
-   control. The Runner uses the daemon HTTP API directly;
+   control. Omission binds Ollama `num_ctx="fit"`: Runner tests the native
+   ceiling and successively smaller native fractions with load-only requests,
+   and admits the largest tested context reported by `/api/ps` as fully
+   GPU-resident. The Runner uses the daemon HTTP API directly;
    no Ollama Python SDK is required.
+   Response-independent local measured and diagnostic-canary cells collect and
+   durably checkpoint target responses first, release the target, and only then
+   load their model-backed scoring judge. Crescendo remains inline because its
+   judgment controls the next turn. Defense guardrails remain in the target
+   phase as part of the evaluated treatment.
 4. **Multimodal lanes.** Image, JALMBench audio, and Video-SafetyBench video are
    attempted only for exact target transports that pass bounded live
    attestation. Agent/tool sources additionally require their substantive

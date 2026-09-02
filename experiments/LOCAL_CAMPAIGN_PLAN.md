@@ -648,9 +648,12 @@ That 2,048-token continuation was stopped on 2 September 2026 at 784 durable
 rows after it had retained 14 missing outputs and 21 length-ended responses.
 It is not a terminal population result. The next DeepSeek unit preserves that
 checkpoint and selects only its never-attempted, missing, and length-ended
-identities under `num_ctx="max"` and `num_predict=-1`; completed non-truncated
-rows are not repeated. The two finite-cap conditions and the native-maximum
-correction remain separately labelled and are never silently pooled.
+identities under automatic GPU-fit context and `num_predict=-1`; completed
+non-truncated rows are not repeated. The two finite-cap conditions and the
+hardware-fit correction remain separately labelled and are never silently
+pooled. A first native-maximum canary on 2 September loaded only 30.2 GB of a
+55.7 GB DeepSeek runtime into VRAM and was stopped before measured rows. That
+attempt is infrastructure evidence, not model output evidence.
 Identity, provenance, residency, seal, budget and wall-time failures
 remain hard failures. Exhausted answer-level malformed output or transport
 failures use the typed missing-response policy above. Earlier attempts remain
@@ -998,32 +1001,43 @@ the seven failed base units. It requires the terminal failed-output recovery and
 then runs only the six never-started R-Judge/GPTGeoChat units, for 2,350 rows.
 Its explicit Ollama configuration binds `think=false` for Gemma and Ministral
 and `think=low` for GPT-OSS. Because none of those six population rows has run,
-their fresh condition binds `num_ctx="max"` and `num_predict=-1`, resolving
-the pinned model's native maximum context and maximum output, with a
-fresh attestation, one-cluster canary, no-call projection and acquisition before
-the measured run. A failed allocation stops that model's unit before population
-calls; it is reported rather than silently replaced by a lower default. No
+their fresh condition binds `num_ctx="fit"` and `num_predict=-1`. Runner starts
+at the pinned native ceiling and performs load-only probes at successively
+smaller native fractions; it admits the largest tested context whose exact
+`/api/ps` row is fully GPU-resident. This precedes the fresh attestation,
+one-cluster canary, no-call projection and acquisition for the measured run. A
+model that cannot fit even the minimum probe is a typed unit failure. No
 local-only classification unit may gain a Hub
 acquisition plan. Reintroducing DeepSeek into this selection or changing the
 2,350-row count is a contract failure.
 
 The general local serving default is provider-independent at the response
-boundary: omitted vLLM `max_model_len` and `max_tokens` use the pinned runtime's
-native context and maximum available output. Ollama binds `num_ctx="max"` and
-`num_predict=-1`; Runner resolves the pinned model's native context length from
-`/api/show` and uses maximum available output. Every policy and resolved value
-is visible in Build and retained in the run condition.
+boundary: omitted vLLM `max_model_len` binds vLLM 0.27's `-1` auto-fit policy,
+while omitted `max_tokens` uses maximum available output. Ollama binds
+`num_ctx="fit"` and `num_predict=-1`; Runner derives and proves a fully
+GPU-resident context before a real prompt. Every policy, attempted allocation,
+and resolved value is visible in Build and retained in the run condition or
+response evidence.
+
+Response-independent local measured and diagnostic-canary cells use two GPU
+phases within the same bound run. The target completes a durable response
+checkpoint with the scoring model absent, then unloads before the Guardrail or
+local LLM judge is loaded. This avoids changing target fit, throughput, or
+latency observations merely by placing a judge on the second card. Crescendo is
+the explicit exception: its judge remains inline because the verdict controls
+the following turn. A defense guard also remains in the target phase as part of
+the treatment. Gate artifacts retain the selected execution schedule.
 
 Before Gate 7, a structure-only truncation inventory must inspect every retained
 current-roster local result. Each nonempty vLLM `finish_reason=length` and Ollama
-`done_reason=length` identity is regenerated once under the same native-maximum
-policy, with fresh admission artifacts and an exact completed-ID selector.
+`done_reason=length` identity is regenerated once under the same automatic
+GPU-fit policy, with fresh admission artifacts and an exact completed-ID selector.
 Historical rows remain immutable. Retired RWKV conditions are not rescheduled,
 because they were explicitly removed from the current roster and task plan.
 After review, execute that inventory with
 `local_truncation_recovery_execution_phase6`. The controller must re-derive the
 bound structure from each source state, use create-only exact-ID selectors and
-native-maximum configs, then derive fresh attestation, canary, projection and
+hardware-fit configs, then derive fresh attestation, canary, projection and
 acquisition artifacts before measured calls. One failed or missing model answer
 is retained under model stability and does not stop the unit; completed
 non-truncated identities are never scheduled again.

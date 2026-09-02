@@ -3198,7 +3198,7 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
     assert "data-backend='ollama'" in ollama_row
     assert "digest pinned" in ollama_row
     assert "precision is fixed by the pulled Ollama artifact" in ollama_row
-    assert "native maximum context / maximum available output" in ollama_row
+    assert "automatic maximum GPU-fit context / maximum available output" in ollama_row
     assert "thinking disabled" in ollama_row
     assert "data-compatible" not in ollama_row
     assert "data-params-b" not in ollama_row
@@ -3211,7 +3211,7 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
         ollama_spec: {
             "digest": "a" * 64,
             "modalities": ["text"],
-            "num_ctx": "max",
+            "num_ctx": "fit",
             "num_predict": -1,
             "think": False,
         }
@@ -3240,7 +3240,7 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
         ollama_spec, local_identity=loaded_ollama[ollama_spec]
     )
     assert ollama_target.__class__.__name__ == "OllamaTarget"
-    assert ollama_target.num_ctx == "max"
+    assert ollama_target.num_ctx == "fit"
     assert "num_ctx" not in ollama_target._sampling_options()
     assert ollama_target._sampling_options()["num_predict"] == -1
 

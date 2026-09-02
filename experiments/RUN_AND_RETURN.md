@@ -6,8 +6,8 @@ source-native evaluators. Experiments and the human audit are still pending.
 Preflight, dry-run, diagnostic-canary, and bounded transport-probe artifacts are
 diagnostics, not thesis results.
 
-The maintained artifact contract is Runner `ura-runner/2.27` with unified schema
-`1.5`. Runner 2.27 is the current executable contract used by this runbook.
+The maintained artifact contract is Runner `ura-runner/2.28` with unified schema
+`1.5`. Runner 2.28 is the current executable contract used by this runbook.
 Runner 2.19/schema 1.4 artifacts remain runtime-free legacy
 compatibility only; do not combine them with the current measured cohort.
 
@@ -1844,10 +1844,11 @@ by `/api/tags` and a unique explicit modality list containing `text` and
 optionally `image`. vLLM-only revision, quantization, tensor parallelism, memory
 utilization, parameter count, `max_tokens`, `max_model_len`, and unknown-fit
 fields are forbidden. Ollama instead accepts `num_ctx` and `num_predict`. A
-newly selected config binds `num_ctx="max"`; Runner resolves the exact native
-maximum from the pinned model's architecture-specific `context_length` in
-`/api/show`, and uses the `num_predict=-1`
-maximum-output sentinel. The pulled
+newly selected config binds `num_ctx="fit"`; Runner reads the exact native
+ceiling from `/api/show`, then performs load-only probes from that ceiling
+downward until `/api/ps` proves the complete runtime is GPU-resident. Only then
+does it submit a real prompt, using the `num_predict=-1` maximum-output
+sentinel. The pulled
 artifact fixes precision. Runner
 uses the daemon HTTP API through the Python standard library, so no Ollama
 Python SDK is required; the daemon and matching pulled tag must exist before a
@@ -1888,30 +1889,44 @@ card count needed for the estimate. The resolved hardware, quantization and
 tensor-parallel configuration enter normal local-config, grid and run
 provenance.
 
-`max_model_len` is an optional vLLM-only per-model field for engine context and
-KV-cache admission. It is separate from `max_tokens`, which remains the maximum
-generated response length. Omit `max_model_len` to let the pinned checkpoint
-declare its native context. An omitted `max_tokens` lets the pinned runtime
-generate until EOS or the remaining context is spent. If `max_model_len` is
-present, it must be a non-boolean integer in 1..1,000,000 and an explicit
-`max_tokens` must not exceed it; null, strings, floats, and
+`max_model_len` is a vLLM-only engine context and KV-cache policy. It is
+separate from `max_tokens`, which remains the maximum generated response
+length. Omission binds `-1`, the installed vLLM auto-fit sentinel: vLLM derives
+the checkpoint ceiling and reduces it to live GPU capacity. An omitted
+`max_tokens` lets the pinned runtime generate until EOS or the remaining
+resolved context is spent. An explicit `max_model_len` must be a non-boolean
+integer in 1..1,000,000, and an explicit `max_tokens` must not exceed it; null,
+strings, floats, and
 out-of-range values fail before engine construction. Rig Web preserves the
 field when materializing the selected local config. The normalized value enters
 the selected-config hash and grid/run provenance, is passed as
 `vllm.LLM(max_model_len=...)` before engine/KV admission, and is reported in the
 local response metadata. The Build row displays either the explicit context cap
-or `native model context`.
+or `automatic maximum GPU-fit context`.
 
-For Ollama, `num_ctx` is the request context/KV policy and
-`num_predict` is the generated-token policy. Explicit context values must be
-`"max"` or positive integers up to 1,000,000; generation accepts the `-1`
+For Ollama, `num_ctx` is the request context/KV policy and `num_predict` is the
+generated-token policy. Context accepts `"fit"`, explicit native maximum
+`"max"`, or positive integers up to 1,000,000; generation accepts the `-1`
 maximum-output sentinel or a positive finite cap up to 25,000. Rig Web selects
-`num_ctx="max"`, shows `native maximum context`, selects `num_predict=-1`, and
-preserves configured overrides in the selected-config hash. Runner resolves
-the maximum policy through `/api/show`, passes the exact value to `/api/chat`, and records it in
-the effective condition and response provenance. A changed value therefore
+`num_ctx="fit"`, shows `automatic maximum GPU-fit context`, selects
+`num_predict=-1`, and preserves configured overrides in the selected-config
+hash. Runner probes the pinned model's native context and successively smaller
+fractions with empty load-only requests. It accepts the first candidate only
+when `/api/ps` reports `size_vram >= size` and the exact requested
+`context_length`, then passes that resolved integer to `/api/chat` and records
+the full fit trace in response provenance. A changed value therefore
 requires a new plan, projection, attestation, and canary; it never silently
 rewrites an existing cohort.
+
+For a response-independent local measured or diagnostic-canary cell with a
+Guardrail or local LLM scoring stage, Runner binds
+`judge_execution_schedule=post_factum_after_target_release`. It completes the
+durable target-response checkpoint, closes the target process or residency, and
+then preflights and runs the scoring cascade. Never preload the scoring judge
+beside the target for these lanes: that would change the available KV capacity
+and contaminate target resource observations. Crescendo must remain inline
+because each verdict controls the next turn. A defense guard also remains in the
+target phase because it changes the treatment rather than merely scoring it.
 
 Before final Phase 7 analysis, derive the exact current-roster truncation set
 with `python -m experiments.local_campaign.local_truncation_recovery_phase6`,
@@ -1922,7 +1937,7 @@ prompt, response or thinking text. Review it before any corrective execution.
 Run the reviewed artifact with
 `python -m experiments.local_campaign.local_truncation_recovery_execution_phase6`
 and bind its `--inventory-sha256`. The controller re-derives every source unit,
-materializes create-only selectors and native-maximum configs, and performs a
+materializes create-only selectors and automatic GPU-fit configs, and performs a
 fresh attestation, canary, projection and acquisition before each measured
 unit. It keeps `--target-answer-retries 1`, continues after retained per-row
 missing outputs, and does not schedule completed non-truncated rows.

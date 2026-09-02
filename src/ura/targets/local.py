@@ -66,13 +66,20 @@ _OLLAMA_TAG = re.compile(
 MAX_VLLM_MODEL_LEN = 1_000_000
 MAX_VLLM_GENERATION_TOKENS = 25_000
 DEFAULT_VLLM_GENERATION_TOKENS: None = None
-# ``max`` is a policy sentinel, not a numeric cap. Before the first generation
-# OllamaTarget resolves the pinned model's native context length from /api/show
-# and sends that exact value as ``num_ctx``. Exact campaigns may still bind an
-# explicit finite historical condition.
-DEFAULT_OLLAMA_NUM_CTX: Literal["max"] = "max"
+# vLLM 0.27's -1 sentinel derives the model-native ceiling and then reduces it
+# to the largest KV-cache allocation that fits the GPUs available at engine
+# construction. It is distinct from an omitted value, which requests the
+# native ceiling even when that cannot fit.
+DEFAULT_VLLM_MAX_MODEL_LEN = -1
+# ``fit`` is the default hardware-fit policy. OllamaTarget starts from the
+# pinned model's native context, performs load-only residency probes, and
+# halves the candidate until /api/ps proves that the complete runtime is GPU
+# resident. ``max`` remains an explicit native-maximum condition for retained
+# historical work.
+DEFAULT_OLLAMA_NUM_CTX: Literal["fit"] = "fit"
 MAX_OLLAMA_NUM_CTX = 1_000_000
 MAX_OLLAMA_NUM_PREDICT = 25_000
+MIN_OLLAMA_HARDWARE_FIT_CONTEXT = 4_096
 # Ollama's -1 sentinel generates until EOS or the available context is spent.
 DEFAULT_OLLAMA_NUM_PREDICT = -1
 VLLM_IN_PROCESS_EXECUTION_MODE = "in_process"
@@ -150,7 +157,7 @@ def canonical_local_model_identity(
 
 
 def validate_vllm_max_model_len(value: object) -> int:
-    """Return one bounded vLLM context limit or reject it.
+    """Return vLLM's hardware-fit sentinel or one bounded context limit.
 
     ``max_model_len`` controls engine/KV-cache allocation, not generation
     length.  The upper bound admits current long-context checkpoints while
@@ -161,10 +168,10 @@ def validate_vllm_max_model_len(value: object) -> int:
     if (
         isinstance(value, bool)
         or not isinstance(value, int)
-        or not 1 <= value <= MAX_VLLM_MODEL_LEN
+        or (value != -1 and not 1 <= value <= MAX_VLLM_MODEL_LEN)
     ):
         raise ValueError(
-            "max_model_len must be an integer in "
+            "max_model_len must be -1 (hardware-fit) or an integer in "
             f"1..{MAX_VLLM_MODEL_LEN}"
         )
     return value
@@ -185,11 +192,11 @@ def validate_vllm_max_tokens(value: object) -> int:
     return value
 
 
-def validate_ollama_num_ctx(value: object) -> int | Literal["max"]:
-    """Return Ollama's native-maximum sentinel or one finite allocation."""
+def validate_ollama_num_ctx(value: object) -> int | Literal["fit", "max"]:
+    """Return an Ollama context policy sentinel or one finite allocation."""
 
-    if value == "max":
-        return "max"
+    if value in {"fit", "max"}:
+        return value
 
     if (
         isinstance(value, bool)
@@ -197,7 +204,7 @@ def validate_ollama_num_ctx(value: object) -> int | Literal["max"]:
         or not 1 <= value <= MAX_OLLAMA_NUM_CTX
     ):
         raise ValueError(
-            "num_ctx must be 'max' or an integer in "
+            "num_ctx must be 'fit', 'max', or an integer in "
             f"1..{MAX_OLLAMA_NUM_CTX}"
         )
     return value
@@ -485,7 +492,7 @@ class VLLMTarget(BaseTarget):
         tensor_parallel_size: int = 2,
         quantization: Optional[str] = None,
         max_tokens: Optional[int] = DEFAULT_VLLM_GENERATION_TOKENS,
-        max_model_len: Optional[int] = None,
+        max_model_len: Optional[int] = DEFAULT_VLLM_MAX_MODEL_LEN,
         temperature: float = 0.0,
         dtype: str = "auto",
         gpu_memory_utilization: float = 0.90,
@@ -537,6 +544,7 @@ class VLLMTarget(BaseTarget):
         )
         if (
             self.max_model_len is not None
+            and self.max_model_len > 0
             and self.max_tokens is not None
             and self.max_tokens > self.max_model_len
         ):
@@ -560,6 +568,7 @@ class VLLMTarget(BaseTarget):
         self._model_runtime = model_runtime
         self._managed_model_role = managed_model_role
         self._llm: Any = None
+        self._resolved_max_model_len: Optional[int] = None
         self._identity_verified = False
 
     @staticmethod
@@ -912,6 +921,17 @@ class VLLMTarget(BaseTarget):
                     construct,
                     cleanup=cleanup,
                 )
+        model_config = getattr(
+            getattr(self._llm, "llm_engine", None), "model_config", None
+        )
+        resolved_max_model_len = getattr(model_config, "max_model_len", None)
+        if (
+            isinstance(resolved_max_model_len, bool)
+            or not isinstance(resolved_max_model_len, int)
+            or not 1 <= resolved_max_model_len <= MAX_VLLM_MODEL_LEN
+        ):
+            raise RuntimeError("vLLM did not expose its resolved context allocation")
+        self._resolved_max_model_len = resolved_max_model_len
         return self._llm
 
     def preflight_base(self) -> None:
@@ -1003,11 +1023,11 @@ class VLLMTarget(BaseTarget):
                 "model_digest": self.model_digest,
                 "quantization": self.quantization or "none",
                 "engine_core_execution_mode": self.engine_core_execution_mode,
-                **(
-                    {"max_model_len": self.max_model_len}
-                    if self.max_model_len is not None
-                    else {}
+                "max_model_len_policy": (
+                    "hardware_fit" if self.max_model_len == -1 else "explicit"
                 ),
+                "requested_max_model_len": self.max_model_len,
+                "max_model_len": self._resolved_max_model_len,
                 "finish_reason": finish_reason,
                 "stop_reason": stop_reason,
                 "empty_completion_observed": empty_completion_observed,
@@ -1019,6 +1039,7 @@ class VLLMTarget(BaseTarget):
                     "seed": seed,
                     "temperature": self.temperature,
                     "max_tokens": self.max_tokens,
+                    "max_model_len": self._resolved_max_model_len,
                 },
             },
         )
@@ -1084,7 +1105,7 @@ class OllamaTarget(BaseTarget):
         model_digest: Optional[str] = None,
         host: str = DEFAULT_OLLAMA_URL,
         temperature: float = 0.0,
-        num_ctx: int | Literal["max"] = DEFAULT_OLLAMA_NUM_CTX,
+        num_ctx: int | Literal["fit", "max"] = DEFAULT_OLLAMA_NUM_CTX,
         num_predict: int = DEFAULT_OLLAMA_NUM_PREDICT,
         think: bool | str = False,
         timeout: float = 300.0,
@@ -1113,6 +1134,7 @@ class OllamaTarget(BaseTarget):
         self.temperature = temperature
         self.num_ctx = validate_ollama_num_ctx(num_ctx)
         self._resolved_num_ctx: int | None = None
+        self._hardware_fit_attempts: list[dict[str, int | bool]] = []
         self.num_predict = validate_ollama_num_predict(num_predict)
         self.think = validate_ollama_think(think)
         self.timeout = timeout
@@ -1273,13 +1295,17 @@ class OllamaTarget(BaseTarget):
         )
 
     def _resolve_num_ctx(self, *, deadline: float) -> int:
-        """Resolve the exact request context for the native-maximum policy."""
+        """Resolve an explicit or native-maximum request context."""
 
         if self._resolved_num_ctx is not None:
             return self._resolved_num_ctx
         if isinstance(self.num_ctx, int):
             self._resolved_num_ctx = self.num_ctx
             return self._resolved_num_ctx
+        if self.num_ctx == "fit":
+            raise LocalTargetOutputError(
+                "Ollama hardware-fit context requires the measured residency lifecycle"
+            )
         payload = json.dumps({"model": self.model}).encode("utf-8")
         request = urllib.request.Request(
             f"{self.host}/api/show",
@@ -1323,6 +1349,171 @@ class OllamaTarget(BaseTarget):
             )
         self._resolved_num_ctx = resolved
         return resolved
+
+    def _loaded_runtime_profile(self, *, deadline: float) -> dict[str, int]:
+        """Return bounded loaded-runtime bytes and context for the selected model."""
+
+        inventory = self._loaded_inventory(deadline=deadline)
+        rows = inventory.get("models") if isinstance(inventory, dict) else None
+        if not isinstance(rows, list) or len(rows) != 1:
+            raise LocalTargetOutputError(
+                "Ollama hardware-fit probe did not resolve one loaded model"
+            )
+        self._verified_inventory_digest(
+            inventory,
+            model=self.model,
+            purpose="hardware-fit loaded-model inventory",
+        )
+        row = rows[0]
+        profile: dict[str, int] = {}
+        for field in ("size", "size_vram", "context_length"):
+            value = row.get(field)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value <= 0
+                or value > 2**63 - 1
+            ):
+                raise LocalTargetOutputError(
+                    f"Ollama hardware-fit inventory has invalid {field}"
+                )
+            profile[field] = value
+        return profile
+
+    def _preload_context_candidate(
+        self, candidate: int, *, deadline: float
+    ) -> dict[str, int]:
+        """Load one context allocation without generating a model answer."""
+
+        payload = json.dumps(
+            {
+                "keep_alive": -1,
+                "model": self.model,
+                "options": {"num_ctx": candidate},
+                "stream": False,
+            }
+        ).encode("utf-8")
+        request = urllib.request.Request(
+            f"{self.host}/api/generate",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        self._residency_owned = True
+        try:
+            value = self._bounded_json_request(
+                request,
+                purpose="hardware-fit preload",
+                deadline=deadline,
+            )
+            if (
+                not isinstance(value, dict)
+                or value.get("done") is not True
+                or value.get("error")
+            ):
+                raise LocalTargetOutputError(
+                    "Ollama hardware-fit preload did not complete cleanly"
+                )
+            resolved_model = value.get("model")
+            if resolved_model is not None and resolved_model != self.model:
+                raise TargetIntegrityError(
+                    "Ollama hardware-fit preload returned an unexpected model"
+                )
+            profile = self._loaded_runtime_profile(deadline=deadline)
+            if profile["context_length"] != candidate:
+                raise LocalTargetOutputError(
+                    "Ollama hardware-fit preload changed the requested context"
+                )
+            return profile
+        except Exception:
+            cleanup_deadline = self._monotonic() + self.timeout
+            try:
+                self._release_owned_residency(deadline=cleanup_deadline)
+            except Exception as cleanup:
+                raise cleanup
+            raise
+
+    def _resolve_hardware_fit_context(self, *, deadline: float) -> int:
+        """Choose the largest tested native fraction that is fully GPU resident."""
+
+        original_policy = self.num_ctx
+        self.num_ctx = "max"
+        try:
+            candidate = self._resolve_num_ctx(deadline=deadline)
+        finally:
+            self.num_ctx = original_policy
+            self._resolved_num_ctx = None
+        minimum = min(candidate, MIN_OLLAMA_HARDWARE_FIT_CONTEXT)
+        while candidate >= minimum:
+            profile = self._preload_context_candidate(candidate, deadline=deadline)
+            fully_gpu_resident = profile["size_vram"] >= profile["size"]
+            self._hardware_fit_attempts.append(
+                {
+                    "context_length": candidate,
+                    "size": profile["size"],
+                    "size_vram": profile["size_vram"],
+                    "fully_gpu_resident": fully_gpu_resident,
+                }
+            )
+            if fully_gpu_resident:
+                self._resolved_num_ctx = candidate
+                return candidate
+            self._release_owned_residency(deadline=deadline)
+            if candidate == minimum:
+                break
+            candidate = max(
+                minimum,
+                (candidate // 2 // 1024) * 1024,
+            )
+        raise LocalTargetOutputError(
+            "Ollama model cannot remain fully GPU resident at the minimum "
+            f"{minimum}-token context"
+        )
+
+    def _ensure_hardware_fit_context(
+        self, *, residency_prestate: str, deadline: float
+    ) -> int:
+        """Prove a GPU-only allocation before each new residency cycle."""
+
+        if residency_prestate == "selected":
+            if self._resolved_num_ctx is None:
+                raise LocalTargetOutputError(
+                    "Ollama hardware-fit residency lacks a resolved context"
+                )
+            profile = self._loaded_runtime_profile(deadline=deadline)
+            if (
+                profile["context_length"] != self._resolved_num_ctx
+                or profile["size_vram"] < profile["size"]
+            ):
+                raise LocalTargetOutputError(
+                    "Ollama hardware-fit residency changed before generation"
+                )
+            return self._resolved_num_ctx
+        if residency_prestate != "empty":
+            raise LocalTargetOutputError(
+                "Ollama hardware-fit assessment requires empty or selected residency"
+            )
+
+        if self._resolved_num_ctx is not None:
+            cached = self._resolved_num_ctx
+            self._hardware_fit_attempts = []
+            profile = self._preload_context_candidate(cached, deadline=deadline)
+            fully_gpu_resident = profile["size_vram"] >= profile["size"]
+            self._hardware_fit_attempts.append(
+                {
+                    "context_length": cached,
+                    "size": profile["size"],
+                    "size_vram": profile["size_vram"],
+                    "fully_gpu_resident": fully_gpu_resident,
+                }
+            )
+            if fully_gpu_resident:
+                return cached
+            self._release_owned_residency(deadline=deadline)
+            self._resolved_num_ctx = None
+
+        self._hardware_fit_attempts = []
+        return self._resolve_hardware_fit_context(deadline=deadline)
 
     def _loaded_inventory(self, *, deadline: float) -> object:
         request = urllib.request.Request(f"{self.host}/api/ps", method="GET")
@@ -1554,7 +1745,13 @@ class OllamaTarget(BaseTarget):
             residency_prestate = self._verify_pre_generation_residency(
                 deadline=deadline
             )
-            resolved_num_ctx = self._resolve_num_ctx(deadline=deadline)
+            if self.num_ctx == "fit":
+                resolved_num_ctx = self._ensure_hardware_fit_context(
+                    residency_prestate=residency_prestate,
+                    deadline=deadline,
+                )
+            else:
+                resolved_num_ctx = self._resolve_num_ctx(deadline=deadline)
             messages = _dialog_to_ollama_messages(
                 dialog,
                 multimodal="image" in self.modality_support,
@@ -1628,6 +1825,19 @@ class OllamaTarget(BaseTarget):
                     resolved_model,
                     deadline=deadline,
                 )
+                loaded_runtime_profile: dict[str, int] = {}
+                if self.num_ctx == "fit":
+                    loaded_runtime_profile = self._loaded_runtime_profile(
+                        deadline=deadline
+                    )
+                    if (
+                        loaded_runtime_profile["context_length"] != resolved_num_ctx
+                        or loaded_runtime_profile["size_vram"]
+                        < loaded_runtime_profile["size"]
+                    ):
+                        raise LocalTargetOutputError(
+                            "Ollama hardware-fit residency changed during generation"
+                        )
             except Exception as primary:
                 cleanup_deadline = self._monotonic() + self.timeout
                 try:
@@ -1690,6 +1900,8 @@ class OllamaTarget(BaseTarget):
                     "num_predict": self.num_predict,
                     "think": self.think,
                 },
+                "hardware_fit_attempts": list(self._hardware_fit_attempts),
+                "loaded_runtime": loaded_runtime_profile,
                 "thinking_output_observed": thinking_observed,
             },
         )
@@ -1715,6 +1927,10 @@ class OllamaTarget(BaseTarget):
         deadline = deadline or (self._monotonic() + self.timeout)
         if self.num_ctx == "max" and self._resolved_num_ctx is None:
             self._resolve_num_ctx(deadline=deadline)
+        if self.num_ctx == "fit" and self._resolved_num_ctx is None:
+            raise LocalTargetOutputError(
+                "Ollama hardware-fit chat requires a completed residency assessment"
+            )
         payload = json.dumps(
             {
                 "model": self.model,
@@ -1871,10 +2087,12 @@ __all__ = [
     "DEFAULT_OLLAMA_NUM_CTX",
     "DEFAULT_OLLAMA_NUM_PREDICT",
     "DEFAULT_VLLM_GENERATION_TOKENS",
+    "DEFAULT_VLLM_MAX_MODEL_LEN",
     "MAX_OLLAMA_NUM_CTX",
     "MAX_OLLAMA_NUM_PREDICT",
     "MAX_VLLM_GENERATION_TOKENS",
     "MAX_VLLM_MODEL_LEN",
+    "MIN_OLLAMA_HARDWARE_FIT_CONTEXT",
     "OLLAMA_FORBIDDEN_LOCAL_CONFIG_FIELDS",
     "VLLM_FORBIDDEN_LOCAL_CONFIG_FIELDS",
     "VLLMTarget",

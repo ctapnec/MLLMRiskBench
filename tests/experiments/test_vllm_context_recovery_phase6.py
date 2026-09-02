@@ -50,7 +50,7 @@ def test_context_selector_rejects_one_mutated_outcome() -> None:
         )
 
 
-def test_larger_context_uses_native_context_and_maximum_output() -> None:
+def test_larger_context_uses_hardware_fit_context_and_maximum_output() -> None:
     original = {
         "vllm:Qwen/Qwen3-VL-8B-Instruct": {
             "revision": "a" * 40,
@@ -66,7 +66,7 @@ def test_larger_context_uses_native_context_and_maximum_output() -> None:
 
     assert original["vllm:Qwen/Qwen3-VL-8B-Instruct"]["max_model_len"] == 12288
     expected = dict(original["vllm:Qwen/Qwen3-VL-8B-Instruct"])
-    expected.pop("max_model_len")
+    expected["max_model_len"] = -1
     expected.pop("max_tokens")
     assert updated["vllm:Qwen/Qwen3-VL-8B-Instruct"] == expected
     mutated = json.loads(json.dumps(original))
@@ -106,4 +106,4 @@ def test_context_recovery_cli_requires_the_retained_input_completion() -> None:
     )
 
     assert parsed.input_recovery_completion.name == "completion.json"
-    assert recovery.STATE_SCHEMA == "ura-vllm-context-recovery-phase6-unit-state/1"
+    assert recovery.STATE_SCHEMA == "ura-vllm-context-recovery-phase6-unit-state/2"

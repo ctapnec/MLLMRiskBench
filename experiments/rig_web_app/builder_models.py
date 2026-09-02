@@ -280,15 +280,18 @@ class BuilderModelsMixin:
     @staticmethod
     def _local_max_model_len(
         spec: str, entry: Mapping[str, object]
-    ) -> int | None:
-        """Validate an optional per-model vLLM context/KV allocation cap."""
+    ) -> int:
+        """Validate the vLLM hardware-fit policy or an explicit context cap."""
 
-        if "max_model_len" not in entry:
-            return None
-        from ura.targets.local import validate_vllm_max_model_len  # noqa: PLC0415
+        from ura.targets.local import (  # noqa: PLC0415
+            DEFAULT_VLLM_MAX_MODEL_LEN,
+            validate_vllm_max_model_len,
+        )
 
         try:
-            return validate_vllm_max_model_len(entry["max_model_len"])
+            return validate_vllm_max_model_len(
+                entry.get("max_model_len", DEFAULT_VLLM_MAX_MODEL_LEN)
+            )
         except ValueError as exc:
             raise ValueError(f"local target {spec!r} {exc}") from exc
 
@@ -555,8 +558,8 @@ class BuilderModelsMixin:
                 spec, entry, project_richer=True
             )
             resolved["gpu_memory_utilization"] = gpu_memory_utilization
-            if max_model_len is not None:
-                resolved["max_model_len"] = max_model_len
+            resolved["max_model_len"] = max_model_len
+            if max_model_len > 0:
                 if max_tokens is not None and max_tokens > max_model_len:
                     raise ValueError(
                         f"local target {spec!r} max_tokens must not exceed "

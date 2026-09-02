@@ -1,4 +1,4 @@
-"""Inventory exact local rows that require native-maximum regeneration.
+"""Inventory exact local rows that require hardware-fit regeneration.
 
 This module never reads response text into its output. It validates retained
 attempt/response identities, selects only unfinished, typed failed-output, and
@@ -34,7 +34,7 @@ from ura.data_models import Response
 from ura.runner import Runner
 
 
-SCHEMA = "ura-local-truncation-recovery-inventory/1"
+SCHEMA = "ura-local-truncation-recovery-inventory/2"
 CURRENT_VLLM_SPECS = frozenset({
     "vllm:Qwen/Qwen3-VL-8B-Instruct",
     "vllm:llava-hf/llava-v1.6-mistral-7b-hf",
@@ -87,19 +87,19 @@ def _without_runtime_bindings(argv: Sequence[str]) -> list[str]:
     return result
 
 
-def native_max_local_config(
+def hardware_fit_local_config(
     config: Mapping[str, Any], *, expected_spec: str
 ) -> dict[str, Any]:
-    """Change only local context/output policy to provider-native maximums."""
+    """Change only local context/output policy to automatic GPU fit."""
 
     if set(config) != {expected_spec} or not isinstance(config[expected_spec], dict):
         raise ValueError("local truncation config must contain the exact selected model")
     entry = dict(config[expected_spec])
     if expected_spec.startswith("vllm:"):
-        entry.pop("max_model_len", None)
+        entry["max_model_len"] = -1
         entry.pop("max_tokens", None)
     elif expected_spec.startswith("ollama:"):
-        entry["num_ctx"] = "max"
+        entry["num_ctx"] = "fit"
         entry["num_predict"] = -1
     else:
         raise ValueError("local truncation config has an unsupported backend")
@@ -309,7 +309,7 @@ def derive_state_inventory(state_path: Path) -> dict[str, Any]:
     ):
         raise ValueError("local truncation source config digest changed")
     config = json.loads(config_payload.decode("utf-8"))
-    corrected_config = native_max_local_config(config, expected_spec=spec)
+    corrected_config = hardware_fit_local_config(config, expected_spec=spec)
     return {
         "source_state": _descriptor(state_path, label="local truncation source state"),
         "source_result_root": str(result_root),
@@ -329,7 +329,7 @@ def derive_state_inventory(state_path: Path) -> dict[str, Any]:
         "local_spec": spec,
         "base_argv": _without_runtime_bindings(argv),
         "recovery_selection": selector,
-        "native_max_local_config": corrected_config,
+        "hardware_fit_local_config": corrected_config,
         "summary": summary,
     }
 

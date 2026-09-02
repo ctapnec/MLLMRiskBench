@@ -1,4 +1,4 @@
-"""Run exact retained local truncation rows with provider-native maximums.
+"""Run exact retained local truncation rows with automatic GPU-fit contexts.
 
 The input inventory is structure-only and is re-derived from its bound source
 states before execution. Each correction unit keeps the original selection and
@@ -41,9 +41,9 @@ from experiments.local_campaign.vllm_stability_phase6 import (
 from ura.runner import CODE_VERSION
 
 
-SCHEMA = "ura-local-truncation-recovery-phase6/1"
-LAUNCH_SCHEMA = "ura-local-truncation-recovery-phase6-launch/1"
-STATE_SCHEMA = "ura-local-truncation-recovery-phase6-unit-state/1"
+SCHEMA = "ura-local-truncation-recovery-phase6/2"
+LAUNCH_SCHEMA = "ura-local-truncation-recovery-phase6-launch/2"
+STATE_SCHEMA = "ura-local-truncation-recovery-phase6-unit-state/2"
 HEX40 = re.compile(r"[0-9a-f]{40}\Z")
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 
@@ -103,7 +103,7 @@ def _safe_unit_id(index: int, item: Mapping[str, Any]) -> str:
     suffix = hashlib.sha256(result_root.encode("utf-8")).hexdigest()[:10]
     if not slug:
         raise ValueError("local truncation recovery unit identity is empty")
-    return f"local-native-max-{index:03d}-{slug}-{suffix}"
+    return f"local-hardware-fit-{index:03d}-{slug}-{suffix}"
 
 
 def configure_units(
@@ -127,7 +127,7 @@ def configure_units(
         base = item.get("base_argv")
         modality = item.get("modality")
         recovery = item.get("recovery_selection")
-        config = item.get("native_max_local_config")
+        config = item.get("hardware_fit_local_config")
         summary = item.get("summary")
         source_lane = item.get("source_lane")
         source_corpus = item.get("source_corpus")
@@ -205,7 +205,7 @@ def run(args: argparse.Namespace) -> int:
     units = configure_units(inventory, control_root=control_root)
     total_rows = sum(unit.selected_records for unit, _path, _sha in units)
     amendment = {
-        "schema": "ura-gate5-local-native-maximum-amendment/1",
+        "schema": "ura-gate5-local-hardware-fit-amendment/1",
         "approved_scope": "exact_retained_local_truncation_and_unfinished_rows",
         "inventory": _descriptor(inventory_path, label="local truncation inventory"),
         "source_units": len(units),
@@ -215,16 +215,16 @@ def run(args: argparse.Namespace) -> int:
         "max_total_judge_calls": 0,
         "max_total_http_attempts": 0,
         "per_unit_deadline_seconds": 86400,
-        "vllm_context_policy": "native_model_maximum",
+        "vllm_context_policy": "vllm_auto_fit_minus_one",
         "vllm_output_policy": "maximum_available_output",
-        "ollama_context_policy": "model_advertised_maximum",
+        "ollama_context_policy": "largest_probed_native_fraction_fully_gpu_resident",
         "ollama_output_policy": "num_predict_minus_one",
         "successful_rows_repeated": 0,
         "historical_rows_mutated": False,
         "cross_condition_pooling_permitted": False,
         "paid_provider_calls": 0,
     }
-    amendment_path = control_root / "gate5-local-native-maximum-amendment.json"
+    amendment_path = control_root / "gate5-local-hardware-fit-amendment.json"
     _create_json(amendment_path, amendment)
     amendment_sha = hashlib.sha256(amendment_path.read_bytes()).hexdigest()
     launch = {
@@ -248,7 +248,7 @@ def run(args: argparse.Namespace) -> int:
         control_root=control_root,
         campaign_id=control_root.name,
         release_commit=args.expected_commit,
-        evidence_class="measured_local_native_maximum_recovery",
+        evidence_class="measured_local_hardware_fit_recovery",
         hard_stop_hours=336,
         tmux_socket=args.tmux_socket,
         tmux_session=args.tmux_session,

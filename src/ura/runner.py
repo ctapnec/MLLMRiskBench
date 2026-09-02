@@ -31,7 +31,7 @@ import time
 from dataclasses import replace
 from itertools import islice
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Literal, Optional
 from urllib.parse import unquote_to_bytes
 
 from . import approximate_metrics, metrics, source_metrics
@@ -78,7 +78,7 @@ from .targets.api import (
 from .modality_coverage import declared_target_combinations
 
 #: Bumped when the orchestration semantics change (recorded in every manifest).
-CODE_VERSION = "ura-runner/2.27"
+CODE_VERSION = "ura-runner/2.28"
 _MAX_SCORED_MEDIA_BYTES = 25 * 1024 * 1024
 #: Video releases legitimately exceed the image/audio bound (Video-SafetyBench
 #: ships ~44 MiB MP4s); mirrors DEFAULT_MAX_VIDEO_ASSET_BYTES converter-side.
@@ -339,6 +339,7 @@ class Runner:
         approximate_evidence_class: approximate_metrics.ApproximateEvidenceClass = "measured",
         target_answer_retries: int = 1,
         stop_on_failed_output: bool = False,
+        execution_stage: Literal["full", "responses", "judgments"] = "full",
     ) -> None:
         self.attacker = attacker
         self.target = target
@@ -365,6 +366,9 @@ class Runner:
         if not isinstance(stop_on_failed_output, bool):
             raise ValueError("stop_on_failed_output must be boolean")
         self.stop_on_failed_output = stop_on_failed_output
+        if execution_stage not in {"full", "responses", "judgments"}:
+            raise ValueError("execution_stage must be full, responses, or judgments")
+        self.execution_stage = execution_stage
 
         target_evidence_class = getattr(target, "evidence_class", "measured")
         if target_evidence_class not in {"measured", "synthetic"}:
@@ -441,6 +445,11 @@ class Runner:
         present in ``resume_records``; it never authorizes a selected-subset run.
         """
         input_contracts = self._plan_attacker_input_contracts(corpus)
+        if self.execution_stage == "responses" and self.attacker.name == "crescendo":
+            raise ValueError(
+                "response-conditioned attackers require inline judging because "
+                "the verdict controls trajectory termination"
+            )
         prepared, media_hashes = self._prepare_corpus(corpus)
         self._validate_generated_media_delivery(input_contracts)
         self._validate_target_modalities(input_contracts)
@@ -677,6 +686,11 @@ class Runner:
                 # judge failure never re-bills the target on the next attempt.
                 response = self._restore_response(attempt, response_record, run_id)
             else:
+                if self.execution_stage == "judgments":
+                    raise ValueError(
+                        "post-factum judging requires a durable response for every "
+                        f"planned attempt; missing {attempt.id!r}"
+                    )
                 response = self._respond(attempt, run_id=run_id)
                 if self.call_budget is not None:
                     self.call_budget.reconcile_http_attempts(
@@ -689,6 +703,10 @@ class Runner:
                     # The already-paid response is durable before an unexpected
                     # provider retry excess stops the cell.
                     self.call_budget.raise_if_overrun()
+            if self.execution_stage == "responses":
+                self.attempts.append(attempt)
+                self.responses.append(response)
+                return response
             if attempt.params["policy_evaluable_turn"] is False:
                 final, raw_trail = self._non_evaluable_setup_outcome(
                     response

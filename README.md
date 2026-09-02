@@ -222,21 +222,25 @@ kernel attempted `.view()` on a non-contiguous tensor. GraySwan RR BitsAndBytes
 4-bit was rejected because its `LlavaNext` implementation exposes no
 `packed_modules_mapping`. Both are architecture/runtime incompatibilities, not
 VRAM-fit failures, and both stopped before target inference.
-The optional vLLM-only `max_model_len` field is an engine-context and KV-cache
-admission cap, not the response-generation `max_tokens` bound. Omission leaves
-the checkpoint's native context unchanged; an explicit integer in 1..1,000,000
-is passed to vLLM at engine construction. An omitted `max_tokens` lets the
-pinned runtime generate until EOS or the remaining native context is spent;
-an explicit value may not exceed an explicit `max_model_len`.
+The vLLM-only `max_model_len` field is an engine-context and KV-cache
+allocation policy, not the response-generation `max_tokens` bound. Omission
+binds `-1`: vLLM derives the checkpoint ceiling and automatically reduces it to
+the largest allocation that fits live GPU memory. An explicit integer in
+1..1,000,000 remains available for a fixed experimental condition. An omitted
+`max_tokens` lets the pinned runtime generate until EOS or the remaining
+resolved context is spent; an explicit value may not exceed an explicit
+positive `max_model_len`.
 Rig Web preserves the field in its selected local config, and the normalized
 value enters grid/run provenance. Each Build row labels either the explicit
-context cap or native model context.
+context cap or automatic maximum GPU-fit context.
 
 Ollama uses its native request fields instead: `num_ctx` and `num_predict` in
-the selected local config. Runner and Build bind `num_ctx="max"` by default;
-Runner resolves that policy from the pinned model's architecture-specific
-`context_length` in `/api/show` and passes the exact native maximum to
-`/api/chat`. The default `num_predict=-1` is Ollama's maximum-output sentinel.
+the selected local config. Runner and Build bind `num_ctx="fit"` by default.
+Runner reads the pinned model ceiling from `/api/show`, performs load-only
+probes from that ceiling downward, and accepts the largest tested native
+fraction for which `/api/ps` proves the complete allocation is GPU-resident.
+No real prompt is submitted while fit is unresolved. The default
+`num_predict=-1` is Ollama's maximum-output sentinel.
 Explicit finite overrides are also passed to `/api/chat`, and the resolved choice is
 retained in config, grid, condition, and response provenance. Reaching an
 explicit finite `num_predict`
@@ -244,6 +248,14 @@ remains a valid length-capped response and the observed text is still evaluated.
 Recovery reuses prior Ollama projections, attestations and canaries only when
 every exact per-model config is unchanged. A context/output-cap change retains
 the older artifacts as diagnostics and creates a fresh projected cohort.
+For response-independent local measured and diagnostic-canary cells,
+model-backed scoring is sequential. Runner first writes target responses to the
+durable response checkpoint while the target owns the GPU capacity, unloads the
+target, and then loads the scoring judge to complete the same bound run. This
+prevents the judge from reducing target context capacity or contaminating target
+resource observations. Crescendo remains inline because each verdict controls
+the next attack turn. A defense guard also remains in the target phase because
+it is part of the evaluated treatment, not post-hoc scoring.
 For retained local truncations, first create the structure-only exact-row
 inventory with `local_truncation_recovery_phase6`, then pass its path and digest
 to `local_truncation_recovery_execution_phase6`. The execution controller
@@ -761,7 +773,7 @@ Runner `RunManifest`; the URA revision that performed their import is retained
 in the return-package/importer context rather than relabelled as an upstream
 native field.
 
-Runner `ura-runner/2.27` writes unified schema `1.5`. Runner 2.27 is the
+Runner `ura-runner/2.28` writes unified schema `1.5`. Runner 2.28 is the
 maintained execution contract. Runner 2.19/schema 1.4 artifacts remain readable
 only as runtime-free legacy compatibility and are not
 mixed into the current measured cohort. Immutable planning/source

@@ -765,7 +765,8 @@ class BuilderPageMixin:
                         context_limit = self._local_max_model_len(runtime_value, entry)
                         generation_limit = self._local_max_tokens(runtime_value, entry)
                         if (
-                            context_limit is not None
+                            isinstance(context_limit, int)
+                            and context_limit > 0
                             and generation_limit is not None
                             and generation_limit > context_limit
                         ):
@@ -827,6 +828,9 @@ class BuilderPageMixin:
                     context_text = "invalid local config"
                 elif runtime_value.startswith("ollama:"):
                     context_text = (
+                        "automatic maximum GPU-fit context"
+                        if context_limit == "fit"
+                        else
                         "native maximum context"
                         if context_limit == "max"
                         else f"context cap {context_limit:,} tokens"
@@ -842,7 +846,11 @@ class BuilderPageMixin:
                             else f" / thinking {thinking_control}"
                         )
                 elif context_limit is not None:
-                    context_text = f"context cap {context_limit:,} tokens"
+                    context_text = (
+                        "automatic maximum GPU-fit context"
+                        if context_limit == -1
+                        else f"context cap {context_limit:,} tokens"
+                    )
                     if generation_limit is None:
                         context_text += " / maximum available output"
                     else:
@@ -1116,6 +1124,9 @@ class BuilderPageMixin:
             )
             pin_text = "digest pinned" if pinned else "64-hex digest required for live use"
             context_detail = (
+                "; automatic maximum GPU-fit context"
+                if context_limit == "fit"
+                else
                 "; native maximum context"
                 if context_limit == "max"
                 else f"; context cap {context_limit:,} tokens"
