@@ -62,7 +62,7 @@ CURRENT_OLLAMA_MODELS = (
         digest="edba8017331d15236e57480eb45406c0d721db77a4cdcf234df500fc2ad3960c",
         quantization="Q4_K_M",
         modalities=("text",),
-        think=False,
+        think=True,
         roles=("target", "native_auditor"),
     ),
     CurrentOllamaModel(

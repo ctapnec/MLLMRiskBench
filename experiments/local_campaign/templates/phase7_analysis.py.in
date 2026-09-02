@@ -11000,7 +11000,12 @@ def build_phase6_campaign_terminal_inventory(
     for lane in failed_output_recovery["unit_order"]:
         append(
             "failed_output_recovery", lane, "measured_complete",
-            failed_output_recovery["project_revision_receipt_sha256"],
+            failed_output_recovery.get(
+                "metric_project_revision_receipt_sha256", {}
+            ).get(
+                lane,
+                failed_output_recovery["project_revision_receipt_sha256"],
+            ),
             failed_output_recovery["source_conformance_sha256"],
             {
                 "completion": failed_output_recovery["completion"],

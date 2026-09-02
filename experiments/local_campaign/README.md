@@ -318,6 +318,15 @@ R-Judge and two GPTGeoChat units (2,350 rows). DeepSeek is excluded because its
 1,909-row extension. Phase 7 retains that split as population/model-stability
 coverage and forbids a pooled security rate across the two Runner strata.
 
+The retained six-unit failed-output recovery completed five units (2,139 rows)
+and rejected DeepSeek before measured execution because the reasoning model was
+bound with `think=false`. Do not repeat those five units. Run
+`failed_output_recovery_continuation_phase6` with the exact terminal completion
+and digest; it validates the retained partition, reuses the exact 1,674-row
+selector, and runs only DeepSeek with `think=true`. Its combined `/2` completion
+is the authoritative Phase 7 and alignment-recovery input, with old and new
+project revisions kept as separate metric strata.
+
 Targeted Runner-output recovery is deliberately outside `launch_chain`. It is
 available only through the generated
 `launch_phase6_recovery_and_seven.sh`. The launcher starts one named tmux

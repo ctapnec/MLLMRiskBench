@@ -471,6 +471,7 @@ def _prepare_units(
     *,
     work_root: Path,
     control_root: Path,
+    only_original_units: Sequence[str] | None = None,
 ) -> list[tuple[Unit, Path, str, dict[str, object], bool, str]]:
     runner_root = work_root / "runs/thesis/runner"
     base_completion = args.ollama_base_completion.resolve(strict=True)
@@ -528,6 +529,16 @@ def _prepare_units(
         label="LLaVA failed-output state",
     )
     sources.append((vllm_template, vllm_state, True, LLAVA_UNIT))
+
+    if only_original_units is not None:
+        requested = tuple(only_original_units)
+        if len(set(requested)) != len(requested) or any(
+            unit not in ORIGINAL_UNIT_ORDER for unit in requested
+        ):
+            raise ValueError("failed-output recovery unit filter changed")
+        sources = [row for row in sources if row[3] in set(requested)]
+        if [row[3] for row in sources] != list(requested):
+            raise ValueError("failed-output recovery unit filter order changed")
 
     prepared: list[tuple[Unit, Path, str, dict[str, object], bool, str]] = []
     for index, (template, state, hub_required, original) in enumerate(sources, 1):
@@ -695,6 +706,12 @@ def validate_phase7_completion(
     resolved = completion_path.resolve(strict=True)
     runner_root = runner_root.resolve(strict=True)
     completion = _load_json(resolved, label="failed-output recovery completion")
+    if completion.get("schema") == "ura-failed-output-recovery-phase6/2":
+        from experiments.local_campaign.failed_output_recovery_continuation_phase6 import (
+            validate_phase7_completion as validate_continuation_completion,
+        )
+
+        return validate_continuation_completion(resolved, runner_root=runner_root)
     fields = {
         "schema",
         "status",

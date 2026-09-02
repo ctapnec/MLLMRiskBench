@@ -930,8 +930,9 @@ structure-only audit found 20 genuine two-token empty LLaVA outputs and 230
 Qwen3-VL context-limit incompatibilities. No prompt or response text was printed
 by either audit.
 
-Runner 2.27 binds Ollama thinking explicitly. Gemma, Ministral and DeepSeek use
-`think=false`; GPT-OSS uses its supported `think=low` condition. The adapter
+Runner 2.27 binds Ollama thinking explicitly. Gemma and Ministral use
+`think=false`, DeepSeek-R1 uses `think=true`, and GPT-OSS uses its supported
+`think=low` condition. The adapter
 reads final content separately, retains no reasoning text, records only whether
 thinking output was observed and rejects a daemon that violates a disabled
 policy. Local vLLM and Ollama still use one configurable Runner answer-retry
@@ -949,6 +950,16 @@ selected population, and their Runner/output-policy/revision strata remain
 separate until an explicitly justified sensitivity view combines estimates.
 Diagnostic attestation/canary calls remain diagnostic and cannot be counted as
 population rows.
+
+The first six-unit recovery retained five terminal units (2,139 rows) but made
+no DeepSeek population call: all five admission probes were rejected because
+the controller had bound that reasoning model with `think=false`. The
+`failed_output_recovery_continuation_phase6` controller accepts only that exact
+terminal partition, retains the five completed results byte-for-byte, reuses
+the exact 1,674-row selector, and runs only DeepSeek with `think=true`. Its
+combined `/2` completion keeps old and continuation project revisions in
+separate metric strata. This is correction of a pre-execution configuration
+error, not an extra response retry.
 
 The alignment continuation is a dependent Phase 6 step, not another replay of
 the seven failed base units. It requires the terminal failed-output recovery and

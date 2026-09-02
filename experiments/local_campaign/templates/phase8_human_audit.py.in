@@ -9601,6 +9601,21 @@ def validate_phase7_completion(
         "metric_lane_order"
     )
     failed_output_recovery_lane_order = list(FAILED_OUTPUT_RECOVERY_UNIT_ORDER)
+    failed_output_recovery_stratum_lanes = (
+        [
+            lane
+            for lanes in failed_output_recovery_strata.values()
+            for lane in lanes
+        ]
+        if isinstance(failed_output_recovery_strata, dict)
+        and all(
+            isinstance(revision, str)
+            and isinstance(lanes, list)
+            and lanes
+            for revision, lanes in failed_output_recovery_strata.items()
+        )
+        else None
+    )
     if (
         failed_output_recovery_states
         != {
@@ -9610,8 +9625,11 @@ def validate_phase7_completion(
         or failed_output_recovery_metric_lanes
         != failed_output_recovery_lane_order
         or not isinstance(failed_output_recovery_strata, dict)
-        or list(failed_output_recovery_strata.values())
-        != [failed_output_recovery_lane_order]
+        or failed_output_recovery_stratum_lanes is None
+        or len(failed_output_recovery_stratum_lanes)
+        != len(set(failed_output_recovery_stratum_lanes))
+        or set(failed_output_recovery_stratum_lanes)
+        != set(failed_output_recovery_lane_order)
         or value.get("failed_output_recovery_terminal_states")
         != failed_output_recovery_states
         or value.get("failed_output_recovery_metric_revision_strata")

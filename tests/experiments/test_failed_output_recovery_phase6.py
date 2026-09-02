@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import inspect
 
 import pytest
 
@@ -11,6 +12,13 @@ from experiments.local_campaign.failed_output_recovery_phase6 import (
     ORIGINAL_UNIT_ORDER,
     _durable_outcomes,
     build_completed_selection,
+)
+from experiments.local_campaign.failed_output_recovery_continuation_phase6 import (
+    CONTINUATION_UNIT_ORDER,
+    DEEPSEEK_PHYSICAL_UNIT,
+    RETAINED_UNIT_ORDER,
+    _revision_map,
+    run as run_continuation,
 )
 from ura.data_models import SCHEMA_VERSION
 
@@ -23,6 +31,37 @@ def test_phase7_recovery_inventory_is_the_exact_six_unit_proof() -> None:
         f"failed-output-recovery-{index:02d}-{original[:52]}"
         for index, original in enumerate(ORIGINAL_UNIT_ORDER, 1)
     )
+
+
+def test_failed_output_continuation_selects_only_unexecuted_deepseek() -> None:
+    assert CONTINUATION_UNIT_ORDER == (EXPECTED_UNIT_ORDER[4],)
+    assert DEEPSEEK_PHYSICAL_UNIT == EXPECTED_UNIT_ORDER[4]
+    assert RETAINED_UNIT_ORDER == EXPECTED_UNIT_ORDER[:4] + EXPECTED_UNIT_ORDER[5:]
+
+    source = inspect.getsource(run_continuation)
+    assert "only_original_units=(DEEPSEEK_UNIT,)" in source
+    assert 'results = dict(prior["unit_results"])' in source
+    assert "successful_rows_repeated\": 0" in source
+
+
+def test_failed_output_continuation_preserves_split_revision_strata() -> None:
+    validated = {
+        lane: {"revision": "a" * 64 if lane != DEEPSEEK_PHYSICAL_UNIT else "b" * 64}
+        for lane in EXPECTED_UNIT_ORDER
+    }
+    strata, by_lane = _revision_map(validated)
+
+    assert strata == {
+        "a" * 64: list(RETAINED_UNIT_ORDER),
+        "b" * 64: [DEEPSEEK_PHYSICAL_UNIT],
+    }
+    assert by_lane[DEEPSEEK_PHYSICAL_UNIT] == "b" * 64
+
+    # Reverse mutation: pooling the continuation into the retained revision is
+    # detectable because the second stratum disappears.
+    mutated = {lane: {"revision": "a" * 64} for lane in EXPECTED_UNIT_ORDER}
+    mutated_strata, _mutated_by_lane = _revision_map(mutated)
+    assert mutated_strata != strata
 
 
 def test_selector_replays_only_failed_and_never_attempted_rows() -> None:

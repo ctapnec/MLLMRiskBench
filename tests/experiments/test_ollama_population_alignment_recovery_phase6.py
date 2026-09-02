@@ -99,7 +99,7 @@ def test_alignment_continuation_separates_actual_replays_from_unique_rows() -> N
     (
         ("ollama:gemma4:12b-it-q4_K_M", False),
         ("ollama:ministral-3:14b-instruct-2512-q4_K_M", False),
-        ("ollama:deepseek-r1:32b-qwen-distill-q4_K_M", False),
+        ("ollama:deepseek-r1:32b-qwen-distill-q4_K_M", True),
         ("ollama:gpt-oss:20b", "low"),
     ),
 )

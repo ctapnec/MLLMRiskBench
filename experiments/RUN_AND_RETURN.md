@@ -566,7 +566,17 @@ GPTGeoChat units with an Ollama target and already-local source data pass no
 model-acquisition arguments; do not manufacture an empty plan. The retained base
 completion is `complete_with_failures`, and its first recovery was interrupted
 after DeepSeek started but before the other six units began. Do not rerun that
-seven-unit command. After `failed_output_recovery_phase6` is terminal, run
+seven-unit command. If the six-unit failed-output recovery has the retained
+five-complete/DeepSeek-pre-execution failure partition, do not rerun its 2,139
+completed rows. Run
+`python -m experiments.local_campaign.failed_output_recovery_continuation_phase6`
+in a named tmux session with the exact prior completion and SHA-256 plus the
+same bound source inputs. It reuses the exact 1,674-row selector and runs only
+DeepSeek-R1 with `think=true`; its combined `/2` completion preserves the prior
+five results and separates project-revision strata. Use that combined
+completion as the failed-output recovery input below.
+
+After the combined `failed_output_recovery_phase6` completion is terminal, run
 `python -m experiments.local_campaign.current_ollama_population_alignment_recovery_phase6`
 in a named tmux session with the exact base completion and SHA-256, the exact
 failed-output recovery completion and SHA-256, current project-revision receipt

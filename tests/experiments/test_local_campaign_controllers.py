@@ -1604,6 +1604,7 @@ def test_phase7_requires_failed_output_recovery_as_six_separate_strata() -> None
     )
     required = (
         "validate_failed_output_recovery_completion(",
+        'failed_output_recovery.get(\n                "metric_project_revision_receipt_sha256", {}',
         '"failed_output_recovery": failed_output_recovery,',
         "failed_output_recovery=failed_output_recovery,",
         "def _failed_output_recovery_metric_lanes(self)",
@@ -1616,6 +1617,9 @@ def test_phase7_requires_failed_output_recovery_as_six_separate_strata() -> None
     flag = "--phase6-failed-output-recovery-completion"
     assert flag in wrapper and flag in watcher
     assert '"failed_output_recovery": 6' in watcher
+    phase8 = (root / "phase8_human_audit.py.in").read_text(encoding="utf-8")
+    assert "failed_output_recovery_stratum_lanes" in phase8
+    assert "set(failed_output_recovery_stratum_lanes)" in phase8
     mutant = analysis.replace(
         '"failed_output_recovery": failed_output_recovery,', "", 1
     )
