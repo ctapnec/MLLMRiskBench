@@ -591,33 +591,38 @@ same bound source inputs. It reuses the exact 1,674-row selector and runs only
 DeepSeek-R1 with `think=true`. The retained bounded ten-input, one-attempt,
 no-judge calibration produced ten visible final answers at `num_predict=2048`,
 all with normal stop reasons and 719-1,335 completion tokens; the stopped
-512-token condition remains diagnostic. The
-continuation's combined `/3` completion preserves the prior five results and
-separates project-revision and generation-condition strata. Its filtered
-execution keeps DeepSeek's original physical unit 05; do not renumber the
-one-unit filtered list
-to 01. Use that combined
-completion as the failed-output recovery input below.
+512-token condition remains diagnostic. The interrupted continuation's `/2`
+completion preserves the prior five results and records DeepSeek unit 05 as its
+only failure. A later DeepSeek process retained 785 of the 1,674 selected rows
+before termination. The hardware-fit inventory binds that exact state, retains
+743 non-length usable outputs and selects only its 14 failed outputs, 28
+length-ended outputs and 889 never-attempted rows. The 931-row hardware-fit
+unit completes that selection.
 
-After the combined `failed_output_recovery_phase6` completion is terminal, run
+After the 25-unit hardware-fit completion is terminal, run
 `python -m experiments.local_campaign.current_ollama_population_alignment_recovery_phase6`
 in a named tmux session with the exact base completion and SHA-256, the exact
-failed-output recovery completion and SHA-256, current project-revision receipt
-and SHA-256, fresh control root, scope, work root, project root and project
-virtual-environment interpreter. The controller requires these additional flags:
+interrupted failed-output completion and SHA-256, the exact hardware-fit
+completion and SHA-256, current project-revision receipt and SHA-256, fresh
+control root, scope, work root, project root and project virtual-environment
+interpreter. The controller requires these additional flags:
 
 ```text
 --failed-output-recovery-completion ABSOLUTE_COMPLETION_JSON
 --failed-output-recovery-completion-sha256 LOWERCASE_SHA256
+--hardware-fit-completion ABSOLUTE_COMPLETION_JSON
+--hardware-fit-completion-sha256 LOWERCASE_SHA256
 ```
 
 It validates that DeepSeek's 1,909-row extension is already reconciled by 235
-retained usable rows plus 1,674 recovery rows, then schedules only four 50-row
-R-Judge units and two 1,075-row GPTGeoChat units. The exact continuation count is
-2,350 rows. It rejects DeepSeek, any base-complete unit, a changed count, a Hub
-plan on a local-only classification lane, or an implicit Ollama thinking policy.
-Give this continuation completion to Phase 7. Population coverage may be joined,
-but rates remain separated by Runner, revision and output-policy stratum.
+retained usable rows, 743 retained non-length continuation rows and 931
+hardware-fit rows. It then schedules only four 50-row R-Judge units and two
+1,075-row GPTGeoChat units. The exact continuation count is 2,350 rows. It
+rejects an incomplete hardware-fit terminal, DeepSeek in the new selection, any
+base-complete unit, a changed count, a Hub plan on a local-only classification
+lane, or an implicit Ollama thinking policy. Give this continuation completion
+to Phase 7. Population coverage may be joined, but rates remain separated by
+Runner, revision and output-policy stratum.
 
 Phase 7 requires that current-Ollama stability completion, the exact terminal
 seven-unit vLLM stability completion, its one-unit GPTGeoChat input recovery,
@@ -627,7 +632,7 @@ It also requires the terminal six failed-output recovery units through
 Its current-Ollama population-alignment input is the six-unit continuation
 completion above, not the interrupted seven-unit recovery root. Eleven logical
 alignment conditions have one terminal metric root. DeepSeek is complete across
-two disjoint Runner strata and is retained for population/model-stability
+three disjoint Runner strata and is retained for population/model-stability
 accounting without a pooled security rate.
 The six completed Runner 2.25 units, one Runner 2.26 suffix and its disjoint
 larger-context recovery are separate metric strata; the failed 375-row prefix

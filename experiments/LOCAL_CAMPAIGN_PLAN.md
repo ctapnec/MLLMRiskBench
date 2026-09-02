@@ -760,17 +760,21 @@ they omit model-acquisition arguments; an empty acquisition plan is not created.
 If the controller seals `complete_with_failures`, continuation must validate the
 exact base completion and select only work that has not become terminal in a
 later artifact. In this campaign the first recovery started DeepSeek and was
-interrupted before the other six failed units began. The separate Runner 2.27
-failed-output recovery completes DeepSeek's 1,909-row extension from 235 retained
-usable rows plus 1,674 recovered or previously unattempted rows. Only after that
-recovery is terminal may the alignment continuation schedule the four 50-row
-R-Judge units and two 1,075-row GPTGeoChat units, exactly 2,350 rows. It must not
-schedule DeepSeek or any of the five base-complete units. All continuations reuse
-the original content-bound limit-50 selectors, derive fresh revision-bound
-attestations and retain separate revision/output-policy strata. Phase 7 accepts
-the resulting population only when its unique extension accounting is exactly
-11,600 rows; actual Runner work is reported separately because 2,772 failed
-outputs were deliberately retried once rather than hidden.
+interrupted before the other six failed units began. A later Runner 2.27
+DeepSeek continuation retained 785 of its 1,674 selected rows before another
+terminal interruption. The hardware-fit controller retains its 743 usable
+non-length rows and completes only 14 failed, 28 length-ended and 889
+never-attempted rows. DeepSeek's 1,909-row extension is therefore reconciled by
+235 earlier usable rows, 743 retained Runner 2.27 rows and 931 Runner 2.29
+hardware-fit rows. Only after that hardware-fit completion is terminal may the
+alignment continuation schedule the four 50-row R-Judge units and two 1,075-row
+GPTGeoChat units, exactly 2,350 rows. It must not schedule DeepSeek or any of the
+five base-complete units. All continuations reuse the original content-bound
+selectors, derive fresh revision-bound attestations and retain separate
+revision/output-policy strata. Phase 7 accepts the resulting population only
+when its unique extension accounting is exactly 11,600 rows; actual Runner work
+is reported separately because 2,772 failed outputs and 42 partial-recovery
+failed or length-ended outputs were deliberately retried rather than hidden.
 
 Before Gate 6 closes, every retained local vLLM failure is partitioned by the
 boundary it reached. A lane that failed before measured Runner execution is run
@@ -984,21 +988,25 @@ population rows.
 The first six-unit recovery retained five terminal units (2,139 rows) but made
 no DeepSeek population call: all five admission probes were rejected because
 the controller had bound that reasoning model with `think=false`. The
-`failed_output_recovery_continuation_phase6` controller accepts only that exact
-terminal partition, retains the five completed results byte-for-byte, reuses
-the exact 1,674-row selector, and runs only DeepSeek with `think=true` under the
-separately calibrated 2,048-token completion allowance. Its combined `/3`
-completion keeps old and continuation project revisions and generation
-conditions in separate metric strata. This is correction of a pre-execution
-configuration error followed by a separately named cap sensitivity, not an
+`failed_output_recovery_continuation_phase6` controller accepted only that exact
+terminal partition, retained the five completed results byte-for-byte, reused
+the exact 1,674-row selector, and ran only DeepSeek with `think=true` under the
+separately calibrated 2,048-token completion allowance. Its `/2` terminal is
+honestly `complete_with_failures` after 785 durable DeepSeek rows. The later
+hardware-fit controller binds that exact partial state and selects only its 931
+unfinished, failed or length-ended rows. This is correction of a pre-execution
+configuration error followed by separately named finite-cap and hardware-fit
+conditions, not an
 extra response retry. Filtering to DeepSeek must preserve its
 physical position 05 from the original six-unit order; renumbering the filtered
 list from one changes the immutable selector identity and is rejected before a
 target call.
 
 The alignment continuation is a dependent Phase 6 step, not another replay of
-the seven failed base units. It requires the terminal failed-output recovery and
-then runs only the six never-started R-Judge/GPTGeoChat units, for 2,350 rows.
+the seven failed base units. Its `/4` contract requires the interrupted
+failed-output completion and the fully successful 25-unit hardware-fit
+completion, then runs only the six never-started R-Judge/GPTGeoChat units, for
+2,350 rows.
 Its explicit Ollama configuration binds `think=false` for Gemma and Ministral
 and `think=low` for GPT-OSS. Because none of those six population rows has run,
 their fresh condition binds `num_ctx="fit"` and `num_predict=-1`. Runner starts
@@ -1014,8 +1022,9 @@ acquisition plan. Reintroducing DeepSeek into this selection or changing the
 The first alignment-recovery launch at commit `8296f76` stopped after its
 controller-start record and before any unit state or population call. It is not
 a completion. After the 25-unit automatic hardware-fit correction finishes,
-run the maintained six-unit continuation in a fresh named rig session and give
-only its validated completion to Phase 7. The 2,350 never-started rows are in
+run the maintained six-unit `/4` continuation in a fresh named rig session with
+both prerequisite completion digests and give only its validated completion to
+Phase 7. The 2,350 never-started rows are in
 addition to the 4,463 row-addressable hardware-fit corrections; neither
 controller may select a row completed by the other or by the retained base.
 
@@ -1168,9 +1177,10 @@ an already completed non-truncated row.
 The 12 population-alignment rows remain logical model/framework conditions, not
 12 necessarily single-root files. Eleven have one terminal metric root. The
 DeepSeek condition is population-complete across its retained Runner 2.26 usable
-segment and Runner 2.27 recovery segment; Phase 7 reports their exact coverage
-and model-stability accounting but forbids a pooled security rate across those
-output-policy/revision strata.
+segment, retained non-length Runner 2.27 continuation segment and Runner 2.29
+hardware-fit segment; Phase 7 reports their exact coverage and model-stability
+accounting but forbids a pooled security rate across those output-policy and
+revision strata.
 The
 contract self-test rejects any
 other count or cohort partition.

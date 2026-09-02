@@ -51,6 +51,18 @@ def test_alignment_continuation_selects_only_six_never_started_units() -> None:
     assert recovery.FAILED_OUTPUT_COVERED_LANE in mutant
 
 
+def test_alignment_continuation_contract_binds_hardware_fit_successor() -> None:
+    destinations = {action.dest for action in recovery.build_parser()._actions}  # noqa: SLF001
+
+    assert recovery.SCHEMA.endswith("/4")
+    assert {
+        "failed_output_recovery_completion",
+        "failed_output_recovery_completion_sha256",
+        "hardware_fit_completion",
+        "hardware_fit_completion_sha256",
+    } <= destinations
+
+
 def test_alignment_continuation_separates_actual_replays_from_unique_rows() -> None:
     execution = recovery._combined_target_execution(  # noqa: SLF001
         base_execution={
@@ -60,22 +72,28 @@ def test_alignment_continuation_separates_actual_replays_from_unique_rows() -> N
         },
         coverage={
             "prior_usable_records": 235,
-            "alignment_recovery_successful_target_generations": 3_779,
-            "alignment_recovery_missing_responses": 14,
+            "alignment_recovery_successful_target_generations": 3_747,
+            "alignment_recovery_missing_responses": 46,
+            "partial_deepseek_successful_target_generations": 771,
+            "retained_partial_deepseek_successful_target_generations": 743,
+            "partial_deepseek_missing_responses": 14,
+            "hardware_fit_replayed_partial_rows": 42,
         },
         continuation_successful=2_350,
         continuation_missing=0,
     )
 
     assert execution == {
-        "target_attempts": 14_372,
-        "successful_target_generations": 11_586,
-        "missing_responses": 2_786,
+        "target_attempts": 14_414,
+        "successful_target_generations": 11_582,
+        "missing_responses": 2_832,
         "unique_population_rows": 11_600,
-        "retained_population_successful_target_generations": 11_586,
-        "retained_population_missing_responses": 14,
+        "retained_population_successful_target_generations": 11_554,
+        "retained_population_missing_responses": 46,
         "replayed_failed_output_rows": 2_772,
+        "replayed_partial_recovery_rows": 42,
         "never_attempted_rows_completed": 1_021,
+        "alignment_never_started_rows_completed": 2_350,
     }
     with pytest.raises(ValueError):
         recovery._combined_target_execution(  # noqa: SLF001
@@ -86,8 +104,31 @@ def test_alignment_continuation_separates_actual_replays_from_unique_rows() -> N
             },
             coverage={
                 "prior_usable_records": 235,
-                "alignment_recovery_successful_target_generations": 3_779,
-                "alignment_recovery_missing_responses": 14,
+                "alignment_recovery_successful_target_generations": 3_747,
+                "alignment_recovery_missing_responses": 46,
+                "partial_deepseek_successful_target_generations": 771,
+                "retained_partial_deepseek_successful_target_generations": 743,
+                "partial_deepseek_missing_responses": 14,
+                "hardware_fit_replayed_partial_rows": 42,
+            },
+            continuation_successful=2_350,
+            continuation_missing=0,
+        )
+    with pytest.raises(ValueError):
+        recovery._combined_target_execution(  # noqa: SLF001
+            base_execution={
+                "target_attempts": 7_341,
+                "successful_target_generations": 5_222,
+                "missing_responses": 2_119,
+            },
+            coverage={
+                "prior_usable_records": 235,
+                "alignment_recovery_successful_target_generations": 3_747,
+                "alignment_recovery_missing_responses": 46,
+                "partial_deepseek_successful_target_generations": 771,
+                "retained_partial_deepseek_successful_target_generations": 743,
+                "partial_deepseek_missing_responses": 14,
+                "hardware_fit_replayed_partial_rows": 41,
             },
             continuation_successful=2_350,
             continuation_missing=0,
