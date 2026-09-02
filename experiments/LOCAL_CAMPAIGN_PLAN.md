@@ -1011,6 +1011,14 @@ local-only classification unit may gain a Hub
 acquisition plan. Reintroducing DeepSeek into this selection or changing the
 2,350-row count is a contract failure.
 
+The first alignment-recovery launch at commit `8296f76` stopped after its
+controller-start record and before any unit state or population call. It is not
+a completion. After the 25-unit automatic hardware-fit correction finishes,
+run the maintained six-unit continuation in a fresh named rig session and give
+only its validated completion to Phase 7. The 2,350 never-started rows are in
+addition to the 4,463 row-addressable hardware-fit corrections; neither
+controller may select a row completed by the other or by the retained base.
+
 The general local serving default is provider-independent at the response
 boundary: omitted vLLM `max_model_len` binds vLLM 0.27's `-1` auto-fit policy,
 while omitted `max_tokens` uses maximum available output. Ollama binds
