@@ -727,6 +727,9 @@ def _sealed_chain(
     level1_sixth = (
         analysis / "lifecycle-strata" / f"{'7' * 12}-{'f' * 12}" / "level1-evidence.json"
     )
+    level1_failed_output_recovery = (
+        analysis / "lifecycle-strata" / f"{'8' * 12}-{'9' * 12}" / "level1-evidence.json"
+    )
     level2 = analysis / "metric-strata" / f"{'1' * 12}-{'a' * 12}" / "level2-report.json"
     level2_second = (
         analysis / "metric-strata" / f"{'2' * 12}-{'b' * 12}" / "level2-report.json"
@@ -743,6 +746,9 @@ def _sealed_chain(
     level2_sixth = (
         analysis / "metric-strata" / f"{'7' * 12}-{'f' * 12}" / "level2-report.json"
     )
+    level2_failed_output_recovery = (
+        analysis / "metric-strata" / f"{'8' * 12}-{'9' * 12}" / "level2-report.json"
+    )
     _level1(
         level1,
         revision="9" * 64 if mutation == "report_scope_revision" else "1" * 64,
@@ -753,6 +759,7 @@ def _sealed_chain(
     _level1(level1_fourth, revision="5" * 64, source="d" * 64)
     _level1(level1_fifth, revision="6" * 64, source="e" * 64)
     _level1(level1_sixth, revision="7" * 64, source="f" * 64)
+    _level1(level1_failed_output_recovery, revision="8" * 64, source="9" * 64)
     _level2(
         level2,
         revision="9" * 64 if mutation == "level2_scope_revision" else "1" * 64,
@@ -762,6 +769,7 @@ def _sealed_chain(
     _level2(level2_fourth, revision="5" * 64)
     _level2(level2_fifth, revision="6" * 64)
     _level2(level2_sixth, revision="7" * 64)
+    _level2(level2_failed_output_recovery, revision="8" * 64)
     statuses = {
         "level1-evidence": "complete",
         "level2-report": "complete_with_limitations" if limited else "complete",
@@ -779,12 +787,14 @@ def _sealed_chain(
             level1_fourth,
             level1_fifth,
             level1_sixth,
+            level1_failed_output_recovery,
             level2,
             level2_second,
             level2_third,
             level2_fourth,
             level2_fifth,
             level2_sixth,
+            level2_failed_output_recovery,
             campaign_inventory,
         )
     ]
