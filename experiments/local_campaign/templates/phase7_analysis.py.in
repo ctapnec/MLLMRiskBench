@@ -17945,7 +17945,9 @@ def contract_self_test() -> int:
             row[0] for row in CURRENT_OLLAMA_STABILITY_LAYOUT
         ]
         current_ollama_alignment_fixture_lanes = list(
-            CURRENT_OLLAMA_ALIGNMENT_LANES
+            lane
+            for lane in CURRENT_OLLAMA_ALIGNMENT_LANES
+            if lane != CURRENT_OLLAMA_ALIGNMENT_SPLIT_LANE
         )
         failed_output_recovery_fixture_lanes = list(
             FAILED_OUTPUT_RECOVERY_UNIT_ORDER
