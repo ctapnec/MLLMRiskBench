@@ -63,3 +63,26 @@ def test_campaign_plan_keeps_checkpoint_recovery_on_original_runner() -> None:
         "recovery projects only their never-completed\nrows under Runner 2.25"
         not in plan
     )
+
+
+def test_docs_bind_post_factum_judge_hardware_fit_without_fractional_reservation() -> None:
+    documents = {
+        _ROOT / "README.md": (
+            "the scoring judge performs its own hardware-fit\nselection and may use "
+            "one or both GPUs",
+            "No fractional judge capacity is\nreserved while the target is measured.",
+        ),
+        _ROOT / "docs" / "ARCHITECTURE.md": (
+            "the judge performs its own hardware-fit\nselection and may use one or both GPUs",
+            "The target phase does not reserve a\nfraction of another device for later scoring",
+        ),
+        _ROOT / "experiments" / "RUN_AND_RETURN.md": (
+            "the judge performs a fresh hardware-fit\nselection and may use one or both GPUs",
+            "Do\nnot reserve an arbitrary fraction of the second GPU",
+        ),
+    }
+
+    for path, required in documents.items():
+        text = path.read_text(encoding="utf-8")
+        for statement in required:
+            assert statement in text, (path, statement)

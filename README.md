@@ -258,6 +258,9 @@ prevents the judge from reducing target context capacity or contaminating target
 resource observations. Crescendo remains inline because each verdict controls
 the next attack turn. A defense guard also remains in the target phase because
 it is part of the evaluated treatment, not post-hoc scoring.
+After verified target teardown, the scoring judge performs its own hardware-fit
+selection and may use one or both GPUs. No fractional judge capacity is
+reserved while the target is measured.
 For retained local truncations, first create the structure-only exact-row
 inventory with `local_truncation_recovery_phase6`, then pass its path and digest
 to `local_truncation_recovery_execution_phase6`. The execution controller

@@ -400,6 +400,12 @@ sequencing, not an unbound later re-adjudication. Crescendo remains inline
 because the verdict changes the following turn. A defense guard remains in the
 target phase because it changes the treatment being measured.
 
+After verified target teardown, the judge performs its own hardware-fit
+selection and may use one or both GPUs. The target phase does not reserve a
+fraction of another device for later scoring, so target utilization and memory
+observations describe the target condition rather than target-judge
+co-residency.
+
 An Ollama entry instead identifies a tag present in the live loopback daemon
 after a successful pull or discovery transaction. Rig Web may Start, Stop, and
 Pull only through its proven current-console-owned child; an external daemon is

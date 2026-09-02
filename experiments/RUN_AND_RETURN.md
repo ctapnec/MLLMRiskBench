@@ -1937,6 +1937,10 @@ and contaminate target resource observations. Crescendo must remain inline
 because each verdict controls the next turn. A defense guard also remains in the
 target phase because it changes the treatment rather than merely scoring it.
 
+After verified target teardown, the judge performs a fresh hardware-fit
+selection and may use one or both GPUs under its own local configuration. Do
+not reserve an arbitrary fraction of the second GPU during target measurement.
+
 Before final Phase 7 analysis, derive the exact current-roster truncation set
 with `python -m experiments.local_campaign.local_truncation_recovery_phase6`,
 passing each retained unit state through repeated `--state` arguments and using
@@ -1970,14 +1974,17 @@ about 47.98 GiB physical and 40.78 GiB usable VRAM at utilization 0.85. A 70B
 model is estimated at 39.9 GiB with 4-bit BitsAndBytes, so the roster shows it
 only with mandatory in-flight 4-bit quantization and tensor parallelism 2; its
 80.5-GiB FP8 estimate does not fit this rig.
-Declaring that model multi-GPU-incompatible makes it a non-fit instead. With an
-8B-class target, tensor parallelism 1 normally leaves the second GPU for the
-scoring guard; a two-GPU target leaves no GPU for that guard and is therefore a
-different execution condition.
+Declaring that model multi-GPU-incompatible makes it a non-fit instead. A
+two-GPU target may use both cards during response generation and release them
+before post-factum scoring. A target-phase model-backed defense still requires
+capacity beside the target because it is part of the measured treatment.
 
-The local preflight loads the one target base engine before it constructs the
-scoring or defense guards. A successful preflight therefore tests the actual
-single-process memory layout; do not start a second target server beside it.
+The local preflight follows the bound judge schedule. Inline conditions load
+the target before any target-phase defense or scoring guard and therefore test
+their actual co-resident memory layout. A response-independent post-factum
+condition preflights the target phase, releases it, and then preflights the
+scoring phase; it does not claim simultaneous residency. Do not start a second
+target server beside either condition.
 
 Before that target enters any security projection, canary or measured run, run
 `python -m experiments.local_model_readiness` against the exact one-model local
@@ -3757,8 +3764,9 @@ stage cannot classify confidently.
 The optional hosted text-only defense contrast uses a separate model identity
 and GPU for each guard. Put the 8B scoring guard on GPU 0 and the 1B defense
 guard on GPU 1; loading both on one 24 GB card is not this planned condition.
-Do not add the model-backed defense to the two-card local-target lane, where GPU
-0 already holds the target and GPU 1 holds the scoring guard.
+Do not add the model-backed defense to a local-target lane that consumes both
+cards; the defense guard must run during the target phase even though the
+separate scoring guard runs after target release.
 
 ```bash
 python -m experiments.rig_check \
