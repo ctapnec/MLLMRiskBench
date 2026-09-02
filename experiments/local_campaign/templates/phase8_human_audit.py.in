@@ -48,6 +48,9 @@ from experiments.local_campaign.vllm_input_recovery_phase6 import (
     FAILED_UNIT as VLLM_STABILITY_RECOVERED_LANE,
     UNIT_LAYOUT as VLLM_STABILITY_UNIT_LAYOUT,
 )
+from experiments.local_campaign.vllm_context_recovery_phase6 import (
+    UNIT_ID as VLLM_CONTEXT_RECOVERY_UNIT,
+)
 from experiments.local_campaign.failed_output_recovery_phase6 import (
     EXPECTED_UNIT_ORDER as FAILED_OUTPUT_RECOVERY_UNIT_ORDER,
 )
@@ -6558,6 +6561,10 @@ def validate_frozen_phase7_oracle_api(oracle: Any) -> None:
             ("completion_path", positional),
             ("runner_root", keyword_only),
         ),
+        "validate_vllm_context_recovery_completion": (
+            ("completion_path", positional),
+            ("runner_root", keyword_only),
+        ),
         "validate_phase6_campaign_terminal_inventory": (
             ("value", positional),
         ),
@@ -6575,6 +6582,7 @@ def validate_frozen_phase7_oracle_api(oracle: Any) -> None:
             ("current_ollama_population_alignment", keyword_only),
             ("failed_output_recovery", keyword_only),
             ("vllm_stability", keyword_only),
+            ("vllm_context_recovery", keyword_only),
         ),
     }
     for name, expected_parameters in expected_api.items():
@@ -6814,6 +6822,15 @@ def replay_frozen_phase7_oracle(
             ),
             runner_root=runner_root,
         )
+        oracle_vllm_context_recovery = (
+            oracle.validate_vllm_context_recovery_completion(
+                descriptor_file(
+                    inputs["vllm_context_recovery"]["completion"],
+                    label="Phase 7 oracle vLLM context-recovery completion",
+                ),
+                runner_root=runner_root,
+            )
+        )
         oracle_campaign = oracle.build_phase6_campaign_terminal_inventory(
             gate5_rows=oracle_manifest["lanes"],
             gate5_manifest=gate5_manifest_path,
@@ -6830,6 +6847,7 @@ def replay_frozen_phase7_oracle(
             ),
             failed_output_recovery=oracle_failed_output_recovery,
             vllm_stability=oracle_vllm_stability,
+            vllm_context_recovery=oracle_vllm_context_recovery,
         )
     except Phase8Error:
         raise
@@ -6856,6 +6874,7 @@ def replay_frozen_phase7_oracle(
         or oracle_failed_output_recovery
         != inputs.get("failed_output_recovery")
         or oracle_vllm_stability != inputs.get("vllm_stability")
+        or oracle_vllm_context_recovery != inputs.get("vllm_context_recovery")
         or oracle_campaign != inputs.get("campaign_terminal_inventory")
     ):
         raise Phase8Error("Phase 7 frozen semantic replay differs from its input")
@@ -7363,6 +7382,7 @@ def validate_phase7_human_sampling_view(
     current_ollama_population_alignment: Mapping[str, Any],
     failed_output_recovery: Mapping[str, Any],
     vllm_stability: Mapping[str, Any],
+    vllm_context_recovery: Mapping[str, Any],
 ) -> tuple[Path, dict[str, Any]]:
     """Revalidate the sampling-only union without reading failed sibling roots."""
 
@@ -7379,7 +7399,10 @@ def validate_phase7_human_sampling_view(
         "included_failed_output_recovery_lanes",
         "failed_output_recovery_result_roots",
         "included_vllm_stability_lanes",
-        "vllm_stability_result_roots", "regular_files_copied", "logical_bytes",
+        "vllm_stability_result_roots",
+        "included_vllm_context_recovery_lanes",
+        "vllm_context_recovery_result_roots",
+        "regular_files_copied", "logical_bytes",
         "source_files_modified", "permitted_view_outputs", "file_inventory",
         "file_inventory_sha256",
     }
@@ -7396,6 +7419,7 @@ def validate_phase7_human_sampling_view(
         ),
         failed_output_recovery=failed_output_recovery,
         vllm_stability=vllm_stability,
+        vllm_context_recovery=vllm_context_recovery,
     )
     inventory = value.get("file_inventory") if isinstance(value, dict) else None
     view_root = checked_dir(expected_view_root, label="Phase 7 human sampling view")
@@ -7403,7 +7427,7 @@ def validate_phase7_human_sampling_view(
     if (
         not isinstance(value, dict)
         or set(value) != fields
-        or value.get("schema") != "ura-phase7-human-audit-sampling-view/7"
+        or value.get("schema") != "ura-phase7-human-audit-sampling-view/8"
         or value.get("status") != "complete"
         or value.get("core_view_receipt") != dict(core_view_receipt)
         or value.get("source_runner_root") != str(runner_root)
@@ -7433,6 +7457,10 @@ def validate_phase7_human_sampling_view(
         != contract["vllm_stability_lanes"]
         or value.get("vllm_stability_result_roots")
         != contract["vllm_stability_roots"]
+        or value.get("included_vllm_context_recovery_lanes")
+        != contract["vllm_context_recovery_lanes"]
+        or value.get("vllm_context_recovery_result_roots")
+        != contract["vllm_context_recovery_roots"]
         or value.get("source_files_modified") is not False
         or value.get("permitted_view_outputs") != []
         or not isinstance(inventory, list)
@@ -7618,6 +7646,7 @@ def phase7_sampling_lane_contract(
     current_ollama_population_alignment: Mapping[str, Any],
     failed_output_recovery: Mapping[str, Any],
     vllm_stability: Mapping[str, Any],
+    vllm_context_recovery: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Return the exact successful Phase 7 sampling union and its strata."""
 
@@ -7796,6 +7825,12 @@ def phase7_sampling_lane_contract(
         states={"measured_complete"},
         label="vLLM stability cohort",
     )
+    vllm_context_recovery_lanes = amendment_lanes(
+        vllm_context_recovery,
+        expected_lanes=(VLLM_CONTEXT_RECOVERY_UNIT,),
+        states={"measured_complete"},
+        label="vLLM context-recovery cohort",
+    )
     if not lane_order or len(set(lane_order)) != len(lane_order):
         raise Phase8Error("Phase 7 successful sampling lane inventory is invalid")
     revision_strata = {
@@ -7840,6 +7875,11 @@ def phase7_sampling_lane_contract(
         "vllm_stability_roots": {
             lane: vllm_stability["metric_roots"][lane]
             for lane in vllm_stability_lanes
+        },
+        "vllm_context_recovery_lanes": vllm_context_recovery_lanes,
+        "vllm_context_recovery_roots": {
+            lane: vllm_context_recovery["metric_roots"][lane]
+            for lane in vllm_context_recovery_lanes
         },
         "revision_strata": revision_strata,
         "source_conformance_strata": source_strata,
@@ -7923,10 +7963,13 @@ def validate_phase7_completion(
         "vllm_stability_terminal_states",
         "vllm_stability_metric_revision_strata",
         "vllm_stability_target_execution",
+        "vllm_context_recovery_terminal_states",
+        "vllm_context_recovery_metric_revision_strata",
+        "vllm_context_recovery_target_execution",
     }
     if (
         set(value) != expected_fields
-        or value.get("schema") != "ura-phase7-analysis-completion/5"
+        or value.get("schema") != "ura-phase7-analysis-completion/6"
         or value.get("status") not in {"complete", "complete_with_explicit_limitations"}
         or not UTC_RE.fullmatch(str(value.get("started_at_utc", "")))
         or not UTC_RE.fullmatch(str(value.get("completed_at_utc", "")))
@@ -7994,6 +8037,7 @@ def validate_phase7_completion(
         "current_ollama_population_alignment",
         "failed_output_recovery",
         "vllm_stability",
+        "vllm_context_recovery",
         "campaign_terminal_inventory",
         "analysis_contract",
         "bound_artifacts",
@@ -8001,7 +8045,7 @@ def validate_phase7_completion(
     }
     if (
         set(inputs) != input_fields
-        or inputs.get("schema") != "ura-phase7-analysis-inputs/5"
+        or inputs.get("schema") != "ura-phase7-analysis-inputs/6"
         or inputs.get("inventory_complete") is not True
         or inputs.get("scope")
         != "all_local_phase7_read_only_analysis_over_phase6_lifecycle"
@@ -8022,6 +8066,7 @@ def validate_phase7_completion(
     )
     failed_output_recovery = inputs.get("failed_output_recovery")
     vllm_stability = inputs.get("vllm_stability")
+    vllm_context_recovery = inputs.get("vllm_context_recovery")
     campaign_inventory = inputs.get("campaign_terminal_inventory")
     if not all(
         isinstance(item, dict)
@@ -8034,6 +8079,7 @@ def validate_phase7_completion(
             current_ollama_population_alignment,
             failed_output_recovery,
             vllm_stability,
+            vllm_context_recovery,
             campaign_inventory,
         )
     ):
@@ -9249,6 +9295,7 @@ def validate_phase7_completion(
         "current_ollama_population_alignment_matches_limit_100",
         "failed_output_recovery_missing_responses_retained",
         "vllm_stability_missing_responses_retained",
+        "vllm_context_recovery_missing_responses_retained",
         "source_parser_classification_kept_out_of_common_metrics",
         "failed_phase6_lanes_excluded_from_metric_and_level2_views",
         "missing_prerequisites_emit_typed_unavailable_artifacts",
@@ -9276,6 +9323,7 @@ def validate_phase7_completion(
                 "current_ollama_population_alignment_matches_limit_100",
                 "failed_output_recovery_missing_responses_retained",
                 "vllm_stability_missing_responses_retained",
+                "vllm_context_recovery_missing_responses_retained",
                 "source_parser_classification_kept_out_of_common_metrics",
                 "failed_phase6_lanes_excluded_from_metric_and_level2_views",
                 "missing_prerequisites_emit_typed_unavailable_artifacts",
@@ -9682,6 +9730,33 @@ def validate_phase7_completion(
             for revision in vllm_stability_strata
         },
     }
+    vllm_context_recovery_states = vllm_context_recovery.get("terminal_states")
+    vllm_context_recovery_strata = vllm_context_recovery.get("revision_strata")
+    vllm_context_recovery_metric_lanes = vllm_context_recovery.get(
+        "metric_lane_order"
+    )
+    if (
+        vllm_context_recovery_states
+        != {VLLM_CONTEXT_RECOVERY_UNIT: "measured_complete"}
+        or vllm_context_recovery_metric_lanes != [VLLM_CONTEXT_RECOVERY_UNIT]
+        or not isinstance(vllm_context_recovery_strata, dict)
+        or list(vllm_context_recovery_strata.values())
+        != [[VLLM_CONTEXT_RECOVERY_UNIT]]
+        or value.get("vllm_context_recovery_terminal_states")
+        != vllm_context_recovery_states
+        or value.get("vllm_context_recovery_metric_revision_strata")
+        != vllm_context_recovery_strata
+        or value.get("vllm_context_recovery_target_execution")
+        != vllm_context_recovery.get("target_execution")
+    ):
+        raise Phase8Error("Phase 7 vLLM context-recovery partition differs")
+    vllm_context_recovery_status_names = {
+        "vllm-context-recovery-lifecycle",
+        *{
+            f"vllm-context-recovery-metric-inputs-{revision[:12]}"
+            for revision in vllm_context_recovery_strata
+        },
+    }
     phase7_metric_lanes = [
         *measured_lanes,
         *current_ollama_metric_lanes,
@@ -9689,6 +9764,7 @@ def validate_phase7_completion(
         *current_ollama_alignment_metric_lanes,
         *failed_output_recovery_metric_lanes,
         *vllm_stability_metric_lanes,
+        *vllm_context_recovery_metric_lanes,
     ]
     if len(set(phase7_metric_lanes)) != len(phase7_metric_lanes):
         raise Phase8Error("Phase 7 metric lane union contains a duplicate")
@@ -9705,6 +9781,7 @@ def validate_phase7_completion(
         ),
         failed_output_recovery=failed_output_recovery,
         vllm_stability=vllm_stability,
+        vllm_context_recovery=vllm_context_recovery,
     )
     stratum_status_names = {
         "metric-stratum-"
@@ -9744,6 +9821,7 @@ def validate_phase7_completion(
         *current_ollama_alignment_status_names,
         *failed_output_recovery_status_names,
         *vllm_stability_status_names,
+        *vllm_context_recovery_status_names,
         *stratum_status_names,
     }
     if (
@@ -9761,6 +9839,7 @@ def validate_phase7_completion(
             + len(current_ollama_alignment_status_names)
             + len(failed_output_recovery_status_names)
             + len(vllm_stability_status_names)
+            + len(vllm_context_recovery_status_names)
             + len(stratum_status_names)
         )
         or any(
@@ -9857,6 +9936,7 @@ def validate_phase7_completion(
             ),
             failed_output_recovery=failed_output_recovery,
             vllm_stability=vllm_stability,
+            vllm_context_recovery=vllm_context_recovery,
         )
     )
     if observed_sampling_contract != sampling_contract:
@@ -10292,6 +10372,7 @@ def validate_phase7_completion(
         ),
         "failed_output_recovery": failed_output_recovery,
         "vllm_stability": vllm_stability,
+        "vllm_context_recovery": vllm_context_recovery,
     }
     support["sampling_index_receipt"] = value["human_audit_sampling_index"]
     support["sampling_index_value"] = sampling_index
@@ -10469,9 +10550,10 @@ def revalidate_bound_audit_runner_view(
     current_ollama_population_alignment: Mapping[str, Any] | None = None,
     failed_output_recovery: Mapping[str, Any] | None = None,
     vllm_stability: Mapping[str, Any] | None = None,
+    vllm_context_recovery: Mapping[str, Any] | None = None,
 ) -> Path:
     if isinstance(receipt, dict) and receipt.get("schema") == (
-        "ura-phase7-human-audit-sampling-view/7"
+        "ura-phase7-human-audit-sampling-view/8"
     ):
         if (
             core_view_receipt is None
@@ -10484,6 +10566,7 @@ def revalidate_bound_audit_runner_view(
             or current_ollama_population_alignment is None
             or failed_output_recovery is None
             or vllm_stability is None
+            or vllm_context_recovery is None
         ):
             raise Phase8Error("human sampling view revalidation inputs are absent")
         view, contract = validate_phase7_human_sampling_view(
@@ -10502,6 +10585,7 @@ def revalidate_bound_audit_runner_view(
             ),
             failed_output_recovery=failed_output_recovery,
             vllm_stability=vllm_stability,
+            vllm_context_recovery=vllm_context_recovery,
         )
         if list(measured_lanes) != contract["lane_order"]:
             raise Phase8Error("human sampling view lane partition changed")
@@ -10624,6 +10708,7 @@ def build_input_manifest(args: argparse.Namespace) -> dict[str, Any]:
         ],
         failed_output_recovery=phase7_support["failed_output_recovery"],
         vllm_stability=phase7_support["vllm_stability"],
+        vllm_context_recovery=phase7_support["vllm_context_recovery"],
     )
     capacity = plan_phase8_capacity(
         common_available_unique_clusters=common_available,
@@ -11795,6 +11880,7 @@ def semantic_revalidate(inputs: Mapping[str, Any]) -> dict[str, Any]:
         ],
         failed_output_recovery=support["failed_output_recovery"],
         vllm_stability=support["vllm_stability"],
+        vllm_context_recovery=support["vllm_context_recovery"],
     )
     capacity = plan_phase8_capacity(
         common_available_unique_clusters=common_available,
@@ -11853,6 +11939,7 @@ def semantic_revalidate(inputs: Mapping[str, Any]) -> dict[str, Any]:
         ],
         "failed_output_recovery": support["failed_output_recovery"],
         "vllm_stability": support["vllm_stability"],
+        "vllm_context_recovery": support["vllm_context_recovery"],
         "gate5": gate5,
         "core": core,
         "extended": extended,
@@ -12318,6 +12405,7 @@ def _bound_qualification_runner_view(inputs: Mapping[str, Any]) -> Path:
         ],
         failed_output_recovery=support["failed_output_recovery"],
         vllm_stability=support["vllm_stability"],
+        vllm_context_recovery=support["vllm_context_recovery"],
     )
 
 
@@ -13037,6 +13125,7 @@ def execute_preparation(control_root: Path, attempt_root: Path) -> int:
             ],
             failed_output_recovery=support["failed_output_recovery"],
             vllm_stability=support["vllm_stability"],
+            vllm_context_recovery=support["vllm_context_recovery"],
         )
 
     common_argv = [
@@ -17323,7 +17412,7 @@ def self_test() -> int:
             "measured_evidence_admitted": False,
         }
         phase7_input: dict[str, Any] = {
-            "schema": "ura-phase7-analysis-inputs/5",
+            "schema": "ura-phase7-analysis-inputs/6",
             "inventory_complete": True,
             "scope": "all_local_phase7_read_only_analysis_over_phase6_lifecycle",
             "controller_payload": descriptor(phase7_source),
@@ -17426,6 +17515,7 @@ def self_test() -> int:
                 "current_ollama_population_alignment_matches_limit_100": True,
                 "failed_output_recovery_missing_responses_retained": True,
                 "vllm_stability_missing_responses_retained": True,
+                "vllm_context_recovery_missing_responses_retained": True,
                 "source_parser_classification_kept_out_of_common_metrics": True,
                 "failed_phase6_lanes_excluded_from_metric_and_level2_views": True,
                 "missing_prerequisites_emit_typed_unavailable_artifacts": True,
@@ -17463,6 +17553,9 @@ def self_test() -> int:
         phase7_input["vllm_stability"] = {
             "completion": descriptor(phase7_generic),
             "input_recovery_completion": descriptor(phase7_generic),
+        }
+        phase7_input["vllm_context_recovery"] = {
+            "completion": descriptor(phase7_generic),
         }
         phase7_input["campaign_terminal_inventory"] = {
             "schema": "ura-phase6-campaign-terminal-inventory-self-test/1",
@@ -17812,7 +17905,7 @@ def self_test() -> int:
             ),
         )
         phase7_completion = {
-            "schema": "ura-phase7-analysis-completion/5",
+            "schema": "ura-phase7-analysis-completion/6",
             "status": "complete_with_explicit_limitations",
             "started_at_utc": "2026-08-22T00:00:00Z",
             "completed_at_utc": "2026-08-22T00:00:01Z",
@@ -18119,6 +18212,21 @@ def self_test() -> int:
             oracle_calls.append("vllm_stability")
             return phase7_input["vllm_stability"]
 
+        def recording_vllm_context_recovery(
+            completion_path: Path,
+            *,
+            runner_root: Path,
+        ) -> Mapping[str, Any]:
+            if (
+                completion_path != phase7_generic
+                or runner_root != expected_current_ollama_runner_root
+            ):
+                raise AssertionError(
+                    "recording oracle vLLM context-recovery arguments differ"
+                )
+            oracle_calls.append("vllm_context_recovery")
+            return phase7_input["vllm_context_recovery"]
+
         def recording_current_ollama_stability(
             completion_path: Path,
             *,
@@ -18179,6 +18287,7 @@ def self_test() -> int:
             current_ollama_population_alignment: Mapping[str, Any],
             failed_output_recovery: Mapping[str, Any],
             vllm_stability: Mapping[str, Any],
+            vllm_context_recovery: Mapping[str, Any],
         ) -> Mapping[str, Any]:
             if {
                 "gate5_rows": rows,
@@ -18200,6 +18309,9 @@ def self_test() -> int:
                     "failed_output_recovery"
                 ],
                 "vllm_stability": phase7_input["vllm_stability"],
+                "vllm_context_recovery": phase7_input[
+                    "vllm_context_recovery"
+                ],
             } != {
                 "gate5_rows": list(gate5_rows),
                 "gate5_manifest": gate5_manifest,
@@ -18216,6 +18328,7 @@ def self_test() -> int:
                 ),
                 "failed_output_recovery": failed_output_recovery,
                 "vllm_stability": vllm_stability,
+                "vllm_context_recovery": vllm_context_recovery,
             }:
                 raise AssertionError("recording oracle campaign arguments differ")
             oracle_calls.append("campaign")
@@ -18248,6 +18361,9 @@ def self_test() -> int:
                 recording_failed_output_recovery
             ),
             validate_vllm_stability_completion=recording_vllm_stability,
+            validate_vllm_context_recovery_completion=(
+                recording_vllm_context_recovery
+            ),
             validate_phase6_campaign_terminal_inventory=(
                 recording_validate_campaign
             ),
@@ -18297,6 +18413,7 @@ def self_test() -> int:
             "current_ollama_alignment",
             "failed_output_recovery",
             "vllm_stability",
+            "vllm_context_recovery",
             "campaign",
         ]
         if loader_calls != [project_root] or oracle_calls != expected_oracle_calls:
@@ -18394,6 +18511,21 @@ def self_test() -> int:
                     else value
                 )
 
+            def mismatched_vllm_context_recovery(
+                completion_path: Path,
+                *,
+                runner_root: Path,
+            ) -> Mapping[str, Any]:
+                value = recording_vllm_context_recovery(
+                    completion_path,
+                    runner_root=runner_root,
+                )
+                return (
+                    with_snapshot_mismatch(value, kind)
+                    if kind == "vllm_context_recovery"
+                    else value
+                )
+
             def mismatched_current_ollama_stability(
                 completion_path: Path,
                 *,
@@ -18461,6 +18593,9 @@ def self_test() -> int:
                     mismatched_failed_output_recovery
                 ),
                 validate_vllm_stability_completion=mismatched_vllm_stability,
+                validate_vllm_context_recovery_completion=(
+                    mismatched_vllm_context_recovery
+                ),
                 validate_phase6_campaign_terminal_inventory=(
                     recording_validate_campaign
                 ),
@@ -18479,6 +18614,7 @@ def self_test() -> int:
             "current_ollama_alignment",
             "failed_output_recovery",
             "vllm_stability",
+            "vllm_context_recovery",
         ):
             candidate_oracle = mismatch_oracle(mismatch_kind)
             rejected(
@@ -18579,6 +18715,9 @@ def self_test() -> int:
                         "failed_output_recovery"
                     ],
                     "vllm_stability": phase7_input["vllm_stability"],
+                    "vllm_context_recovery": phase7_input[
+                        "vllm_context_recovery"
+                    ],
                 }
 
             def fixture_view(**kwargs: Any) -> Path:

@@ -1071,6 +1071,13 @@ def test_phase8_frozen_phase7_api_requires_recovery_and_campaign_union(
         "validate_followon_inventory",
         "validate_seven_output_policy_inventory",
         "validate_phase6_recovery_completions",
+        "validate_current_ollama_completion",
+        "validate_current_ollama_recovery_completion",
+        "validate_current_ollama_stability_completion",
+        "validate_current_ollama_alignment_completion",
+        "validate_failed_output_recovery_completion",
+        "validate_vllm_stability_completion",
+        "validate_vllm_context_recovery_completion",
         "validate_phase6_campaign_terminal_inventory",
         "build_phase6_campaign_terminal_inventory",
     )
@@ -1083,7 +1090,9 @@ def test_phase8_frozen_phase7_api_requires_recovery_and_campaign_union(
 
     def stale_campaign_builder(
         *, gate5_rows, gate5_manifest, project_and_source, runner, native, seven,
-        followon
+        followon, current_ollama, current_ollama_stability,
+        current_ollama_population_alignment, failed_output_recovery,
+        vllm_stability, vllm_context_recovery
     ):
         return {}
 
@@ -1145,6 +1154,9 @@ def test_phase8_frozen_replay_uses_current_identity_for_native_only(
     vllm_stability = {
         "input_recovery_completion": artifact("vllm-stability.json", {})
     }
+    vllm_context_recovery = {
+        "completion": artifact("vllm-context-recovery.json", {})
+    }
     recoveries = {"completion_order": [recovery_completion]}
     campaign = {"fixture": "campaign"}
     inputs = {
@@ -1157,6 +1169,7 @@ def test_phase8_frozen_replay_uses_current_identity_for_native_only(
         "current_ollama_population_alignment": current_ollama_alignment,
         "failed_output_recovery": failed_output_recovery,
         "vllm_stability": vllm_stability,
+        "vllm_context_recovery": vllm_context_recovery,
         "campaign_terminal_inventory": campaign,
     }
     observed: dict[str, object] = {}
@@ -1231,6 +1244,9 @@ def test_phase8_frozen_replay_uses_current_identity_for_native_only(
         ),
         validate_vllm_stability_completion=(
             lambda *_args, **_kwargs: vllm_stability
+        ),
+        validate_vllm_context_recovery_completion=(
+            lambda *_args, **_kwargs: vllm_context_recovery
         ),
         build_phase6_campaign_terminal_inventory=lambda **_kwargs: campaign,
     )

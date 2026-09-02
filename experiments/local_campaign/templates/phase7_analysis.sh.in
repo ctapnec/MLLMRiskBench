@@ -23,7 +23,8 @@ usage() {
     '    --phase6-current-ollama-population-alignment-completion ABSOLUTE_PATH \' \
     '    --phase6-failed-output-recovery-completion ABSOLUTE_PATH \' \
     '    --phase6-vllm-stability-completion ABSOLUTE_PATH \' \
-    '    --phase6-vllm-input-recovery-completion ABSOLUTE_PATH' \
+    '    --phase6-vllm-input-recovery-completion ABSOLUTE_PATH \' \
+    '    --phase6-vllm-context-recovery-completion ABSOLUTE_PATH' \
     '' \
     'Launch only the exact operator-authorized input manifest:' \
     '  phase7_analysis.sh --input-manifest ABSOLUTE_PATH \' \
@@ -74,6 +75,7 @@ current_ollama_population_alignment_completion=''
 failed_output_recovery_completion=''
 vllm_stability_completion=''
 vllm_input_recovery_completion=''
+vllm_context_recovery_completion=''
 input_manifest=''
 authorized_sha=''
 
@@ -185,6 +187,11 @@ while (( $# )); do
       vllm_input_recovery_completion="$2"
       shift 2
       ;;
+    --phase6-vllm-context-recovery-completion)
+      [[ $# -ge 2 && -z "$vllm_context_recovery_completion" ]] || usage
+      vllm_context_recovery_completion="$2"
+      shift 2
+      ;;
     --input-manifest)
       [[ $# -ge 2 && -z "$mode" ]] || usage
       mode='launch'
@@ -212,7 +219,8 @@ if [[ "$mode" == 'self-test' ]]; then
       -z "$current_ollama_population_alignment_completion" && \
       -z "$failed_output_recovery_completion" && \
       -z "$vllm_stability_completion" && \
-      -z "$vllm_input_recovery_completion" ]] || usage
+      -z "$vllm_input_recovery_completion" && \
+      -z "$vllm_context_recovery_completion" ]] || usage
   [[ -z "$input_manifest" && -z "$authorized_sha" ]] || usage
   exec "$PY" "$PAYLOAD_SOURCE" contract-self-test
 fi
@@ -228,6 +236,7 @@ if [[ "$mode" == 'prepare' ]]; then
   [[ -n "$failed_output_recovery_completion" ]] || usage
   [[ -n "$vllm_stability_completion" ]] || usage
   [[ -n "$vllm_input_recovery_completion" ]] || usage
+  [[ -n "$vllm_context_recovery_completion" ]] || usage
   [[ -z "$input_manifest" && -z "$authorized_sha" ]] || usage
   recovery_args=()
   for recovery_completion in "${recovery_completions[@]}"; do
@@ -264,7 +273,9 @@ if [[ "$mode" == 'prepare' ]]; then
     "$failed_output_recovery_completion" \
     --phase6-vllm-stability-completion "$vllm_stability_completion" \
     --phase6-vllm-input-recovery-completion \
-    "$vllm_input_recovery_completion"
+    "$vllm_input_recovery_completion" \
+    --phase6-vllm-context-recovery-completion \
+    "$vllm_context_recovery_completion"
 fi
 
 [[ "$mode" == 'launch' && -n "$input_manifest" && -n "$authorized_sha" ]] || usage
@@ -279,7 +290,8 @@ fi
     -z "$current_ollama_population_alignment_completion" && \
     -z "$failed_output_recovery_completion" && \
     -z "$vllm_stability_completion" && \
-    -z "$vllm_input_recovery_completion" ]] || usage
+    -z "$vllm_input_recovery_completion" && \
+    -z "$vllm_context_recovery_completion" ]] || usage
 [[ "$authorized_sha" =~ ^[0-9a-f]{64}$ ]] || usage
 
 INPUT_MANIFEST="$($PY - "$input_manifest" "$authorized_sha" "$PAYLOAD_SOURCE" <<'PY'

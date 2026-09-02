@@ -635,12 +635,15 @@ Pass the terminal controller through `--phase6-vllm-stability-completion` and
 the create-only suffix completion through
 `--phase6-vllm-input-recovery-completion`; the validator requires the latter to
 bind the former byte-for-byte.
-Its plan-owned terminal inventory has 115 logical rows after population
+Pass the terminal larger-context Qwen correction separately through
+`--phase6-vllm-context-recovery-completion`; it is not pooled silently with the
+earlier 12,288-token condition.
+Its plan-owned terminal inventory has 116 logical rows after population
 alignment and failed-output recovery: 46 canonical, four output-policy
 amendment, three follow-on, 14
 historical current-Ollama, 14 current-Ollama stability, 12 current-Ollama
-population-alignment, six failed-output recovery, seven vLLM stability and nine
-native. The analysis
+population-alignment, six failed-output recovery, seven vLLM stability, one
+vLLM context-recovery and nine native. The analysis
 self-test, Phase 8 frozen replay and Stats adapter
 all reject an omitted cohort, a changed terminal state or any cross-policy
 pooling. These counts describe this local campaign only; they are not generic
