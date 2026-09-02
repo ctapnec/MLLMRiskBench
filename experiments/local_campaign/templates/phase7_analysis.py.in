@@ -10991,7 +10991,10 @@ def build_phase6_campaign_terminal_inventory(
             current_ollama_population_alignment["source_conformance_sha256"],
             {
                 "completion": current_ollama_population_alignment["completion"],
-                **current_ollama_population_alignment["metric_evidence"][lane],
+                **current_ollama_population_alignment.get(
+                    "lifecycle_evidence",
+                    current_ollama_population_alignment["metric_evidence"],
+                )[lane],
             },
         )
     for lane in failed_output_recovery["unit_order"]:
@@ -16085,7 +16088,9 @@ class AnalysisController:
             "target_execution": current["target_execution"],
             "population_segments": current.get("population_segments", {}),
             "metric_exclusions": {
-                lane: current["metric_evidence"][lane]
+                lane: current.get(
+                    "lifecycle_evidence", current["metric_evidence"]
+                )[lane]
                 for lane in current["unit_order"]
                 if lane not in current["metric_lane_order"]
             },

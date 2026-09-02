@@ -728,7 +728,8 @@ def validate_recovery_completion(
     result["metric_lane_order"] = metric_lanes
     result["metric_roots"].update(recovered_roots)
     result["metric_evidence"].update(recovered_evidence)
-    result["metric_evidence"][FAILED_OUTPUT_COVERED_LANE] = {
+    result["lifecycle_evidence"] = copy.deepcopy(result["metric_evidence"])
+    result["lifecycle_evidence"][FAILED_OUTPUT_COVERED_LANE] = {
         "metric_disposition": "split_runner_strata_no_pooling",
         "failed_output_recovery_completion": failed_output_descriptor,
         "population_coverage": dict(coverage),

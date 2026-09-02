@@ -1139,6 +1139,9 @@ def test_phase8_frozen_replay_uses_current_identity_for_native_only(
     current_ollama_alignment = {
         "completion": artifact("current-ollama-alignment.json", {})
     }
+    failed_output_recovery = {
+        "completion": artifact("failed-output-recovery.json", {})
+    }
     vllm_stability = {
         "input_recovery_completion": artifact("vllm-stability.json", {})
     }
@@ -1152,6 +1155,7 @@ def test_phase8_frozen_replay_uses_current_identity_for_native_only(
         "current_ollama": current_ollama,
         "current_ollama_stability": current_ollama_stability,
         "current_ollama_population_alignment": current_ollama_alignment,
+        "failed_output_recovery": failed_output_recovery,
         "vllm_stability": vllm_stability,
         "campaign_terminal_inventory": campaign,
     }
@@ -1221,6 +1225,9 @@ def test_phase8_frozen_replay_uses_current_identity_for_native_only(
         ),
         validate_current_ollama_alignment_completion=(
             lambda *_args, **_kwargs: current_ollama_alignment
+        ),
+        validate_failed_output_recovery_completion=(
+            lambda *_args, **_kwargs: failed_output_recovery
         ),
         validate_vllm_stability_completion=(
             lambda *_args, **_kwargs: vllm_stability

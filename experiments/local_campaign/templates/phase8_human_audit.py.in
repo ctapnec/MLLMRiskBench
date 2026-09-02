@@ -41,6 +41,9 @@ from experiments.local_campaign.current_ollama_stability_phase6 import (
 from experiments.local_campaign.current_ollama_population_alignment_phase6 import (
     ALIGNMENT_LANES as CURRENT_OLLAMA_ALIGNMENT_LANES,
 )
+from experiments.local_campaign.current_ollama_population_alignment_recovery_phase6 import (
+    FAILED_OUTPUT_COVERED_LANE as CURRENT_OLLAMA_ALIGNMENT_SPLIT_LANE,
+)
 from experiments.local_campaign.vllm_input_recovery_phase6 import (
     FAILED_UNIT as VLLM_STABILITY_RECOVERED_LANE,
     UNIT_LAYOUT as VLLM_STABILITY_UNIT_LAYOUT,
@@ -7688,6 +7691,7 @@ def phase7_sampling_lane_contract(
         value: Mapping[str, Any],
         *,
         expected_lanes: Sequence[str],
+        expected_metric_lanes: Sequence[str] | None = None,
         states: set[str],
         label: str,
     ) -> list[str]:
@@ -7695,18 +7699,38 @@ def phase7_sampling_lane_contract(
         metric_lanes = value.get("metric_lane_order")
         metric_roots = value.get("metric_roots")
         metric_evidence = value.get("metric_evidence")
+        expected_metrics = (
+            list(expected_metric_lanes)
+            if expected_metric_lanes is not None
+            else [
+                lane
+                for lane in expected_lanes
+                if isinstance(terminal_states, dict)
+                and terminal_states.get(lane) == "measured_complete"
+            ]
+        )
+        metric_revisions = value.get("metric_project_revision_receipt_sha256")
+        if metric_revisions is None:
+            metric_revisions = {
+                lane: value.get("project_revision_receipt_sha256")
+                for lane in expected_metrics
+            }
         if (
             not isinstance(terminal_states, dict)
             or set(terminal_states) != set(expected_lanes)
             or set(terminal_states.values()) - states
             or not isinstance(metric_lanes, list)
-            or metric_lanes
-            != [lane for lane in expected_lanes if terminal_states[lane] == "measured_complete"]
+            or metric_lanes != expected_metrics
             or not isinstance(metric_roots, dict)
             or set(metric_roots) != set(metric_lanes)
             or not isinstance(metric_evidence, dict)
             or set(metric_evidence) != set(metric_lanes)
-            or HEX64.fullmatch(str(value.get("project_revision_receipt_sha256", ""))) is None
+            or not isinstance(metric_revisions, dict)
+            or set(metric_revisions) != set(metric_lanes)
+            or any(
+                HEX64.fullmatch(str(metric_revisions.get(lane, ""))) is None
+                for lane in metric_lanes
+            )
             or HEX64.fullmatch(str(value.get("source_conformance_sha256", ""))) is None
         ):
             raise Phase8Error(f"Phase 7 {label} sampling partition changed")
@@ -7715,7 +7739,7 @@ def phase7_sampling_lane_contract(
                 lane,
                 metric_roots[lane],
                 metric_evidence[lane],
-                value["project_revision_receipt_sha256"],
+                metric_revisions[lane],
                 value["source_conformance_sha256"],
             )
         return list(metric_lanes)
@@ -7752,6 +7776,11 @@ def phase7_sampling_lane_contract(
     current_ollama_alignment_lanes = amendment_lanes(
         current_ollama_population_alignment,
         expected_lanes=CURRENT_OLLAMA_ALIGNMENT_LANES,
+        expected_metric_lanes=tuple(
+            lane
+            for lane in CURRENT_OLLAMA_ALIGNMENT_LANES
+            if lane != CURRENT_OLLAMA_ALIGNMENT_SPLIT_LANE
+        ),
         states={"measured_complete"},
         label="current Ollama population-alignment cohort",
     )
@@ -9512,6 +9541,24 @@ def validate_phase7_completion(
         current_ollama_population_alignment.get("metric_lane_order")
     )
     current_ollama_alignment_lane_order = list(CURRENT_OLLAMA_ALIGNMENT_LANES)
+    expected_current_ollama_alignment_metric_lanes = [
+        lane
+        for lane in current_ollama_alignment_lane_order
+        if lane != CURRENT_OLLAMA_ALIGNMENT_SPLIT_LANE
+    ]
+    current_ollama_alignment_stratum_lanes = (
+        [
+            lane
+            for lanes in current_ollama_alignment_strata.values()
+            for lane in lanes
+        ]
+        if isinstance(current_ollama_alignment_strata, dict)
+        and all(
+            isinstance(lanes, list)
+            for lanes in current_ollama_alignment_strata.values()
+        )
+        else []
+    )
     if (
         current_ollama_alignment_states
         != {
@@ -9519,10 +9566,14 @@ def validate_phase7_completion(
             for lane in current_ollama_alignment_lane_order
         }
         or current_ollama_alignment_metric_lanes
-        != current_ollama_alignment_lane_order
+        != expected_current_ollama_alignment_metric_lanes
         or not isinstance(current_ollama_alignment_strata, dict)
-        or list(current_ollama_alignment_strata.values())
-        != [current_ollama_alignment_lane_order]
+        or len(current_ollama_alignment_stratum_lanes)
+        != len(expected_current_ollama_alignment_metric_lanes)
+        or set(current_ollama_alignment_stratum_lanes)
+        != set(expected_current_ollama_alignment_metric_lanes)
+        or len(set(current_ollama_alignment_stratum_lanes))
+        != len(current_ollama_alignment_stratum_lanes)
         or value.get("current_ollama_population_alignment_terminal_states")
         != current_ollama_alignment_states
         or value.get(

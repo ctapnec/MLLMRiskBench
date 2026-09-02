@@ -298,3 +298,28 @@ def test_phase7_uses_alignment_recovery_dispatcher() -> None:
     with pytest.raises(AssertionError):
         for token in required:
             assert token in mutant
+
+
+def test_phase8_excludes_split_alignment_lane_from_metric_sampling() -> None:
+    template = (
+        Path(__file__).parents[2]
+        / "experiments/local_campaign/templates/phase8_human_audit.py.in"
+    ).read_text(encoding="utf-8")
+    required = (
+        "FAILED_OUTPUT_COVERED_LANE as CURRENT_OLLAMA_ALIGNMENT_SPLIT_LANE",
+        "expected_metric_lanes: Sequence[str] | None = None",
+        "if lane != CURRENT_OLLAMA_ALIGNMENT_SPLIT_LANE",
+        'metric_revisions = value.get("metric_project_revision_receipt_sha256")',
+        "!= expected_current_ollama_alignment_metric_lanes",
+    )
+    for token in required:
+        assert token in template
+
+    mutant = template.replace(
+        "if lane != CURRENT_OLLAMA_ALIGNMENT_SPLIT_LANE",
+        "if True",
+    )
+    assert mutant != template
+    with pytest.raises(AssertionError):
+        for token in required:
+            assert token in mutant
