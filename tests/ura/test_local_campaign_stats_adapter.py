@@ -1049,10 +1049,8 @@ def test_phase7_watcher_chain_binds_reports_and_rejects_mutated_output(
     assert bundle is not None
     assert [report.kind for report in bundle.reports] == [
         "terminal_inventory",
-        "level1", "level1", "level1", "level1", "level1", "level1",
-        "level1",
-        "level2", "level2", "level2", "level2", "level2", "level2",
-        "level2",
+        *(["level1"] * 8),
+        *(["level2"] * 8),
     ]
     assert [report.display_name for report in bundle.reports] == [
         "campaign-terminal-inventory.json",
@@ -1063,6 +1061,7 @@ def test_phase7_watcher_chain_binds_reports_and_rejects_mutated_output(
         "lifecycle-strata/666666666666-eeeeeeeeeeee/level1-evidence.json",
         "lifecycle-strata/777777777777-ffffffffffff/level1-evidence.json",
         "lifecycle-strata/888888888888-999999999999/level1-evidence.json",
+        "lifecycle-strata/999999999999-000000000000/level1-evidence.json",
         "metric-strata/111111111111-aaaaaaaaaaaa/level2-report.json",
         "metric-strata/222222222222-bbbbbbbbbbbb/level2-report.json",
         "metric-strata/333333333333-cccccccccccc/level2-report.json",
@@ -1070,6 +1069,7 @@ def test_phase7_watcher_chain_binds_reports_and_rejects_mutated_output(
         "metric-strata/666666666666-eeeeeeeeeeee/level2-report.json",
         "metric-strata/777777777777-ffffffffffff/level2-report.json",
         "metric-strata/888888888888-999999999999/level2-report.json",
+        "metric-strata/999999999999-000000000000/level2-report.json",
     ]
     assert bundle.expected_commit == COMMIT
     phase6_completion = json.loads(
@@ -1162,8 +1162,8 @@ def test_stats_links_sealed_phase7_reports_to_watcher_campaign(
     assert registration is not None
     assert [report.kind for report in registration.reports] == [
         "terminal_inventory",
-        "level1", "level1", "level1", "level1", "level1", "level1", "level1",
-        "level2", "level2", "level2", "level2", "level2", "level2", "level2",
+        *(["level1"] * 8),
+        *(["level2"] * 8),
     ]
     app = RigWebApp(
         results_root=results,
