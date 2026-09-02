@@ -212,6 +212,13 @@ def _terminal_inventory() -> dict[str, object]:
             "9" * 64,
             "0" * 64,
         ),
+        (
+            "local_hardware_fit_recovery",
+            25,
+            "measured_complete",
+            "9" * 64,
+            "0" * 64,
+        ),
         ("native", 9, "run", "4" * 64, "not_applicable"),
     )
     rows: list[dict[str, object]] = []
@@ -236,7 +243,7 @@ def _terminal_inventory() -> dict[str, object]:
             project_strata.setdefault(revision, []).append(key)
             source_strata.setdefault(source, []).append(key)
     return {
-        "schema": "ura-phase6-campaign-terminal-inventory/6",
+        "schema": "ura-phase6-campaign-terminal-inventory/7",
         "status": "complete",
         "cohort_order": [row[0] for row in cohorts],
         "cohort_counts": {row[0]: row[1] for row in cohorts},
@@ -495,7 +502,7 @@ def _sealed_chain(
     )
     campaign_inventory_value = _terminal_inventory()
     inputs = {
-        "schema": "ura-phase7-analysis-inputs/6",
+        "schema": "ura-phase7-analysis-inputs/7",
         "inventory_complete": True,
         "scope": "all_local_phase7_read_only_analysis_over_phase6_lifecycle",
         "code_identity": {"expected_commit": COMMIT, "framework_lock_id": input_lock},
@@ -602,6 +609,15 @@ def _sealed_chain(
                 "missing_responses": 0,
             },
         },
+        "local_hardware_fit_recovery": {
+            "terminal_states": {"local-fit-lane": "measured_complete"},
+            "revision_strata": {"9" * 64: ["local-fit-lane"]},
+            "target_execution": {
+                "target_attempts": 1,
+                "successful_target_generations": 1,
+                "missing_responses": 0,
+            },
+        },
         "campaign_terminal_inventory": campaign_inventory_value,
         "runner": {
             "lifecycle_lane_order": ["core-lane", "extended-lane"],
@@ -632,7 +648,7 @@ def _sealed_chain(
 
     prepare_result = {
         "status": "prepared",
-        "schema": "ura-phase7-analysis-inputs/6",
+        "schema": "ura-phase7-analysis-inputs/7",
         "output": (
             str(watcher / "wrong-input.json")
             if mutation == "prepare_result_output"
@@ -644,7 +660,7 @@ def _sealed_chain(
         "runner_lanes": 2,
         "metric_runner_lanes": 2,
         "native_outcomes": {"native-lane": "run"},
-        "campaign_terminal_rows": 116,
+        "campaign_terminal_rows": 141,
         "campaign_terminal_status": "complete",
         "authorization_required_before_launch": True,
     }
@@ -849,7 +865,7 @@ def _sealed_chain(
     )
     controller.update(
         {
-            "schema": "ura-phase7-analysis-completion/6",
+            "schema": "ura-phase7-analysis-completion/7",
             "status": completion_status,
             "inventory_complete": True,
             "input_manifest": _descriptor(control_input),
@@ -938,6 +954,15 @@ def _sealed_chain(
             ]["revision_strata"],
             "vllm_context_recovery_target_execution": inputs[
                 "vllm_context_recovery"
+            ]["target_execution"],
+            "local_hardware_fit_terminal_states": inputs[
+                "local_hardware_fit_recovery"
+            ]["terminal_states"],
+            "local_hardware_fit_metric_revision_strata": inputs[
+                "local_hardware_fit_recovery"
+            ]["revision_strata"],
+            "local_hardware_fit_target_execution": inputs[
+                "local_hardware_fit_recovery"
             ]["target_execution"],
             "target_calls": 0,
             "judge_calls": 0,
@@ -1156,7 +1181,7 @@ def test_stats_links_sealed_phase7_reports_to_watcher_campaign(
     assert "Registered external analysis" in detail_text
     assert "does not grant thesis-evidence authority" in detail_text
     assert "Campaign terminal rows" in detail_text
-    assert "116 terminal campaign rows; 0 failure rows" in detail_text
+    assert "141 terminal campaign rows; 0 failure rows" in detail_text
     assert "Rows by cohort" in detail_text
     assert "Rows by terminal state" in detail_text
     assert "Failure accounting" in detail_text

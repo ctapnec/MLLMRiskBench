@@ -1078,6 +1078,7 @@ def test_phase8_frozen_phase7_api_requires_recovery_and_campaign_union(
         "validate_failed_output_recovery_completion",
         "validate_vllm_stability_completion",
         "validate_vllm_context_recovery_completion",
+        "validate_local_hardware_fit_completion",
         "validate_phase6_campaign_terminal_inventory",
         "build_phase6_campaign_terminal_inventory",
     )
@@ -1092,7 +1093,7 @@ def test_phase8_frozen_phase7_api_requires_recovery_and_campaign_union(
         *, gate5_rows, gate5_manifest, project_and_source, runner, native, seven,
         followon, current_ollama, current_ollama_stability,
         current_ollama_population_alignment, failed_output_recovery,
-        vllm_stability, vllm_context_recovery
+        vllm_stability, vllm_context_recovery, local_hardware_fit_recovery
     ):
         return {}
 
@@ -1157,6 +1158,9 @@ def test_phase8_frozen_replay_uses_current_identity_for_native_only(
     vllm_context_recovery = {
         "completion": artifact("vllm-context-recovery.json", {})
     }
+    local_hardware_fit = {
+        "completion": artifact("local-hardware-fit.json", {})
+    }
     recoveries = {"completion_order": [recovery_completion]}
     campaign = {"fixture": "campaign"}
     inputs = {
@@ -1170,6 +1174,7 @@ def test_phase8_frozen_replay_uses_current_identity_for_native_only(
         "failed_output_recovery": failed_output_recovery,
         "vllm_stability": vllm_stability,
         "vllm_context_recovery": vllm_context_recovery,
+        "local_hardware_fit_recovery": local_hardware_fit,
         "campaign_terminal_inventory": campaign,
     }
     observed: dict[str, object] = {}
@@ -1247,6 +1252,9 @@ def test_phase8_frozen_replay_uses_current_identity_for_native_only(
         ),
         validate_vllm_context_recovery_completion=(
             lambda *_args, **_kwargs: vllm_context_recovery
+        ),
+        validate_local_hardware_fit_completion=(
+            lambda *_args, **_kwargs: local_hardware_fit
         ),
         build_phase6_campaign_terminal_inventory=lambda **_kwargs: campaign,
     )

@@ -221,6 +221,9 @@ _CONTROLLER_FIELDS = {
     "vllm_context_recovery_terminal_states",
     "vllm_context_recovery_metric_revision_strata",
     "vllm_context_recovery_target_execution",
+    "local_hardware_fit_terminal_states",
+    "local_hardware_fit_metric_revision_strata",
+    "local_hardware_fit_target_execution",
     "target_calls",
     "judge_calls",
     "provider_http_attempts",
@@ -250,7 +253,7 @@ _INVENTORY_FIELDS = {
     "human_labels_consumed",
 }
 
-_LOCAL_TERMINAL_INVENTORY_SCHEMA = "ura-phase6-campaign-terminal-inventory/6"
+_LOCAL_TERMINAL_INVENTORY_SCHEMA = "ura-phase6-campaign-terminal-inventory/7"
 _LOCAL_TERMINAL_INVENTORY_COHORTS = (
     "canonical",
     "output_policy_amendment",
@@ -261,6 +264,7 @@ _LOCAL_TERMINAL_INVENTORY_COHORTS = (
     "failed_output_recovery",
     "vllm_stability",
     "vllm_context_recovery",
+    "local_hardware_fit_recovery",
     "native",
 )
 _LOCAL_TERMINAL_INVENTORY_COHORT_COUNTS = {
@@ -273,6 +277,7 @@ _LOCAL_TERMINAL_INVENTORY_COHORT_COUNTS = {
     "failed_output_recovery": 6,
     "vllm_stability": 7,
     "vllm_context_recovery": 1,
+    "local_hardware_fit_recovery": 25,
     "native": 9,
 }
 _LOCAL_TERMINAL_INVENTORY_STATES = {
@@ -297,6 +302,7 @@ _LOCAL_TERMINAL_INVENTORY_STATES = {
     "failed_output_recovery": {"measured_complete"},
     "vllm_stability": {"measured_complete"},
     "vllm_context_recovery": {"measured_complete"},
+    "local_hardware_fit_recovery": {"measured_complete", "failed"},
     "native": {"run", "failed", "unavailable", "not-selected"},
 }
 _LOCAL_TERMINAL_INVENTORY_ACCOUNTING_FIELDS = {
@@ -322,8 +328,8 @@ def _validate_local_campaign_terminal_inventory(
         != list(_LOCAL_TERMINAL_INVENTORY_COHORTS)
         or document.get("cohort_counts")
         != _LOCAL_TERMINAL_INVENTORY_COHORT_COUNTS
-        or len(rows) != 116
-        or len(document["row_order"]) != 116
+        or len(rows) != 141
+        or len(document["row_order"]) != 141
         or document.get("cross_revision_pooling_permitted") is not False
         or document.get("cross_source_pooling_permitted") is not False
     ):
@@ -852,7 +858,7 @@ def load_local_campaign_stats_bundle(
         if (
             set(prepare) != _PREPARE_RESULT_FIELDS
             or prepare.get("status") != "prepared"
-            or prepare.get("schema") != "ura-phase7-analysis-inputs/6"
+            or prepare.get("schema") != "ura-phase7-analysis-inputs/7"
             or prepare.get("output") != str(watcher_root / "phase7-inputs.json")
             or prepare.get("sha256") != input_sha
             or type(prepare.get("bytes")) is not int
@@ -864,7 +870,7 @@ def load_local_campaign_stats_bundle(
             or type(prepare.get("metric_runner_lanes")) is not int
             or not 0 <= prepare["metric_runner_lanes"] <= prepare["runner_lanes"]
             or not isinstance(prepare.get("native_outcomes"), Mapping)
-            or prepare.get("campaign_terminal_rows") != 116
+            or prepare.get("campaign_terminal_rows") != 141
             or prepare.get("campaign_terminal_status")
             not in {"complete", "complete_with_failures"}
             or prepare.get("authorization_required_before_launch") is not True
@@ -931,7 +937,7 @@ def load_local_campaign_stats_bundle(
         )
         if (
             set(controller) != _CONTROLLER_FIELDS
-            or controller.get("schema") != "ura-phase7-analysis-completion/6"
+            or controller.get("schema") != "ura-phase7-analysis-completion/7"
             or controller.get("status") != watcher.get("status")
             or not isinstance(statuses, dict)
             or not statuses
@@ -1091,6 +1097,7 @@ def load_local_campaign_stats_bundle(
         failed_output_recovery_inputs = inputs.get("failed_output_recovery")
         vllm_stability_inputs = inputs.get("vllm_stability")
         vllm_context_recovery_inputs = inputs.get("vllm_context_recovery")
+        local_hardware_fit_inputs = inputs.get("local_hardware_fit_recovery")
         followon_states = (
             followon_inputs.get("terminal_states")
             if isinstance(followon_inputs, Mapping)
@@ -1111,7 +1118,7 @@ def load_local_campaign_stats_bundle(
             else None
         )
         if (
-            inputs.get("schema") != "ura-phase7-analysis-inputs/6"
+            inputs.get("schema") != "ura-phase7-analysis-inputs/7"
             or inputs.get("inventory_complete") is not True
             or inputs.get("scope") != "all_local_phase7_read_only_analysis_over_phase6_lifecycle"
             or code_identity
@@ -1201,6 +1208,13 @@ def load_local_campaign_stats_bundle(
             != vllm_context_recovery_inputs.get("revision_strata")
             or controller.get("vllm_context_recovery_target_execution")
             != vllm_context_recovery_inputs.get("target_execution")
+            or not isinstance(local_hardware_fit_inputs, Mapping)
+            or controller.get("local_hardware_fit_terminal_states")
+            != local_hardware_fit_inputs.get("terminal_states")
+            or controller.get("local_hardware_fit_metric_revision_strata")
+            != local_hardware_fit_inputs.get("revision_strata")
+            or controller.get("local_hardware_fit_target_execution")
+            != local_hardware_fit_inputs.get("target_execution")
         ):
             return None
         gate5_path, gate5_payload = _descriptor_file(

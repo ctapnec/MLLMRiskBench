@@ -1151,8 +1151,12 @@ follow-on, 14 historical current-Ollama, 14 current-Ollama stability, seven
 vLLM stability and nine native. The population-alignment amendment adds 12
 current-Ollama population-alignment logical extension rows, giving 109. The six
 failed-output recovery units use Runner 2.27 and give a final terminal inventory
-of 115. The final union adds one vLLM context-recovery condition and gives
-the final Phase 7 union 116 logical rows.
+of 115. The union then adds one vLLM context-recovery condition and 25 local
+hardware-fit recovery units, giving the final Phase 7 union 141 logical rows.
+Those 25 units cover exactly 4,463 unfinished, failed-output, or
+provider-declared length-ended rows. They use automatic GPU-fit context and
+maximum available local output, remain a separate condition, and never repeat
+an already completed non-truncated row.
 The 12 population-alignment rows remain logical model/framework conditions, not
 12 necessarily single-root files. Eleven have one terminal metric root. The
 DeepSeek condition is population-complete across its retained Runner 2.26 usable

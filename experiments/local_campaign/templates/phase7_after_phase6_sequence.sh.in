@@ -55,6 +55,7 @@ FAILED_OUTPUT_RECOVERY_COMPLETION=''
 VLLM_STABILITY_COMPLETION=''
 VLLM_INPUT_RECOVERY_COMPLETION=''
 VLLM_CONTEXT_RECOVERY_COMPLETION=''
+LOCAL_HARDWARE_FIT_COMPLETION=''
 WATCHER_ARGS=("$@")
 while (( $# )); do
   case "$1" in
@@ -133,6 +134,11 @@ while (( $# )); do
       VLLM_CONTEXT_RECOVERY_COMPLETION="$2"
       shift 2
       ;;
+    --phase6-local-hardware-fit-completion)
+      [[ $# -ge 2 && -z "$LOCAL_HARDWARE_FIT_COMPLETION" ]] || exit 2
+      LOCAL_HARDWARE_FIT_COMPLETION="$2"
+      shift 2
+      ;;
     *) exit 2 ;;
   esac
 done
@@ -146,6 +152,7 @@ done
 [[ -n "$VLLM_STABILITY_COMPLETION" ]] || exit 2
 [[ -n "$VLLM_INPUT_RECOVERY_COMPLETION" ]] || exit 2
 [[ -n "$VLLM_CONTEXT_RECOVERY_COMPLETION" ]] || exit 2
+[[ -n "$LOCAL_HARDWARE_FIT_COMPLETION" ]] || exit 2
 case "$PHASE6_SEQUENCE_COMPLETION" in
   /*/completion.json) PHASE6_ROOT="${PHASE6_SEQUENCE_COMPLETION%/completion.json}" ;;
   *) exit 2 ;;
@@ -196,6 +203,12 @@ esac
 case "$VLLM_CONTEXT_RECOVERY_COMPLETION" in
   /*/completion.json)
     VLLM_CONTEXT_RECOVERY_ROOT="${VLLM_CONTEXT_RECOVERY_COMPLETION%/completion.json}"
+    ;;
+  *) exit 2 ;;
+esac
+case "$LOCAL_HARDWARE_FIT_COMPLETION" in
+  /*/completion.json)
+    LOCAL_HARDWARE_FIT_ROOT="${LOCAL_HARDWARE_FIT_COMPLETION%/completion.json}"
     ;;
   *) exit 2 ;;
 esac
@@ -571,6 +584,8 @@ printf 'PHASE7_WATCHER_WAITING_FOR_VLLM_INPUT_RECOVERY=%s\n' \
   "$VLLM_INPUT_RECOVERY_ROOT"
 printf 'PHASE7_WATCHER_WAITING_FOR_VLLM_CONTEXT_RECOVERY=%s\n' \
   "$VLLM_CONTEXT_RECOVERY_ROOT"
+printf 'PHASE7_WATCHER_WAITING_FOR_LOCAL_HARDWARE_FIT=%s\n' \
+  "$LOCAL_HARDWARE_FIT_ROOT"
 controller_hard_stop_check await-phase6
 current_ollama_terminal_seen='no'
 current_ollama_recovery_terminal_seen='yes'
@@ -584,6 +599,7 @@ failed_output_recovery_terminal_seen='no'
 vllm_stability_terminal_seen='no'
 vllm_input_recovery_terminal_seen='no'
 vllm_context_recovery_terminal_seen='no'
+local_hardware_fit_terminal_seen='no'
 while true; do
   controller_hard_stop_check await-phase6
   if [[ -f "$PHASE6_ROOT/.exit" && ! -L "$PHASE6_ROOT/.exit" ]]; then
@@ -636,6 +652,12 @@ while true; do
         ! -L "$VLLM_CONTEXT_RECOVERY_COMPLETION" ]]; then
     vllm_context_recovery_terminal_seen='yes'
   fi
+  if [[ -f "$LOCAL_HARDWARE_FIT_ROOT/.exit" && \
+        ! -L "$LOCAL_HARDWARE_FIT_ROOT/.exit" && \
+        -f "$LOCAL_HARDWARE_FIT_COMPLETION" && \
+        ! -L "$LOCAL_HARDWARE_FIT_COMPLETION" ]]; then
+    local_hardware_fit_terminal_seen='yes'
+  fi
   if [[ "$phase6_terminal_seen" = 'yes' && \
         "$current_ollama_terminal_seen" = 'yes' && \
         "$current_ollama_recovery_terminal_seen" = 'yes' && \
@@ -644,7 +666,8 @@ while true; do
         "$failed_output_recovery_terminal_seen" = 'yes' && \
         "$vllm_stability_terminal_seen" = 'yes' && \
         "$vllm_input_recovery_terminal_seen" = 'yes' && \
-        "$vllm_context_recovery_terminal_seen" = 'yes' ]]; then
+        "$vllm_context_recovery_terminal_seen" = 'yes' && \
+        "$local_hardware_fit_terminal_seen" = 'yes' ]]; then
     break
   fi
   if tmux -L "$PHASE6_SOCKET" has-session -t "$PHASE6_SESSION" 2>/dev/null; then
@@ -658,6 +681,7 @@ test "$current_ollama_terminal_seen" = 'yes'
 test "$current_ollama_recovery_terminal_seen" = 'yes'
 test "$current_ollama_stability_terminal_seen" = 'yes'
 test "$current_ollama_alignment_terminal_seen" = 'yes'
+test "$local_hardware_fit_terminal_seen" = 'yes'
 test "$failed_output_recovery_terminal_seen" = 'yes'
 test "$vllm_stability_terminal_seen" = 'yes'
 test "$vllm_input_recovery_terminal_seen" = 'yes'
@@ -1070,6 +1094,8 @@ bash "$WRAPPER" --prepare-input-manifest "$INPUT_MANIFEST" \
   "$VLLM_INPUT_RECOVERY_COMPLETION" \
   --phase6-vllm-context-recovery-completion \
   "$VLLM_CONTEXT_RECOVERY_COMPLETION" \
+  --phase6-local-hardware-fit-completion \
+  "$LOCAL_HARDWARE_FIT_COMPLETION" \
   > "$PREPARE_RESULT"
 
 INPUT_SHA="$(
@@ -1187,7 +1213,7 @@ if (
     not isinstance(result, dict)
     or set(result) != expected_fields
     or result.get("status") != "prepared"
-    or result.get("schema") != "ura-phase7-analysis-inputs/6"
+    or result.get("schema") != "ura-phase7-analysis-inputs/7"
     or result.get("output") != str(input_path)
     or result.get("sha256") != digest
     or type(result.get("bytes")) is not int
@@ -1197,7 +1223,7 @@ if (
     or type(result.get("runner_lanes")) is not int
     or type(result.get("metric_runner_lanes")) is not int
     or not isinstance(result.get("native_outcomes"), dict)
-    or result.get("campaign_terminal_rows") != 116
+    or result.get("campaign_terminal_rows") != 141
     or result.get("campaign_terminal_status")
     not in {"complete", "complete_with_failures"}
     or result.get("authorization_required_before_launch") is not True
@@ -1214,7 +1240,7 @@ expected_controller = {
     "bytes": len(payload_bytes),
 }
 if (
-    manifest.get("schema") != "ura-phase7-analysis-inputs/6"
+    manifest.get("schema") != "ura-phase7-analysis-inputs/7"
     or manifest.get("inventory_complete") is not True
     or manifest.get("code_identity")
     != {
@@ -1445,6 +1471,9 @@ expected_fields = {
     "vllm_context_recovery_metric_revision_strata",
     "vllm_context_recovery_terminal_states",
     "vllm_context_recovery_target_execution",
+    "local_hardware_fit_metric_revision_strata",
+    "local_hardware_fit_terminal_states",
+    "local_hardware_fit_target_execution",
     "target_calls",
     "judge_calls",
     "provider_http_attempts",
@@ -1458,7 +1487,7 @@ expected_fields = {
 if (
     not isinstance(completion, dict)
     or set(completion) != expected_fields
-    or completion.get("schema") != "ura-phase7-analysis-completion/6"
+    or completion.get("schema") != "ura-phase7-analysis-completion/7"
     or completion.get("status")
     not in {"complete", "complete_with_explicit_limitations"}
     or completion.get("inventory_complete") is not True
@@ -1555,7 +1584,7 @@ campaign_inventory = strict_json_loads(campaign_inventory_path.read_bytes())
 if (
     not isinstance(campaign_inventory, dict)
     or campaign_inventory.get("schema")
-    != "ura-phase6-campaign-terminal-inventory/6"
+    != "ura-phase6-campaign-terminal-inventory/7"
     or campaign_inventory.get("status")
     not in {"complete", "complete_with_failures"}
     or campaign_inventory.get("all_rows_terminal") is not True
@@ -1567,9 +1596,10 @@ if (
         "current_ollama_stability": 14,
         "current_ollama_population_alignment": 12,
         "failed_output_recovery": 6,
-        "vllm_stability": 7, "vllm_context_recovery": 1, "native": 9}
+        "vllm_stability": 7, "vllm_context_recovery": 1,
+        "local_hardware_fit_recovery": 25, "native": 9}
     or not isinstance(campaign_inventory.get("rows"), list)
-    or len(campaign_inventory["rows"]) != 116
+    or len(campaign_inventory["rows"]) != 141
 ):
     raise SystemExit("campaign terminal inventory changed")
 for index, artifact in enumerate(artifacts):
@@ -1608,6 +1638,7 @@ current_ollama_alignment = input_manifest.get(
 failed_output_recovery = input_manifest.get("failed_output_recovery")
 vllm_stability = input_manifest.get("vllm_stability")
 vllm_context_recovery = input_manifest.get("vllm_context_recovery")
+local_hardware_fit = input_manifest.get("local_hardware_fit_recovery")
 if (
     completion.get("followon_terminal_states") != expected_followon_states
     or completion.get("followon_metric_revision_strata")
@@ -1662,6 +1693,13 @@ if (
     != vllm_context_recovery.get("terminal_states")
     or completion.get("vllm_context_recovery_target_execution")
     != vllm_context_recovery.get("target_execution")
+    or not isinstance(local_hardware_fit, dict)
+    or completion.get("local_hardware_fit_metric_revision_strata")
+    != local_hardware_fit.get("revision_strata")
+    or completion.get("local_hardware_fit_terminal_states")
+    != local_hardware_fit.get("terminal_states")
+    or completion.get("local_hardware_fit_target_execution")
+    != local_hardware_fit.get("target_execution")
 ):
     raise SystemExit("Phase 7 copied cohort states or revision strata differ")
 

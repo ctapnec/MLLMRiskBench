@@ -639,12 +639,18 @@ bind the former byte-for-byte.
 Pass the terminal larger-context Qwen correction separately through
 `--phase6-vllm-context-recovery-completion`; it is not pooled silently with the
 earlier 12,288-token condition.
-Its plan-owned terminal inventory has 116 logical rows after population
+Pass the terminal automatic hardware-fit correction separately through
+`--phase6-local-hardware-fit-completion`. Its 25 units contribute only
+unfinished, typed failed-output, and provider-declared length-ended rows under
+the maximum local output and GPU-fit context policy. Successful metric roots
+and genuine terminal failures remain visible separately, and completed
+non-truncated rows are not repeated.
+Its plan-owned terminal inventory has 141 logical rows after population
 alignment and failed-output recovery: 46 canonical, four output-policy
 amendment, three follow-on, 14
 historical current-Ollama, 14 current-Ollama stability, 12 current-Ollama
 population-alignment, six failed-output recovery, seven vLLM stability, one
-vLLM context-recovery and nine native. The analysis
+vLLM context-recovery, 25 local hardware-fit recovery, and nine native. The analysis
 self-test, Phase 8 frozen replay and Stats adapter
 all reject an omitted cohort, a changed terminal state or any cross-policy
 pooling. These counts describe this local campaign only; they are not generic

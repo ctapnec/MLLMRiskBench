@@ -1424,7 +1424,7 @@ def test_rendered_phase7_lifecycle_partition_mutations_fail(tmp_path: Path) -> N
     assert "phase7-adaptivity-non-estimable-contrasts" in value["contracts"]
     assert "phase7-transfer-faceted-index" in value["contracts"]
     assert "phase7-runner-view-content-binding" in value["contracts"]
-    assert "phase6-campaign-terminal-inventory-116-row-union" in value["contracts"]
+    assert "phase6-campaign-terminal-inventory-141-row-union" in value["contracts"]
     rendered = (output / "phase7_analysis.py").read_text(encoding="utf-8")
     rr_prerequisite = (
         "                    ADAPTIVITY_RIGHT_LANE,\n"
@@ -1465,8 +1465,8 @@ def test_phase7_requires_current_ollama_terminal_and_metric_cohort() -> None:
         'def _current_ollama_metric_lanes(self)',
         'self.record_current_ollama_outcomes()',
         '"current_ollama_target_execution"',
-        '"phase6-campaign-terminal-inventory-116-row-union"',
-        "if CAMPAIGN_TOTAL_ROWS != 116:",
+        '"phase6-campaign-terminal-inventory-141-row-union"',
+        "if CAMPAIGN_TOTAL_ROWS != 141:",
     )
     for token in required_analysis:
         assert token in analysis
@@ -1478,7 +1478,7 @@ def test_phase7_requires_current_ollama_terminal_and_metric_cohort() -> None:
         assert token in wrapper and token in watcher
     assert "validate_current_ollama_recovery_completion(" in analysis
     assert "current Ollama Phase 6 failures require their exact recovery completion" in analysis
-    assert 'result.get("campaign_terminal_rows") != 116' in watcher
+    assert 'result.get("campaign_terminal_rows") != 141' in watcher
     assert '"current_ollama": 14' in watcher
 
     mutant = analysis.replace('"current_ollama": current_ollama,', "", 1)
@@ -1505,7 +1505,7 @@ def test_phase7_requires_vllm_failure_and_input_recovery_as_separate_strata() ->
         "def _vllm_stability_metric_lanes(self)",
         "self.record_vllm_stability_outcomes()",
         '"vllm_stability": len(VLLM_STABILITY_UNIT_LAYOUT)',
-        '"phase6-campaign-terminal-inventory-116-row-union"',
+        '"phase6-campaign-terminal-inventory-141-row-union"',
     )
     for token in required_analysis:
         assert token in analysis
@@ -1535,7 +1535,7 @@ def test_phase7_requires_vllm_context_recovery_as_a_separate_stratum() -> None:
         "def _vllm_context_recovery_metric_lanes(self)",
         "self.record_vllm_context_recovery_outcomes()",
         '"vllm_context_recovery": 1',
-        '"phase6-campaign-terminal-inventory-116-row-union"',
+        '"phase6-campaign-terminal-inventory-141-row-union"',
     )
     for token in required:
         assert token in analysis
@@ -1544,6 +1544,47 @@ def test_phase7_requires_vllm_context_recovery_as_a_separate_stratum() -> None:
     assert '"vllm_context_recovery": 1' in watcher
     mutant = analysis.replace(
         '"vllm_context_recovery": vllm_context_recovery,', "", 1
+    )
+    assert mutant != analysis
+    with pytest.raises(AssertionError):
+        for token in required:
+            assert token in mutant
+
+
+def test_phase7_requires_local_hardware_fit_as_a_separate_stratum() -> None:
+    root = Path(__file__).parents[2] / "experiments" / "local_campaign" / "templates"
+    analysis = (root / "phase7_analysis.py.in").read_text(encoding="utf-8")
+    wrapper = (root / "phase7_analysis.sh.in").read_text(encoding="utf-8")
+    watcher = (root / "phase7_after_phase6_sequence.sh.in").read_text(
+        encoding="utf-8"
+    )
+    phase8 = (root / "phase8_human_audit.py.in").read_text(encoding="utf-8")
+    required = (
+        "validate_local_hardware_fit_completion(",
+        '"local_hardware_fit_recovery": local_hardware_fit_recovery,',
+        "local_hardware_fit_recovery=local_hardware_fit_recovery,",
+        "def _local_hardware_fit_metric_lanes(self)",
+        "self.record_local_hardware_fit_outcomes()",
+        '"local_hardware_fit_recovery": 25',
+        '"phase6-campaign-terminal-inventory-141-row-union"',
+    )
+    for token in required:
+        assert token in analysis
+    flag = "--phase6-local-hardware-fit-completion"
+    assert flag in wrapper and flag in watcher
+    assert '"local_hardware_fit_recovery": 25' in watcher
+    for token in (
+        '"validate_local_hardware_fit_completion": (',
+        "oracle.validate_local_hardware_fit_completion(",
+        "local_hardware_fit_recovery=oracle_local_hardware_fit,",
+        '!= inputs.get("local_hardware_fit_recovery")',
+        '"local_hardware_fit_terminal_states",',
+        '"included_local_hardware_fit_lanes",',
+        'local_hardware_fit_recovery=support["local_hardware_fit_recovery"],',
+    ):
+        assert token in phase8
+    mutant = analysis.replace(
+        '"local_hardware_fit_recovery": local_hardware_fit_recovery,', "", 1
     )
     assert mutant != analysis
     with pytest.raises(AssertionError):
@@ -1566,7 +1607,7 @@ def test_phase7_requires_current_ollama_stability_as_a_separate_stratum() -> Non
         "def _current_ollama_stability_metric_lanes(self)",
         "self.record_current_ollama_stability_outcomes()",
         '"current_ollama_stability": len(CURRENT_OLLAMA_STABILITY_LAYOUT)',
-        '"phase6-campaign-terminal-inventory-116-row-union"',
+        '"phase6-campaign-terminal-inventory-141-row-union"',
     )
     for token in required:
         assert token in analysis
@@ -1605,14 +1646,14 @@ def test_phase7_requires_matched_ollama_population_alignment() -> None:
         "def _current_ollama_alignment_metric_lanes(self)",
         "self.record_current_ollama_alignment_outcomes()",
         '"current_ollama_population_alignment": len(CURRENT_OLLAMA_ALIGNMENT_LANES)',
-        '"phase6-campaign-terminal-inventory-116-row-union"',
+        '"phase6-campaign-terminal-inventory-141-row-union"',
     )
     for token in required:
         assert token in analysis
     flag = "--phase6-current-ollama-population-alignment-completion"
     assert flag in wrapper and flag in watcher
     assert '"current_ollama_population_alignment": 12' in watcher
-    assert 'result.get("campaign_terminal_rows") != 116' in watcher
+    assert 'result.get("campaign_terminal_rows") != 141' in watcher
 
     mutant = analysis.replace(
         '"current_ollama_population_alignment": (',
@@ -1640,7 +1681,7 @@ def test_phase7_requires_failed_output_recovery_as_six_separate_strata() -> None
         "def _failed_output_recovery_metric_lanes(self)",
         "self.record_failed_output_recovery_outcomes()",
         '"failed_output_recovery": len(FAILED_OUTPUT_RECOVERY_UNIT_ORDER)',
-        '"phase6-campaign-terminal-inventory-116-row-union"',
+        '"phase6-campaign-terminal-inventory-141-row-union"',
     )
     for token in required:
         assert token in analysis
@@ -1659,7 +1700,7 @@ def test_phase7_requires_failed_output_recovery_as_six_separate_strata() -> None
             assert token in mutant
 
 
-def test_phase7_docs_bind_exact_116_row_stability_partition() -> None:
+def test_phase7_docs_bind_exact_141_row_hardware_fit_partition() -> None:
     root = Path(__file__).parents[2]
     plan = (root / "experiments" / "LOCAL_CAMPAIGN_PLAN.md").read_text(
         encoding="utf-8"
@@ -1673,11 +1714,12 @@ def test_phase7_docs_bind_exact_116_row_stability_partition() -> None:
 
     for document in (plan, runbook, local_readme):
         normalized = " ".join(document.split())
-        assert "116" in normalized
+        assert "141" in normalized
         assert "14 current-Ollama stability" in normalized
         assert "12 current-Ollama population" in normalized
         assert "seven vLLM stability" in normalized
         assert "one vLLM context-recovery" in normalized
+        assert "25 local hardware-fit recovery" in normalized
         assert "six failed-output recovery" in normalized
     assert "--phase6-current-ollama-stability-completion" in local_readme
     assert (
@@ -1703,7 +1745,7 @@ def test_phase8_replays_current_ollama_oracle_and_sampling_cohort() -> None:
         'or oracle_current_ollama != inputs.get("current_ollama")',
         '"current_ollama_terminal_states",',
         '"included_current_ollama_lanes",',
-        '"ura-phase7-human-audit-sampling-view/8"',
+        '"ura-phase7-human-audit-sampling-view/9"',
         'current_ollama=support["current_ollama"],',
         '"validate_current_ollama_recovery_completion": (',
         "oracle.validate_current_ollama_recovery_completion(",

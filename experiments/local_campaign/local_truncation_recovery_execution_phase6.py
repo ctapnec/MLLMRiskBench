@@ -31,12 +31,16 @@ from experiments.local_campaign.vllm_stability_phase6 import (
     Unit,
     _create_json,
     _framework_lock_id,
+    _load_json,
     _option,
     _project_python,
     _replace_option,
     _run_unit,
     _utc_now,
     _validate_descriptor,
+)
+from experiments.local_campaign.vllm_input_recovery_phase6 import (
+    _validate_metric_result,
 )
 from ura.runner import CODE_VERSION
 
@@ -46,6 +50,297 @@ LAUNCH_SCHEMA = "ura-local-truncation-recovery-phase6-launch/2"
 STATE_SCHEMA = "ura-local-truncation-recovery-phase6-unit-state/2"
 HEX40 = re.compile(r"[0-9a-f]{40}\Z")
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
+
+
+def validate_completion(
+    completion_path: Path,
+    *,
+    runner_root: Path,
+) -> dict[str, Any]:
+    """Validate the hardware-fit recovery as a separate Phase 7 stratum."""
+
+    completion_path = completion_path.resolve(strict=True)
+    runner_root = runner_root.resolve(strict=True)
+    value = _load_json(completion_path, label="local hardware-fit completion")
+    fields = {
+        "schema",
+        "status",
+        "controller_exit_code",
+        "completed_at_utc",
+        "expected_commit",
+        "runner_code_version",
+        "target_answer_retries",
+        "inventory",
+        "gate5_amendment",
+        "unit_order",
+        "unit_results",
+        "unit_failures",
+        "target_execution",
+        "planned_unique_rows",
+        "no_completed_rows_repeated",
+        "cross_condition_pooling_permitted",
+        "historical_rows_mutated",
+        "paid_provider_calls",
+    }
+    results = value.get("unit_results")
+    failures = value.get("unit_failures")
+    if (
+        set(value) != fields
+        or value.get("schema") != SCHEMA
+        or value.get("status")
+        not in {"complete", "complete_with_failures"}
+        or value.get("controller_exit_code")
+        != (0 if value.get("status") == "complete" else 1)
+        or HEX40.fullmatch(str(value.get("expected_commit", ""))) is None
+        or value.get("runner_code_version") != CODE_VERSION
+        or value.get("target_answer_retries") != 1
+        or not isinstance(results, dict)
+        or not isinstance(failures, dict)
+        or bool(failures) != (value.get("status") == "complete_with_failures")
+        or value.get("no_completed_rows_repeated") is not True
+        or value.get("cross_condition_pooling_permitted") is not False
+        or value.get("historical_rows_mutated") is not False
+        or value.get("paid_provider_calls") != 0
+        or re.fullmatch(
+            r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z",
+            str(value.get("completed_at_utc", "")),
+        )
+        is None
+    ):
+        raise ValueError("local hardware-fit completion contract changed")
+    control_root = completion_path.parent
+    if (
+        control_root.is_symlink()
+        or control_root.resolve(strict=True) != control_root
+        or control_root.parent.name != "engineering"
+    ):
+        raise ValueError("local hardware-fit control root changed")
+
+    inventory_path = _validate_descriptor(
+        value.get("inventory"), label="local hardware-fit inventory"
+    )
+    inventory_descriptor = value["inventory"]
+    if not isinstance(inventory_descriptor, dict):
+        raise ValueError("local hardware-fit inventory descriptor changed")
+    inventory = load_inventory(
+        inventory_path,
+        str(inventory_descriptor.get("sha256", "")),
+    )
+    inventory_units = inventory["units"]
+    expected_order = [
+        _safe_unit_id(index, item)
+        for index, item in enumerate(inventory_units, 1)
+    ]
+    if (
+        value.get("unit_order") != expected_order
+        or set(results) & set(failures)
+        or set(results) | set(failures) != set(expected_order)
+        or list(results) != [unit_id for unit_id in expected_order if unit_id in results]
+        or list(failures)
+        != [unit_id for unit_id in expected_order if unit_id in failures]
+    ):
+        raise ValueError("local hardware-fit terminal unit partition changed")
+    total_rows = sum(int(item["summary"]["recovery_records"]) for item in inventory_units)
+    if value.get("planned_unique_rows") != total_rows:
+        raise ValueError("local hardware-fit planned row count changed")
+
+    amendment_path = _validate_descriptor(
+        value.get("gate5_amendment"), label="local hardware-fit Gate 5 amendment"
+    )
+    expected_amendment = {
+        "schema": "ura-gate5-local-hardware-fit-amendment/1",
+        "approved_scope": "exact_retained_local_truncation_and_unfinished_rows",
+        "inventory": dict(inventory_descriptor),
+        "source_units": len(inventory_units),
+        "selected_records": total_rows,
+        "target_answer_retries": 1,
+        "max_total_target_calls": total_rows * 2,
+        "max_total_judge_calls": 0,
+        "max_total_http_attempts": 0,
+        "per_unit_deadline_seconds": 86400,
+        "vllm_context_policy": "vllm_auto_fit_minus_one",
+        "vllm_output_policy": "maximum_available_output",
+        "ollama_context_policy": "largest_probed_native_fraction_fully_gpu_resident",
+        "ollama_output_policy": "num_predict_minus_one",
+        "successful_rows_repeated": 0,
+        "historical_rows_mutated": False,
+        "cross_condition_pooling_permitted": False,
+        "paid_provider_calls": 0,
+    }
+    if (
+        amendment_path
+        != control_root / "gate5-local-hardware-fit-amendment.json"
+        or _load_json(amendment_path, label="local hardware-fit Gate 5 amendment")
+        != expected_amendment
+    ):
+        raise ValueError("local hardware-fit Gate 5 amendment changed")
+
+    completion_descriptor = _descriptor(
+        completion_path, label="local hardware-fit completion"
+    )
+    terminal_states: dict[str, str] = {}
+    lifecycle_roots: dict[str, str | None] = {}
+    lifecycle_evidence: dict[str, dict[str, object]] = {}
+    lifecycle_revisions: dict[str, str] = {}
+    metric_order: list[str] = []
+    metric_roots: dict[str, str] = {}
+    metric_evidence: dict[str, dict[str, object]] = {}
+    metric_grids: list[dict[str, object]] = []
+    metric_eligibility: list[dict[str, object]] = []
+    metric_markers: list[dict[str, object]] = []
+    metric_revisions: dict[str, str] = {}
+    sources: set[str] = set()
+    total_successful = 0
+    total_missing = 0
+
+    for index, item in enumerate(inventory_units, 1):
+        unit_id = expected_order[index - 1]
+        recovery = item["recovery_selection"]
+        corpora = recovery["corpora"]
+        corpus = next(iter(corpora)) if len(corpora) == 1 else None
+        selected_records = int(item["summary"]["recovery_records"])
+        selector_path = control_root / "inputs" / f"{unit_id}.json"
+        config_path = control_root / "configs" / f"{unit_id}.json"
+        if (
+            _load_json(selector_path, label=f"{unit_id} recovery selector")
+            != recovery
+            or _load_json(config_path, label=f"{unit_id} hardware-fit config")
+            != item["hardware_fit_local_config"]
+        ):
+            raise ValueError(f"{unit_id} hardware-fit input changed")
+        selector_sha = hashlib.sha256(selector_path.read_bytes()).hexdigest()
+        config_sha = hashlib.sha256(config_path.read_bytes()).hexdigest()
+        state_path = control_root / "units" / unit_id / "state.json"
+
+        if unit_id in results:
+            validated = _validate_metric_result(
+                results[unit_id],
+                logical_lane=unit_id,
+                physical_unit=unit_id,
+                source_lane=str(item["source_lane"]),
+                corpus=corpus,
+                selected_records=selected_records,
+                runner_root=runner_root,
+                control_root=control_root,
+                state_schema=STATE_SCHEMA,
+                completion=completion_descriptor,
+            )
+            state = _load_json(state_path, label=f"{unit_id} state")
+            argv = state["runner_argv"]
+            if (
+                _option(argv, "--recovery-completed-prefix")
+                != str(selector_path)
+                or _option(argv, "--recovery-completed-prefix-sha256")
+                != selector_sha
+                or _option(argv, "--local-config") != str(config_path)
+                or _option(argv, "--local-config-sha256") != config_sha
+            ):
+                raise ValueError(f"{unit_id} hardware-fit measured binding changed")
+            terminal_states[unit_id] = "measured_complete"
+            lifecycle_roots[unit_id] = str(validated["root"])
+            lifecycle_evidence[unit_id] = dict(validated["evidence"])
+            lifecycle_revisions[unit_id] = str(validated["revision"])
+            metric_order.append(unit_id)
+            metric_roots[unit_id] = str(validated["root"])
+            metric_evidence[unit_id] = dict(validated["evidence"])
+            metric_grids.append(dict(validated["grid"]))
+            metric_eligibility.append(dict(validated["eligibility_plan"]))
+            metric_markers.extend(validated["completion_markers"])
+            metric_revisions[unit_id] = str(validated["revision"])
+            sources.add(str(validated["source"]))
+            total_successful += int(validated["successful"])
+            total_missing += int(validated["missing"])
+            continue
+
+        failure = failures[unit_id]
+        if (
+            not isinstance(failure, dict)
+            or set(failure) != {"status", "error_type", "error"}
+            or failure.get("status") != "failed"
+            or not isinstance(failure.get("error_type"), str)
+            or not failure["error_type"]
+            or not isinstance(failure.get("error"), str)
+            or not failure["error"]
+            or len(failure["error"]) > 4000
+            or not state_path.is_file()
+            or state_path.is_symlink()
+        ):
+            raise ValueError(f"{unit_id} failure evidence changed")
+        state = _load_json(state_path, label=f"{unit_id} failed state")
+        argv = state.get("runner_argv")
+        result_root = Path(str(state.get("result_root", "")))
+        expected_root = runner_root / unit_id / control_root.name
+        if (
+            state.get("schema") != STATE_SCHEMA
+            or state.get("unit_id") != unit_id
+            or state.get("selected_records") != selected_records
+            or not isinstance(argv, list)
+            or any(not isinstance(entry, str) for entry in argv)
+            or _option(argv, "--recovery-completed-prefix") != str(selector_path)
+            or _option(argv, "--recovery-completed-prefix-sha256") != selector_sha
+            or _option(argv, "--local-config") != str(config_path)
+            or _option(argv, "--local-config-sha256") != config_sha
+            or result_root != expected_root
+            or result_root.is_symlink()
+            or not result_root.is_dir()
+        ):
+            raise ValueError(f"{unit_id} failed measured binding changed")
+        revision = _option(argv, "--project-revision-sha256")
+        source = _option(argv, "--source-conformance-sha256")
+        if HEX64.fullmatch(revision) is None or HEX64.fullmatch(source) is None:
+            raise ValueError(f"{unit_id} failed stratum changed")
+        terminal_states[unit_id] = "failed"
+        lifecycle_roots[unit_id] = str(result_root)
+        lifecycle_evidence[unit_id] = {
+            "completion": dict(completion_descriptor),
+            "state": _descriptor(state_path, label=f"{unit_id} failed state"),
+            "failure": dict(failure),
+        }
+        lifecycle_revisions[unit_id] = revision
+        sources.add(source)
+
+    target_execution = {
+        "target_attempts": sum(
+            int(result["target_attempts"]) for result in results.values()
+        ),
+        "successful_target_generations": total_successful,
+        "missing_responses": total_missing,
+    }
+    if value.get("target_execution") != target_execution or len(sources) != 1:
+        raise ValueError("local hardware-fit target accounting or source changed")
+    revision_strata: dict[str, list[str]] = {}
+    for unit_id in metric_order:
+        revision_strata.setdefault(metric_revisions[unit_id], []).append(unit_id)
+    lifecycle_revision_strata: dict[str, list[str]] = {}
+    for unit_id in expected_order:
+        lifecycle_revision_strata.setdefault(lifecycle_revisions[unit_id], []).append(
+            unit_id
+        )
+    return {
+        "completion": completion_descriptor,
+        "inventory": dict(inventory_descriptor),
+        "runner_code_version": CODE_VERSION,
+        "output_policy_stratum": "hardware_fit_context_and_maximum_available_output",
+        "unit_order": expected_order,
+        "terminal_states": terminal_states,
+        "lifecycle_roots": lifecycle_roots,
+        "lifecycle_evidence": lifecycle_evidence,
+        "lifecycle_revision_strata": lifecycle_revision_strata,
+        "lifecycle_project_revision_receipt_sha256": lifecycle_revisions,
+        "metric_lane_order": metric_order,
+        "metric_roots": metric_roots,
+        "metric_evidence": metric_evidence,
+        "metric_grids": metric_grids,
+        "metric_eligibility_plans": metric_eligibility,
+        "metric_completion_markers": metric_markers,
+        "revision_strata": revision_strata,
+        "metric_project_revision_receipt_sha256": metric_revisions,
+        "source_conformance_sha256": next(iter(sources)),
+        "target_execution": target_execution,
+        "planned_unique_rows": total_rows,
+        "successful_rows_repeated": 0,
+        "cross_condition_pooling_permitted": False,
+    }
 
 
 def load_inventory(path: Path, expected_sha256: str) -> dict[str, Any]:

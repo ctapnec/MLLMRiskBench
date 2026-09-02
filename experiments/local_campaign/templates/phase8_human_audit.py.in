@@ -6565,6 +6565,10 @@ def validate_frozen_phase7_oracle_api(oracle: Any) -> None:
             ("completion_path", positional),
             ("runner_root", keyword_only),
         ),
+        "validate_local_hardware_fit_completion": (
+            ("completion_path", positional),
+            ("runner_root", keyword_only),
+        ),
         "validate_phase6_campaign_terminal_inventory": (
             ("value", positional),
         ),
@@ -6583,6 +6587,7 @@ def validate_frozen_phase7_oracle_api(oracle: Any) -> None:
             ("failed_output_recovery", keyword_only),
             ("vllm_stability", keyword_only),
             ("vllm_context_recovery", keyword_only),
+            ("local_hardware_fit_recovery", keyword_only),
         ),
     }
     for name, expected_parameters in expected_api.items():
@@ -6831,6 +6836,13 @@ def replay_frozen_phase7_oracle(
                 runner_root=runner_root,
             )
         )
+        oracle_local_hardware_fit = oracle.validate_local_hardware_fit_completion(
+            descriptor_file(
+                inputs["local_hardware_fit_recovery"]["completion"],
+                label="Phase 7 oracle local hardware-fit completion",
+            ),
+            runner_root=runner_root,
+        )
         oracle_campaign = oracle.build_phase6_campaign_terminal_inventory(
             gate5_rows=oracle_manifest["lanes"],
             gate5_manifest=gate5_manifest_path,
@@ -6848,6 +6860,7 @@ def replay_frozen_phase7_oracle(
             failed_output_recovery=oracle_failed_output_recovery,
             vllm_stability=oracle_vllm_stability,
             vllm_context_recovery=oracle_vllm_context_recovery,
+            local_hardware_fit_recovery=oracle_local_hardware_fit,
         )
     except Phase8Error:
         raise
@@ -6875,6 +6888,8 @@ def replay_frozen_phase7_oracle(
         != inputs.get("failed_output_recovery")
         or oracle_vllm_stability != inputs.get("vllm_stability")
         or oracle_vllm_context_recovery != inputs.get("vllm_context_recovery")
+        or oracle_local_hardware_fit
+        != inputs.get("local_hardware_fit_recovery")
         or oracle_campaign != inputs.get("campaign_terminal_inventory")
     ):
         raise Phase8Error("Phase 7 frozen semantic replay differs from its input")
@@ -7383,6 +7398,7 @@ def validate_phase7_human_sampling_view(
     failed_output_recovery: Mapping[str, Any],
     vllm_stability: Mapping[str, Any],
     vllm_context_recovery: Mapping[str, Any],
+    local_hardware_fit_recovery: Mapping[str, Any],
 ) -> tuple[Path, dict[str, Any]]:
     """Revalidate the sampling-only union without reading failed sibling roots."""
 
@@ -7402,6 +7418,8 @@ def validate_phase7_human_sampling_view(
         "vllm_stability_result_roots",
         "included_vllm_context_recovery_lanes",
         "vllm_context_recovery_result_roots",
+        "included_local_hardware_fit_lanes",
+        "local_hardware_fit_result_roots",
         "regular_files_copied", "logical_bytes",
         "source_files_modified", "permitted_view_outputs", "file_inventory",
         "file_inventory_sha256",
@@ -7420,6 +7438,7 @@ def validate_phase7_human_sampling_view(
         failed_output_recovery=failed_output_recovery,
         vllm_stability=vllm_stability,
         vllm_context_recovery=vllm_context_recovery,
+        local_hardware_fit_recovery=local_hardware_fit_recovery,
     )
     inventory = value.get("file_inventory") if isinstance(value, dict) else None
     view_root = checked_dir(expected_view_root, label="Phase 7 human sampling view")
@@ -7427,7 +7446,7 @@ def validate_phase7_human_sampling_view(
     if (
         not isinstance(value, dict)
         or set(value) != fields
-        or value.get("schema") != "ura-phase7-human-audit-sampling-view/8"
+        or value.get("schema") != "ura-phase7-human-audit-sampling-view/9"
         or value.get("status") != "complete"
         or value.get("core_view_receipt") != dict(core_view_receipt)
         or value.get("source_runner_root") != str(runner_root)
@@ -7461,6 +7480,10 @@ def validate_phase7_human_sampling_view(
         != contract["vllm_context_recovery_lanes"]
         or value.get("vllm_context_recovery_result_roots")
         != contract["vllm_context_recovery_roots"]
+        or value.get("included_local_hardware_fit_lanes")
+        != contract["local_hardware_fit_lanes"]
+        or value.get("local_hardware_fit_result_roots")
+        != contract["local_hardware_fit_roots"]
         or value.get("source_files_modified") is not False
         or value.get("permitted_view_outputs") != []
         or not isinstance(inventory, list)
@@ -7647,6 +7670,7 @@ def phase7_sampling_lane_contract(
     failed_output_recovery: Mapping[str, Any],
     vllm_stability: Mapping[str, Any],
     vllm_context_recovery: Mapping[str, Any],
+    local_hardware_fit_recovery: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Return the exact successful Phase 7 sampling union and its strata."""
 
@@ -7831,6 +7855,15 @@ def phase7_sampling_lane_contract(
         states={"measured_complete"},
         label="vLLM context-recovery cohort",
     )
+    local_hardware_fit_lanes = amendment_lanes(
+        local_hardware_fit_recovery,
+        expected_lanes=tuple(local_hardware_fit_recovery["unit_order"]),
+        expected_metric_lanes=tuple(
+            local_hardware_fit_recovery["metric_lane_order"]
+        ),
+        states={"measured_complete", "failed"},
+        label="local hardware-fit recovery cohort",
+    )
     if not lane_order or len(set(lane_order)) != len(lane_order):
         raise Phase8Error("Phase 7 successful sampling lane inventory is invalid")
     revision_strata = {
@@ -7880,6 +7913,11 @@ def phase7_sampling_lane_contract(
         "vllm_context_recovery_roots": {
             lane: vllm_context_recovery["metric_roots"][lane]
             for lane in vllm_context_recovery_lanes
+        },
+        "local_hardware_fit_lanes": local_hardware_fit_lanes,
+        "local_hardware_fit_roots": {
+            lane: local_hardware_fit_recovery["metric_roots"][lane]
+            for lane in local_hardware_fit_lanes
         },
         "revision_strata": revision_strata,
         "source_conformance_strata": source_strata,
@@ -7966,10 +8004,13 @@ def validate_phase7_completion(
         "vllm_context_recovery_terminal_states",
         "vllm_context_recovery_metric_revision_strata",
         "vllm_context_recovery_target_execution",
+        "local_hardware_fit_terminal_states",
+        "local_hardware_fit_metric_revision_strata",
+        "local_hardware_fit_target_execution",
     }
     if (
         set(value) != expected_fields
-        or value.get("schema") != "ura-phase7-analysis-completion/6"
+        or value.get("schema") != "ura-phase7-analysis-completion/7"
         or value.get("status") not in {"complete", "complete_with_explicit_limitations"}
         or not UTC_RE.fullmatch(str(value.get("started_at_utc", "")))
         or not UTC_RE.fullmatch(str(value.get("completed_at_utc", "")))
@@ -8038,6 +8079,7 @@ def validate_phase7_completion(
         "failed_output_recovery",
         "vllm_stability",
         "vllm_context_recovery",
+        "local_hardware_fit_recovery",
         "campaign_terminal_inventory",
         "analysis_contract",
         "bound_artifacts",
@@ -8045,7 +8087,7 @@ def validate_phase7_completion(
     }
     if (
         set(inputs) != input_fields
-        or inputs.get("schema") != "ura-phase7-analysis-inputs/6"
+        or inputs.get("schema") != "ura-phase7-analysis-inputs/7"
         or inputs.get("inventory_complete") is not True
         or inputs.get("scope")
         != "all_local_phase7_read_only_analysis_over_phase6_lifecycle"
@@ -8067,6 +8109,7 @@ def validate_phase7_completion(
     failed_output_recovery = inputs.get("failed_output_recovery")
     vllm_stability = inputs.get("vllm_stability")
     vllm_context_recovery = inputs.get("vllm_context_recovery")
+    local_hardware_fit = inputs.get("local_hardware_fit_recovery")
     campaign_inventory = inputs.get("campaign_terminal_inventory")
     if not all(
         isinstance(item, dict)
@@ -8080,6 +8123,7 @@ def validate_phase7_completion(
             failed_output_recovery,
             vllm_stability,
             vllm_context_recovery,
+            local_hardware_fit,
             campaign_inventory,
         )
     ):
@@ -9296,6 +9340,8 @@ def validate_phase7_completion(
         "failed_output_recovery_missing_responses_retained",
         "vllm_stability_missing_responses_retained",
         "vllm_context_recovery_missing_responses_retained",
+        "local_hardware_fit_missing_responses_retained",
+        "local_hardware_fit_cross_condition_pooling_permitted",
         "source_parser_classification_kept_out_of_common_metrics",
         "failed_phase6_lanes_excluded_from_metric_and_level2_views",
         "missing_prerequisites_emit_typed_unavailable_artifacts",
@@ -9324,6 +9370,7 @@ def validate_phase7_completion(
                 "failed_output_recovery_missing_responses_retained",
                 "vllm_stability_missing_responses_retained",
                 "vllm_context_recovery_missing_responses_retained",
+                "local_hardware_fit_missing_responses_retained",
                 "source_parser_classification_kept_out_of_common_metrics",
                 "failed_phase6_lanes_excluded_from_metric_and_level2_views",
                 "missing_prerequisites_emit_typed_unavailable_artifacts",
@@ -9335,6 +9382,10 @@ def validate_phase7_completion(
         or analysis_contract.get("qwen_replay_vs_crescendo_arms") != list(ADAPTIVE_ARMS)
         or analysis_contract.get("paired_inference_unit") != "source_cluster_id"
         or analysis_contract.get("human_labels_consumed") is not False
+        or analysis_contract.get(
+            "local_hardware_fit_cross_condition_pooling_permitted"
+        )
+        is not False
     ):
         raise Phase8Error("Phase 7 analysis boundary contract differs")
     exact_zero_fields(
@@ -9757,6 +9808,55 @@ def validate_phase7_completion(
             for revision in vllm_context_recovery_strata
         },
     }
+    local_hardware_fit_order = local_hardware_fit.get("unit_order")
+    local_hardware_fit_states = local_hardware_fit.get("terminal_states")
+    local_hardware_fit_strata = local_hardware_fit.get("revision_strata")
+    local_hardware_fit_metric_lanes = local_hardware_fit.get("metric_lane_order")
+    local_hardware_fit_stratum_lanes = (
+        [lane for lanes in local_hardware_fit_strata.values() for lane in lanes]
+        if isinstance(local_hardware_fit_strata, dict)
+        and all(
+            isinstance(revision, str)
+            and HEX64.fullmatch(revision)
+            and isinstance(lanes, list)
+            for revision, lanes in local_hardware_fit_strata.items()
+        )
+        else None
+    )
+    if (
+        not isinstance(local_hardware_fit_order, list)
+        or len(local_hardware_fit_order) != 25
+        or len(set(local_hardware_fit_order)) != 25
+        or not isinstance(local_hardware_fit_states, dict)
+        or list(local_hardware_fit_states) != local_hardware_fit_order
+        or set(local_hardware_fit_states.values())
+        - {"measured_complete", "failed"}
+        or local_hardware_fit_metric_lanes
+        != [
+            lane
+            for lane in local_hardware_fit_order
+            if local_hardware_fit_states[lane] == "measured_complete"
+        ]
+        or local_hardware_fit_stratum_lanes is None
+        or len(local_hardware_fit_stratum_lanes)
+        != len(set(local_hardware_fit_stratum_lanes))
+        or set(local_hardware_fit_stratum_lanes)
+        != set(local_hardware_fit_metric_lanes)
+        or value.get("local_hardware_fit_terminal_states")
+        != local_hardware_fit_states
+        or value.get("local_hardware_fit_metric_revision_strata")
+        != local_hardware_fit_strata
+        or value.get("local_hardware_fit_target_execution")
+        != local_hardware_fit.get("target_execution")
+    ):
+        raise Phase8Error("Phase 7 local hardware-fit partition differs")
+    local_hardware_fit_status_names = {
+        "local-hardware-fit-recovery-lifecycle",
+        *{
+            f"local-hardware-fit-metric-inputs-{revision[:12]}"
+            for revision in local_hardware_fit_strata
+        },
+    }
     phase7_metric_lanes = [
         *measured_lanes,
         *current_ollama_metric_lanes,
@@ -9765,6 +9865,7 @@ def validate_phase7_completion(
         *failed_output_recovery_metric_lanes,
         *vllm_stability_metric_lanes,
         *vllm_context_recovery_metric_lanes,
+        *local_hardware_fit_metric_lanes,
     ]
     if len(set(phase7_metric_lanes)) != len(phase7_metric_lanes):
         raise Phase8Error("Phase 7 metric lane union contains a duplicate")
@@ -9782,6 +9883,7 @@ def validate_phase7_completion(
         failed_output_recovery=failed_output_recovery,
         vllm_stability=vllm_stability,
         vllm_context_recovery=vllm_context_recovery,
+        local_hardware_fit_recovery=local_hardware_fit,
     )
     stratum_status_names = {
         "metric-stratum-"
@@ -9822,6 +9924,7 @@ def validate_phase7_completion(
         *failed_output_recovery_status_names,
         *vllm_stability_status_names,
         *vllm_context_recovery_status_names,
+        *local_hardware_fit_status_names,
         *stratum_status_names,
     }
     if (
@@ -9840,6 +9943,7 @@ def validate_phase7_completion(
             + len(failed_output_recovery_status_names)
             + len(vllm_stability_status_names)
             + len(vllm_context_recovery_status_names)
+            + len(local_hardware_fit_status_names)
             + len(stratum_status_names)
         )
         or any(
@@ -9937,6 +10041,7 @@ def validate_phase7_completion(
             failed_output_recovery=failed_output_recovery,
             vllm_stability=vllm_stability,
             vllm_context_recovery=vllm_context_recovery,
+            local_hardware_fit_recovery=local_hardware_fit,
         )
     )
     if observed_sampling_contract != sampling_contract:
@@ -10373,6 +10478,7 @@ def validate_phase7_completion(
         "failed_output_recovery": failed_output_recovery,
         "vllm_stability": vllm_stability,
         "vllm_context_recovery": vllm_context_recovery,
+        "local_hardware_fit_recovery": local_hardware_fit,
     }
     support["sampling_index_receipt"] = value["human_audit_sampling_index"]
     support["sampling_index_value"] = sampling_index
@@ -10551,9 +10657,10 @@ def revalidate_bound_audit_runner_view(
     failed_output_recovery: Mapping[str, Any] | None = None,
     vllm_stability: Mapping[str, Any] | None = None,
     vllm_context_recovery: Mapping[str, Any] | None = None,
+    local_hardware_fit_recovery: Mapping[str, Any] | None = None,
 ) -> Path:
     if isinstance(receipt, dict) and receipt.get("schema") == (
-        "ura-phase7-human-audit-sampling-view/8"
+        "ura-phase7-human-audit-sampling-view/9"
     ):
         if (
             core_view_receipt is None
@@ -10567,6 +10674,7 @@ def revalidate_bound_audit_runner_view(
             or failed_output_recovery is None
             or vllm_stability is None
             or vllm_context_recovery is None
+            or local_hardware_fit_recovery is None
         ):
             raise Phase8Error("human sampling view revalidation inputs are absent")
         view, contract = validate_phase7_human_sampling_view(
@@ -10586,6 +10694,7 @@ def revalidate_bound_audit_runner_view(
             failed_output_recovery=failed_output_recovery,
             vllm_stability=vllm_stability,
             vllm_context_recovery=vllm_context_recovery,
+            local_hardware_fit_recovery=local_hardware_fit_recovery,
         )
         if list(measured_lanes) != contract["lane_order"]:
             raise Phase8Error("human sampling view lane partition changed")
@@ -10709,6 +10818,9 @@ def build_input_manifest(args: argparse.Namespace) -> dict[str, Any]:
         failed_output_recovery=phase7_support["failed_output_recovery"],
         vllm_stability=phase7_support["vllm_stability"],
         vllm_context_recovery=phase7_support["vllm_context_recovery"],
+        local_hardware_fit_recovery=phase7_support[
+            "local_hardware_fit_recovery"
+        ],
     )
     capacity = plan_phase8_capacity(
         common_available_unique_clusters=common_available,
@@ -11881,6 +11993,7 @@ def semantic_revalidate(inputs: Mapping[str, Any]) -> dict[str, Any]:
         failed_output_recovery=support["failed_output_recovery"],
         vllm_stability=support["vllm_stability"],
         vllm_context_recovery=support["vllm_context_recovery"],
+        local_hardware_fit_recovery=support["local_hardware_fit_recovery"],
     )
     capacity = plan_phase8_capacity(
         common_available_unique_clusters=common_available,
@@ -12406,6 +12519,7 @@ def _bound_qualification_runner_view(inputs: Mapping[str, Any]) -> Path:
         failed_output_recovery=support["failed_output_recovery"],
         vllm_stability=support["vllm_stability"],
         vllm_context_recovery=support["vllm_context_recovery"],
+        local_hardware_fit_recovery=support["local_hardware_fit_recovery"],
     )
 
 
@@ -13126,6 +13240,9 @@ def execute_preparation(control_root: Path, attempt_root: Path) -> int:
             failed_output_recovery=support["failed_output_recovery"],
             vllm_stability=support["vllm_stability"],
             vllm_context_recovery=support["vllm_context_recovery"],
+            local_hardware_fit_recovery=support[
+                "local_hardware_fit_recovery"
+            ],
         )
 
     common_argv = [
@@ -17412,7 +17529,7 @@ def self_test() -> int:
             "measured_evidence_admitted": False,
         }
         phase7_input: dict[str, Any] = {
-            "schema": "ura-phase7-analysis-inputs/6",
+            "schema": "ura-phase7-analysis-inputs/7",
             "inventory_complete": True,
             "scope": "all_local_phase7_read_only_analysis_over_phase6_lifecycle",
             "controller_payload": descriptor(phase7_source),
@@ -17516,6 +17633,8 @@ def self_test() -> int:
                 "failed_output_recovery_missing_responses_retained": True,
                 "vllm_stability_missing_responses_retained": True,
                 "vllm_context_recovery_missing_responses_retained": True,
+                "local_hardware_fit_missing_responses_retained": True,
+                "local_hardware_fit_cross_condition_pooling_permitted": False,
                 "source_parser_classification_kept_out_of_common_metrics": True,
                 "failed_phase6_lanes_excluded_from_metric_and_level2_views": True,
                 "missing_prerequisites_emit_typed_unavailable_artifacts": True,
@@ -17555,6 +17674,9 @@ def self_test() -> int:
             "input_recovery_completion": descriptor(phase7_generic),
         }
         phase7_input["vllm_context_recovery"] = {
+            "completion": descriptor(phase7_generic),
+        }
+        phase7_input["local_hardware_fit_recovery"] = {
             "completion": descriptor(phase7_generic),
         }
         phase7_input["campaign_terminal_inventory"] = {
@@ -17905,7 +18027,7 @@ def self_test() -> int:
             ),
         )
         phase7_completion = {
-            "schema": "ura-phase7-analysis-completion/6",
+            "schema": "ura-phase7-analysis-completion/7",
             "status": "complete_with_explicit_limitations",
             "started_at_utc": "2026-08-22T00:00:00Z",
             "completed_at_utc": "2026-08-22T00:00:01Z",
@@ -18227,6 +18349,21 @@ def self_test() -> int:
             oracle_calls.append("vllm_context_recovery")
             return phase7_input["vllm_context_recovery"]
 
+        def recording_local_hardware_fit(
+            completion_path: Path,
+            *,
+            runner_root: Path,
+        ) -> Mapping[str, Any]:
+            if (
+                completion_path != phase7_generic
+                or runner_root != expected_current_ollama_runner_root
+            ):
+                raise AssertionError(
+                    "recording oracle local hardware-fit arguments differ"
+                )
+            oracle_calls.append("local_hardware_fit")
+            return phase7_input["local_hardware_fit_recovery"]
+
         def recording_current_ollama_stability(
             completion_path: Path,
             *,
@@ -18288,6 +18425,7 @@ def self_test() -> int:
             failed_output_recovery: Mapping[str, Any],
             vllm_stability: Mapping[str, Any],
             vllm_context_recovery: Mapping[str, Any],
+            local_hardware_fit_recovery: Mapping[str, Any],
         ) -> Mapping[str, Any]:
             if {
                 "gate5_rows": rows,
@@ -18312,6 +18450,9 @@ def self_test() -> int:
                 "vllm_context_recovery": phase7_input[
                     "vllm_context_recovery"
                 ],
+                "local_hardware_fit_recovery": phase7_input[
+                    "local_hardware_fit_recovery"
+                ],
             } != {
                 "gate5_rows": list(gate5_rows),
                 "gate5_manifest": gate5_manifest,
@@ -18329,6 +18470,7 @@ def self_test() -> int:
                 "failed_output_recovery": failed_output_recovery,
                 "vllm_stability": vllm_stability,
                 "vllm_context_recovery": vllm_context_recovery,
+                "local_hardware_fit_recovery": local_hardware_fit_recovery,
             }:
                 raise AssertionError("recording oracle campaign arguments differ")
             oracle_calls.append("campaign")
@@ -18364,6 +18506,7 @@ def self_test() -> int:
             validate_vllm_context_recovery_completion=(
                 recording_vllm_context_recovery
             ),
+            validate_local_hardware_fit_completion=recording_local_hardware_fit,
             validate_phase6_campaign_terminal_inventory=(
                 recording_validate_campaign
             ),
@@ -18414,6 +18557,7 @@ def self_test() -> int:
             "failed_output_recovery",
             "vllm_stability",
             "vllm_context_recovery",
+            "local_hardware_fit",
             "campaign",
         ]
         if loader_calls != [project_root] or oracle_calls != expected_oracle_calls:
@@ -18526,6 +18670,21 @@ def self_test() -> int:
                     else value
                 )
 
+            def mismatched_local_hardware_fit(
+                completion_path: Path,
+                *,
+                runner_root: Path,
+            ) -> Mapping[str, Any]:
+                value = recording_local_hardware_fit(
+                    completion_path,
+                    runner_root=runner_root,
+                )
+                return (
+                    with_snapshot_mismatch(value, kind)
+                    if kind == "local_hardware_fit"
+                    else value
+                )
+
             def mismatched_current_ollama_stability(
                 completion_path: Path,
                 *,
@@ -18596,6 +18755,9 @@ def self_test() -> int:
                 validate_vllm_context_recovery_completion=(
                     mismatched_vllm_context_recovery
                 ),
+                validate_local_hardware_fit_completion=(
+                    mismatched_local_hardware_fit
+                ),
                 validate_phase6_campaign_terminal_inventory=(
                     recording_validate_campaign
                 ),
@@ -18615,6 +18777,7 @@ def self_test() -> int:
             "failed_output_recovery",
             "vllm_stability",
             "vllm_context_recovery",
+            "local_hardware_fit",
         ):
             candidate_oracle = mismatch_oracle(mismatch_kind)
             rejected(
@@ -18717,6 +18880,9 @@ def self_test() -> int:
                     "vllm_stability": phase7_input["vllm_stability"],
                     "vllm_context_recovery": phase7_input[
                         "vllm_context_recovery"
+                    ],
+                    "local_hardware_fit_recovery": phase7_input[
+                        "local_hardware_fit_recovery"
                     ],
                 }
 

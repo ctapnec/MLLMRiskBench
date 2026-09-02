@@ -60,6 +60,9 @@ from experiments.local_campaign.vllm_context_recovery_phase6 import (
     UNIT_ID as VLLM_CONTEXT_RECOVERY_UNIT,
     validate_completion as validate_vllm_context_recovery_completion,
 )
+from experiments.local_campaign.local_truncation_recovery_execution_phase6 import (
+    validate_completion as validate_local_hardware_fit_completion,
+)
 from experiments.local_campaign.failed_output_recovery_phase6 import (
     EXPECTED_UNIT_ORDER as FAILED_OUTPUT_RECOVERY_UNIT_ORDER,
     validate_phase7_completion as validate_failed_output_recovery_completion,
@@ -77,17 +80,17 @@ from ura.eligibility import validate_eligibility_plan
 from ura.project_revision import load_project_revision_file, project_revision_binding
 
 
-INPUT_SCHEMA = "ura-phase7-analysis-inputs/6"
+INPUT_SCHEMA = "ura-phase7-analysis-inputs/7"
 LAUNCH_SCHEMA = "ura-phase7-analysis-launch/1"
-COMPLETION_SCHEMA = "ura-phase7-analysis-completion/6"
+COMPLETION_SCHEMA = "ura-phase7-analysis-completion/7"
 STATUS_SCHEMA = "ura-phase7-analysis-status/1"
-RUNNER_VIEW_SCHEMA = "ura-phase7-runner-input-view/6"
+RUNNER_VIEW_SCHEMA = "ura-phase7-runner-input-view/7"
 LIFECYCLE_RUNNER_VIEW_SCHEMA = "ura-phase7-lifecycle-runner-input-view/2"
 FOLLOWON_AMENDMENT_SCHEMA = "ura-followon-gate5-amendment/2"
 FOLLOWON_COMPLETION_SCHEMA = "ura-followon-phase6-completion/2"
 FOLLOWON_VIEW_SCHEMA = "ura-phase7-followon-input-view/1"
-HUMAN_AUDIT_VIEW_SCHEMA = "ura-phase7-human-audit-sampling-view/8"
-PHASE6_CAMPAIGN_INVENTORY_SCHEMA = "ura-phase6-campaign-terminal-inventory/6"
+HUMAN_AUDIT_VIEW_SCHEMA = "ura-phase7-human-audit-sampling-view/9"
+PHASE6_CAMPAIGN_INVENTORY_SCHEMA = "ura-phase6-campaign-terminal-inventory/7"
 SEVEN_AMENDMENT_SCHEMA = "ura-gate5-seven-output-policy-amendment/1"
 SEVEN_COMPLETION_SCHEMA = "ura-seven-output-policy-amendment-completion/1"
 SEVEN_AMENDMENT_LANES = (
@@ -369,6 +372,7 @@ CAMPAIGN_COHORTS = (
     "failed_output_recovery",
     "vllm_stability",
     "vllm_context_recovery",
+    "local_hardware_fit_recovery",
     "native",
 )
 CAMPAIGN_COHORT_COUNTS = {
@@ -384,6 +388,7 @@ CAMPAIGN_COHORT_COUNTS = {
     "failed_output_recovery": len(FAILED_OUTPUT_RECOVERY_UNIT_ORDER),
     "vllm_stability": len(VLLM_STABILITY_UNIT_LAYOUT),
     "vllm_context_recovery": 1,
+    "local_hardware_fit_recovery": 25,
     "native": 9,
 }
 CAMPAIGN_TOTAL_ROWS = sum(CAMPAIGN_COHORT_COUNTS.values())
@@ -400,6 +405,7 @@ CAMPAIGN_TERMINAL_STATES = {
     "failed_output_recovery": {"measured_complete"},
     "vllm_stability": {"measured_complete"},
     "vllm_context_recovery": {"measured_complete"},
+    "local_hardware_fit_recovery": {"measured_complete", "failed"},
     "native": {"run", "failed", "unavailable", "not-selected"},
 }
 FOLLOWON_LANES = (
@@ -10783,6 +10789,7 @@ def build_phase6_campaign_terminal_inventory(
     failed_output_recovery: Mapping[str, Any],
     vllm_stability: Mapping[str, Any],
     vllm_context_recovery: Mapping[str, Any],
+    local_hardware_fit_recovery: Mapping[str, Any],
 ) -> dict[str, Any]:
     validate_phase6_recovery_transitions(recoveries=recoveries, runner=runner)
     canonical_revision = project_and_source["project_revision"]["artifact"]["sha256"]
@@ -11038,6 +11045,21 @@ def build_phase6_campaign_terminal_inventory(
             {
                 "completion": vllm_context_recovery["completion"],
                 **vllm_context_recovery["metric_evidence"][lane],
+            },
+        )
+    for lane in local_hardware_fit_recovery["unit_order"]:
+        append(
+            "local_hardware_fit_recovery",
+            lane,
+            local_hardware_fit_recovery["terminal_states"][lane],
+            local_hardware_fit_recovery[
+                "lifecycle_project_revision_receipt_sha256"
+            ][lane],
+            local_hardware_fit_recovery["source_conformance_sha256"],
+            {
+                "completion": local_hardware_fit_recovery["completion"],
+                "inventory": local_hardware_fit_recovery["inventory"],
+                **local_hardware_fit_recovery["lifecycle_evidence"][lane],
             },
         )
     _native_completion_path, native_completion = descriptor_object(
@@ -12231,6 +12253,10 @@ def build_input_manifest(args: argparse.Namespace) -> dict[str, Any]:
         Path(args.phase6_vllm_context_recovery_completion),
         runner_root=runner_root,
     )
+    local_hardware_fit_recovery = validate_local_hardware_fit_completion(
+        Path(args.phase6_local_hardware_fit_completion),
+        runner_root=runner_root,
+    )
     campaign_inventory = build_phase6_campaign_terminal_inventory(
         gate5_rows=gate5["lanes"],
         gate5_manifest=gate5_manifest,
@@ -12248,6 +12274,7 @@ def build_input_manifest(args: argparse.Namespace) -> dict[str, Any]:
         failed_output_recovery=failed_output_recovery,
         vllm_stability=vllm_stability,
         vllm_context_recovery=vllm_context_recovery,
+        local_hardware_fit_recovery=local_hardware_fit_recovery,
     )
 
     gate5_terminal_rows = {
@@ -12307,6 +12334,7 @@ def build_input_manifest(args: argparse.Namespace) -> dict[str, Any]:
         "failed_output_recovery": failed_output_recovery,
         "vllm_stability": vllm_stability,
         "vllm_context_recovery": vllm_context_recovery,
+        "local_hardware_fit_recovery": local_hardware_fit_recovery,
         "campaign_terminal_inventory": campaign_inventory,
         "analysis_contract": {
             "level1_over_every_final_eligibility_plan": True,
@@ -12326,6 +12354,8 @@ def build_input_manifest(args: argparse.Namespace) -> dict[str, Any]:
             "failed_output_recovery_missing_responses_retained": True,
             "vllm_stability_missing_responses_retained": True,
             "vllm_context_recovery_missing_responses_retained": True,
+            "local_hardware_fit_missing_responses_retained": True,
+            "local_hardware_fit_cross_condition_pooling_permitted": False,
             "source_parser_classification_kept_out_of_common_metrics": True,
             "failed_phase6_lanes_excluded_from_metric_and_level2_views": True,
             "missing_prerequisites_emit_typed_unavailable_artifacts": True,
@@ -12485,6 +12515,7 @@ class AnalysisController:
             "failed_output_recovery",
             "vllm_stability",
             "vllm_context_recovery",
+            "local_hardware_fit_recovery",
             "campaign_terminal_inventory",
             "analysis_contract",
             "bound_artifacts",
@@ -12519,6 +12550,8 @@ class AnalysisController:
             "failed_output_recovery_missing_responses_retained",
             "vllm_stability_missing_responses_retained",
             "vllm_context_recovery_missing_responses_retained",
+            "local_hardware_fit_missing_responses_retained",
+            "local_hardware_fit_cross_condition_pooling_permitted",
             "source_parser_classification_kept_out_of_common_metrics",
             "failed_phase6_lanes_excluded_from_metric_and_level2_views",
             "missing_prerequisites_emit_typed_unavailable_artifacts",
@@ -12547,6 +12580,7 @@ class AnalysisController:
                     "failed_output_recovery_missing_responses_retained",
                     "vllm_stability_missing_responses_retained",
                     "vllm_context_recovery_missing_responses_retained",
+                    "local_hardware_fit_missing_responses_retained",
                     "source_parser_classification_kept_out_of_common_metrics",
                     "failed_phase6_lanes_excluded_from_metric_and_level2_views",
                     "missing_prerequisites_emit_typed_unavailable_artifacts",
@@ -12566,6 +12600,8 @@ class AnalysisController:
         )
         if (
             contract.get("human_labels_consumed") is not False
+            or contract.get("local_hardware_fit_cross_condition_pooling_permitted")
+            is not False
             or contract.get("transfer_attacker") != "replay"
             or contract.get("paired_inference_unit") != "source_cluster_id"
             or contract.get("llava_image_arms") != list(IMAGE_ARMS)
@@ -13483,6 +13519,22 @@ class AnalysisController:
             raise Phase7Error(
                 "authorized vLLM context-recovery semantic snapshot changed"
             )
+        local_hardware_fit_recovery = value.get("local_hardware_fit_recovery")
+        if not isinstance(local_hardware_fit_recovery, dict):
+            raise Phase7Error("authorized local hardware-fit snapshot is invalid")
+        validated_local_hardware_fit_recovery = (
+            validate_local_hardware_fit_completion(
+                descriptor_file(
+                    local_hardware_fit_recovery.get("completion"),
+                    label="authorized local hardware-fit completion",
+                ),
+                runner_root=runner_root,
+            )
+        )
+        if validated_local_hardware_fit_recovery != local_hardware_fit_recovery:
+            raise Phase7Error(
+                "authorized local hardware-fit semantic snapshot changed"
+            )
         validated_campaign = build_phase6_campaign_terminal_inventory(
             gate5_rows=gate5_value["lanes"],
             gate5_manifest=gate5_manifest_path,
@@ -13500,6 +13552,9 @@ class AnalysisController:
             failed_output_recovery=validated_failed_output_recovery,
             vllm_stability=validated_vllm_stability,
             vllm_context_recovery=validated_vllm_context_recovery,
+            local_hardware_fit_recovery=(
+                validated_local_hardware_fit_recovery
+            ),
         )
         if validated_campaign != value.get("campaign_terminal_inventory"):
             raise Phase7Error("authorized campaign terminal inventory changed")
@@ -13706,6 +13761,17 @@ class AnalysisController:
                 label=f"vLLM context-recovery lifecycle {lane}",
             )
             add(f"vllm-context-recovery-{lane}", root, "measured_complete")
+        local_hardware_fit = self.inputs["local_hardware_fit_recovery"]
+        for lane in local_hardware_fit["unit_order"]:
+            root = self._representable_lifecycle_root(
+                local_hardware_fit["lifecycle_roots"].get(lane),
+                label=f"local hardware-fit lifecycle {lane}",
+            )
+            add(
+                f"local-hardware-fit-{lane}",
+                root,
+                local_hardware_fit["terminal_states"][lane],
+            )
         return roots, states, registry_only
 
     def _lifecycle_root_stratum(self, raw_root: str, *, label: str) -> tuple[str, str]:
@@ -13863,6 +13929,17 @@ class AnalysisController:
             raise Phase7Error("vLLM context-recovery metric lane order changed")
         return list(lanes)
 
+    def _local_hardware_fit_metric_lanes(self) -> list[str]:
+        current = self.inputs["local_hardware_fit_recovery"]
+        lanes = current.get("metric_lane_order")
+        if (
+            not isinstance(lanes, list)
+            or any(lane not in current["unit_order"] for lane in lanes)
+            or len(set(lanes)) != len(lanes)
+        ):
+            raise Phase7Error("local hardware-fit metric lane order changed")
+        return list(lanes)
+
     def _failed_output_recovery_metric_lanes(self) -> list[str]:
         lanes = self.inputs["failed_output_recovery"].get("metric_lane_order")
         if lanes != list(FAILED_OUTPUT_RECOVERY_UNIT_ORDER):
@@ -13900,6 +13977,7 @@ class AnalysisController:
             *self._failed_output_recovery_metric_lanes(),
             *self._vllm_stability_metric_lanes(),
             *self._vllm_context_recovery_metric_lanes(),
+            *self._local_hardware_fit_metric_lanes(),
         ]
         if len(set(lanes)) != len(lanes):
             raise Phase7Error("combined metric lane order contains a duplicate")
@@ -13916,6 +13994,9 @@ class AnalysisController:
             *self.inputs["failed_output_recovery"]["metric_eligibility_plans"],
             *self.inputs["vllm_stability"]["metric_eligibility_plans"],
             *self.inputs["vllm_context_recovery"]["metric_eligibility_plans"],
+            *self.inputs["local_hardware_fit_recovery"][
+                "metric_eligibility_plans"
+            ],
         ]
 
     def _all_metric_completion_markers(self) -> list[dict[str, Any]]:
@@ -13929,6 +14010,9 @@ class AnalysisController:
             *self.inputs["failed_output_recovery"]["metric_completion_markers"],
             *self.inputs["vllm_stability"]["metric_completion_markers"],
             *self.inputs["vllm_context_recovery"]["metric_completion_markers"],
+            *self.inputs["local_hardware_fit_recovery"][
+                "metric_completion_markers"
+            ],
         ]
 
     def _current_ollama_sampling_root(self, lane: str) -> Path:
@@ -13947,6 +14031,12 @@ class AnalysisController:
         return checked_dir(
             self.inputs["vllm_context_recovery"]["metric_roots"].get(lane),
             label=f"{lane} vLLM context-recovery sampling root",
+        )
+
+    def _local_hardware_fit_sampling_root(self, lane: str) -> Path:
+        return checked_dir(
+            self.inputs["local_hardware_fit_recovery"]["metric_roots"].get(lane),
+            label=f"{lane} local hardware-fit sampling root",
         )
 
     def _failed_output_recovery_sampling_root(self, lane: str) -> Path:
@@ -14025,6 +14115,7 @@ class AnalysisController:
             *self._failed_output_recovery_metric_lanes(),
             *self._vllm_stability_metric_lanes(),
             *self._vllm_context_recovery_metric_lanes(),
+            *self._local_hardware_fit_metric_lanes(),
         ]
         if len(set(lanes)) != len(lanes):
             raise Phase7Error("human-audit Runner view contains a duplicate lane")
@@ -14110,6 +14201,14 @@ class AnalysisController:
                         "vLLM context-recovery sampling lane is duplicated"
                     )
                 by_lane[lane] = revision
+        local_hardware_fit = self.inputs["local_hardware_fit_recovery"]
+        for revision, lanes in local_hardware_fit["revision_strata"].items():
+            for lane in lanes:
+                if lane in by_lane:
+                    raise Phase7Error(
+                        "local hardware-fit sampling lane is duplicated"
+                    )
+                by_lane[lane] = revision
         lane_order = self._human_audit_lane_order()
         if set(by_lane) != set(lane_order):
             raise Phase7Error("human-audit sampling revision inventory is incomplete")
@@ -14165,6 +14264,9 @@ class AnalysisController:
         vllm_context_recovery = self.inputs["vllm_context_recovery"]
         for lane in self._vllm_context_recovery_metric_lanes():
             by_lane[lane] = vllm_context_recovery["source_conformance_sha256"]
+        local_hardware_fit = self.inputs["local_hardware_fit_recovery"]
+        for lane in self._local_hardware_fit_metric_lanes():
+            by_lane[lane] = local_hardware_fit["source_conformance_sha256"]
         lane_order = self._human_audit_lane_order()
         if set(by_lane) != set(lane_order):
             raise Phase7Error("human-audit sampling source inventory is incomplete")
@@ -14196,6 +14298,8 @@ class AnalysisController:
             "vllm_stability_result_roots",
             "included_vllm_context_recovery_lanes",
             "vllm_context_recovery_result_roots",
+            "included_local_hardware_fit_lanes",
+            "local_hardware_fit_result_roots",
             "regular_files_copied", "logical_bytes",
             "source_files_modified", "permitted_view_outputs", "file_inventory",
             "file_inventory_sha256",
@@ -14264,6 +14368,15 @@ class AnalysisController:
             != {
                 lane: self.inputs["vllm_context_recovery"]["metric_roots"][lane]
                 for lane in self._vllm_context_recovery_metric_lanes()
+            }
+            or receipt.get("included_local_hardware_fit_lanes")
+            != self._local_hardware_fit_metric_lanes()
+            or receipt.get("local_hardware_fit_result_roots")
+            != {
+                lane: self.inputs["local_hardware_fit_recovery"][
+                    "metric_roots"
+                ][lane]
+                for lane in self._local_hardware_fit_metric_lanes()
             }
             or receipt.get("source_files_modified") is not False
             or receipt.get("permitted_view_outputs") != []
@@ -14429,6 +14542,18 @@ class AnalysisController:
                         "vLLM context-recovery sampling source path collides"
                     )
                 sources[destination] = (path, self.runner_root)
+        for lane in self._local_hardware_fit_metric_lanes():
+            root = self._local_hardware_fit_sampling_root(lane)
+            prefix = root.relative_to(self.runner_root).as_posix()
+            for relative, path in _regular_tree_files(
+                root, label=f"{lane} exact successful local hardware-fit root"
+            ).items():
+                destination = f"{prefix}/{relative}"
+                if destination in sources:
+                    raise Phase7Error(
+                        "local hardware-fit sampling source path collides"
+                    )
+                sources[destination] = (path, self.runner_root)
         return {relative: sources[relative] for relative in sorted(sources)}
 
     def human_audit_runner_input_view(self) -> Path:
@@ -14514,6 +14639,15 @@ class AnalysisController:
             "vllm_context_recovery_result_roots": {
                 lane: self.inputs["vllm_context_recovery"]["metric_roots"][lane]
                 for lane in self._vllm_context_recovery_metric_lanes()
+            },
+            "included_local_hardware_fit_lanes": (
+                self._local_hardware_fit_metric_lanes()
+            ),
+            "local_hardware_fit_result_roots": {
+                lane: self.inputs["local_hardware_fit_recovery"][
+                    "metric_roots"
+                ][lane]
+                for lane in self._local_hardware_fit_metric_lanes()
             },
             "regular_files_copied": len(file_inventory),
             "logical_bytes": sum(
@@ -15193,6 +15327,15 @@ class AnalysisController:
                     self._vllm_context_recovery_sampling_root(lane),
                     revision,
                     vllm_context_recovery["source_conformance_sha256"],
+                )
+        local_hardware_fit = self.inputs["local_hardware_fit_recovery"]
+        for revision, lanes in local_hardware_fit["revision_strata"].items():
+            for lane in lanes:
+                add(
+                    lane,
+                    self._local_hardware_fit_sampling_root(lane),
+                    revision,
+                    local_hardware_fit["source_conformance_sha256"],
                 )
         return grouped
 
@@ -16374,6 +16517,81 @@ class AnalysisController:
                 outputs=(output,),
             )
 
+    def record_local_hardware_fit_outcomes(self) -> None:
+        """Retain automatic hardware-fit recoveries without cross-policy pooling."""
+
+        current = self.inputs["local_hardware_fit_recovery"]
+        lifecycle_output = (
+            self.analysis / "local-hardware-fit-recovery" / "lifecycle.json"
+        )
+        lifecycle_value = {
+            "schema": "ura-phase7-local-hardware-fit-input-view/1",
+            "status": (
+                "complete_with_failures"
+                if "failed" in current["terminal_states"].values()
+                else "complete"
+            ),
+            "unit_order": current["unit_order"],
+            "terminal_states": current["terminal_states"],
+            "runner_code_version": current["runner_code_version"],
+            "output_policy_stratum": current["output_policy_stratum"],
+            "target_execution": current["target_execution"],
+            "planned_unique_rows": current["planned_unique_rows"],
+            "missing_responses_retained": True,
+            "successful_rows_repeated": current["successful_rows_repeated"],
+            "cross_condition_pooling_permitted": False,
+        }
+        write_new(lifecycle_output, canonical(lifecycle_value))
+        self.status(
+            "local-hardware-fit-recovery-lifecycle",
+            lifecycle_value["status"],
+            detail="hardware-fit recovery units retained as a separate condition",
+            outputs=(lifecycle_output,),
+            limitations=(
+                {
+                    "failed_units": [
+                        lane
+                        for lane, state in current["terminal_states"].items()
+                        if state == "failed"
+                    ]
+                }
+                if lifecycle_value["status"] == "complete_with_failures"
+                else None
+            ),
+        )
+        for revision, lanes in current["revision_strata"].items():
+            output = (
+                self.analysis
+                / "local-hardware-fit-recovery"
+                / "metric-inputs"
+                / f"{revision}.json"
+            )
+            value = {
+                "schema": "ura-phase7-local-hardware-fit-metric-inputs/1",
+                "status": "validated",
+                "project_revision_sha256": revision,
+                "source_conformance_sha256": current[
+                    "source_conformance_sha256"
+                ],
+                "lane_order": lanes,
+                "result_roots": {
+                    lane: current["metric_roots"][lane] for lane in lanes
+                },
+                "metric_evidence": {
+                    lane: current["metric_evidence"][lane] for lane in lanes
+                },
+                "cross_condition_pooling_permitted": False,
+                "cross_revision_pooling_permitted": False,
+                "cross_source_pooling_permitted": False,
+            }
+            write_new(output, canonical(value))
+            self.status(
+                f"local-hardware-fit-metric-inputs-{revision[:12]}",
+                "complete",
+                detail="hardware-fit roots retained in one revision stratum",
+                outputs=(output,),
+            )
+
     def record_failed_output_recovery_outcomes(self) -> None:
         """Retain the six Runner 2.27 recovery populations as one stratum."""
 
@@ -16943,6 +17161,14 @@ class AnalysisController:
                 for revision in vllm_context_recovery["revision_strata"]
             },
         }
+        local_hardware_fit = self.inputs["local_hardware_fit_recovery"]
+        local_hardware_fit_statuses = {
+            "local-hardware-fit-recovery-lifecycle",
+            *{
+                f"local-hardware-fit-metric-inputs-{revision[:12]}"
+                for revision in local_hardware_fit["revision_strata"]
+            },
+        }
         stratum_statuses = {
             f"metric-stratum-{revision[:12]}-{source[:12]}"
             for revision, source in self._metric_stratum_roots()
@@ -16972,6 +17198,7 @@ class AnalysisController:
             *failed_output_recovery_statuses,
             *vllm_stability_statuses,
             *vllm_context_recovery_statuses,
+            *local_hardware_fit_statuses,
             *stratum_statuses,
         }
         expected_count = 36 + len(
@@ -16983,6 +17210,7 @@ class AnalysisController:
         ) + len(failed_output_recovery_statuses) + len(
             vllm_stability_statuses
         ) + len(vllm_context_recovery_statuses) + len(stratum_statuses)
+        expected_count += len(local_hardware_fit_statuses)
         if set(self.statuses) != expected or len(expected) != expected_count:
             raise Phase7Error(
                 "Phase 7 completion inventory differs: "
@@ -17167,6 +17395,15 @@ class AnalysisController:
         completion["vllm_context_recovery_target_execution"] = (
             vllm_context_recovery["target_execution"]
         )
+        completion["local_hardware_fit_metric_revision_strata"] = (
+            local_hardware_fit["revision_strata"]
+        )
+        completion["local_hardware_fit_terminal_states"] = local_hardware_fit[
+            "terminal_states"
+        ]
+        completion["local_hardware_fit_target_execution"] = local_hardware_fit[
+            "target_execution"
+        ]
         write_new(self.completion_path, canonical(completion))
         self.event(
             "controller", "final-inventory", "complete", f"{len(expected)} statuses"
@@ -17192,6 +17429,7 @@ class AnalysisController:
         self.record_failed_output_recovery_outcomes()
         self.record_vllm_stability_outcomes()
         self.record_vllm_context_recovery_outcomes()
+        self.record_local_hardware_fit_outcomes()
         self.run_level1()
         self.run_metric_strata()
         suite = self.run_suite_summary()
@@ -17338,7 +17576,7 @@ def execute(args: argparse.Namespace) -> int:
 
 def contract_self_test() -> int:
     rejected: list[str] = []
-    if CAMPAIGN_TOTAL_ROWS != 116:
+    if CAMPAIGN_TOTAL_ROWS != 141:
         raise Phase7Error("Phase 7 campaign terminal row count changed")
 
     def must_fail(label: str, action: Any) -> None:
@@ -18134,6 +18372,9 @@ def contract_self_test() -> int:
         source_file.write_bytes(b"sealed-runner-input")
         vllm_fixture_lanes = [row[0] for row in VLLM_STABILITY_UNIT_LAYOUT]
         vllm_context_recovery_fixture_lanes = [VLLM_CONTEXT_RECOVERY_UNIT]
+        local_hardware_fit_fixture_lanes = [
+            f"local-hardware-fit-fixture-{index:03d}" for index in range(25)
+        ]
         current_ollama_fixture_lanes = [
             row[0] for row in CURRENT_OLLAMA_STABILITY_LAYOUT
         ]
@@ -18151,6 +18392,7 @@ def contract_self_test() -> int:
             *failed_output_recovery_fixture_lanes,
             *vllm_fixture_lanes,
             *vllm_context_recovery_fixture_lanes,
+            *local_hardware_fit_fixture_lanes,
         ]:
             fixture_root = source_root / lane
             fixture_root.mkdir()
@@ -18177,6 +18419,10 @@ def contract_self_test() -> int:
             "vllm_context_recovery": {
                 "metric_lane_order": vllm_context_recovery_fixture_lanes
             },
+            "local_hardware_fit_recovery": {
+                "unit_order": local_hardware_fit_fixture_lanes,
+                "metric_lane_order": local_hardware_fit_fixture_lanes,
+            },
         }
         view_controller.runner_view = temp / "view"
         view_controller.runner_view_receipt = temp / "view-receipt.json"
@@ -18194,6 +18440,7 @@ def contract_self_test() -> int:
                 *failed_output_recovery_fixture_lanes,
                 *vllm_fixture_lanes,
                 *vllm_context_recovery_fixture_lanes,
+                *local_hardware_fit_fixture_lanes,
             ],
         )
         forged = view_root / "transfer_matrix__replay__forged.manifest.json"
@@ -19392,6 +19639,7 @@ def contract_self_test() -> int:
             "failed_output_recovery": "measured_complete",
             "vllm_stability": "measured_complete",
             "vllm_context_recovery": "measured_complete",
+            "local_hardware_fit_recovery": "measured_complete",
             "native": "run",
         }[cohort]
         for index in range(CAMPAIGN_COHORT_COUNTS[cohort]):
@@ -19529,7 +19777,7 @@ def contract_self_test() -> int:
                         "phase7-metric-boundary-derivation",
                         "phase7-all-abstained-proxy-boundary",
                         "phase7-proxy-condition-realization-counts",
-                        "phase6-campaign-terminal-inventory-116-row-union",
+                        "phase6-campaign-terminal-inventory-141-row-union",
                         "phase6-campaign-terminal-early-failure-independence",
                         "source-conformance-45-row-portfolio",
                     }
@@ -19582,6 +19830,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     prepare_parser.add_argument(
         "--phase6-vllm-context-recovery-completion", required=True
+    )
+    prepare_parser.add_argument(
+        "--phase6-local-hardware-fit-completion", required=True
     )
     execute_parser = subparsers.add_parser("execute")
     execute_parser.add_argument("--launch", required=True)
