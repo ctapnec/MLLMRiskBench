@@ -141,6 +141,14 @@ _CONDITION_FIELDS_WITH_SAMPLING_POLICY = frozenset({
     *_CONDITION_FIELDS,
     "sampling_policy",
 })
+_CONDITION_FIELDS_WITH_JUDGE_SCHEDULE = frozenset({
+    *_CONDITION_FIELDS,
+    "judge_execution_schedule",
+})
+_CONDITION_FIELDS_WITH_SAMPLING_POLICY_AND_JUDGE_SCHEDULE = frozenset({
+    *_CONDITION_FIELDS_WITH_SAMPLING_POLICY,
+    "judge_execution_schedule",
+})
 _CSV_FIELDS = (
     "lifecycle_stratum_id",
     "request_id",
@@ -350,6 +358,8 @@ def _condition_values(value: object) -> dict[str, Any]:
         _CONDITION_FIELDS_V2_WITH_SAMPLING_POLICY,
         _CONDITION_FIELDS_V3_WITH_SAMPLING_POLICY,
         _CONDITION_FIELDS_WITH_SAMPLING_POLICY,
+        _CONDITION_FIELDS_WITH_JUDGE_SCHEDULE,
+        _CONDITION_FIELDS_WITH_SAMPLING_POLICY_AND_JUDGE_SCHEDULE,
     }
     if not isinstance(value, dict) or frozenset(value) not in allowed_fields:
         raise ValueError("eligibility experiment-condition fields are incomplete")
@@ -357,6 +367,12 @@ def _condition_values(value: object) -> dict[str, Any]:
         from ura.sampling import effective_sampling_policy  # noqa: PLC0415
 
         effective_sampling_policy(value["sampling_policy"])
+    if (
+        "judge_execution_schedule" in value
+        and value["judge_execution_schedule"]
+        not in {"inline", "post_factum_after_target_release"}
+    ):
+        raise ValueError("experiment condition judge execution schedule is invalid")
     if value["execution_purpose"] not in {
         "diagnostic_dry_run",
         "preflight_only",

@@ -581,6 +581,22 @@ def test_condition_projection_accepts_multi_arm_recovery_with_retry() -> None:
         _condition_values(condition["values"])
 
 
+def test_condition_projection_accepts_only_known_judge_execution_schedules() -> None:
+    condition, _bindings = _conditions(dry_run=False)
+    condition["values"]["judge_execution_schedule"] = (
+        "post_factum_after_target_release"
+    )
+
+    values = _condition_values(condition["values"])
+
+    assert values["judge_execution_schedule"] == (
+        "post_factum_after_target_release"
+    )
+    condition["values"]["judge_execution_schedule"] = "concurrent"
+    with pytest.raises(ValueError, match="judge execution schedule"):
+        _condition_values(condition["values"])
+
+
 def test_condition_projection_accepts_noncontiguous_completed_selection() -> None:
     condition, _bindings = _conditions(dry_run=False)
     completed = ["row-1", "row-3"]
