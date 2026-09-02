@@ -11782,6 +11782,7 @@ def semantic_revalidate(inputs: Mapping[str, Any]) -> dict[str, Any]:
         "current_ollama_population_alignment": support[
             "current_ollama_population_alignment"
         ],
+        "failed_output_recovery": support["failed_output_recovery"],
         "vllm_stability": support["vllm_stability"],
         "gate5": gate5,
         "core": core,
@@ -18504,6 +18505,9 @@ def self_test() -> int:
                     ],
                     "current_ollama_population_alignment": phase7_input[
                         "current_ollama_population_alignment"
+                    ],
+                    "failed_output_recovery": phase7_input[
+                        "failed_output_recovery"
                     ],
                     "vllm_stability": phase7_input["vllm_stability"],
                 }
