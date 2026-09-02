@@ -95,6 +95,19 @@ def test_truncation_selection_reruns_only_unfinished_failed_and_length_rows() ->
     assert summary["never_attempted_records"] == 1
 
 
+def test_length_inventory_accepts_runner_synthesized_failed_output() -> None:
+    response = Response(
+        attempt_id="attempt-failed",
+        target="ollama:fixture",
+        output_turns=[],
+        raw={"output_status": "failed_output"},
+    )
+
+    assert not length_ended_datapoint_ids(
+        attempts={"attempt-failed": "row-failed"}, responses=[response]
+    )
+
+
 def test_runtime_binding_strip_preserves_selection_and_retry_policy() -> None:
     argv = [
         "--local",

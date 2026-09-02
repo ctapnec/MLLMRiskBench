@@ -124,6 +124,12 @@ def length_ended_datapoint_ids(
             is_length = raw.get("finish_reason") == "length"
         elif backend == "ollama":
             is_length = raw.get("done_reason") == "length"
+        elif (
+            backend is None
+            and raw.get("finish_reason") is None
+            and raw.get("done_reason") is None
+        ):
+            is_length = False
         else:
             raise ValueError("truncation inventory contains a non-local backend")
         if is_length:
