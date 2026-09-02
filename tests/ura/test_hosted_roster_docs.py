@@ -484,6 +484,14 @@ def test_local_example_same_base_pair_shares_memory_utilization() -> None:
     assert base["max_tokens"] == guarded["max_tokens"]
 
 
+def test_local_example_qwen_context_covers_the_campaign_prompt_population() -> None:
+    registry = _json(_ROOT / "experiments" / "rig" / "local-targets.example.json")
+    qwen = registry["vllm:Qwen/Qwen3-VL-8B-Instruct"]
+
+    assert qwen["max_model_len"] == 24576
+    assert qwen["max_model_len"] >= 16705 + qwen["max_tokens"]
+
+
 def test_advertised_names_are_canonical_across_maintained_docs_and_registries() -> None:
     maintained = (
         _ROOT / "README.md",

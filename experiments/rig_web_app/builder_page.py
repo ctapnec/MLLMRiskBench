@@ -2527,7 +2527,10 @@ class BuilderPageMixin:
                 kind="number",
             )
             + "</div></div>"
-            "<div class='card'><h2>" + _icon("disk") + "Local serving (vLLM)</h2><div class='cols'>"
+            "<div class='card'><h2>" + _icon("disk") + "Local serving (vLLM)</h2>"
+            "<p class='muted'>A model without an explicit context cap uses its native "
+            "context. Curated caps are visible in the model picker and remain part of "
+            "the bound execution condition.</p><div class='cols'>"
             "<div class='fieldcell'><label class='fieldlabel'>--dtype</label>"
             f"<select name='dtype'>{dtype_opts}</select>"
             + err("dtype")

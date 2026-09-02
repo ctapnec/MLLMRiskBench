@@ -225,19 +225,20 @@ VRAM-fit failures, and both stopped before target inference.
 The optional vLLM-only `max_model_len` field is an engine-context and KV-cache
 admission cap, not the response-generation `max_tokens` bound. Omission leaves
 the checkpoint's native context unchanged; an explicit integer in 1..1,000,000
-is passed to vLLM at engine construction, and `max_tokens` may not exceed it.
+is passed to vLLM at engine construction. An omitted `max_tokens` uses the
+4,096-token local default, and an explicit value may not exceed `max_model_len`.
 Rig Web preserves the field in its selected local config, and the normalized
 value enters grid/run provenance. Each Build row labels either the explicit
 context cap or native model context.
 
 Ollama uses its native request fields instead: optional `num_ctx` and
 `num_predict` integers in the selected local config. Runner and Build default
-them to 8,192 context tokens and 512 generated tokens, pass both in every
+them to 32,768 context tokens and 4,096 generated tokens, pass both in every
 `/api/chat` request, and retain them in config, grid, condition, and response
-provenance. This avoids allocating a model's full advertised long context for
-short benchmark prompts while keeping a different bounded value available as a
-separately reviewed execution condition. Reaching `num_predict` remains a valid
-length-capped response and the observed text is still evaluated.
+provenance. This high local default leaves room for corpus/framework material
+and a full response without pretending that every advertised 131K or 262K
+window fits beside the evaluator on the available GPUs. Reaching `num_predict`
+remains a valid length-capped response and the observed text is still evaluated.
 Recovery reuses prior Ollama projections, attestations and canaries only when
 every exact per-model config is unchanged. A context/output-cap change retains
 the older artifacts as diagnostics and creates a fresh projected cohort.

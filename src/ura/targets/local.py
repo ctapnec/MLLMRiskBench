@@ -65,8 +65,13 @@ _OLLAMA_TAG = re.compile(
 )
 MAX_VLLM_MODEL_LEN = 1_000_000
 MAX_VLLM_GENERATION_TOKENS = 25_000
-DEFAULT_OLLAMA_NUM_CTX = 8_192
-DEFAULT_OLLAMA_NUM_PREDICT = 512
+DEFAULT_VLLM_GENERATION_TOKENS = 4_096
+# A local benchmark prompt may include corpus/framework material well beyond the
+# short interactive-chat default.  Keep enough room for that material plus the
+# same 4K response allowance used by the maintained vLLM roster.  Exact
+# campaigns can and do bind smaller historical conditions explicitly.
+DEFAULT_OLLAMA_NUM_CTX = 32_768
+DEFAULT_OLLAMA_NUM_PREDICT = 4_096
 MAX_OLLAMA_NUM_CTX = 1_000_000
 MAX_OLLAMA_NUM_PREDICT = 25_000
 VLLM_IN_PROCESS_EXECUTION_MODE = "in_process"
@@ -475,7 +480,7 @@ class VLLMTarget(BaseTarget):
         model_digest: Optional[str] = None,
         tensor_parallel_size: int = 2,
         quantization: Optional[str] = None,
-        max_tokens: int = 512,
+        max_tokens: int = DEFAULT_VLLM_GENERATION_TOKENS,
         max_model_len: Optional[int] = None,
         temperature: float = 0.0,
         dtype: str = "auto",
@@ -1794,6 +1799,7 @@ REGISTRY.register(
 __all__ = [
     "DEFAULT_OLLAMA_NUM_CTX",
     "DEFAULT_OLLAMA_NUM_PREDICT",
+    "DEFAULT_VLLM_GENERATION_TOKENS",
     "MAX_OLLAMA_NUM_CTX",
     "MAX_OLLAMA_NUM_PREDICT",
     "MAX_VLLM_GENERATION_TOKENS",

@@ -23,6 +23,7 @@ from ura.targets.base import TargetInputError
 from ura.targets.local import (
     DEFAULT_OLLAMA_NUM_CTX,
     DEFAULT_OLLAMA_NUM_PREDICT,
+    DEFAULT_VLLM_GENERATION_TOKENS,
     MAX_VLLM_MODEL_LEN,
     LocalTargetAnswerError,
     OllamaTarget,
@@ -36,6 +37,25 @@ REVISION = "6" * 40
 
 def test_current_runner_version_includes_local_context_contract() -> None:
     assert CODE_VERSION == "ura-runner/2.27"
+    assert DEFAULT_VLLM_GENERATION_TOKENS == 4_096
+
+
+def test_vllm_omitted_generation_cap_uses_high_local_default(
+    tmp_path: Path,
+) -> None:
+    config = _config(include_context_cap=False)
+    config.pop("max_tokens")
+    path = _write_config(tmp_path, config)
+
+    loaded, _artifact = run_matrix._load_local_config(str(path), [SPEC])
+    assert loaded[SPEC]["max_tokens"] == 4_096
+    target = run_matrix.build_target(SPEC, local_identity=loaded[SPEC])
+    assert target.max_tokens == 4_096
+    direct_identity = dict(loaded[SPEC])
+    direct_identity.pop("max_tokens")
+    direct_target = run_matrix.build_target(SPEC, local_identity=direct_identity)
+    assert direct_target.max_tokens == 4_096
+    assert VLLMTarget("fixture", revision=REVISION).max_tokens == 4_096
 
 
 def _rig_hardware() -> dict[str, object]:

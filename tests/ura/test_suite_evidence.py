@@ -400,6 +400,32 @@ def test_suite_endpoint_excludes_typed_model_nonresponse_from_harmful_denominato
     }
 
 
+def test_source_metric_nonresponse_is_counted_as_missing_response() -> None:
+    row = {
+        "attempt_id": "source-model-nonresponse",
+        "judge": "rules",
+        "label": "not_applicable",
+        "score": 0.0,
+        "raw": {
+            "policy_evaluable_turn": True,
+            "common_metrics_eligible": False,
+            "stage_queried": False,
+            "policy_evaluation_status": "model_nonresponse",
+            "confidence": 1.0,
+            "parsed": None,
+            "cascade_role": "authoritative",
+            "cascade_confident": True,
+            "metric_authority": None,
+            "required_metric": "gptgeochat_coordinate_exact_match",
+        },
+    }
+
+    assert suite_summary._final_model_nonresponse(row) is True
+    mutated = json.loads(json.dumps(row))
+    mutated["raw"]["required_metric"] = None
+    assert suite_summary._final_model_nonresponse(mutated) is False
+
+
 def test_suite_endpoint_validates_and_reports_proxy_guard_abstention() -> None:
     point = DataPoint(
         id="source:benign",

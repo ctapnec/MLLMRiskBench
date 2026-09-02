@@ -786,8 +786,16 @@ units are restarted. After it terminalizes,
 `experiments.local_campaign.vllm_input_recovery_phase6` validates that exact
 prefix and schedules only the 1,645 never-completed GPTGeoChat rows under Runner
 2.26 with the unchanged model/configuration. Later context-limit rejections are
-retained as input-compatibility missing responses. The Runner 2.25 prefix and
-Runner 2.26 suffix remain separate, non-poolable strata.
+retained as input-compatibility missing responses. A structure-only audit of
+that suffix identified exactly 230 such rows: their rendered prompts contained
+12,290 to 16,705 tokens against the 12,288-token admission. Before Gate 6,
+`experiments.local_campaign.vllm_context_recovery_phase6` must bind those exact
+typed outcomes and run only those rows under a separately projected
+24,576-token condition. The completion allowance remains 4,096 tokens and the
+campaign-wide local answer-retry count remains one. The Runner 2.25 prefix,
+Runner 2.26 suffix and larger-context recovery remain separate, non-poolable
+execution-condition strata; their disjoint selected IDs may be joined only for
+population coverage.
 
 The continuation controller binds its named tmux session to the existing Jobs
 lifecycle and publishes terminal target-attempt and successful-generation
@@ -951,7 +959,11 @@ rows: the 2,772 failed outputs plus the 1,021 never-attempted DeepSeek rows. It
 also schedules the 20 genuine LLaVA failed outputs, for 3,813 measured recovery
 rows in six fresh Runner 2.27 units. It excludes every usable first response,
 every response recovered after retry, and all 230 deterministic Qwen3-VL input
-incompatibilities. Old rows stay immutable lifecycle evidence. Only the old
+incompatibilities because they require a different context condition rather
+than an answer retry. The dedicated vLLM context-recovery controller verifies
+and selects that exact 230-row set, derives a fresh route attestation, canary
+and no-call projection, then runs it with `max_model_len=24576`. Old rows stay
+immutable lifecycle evidence. Only the old
 successful rows and their fresh recovery rows form the eventual complete
 selected population, and their Runner/output-policy/revision strata remain
 separate until an explicitly justified sensitivity view combines estimates.
@@ -977,9 +989,24 @@ The alignment continuation is a dependent Phase 6 step, not another replay of
 the seven failed base units. It requires the terminal failed-output recovery and
 then runs only the six never-started R-Judge/GPTGeoChat units, for 2,350 rows.
 Its explicit Ollama configuration binds `think=false` for Gemma and Ministral
-and `think=low` for GPT-OSS; no local-only classification unit may gain a Hub
+and `think=low` for GPT-OSS. Because none of those six population rows has run,
+their fresh condition uses `num_ctx=32768` and `num_predict=4096`, with a fresh
+attestation, one-cluster canary, no-call projection and acquisition before the
+measured run. This is the maximum common high-context candidate admitted for
+live hardware verification on the two-card rig, not a claim that the models'
+advertised 131K or 262K windows fit beside the evaluator. A failed allocation
+stops that model's unit before population calls and is replaced by its highest
+passing bound. No local-only classification unit may gain a Hub
 acquisition plan. Reintroducing DeepSeek into this selection or changing the
 2,350-row count is a contract failure.
+
+The general local serving default is provider-independent at the response
+boundary: an omitted vLLM `max_tokens` and an omitted Ollama `num_predict` both
+resolve to 4,096. vLLM uses each checkpoint's native context unless an explicit
+hardware-fit `max_model_len` is bound; Ollama uses the 32,768-token high-context
+candidate because its request API otherwise falls back to a short interactive
+allocation. Every resolved value is visible in Build and retained in the run
+condition.
 
 Interactive shutdown owns SIGINT as well as SIGTERM. Runner records the signal,
 finishes model and framework teardown, restores both prior handlers and then

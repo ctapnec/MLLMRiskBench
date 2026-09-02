@@ -28,6 +28,8 @@ from experiments.local_campaign.current_ollama import (
     CURRENT_OLLAMA_TEXT_ONLY_MODELS,
     CURRENT_OLLAMA_TYPED_TERMINAL_LANES,
     CurrentOllamaModel,
+    PROSPECTIVE_OLLAMA_NUM_CTX,
+    PROSPECTIVE_OLLAMA_NUM_PREDICT,
     gptgeochat_lane,
     image_lane,
     rjudge_lane,
@@ -89,6 +91,8 @@ def test_current_ollama_roster_is_exact_recent_thesis_cohort() -> None:
     _assert_exact_current_roster(CURRENT_OLLAMA_MODELS)
     assert CURRENT_OLLAMA_NUM_CTX == 8192
     assert CURRENT_OLLAMA_NUM_PREDICT == 512
+    assert PROSPECTIVE_OLLAMA_NUM_CTX == 32768
+    assert PROSPECTIVE_OLLAMA_NUM_PREDICT == 4096
 
 
 def test_current_ollama_gate5_binds_bounded_context_and_output_caps(

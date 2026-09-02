@@ -512,6 +512,21 @@ selector, and runs only the 1,645 never-completed GPTGeoChat rows under Runner
 context-limit rejection is a typed input-compatibility missing response; the
 375-row Runner 2.25 prefix and Runner 2.26 suffix are never pooled.
 
+The retained suffix contains exactly 230 typed context-limit outcomes with
+rendered prompt lengths from 12,290 through 16,705 tokens. Do not count them as
+successful generations and do not replay the other 1,790 selected rows. Run
+`python -m experiments.local_campaign.vllm_context_recovery_phase6` with the
+exact input-recovery completion and SHA-256, current project-revision receipt,
+fresh control root, scope, work root, project root and project virtual-
+environment interpreter. The controller verifies every retained outcome as
+`LocalTargetInputError/context_limit_exceeded`, creates a content-bound
+completed-ID selector that leaves only those 230 IDs, and changes only Qwen's
+`max_model_len` from 12,288 to 24,576. Its 4,096-token completion allowance and
+one local answer retry are unchanged. It derives a fresh attestation, canary,
+projection and acquisition binding before measured calls. Treat the result as
+a separate context-condition stratum; join disjoint IDs for population
+coverage, never pool the old and new condition rates silently.
+
 An exact old-Runner current-Ollama recovery can be terminal yet make no progress
 when its retained result root has an open circuit. Do not repeat that argv loop
 or clear the historical circuit in place. Run
@@ -604,7 +619,8 @@ Give this continuation completion to Phase 7. Population coverage may be joined,
 but rates remain separated by Runner, revision and output-policy stratum.
 
 Phase 7 requires that current-Ollama stability completion, the exact terminal
-seven-unit vLLM stability completion, and its one-unit GPTGeoChat input recovery.
+seven-unit vLLM stability completion, its one-unit GPTGeoChat input recovery,
+and the exact 230-row GPTGeoChat larger-context recovery.
 It also requires the terminal six failed-output recovery units through
 `--phase6-failed-output-recovery-completion`.
 Its current-Ollama population-alignment input is the six-unit continuation
@@ -612,8 +628,9 @@ completion above, not the interrupted seven-unit recovery root. Eleven logical
 alignment conditions have one terminal metric root. DeepSeek is complete across
 two disjoint Runner strata and is retained for population/model-stability
 accounting without a pooled security rate.
-The six completed Runner 2.25 units and one Runner 2.26 missing-only suffix are
-separate metric strata; the failed 375-row prefix remains lifecycle evidence.
+The six completed Runner 2.25 units, one Runner 2.26 suffix and its disjoint
+larger-context recovery are separate metric strata; the failed 375-row prefix
+remains lifecycle evidence.
 Pass the terminal controller through `--phase6-vllm-stability-completion` and
 the create-only suffix completion through
 `--phase6-vllm-input-recovery-completion`; the validator requires the latter to
@@ -1823,7 +1840,7 @@ by `/api/tags` and a unique explicit modality list containing `text` and
 optionally `image`. vLLM-only revision, quantization, tensor parallelism, memory
 utilization, parameter count, `max_tokens`, `max_model_len`, and unknown-fit
 fields are forbidden. Ollama instead binds `num_ctx` and `num_predict`, which
-default to 8,192 and 512, respectively, in the selected config. The pulled
+default to 32,768 and 4,096, respectively, in a newly selected config. The pulled
 artifact fixes precision. Runner
 uses the daemon HTTP API through the Python standard library, so no Ollama
 Python SDK is required; the daemon and matching pulled tag must exist before a
@@ -1867,7 +1884,8 @@ provenance.
 `max_model_len` is an optional vLLM-only per-model field for engine context and
 KV-cache admission. It is separate from `max_tokens`, which remains the maximum
 generated response length. Omit `max_model_len` to let the pinned checkpoint
-declare its native context. If present, it must be a non-boolean integer in
+declare its native context. An omitted `max_tokens` uses the 4,096-token local
+default. If `max_model_len` is present, it must be a non-boolean integer in
 1..1,000,000 and `max_tokens` must not exceed it; null, strings, floats, and
 out-of-range values fail before engine construction. Rig Web preserves the
 field when materializing the selected local config. The normalized value enters
@@ -1878,7 +1896,7 @@ or `native model context`.
 
 For Ollama, `num_ctx` is the request context/KV allocation and `num_predict` is
 the generated-token cap. Both must be non-boolean positive integers; the global
-upper bounds are 1,000,000 and 25,000. Rig Web defaults them to 8,192 and 512,
+upper bounds are 1,000,000 and 25,000. Rig Web defaults them to 32,768 and 4,096,
 shows both on each installed-model row, and preserves configured overrides in
 the selected-config hash. Runner passes them to `/api/chat` and records them in
 the effective condition and response provenance. A changed value therefore

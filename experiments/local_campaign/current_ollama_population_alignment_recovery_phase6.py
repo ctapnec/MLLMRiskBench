@@ -30,8 +30,8 @@ from experiments.local_campaign.current_ollama_gate5 import (
 )
 from experiments.local_campaign.current_ollama import (
     CURRENT_OLLAMA_BY_SPEC,
-    CURRENT_OLLAMA_NUM_CTX,
-    CURRENT_OLLAMA_NUM_PREDICT,
+    PROSPECTIVE_OLLAMA_NUM_CTX,
+    PROSPECTIVE_OLLAMA_NUM_PREDICT,
 )
 from experiments.local_campaign.current_ollama_population_alignment_phase6 import (
     ALIGNMENT_LANES,
@@ -240,8 +240,8 @@ def _configured_unit(item: Any, *, control_root: Path) -> Any:
                 model.spec: {
                     "digest": model.digest,
                     "modalities": list(model.modalities),
-                    "num_ctx": CURRENT_OLLAMA_NUM_CTX,
-                    "num_predict": CURRENT_OLLAMA_NUM_PREDICT,
+                    "num_ctx": PROSPECTIVE_OLLAMA_NUM_CTX,
+                    "num_predict": PROSPECTIVE_OLLAMA_NUM_PREDICT,
                     "think": model.think,
                 }
             },
@@ -650,8 +650,8 @@ def validate_recovery_completion(
                 model.spec: {
                     "digest": model.digest,
                     "modalities": list(model.modalities),
-                    "num_ctx": CURRENT_OLLAMA_NUM_CTX,
-                    "num_predict": CURRENT_OLLAMA_NUM_PREDICT,
+                    "num_ctx": PROSPECTIVE_OLLAMA_NUM_CTX,
+                    "num_predict": PROSPECTIVE_OLLAMA_NUM_PREDICT,
                     "think": model.think,
                 }
             }

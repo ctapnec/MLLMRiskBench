@@ -10,14 +10,16 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Mapping
 
-from ura.targets.local import (
-    DEFAULT_OLLAMA_NUM_CTX,
-    DEFAULT_OLLAMA_NUM_PREDICT,
-)
+# These constants describe the already-retained Gate 5 and initial Phase 6
+# condition.  They intentionally do not follow later product defaults.
+CURRENT_OLLAMA_NUM_CTX = 8_192
+CURRENT_OLLAMA_NUM_PREDICT = 512
 
-
-CURRENT_OLLAMA_NUM_CTX = DEFAULT_OLLAMA_NUM_CTX
-CURRENT_OLLAMA_NUM_PREDICT = DEFAULT_OLLAMA_NUM_PREDICT
+# Never-started continuation units use the higher post-confound condition.  A
+# changed context/output profile receives fresh attestation, canary, projection,
+# acquisition, and measured artifacts before it can contribute evidence.
+PROSPECTIVE_OLLAMA_NUM_CTX = 32_768
+PROSPECTIVE_OLLAMA_NUM_PREDICT = 4_096
 
 
 @dataclass(frozen=True)

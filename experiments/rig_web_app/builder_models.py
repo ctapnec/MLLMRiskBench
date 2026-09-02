@@ -296,10 +296,15 @@ class BuilderModelsMixin:
     def _local_max_tokens(spec: str, entry: Mapping[str, object]) -> int:
         """Validate the vLLM generation cap with the shared CLI contract."""
 
-        from ura.targets.local import validate_vllm_max_tokens  # noqa: PLC0415
+        from ura.targets.local import (  # noqa: PLC0415
+            DEFAULT_VLLM_GENERATION_TOKENS,
+            validate_vllm_max_tokens,
+        )
 
         try:
-            return validate_vllm_max_tokens(entry.get("max_tokens", 512))
+            return validate_vllm_max_tokens(
+                entry.get("max_tokens", DEFAULT_VLLM_GENERATION_TOKENS)
+            )
         except ValueError as exc:
             raise ValueError(f"local target {spec!r} {exc}") from exc
 

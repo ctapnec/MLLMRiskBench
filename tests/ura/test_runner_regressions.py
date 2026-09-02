@@ -6995,6 +6995,14 @@ def test_empty_source_metric_response_is_retained_as_model_stability_failure(
     assert final.raw["model_stability_status"] == "failed_output"
     assert final.raw["model_stability_category"] == "empty_output"
     assert final.raw["source_evaluation"] is None
+    assert run_matrix._completed_scored_population_is_admissible(
+        runner.attempts, runner.responses, runner.judgments, []
+    )
+    malformed = final.model_copy(deep=True)
+    malformed.raw["required_metric"] = None
+    assert not run_matrix._completed_scored_population_is_admissible(
+        runner.attempts, runner.responses, [malformed], []
+    )
     trail_path = tmp_path / "empty-source-prediction.trails.jsonl"
     runner.save_trails(trail_path)
     rows = [

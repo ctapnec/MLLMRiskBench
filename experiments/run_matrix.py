@@ -1790,16 +1790,18 @@ def _load_local_config(
                     f"vLLM config {display_spec!r} gpu_memory_utilization must be in [0.1, 0.95]"
                 )
             from ura.targets.local import (  # noqa: PLC0415
+                DEFAULT_VLLM_GENERATION_TOKENS,
                 validate_vllm_max_model_len,
                 validate_vllm_max_tokens,
             )
 
             try:
                 max_tokens = validate_vllm_max_tokens(
-                    config.get("max_tokens", 512)
+                    config.get("max_tokens", DEFAULT_VLLM_GENERATION_TOKENS)
                 )
             except ValueError as exc:
                 raise ValueError(f"vLLM config {display_spec!r} {exc}") from exc
+            config["max_tokens"] = max_tokens
             if "max_model_len" in config:
                 try:
                     max_model_len = validate_vllm_max_model_len(
@@ -2421,11 +2423,19 @@ def _completed_scored_population_is_admissible(
         raw = judgment.raw
         response = response_by_attempt[judgment.attempt_id]
         confidence = raw.get("confidence")
+        metric_binding = (
+            raw.get("common_metrics_eligible") is True
+            and raw.get("required_metric") is None
+        ) or (
+            raw.get("common_metrics_eligible") is False
+            and isinstance(raw.get("required_metric"), str)
+            and bool(raw["required_metric"].strip())
+        )
         if not (
             judgment.label == "not_applicable"
             and judgment.score == 0.0
             and raw.get("policy_evaluable_turn") is True
-            and raw.get("common_metrics_eligible") is True
+            and metric_binding
             and raw.get("stage_queried") is False
             and raw.get("policy_evaluation_status") == "model_nonresponse"
             and isinstance(confidence, (int, float))
@@ -2435,7 +2445,6 @@ def _completed_scored_population_is_admissible(
             and raw.get("cascade_role") == "authoritative"
             and raw.get("cascade_confident") is True
             and raw.get("metric_authority") is None
-            and raw.get("required_metric") is None
             and response.output_turns == []
             and response.raw.get("empty_completion_observed") is True
         ):
@@ -2915,7 +2924,10 @@ def build_target(
                 )
             modalities = tuple(local_identity["modalities"])
             if backend == "vllm":
-                from ura.targets.local import VLLMTarget
+                from ura.targets.local import (
+                    DEFAULT_VLLM_GENERATION_TOKENS,
+                    VLLMTarget,
+                )
                 kwargs: dict = {
                     "dtype": dtype,
                     "modality_support": modalities,
@@ -2925,7 +2937,9 @@ def build_target(
                     "gpu_memory_utilization": local_identity.get(
                         "gpu_memory_utilization", 0.90
                     ),
-                    "max_tokens": local_identity.get("max_tokens", 512),
+                    "max_tokens": local_identity.get(
+                        "max_tokens", DEFAULT_VLLM_GENERATION_TOKENS
+                    ),
                     "max_model_len": local_identity.get("max_model_len"),
                 }
                 resolved_quantization = str(

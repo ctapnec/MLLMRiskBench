@@ -237,12 +237,21 @@ def _final_guard_abstention(row: dict[str, Any]) -> bool:
 
 def _final_model_nonresponse(row: dict[str, Any]) -> bool:
     raw = row.get("raw")
+    if not isinstance(raw, dict):
+        return False
+    metric_binding = (
+        raw.get("common_metrics_eligible") is True
+        and raw.get("required_metric") is None
+    ) or (
+        raw.get("common_metrics_eligible") is False
+        and isinstance(raw.get("required_metric"), str)
+        and bool(raw["required_metric"].strip())
+    )
     return (
-        isinstance(raw, dict)
-        and row.get("label") == "not_applicable"
+        row.get("label") == "not_applicable"
         and row.get("score") == 0.0
         and raw.get("policy_evaluable_turn") is True
-        and raw.get("common_metrics_eligible") is True
+        and metric_binding
         and raw.get("stage_queried") is False
         and raw.get("policy_evaluation_status") == "model_nonresponse"
         and isinstance(raw.get("confidence"), (int, float))
@@ -252,7 +261,6 @@ def _final_model_nonresponse(row: dict[str, Any]) -> bool:
         and raw.get("cascade_role") == "authoritative"
         and raw.get("cascade_confident") is True
         and raw.get("metric_authority") is None
-        and raw.get("required_metric") is None
     )
 
 

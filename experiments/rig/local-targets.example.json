@@ -4,7 +4,7 @@
     "modalities": ["text", "image"],
     "tensor_parallel_size": 1,
     "gpu_memory_utilization": 0.90,
-    "max_model_len": 12288,
+    "max_model_len": 24576,
     "max_tokens": 4096
   },
   "vllm:llava-hf/llava-v1.6-mistral-7b-hf": {

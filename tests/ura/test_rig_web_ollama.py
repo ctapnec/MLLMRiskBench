@@ -1253,8 +1253,8 @@ def test_builder_uses_only_exact_live_rows_and_ignores_catalog_only_overlap(
     assert catalog["ollama:granite:latest"] == {
         "digest": "B" * 64,
         "modalities": ["text", "image"],
-        "num_ctx": 8192,
-        "num_predict": 512,
+        "num_ctx": 32768,
+        "num_predict": 4096,
         "think": False,
     }
     generated = builder._materialize_selected_local_config(
@@ -1264,8 +1264,8 @@ def test_builder_uses_only_exact_live_rows_and_ignores_catalog_only_overlap(
         "ollama:granite:latest": {
             "digest": "b" * 64,
             "modalities": ["text", "image"],
-            "num_ctx": 8192,
-            "num_predict": 512,
+            "num_ctx": 32768,
+            "num_predict": 4096,
             "think": False,
         }
     }
