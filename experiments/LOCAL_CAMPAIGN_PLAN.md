@@ -959,7 +959,10 @@ terminal partition, retains the five completed results byte-for-byte, reuses
 the exact 1,674-row selector, and runs only DeepSeek with `think=true`. Its
 combined `/2` completion keeps old and continuation project revisions in
 separate metric strata. This is correction of a pre-execution configuration
-error, not an extra response retry.
+error, not an extra response retry. Filtering to DeepSeek must preserve its
+physical position 05 from the original six-unit order; renumbering the filtered
+list from one changes the immutable selector identity and is rejected before a
+target call.
 
 The alignment continuation is a dependent Phase 6 step, not another replay of
 the seven failed base units. It requires the terminal failed-output recovery and

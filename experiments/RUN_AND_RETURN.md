@@ -573,7 +573,9 @@ completed rows. Run
 in a named tmux session with the exact prior completion and SHA-256 plus the
 same bound source inputs. It reuses the exact 1,674-row selector and runs only
 DeepSeek-R1 with `think=true`; its combined `/2` completion preserves the prior
-five results and separates project-revision strata. Use that combined
+five results and separates project-revision strata. Its filtered execution keeps
+DeepSeek's original physical unit 05; do not renumber the one-unit filtered list
+to 01. Use that combined
 completion as the failed-output recovery input below.
 
 After the combined `failed_output_recovery_phase6` completion is terminal, run

@@ -324,8 +324,9 @@ bound with `think=false`. Do not repeat those five units. Run
 `failed_output_recovery_continuation_phase6` with the exact terminal completion
 and digest; it validates the retained partition, reuses the exact 1,674-row
 selector, and runs only DeepSeek with `think=true`. Its combined `/2` completion
-is the authoritative Phase 7 and alignment-recovery input, with old and new
-project revisions kept as separate metric strata.
+preserves DeepSeek's original physical unit 05 rather than renumbering the
+filtered one-unit list. It is the authoritative Phase 7 and alignment-recovery
+input, with old and new project revisions kept as separate metric strata.
 
 Targeted Runner-output recovery is deliberately outside `launch_chain`. It is
 available only through the generated
