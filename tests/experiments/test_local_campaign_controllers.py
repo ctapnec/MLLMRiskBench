@@ -3436,6 +3436,10 @@ def test_phase7_seven_row_and_recovery_boundary_contracts(tmp_path: Path) -> Non
         "failed-output-recovery-completion.json",
         "--phase6-vllm-input-recovery-completion",
         "vllm-input-recovery-completion.json",
+        "--phase6-vllm-context-recovery-completion",
+        "vllm-context-recovery-completion.json",
+        "--phase6-local-hardware-fit-completion",
+        "local-hardware-fit-completion.json",
     ]
     parsed = phase7["build_parser"]().parse_args(prepare_argv)
     assert parsed.phase6_recovery_completion == []
@@ -6979,10 +6983,10 @@ def test_phase6_gate5_wait_uses_the_declared_controller_hard_stop() -> None:
             "phase7_after_phase6_sequence.sh",
             720,
             (
-                (
-                    "phase6_terminal_seen='no'\nwhile true; do",
-                    "controller_hard_stop_check await-phase6",
-                    False,
+                    (
+                        "local_hardware_fit_terminal_seen='no'\nwhile true; do",
+                        "controller_hard_stop_check await-phase6",
+                        False,
                 ),
                 (
                     'while tmux -L "$PHASE7_SOCKET" has-session -t '
@@ -7123,12 +7127,7 @@ def test_phase7_watcher_waits_through_phase6_pre_session_validation() -> None:
         _assert_source_contract(candidate, required)
 
     assert_wait_contract(source)
-    reverted = source.replace(
-        "phase6_terminal_seen='no'\nwhile true; do",
-        'while tmux -L "$PHASE6_SOCKET" has-session -t '
-        '"$PHASE6_SESSION" 2>/dev/null; do',
-        1,
-    )
+    reverted = source.replace("phase6_terminal_seen='no'\n", "", 1)
     with pytest.raises(AssertionError):
         assert_wait_contract(reverted)
 

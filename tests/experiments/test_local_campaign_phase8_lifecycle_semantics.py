@@ -1548,15 +1548,113 @@ def test_phase8_full_current_sampling_view_is_revision_and_source_stratified(
         "project_revision_receipt_sha256": revisions["followon"],
         "source_conformance_sha256": sources["followon"],
     }
+    extra_revision = "f" * 64
+    extra_source = "6" * 64
+
+    def cohort(
+        group: str,
+        terminal_states: dict[str, str],
+        metric_lanes: list[str],
+    ) -> dict[str, object]:
+        roots = {lane: lane_root(group, lane) for lane in metric_lanes}
+        for lane in metric_lanes:
+            actual_strata[lane] = (extra_revision, extra_source)
+        return {
+            "terminal_states": terminal_states,
+            "metric_lane_order": metric_lanes,
+            "metric_roots": roots,
+            "metric_evidence": {
+                lane: {"lane": lane} for lane in metric_lanes
+            },
+            "project_revision_receipt_sha256": extra_revision,
+            "source_conformance_sha256": extra_source,
+        }
+
+    current_ollama_order = [
+        *phase8.CURRENT_OLLAMA_RUNNABLE_LANES,
+        *phase8.CURRENT_OLLAMA_TYPED_TERMINAL_LANES,
+    ]
+    current_ollama_states = {
+        lane: "measured_complete" if index == 0 else "failed"
+        for index, lane in enumerate(current_ollama_order)
+    }
+    current_ollama = cohort(
+        "current-ollama", current_ollama_states, current_ollama_order[:1]
+    )
+    stability_order = [row[0] for row in phase8.CURRENT_OLLAMA_STABILITY_LAYOUT]
+    current_ollama_stability = cohort(
+        "current-ollama-stability",
+        {lane: "measured_complete" for lane in stability_order},
+        stability_order,
+    )
+    alignment_order = list(phase8.CURRENT_OLLAMA_ALIGNMENT_LANES)
+    alignment_metric = [
+        lane
+        for lane in alignment_order
+        if lane != phase8.CURRENT_OLLAMA_ALIGNMENT_SPLIT_LANE
+    ]
+    current_ollama_alignment = cohort(
+        "current-ollama-alignment",
+        {lane: "measured_complete" for lane in alignment_order},
+        alignment_metric,
+    )
+    failed_output_order = list(phase8.FAILED_OUTPUT_RECOVERY_UNIT_ORDER)
+    failed_output = cohort(
+        "failed-output",
+        {lane: "measured_complete" for lane in failed_output_order},
+        failed_output_order,
+    )
+    vllm_order = [row[0] for row in phase8.VLLM_STABILITY_UNIT_LAYOUT]
+    vllm_stability = cohort(
+        "vllm-stability",
+        {lane: "measured_complete" for lane in vllm_order},
+        vllm_order,
+    )
+    vllm_context_order = [phase8.VLLM_CONTEXT_RECOVERY_UNIT]
+    vllm_context = cohort(
+        "vllm-context",
+        {vllm_context_order[0]: "measured_complete"},
+        vllm_context_order,
+    )
+    hardware_order = ["local-hardware-fit-fixture"]
+    local_hardware_fit = cohort(
+        "local-hardware-fit",
+        {hardware_order[0]: "measured_complete"},
+        hardware_order,
+    )
+    local_hardware_fit["unit_order"] = hardware_order
+    extra_inputs = {
+        "current_ollama": current_ollama,
+        "current_ollama_stability": current_ollama_stability,
+        "current_ollama_population_alignment": current_ollama_alignment,
+        "failed_output_recovery": failed_output,
+        "vllm_stability": vllm_stability,
+        "vllm_context_recovery": vllm_context,
+        "local_hardware_fit_recovery": local_hardware_fit,
+    }
+    extra_metric_lanes = [
+        *current_ollama_order[:1],
+        *stability_order,
+        *alignment_metric,
+        *failed_output_order,
+        *vllm_order,
+        *vllm_context_order,
+        *hardware_order,
+    ]
     contract = phase8.phase7_sampling_lane_contract(
         runner_root=runner_root,
         runner=runner,
         recoveries=recoveries,
         seven=seven,
         followon=followon,
+        **extra_inputs,
     )
     assert contract["lane_order"] == [
-        original_lane, recovered_lane, *seven_metric, *followon_metric
+        original_lane,
+        recovered_lane,
+        *seven_metric,
+        *followon_metric,
+        *extra_metric_lanes,
     ]
     assert set(contract["lane_order"]).isdisjoint(
         {phase8.SEVEN_AMENDMENT_LANES[2], *phase8.FOLLOWON_LANES[1:]}
@@ -1566,12 +1664,14 @@ def test_phase8_full_current_sampling_view_is_revision_and_source_stratified(
         revisions["recovery"]: [recovered_lane],
         revisions["seven"]: seven_metric,
         revisions["followon"]: followon_metric,
+        extra_revision: extra_metric_lanes,
     }
     assert contract["source_conformance_strata"] == {
         sources["canonical"]: [original_lane],
         sources["recovery"]: [recovered_lane],
         sources["seven"]: seven_metric,
         sources["followon"]: followon_metric,
+        extra_source: extra_metric_lanes,
     }
     assert calls[0] == (original_lane, None, None)
     assert calls[1] == (
@@ -1611,7 +1711,7 @@ def test_phase8_full_current_sampling_view_is_revision_and_source_stratified(
     inventory.sort(key=lambda row: str(row["relative_path"]))
     core_view_receipt = {"schema": "fixture-core-view"}
     receipt = {
-        "schema": "ura-phase7-human-audit-sampling-view/2",
+        "schema": "ura-phase7-human-audit-sampling-view/9",
         "status": "complete",
         "core_view_receipt": core_view_receipt,
         "source_runner_root": str(runner_root.resolve()),
@@ -1621,6 +1721,40 @@ def test_phase8_full_current_sampling_view_is_revision_and_source_stratified(
         "amendment_result_roots": contract["seven_roots"],
         "included_followon_lanes": contract["followon_lanes"],
         "followon_result_roots": contract["followon_roots"],
+        "included_current_ollama_lanes": contract["current_ollama_lanes"],
+        "current_ollama_result_roots": contract["current_ollama_roots"],
+        "included_current_ollama_stability_lanes": contract[
+            "current_ollama_stability_lanes"
+        ],
+        "current_ollama_stability_result_roots": contract[
+            "current_ollama_stability_roots"
+        ],
+        "included_current_ollama_alignment_lanes": contract[
+            "current_ollama_alignment_lanes"
+        ],
+        "current_ollama_alignment_result_roots": contract[
+            "current_ollama_alignment_roots"
+        ],
+        "included_failed_output_recovery_lanes": contract[
+            "failed_output_recovery_lanes"
+        ],
+        "failed_output_recovery_result_roots": contract[
+            "failed_output_recovery_roots"
+        ],
+        "included_vllm_stability_lanes": contract["vllm_stability_lanes"],
+        "vllm_stability_result_roots": contract["vllm_stability_roots"],
+        "included_vllm_context_recovery_lanes": contract[
+            "vllm_context_recovery_lanes"
+        ],
+        "vllm_context_recovery_result_roots": contract[
+            "vllm_context_recovery_roots"
+        ],
+        "included_local_hardware_fit_lanes": contract[
+            "local_hardware_fit_lanes"
+        ],
+        "local_hardware_fit_result_roots": contract[
+            "local_hardware_fit_roots"
+        ],
         "regular_files_copied": len(inventory),
         "logical_bytes": logical_bytes,
         "source_files_modified": False,
@@ -1637,13 +1771,14 @@ def test_phase8_full_current_sampling_view_is_revision_and_source_stratified(
         recoveries=recoveries,
         seven=seven,
         followon=followon,
+        **extra_inputs,
     )
     assert observed_root == view_root.resolve()
     assert observed_contract == contract
     assert not any("failed-and-partial" in row["relative_path"] for row in inventory)
 
     stale_schema = copy.deepcopy(receipt)
-    stale_schema["schema"] = "ura-phase7-human-audit-sampling-view/1"
+    stale_schema["schema"] = "ura-phase7-human-audit-sampling-view/8"
     with pytest.raises(phase8.Phase8Error, match="sampling view contract"):
         phase8.validate_phase7_human_sampling_view(
             stale_schema,
@@ -1654,6 +1789,7 @@ def test_phase8_full_current_sampling_view_is_revision_and_source_stratified(
             recoveries=recoveries,
             seven=seven,
             followon=followon,
+            **extra_inputs,
         )
 
     stale_seven = copy.deepcopy(seven)
@@ -1661,26 +1797,26 @@ def test_phase8_full_current_sampling_view_is_revision_and_source_stratified(
     with pytest.raises(phase8.Phase8Error, match="sampling partition changed"):
         phase8.phase7_sampling_lane_contract(
             runner_root=runner_root, runner=runner, recoveries=recoveries,
-            seven=stale_seven, followon=followon,
+            seven=stale_seven, followon=followon, **extra_inputs,
         )
     wrong_revision = copy.deepcopy(seven)
     wrong_revision["project_revision_receipt_sha256"] = "e" * 64
     with pytest.raises(phase8.Phase8Error, match="project-revision stratum changed"):
         phase8.phase7_sampling_lane_contract(
             runner_root=runner_root, runner=runner, recoveries=recoveries,
-            seven=wrong_revision, followon=followon,
+            seven=wrong_revision, followon=followon, **extra_inputs,
         )
     wrong_source = copy.deepcopy(followon)
     wrong_source["source_conformance_sha256"] = "5" * 64
     with pytest.raises(phase8.Phase8Error, match="source-conformance stratum changed"):
         phase8.phase7_sampling_lane_contract(
             runner_root=runner_root, runner=runner, recoveries=recoveries,
-            seven=seven, followon=wrong_source,
+            seven=seven, followon=wrong_source, **extra_inputs,
         )
     failed_recovery = copy.deepcopy(recoveries)
     failed_recovery["latest"][recovered_lane]["state"] = "failed"
     without_recovery = phase8.phase7_sampling_lane_contract(
         runner_root=runner_root, runner=runner, recoveries=failed_recovery,
-        seven=seven, followon=followon,
+        seven=seven, followon=followon, **extra_inputs,
     )
     assert recovered_lane not in without_recovery["lane_order"]
