@@ -1913,6 +1913,13 @@ the effective condition and response provenance. A changed value therefore
 requires a new plan, projection, attestation, and canary; it never silently
 rewrites an existing cohort.
 
+Before final Phase 7 analysis, derive the exact current-roster truncation set
+with `python -m experiments.local_campaign.local_truncation_recovery_phase6`,
+passing each retained unit state through repeated `--state` arguments and using
+a fresh `--out` file. The inventory is structure-only: it records descriptors,
+IDs, counts, corrected configs and completed-ID selectors without retaining
+prompt, response or thinking text. Review it before any corrective execution.
+
 Runner 2.26 local adapters construct each vLLM/Ollama `Response` with the same
 deterministic dialog-fingerprint placeholder used by hosted adapters: the first
 16 lowercase SHA-256 hex characters over ordered rendered roles, content, and

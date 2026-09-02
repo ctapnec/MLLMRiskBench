@@ -1126,6 +1126,8 @@ class BuilderPageMixin:
                 " / maximum available output"
                 if generation_limit == -1
                 else f" / output cap {generation_limit:,} tokens"
+                if isinstance(generation_limit, int)
+                else " / invalid output policy"
             )
             detail = (
                 "<span class='fieldhint'>local Ollama daemon - "
