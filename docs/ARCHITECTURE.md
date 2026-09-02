@@ -384,14 +384,15 @@ The later output-policy and paid-spend stop changes advance executable code to
 Runner 2.27 without changing unified schema 1.5 or the byte contracts of retained
 Runner 2.19 through 2.26 artifacts.
 
-Runner 2.28 adds hardware-fit context admission without changing unified schema
+Runner 2.29 adds hardware-fit context admission without changing unified schema
 1.5. vLLM uses its `-1` auto-fit mode. Ollama begins at the pinned model-native
 ceiling and halves that value with load-only probes until `/api/ps` proves the
 entire loaded runtime is GPU-resident. Only the accepted value reaches a real
 prompt; the requested policy, probes, and resolved allocation are retained.
 
-Runner 2.28 also separates GPU phases for response-independent local measured
-and diagnostic-canary cells. It completes the target-response checkpoint first,
+Runner 2.29 also separates GPU phases for response-independent local
+attestation, diagnostic-canary, and measured cells. It completes the
+target-response checkpoint first,
 closes the target, then loads the model-backed scoring cascade and adjudicates
 those durable responses. The grid and run condition bind
 `judge_execution_schedule=post_factum_after_target_release`. This is same-run

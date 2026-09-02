@@ -5,7 +5,7 @@ validity rules, then execute [RUN_AND_RETURN.md](RUN_AND_RETURN.md). A dry run,
 partial artifact family, source conversion, model-name assumption, native prompt
 export, or synthetic figure is not a measured thesis result.
 
-The maintained execution contract is Runner `ura-runner/2.28` with unified
+The maintained execution contract is Runner `ura-runner/2.29` with unified
 schema `1.5`. Runner 2.19/schema 1.4 artifacts remain runtime-free legacy
 compatibility only and are not mixed into the current measured cohort.
 Ignored local/rig engineering logs are operational diagnostics, not committed
@@ -90,10 +90,10 @@ product:
    and admits the largest tested context reported by `/api/ps` as fully
    GPU-resident. The Runner uses the daemon HTTP API directly;
    no Ollama Python SDK is required.
-   Response-independent local measured and diagnostic-canary cells collect and
-   durably checkpoint target responses first, release the target, and only then
-   load their model-backed scoring judge. Crescendo remains inline because its
-   judgment controls the next turn. Defense guardrails remain in the target
+   Response-independent local attestation, diagnostic-canary, and measured cells
+   collect and durably checkpoint target responses first, release the target,
+   and only then load their model-backed scoring judge. Crescendo remains inline
+   because its judgment controls the next turn. Defense guardrails remain in the target
    phase as part of the evaluated treatment.
 4. **Multimodal lanes.** Image, JALMBench audio, and Video-SafetyBench video are
    attempted only for exact target transports that pass bounded live

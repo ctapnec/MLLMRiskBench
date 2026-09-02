@@ -6257,6 +6257,32 @@ def test_post_factum_judging_refuses_a_missing_response_before_target_call() -> 
     assert target._dialogs == []
 
 
+@pytest.mark.parametrize(
+    ("purpose", "attackers", "judges", "local_judge", "expected"),
+    (
+        ("attestation_probe", ["replay"], ["rules", "guardrail"], None, True),
+        ("diagnostic_canary", ["replay"], ["rules", "guardrail"], None, True),
+        ("measured_run", ["replay"], ["rules", "llm"], "vllm:judge", True),
+        ("attestation_probe", ["replay"], ["rules"], None, False),
+        ("attestation_probe", ["crescendo"], ["rules", "guardrail"], None, False),
+    ),
+)
+def test_local_attestation_and_response_independent_runs_defer_model_judges(
+    purpose: str,
+    attackers: list[str],
+    judges: list[str],
+    local_judge: str | None,
+    expected: bool,
+) -> None:
+    assert run_matrix._uses_post_factum_local_judging(
+        local_specs=["ollama:fixture"],
+        execution_purpose=purpose,
+        attacker_names=attackers,
+        judge_names=judges,
+        local_judge_spec=local_judge,
+    ) is expected
+
+
 def test_typed_guardrail_na_checkpoint_resume_makes_no_second_target_call() -> None:
     corpus = [_benign_datapoint()]
     paid_target = _RecordingTarget()

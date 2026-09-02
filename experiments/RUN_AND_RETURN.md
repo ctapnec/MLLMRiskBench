@@ -6,8 +6,8 @@ source-native evaluators. Experiments and the human audit are still pending.
 Preflight, dry-run, diagnostic-canary, and bounded transport-probe artifacts are
 diagnostics, not thesis results.
 
-The maintained artifact contract is Runner `ura-runner/2.28` with unified schema
-`1.5`. Runner 2.28 is the current executable contract used by this runbook.
+The maintained artifact contract is Runner `ura-runner/2.29` with unified schema
+`1.5`. Runner 2.29 is the current executable contract used by this runbook.
 Runner 2.19/schema 1.4 artifacts remain runtime-free legacy
 compatibility only; do not combine them with the current measured cohort.
 
@@ -1918,8 +1918,8 @@ the full fit trace in response provenance. A changed value therefore
 requires a new plan, projection, attestation, and canary; it never silently
 rewrites an existing cohort.
 
-For a response-independent local measured or diagnostic-canary cell with a
-Guardrail or local LLM scoring stage, Runner binds
+For a response-independent local attestation, diagnostic-canary, or measured
+cell with a Guardrail or local LLM scoring stage, Runner binds
 `judge_execution_schedule=post_factum_after_target_release`. It completes the
 durable target-response checkpoint, closes the target process or residency, and
 then preflights and runs the scoring cascade. Never preload the scoring judge

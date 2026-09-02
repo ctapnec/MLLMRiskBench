@@ -248,8 +248,8 @@ remains a valid length-capped response and the observed text is still evaluated.
 Recovery reuses prior Ollama projections, attestations and canaries only when
 every exact per-model config is unchanged. A context/output-cap change retains
 the older artifacts as diagnostics and creates a fresh projected cohort.
-For response-independent local measured and diagnostic-canary cells,
-model-backed scoring is sequential. Runner first writes target responses to the
+For response-independent local attestation, diagnostic-canary, and measured
+cells, model-backed scoring is sequential. Runner first writes target responses to the
 durable response checkpoint while the target owns the GPU capacity, unloads the
 target, and then loads the scoring judge to complete the same bound run. This
 prevents the judge from reducing target context capacity or contaminating target
@@ -773,7 +773,7 @@ Runner `RunManifest`; the URA revision that performed their import is retained
 in the return-package/importer context rather than relabelled as an upstream
 native field.
 
-Runner `ura-runner/2.28` writes unified schema `1.5`. Runner 2.28 is the
+Runner `ura-runner/2.29` writes unified schema `1.5`. Runner 2.29 is the
 maintained execution contract. Runner 2.19/schema 1.4 artifacts remain readable
 only as runtime-free legacy compatibility and are not
 mixed into the current measured cohort. Immutable planning/source

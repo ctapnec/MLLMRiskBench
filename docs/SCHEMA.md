@@ -2,7 +2,7 @@
 
 `ura.data_models` is the typed Pydantic v2 contract shared by converters,
 attackers, targets, judges, persistence, and analysis. `SCHEMA_VERSION = "1.5"`
-is stamped on datapoints, checkpoints, and manifests. Runner 2.28 rejects mixed
+is stamped on datapoints, checkpoints, and manifests. Runner 2.29 rejects mixed
 schema versions and duplicate datapoint IDs before a target call.
 
 The 1.5 transition introduces isolated-engine identities and verified closing
@@ -621,7 +621,7 @@ an executed cell:
   artifact fixes precision. The adapter uses the daemon HTTP API via the Python
   standard library and does not require an Ollama Python SDK.
   Runner 2.27 also derives a hosted-only `stop_on_failed_output` execution
-  policy from the already-bound API target type. Runner 2.28 additionally binds
+  policy from the already-bound API target type. Runner 2.29 additionally binds
   automatic GPU-fit context admission for local targets. Ollama `num_ctx="fit"`
   uses load-only descending native-fraction probes and accepts only an exact
   `/api/ps` row with `size_vram >= size`; vLLM uses its `-1` auto-fit mode. The
@@ -631,8 +631,8 @@ an executed cell:
   `/6`: hosted targets require zero answer retries, and their first retained
   failed output or transport/network failure opens the global `paid_provider`
   circuit before another paid call.
-  Response-independent local measured and diagnostic-canary runs with a
-  model-backed scoring stage additionally bind
+  Response-independent local attestation, diagnostic-canary, and measured runs
+  with a model-backed scoring stage additionally bind
   `judge_execution_schedule=post_factum_after_target_release`. The response
   checkpoint is completed while the target owns GPU capacity; the target is
   then closed before the scoring model is loaded. Crescendo binds `inline`

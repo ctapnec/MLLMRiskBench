@@ -1019,9 +1019,9 @@ GPU-resident context before a real prompt. Every policy, attempted allocation,
 and resolved value is visible in Build and retained in the run condition or
 response evidence.
 
-Response-independent local measured and diagnostic-canary cells use two GPU
-phases within the same bound run. The target completes a durable response
-checkpoint with the scoring model absent, then unloads before the Guardrail or
+Response-independent local attestation, diagnostic-canary, and measured cells
+use two GPU phases within the same bound run. The target completes a durable
+response checkpoint with the scoring model absent, then unloads before the Guardrail or
 local LLM judge is loaded. This avoids changing target fit, throughput, or
 latency observations merely by placing a judge on the second card. Crescendo is
 the explicit exception: its judge remains inline because the verdict controls

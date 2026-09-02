@@ -4520,6 +4520,25 @@ class _EngineRuntimeTermination(BaseException):
         self.signum = signum
 
 
+def _uses_post_factum_local_judging(
+    *,
+    local_specs: list[str],
+    execution_purpose: str,
+    attacker_names: list[str],
+    judge_names: list[str],
+    local_judge_spec: str | None,
+) -> bool:
+    """Keep every response-independent local scoring model off the target phase."""
+
+    return bool(
+        local_specs
+        and execution_purpose
+        in {"attestation_probe", "diagnostic_canary", "measured_run"}
+        and "crescendo" not in {name.lower() for name in attacker_names}
+        and ("guardrail" in judge_names or local_judge_spec is not None)
+    )
+
+
 def _main(argv=None) -> int:
     global _ACTIVE_ENGINE_RUNTIME_SELECTION
     invocation_started_epoch = time.time()
@@ -4803,12 +4822,12 @@ def _main(argv=None) -> int:
         and args.judge_model != "mock"
         and local_judge_spec is None
     )
-    deferred_local_judging = bool(
-        local_specs
-        and execution_purpose in {"diagnostic_canary", "measured_run"}
-        and not args.attestation_probe
-        and "crescendo" not in {name.lower() for name in attacker_names}
-        and ("guardrail" in judge_names or local_judge_spec is not None)
+    deferred_local_judging = _uses_post_factum_local_judging(
+        local_specs=local_specs,
+        execution_purpose=execution_purpose,
+        attacker_names=attacker_names,
+        judge_names=judge_names,
+        local_judge_spec=local_judge_spec,
     )
     judge_execution_schedule = (
         "post_factum_after_target_release"
@@ -6887,8 +6906,8 @@ def _main(argv=None) -> int:
                 if callable(preflight):
                     preflight()
                 call_budget.raise_if_deadline_reached()
-            # An attestation probe makes no policy-judge call. Do not load an
-            # unused scoring model beside the target it is meant to attest.
+            # Model-backed local attestation scoring uses the deferred branch,
+            # so this inline branch cannot co-reside its judge with the target.
             if not args.attestation_probe:
                 for stage in planned_cascade.stages:
                     call_budget.raise_if_deadline_reached()

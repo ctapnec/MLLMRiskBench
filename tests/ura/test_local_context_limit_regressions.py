@@ -37,7 +37,7 @@ REVISION = "6" * 40
 
 
 def test_current_runner_version_includes_local_context_contract() -> None:
-    assert CODE_VERSION == "ura-runner/2.28"
+    assert CODE_VERSION == "ura-runner/2.29"
     assert DEFAULT_VLLM_GENERATION_TOKENS is None
     assert DEFAULT_VLLM_MAX_MODEL_LEN == -1
     assert DEFAULT_OLLAMA_NUM_CTX == "fit"
