@@ -955,7 +955,7 @@ var localJudge=jg.indexOf('llm')>=0&&Array.prototype.some.call(
 form.querySelectorAll(".modelbox[data-kind='local']"),
 function(b){return (b.getAttribute('data-model')||'')===judgeModelValue;});
 var responseConditioned=fw.some(function(name){return name.toLowerCase()==='crescendo';});
-var deferredLocalJudge=loc.length&&!responseConditioned&&
+var deferredLocalJudge=loc.length&&!drySynthetic&&!responseConditioned&&
 (jg.indexOf('guardrail')>=0||localJudge)&&
 (mode==='measured'||mode==='diagnostic_canary'||mode==='attestation_probe');
 var judgeSchedule=deferredLocalJudge?'post-factum after target GPU release':'inline';
