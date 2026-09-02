@@ -766,6 +766,7 @@ class BuilderPageMixin:
                         generation_limit = self._local_max_tokens(runtime_value, entry)
                         if (
                             context_limit is not None
+                            and generation_limit is not None
                             and generation_limit > context_limit
                         ):
                             raise ValueError(
@@ -824,9 +825,27 @@ class BuilderPageMixin:
                 ) or (isinstance(digest, str) and re.fullmatch(r"[0-9a-fA-F]{64}", digest))
                 if local_config_error:
                     context_text = "invalid local config"
+                elif runtime_value.startswith("ollama:"):
+                    context_text = (
+                        "native maximum context"
+                        if context_limit == "max"
+                        else f"context cap {context_limit:,} tokens"
+                    )
+                    if generation_limit == -1:
+                        context_text += " / maximum available output"
+                    else:
+                        context_text += f" / output cap {generation_limit:,} tokens"
+                    if thinking_control is not None:
+                        context_text += (
+                            " / thinking disabled"
+                            if thinking_control is False
+                            else f" / thinking {thinking_control}"
+                        )
                 elif context_limit is not None:
                     context_text = f"context cap {context_limit:,} tokens"
-                    if generation_limit is not None:
+                    if generation_limit is None:
+                        context_text += " / maximum available output"
+                    else:
                         context_text += f" / output cap {generation_limit:,} tokens"
                     if thinking_control is not None:
                         context_text += (
@@ -835,7 +854,7 @@ class BuilderPageMixin:
                             else f" / thinking {thinking_control}"
                         )
                 else:
-                    context_text = "native model context"
+                    context_text = "native model context / maximum available output"
                 # A known non-fit stays disabled. Unknown fit is an explicit UI
                 # opt-in; a live run additionally requires a per-model precision.
                 if fit is False:
@@ -1096,18 +1115,25 @@ class BuilderPageMixin:
                 )
             )
             pin_text = "digest pinned" if pinned else "64-hex digest required for live use"
+            context_detail = (
+                "; native maximum context"
+                if context_limit == "max"
+                else f"; context cap {context_limit:,} tokens"
+                if isinstance(context_limit, int)
+                else "; invalid context policy"
+            )
+            context_detail += (
+                " / maximum available output"
+                if generation_limit == -1
+                else f" / output cap {generation_limit:,} tokens"
+            )
             detail = (
                 "<span class='fieldhint'>local Ollama daemon - "
                 + html.escape("/".join(mods))
                 + " - "
                 + pin_text
                 + "; precision is fixed by the pulled Ollama artifact"
-                + (
-                    f"; context cap {context_limit:,} tokens / output cap "
-                    f"{generation_limit:,} tokens"
-                    if context_limit is not None and generation_limit is not None
-                    else ""
-                )
+                + context_detail
                 + (
                     "; thinking disabled"
                     if thinking_control is False

@@ -91,8 +91,8 @@ def test_current_ollama_roster_is_exact_recent_thesis_cohort() -> None:
     _assert_exact_current_roster(CURRENT_OLLAMA_MODELS)
     assert CURRENT_OLLAMA_NUM_CTX == 8192
     assert CURRENT_OLLAMA_NUM_PREDICT == 512
-    assert PROSPECTIVE_OLLAMA_NUM_CTX == 32768
-    assert PROSPECTIVE_OLLAMA_NUM_PREDICT == 4096
+    assert PROSPECTIVE_OLLAMA_NUM_CTX == "max"
+    assert PROSPECTIVE_OLLAMA_NUM_PREDICT == -1
 
 
 def test_current_ollama_gate5_binds_bounded_context_and_output_caps(
@@ -1049,7 +1049,7 @@ def test_current_ollama_alignment_uses_the_common_limit_100_population(
     source = Path(phase6_alignment.__file__).read_text(encoding="utf-8")
 
     def assert_result_membership(candidate: str) -> None:
-        assert "set(results) != set(ALIGNMENT_LANES)" in candidate
+        assert "set(results) != set(selected)" in candidate
         assert (
             "current_ollama_stability_canary_recovery_phase6 import ("
             in candidate
@@ -1059,8 +1059,8 @@ def test_current_ollama_alignment_uses_the_common_limit_100_population(
 
     assert_result_membership(source)
     changed = source.replace(
-        "set(results) != set(ALIGNMENT_LANES)",
-        "list(results) != list(ALIGNMENT_LANES)",
+        "set(results) != set(selected)",
+        "list(results) != list(selected)",
         1,
     )
     assert changed != source

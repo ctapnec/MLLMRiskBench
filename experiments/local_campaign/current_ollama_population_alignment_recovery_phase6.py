@@ -234,17 +234,16 @@ def _configured_unit(item: Any, *, control_root: Path) -> Any:
         raise ValueError(f"{item.unit.unit_id}: current Ollama identity changed")
     config_path = control_root / "configs" / f"{model.label}.json"
     if not config_path.exists():
+        model_config: dict[str, object] = {
+            "digest": model.digest,
+            "modalities": list(model.modalities),
+            "num_ctx": PROSPECTIVE_OLLAMA_NUM_CTX,
+            "num_predict": PROSPECTIVE_OLLAMA_NUM_PREDICT,
+            "think": model.think,
+        }
         _create_json(
             config_path,
-            {
-                model.spec: {
-                    "digest": model.digest,
-                    "modalities": list(model.modalities),
-                    "num_ctx": PROSPECTIVE_OLLAMA_NUM_CTX,
-                    "num_predict": PROSPECTIVE_OLLAMA_NUM_PREDICT,
-                    "think": model.think,
-                }
-            },
+            {model.spec: model_config},
         )
     config_sha = hashlib.sha256(config_path.read_bytes()).hexdigest()
     base = _replace_option(base, "--local-config", str(config_path))
@@ -645,19 +644,16 @@ def validate_recovery_completion(
         config_path = Path(_option(argv, "--local-config")).resolve(strict=True)
         config_sha = _option(argv, "--local-config-sha256")
         config = _load_json(config_path, label=f"{lane} local configuration")
-        expected_config = (
-            {
-                model.spec: {
-                    "digest": model.digest,
-                    "modalities": list(model.modalities),
-                    "num_ctx": PROSPECTIVE_OLLAMA_NUM_CTX,
-                    "num_predict": PROSPECTIVE_OLLAMA_NUM_PREDICT,
-                    "think": model.think,
-                }
+        expected_config = None
+        if model is not None:
+            expected_model_config: dict[str, object] = {
+                "digest": model.digest,
+                "modalities": list(model.modalities),
+                "num_ctx": PROSPECTIVE_OLLAMA_NUM_CTX,
+                "num_predict": PROSPECTIVE_OLLAMA_NUM_PREDICT,
+                "think": model.think,
             }
-            if model is not None
-            else None
-        )
+            expected_config = {model.spec: expected_model_config}
         if (
             _option(argv, "--limit") != "100"
             or _option(argv, "--sample-seed") != "0"

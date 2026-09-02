@@ -293,24 +293,28 @@ class BuilderModelsMixin:
             raise ValueError(f"local target {spec!r} {exc}") from exc
 
     @staticmethod
-    def _local_max_tokens(spec: str, entry: Mapping[str, object]) -> int:
-        """Validate the vLLM generation cap with the shared CLI contract."""
+    def _local_max_tokens(
+        spec: str, entry: Mapping[str, object]
+    ) -> int | None:
+        """Validate an optional vLLM generation override."""
 
         from ura.targets.local import (  # noqa: PLC0415
             DEFAULT_VLLM_GENERATION_TOKENS,
             validate_vllm_max_tokens,
         )
 
+        if "max_tokens" not in entry:
+            return DEFAULT_VLLM_GENERATION_TOKENS
         try:
-            return validate_vllm_max_tokens(
-                entry.get("max_tokens", DEFAULT_VLLM_GENERATION_TOKENS)
-            )
+            return validate_vllm_max_tokens(entry["max_tokens"])
         except ValueError as exc:
             raise ValueError(f"local target {spec!r} {exc}") from exc
 
     @staticmethod
-    def _local_ollama_num_ctx(spec: str, entry: Mapping[str, object]) -> int:
-        """Validate the request-bound Ollama context allocation."""
+    def _local_ollama_num_ctx(
+        spec: str, entry: Mapping[str, object]
+    ) -> int | str:
+        """Validate the native-maximum policy or an explicit context cap."""
 
         from ura.targets.local import (  # noqa: PLC0415
             DEFAULT_OLLAMA_NUM_CTX,
@@ -511,7 +515,7 @@ class BuilderModelsMixin:
                             f"local target {spec!r} configured digest/modalities do "
                             "not match current live Ollama discovery"
                         )
-                selected[spec] = {
+                resolved_ollama: dict[str, object] = {
                     "digest": str((live_entry or entry)["digest"]).lower(),
                     "modalities": self._validated_local_modalities(
                         spec, live_entry or entry
@@ -520,6 +524,7 @@ class BuilderModelsMixin:
                     "num_predict": self._local_ollama_num_predict(spec, entry),
                     "think": self._local_ollama_think(spec, entry),
                 }
+                selected[spec] = resolved_ollama
                 continue
             from ura.targets.local import (  # noqa: PLC0415
                 VLLM_FORBIDDEN_LOCAL_CONFIG_FIELDS,
@@ -552,7 +557,7 @@ class BuilderModelsMixin:
             resolved["gpu_memory_utilization"] = gpu_memory_utilization
             if max_model_len is not None:
                 resolved["max_model_len"] = max_model_len
-                if max_tokens > max_model_len:
+                if max_tokens is not None and max_tokens > max_model_len:
                     raise ValueError(
                         f"local target {spec!r} max_tokens must not exceed "
                         "max_model_len"

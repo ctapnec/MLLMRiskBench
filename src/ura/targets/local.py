@@ -23,7 +23,7 @@ import urllib.error
 import urllib.request
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Iterable, Iterator, Optional
+from typing import Any, Callable, Iterable, Iterator, Literal, Optional
 
 from ..data_models import DialogTurn, Response
 from ..ollama_security import (
@@ -65,15 +65,16 @@ _OLLAMA_TAG = re.compile(
 )
 MAX_VLLM_MODEL_LEN = 1_000_000
 MAX_VLLM_GENERATION_TOKENS = 25_000
-DEFAULT_VLLM_GENERATION_TOKENS = 4_096
-# A local benchmark prompt may include corpus/framework material well beyond the
-# short interactive-chat default.  Keep enough room for that material plus the
-# same 4K response allowance used by the maintained vLLM roster.  Exact
-# campaigns can and do bind smaller historical conditions explicitly.
-DEFAULT_OLLAMA_NUM_CTX = 32_768
-DEFAULT_OLLAMA_NUM_PREDICT = 4_096
+DEFAULT_VLLM_GENERATION_TOKENS: None = None
+# ``max`` is a policy sentinel, not a numeric cap. Before the first generation
+# OllamaTarget resolves the pinned model's native context length from /api/show
+# and sends that exact value as ``num_ctx``. Exact campaigns may still bind an
+# explicit finite historical condition.
+DEFAULT_OLLAMA_NUM_CTX: Literal["max"] = "max"
 MAX_OLLAMA_NUM_CTX = 1_000_000
 MAX_OLLAMA_NUM_PREDICT = 25_000
+# Ollama's -1 sentinel generates until EOS or the available context is spent.
+DEFAULT_OLLAMA_NUM_PREDICT = -1
 VLLM_IN_PROCESS_EXECUTION_MODE = "in_process"
 _VLLM_MULTIPROCESSING_ENV = "VLLM_ENABLE_V1_MULTIPROCESSING"
 _VLLM_ENVIRONMENT_LOCK = threading.RLock()
@@ -184,8 +185,11 @@ def validate_vllm_max_tokens(value: object) -> int:
     return value
 
 
-def validate_ollama_num_ctx(value: object) -> int:
-    """Return one bounded Ollama request context allocation or reject it."""
+def validate_ollama_num_ctx(value: object) -> int | Literal["max"]:
+    """Return Ollama's native-maximum sentinel or one finite allocation."""
+
+    if value == "max":
+        return "max"
 
     if (
         isinstance(value, bool)
@@ -193,22 +197,22 @@ def validate_ollama_num_ctx(value: object) -> int:
         or not 1 <= value <= MAX_OLLAMA_NUM_CTX
     ):
         raise ValueError(
-            "num_ctx must be an integer in "
+            "num_ctx must be 'max' or an integer in "
             f"1..{MAX_OLLAMA_NUM_CTX}"
         )
     return value
 
 
 def validate_ollama_num_predict(value: object) -> int:
-    """Return one bounded Ollama generation limit or reject it."""
+    """Return Ollama's maximum sentinel or one bounded finite limit."""
 
     if (
         isinstance(value, bool)
         or not isinstance(value, int)
-        or not 1 <= value <= MAX_OLLAMA_NUM_PREDICT
+        or (value != -1 and not 1 <= value <= MAX_OLLAMA_NUM_PREDICT)
     ):
         raise ValueError(
-            "num_predict must be an integer in "
+            "num_predict must be -1 or an integer in "
             f"1..{MAX_OLLAMA_NUM_PREDICT}"
         )
     return value
@@ -480,7 +484,7 @@ class VLLMTarget(BaseTarget):
         model_digest: Optional[str] = None,
         tensor_parallel_size: int = 2,
         quantization: Optional[str] = None,
-        max_tokens: int = DEFAULT_VLLM_GENERATION_TOKENS,
+        max_tokens: Optional[int] = DEFAULT_VLLM_GENERATION_TOKENS,
         max_model_len: Optional[int] = None,
         temperature: float = 0.0,
         dtype: str = "auto",
@@ -523,13 +527,19 @@ class VLLMTarget(BaseTarget):
         self.media_roots = _media_roots(media_roots)
         self.tensor_parallel_size = tensor_parallel_size
         self.quantization = quantization
-        self.max_tokens = validate_vllm_max_tokens(max_tokens)
+        self.max_tokens = (
+            None if max_tokens is None else validate_vllm_max_tokens(max_tokens)
+        )
         self.max_model_len = (
             None
             if max_model_len is None
             else validate_vllm_max_model_len(max_model_len)
         )
-        if self.max_model_len is not None and self.max_tokens > self.max_model_len:
+        if (
+            self.max_model_len is not None
+            and self.max_tokens is not None
+            and self.max_tokens > self.max_model_len
+        ):
             raise ValueError("max_tokens must not exceed max_model_len")
         self.temperature = temperature
         self.dtype = dtype
@@ -1074,7 +1084,7 @@ class OllamaTarget(BaseTarget):
         model_digest: Optional[str] = None,
         host: str = DEFAULT_OLLAMA_URL,
         temperature: float = 0.0,
-        num_ctx: int = DEFAULT_OLLAMA_NUM_CTX,
+        num_ctx: int | Literal["max"] = DEFAULT_OLLAMA_NUM_CTX,
         num_predict: int = DEFAULT_OLLAMA_NUM_PREDICT,
         think: bool | str = False,
         timeout: float = 300.0,
@@ -1102,6 +1112,7 @@ class OllamaTarget(BaseTarget):
         self.host = canonicalize_ollama_url(host)
         self.temperature = temperature
         self.num_ctx = validate_ollama_num_ctx(num_ctx)
+        self._resolved_num_ctx: int | None = None
         self.num_predict = validate_ollama_num_predict(num_predict)
         self.think = validate_ollama_think(think)
         self.timeout = timeout
@@ -1260,6 +1271,58 @@ class OllamaTarget(BaseTarget):
             model=self.model,
             purpose="model inventory",
         )
+
+    def _resolve_num_ctx(self, *, deadline: float) -> int:
+        """Resolve the exact request context for the native-maximum policy."""
+
+        if self._resolved_num_ctx is not None:
+            return self._resolved_num_ctx
+        if isinstance(self.num_ctx, int):
+            self._resolved_num_ctx = self.num_ctx
+            return self._resolved_num_ctx
+        payload = json.dumps({"model": self.model}).encode("utf-8")
+        request = urllib.request.Request(
+            f"{self.host}/api/show",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        document = self._bounded_json_request(
+            request,
+            purpose="model context metadata",
+            deadline=deadline,
+        )
+        model_info = (
+            document.get("model_info") if isinstance(document, dict) else None
+        )
+        if not isinstance(model_info, dict) or len(model_info) > 4096:
+            raise LocalTargetOutputError(
+                "Ollama /api/show lacks bounded model_info for native context"
+            )
+        architecture = model_info.get("general.architecture")
+        if (
+            not isinstance(architecture, str)
+            or not architecture
+            or len(architecture) > 128
+            or re.fullmatch(r"[A-Za-z0-9_.-]+", architecture) is None
+        ):
+            raise LocalTargetOutputError(
+                "Ollama /api/show lacks a valid general.architecture"
+            )
+        key = f"{architecture}.context_length"
+        value = model_info.get(key)
+        try:
+            resolved = validate_ollama_num_ctx(value)
+        except ValueError as exc:
+            raise LocalTargetOutputError(
+                f"Ollama /api/show lacks a valid {key} native context length"
+            ) from exc
+        if not isinstance(resolved, int):
+            raise LocalTargetOutputError(
+                f"Ollama /api/show lacks a finite {key} native context length"
+            )
+        self._resolved_num_ctx = resolved
+        return resolved
 
     def _loaded_inventory(self, *, deadline: float) -> object:
         request = urllib.request.Request(f"{self.host}/api/ps", method="GET")
@@ -1466,9 +1529,12 @@ class OllamaTarget(BaseTarget):
     def _sampling_options(self, seed: int | None = None) -> dict[str, Any]:
         opts: dict[str, Any] = {
             "temperature": self.temperature,
-            "num_ctx": self.num_ctx,
             "num_predict": self.num_predict,
         }
+        if isinstance(self.num_ctx, int):
+            opts["num_ctx"] = self.num_ctx
+        elif self._resolved_num_ctx is not None:
+            opts["num_ctx"] = self._resolved_num_ctx
         opts.update(self.options)
         if seed is not None:
             opts["seed"] = int(seed)
@@ -1488,6 +1554,7 @@ class OllamaTarget(BaseTarget):
             residency_prestate = self._verify_pre_generation_residency(
                 deadline=deadline
             )
+            resolved_num_ctx = self._resolve_num_ctx(deadline=deadline)
             messages = _dialog_to_ollama_messages(
                 dialog,
                 multimodal="image" in self.modality_support,
@@ -1618,7 +1685,8 @@ class OllamaTarget(BaseTarget):
                 "generation": {
                     "seed": seed,
                     "temperature": self.temperature,
-                    "num_ctx": self.num_ctx,
+                    "num_ctx_policy": self.num_ctx,
+                    "num_ctx": resolved_num_ctx,
                     "num_predict": self.num_predict,
                     "think": self.think,
                 },
@@ -1644,6 +1712,9 @@ class OllamaTarget(BaseTarget):
         deadline: float | None = None,
     ) -> dict[str, Any]:
         """Dependency-free fallback against Ollama's REST API."""
+        deadline = deadline or (self._monotonic() + self.timeout)
+        if self.num_ctx == "max" and self._resolved_num_ctx is None:
+            self._resolve_num_ctx(deadline=deadline)
         payload = json.dumps(
             {
                 "model": self.model,
@@ -1665,7 +1736,7 @@ class OllamaTarget(BaseTarget):
             value = self._bounded_json_request(
                 req,
                 purpose="chat response",
-                deadline=deadline or (self._monotonic() + self.timeout),
+                deadline=deadline,
             )
         except (LocalTargetOutputError, RuntimeError) as exc:
             raise LocalTargetAnswerError(

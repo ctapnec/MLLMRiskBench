@@ -37,10 +37,12 @@ REVISION = "6" * 40
 
 def test_current_runner_version_includes_local_context_contract() -> None:
     assert CODE_VERSION == "ura-runner/2.27"
-    assert DEFAULT_VLLM_GENERATION_TOKENS == 4_096
+    assert DEFAULT_VLLM_GENERATION_TOKENS is None
+    assert DEFAULT_OLLAMA_NUM_CTX == "max"
+    assert DEFAULT_OLLAMA_NUM_PREDICT == -1
 
 
-def test_vllm_omitted_generation_cap_uses_high_local_default(
+def test_vllm_omitted_generation_cap_uses_local_maximum(
     tmp_path: Path,
 ) -> None:
     config = _config(include_context_cap=False)
@@ -48,14 +50,13 @@ def test_vllm_omitted_generation_cap_uses_high_local_default(
     path = _write_config(tmp_path, config)
 
     loaded, _artifact = run_matrix._load_local_config(str(path), [SPEC])
-    assert loaded[SPEC]["max_tokens"] == 4_096
+    assert "max_tokens" not in loaded[SPEC]
     target = run_matrix.build_target(SPEC, local_identity=loaded[SPEC])
-    assert target.max_tokens == 4_096
+    assert target.max_tokens is None
     direct_identity = dict(loaded[SPEC])
-    direct_identity.pop("max_tokens")
     direct_target = run_matrix.build_target(SPEC, local_identity=direct_identity)
-    assert direct_target.max_tokens == 4_096
-    assert VLLMTarget("fixture", revision=REVISION).max_tokens == 4_096
+    assert direct_target.max_tokens is None
+    assert VLLMTarget("fixture", revision=REVISION).max_tokens is None
 
 
 def _rig_hardware() -> dict[str, object]:
@@ -368,6 +369,8 @@ def test_vllm_engine_receives_only_explicit_context_cap(
     native_response = native.generate([DialogTurn(role="user", content="probe")])
     assert os.environ["VLLM_ENABLE_V1_MULTIPROCESSING"] == "operator-value"
     assert "max_model_len" not in engine_kwargs[1]
+    assert sampling_kwargs[-1]["max_tokens"] is None
+    assert native_response.raw["generation"]["max_tokens"] is None
     assert "max_model_len" not in native_response.raw
 
 
@@ -491,7 +494,7 @@ def test_ollama_uses_the_same_nonblank_deterministic_attempt_placeholder(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     digest = "a" * 64
-    target = OllamaTarget("fixture:latest", model_digest=digest)
+    target = OllamaTarget("fixture:latest", model_digest=digest, num_ctx=8192)
     monkeypatch.setattr(
         target, "_verify_daemon_identity", lambda *, deadline=None: digest
     )
@@ -539,7 +542,7 @@ def test_ollama_retains_successful_empty_completion_as_typed_nonresponse(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     digest = "a" * 64
-    target = OllamaTarget("fixture:latest", model_digest=digest)
+    target = OllamaTarget("fixture:latest", model_digest=digest, num_ctx=8192)
     monkeypatch.setattr(
         target, "_verify_daemon_identity", lambda *, deadline=None: digest
     )
@@ -580,7 +583,9 @@ def test_ollama_disabled_thinking_rejects_daemon_policy_drift(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     digest = "a" * 64
-    target = OllamaTarget("fixture:latest", model_digest=digest, think=False)
+    target = OllamaTarget(
+        "fixture:latest", model_digest=digest, num_ctx=8192, think=False
+    )
     monkeypatch.setattr(
         target, "_verify_daemon_identity", lambda *, deadline=None: digest
     )
@@ -695,17 +700,56 @@ def test_ollama_local_config_binds_context_and_output_caps(
         encoding="utf-8",
     )
     defaults, _artifact = run_matrix._load_local_config(str(default_path), [spec])
-    assert defaults[spec]["num_ctx"] == DEFAULT_OLLAMA_NUM_CTX
+    assert defaults[spec]["num_ctx"] == "max"
     assert defaults[spec]["num_predict"] == DEFAULT_OLLAMA_NUM_PREDICT
     assert defaults[spec]["think"] is False
+    default_target = run_matrix.build_target(spec, local_identity=defaults[spec])
+    assert default_target.num_ctx == "max"
+    assert "num_ctx" not in default_target._sampling_options()
+    assert default_target._sampling_options()["num_predict"] == -1
+
+
+def test_ollama_native_max_context_is_resolved_once_from_pinned_model_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = OllamaTarget(
+        "fixture:latest",
+        model_digest="a" * 64,
+        num_ctx="max",
+    )
+    requests: list[str] = []
+
+    def bounded(request, *, purpose: str, deadline: float):
+        del deadline
+        requests.append(request.full_url)
+        assert purpose == "model context metadata"
+        return {
+            "model_info": {
+                "general.architecture": "fixture",
+                "fixture.context_length": 131_072,
+            }
+        }
+
+    monkeypatch.setattr(target, "_bounded_json_request", bounded)
+
+    assert target._resolve_num_ctx(deadline=1.0) == 131_072
+    assert target._resolve_num_ctx(deadline=1.0) == 131_072
+    assert requests == ["http://127.0.0.1:11434/api/show"]
+    assert target._sampling_options() == {
+        "temperature": 0.0,
+        "num_ctx": 131_072,
+        "num_predict": -1,
+    }
 
 
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     (
-        ("num_ctx", True, "num_ctx must be an integer"),
-        ("num_ctx", 0, "num_ctx must be an integer"),
-        ("num_predict", 0, "num_predict must be an integer"),
+        ("num_ctx", True, "num_ctx must be 'max' or an integer"),
+        ("num_ctx", 0, "num_ctx must be 'max' or an integer"),
+        ("num_ctx", "default", "num_ctx must be 'max' or an integer"),
+        ("num_predict", -2, "num_predict must be -1 or an integer"),
+        ("num_predict", 0, "num_predict must be -1 or an integer"),
         ("think", "extreme", "think must be boolean"),
     ),
 )

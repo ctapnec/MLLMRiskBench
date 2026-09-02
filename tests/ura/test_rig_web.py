@@ -3198,7 +3198,7 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
     assert "data-backend='ollama'" in ollama_row
     assert "digest pinned" in ollama_row
     assert "precision is fixed by the pulled Ollama artifact" in ollama_row
-    assert "context cap 32,768 tokens / output cap 4,096 tokens" in ollama_row
+    assert "native maximum context / maximum available output" in ollama_row
     assert "thinking disabled" in ollama_row
     assert "data-compatible" not in ollama_row
     assert "data-params-b" not in ollama_row
@@ -3211,8 +3211,8 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
         ollama_spec: {
             "digest": "a" * 64,
             "modalities": ["text"],
-            "num_ctx": 32768,
-            "num_predict": 4096,
+            "num_ctx": "max",
+            "num_predict": -1,
             "think": False,
         }
     }
@@ -3240,7 +3240,9 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
         ollama_spec, local_identity=loaded_ollama[ollama_spec]
     )
     assert ollama_target.__class__.__name__ == "OllamaTarget"
-    assert ollama_target._sampling_options()["num_ctx"] == 32768
+    assert ollama_target.num_ctx == "max"
+    assert "num_ctx" not in ollama_target._sampling_options()
+    assert ollama_target._sampling_options()["num_predict"] == -1
 
     # Rendering, validation, and generated execution config share one
     # precedence: per-model selection, then the submitted global default.

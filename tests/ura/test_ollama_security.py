@@ -29,6 +29,7 @@ from ura.ollama_security import (
     model_identity_keys,
     ollama_lock_path,
 )
+from ura.targets.base import TargetIntegrityError
 from ura.targets.local import LocalTargetOutputError, OllamaTarget
 
 
@@ -96,7 +97,13 @@ def _unload(*, model: str = "fixture:latest") -> dict[str, object]:
 def _target_with_sequence(
     monkeypatch: pytest.MonkeyPatch, documents: list[object]
 ) -> tuple[OllamaTarget, list[str]]:
-    target = OllamaTarget("fixture:latest", model_digest=_DIGEST_A, timeout=2.0)
+    target = OllamaTarget(
+        "fixture:latest",
+        model_digest=_DIGEST_A,
+        num_ctx=8192,
+        num_predict=512,
+        timeout=2.0,
+    )
     calls: list[str] = []
     remaining = documents
 
@@ -113,7 +120,12 @@ def test_chat_request_binds_explicit_thinking_policy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     target = OllamaTarget(
-        "fixture:latest", model_digest=_DIGEST_A, think="low", timeout=2.0
+        "fixture:latest",
+        model_digest=_DIGEST_A,
+        num_ctx=8192,
+        num_predict=512,
+        think="low",
+        timeout=2.0,
     )
     observed: dict[str, object] = {}
 
@@ -158,7 +170,13 @@ def test_target_transaction_exclusively_controls_and_releases_residency(
             events.append(f"{self.namespace}-exit")
 
     monkeypatch.setattr("ura.targets.local.OllamaProcessLock", _LifetimeLock)
-    target = OllamaTarget("fixture:latest", model_digest=_DIGEST_A, timeout=2.0)
+    target = OllamaTarget(
+        "fixture:latest",
+        model_digest=_DIGEST_A,
+        num_ctx=8192,
+        num_predict=512,
+        timeout=2.0,
+    )
     calls: list[str] = []
     remaining = [
         _inventory(),
@@ -220,6 +238,8 @@ def test_target_lifetime_lease_blocks_mutation_but_admits_status_readers(
         "fixture:latest",
         model_digest=_DIGEST_A,
         host=host,
+        num_ctx=8192,
+        num_predict=512,
         timeout=2.0,
     )
     remaining = [
@@ -502,9 +522,9 @@ def test_cleanup_revalidates_without_posting_on_drift_or_foreign_residency(
 
 
 @pytest.mark.parametrize(
-    ("documents", "message"),
+    ("documents", "message", "error_type"),
     (
-        ([_inventory(count=2)], "exactly one"),
+        ([_inventory(count=2)], "exactly one", LocalTargetOutputError),
         (
             [
                 _inventory(),
@@ -517,6 +537,7 @@ def test_cleanup_revalidates_without_posting_on_drift_or_foreign_residency(
                 {"models": []},
             ],
             "does not match declared",
+            LocalTargetOutputError,
         ),
         (
             [
@@ -529,6 +550,7 @@ def test_cleanup_revalidates_without_posting_on_drift_or_foreign_residency(
                 {"models": []},
             ],
             "exactly one",
+            LocalTargetOutputError,
         ),
         (
             [
@@ -545,6 +567,7 @@ def test_cleanup_revalidates_without_posting_on_drift_or_foreign_residency(
                 {"models": []},
             ],
             "co-resident",
+            LocalTargetOutputError,
         ),
         (
             [
@@ -557,6 +580,7 @@ def test_cleanup_revalidates_without_posting_on_drift_or_foreign_residency(
                 {"models": []},
             ],
             "unexpected model identity",
+            TargetIntegrityError,
         ),
     ),
 )
@@ -564,9 +588,10 @@ def test_target_transaction_rejects_duplicate_drift_missing_and_aliases(
     monkeypatch: pytest.MonkeyPatch,
     documents: list[object],
     message: str,
+    error_type: type[RuntimeError],
 ) -> None:
     target, _calls = _target_with_sequence(monkeypatch, documents)
-    with pytest.raises(LocalTargetOutputError, match=message):
+    with pytest.raises(error_type, match=message):
         target.generate([DialogTurn(role="user", content="probe")])
     target.close()
 

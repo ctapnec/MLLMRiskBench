@@ -644,6 +644,13 @@ visible final text with 719-1,335 completion tokens and normal stop reasons. The
 resulting DeepSeek-only continuation binds that
 condition in its launch, local-config digest, Runner request and combined `/3`
 completion; it cannot be pooled with the stopped 512-token diagnostic condition.
+That 2,048-token continuation was stopped on 2 September 2026 at 784 durable
+rows after it had retained 14 missing outputs and 21 length-ended responses.
+It is not a terminal population result. The next DeepSeek unit preserves that
+checkpoint and selects only its never-attempted, missing, and length-ended
+identities under `num_ctx="max"` and `num_predict=-1`; completed non-truncated
+rows are not repeated. The two finite-cap conditions and the native-maximum
+correction remain separately labelled and are never silently pooled.
 Identity, provenance, residency, seal, budget and wall-time failures
 remain hard failures. Exhausted answer-level malformed output or transport
 failures use the typed missing-response policy above. Earlier attempts remain
@@ -790,8 +797,8 @@ retained as input-compatibility missing responses. A structure-only audit of
 that suffix identified exactly 230 such rows: their rendered prompts contained
 12,290 to 16,705 tokens against the 12,288-token admission. Before Gate 6,
 `experiments.local_campaign.vllm_context_recovery_phase6` must bind those exact
-typed outcomes and run only those rows under a separately projected
-24,576-token condition. The completion allowance remains 4,096 tokens and the
+typed outcomes and run only those rows under a separately projected native
+checkpoint-context and maximum-available-output condition. The
 campaign-wide local answer-retry count remains one. The Runner 2.25 prefix,
 Runner 2.26 suffix and larger-context recovery remain separate, non-poolable
 execution-condition strata; their disjoint selected IDs may be joined only for
@@ -962,7 +969,8 @@ every response recovered after retry, and all 230 deterministic Qwen3-VL input
 incompatibilities because they require a different context condition rather
 than an answer retry. The dedicated vLLM context-recovery controller verifies
 and selects that exact 230-row set, derives a fresh route attestation, canary
-and no-call projection, then runs it with `max_model_len=24576`. Old rows stay
+and no-call projection, then runs it without explicit `max_model_len` or
+`max_tokens`, using the pinned runtime's native limits. Old rows stay
 immutable lifecycle evidence. Only the old
 successful rows and their fresh recovery rows form the eventual complete
 selected population, and their Runner/output-policy/revision strata remain
@@ -990,23 +998,28 @@ the seven failed base units. It requires the terminal failed-output recovery and
 then runs only the six never-started R-Judge/GPTGeoChat units, for 2,350 rows.
 Its explicit Ollama configuration binds `think=false` for Gemma and Ministral
 and `think=low` for GPT-OSS. Because none of those six population rows has run,
-their fresh condition uses `num_ctx=32768` and `num_predict=4096`, with a fresh
-attestation, one-cluster canary, no-call projection and acquisition before the
-measured run. This is the maximum common high-context candidate admitted for
-live hardware verification on the two-card rig, not a claim that the models'
-advertised 131K or 262K windows fit beside the evaluator. A failed allocation
-stops that model's unit before population calls and is replaced by its highest
-passing bound. No local-only classification unit may gain a Hub
+their fresh condition binds `num_ctx="max"` and `num_predict=-1`, resolving
+the pinned model's native maximum context and maximum output, with a
+fresh attestation, one-cluster canary, no-call projection and acquisition before
+the measured run. A failed allocation stops that model's unit before population
+calls; it is reported rather than silently replaced by a lower default. No
+local-only classification unit may gain a Hub
 acquisition plan. Reintroducing DeepSeek into this selection or changing the
 2,350-row count is a contract failure.
 
 The general local serving default is provider-independent at the response
-boundary: an omitted vLLM `max_tokens` and an omitted Ollama `num_predict` both
-resolve to 4,096. vLLM uses each checkpoint's native context unless an explicit
-hardware-fit `max_model_len` is bound; Ollama uses the 32,768-token high-context
-candidate because its request API otherwise falls back to a short interactive
-allocation. Every resolved value is visible in Build and retained in the run
-condition.
+boundary: omitted vLLM `max_model_len` and `max_tokens` use the pinned runtime's
+native context and maximum available output. Ollama binds `num_ctx="max"` and
+`num_predict=-1`; Runner resolves the pinned model's native context length from
+`/api/show` and uses maximum available output. Every policy and resolved value
+is visible in Build and retained in the run condition.
+
+Before Gate 7, a structure-only truncation inventory must inspect every retained
+current-roster local result. Each nonempty vLLM `finish_reason=length` and Ollama
+`done_reason=length` identity is regenerated once under the same native-maximum
+policy, with fresh admission artifacts and an exact completed-ID selector.
+Historical rows remain immutable. Retired RWKV conditions are not rescheduled,
+because they were explicitly removed from the current roster and task plan.
 
 Interactive shutdown owns SIGINT as well as SIGTERM. Runner records the signal,
 finishes model and framework teardown, restores both prior handlers and then
@@ -1117,8 +1130,8 @@ follow-on, 14 historical current-Ollama, 14 current-Ollama stability, seven
 vLLM stability and nine native. The population-alignment amendment adds 12
 current-Ollama population-alignment logical extension rows, giving 109. The six
 failed-output recovery units use Runner 2.27 and give a final terminal inventory
-of 115. The separately retained vLLM context-recovery condition gives the final
-Phase 7 union 116 logical rows.
+of 115. The final union adds one vLLM context-recovery condition and gives
+the final Phase 7 union 116 logical rows.
 The 12 population-alignment rows remain logical model/framework conditions, not
 12 necessarily single-root files. Eleven have one terminal metric root. The
 DeepSeek condition is population-complete across its retained Runner 2.26 usable

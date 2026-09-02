@@ -1760,7 +1760,11 @@ class BuilderValidationMixin:
                 except ValueError as exc:
                     errors.setdefault(local_error_field, str(exc))
                     continue
-                if max_model_len is not None and max_tokens > max_model_len:
+                if (
+                    max_model_len is not None
+                    and max_tokens is not None
+                    and max_tokens > max_model_len
+                ):
                     errors.setdefault(
                         local_error_field,
                         f"local target {spec!r} max_tokens must not exceed "

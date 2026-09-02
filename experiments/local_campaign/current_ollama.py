@@ -15,11 +15,12 @@ from typing import Mapping
 CURRENT_OLLAMA_NUM_CTX = 8_192
 CURRENT_OLLAMA_NUM_PREDICT = 512
 
-# Never-started continuation units use the higher post-confound condition.  A
-# changed context/output profile receives fresh attestation, canary, projection,
-# acquisition, and measured artifacts before it can contribute evidence.
-PROSPECTIVE_OLLAMA_NUM_CTX = 32_768
-PROSPECTIVE_OLLAMA_NUM_PREDICT = 4_096
+# Never-started continuation units resolve the pinned model's native maximum
+# context, matching the product default. A changed output profile receives fresh
+# attestation, canary, projection, acquisition, and measured artifacts before
+# it can contribute evidence.
+PROSPECTIVE_OLLAMA_NUM_CTX = "max"
+PROSPECTIVE_OLLAMA_NUM_PREDICT = -1
 
 
 @dataclass(frozen=True)

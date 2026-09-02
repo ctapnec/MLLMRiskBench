@@ -481,15 +481,15 @@ def test_local_example_same_base_pair_shares_memory_utilization() -> None:
     assert isinstance(base, dict) and isinstance(guarded, dict)
     assert base["gpu_memory_utilization"] == guarded["gpu_memory_utilization"] == 0.85
     assert base["tensor_parallel_size"] == guarded["tensor_parallel_size"]
-    assert base["max_tokens"] == guarded["max_tokens"]
+    assert "max_tokens" not in base and "max_tokens" not in guarded
 
 
-def test_local_example_qwen_context_covers_the_campaign_prompt_population() -> None:
+def test_local_example_qwen_uses_native_context_and_local_maximum_output() -> None:
     registry = _json(_ROOT / "experiments" / "rig" / "local-targets.example.json")
     qwen = registry["vllm:Qwen/Qwen3-VL-8B-Instruct"]
 
-    assert qwen["max_model_len"] == 24576
-    assert qwen["max_model_len"] >= 16705 + qwen["max_tokens"]
+    assert "max_model_len" not in qwen
+    assert "max_tokens" not in qwen
 
 
 def test_advertised_names_are_canonical_across_maintained_docs_and_registries() -> None:

@@ -50,7 +50,7 @@ def test_context_selector_rejects_one_mutated_outcome() -> None:
         )
 
 
-def test_larger_context_changes_only_engine_context() -> None:
+def test_larger_context_uses_native_context_and_maximum_output() -> None:
     original = {
         "vllm:Qwen/Qwen3-VL-8B-Instruct": {
             "revision": "a" * 40,
@@ -65,10 +65,10 @@ def test_larger_context_changes_only_engine_context() -> None:
     updated = recovery.with_larger_context(original)
 
     assert original["vllm:Qwen/Qwen3-VL-8B-Instruct"]["max_model_len"] == 12288
-    assert updated["vllm:Qwen/Qwen3-VL-8B-Instruct"] == {
-        **original["vllm:Qwen/Qwen3-VL-8B-Instruct"],
-        "max_model_len": 24576,
-    }
+    expected = dict(original["vllm:Qwen/Qwen3-VL-8B-Instruct"])
+    expected.pop("max_model_len")
+    expected.pop("max_tokens")
+    assert updated["vllm:Qwen/Qwen3-VL-8B-Instruct"] == expected
     mutated = json.loads(json.dumps(original))
     mutated["vllm:Qwen/Qwen3-VL-8B-Instruct"]["max_tokens"] = 2048
     with pytest.raises(ValueError, match="completion allowance"):

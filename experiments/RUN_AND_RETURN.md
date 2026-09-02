@@ -520,9 +520,10 @@ exact input-recovery completion and SHA-256, current project-revision receipt,
 fresh control root, scope, work root, project root and project virtual-
 environment interpreter. The controller verifies every retained outcome as
 `LocalTargetInputError/context_limit_exceeded`, creates a content-bound
-completed-ID selector that leaves only those 230 IDs, and changes only Qwen's
-`max_model_len` from 12,288 to 24,576. Its 4,096-token completion allowance and
-one local answer retry are unchanged. It derives a fresh attestation, canary,
+completed-ID selector that leaves only those 230 IDs, removes Qwen's explicit
+12,288-token `max_model_len` and 4,096-token `max_tokens`, and therefore uses
+the pinned runtime's native context and maximum available output. One local
+answer retry remains. It derives a fresh attestation, canary,
 projection and acquisition binding before measured calls. Treat the result as
 a separate context-condition stratum; join disjoint IDs for population
 coverage, never pool the old and new condition rates silently.
@@ -1842,8 +1843,11 @@ checks remain authoritative. Each
 by `/api/tags` and a unique explicit modality list containing `text` and
 optionally `image`. vLLM-only revision, quantization, tensor parallelism, memory
 utilization, parameter count, `max_tokens`, `max_model_len`, and unknown-fit
-fields are forbidden. Ollama instead binds `num_ctx` and `num_predict`, which
-default to 32,768 and 4,096, respectively, in a newly selected config. The pulled
+fields are forbidden. Ollama instead accepts `num_ctx` and `num_predict`. A
+newly selected config binds `num_ctx="max"`; Runner resolves the exact native
+maximum from the pinned model's architecture-specific `context_length` in
+`/api/show`, and uses the `num_predict=-1`
+maximum-output sentinel. The pulled
 artifact fixes precision. Runner
 uses the daemon HTTP API through the Python standard library, so no Ollama
 Python SDK is required; the daemon and matching pulled tag must exist before a
@@ -1887,9 +1891,10 @@ provenance.
 `max_model_len` is an optional vLLM-only per-model field for engine context and
 KV-cache admission. It is separate from `max_tokens`, which remains the maximum
 generated response length. Omit `max_model_len` to let the pinned checkpoint
-declare its native context. An omitted `max_tokens` uses the 4,096-token local
-default. If `max_model_len` is present, it must be a non-boolean integer in
-1..1,000,000 and `max_tokens` must not exceed it; null, strings, floats, and
+declare its native context. An omitted `max_tokens` lets the pinned runtime
+generate until EOS or the remaining context is spent. If `max_model_len` is
+present, it must be a non-boolean integer in 1..1,000,000 and an explicit
+`max_tokens` must not exceed it; null, strings, floats, and
 out-of-range values fail before engine construction. Rig Web preserves the
 field when materializing the selected local config. The normalized value enters
 the selected-config hash and grid/run provenance, is passed as
@@ -1897,11 +1902,13 @@ the selected-config hash and grid/run provenance, is passed as
 local response metadata. The Build row displays either the explicit context cap
 or `native model context`.
 
-For Ollama, `num_ctx` is the request context/KV allocation and `num_predict` is
-the generated-token cap. Both must be non-boolean positive integers; the global
-upper bounds are 1,000,000 and 25,000. Rig Web defaults them to 32,768 and 4,096,
-shows both on each installed-model row, and preserves configured overrides in
-the selected-config hash. Runner passes them to `/api/chat` and records them in
+For Ollama, `num_ctx` is the request context/KV policy and
+`num_predict` is the generated-token policy. Explicit context values must be
+`"max"` or positive integers up to 1,000,000; generation accepts the `-1`
+maximum-output sentinel or a positive finite cap up to 25,000. Rig Web selects
+`num_ctx="max"`, shows `native maximum context`, selects `num_predict=-1`, and
+preserves configured overrides in the selected-config hash. Runner resolves
+the maximum policy through `/api/show`, passes the exact value to `/api/chat`, and records it in
 the effective condition and response provenance. A changed value therefore
 requires a new plan, projection, attestation, and canary; it never silently
 rewrites an existing cohort.

@@ -2,7 +2,7 @@
 
 The retained 12,288-token condition stays immutable. This controller verifies
 its typed context-limit outcomes, builds an exact completed-ID selector, and
-runs only those rows under a separately reported 24,576-token condition.
+runs only those rows with native model context and the local maximum output.
 """
 
 from __future__ import annotations
@@ -58,11 +58,12 @@ from ura.runner import CODE_VERSION, Runner
 SCHEMA = "ura-vllm-context-recovery-phase6/1"
 LAUNCH_SCHEMA = "ura-vllm-context-recovery-phase6-launch/1"
 STATE_SCHEMA = "ura-vllm-context-recovery-phase6-unit-state/1"
-UNIT_ID = "vllm-context-recovery-gptgeochat-qwen3-vl-24576"
+UNIT_ID = "vllm-context-recovery-gptgeochat-qwen3-vl-native-max"
 SELECTED_RECORDS = 2020
 CONTEXT_RECOVERY_RECORDS = 230
 OLD_MAX_MODEL_LEN = 12288
-NEW_MAX_MODEL_LEN = 24576
+NEW_MAX_MODEL_LEN = None
+NEW_MAX_TOKENS = None
 EXPECTED_PROMPT_MIN = 12290
 EXPECTED_PROMPT_MAX = 16705
 HEX40 = re.compile(r"[0-9a-f]{40}\Z")
@@ -131,7 +132,7 @@ def build_context_selection(
 
 
 def with_larger_context(config: Mapping[str, Any]) -> dict[str, Any]:
-    """Change only the admitted engine context in a one-model vLLM config."""
+    """Use native engine context and maximum output in one vLLM config."""
 
     if len(config) != 1:
         raise ValueError("Qwen context recovery config must contain one model")
@@ -143,7 +144,8 @@ def with_larger_context(config: Mapping[str, Any]) -> dict[str, Any]:
     if value.get("max_tokens") != 4096:
         raise ValueError("Qwen completion allowance changed")
     updated = dict(value)
-    updated["max_model_len"] = NEW_MAX_MODEL_LEN
+    updated.pop("max_model_len")
+    updated.pop("max_tokens")
     return {spec: updated}
 
 
@@ -241,7 +243,7 @@ def _derive_context_selector(
             "maximum": max(lengths),
             "old_admitted_context": OLD_MAX_MODEL_LEN,
             "new_admitted_context": NEW_MAX_MODEL_LEN,
-            "completion_allowance": 4096,
+            "completion_allowance": NEW_MAX_TOKENS,
         },
     }
     return selector, snapshot
@@ -330,7 +332,7 @@ def validate_completion(
     )
     if (
         selector_path != control_root / "inputs/gptgeochat-context-incompatible.json"
-        or config_path != control_root / "configs/qwen3-vl-24576.json"
+        or config_path != control_root / "configs/qwen3-vl-native-max.json"
         or amendment_path != control_root / "gate5-context-amendment.json"
         or _load_json(selector_path, label="vLLM context selector") != expected_selector
     ):
@@ -348,7 +350,7 @@ def validate_completion(
     if _load_json(config_path, label="larger-context config") != with_larger_context(
         json.loads(old_payload.decode("utf-8"))
     ):
-        raise ValueError("larger-context config changed more than max_model_len")
+        raise ValueError("native-max config changed beyond context/output policy")
     amendment = _load_json(amendment_path, label="vLLM context Gate 5 amendment")
     if amendment != {
         "schema": "ura-gate5-corrective-context-amendment/1",
@@ -364,6 +366,8 @@ def validate_completion(
         "deadline_seconds": 86400,
         "old_max_model_len": OLD_MAX_MODEL_LEN,
         "new_max_model_len": NEW_MAX_MODEL_LEN,
+        "old_max_tokens": 4_096,
+        "new_max_tokens": NEW_MAX_TOKENS,
         "prompt_token_minimum": EXPECTED_PROMPT_MIN,
         "prompt_token_maximum": EXPECTED_PROMPT_MAX,
         "successful_rows_repeated": 0,
@@ -502,7 +506,7 @@ def run(args: argparse.Namespace) -> int:
     if hashlib.sha256(old_config_payload).hexdigest() != old_config_sha:
         raise ValueError("old Qwen local config digest changed")
     new_config = with_larger_context(json.loads(old_config_payload.decode("utf-8")))
-    config_path = control_root / "configs/qwen3-vl-24576.json"
+    config_path = control_root / "configs/qwen3-vl-native-max.json"
     _create_json(config_path, new_config)
     config_sha = hashlib.sha256(config_path.read_bytes()).hexdigest()
 
@@ -537,6 +541,8 @@ def run(args: argparse.Namespace) -> int:
         "deadline_seconds": 86400,
         "old_max_model_len": OLD_MAX_MODEL_LEN,
         "new_max_model_len": NEW_MAX_MODEL_LEN,
+        "old_max_tokens": 4_096,
+        "new_max_tokens": NEW_MAX_TOKENS,
         "prompt_token_minimum": EXPECTED_PROMPT_MIN,
         "prompt_token_maximum": EXPECTED_PROMPT_MAX,
         "successful_rows_repeated": 0,

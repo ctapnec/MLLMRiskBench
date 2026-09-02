@@ -1795,13 +1795,13 @@ def _load_local_config(
                 validate_vllm_max_tokens,
             )
 
-            try:
-                max_tokens = validate_vllm_max_tokens(
-                    config.get("max_tokens", DEFAULT_VLLM_GENERATION_TOKENS)
-                )
-            except ValueError as exc:
-                raise ValueError(f"vLLM config {display_spec!r} {exc}") from exc
-            config["max_tokens"] = max_tokens
+            max_tokens = DEFAULT_VLLM_GENERATION_TOKENS
+            if "max_tokens" in config:
+                try:
+                    max_tokens = validate_vllm_max_tokens(config["max_tokens"])
+                except ValueError as exc:
+                    raise ValueError(f"vLLM config {display_spec!r} {exc}") from exc
+                config["max_tokens"] = max_tokens
             if "max_model_len" in config:
                 try:
                     max_model_len = validate_vllm_max_model_len(
@@ -1809,7 +1809,7 @@ def _load_local_config(
                     )
                 except ValueError as exc:
                     raise ValueError(f"vLLM config {display_spec!r} {exc}") from exc
-                if max_tokens > max_model_len:
+                if max_tokens is not None and max_tokens > max_model_len:
                     raise ValueError(
                         f"vLLM config {display_spec!r} max_tokens must not exceed "
                         "max_model_len"
@@ -2960,7 +2960,7 @@ def build_target(
                 model=model,
                 model_digest=str(local_identity["digest"]),
                 modality_support=modalities,
-                num_ctx=int(local_identity["num_ctx"]),
+                num_ctx=local_identity["num_ctx"],
                 num_predict=int(local_identity["num_predict"]),
                 think=local_identity["think"],
             )

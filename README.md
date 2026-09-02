@@ -225,19 +225,21 @@ VRAM-fit failures, and both stopped before target inference.
 The optional vLLM-only `max_model_len` field is an engine-context and KV-cache
 admission cap, not the response-generation `max_tokens` bound. Omission leaves
 the checkpoint's native context unchanged; an explicit integer in 1..1,000,000
-is passed to vLLM at engine construction. An omitted `max_tokens` uses the
-4,096-token local default, and an explicit value may not exceed `max_model_len`.
+is passed to vLLM at engine construction. An omitted `max_tokens` lets the
+pinned runtime generate until EOS or the remaining native context is spent;
+an explicit value may not exceed an explicit `max_model_len`.
 Rig Web preserves the field in its selected local config, and the normalized
 value enters grid/run provenance. Each Build row labels either the explicit
 context cap or native model context.
 
-Ollama uses its native request fields instead: optional `num_ctx` and
-`num_predict` integers in the selected local config. Runner and Build default
-them to 32,768 context tokens and 4,096 generated tokens, pass both in every
-`/api/chat` request, and retain them in config, grid, condition, and response
-provenance. This high local default leaves room for corpus/framework material
-and a full response without pretending that every advertised 131K or 262K
-window fits beside the evaluator on the available GPUs. Reaching `num_predict`
+Ollama uses its native request fields instead: `num_ctx` and `num_predict` in
+the selected local config. Runner and Build bind `num_ctx="max"` by default;
+Runner resolves that policy from the pinned model's architecture-specific
+`context_length` in `/api/show` and passes the exact native maximum to
+`/api/chat`. The default `num_predict=-1` is Ollama's maximum-output sentinel.
+Explicit finite overrides are also passed to `/api/chat`, and the resolved choice is
+retained in config, grid, condition, and response provenance. Reaching an
+explicit finite `num_predict`
 remains a valid length-capped response and the observed text is still evaluated.
 Recovery reuses prior Ollama projections, attestations and canaries only when
 every exact per-model config is unchanged. A context/output-cap change retains
@@ -356,7 +358,7 @@ entry must carry the exact lowercase 64-hex digest reported by `/api/tags` and
 an explicit unique modality list containing `text` and optionally `image`.
 Ollama entries reject vLLM-only revision, parameter, topology, memory,
 `max_tokens`, `max_model_len`, quantization, and unknown-fit fields; they accept
-only their bounded `num_ctx` and `num_predict` execution controls in addition to
+only their bounded `num_ctx` policy and `num_predict` execution control in addition to
 digest and modalities. The pulled artifact fixes precision, so the Build page
 shows no automatic fit or precision control for it. Runner admission
 independently refreshes the live show-backed roster. Each inference
