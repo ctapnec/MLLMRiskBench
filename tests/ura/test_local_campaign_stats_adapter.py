@@ -1102,8 +1102,8 @@ def test_stats_links_sealed_phase7_reports_to_watcher_campaign(
     assert registration is not None
     assert [report.kind for report in registration.reports] == [
         "terminal_inventory",
-        "level1", "level1", "level1", "level1", "level1", "level1",
-        "level2", "level2", "level2", "level2", "level2", "level2",
+        "level1", "level1", "level1", "level1", "level1", "level1", "level1",
+        "level2", "level2", "level2", "level2", "level2", "level2", "level2",
     ]
     app = RigWebApp(
         results_root=results,
@@ -1150,9 +1150,11 @@ def test_stats_links_sealed_phase7_reports_to_watcher_campaign(
     assert "lifecycle-strata/111111111111-aaaaaaaaaaaa/level1-evidence.json" in detail_text
     assert "lifecycle-strata/333333333333-cccccccccccc/level1-evidence.json" in detail_text
     assert "lifecycle-strata/666666666666-eeeeeeeeeeee/level1-evidence.json" in detail_text
+    assert "lifecycle-strata/888888888888-999999999999/level1-evidence.json" in detail_text
     assert "metric-strata/111111111111-aaaaaaaaaaaa/level2-report.json" in detail_text
     assert "metric-strata/333333333333-cccccccccccc/level2-report.json" in detail_text
     assert "metric-strata/666666666666-eeeeeeeeeeee/level2-report.json" in detail_text
+    assert "metric-strata/888888888888-999999999999/level2-report.json" in detail_text
     assert "refusal_rate" in detail_text
     assert "class='barchart'" in detail_text
     assert "Open full job record" in detail_text
