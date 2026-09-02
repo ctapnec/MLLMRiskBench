@@ -1799,8 +1799,11 @@ In the Build tab, one large role-aware model-picker modal serves both target and
 LLM-judge selection. Choose hosted or local, then use the hosted provider filter
 (`All` by default) or the local filtering surface. Target mode binds one or more
 hosted targets and at most one local target. Judge mode binds exactly one model,
-distinct from every target; a local target and distinct local judge cannot share
-one process. Schedule different local target models as separate rig jobs/grids;
+distinct from every target. A distinct local judge may accompany one local
+target in a response-independent probe, live canary, or measured run: Runner
+checkpoints responses, releases the target, then loads the judge. Crescendo is
+adaptive and therefore rejects that pairing. Schedule different local target
+models as separate rig jobs/grids;
 each such grid may still include multiple hosted targets. A judge-only warning
 marks the highest configured comparable
 input/output rate in each currency; it is a cost signal, not a quality claim.

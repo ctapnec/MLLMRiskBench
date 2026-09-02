@@ -295,7 +295,8 @@ def test_general_pipeline_summary_covers_every_builder_section_and_refreshes(
     assert "form.addEventListener('change',refresh)" in _BUILDER_SCRIPT
     assert "form.addEventListener('input',refresh)" in _BUILDER_SCRIPT
     assert "post-factum after target GPU release" in _BUILDER_SCRIPT
-    assert "!checkedName('attestation_probe')" in _BUILDER_SCRIPT
+    assert "mode==='attestation_probe'" in _BUILDER_SCRIPT
+    assert "!checkedName('attestation_probe')" not in _BUILDER_SCRIPT
     assert _BUILDER_SCRIPT.rstrip().endswith("refresh();\n})();</script>")
     assert "not the final reviewed command" in page
 

@@ -181,8 +181,10 @@ model-picker wizard serves both the target and LLM-judge controls: first choose
 hosted or local, then apply the relevant hosted-provider (`All` by default) or
 local filters. Target mode binds one or more hosted targets and at most one
 local target. Judge mode binds exactly one model, distinct from every target; a
-local target and a distinct local judge cannot share one process. Different
-local target models are scheduled as separate rig jobs/grids; one
+local target and a distinct local judge share one run only when the selected
+probe, live canary, or measured lane is response-independent. Runner then
+releases the target before loading the judge; Crescendo remains inline and is
+rejected for this pairing. Different local target models are scheduled as separate rig jobs/grids; one
 legal grid may still combine multiple hosted targets with its single local target.
 A judge-only
 warning marks the highest configured comparable input/output rate in each

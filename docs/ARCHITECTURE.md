@@ -543,8 +543,10 @@ dashboard and Build tab render that one snapshot. A single role-aware modal
 picker serves target and LLM-judge selection. Its first step chooses hosted or
 local; the second applies hosted-provider (`All` initially) or local filters.
 Target mode binds one or more hosted targets and at most one local target. Judge
-mode binds exactly one model, distinct from every target; a local target and a
-distinct local judge cannot share one process. Different local targets are
+mode binds exactly one model, distinct from every target. A local target and a
+distinct local judge may share one response-independent probe, live canary, or
+measured run because Runner releases the target before loading the judge;
+adaptive Crescendo cannot use this pairing. Different local targets are
 scheduled as separate rig jobs/grids, while each grid may also contain multiple
 hosted targets. The judge role alone marks the
 highest comparable configured rate per currency as expensive; this is a cost

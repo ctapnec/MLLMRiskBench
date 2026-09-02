@@ -1696,10 +1696,23 @@ class BuilderValidationMixin:
                     "the LLM judge must differ from every target model after "
                     "immutable content-identity resolution"
                 )
-            elif judge_kind == "local" and local:
+            elif (
+                judge_kind == "local"
+                and local
+                and (
+                    mode not in {
+                        "attestation_probe",
+                        "diagnostic_canary",
+                        "measured",
+                    }
+                    or canary_dry
+                    or "crescendo" in {name.lower() for name in attackers}
+                )
+            ):
                 errors["judge_model"] = (
-                    "a local target and a distinct local LLM judge cannot share "
-                    "one process; choose a hosted judge or hosted targets"
+                    "a local target and a distinct local LLM judge require a "
+                    "response-independent live probe, canary, or measured lane "
+                    "so Runner can release the target before loading the judge"
                 )
             else:
                 durable_local_identities = self._catalog_local_identities()

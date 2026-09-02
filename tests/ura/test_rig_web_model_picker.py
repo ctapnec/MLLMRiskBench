@@ -432,9 +432,19 @@ def test_server_validates_explicit_judge_and_local_engine_conflicts(
     assert status == 200
     assert b"requires enabling the llm judge stage" in body
     assert app.jobs == {}
-    assert "cannot share one process" in app._validate_builder({
+    local_pair = {
         **base, "api": "", "local": _LOCAL,
         "judge_model": _LOCAL_OTHER,
+    }
+    assert "judge_model" not in app._validate_builder(local_pair)
+    for mode in ("attestation_probe", "diagnostic_canary", "measured"):
+        assert "judge_model" not in app._validate_builder({
+            **local_pair,
+            "mode": mode,
+        })
+    assert "response-independent" in app._validate_builder({
+        **local_pair,
+        "attackers": "crescendo",
     })["judge_model"]
     app.close()
 
