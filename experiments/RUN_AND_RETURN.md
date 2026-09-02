@@ -563,23 +563,38 @@ remain separate Runner strata; completed prefix rows are never called again.
 
 Static alignment units derive and acquire their exact Hub plan. R-Judge and
 GPTGeoChat units with an Ollama target and already-local source data pass no
-model-acquisition arguments; do not manufacture an empty plan. If the alignment
-completion is `complete_with_failures`, first validate it with
-`current_ollama_population_alignment_phase6.validate_completion(...,
-allow_incomplete=True)`. Then run
+model-acquisition arguments; do not manufacture an empty plan. The retained base
+completion is `complete_with_failures`, and its first recovery was interrupted
+after DeepSeek started but before the other six units began. Do not rerun that
+seven-unit command. After `failed_output_recovery_phase6` is terminal, run
 `python -m experiments.local_campaign.current_ollama_population_alignment_recovery_phase6`
-in a named tmux session with the exact base completion and SHA-256, current
-project-revision receipt and SHA-256, fresh control root, scope, work root,
-project root and project virtual-environment interpreter. The controller selects
-only failed units, rejects any that reached measured state, reuses their exact
-completed-prefix selectors, and writes a separate recovery completion. Give that
-completion to Phase 7. The validator combines the two revisions only for
-population coverage and retains separate revision strata for all rates.
+in a named tmux session with the exact base completion and SHA-256, the exact
+failed-output recovery completion and SHA-256, current project-revision receipt
+and SHA-256, fresh control root, scope, work root, project root and project
+virtual-environment interpreter. The controller requires these additional flags:
+
+```text
+--failed-output-recovery-completion ABSOLUTE_COMPLETION_JSON
+--failed-output-recovery-completion-sha256 LOWERCASE_SHA256
+```
+
+It validates that DeepSeek's 1,909-row extension is already reconciled by 235
+retained usable rows plus 1,674 recovery rows, then schedules only four 50-row
+R-Judge units and two 1,075-row GPTGeoChat units. The exact continuation count is
+2,350 rows. It rejects DeepSeek, any base-complete unit, a changed count, a Hub
+plan on a local-only classification lane, or an implicit Ollama thinking policy.
+Give this continuation completion to Phase 7. Population coverage may be joined,
+but rates remain separated by Runner, revision and output-policy stratum.
 
 Phase 7 requires that current-Ollama stability completion, the exact terminal
 seven-unit vLLM stability completion, and its one-unit GPTGeoChat input recovery.
 It also requires the terminal six failed-output recovery units through
 `--phase6-failed-output-recovery-completion`.
+Its current-Ollama population-alignment input is the six-unit continuation
+completion above, not the interrupted seven-unit recovery root. Eleven logical
+alignment conditions have one terminal metric root. DeepSeek is complete across
+two disjoint Runner strata and is retained for population/model-stability
+accounting without a pooled security rate.
 The six completed Runner 2.25 units and one Runner 2.26 missing-only suffix are
 separate metric strata; the failed 375-row prefix remains lifecycle evidence.
 Pass the terminal controller through `--phase6-vllm-stability-completion` and

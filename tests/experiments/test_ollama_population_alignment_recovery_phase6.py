@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 from typing import Sequence
 
@@ -8,7 +10,143 @@ import pytest
 from experiments.local_campaign import (
     current_ollama_population_alignment_phase6 as alignment,
 )
+from experiments.local_campaign import (
+    current_ollama_population_alignment_recovery_phase6 as recovery,
+)
 from experiments.local_campaign import vllm_stability_phase6 as unit_runner
+
+
+def test_alignment_continuation_selects_only_six_never_started_units() -> None:
+    failed = {
+        recovery.FAILED_OUTPUT_COVERED_LANE,
+        *recovery.CONTINUATION_LANES,
+    }
+    snapshot = {
+        "terminal_states": {
+            lane: "failed" if lane in failed else "measured_complete"
+            for lane in alignment.ALIGNMENT_LANES
+        }
+    }
+
+    selected = recovery._selected_failed_lanes(  # noqa: SLF001
+        snapshot,
+        covered_lanes=(recovery.FAILED_OUTPUT_COVERED_LANE,),
+    )
+
+    assert selected == list(recovery.CONTINUATION_LANES)
+    assert len(selected) == 6
+    assert recovery.FAILED_OUTPUT_COVERED_LANE not in selected
+    assert all(
+        lane.startswith(("rjudge-ollama-", "gptgeochat-ollama-"))
+        for lane in selected
+    )
+    expected_rows = sum(
+        50 if lane.startswith("rjudge-ollama-") else 1_075
+        for lane in selected
+    )
+    assert expected_rows == recovery.EXPECTED_CONTINUATION_ROWS == 2_350
+
+    mutant = recovery._selected_failed_lanes(snapshot)  # noqa: SLF001
+    assert mutant != selected
+    assert recovery.FAILED_OUTPUT_COVERED_LANE in mutant
+
+
+def test_alignment_continuation_separates_actual_replays_from_unique_rows() -> None:
+    execution = recovery._combined_target_execution(  # noqa: SLF001
+        base_execution={
+            "target_attempts": 7_341,
+            "successful_target_generations": 5_222,
+            "missing_responses": 2_119,
+        },
+        coverage={
+            "prior_usable_records": 235,
+            "alignment_recovery_successful_target_generations": 3_779,
+            "alignment_recovery_missing_responses": 14,
+        },
+        continuation_successful=2_350,
+        continuation_missing=0,
+    )
+
+    assert execution == {
+        "target_attempts": 14_372,
+        "successful_target_generations": 11_586,
+        "missing_responses": 2_786,
+        "unique_population_rows": 11_600,
+        "retained_population_successful_target_generations": 11_586,
+        "retained_population_missing_responses": 14,
+        "replayed_failed_output_rows": 2_772,
+        "never_attempted_rows_completed": 1_021,
+    }
+    with pytest.raises(ValueError):
+        recovery._combined_target_execution(  # noqa: SLF001
+            base_execution={
+                "target_attempts": 7_340,
+                "successful_target_generations": 5_222,
+                "missing_responses": 2_118,
+            },
+            coverage={
+                "prior_usable_records": 235,
+                "alignment_recovery_successful_target_generations": 3_779,
+                "alignment_recovery_missing_responses": 14,
+            },
+            continuation_successful=2_350,
+            continuation_missing=0,
+        )
+
+
+@pytest.mark.parametrize(
+    ("model_spec", "expected_think"),
+    (
+        ("ollama:gemma4:12b-it-q4_K_M", False),
+        ("ollama:ministral-3:14b-instruct-2512-q4_K_M", False),
+        ("ollama:deepseek-r1:32b-qwen-distill-q4_K_M", False),
+        ("ollama:gpt-oss:20b", "low"),
+    ),
+)
+def test_alignment_continuation_rebinds_explicit_thinking_policy(
+    tmp_path: Path,
+    model_spec: str,
+    expected_think: bool | str,
+) -> None:
+    control_root = tmp_path / "alignment-continuation"
+    (control_root / "configs").mkdir(parents=True)
+    unit = unit_runner.Unit(
+        unit_id="fixture",
+        source_lane="fixture",
+        corpus=None,
+        spec={
+            "metric_mode": "rjudge",
+            "base_argv": [
+                "--local",
+                model_spec,
+                "--local-config",
+                "/old/config.json",
+                "--local-config-sha256",
+                "a" * 64,
+            ],
+        },
+        selected_records=1,
+    )
+    item = alignment.AlignmentUnit(
+        unit=unit,
+        old_lane="fixture",
+        full_records=1,
+        prefix_records=0,
+        by_corpus={},
+        recovery={},
+    )
+
+    configured = recovery._configured_unit(  # noqa: SLF001
+        item, control_root=control_root
+    )
+    argv = configured.unit.spec["base_argv"]
+    config_path = Path(unit_runner._option(argv, "--local-config"))  # noqa: SLF001
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+
+    assert payload[model_spec]["think"] == expected_think
+    assert unit_runner._option(  # noqa: SLF001
+        argv, "--local-config-sha256"
+    ) == hashlib.sha256(config_path.read_bytes()).hexdigest()
 
 
 @pytest.mark.parametrize(
@@ -134,10 +272,22 @@ def test_phase7_uses_alignment_recovery_dispatcher() -> None:
     ).read_text(encoding="utf-8")
     required = (
         "current_ollama_population_alignment_recovery_phase6 import (",
+        "FAILED_OUTPUT_COVERED_LANE as CURRENT_OLLAMA_ALIGNMENT_SPLIT_LANE",
         "validate_phase7_completion as validate_current_ollama_alignment_completion",
+        'current_ollama_alignment["metric_roots"].get(lane)',
+        "if lane != CURRENT_OLLAMA_ALIGNMENT_SPLIT_LANE",
+        '"population_segments": current.get("population_segments", {})',
     )
     for token in required:
         assert token in template
+    current_method = template.split(
+        "def record_current_ollama_outcomes", 1
+    )[1].split("def record_current_ollama_stability_outcomes", 1)[0]
+    alignment_method = template.split(
+        "def record_current_ollama_alignment_outcomes", 1
+    )[1].split("def record_vllm_stability_outcomes", 1)[0]
+    assert '"population_segments"' not in current_method
+    assert '"population_segments"' in alignment_method
 
     mutant = template.replace(
         "current_ollama_population_alignment_recovery_phase6 import (",

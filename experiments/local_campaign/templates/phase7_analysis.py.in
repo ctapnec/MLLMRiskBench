@@ -49,6 +49,7 @@ from experiments.local_campaign.current_ollama_population_alignment_phase6 impor
     ALIGNMENT_LANES as CURRENT_OLLAMA_ALIGNMENT_LANES,
 )
 from experiments.local_campaign.current_ollama_population_alignment_recovery_phase6 import (
+    FAILED_OUTPUT_COVERED_LANE as CURRENT_OLLAMA_ALIGNMENT_SPLIT_LANE,
     validate_phase7_completion as validate_current_ollama_alignment_completion,
 )
 from experiments.local_campaign.vllm_input_recovery_phase6 import (
@@ -10979,9 +10980,14 @@ def build_phase6_campaign_terminal_inventory(
     for lane in current_ollama_population_alignment["unit_order"]:
         append(
             "current_ollama_population_alignment", lane, "measured_complete",
-            current_ollama_population_alignment[
-                "project_revision_receipt_sha256"
-            ],
+            current_ollama_population_alignment.get(
+                "lifecycle_project_revision_receipt_sha256", {}
+            ).get(
+                lane,
+                current_ollama_population_alignment[
+                    "project_revision_receipt_sha256"
+                ],
+            ),
             current_ollama_population_alignment["source_conformance_sha256"],
             {
                 "completion": current_ollama_population_alignment["completion"],
@@ -13620,7 +13626,7 @@ class AnalysisController:
         ]
         for lane in current_ollama_alignment["unit_order"]:
             root = self._representable_lifecycle_root(
-                current_ollama_alignment["metric_roots"][lane],
+                current_ollama_alignment["metric_roots"].get(lane),
                 label=f"current Ollama population alignment lifecycle {lane}",
             )
             add(
@@ -13810,7 +13816,12 @@ class AnalysisController:
         lanes = self.inputs["current_ollama_population_alignment"].get(
             "metric_lane_order"
         )
-        if lanes != list(CURRENT_OLLAMA_ALIGNMENT_LANES):
+        expected = [
+            lane
+            for lane in CURRENT_OLLAMA_ALIGNMENT_LANES
+            if lane != CURRENT_OLLAMA_ALIGNMENT_SPLIT_LANE
+        ]
+        if lanes != expected:
             raise Phase7Error(
                 "current Ollama population-alignment lane order changed"
             )
@@ -16069,8 +16080,15 @@ class AnalysisController:
             "status": "validated",
             "unit_order": current["unit_order"],
             "runner_code_version": current["runner_code_version"],
+            "runner_code_versions": current.get("runner_code_versions", {}),
             "population_alignment": current["population_alignment"],
             "target_execution": current["target_execution"],
+            "population_segments": current.get("population_segments", {}),
+            "metric_exclusions": {
+                lane: current["metric_evidence"][lane]
+                for lane in current["unit_order"]
+                if lane not in current["metric_lane_order"]
+            },
             "target_answer_retries": 1,
             "historical_completed_rows_repeated": False,
             "cross_revision_pooling_permitted": False,

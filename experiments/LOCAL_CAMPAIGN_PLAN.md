@@ -740,13 +740,20 @@ Static alignment lanes retain their Hub acquisition plan because their selected
 source inventory contains Hub-backed resources. The Ollama R-Judge and
 GPTGeoChat lanes use already-local source data and a local daemon target, so
 they omit model-acquisition arguments; an empty acquisition plan is not created.
-If the controller seals `complete_with_failures`, the recovery controller must
-validate the exact base completion and select only its failed units. It refuses
-any selected unit with a measured state or Level-1 artifact, reuses the original
-content-bound limit-50 selector, derives a fresh revision-bound attestation, and
-runs the never-measured extension. Base and recovery revisions remain separate
-analysis strata, `no_completed_rows_repeated` stays true, and Phase 7 accepts the
-recovery completion only when their combined accounting is exactly 11,600 rows.
+If the controller seals `complete_with_failures`, continuation must validate the
+exact base completion and select only work that has not become terminal in a
+later artifact. In this campaign the first recovery started DeepSeek and was
+interrupted before the other six failed units began. The separate Runner 2.27
+failed-output recovery completes DeepSeek's 1,909-row extension from 235 retained
+usable rows plus 1,674 recovered or previously unattempted rows. Only after that
+recovery is terminal may the alignment continuation schedule the four 50-row
+R-Judge units and two 1,075-row GPTGeoChat units, exactly 2,350 rows. It must not
+schedule DeepSeek or any of the five base-complete units. All continuations reuse
+the original content-bound limit-50 selectors, derive fresh revision-bound
+attestations and retain separate revision/output-policy strata. Phase 7 accepts
+the resulting population only when its unique extension accounting is exactly
+11,600 rows; actual Runner work is reported separately because 2,772 failed
+outputs were deliberately retried once rather than hidden.
 
 Before Gate 6 closes, every retained local vLLM failure is partitioned by the
 boundary it reached. A lane that failed before measured Runner execution is run
@@ -943,6 +950,14 @@ separate until an explicitly justified sensitivity view combines estimates.
 Diagnostic attestation/canary calls remain diagnostic and cannot be counted as
 population rows.
 
+The alignment continuation is a dependent Phase 6 step, not another replay of
+the seven failed base units. It requires the terminal failed-output recovery and
+then runs only the six never-started R-Judge/GPTGeoChat units, for 2,350 rows.
+Its explicit Ollama configuration binds `think=false` for Gemma and Ministral
+and `think=low` for GPT-OSS; no local-only classification unit may gain a Hub
+acquisition plan. Reintroducing DeepSeek into this selection or changing the
+2,350-row count is a contract failure.
+
 Interactive shutdown owns SIGINT as well as SIGTERM. Runner records the signal,
 finishes model and framework teardown, restores both prior handlers and then
 returns the conventional signal status. Gate 6 requires an empty Ollama `/api/ps`
@@ -1053,6 +1068,12 @@ vLLM stability and nine native. The population-alignment amendment adds 12
 current-Ollama population-alignment logical extension rows, giving 109. The six
 failed-output recovery units use Runner 2.27 and give a final terminal inventory
 of 115.
+The 12 population-alignment rows remain logical model/framework conditions, not
+12 necessarily single-root files. Eleven have one terminal metric root. The
+DeepSeek condition is population-complete across its retained Runner 2.26 usable
+segment and Runner 2.27 recovery segment; Phase 7 reports their exact coverage
+and model-stability accounting but forbids a pooled security rate across those
+output-policy/revision strata.
 The
 contract self-test rejects any
 other count or cohort partition.

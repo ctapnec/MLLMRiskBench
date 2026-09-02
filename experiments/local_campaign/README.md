@@ -307,6 +307,17 @@ The failed unit's 375-row prefix remains lifecycle evidence and is never pooled
 with the suffix. Completed Runner 2.24 Qwen text and Crescendo lanes are not
 repeated and remain in their historical output-policy stratum.
 
+For this retained campaign,
+`--phase6-current-ollama-population-alignment-completion` names the terminal
+six-unit continuation completion, not the interrupted seven-unit recovery root.
+Launch that continuation only after the failed-output recovery is terminal. Its
+module requires the base alignment completion plus
+`--failed-output-recovery-completion` and its SHA-256, and schedules exactly four
+R-Judge and two GPTGeoChat units (2,350 rows). DeepSeek is excluded because its
+235 retained usable rows plus 1,674 Runner 2.27 recovery rows already close its
+1,909-row extension. Phase 7 retains that split as population/model-stability
+coverage and forbids a pooled security rate across the two Runner strata.
+
 Targeted Runner-output recovery is deliberately outside `launch_chain`. It is
 available only through the generated
 `launch_phase6_recovery_and_seven.sh`. The launcher starts one named tmux
