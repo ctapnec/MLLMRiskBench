@@ -1049,7 +1049,7 @@ def test_current_ollama_alignment_uses_the_common_limit_100_population(
     source = Path(phase6_alignment.__file__).read_text(encoding="utf-8")
 
     def assert_result_membership(candidate: str) -> None:
-        assert "set(results) != set(selected)" in candidate
+        assert "result_lanes | failure_lanes != set(ALIGNMENT_LANES)" in candidate
         assert (
             "current_ollama_stability_canary_recovery_phase6 import ("
             in candidate
@@ -1059,8 +1059,8 @@ def test_current_ollama_alignment_uses_the_common_limit_100_population(
 
     assert_result_membership(source)
     changed = source.replace(
-        "set(results) != set(selected)",
-        "list(results) != list(selected)",
+        "result_lanes | failure_lanes != set(ALIGNMENT_LANES)",
+        "result_lanes | failure_lanes != set()",
         1,
     )
     assert changed != source
