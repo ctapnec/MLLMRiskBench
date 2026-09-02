@@ -115,6 +115,16 @@ STATE_FIELDS = {
 }
 
 
+def physical_unit_id(original_unit: str) -> str:
+    """Keep a filtered recovery unit at its original six-unit position."""
+
+    try:
+        index = ORIGINAL_UNIT_ORDER.index(original_unit) + 1
+    except ValueError as exc:
+        raise ValueError("unknown failed-output recovery unit") from exc
+    return f"failed-output-recovery-{index:02d}-{original_unit[:52]}"
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -541,8 +551,8 @@ def _prepare_units(
             raise ValueError("failed-output recovery unit filter order changed")
 
     prepared: list[tuple[Unit, Path, str, dict[str, object], bool, str]] = []
-    for index, (template, state, hub_required, original) in enumerate(sources, 1):
-        physical = f"failed-output-recovery-{index:02d}-{original[:52]}"
+    for template, state, hub_required, original in sources:
+        physical = physical_unit_id(original)
         unit, selector, digest, snapshot = _recovery_unit(
             template,
             state_path=state,

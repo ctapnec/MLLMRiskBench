@@ -12,6 +12,7 @@ from experiments.local_campaign.failed_output_recovery_phase6 import (
     ORIGINAL_UNIT_ORDER,
     _durable_outcomes,
     build_completed_selection,
+    physical_unit_id,
 )
 from experiments.local_campaign.failed_output_recovery_continuation_phase6 import (
     CONTINUATION_UNIT_ORDER,
@@ -42,6 +43,15 @@ def test_failed_output_continuation_selects_only_unexecuted_deepseek() -> None:
     assert "only_original_units=(DEEPSEEK_UNIT,)" in source
     assert 'results = dict(prior["unit_results"])' in source
     assert "successful_rows_repeated\": 0" in source
+
+    assert physical_unit_id(ORIGINAL_UNIT_ORDER[4]) == EXPECTED_UNIT_ORDER[4]
+    with pytest.raises(ValueError, match="unknown failed-output recovery unit"):
+        physical_unit_id("not-a-recovery-unit")
+
+    # Reverse mutation: renumbering the filtered unit from one reproduces the
+    # pre-execution selector mismatch that this continuation must reject.
+    reindexed = f"failed-output-recovery-01-{ORIGINAL_UNIT_ORDER[4][:52]}"
+    assert reindexed != DEEPSEEK_PHYSICAL_UNIT
 
 
 def test_failed_output_continuation_preserves_split_revision_strata() -> None:
