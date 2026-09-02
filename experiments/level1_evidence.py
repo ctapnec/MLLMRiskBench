@@ -803,6 +803,10 @@ def _grid_condition(
         values["recovery_selection"] = request["recovery_selection"]
     if "sampling_policy" in request:
         values["sampling_policy"] = request["sampling_policy"]
+    if "judge_execution_schedule" in request:
+        values["judge_execution_schedule"] = request[
+            "judge_execution_schedule"
+        ]
     if legacy:
         legacy_values = dict(values)
         legacy_selected = dict(selected)
