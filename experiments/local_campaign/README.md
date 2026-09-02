@@ -323,10 +323,14 @@ and rejected DeepSeek before measured execution because the reasoning model was
 bound with `think=false`. Do not repeat those five units. Run
 `failed_output_recovery_continuation_phase6` with the exact terminal completion
 and digest; it validates the retained partition, reuses the exact 1,674-row
-selector, and runs only DeepSeek with `think=true`. Its combined `/2` completion
-preserves DeepSeek's original physical unit 05 rather than renumbering the
-filtered one-unit list. It is the authoritative Phase 7 and alignment-recovery
-input, with old and new project revisions kept as separate metric strata.
+selector, and runs only DeepSeek with `think=true`. The separately calibrated
+condition uses `num_predict=2048` after a ten-input, one-attempt, no-judge
+diagnostic produced ten visible final answers with normal stop reasons and
+719-1,335 completion tokens; the stopped 512-token condition remains diagnostic.
+Its combined `/3` completion preserves DeepSeek's
+original physical unit 05 rather than renumbering the filtered one-unit list. It
+is the authoritative Phase 7 and alignment-recovery input, with old and new
+project revisions and generation conditions kept as separate metric strata.
 
 Targeted Runner-output recovery is deliberately outside `launch_chain`. It is
 available only through the generated

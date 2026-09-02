@@ -22,7 +22,10 @@ from experiments.local_campaign.console_events import (
     publish_target_execution,
     start_child_controller,
 )
-from experiments.local_campaign.current_ollama import CURRENT_OLLAMA_BY_SPEC
+from experiments.local_campaign.current_ollama import (
+    CURRENT_OLLAMA_BY_SPEC,
+    CURRENT_OLLAMA_NUM_CTX,
+)
 from experiments.local_campaign.current_ollama_gate5 import (
     _descriptor,
     _stable_file,
@@ -39,6 +42,7 @@ from experiments.local_campaign.failed_output_recovery_phase6 import (
     SCHEMA as PRIOR_SCHEMA,
     SNAPSHOT_SCHEMA as PRIOR_SNAPSHOT_SCHEMA,
     UNIT_STATE_SCHEMA,
+    _durable_outcomes,
     _prepare_units,
     _validate_metric_result,
 )
@@ -54,9 +58,10 @@ from experiments.local_campaign.vllm_stability_phase6 import (
 from ura.runner import CODE_VERSION
 
 
-SCHEMA = "ura-failed-output-recovery-phase6/2"
-LAUNCH_SCHEMA = "ura-failed-output-recovery-continuation-phase6-launch/1"
+SCHEMA = "ura-failed-output-recovery-phase6/3"
+LAUNCH_SCHEMA = "ura-failed-output-recovery-continuation-phase6-launch/2"
 SNAPSHOT_SCHEMA = "ura-failed-output-recovery-continuation-input-snapshot/1"
+DEEPSEEK_CONTINUATION_NUM_PREDICT = 2_048
 DEEPSEEK_PHYSICAL_UNIT = EXPECTED_UNIT_ORDER[4]
 RETAINED_UNIT_ORDER = EXPECTED_UNIT_ORDER[:4] + EXPECTED_UNIT_ORDER[5:]
 CONTINUATION_UNIT_ORDER = (DEEPSEEK_PHYSICAL_UNIT,)
@@ -183,6 +188,88 @@ def _revision_map(
     return strata, by_lane
 
 
+def _partial_durable_counts(
+    *,
+    work_root: Path,
+    control_root: Path,
+) -> tuple[int, int, int]:
+    """Count checkpointed logical rows when Runner exits before Level 1."""
+
+    state_path = control_root / "units" / DEEPSEEK_PHYSICAL_UNIT / "state.json"
+    if not state_path.exists():
+        return 0, 0, 0
+    state = _load_json(state_path, label="partial DeepSeek unit state")
+    expected_root = (
+        work_root
+        / "runs/thesis/runner"
+        / DEEPSEEK_PHYSICAL_UNIT
+        / control_root.name
+    )
+    result_root = Path(str(state.get("result_root", "")))
+    if (
+        state.get("schema") != UNIT_STATE_SCHEMA
+        or state.get("unit_id") != DEEPSEEK_PHYSICAL_UNIT
+        or state.get("selected_records") != EXPECTED_RECOVERY_COUNTS[4]
+        or state.get("target_answer_retries") != 1
+        or not result_root.is_absolute()
+        or result_root.is_symlink()
+        or result_root.resolve(strict=True) != expected_root.resolve(strict=True)
+    ):
+        raise ValueError("partial DeepSeek unit state changed")
+    attempts, outcomes, _attempt_files, _response_files = _durable_outcomes(
+        result_root
+    )
+    allowed = {
+        "usable_first_response",
+        "recovered_after_retry",
+        "failed_output",
+        "input_incompatible",
+    }
+    if any(status not in allowed for status in outcomes.values()):
+        raise ValueError("partial DeepSeek outcome has an unsupported terminal status")
+    attempted = len(attempts)
+    if attempted > EXPECTED_RECOVERY_COUNTS[4]:
+        raise ValueError("partial DeepSeek outcome count exceeds its selection")
+    missing = sum(
+        status in {"failed_output", "input_incompatible"}
+        for status in outcomes.values()
+    )
+    return attempted, attempted - missing, missing
+
+
+def _create_deepseek_generation_condition(
+    *,
+    control_root: Path,
+) -> dict[str, object]:
+    """Bind the separately calibrated DeepSeek completion allowance."""
+
+    model = CURRENT_OLLAMA_BY_SPEC[
+        "ollama:deepseek-r1:32b-qwen-distill-q4_K_M"
+    ]
+    if model.label != "deepseek-r1-distill-32b" or model.think is not True:
+        raise ValueError("DeepSeek continuation model condition changed")
+    config_path = control_root / "configs" / f"{model.label}.json"
+    _create_json(
+        config_path,
+        {
+            model.spec: {
+                "digest": model.digest,
+                "modalities": list(model.modalities),
+                "num_ctx": CURRENT_OLLAMA_NUM_CTX,
+                "num_predict": DEEPSEEK_CONTINUATION_NUM_PREDICT,
+                "think": True,
+            }
+        },
+    )
+    config = _descriptor(config_path, label="DeepSeek continuation local config")
+    return {
+        "local_config": config,
+        "num_ctx": CURRENT_OLLAMA_NUM_CTX,
+        "num_predict": DEEPSEEK_CONTINUATION_NUM_PREDICT,
+        "think": True,
+    }
+
+
 def validate_phase7_completion(
     completion_path: Path,
     *,
@@ -201,6 +288,7 @@ def validate_phase7_completion(
         "expected_commit",
         "runner_code_version",
         "target_answer_retries",
+        "generation_condition",
         "prior_completion",
         "launch",
         "input_snapshot",
@@ -254,12 +342,46 @@ def validate_phase7_completion(
     snapshot = _load_json(
         snapshot_path, label="failed-output continuation snapshot"
     )
+    condition = completion.get("generation_condition")
+    if not isinstance(condition, dict) or set(condition) != {
+        "local_config",
+        "num_ctx",
+        "num_predict",
+        "think",
+    }:
+        raise ValueError("DeepSeek continuation generation condition changed")
+    config_path = _validate_descriptor(
+        condition["local_config"], label="DeepSeek continuation local config"
+    )
+    model = CURRENT_OLLAMA_BY_SPEC[
+        "ollama:deepseek-r1:32b-qwen-distill-q4_K_M"
+    ]
+    expected_config = {
+        model.spec: {
+            "digest": model.digest,
+            "modalities": list(model.modalities),
+            "num_ctx": CURRENT_OLLAMA_NUM_CTX,
+            "num_predict": DEEPSEEK_CONTINUATION_NUM_PREDICT,
+            "think": True,
+        }
+    }
+    if (
+        condition.get("num_ctx") != CURRENT_OLLAMA_NUM_CTX
+        or condition.get("num_predict") != DEEPSEEK_CONTINUATION_NUM_PREDICT
+        or condition.get("think") is not True
+        or config_path
+        != control_root / "configs" / f"{model.label}.json"
+        or _load_json(config_path, label="DeepSeek continuation local config")
+        != expected_config
+    ):
+        raise ValueError("DeepSeek continuation local config changed")
     if (
         launch_path != control_root / "launch.json"
         or snapshot_path != control_root / "input-snapshot.json"
         or launch.get("schema") != LAUNCH_SCHEMA
         or launch.get("runner_code_version") != "ura-runner/2.27"
         or launch.get("target_answer_retries") != 1
+        or launch.get("generation_condition") != condition
         or launch.get("prior_completion") != completion["prior_completion"]
         or launch.get("unit_order") != list(CONTINUATION_UNIT_ORDER)
         or launch.get("recovery_records") != EXPECTED_RECOVERY_COUNTS[4]
@@ -342,6 +464,22 @@ def validate_phase7_completion(
         metric_completion_markers.extend(item["completion_markers"])
         successful += int(item["successful"])
         missing += int(item["missing"])
+    deepseek_state_path = _validate_descriptor(
+        results[DEEPSEEK_PHYSICAL_UNIT]["state"],
+        label="DeepSeek continuation state",
+    )
+    deepseek_state = _load_json(
+        deepseek_state_path, label="DeepSeek continuation state"
+    )
+    deepseek_argv = deepseek_state.get("runner_argv")
+    if (
+        not isinstance(deepseek_argv, list)
+        or any(not isinstance(item, str) for item in deepseek_argv)
+        or _option(deepseek_argv, "--local-config") != str(config_path)
+        or _option(deepseek_argv, "--local-config-sha256")
+        != condition["local_config"]["sha256"]
+    ):
+        raise ValueError("DeepSeek continuation state lost its generation condition")
     target_execution = completion.get("target_execution")
     if (
         target_execution
@@ -412,6 +550,9 @@ def run(args: argparse.Namespace) -> int:
     control_root.mkdir(mode=0o700)
     for name in ("units", "inputs", "configs"):
         (control_root / name).mkdir(mode=0o700)
+    generation_condition = _create_deepseek_generation_condition(
+        control_root=control_root
+    )
     prepared = _prepare_units(
         args,
         work_root=work_root,
@@ -433,7 +574,15 @@ def run(args: argparse.Namespace) -> int:
     unit, selector, selector_sha, source_snapshot, hub_required, original = prepared[0]
     local = _option(unit.spec["base_argv"], "--local")
     model = CURRENT_OLLAMA_BY_SPEC.get(local)
-    if model is None or model.label != "deepseek-r1-distill-32b" or model.think is not True:
+    if (
+        model is None
+        or model.label != "deepseek-r1-distill-32b"
+        or model.think is not True
+        or _option(unit.spec["base_argv"], "--local-config")
+        != generation_condition["local_config"]["path"]
+        or _option(unit.spec["base_argv"], "--local-config-sha256")
+        != generation_condition["local_config"]["sha256"]
+    ):
         raise ValueError("DeepSeek continuation thinking policy changed")
 
     snapshot = {
@@ -461,6 +610,7 @@ def run(args: argparse.Namespace) -> int:
         "runner_code_version": CODE_VERSION,
         "execution_scope_id": args.execution_scope_id,
         "target_answer_retries": 1,
+        "generation_condition": generation_condition,
         "prior_completion": prior_descriptor,
         "project_revision": _descriptor(
             project_revision, label="continuation project revision"
@@ -537,6 +687,21 @@ def run(args: argparse.Namespace) -> int:
         continuation_missing = int(result["missing_responses"])
     else:
         failures[DEEPSEEK_PHYSICAL_UNIT] = failure
+        try:
+            (
+                continuation_attempts,
+                continuation_successful,
+                continuation_missing,
+            ) = _partial_durable_counts(
+                work_root=work_root,
+                control_root=control_root,
+            )
+        except (OSError, TypeError, ValueError) as accounting_exc:
+            if failure is not None:
+                failure["durable_accounting_error_type"] = type(
+                    accounting_exc
+                ).__name__
+                failure["durable_accounting_error"] = str(accounting_exc)[:4000]
     completion = {
         "schema": SCHEMA,
         "status": "complete" if not failures else "complete_with_failures",
@@ -545,6 +710,7 @@ def run(args: argparse.Namespace) -> int:
         "expected_commit": args.expected_commit,
         "runner_code_version": CODE_VERSION,
         "target_answer_retries": 1,
+        "generation_condition": generation_condition,
         "prior_completion": prior_descriptor,
         "launch": _descriptor(launch_path, label="failed-output continuation launch"),
         "input_snapshot": _descriptor(

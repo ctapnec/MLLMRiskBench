@@ -572,9 +572,14 @@ completed rows. Run
 `python -m experiments.local_campaign.failed_output_recovery_continuation_phase6`
 in a named tmux session with the exact prior completion and SHA-256 plus the
 same bound source inputs. It reuses the exact 1,674-row selector and runs only
-DeepSeek-R1 with `think=true`; its combined `/2` completion preserves the prior
-five results and separates project-revision strata. Its filtered execution keeps
-DeepSeek's original physical unit 05; do not renumber the one-unit filtered list
+DeepSeek-R1 with `think=true`. The retained bounded ten-input, one-attempt,
+no-judge calibration produced ten visible final answers at `num_predict=2048`,
+all with normal stop reasons and 719-1,335 completion tokens; the stopped
+512-token condition remains diagnostic. The
+continuation's combined `/3` completion preserves the prior five results and
+separates project-revision and generation-condition strata. Its filtered
+execution keeps DeepSeek's original physical unit 05; do not renumber the
+one-unit filtered list
 to 01. Use that combined
 completion as the failed-output recovery input below.
 

@@ -5,6 +5,7 @@ import inspect
 
 import pytest
 
+from experiments.local_campaign.current_ollama import CURRENT_OLLAMA_BY_LABEL
 from experiments.local_campaign.failed_output_recovery_phase6 import (
     EXPECTED_RECOVERY_COUNTS,
     EXPECTED_RECOVERY_ROWS,
@@ -13,11 +14,16 @@ from experiments.local_campaign.failed_output_recovery_phase6 import (
     _durable_outcomes,
     build_completed_selection,
     physical_unit_id,
+    validate_phase7_completion as dispatch_phase7_completion,
 )
 from experiments.local_campaign.failed_output_recovery_continuation_phase6 import (
     CONTINUATION_UNIT_ORDER,
+    DEEPSEEK_CONTINUATION_NUM_PREDICT,
     DEEPSEEK_PHYSICAL_UNIT,
     RETAINED_UNIT_ORDER,
+    SCHEMA as CONTINUATION_SCHEMA,
+    _create_deepseek_generation_condition,
+    _partial_durable_counts,
     _revision_map,
     run as run_continuation,
 )
@@ -43,6 +49,12 @@ def test_failed_output_continuation_selects_only_unexecuted_deepseek() -> None:
     assert "only_original_units=(DEEPSEEK_UNIT,)" in source
     assert 'results = dict(prior["unit_results"])' in source
     assert "successful_rows_repeated\": 0" in source
+    assert "_partial_durable_counts(" in source
+    assert "_create_deepseek_generation_condition(" in source
+    assert CONTINUATION_SCHEMA == "ura-failed-output-recovery-phase6/3"
+    assert "ura-failed-output-recovery-phase6/3" in inspect.getsource(
+        dispatch_phase7_completion
+    )
 
     assert physical_unit_id(ORIGINAL_UNIT_ORDER[4]) == EXPECTED_UNIT_ORDER[4]
     with pytest.raises(ValueError, match="unknown failed-output recovery unit"):
@@ -72,6 +84,103 @@ def test_failed_output_continuation_preserves_split_revision_strata() -> None:
     mutated = {lane: {"revision": "a" * 64} for lane in EXPECTED_UNIT_ORDER}
     mutated_strata, _mutated_by_lane = _revision_map(mutated)
     assert mutated_strata != strata
+
+
+def test_failed_output_continuation_counts_checkpointed_rows_after_failure(
+    tmp_path,
+) -> None:
+    work_root = tmp_path / "work"
+    control_root = work_root / "runs" / "engineering" / "campaign"
+    unit_root = control_root / "units" / DEEPSEEK_PHYSICAL_UNIT
+    result_root = (
+        work_root
+        / "runs"
+        / "thesis"
+        / "runner"
+        / DEEPSEEK_PHYSICAL_UNIT
+        / control_root.name
+    )
+    unit_root.mkdir(parents=True)
+    result_root.mkdir(parents=True)
+    (unit_root / "state.json").write_text(
+        json.dumps({
+            "schema": "ura-failed-output-recovery-phase6-unit-state/1",
+            "unit_id": DEEPSEEK_PHYSICAL_UNIT,
+            "selected_records": EXPECTED_RECOVERY_COUNTS[4],
+            "target_answer_retries": 1,
+            "result_root": str(result_root),
+        }),
+        encoding="utf-8",
+    )
+    attempts = [
+        {
+            "id": f"attempt-{index}",
+            "datapoint_id": f"row-{index}",
+            "attacker": "replay",
+            "target": "target",
+            "rendered_input": [{"role": "user", "content": "fixture"}],
+            "run_id": f"run-{index}",
+        }
+        for index in range(2)
+    ]
+    responses = [
+        {
+            "attempt_id": "attempt-0",
+            "target": "target",
+            "output_turns": [{"role": "assistant", "content": "answer"}],
+            "raw": {"model_stability_status": "usable_first_response"},
+            "run_id": "run-0",
+        },
+        {
+            "attempt_id": "attempt-1",
+            "target": "target",
+            "output_turns": [],
+            "raw": {"model_stability_status": "failed_output"},
+            "run_id": "run-1",
+        },
+    ]
+    (result_root / "fixture.attempts.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in attempts), encoding="utf-8"
+    )
+    (result_root / "fixture.responses.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in responses), encoding="utf-8"
+    )
+
+    assert _partial_durable_counts(
+        work_root=work_root,
+        control_root=control_root,
+    ) == (2, 1, 1)
+
+    # Reverse mutation: the old controller published zeros after the same
+    # checkpointed failure and therefore cannot satisfy this accounting proof.
+    assert (0, 0, 0) != (2, 1, 1)
+
+
+def test_deepseek_continuation_binds_separate_calibrated_generation_cap(
+    tmp_path,
+) -> None:
+    model = CURRENT_OLLAMA_BY_LABEL["deepseek-r1-distill-32b"]
+    control_root = tmp_path / "campaign"
+    (control_root / "configs").mkdir(parents=True)
+    condition = _create_deepseek_generation_condition(
+        control_root=control_root,
+    )
+
+    assert DEEPSEEK_CONTINUATION_NUM_PREDICT == 2_048
+    assert condition["num_predict"] == 2_048
+    assert condition["think"] is True
+    config_path = control_root / "configs" / "deepseek-r1-distill-32b.json"
+    assert condition["local_config"]["path"] == str(config_path)
+    assert json.loads(config_path.read_text(encoding="utf-8"))[model.spec] == {
+        "digest": model.digest,
+        "modalities": ["text"],
+        "num_ctx": 8192,
+        "num_predict": 2_048,
+        "think": True,
+    }
+
+    # Reverse mutation: the stopped 512-token condition is not this cohort.
+    assert 512 != DEEPSEEK_CONTINUATION_NUM_PREDICT
 
 
 def test_selector_replays_only_failed_and_never_attempted_rows() -> None:

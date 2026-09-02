@@ -630,14 +630,21 @@ cohort used limit 50 and sample seed 0 for bounded text and source-classificatio
 lanes, with image and GPTGeoChat lanes only for Gemma 4 and Ministral 3. The
 population-alignment amendment completes the same nested seed-0 prefix to limit
 100 for every comparable Ollama lane. It does not rewrite the already sealed
-46-row historical profile or repeat a completed limit-50 row. Every Ollama
-request in these amendments binds `num_ctx=8192` and `num_predict=512`. The
-first value prevents
+46-row historical profile or repeat a completed limit-50 row. Every retained
+Ollama request before the DeepSeek continuation binds `num_ctx=8192` and
+`num_predict=512`. The first value prevents
 the 32B DeepSeek condition from allocating its full 131,072-token native context
 and spilling nearly half of a short-prompt canary to CPU while the scoring guard
 is resident; the second is an output cap, not a reason to discard observed
 length-capped text. A different context or output cap is a separate projected
-cohort. Identity, provenance, residency, seal, budget and wall-time failures
+cohort. After `think=true` exposed a systematic 512-token no-final-answer
+condition on difficult security inputs, a separate ten-input, one-attempt,
+no-judge diagnostic admitted `num_predict=2048` after all ten inputs returned
+visible final text with 719-1,335 completion tokens and normal stop reasons. The
+resulting DeepSeek-only continuation binds that
+condition in its launch, local-config digest, Runner request and combined `/3`
+completion; it cannot be pooled with the stopped 512-token diagnostic condition.
+Identity, provenance, residency, seal, budget and wall-time failures
 remain hard failures. Exhausted answer-level malformed output or transport
 failures use the typed missing-response policy above. Earlier attempts remain
 diagnostic observations.
@@ -956,10 +963,12 @@ no DeepSeek population call: all five admission probes were rejected because
 the controller had bound that reasoning model with `think=false`. The
 `failed_output_recovery_continuation_phase6` controller accepts only that exact
 terminal partition, retains the five completed results byte-for-byte, reuses
-the exact 1,674-row selector, and runs only DeepSeek with `think=true`. Its
-combined `/2` completion keeps old and continuation project revisions in
-separate metric strata. This is correction of a pre-execution configuration
-error, not an extra response retry. Filtering to DeepSeek must preserve its
+the exact 1,674-row selector, and runs only DeepSeek with `think=true` under the
+separately calibrated 2,048-token completion allowance. Its combined `/3`
+completion keeps old and continuation project revisions and generation
+conditions in separate metric strata. This is correction of a pre-execution
+configuration error followed by a separately named cap sensitivity, not an
+extra response retry. Filtering to DeepSeek must preserve its
 physical position 05 from the original six-unit order; renumbering the filtered
 list from one changes the immutable selector identity and is rejected before a
 target call.

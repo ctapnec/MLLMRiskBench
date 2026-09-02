@@ -716,7 +716,10 @@ def validate_phase7_completion(
     resolved = completion_path.resolve(strict=True)
     runner_root = runner_root.resolve(strict=True)
     completion = _load_json(resolved, label="failed-output recovery completion")
-    if completion.get("schema") == "ura-failed-output-recovery-phase6/2":
+    if completion.get("schema") in {
+        "ura-failed-output-recovery-phase6/2",
+        "ura-failed-output-recovery-phase6/3",
+    }:
         from experiments.local_campaign.failed_output_recovery_continuation_phase6 import (
             validate_phase7_completion as validate_continuation_completion,
         )
