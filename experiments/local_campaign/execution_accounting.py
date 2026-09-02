@@ -220,10 +220,10 @@ def build_execution_accounting(
             if source_authoritative:
                 row["source_authoritative_decisions"] += int(decided)
             else:
-                row["common_local_judgments"] += 1
+                row["common_local_judgments"] += int(not missing)
                 row["local_rules_decisions"] += int(judge == "rules" and decided)
                 row["local_guardrail_calls"] += int(
-                    raw.get("guardrail_queried") is True
+                    not missing and raw.get("guardrail_queried") is True
                 )
 
     rows: list[dict[str, Any]] = []
@@ -328,6 +328,12 @@ def validate_execution_accounting(value: object) -> dict[str, Any]:
             or row["selected_inputs"] > row["initial_target_calls"]
             or row["source_authoritative_decisions"]
             and row["common_local_judgments"]
+            or row["source_authoritative_decisions"]
+            > row["successful_output_generations"]
+            or row["common_local_judgments"]
+            > row["successful_output_generations"]
+            or row["local_rules_decisions"] > row["common_local_judgments"]
+            or row["local_guardrail_calls"] > row["common_local_judgments"]
             or row["haiku_judge_calls"] != 0
         ):
             raise ValueError("execution accounting row counts do not reconcile")

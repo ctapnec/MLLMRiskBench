@@ -1771,9 +1771,18 @@ class DashboardMixin:
             "level1": {"ura-level1-evidence/3", "ura-level1-evidence/2"},
             "level2": {"ura-level2-report/1"},
         }.get(kind)
-        if kind not in {"level1", "level2", "terminal_inventory"} or (
+        if kind not in {
+            "level1",
+            "level2",
+            "terminal_inventory",
+            "execution_accounting",
+        } or (
             expected is not None
             and str(doc.get("schema_version")) not in expected
+        ) or (
+            kind == "execution_accounting"
+            and doc.get("schema")
+            != "ura-local-campaign-execution-accounting/1"
         ):
             return (
                 "<div class='card'><h3>"
@@ -1795,6 +1804,10 @@ class DashboardMixin:
         try:
             if kind == "terminal_inventory":
                 return self._render_terminal_inventory(
+                    display_name, doc, artifact_relative=rel
+                )
+            if kind == "execution_accounting":
+                return self._render_execution_accounting(
                     display_name, doc, artifact_relative=rel
                 )
             if kind == "level2":
@@ -2182,6 +2195,122 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
     #: Chart bars are capped for legibility; the table always shows every row,
     #: so nothing is silently dropped.
     _LEVEL2_CHART_CAP = 40
+
+    def _render_execution_accounting(
+        self,
+        rel: str,
+        doc: Mapping[str, Any],
+        *,
+        artifact_relative: str | None = None,
+    ) -> str:
+        """Render the exact local input/call/output/judge accounting table."""
+
+        rows = doc["rows"]
+        totals = doc["totals"]
+        plan = doc["population_plan"]
+        provider_calls: dict[str, int] = {}
+        for row in rows:
+            provider = str(row["target_provider"])
+            provider_calls[provider] = provider_calls.get(provider, 0) + int(
+                row["initial_target_calls"]
+            )
+        funnel_chart = self._count_bar_chart(
+            [
+                ("selected inputs", int(totals["selected_inputs"])),
+                ("initial target calls", int(totals["initial_target_calls"])),
+                ("answer retries", int(totals["answer_retry_calls"])),
+                (
+                    "successful outputs",
+                    int(totals["successful_output_generations"]),
+                ),
+                ("missing outputs", int(totals["retained_missing_outputs"])),
+            ],
+            label="Local campaign input, call and output funnel",
+        )
+        provider_chart = self._count_bar_chart(
+            sorted(provider_calls.items()),
+            label="Initial target calls by local serving provider",
+        )
+        judge_chart = self._count_bar_chart(
+            [
+                ("common local judgments", int(totals["common_local_judgments"])),
+                ("rules decisions", int(totals["local_rules_decisions"])),
+                ("guardrail calls", int(totals["local_guardrail_calls"])),
+                (
+                    "source-authoritative decisions",
+                    int(totals["source_authoritative_decisions"]),
+                ),
+                ("Haiku calls", int(totals["haiku_judge_calls"])),
+            ],
+            label="Local and hosted judge-path accounting",
+        )
+        table_rows = []
+        for row in rows:
+            table_rows.append(
+                "<tr>"
+                f"<td>{html.escape(str(row['target_provider']))}<br><code>"
+                f"{html.escape(str(row['exact_model']))}</code></td>"
+                f"<td>{html.escape(str(row['framework']))}</td>"
+                f"<td>{html.escape(str(row['corpus_family']))}<br><code>"
+                f"{html.escape(str(row['logical_arm']))}</code></td>"
+                f"<td>{html.escape(str(row['modality']))}<br>"
+                f"{html.escape(str(row['risk']))}<br>"
+                f"{html.escape(str(row['expected_behavior']))}</td>"
+                f"<td>{int(row['seed'])}</td>"
+                "<td><code>"
+                f"{html.escape(str(row['project_revision_sha256'])[:12])}</code><br>"
+                f"<code>{html.escape(str(row['output_policy_sha256'])[:12])}</code></td>"
+                f"<td>{int(row['selected_inputs']):,}</td>"
+                f"<td>{int(row['initial_target_calls']):,}</td>"
+                f"<td>{int(row['answer_retry_calls']):,}</td>"
+                f"<td>{int(row['successful_output_generations']):,}</td>"
+                f"<td>{int(row['retained_missing_outputs']):,}</td>"
+                f"<td>{int(row['local_rules_decisions']):,}</td>"
+                f"<td>{int(row['local_guardrail_calls']):,}</td>"
+                f"<td>{int(row['source_authoritative_decisions']):,}</td>"
+                f"<td>{int(row['common_local_judgments']):,}</td>"
+                f"<td>{int(row['haiku_judge_calls']):,}</td></tr>"
+            )
+        if artifact_relative is None:
+            artifact_relative = rel
+        artifact_note = (
+            f"<p class='note'><a href='/artifacts?path={quote(artifact_relative)}'>"
+            "open the full validated execution accounting &rarr;</a></p>"
+            if artifact_relative
+            else ""
+        )
+        return (
+            "<div class='card'><h2>"
+            + _icon("chart")
+            + "Campaign execution accounting "
+            "<span class='badge blue'>validated local evidence</span></h2>"
+            "<p class='note'>The planned population contains "
+            f"<strong>{int(plan['intended_target_calls_before_optional_defense']):,}"
+            "</strong> target calls before optional defense work: "
+            f"{int(plan['source_authoritative_rows']):,} source-authoritative and "
+            f"{int(plan['common_judge_eligible_rows']):,} common-judge-eligible. "
+            "The table below reports observed success-view strata separately. "
+            "Retries never inflate selected inputs, multiple judge stages never "
+            "inflate target calls, and revision/output-policy strata are not pooled."
+            "</p><h3>Input to output funnel</h3>"
+            + funnel_chart
+            + "<h3>Calls by local provider</h3>"
+            + provider_chart
+            + "<h3>Judge coverage</h3>"
+            + judge_chart
+            + "<div class='scroll'><table><tr><th>Local provider / exact model</th>"
+            "<th>Framework</th><th>Corpus / logical arm</th>"
+            "<th>Modality / risk / behavior</th><th>Seed</th>"
+            "<th>Revision / output policy</th><th>Selected inputs</th>"
+            "<th>Initial calls</th><th>Retries</th><th>Successful outputs</th>"
+            "<th>Missing outputs</th><th>Rules decisions</th>"
+            "<th>Guardrail calls</th><th>Source-authoritative decisions</th>"
+            "<th>Common local judgments</th><th>Haiku calls</th></tr>"
+            + "".join(table_rows)
+            + "</table></div>"
+            + artifact_note
+            + "</div>"
+        )
 
     def _render_terminal_inventory(
         self,

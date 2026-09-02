@@ -9,6 +9,7 @@ from experiments.local_campaign.execution_accounting import (
     build_execution_accounting,
     validate_execution_accounting,
 )
+from experiments.rig_web import RigWebApp, _validate_report_document
 
 
 def _cell(
@@ -105,9 +106,9 @@ def test_execution_accounting_separates_inputs_calls_outputs_and_judges() -> Non
         "successful_output_generations": 2,
         "retained_missing_outputs": 1,
         "local_rules_decisions": 0,
-        "local_guardrail_calls": 2,
+        "local_guardrail_calls": 1,
         "source_authoritative_decisions": 1,
-        "common_local_judgments": 2,
+        "common_local_judgments": 1,
         "haiku_judge_calls": 0,
     }
     common = next(row for row in report["rows"] if row["logical_arm"] == "airbench_full")
@@ -116,6 +117,7 @@ def test_execution_accounting_separates_inputs_calls_outputs_and_judges() -> Non
     assert common["answer_retry_calls"] == 2
     assert common["successful_output_generations"] == 1
     assert common["retained_missing_outputs"] == 1
+    assert common["common_local_judgments"] == 1
     assert common["target_provider"] == "ollama"
     source = next(row for row in report["rows"] if row["logical_arm"] == "rjudge_release")
     assert source["target_provider"] == "vllm"
@@ -125,7 +127,7 @@ def test_execution_accounting_separates_inputs_calls_outputs_and_judges() -> Non
 
 @pytest.mark.parametrize(
     "mutation",
-    ("retry_total", "row_output", "haiku", "order", "identity"),
+    ("retry_total", "row_output", "judge_overflow", "haiku", "order", "identity"),
 )
 def test_execution_accounting_mutations_fail(mutation: str) -> None:
     report = copy.deepcopy(_report())
@@ -133,6 +135,8 @@ def test_execution_accounting_mutations_fail(mutation: str) -> None:
         report["totals"]["answer_retry_calls"] += 1
     elif mutation == "row_output":
         report["rows"][0]["successful_output_generations"] += 1
+    elif mutation == "judge_overflow":
+        report["rows"][0]["common_local_judgments"] += 1
     elif mutation == "haiku":
         report["rows"][0]["haiku_judge_calls"] = 1
     elif mutation == "order":
@@ -142,3 +146,32 @@ def test_execution_accounting_mutations_fail(mutation: str) -> None:
 
     with pytest.raises(ValueError):
         validate_execution_accounting(report)
+
+
+def test_execution_accounting_is_validated_and_rendered_as_quantitative_stats() -> None:
+    report = _report()
+    _validate_report_document("execution_accounting", report)
+    app = object.__new__(RigWebApp)
+
+    rendered = app._render_execution_accounting(
+        "analysis/campaign-execution-accounting.json",
+        report,
+    )
+
+    assert "Campaign execution accounting" in rendered
+    assert "42,882" in rendered
+    assert "8,680 source-authoritative" in rendered
+    assert "34,202 common-judge-eligible" in rendered
+    assert "Input to output funnel" in rendered
+    assert "Calls by local provider" in rendered
+    assert "Judge coverage" in rendered
+    assert "Local provider / exact model" in rendered
+    assert "Initial calls" in rendered
+    assert "Missing outputs" in rendered
+    assert "Haiku calls" in rendered
+    assert "deepseek-r1:32b" in rendered
+    assert "rjudge_release" in rendered
+    assert (
+        "href='/artifacts?path=analysis/campaign-execution-accounting.json'"
+        in rendered
+    )

@@ -1299,6 +1299,8 @@ def load_local_campaign_stats_bundle(
             if path.name == "level2-report.json"
             and path.parent.parent == metric_strata_root
         )
+        accounting_path = (analysis / "campaign-execution-accounting.json").resolve()
+        accounting_present = accounting_path in descriptors
         strata, expected_metric_strata = _campaign_report_strata(campaign_inventory)
         lifecycle_ids = [path.parent.name for path in lifecycle_reports]
         metric_ids = [path.parent.name for path in stratum_reports]
@@ -1316,7 +1318,11 @@ def load_local_campaign_stats_bundle(
             return None
         selected = [
             (campaign_path, "terminal_inventory"),
-        ] + [
+        ] + (
+            [(accounting_path, "execution_accounting")]
+            if accounting_present
+            else []
+        ) + [
             (path, "level1") for path in lifecycle_reports
         ] + [
             (path, "level2") for path in stratum_reports
@@ -1331,6 +1337,20 @@ def load_local_campaign_stats_bundle(
             report_document = _object(report_payload)
             if kind == "terminal_inventory":
                 _validate_local_campaign_terminal_inventory(report_document)
+            elif kind == "execution_accounting":
+                _validate_report_document(kind, report_document)
+                if report_document.get("generated_from") != {
+                    "human_audit_runner_input_view": controller[
+                        "human_audit_runner_input_view"
+                    ],
+                    "human_audit_sampling_index": controller[
+                        "human_audit_sampling_index"
+                    ],
+                    "campaign_terminal_inventory": controller[
+                        "campaign_terminal_inventory"
+                    ],
+                }:
+                    return None
             else:
                 _validate_report_document(kind, report_document)
                 revision, source = strata[path.parent.name]

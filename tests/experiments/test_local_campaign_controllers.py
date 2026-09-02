@@ -4836,6 +4836,24 @@ def test_phase7_stats_publication_is_plan_owned_ordered_and_fail_closed(
             assert_publication_contract(changed)
 
 
+def test_phase7_publishes_exact_execution_accounting_from_final_runner_view() -> None:
+    source = _template_source("phase7_analysis.py.in")
+
+    required = (
+        "def record_execution_accounting(self) -> None:",
+        "runner_view = self.human_audit_runner_input_view()",
+        "_load_cells(runner_view)",
+        'self.analysis / "campaign-execution-accounting.json"',
+        "build_execution_accounting(",
+        '"execution-accounting"',
+        "self.record_execution_accounting()",
+    )
+    _assert_source_contract(source, required)
+    assert source.index("self.run_level1()") < source.index(
+        "self.record_execution_accounting()"
+    ) < source.index("self.run_metric_strata()")
+
+
 def test_phase6_gate5_launch_identity_uses_the_rendered_commit(
     tmp_path: Path,
 ) -> None:

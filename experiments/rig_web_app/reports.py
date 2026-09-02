@@ -28,6 +28,7 @@ from .artifacts import (
 )
 
 _REPORT_SCHEMAS = {
+    "ura-local-campaign-execution-accounting/1": "execution_accounting",
     "ura-level1-evidence/3": "level1",
     "ura-level1-evidence/2": "level1",
     "ura-level2-report/1": "level2",
@@ -276,6 +277,14 @@ def _validate_content_id(
 
 def _validate_report_document(kind: str, document: Mapping[str, Any]) -> None:
     """Fail closed before a retained document receives a scientific badge."""
+
+    if kind == "execution_accounting":
+        from experiments.local_campaign.execution_accounting import (
+            validate_execution_accounting,
+        )
+
+        validate_execution_accounting(dict(document))
+        return
 
     if kind == "terminal_inventory":
         _validate_terminal_inventory(document)

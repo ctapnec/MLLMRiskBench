@@ -216,7 +216,12 @@ def _validated_report(
     if set(raw) != _REPORT_FIELDS:
         raise ValueError("external analysis report fields differ")
     kind = raw.get("kind")
-    if kind not in {"level1", "level2", "terminal_inventory"}:
+    if kind not in {
+        "level1",
+        "level2",
+        "terminal_inventory",
+        "execution_accounting",
+    }:
         raise ValueError("unsupported external analysis report kind")
     path, relative = _resolved_relative(
         results_root,
@@ -352,6 +357,7 @@ def load_external_analysis_registration(
         if (
             len({report.path for report in reports}) != len(reports)
             or sum(report.kind == "terminal_inventory" for report in reports) > 1
+            or sum(report.kind == "execution_accounting" for report in reports) > 1
         ):
             return None
         return ExternalAnalysisRegistration(
@@ -392,17 +398,25 @@ def publish_external_analysis_registration(
     rows = []
     seen: set[Path] = set()
     terminal_inventory_seen = False
+    execution_accounting_seen = False
     for report in reports:
         path = Path(report.path).resolve(strict=True)
         if (
             path in seen
             or (report.kind == "terminal_inventory" and terminal_inventory_seen)
+            or (
+                report.kind == "execution_accounting"
+                and execution_accounting_seen
+            )
             or not _beneath(path, analysis)
         ):
             raise ValueError("external analysis report ownership differs")
         seen.add(path)
         terminal_inventory_seen = (
             terminal_inventory_seen or report.kind == "terminal_inventory"
+        )
+        execution_accounting_seen = (
+            execution_accounting_seen or report.kind == "execution_accounting"
         )
         payload = _regular_bytes(path, maximum=_MAX_REPORT_BYTES)
         relative = path.relative_to(results).as_posix()

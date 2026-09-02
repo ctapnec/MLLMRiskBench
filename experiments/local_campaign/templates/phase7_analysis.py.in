@@ -67,6 +67,10 @@ from experiments.local_campaign.failed_output_recovery_phase6 import (
     EXPECTED_UNIT_ORDER as FAILED_OUTPUT_RECOVERY_UNIT_ORDER,
     validate_phase7_completion as validate_failed_output_recovery_completion,
 )
+from experiments.local_campaign.execution_accounting import (
+    build_execution_accounting,
+    validate_execution_accounting,
+)
 from experiments.local_campaign.ollama_static_terminal import (
     OLLAMA_STATIC_TERMINAL_DISPOSITION,
     OLLAMA_STATIC_TERMINAL_LANES,
@@ -16670,6 +16674,43 @@ class AnalysisController:
             ),
         )
 
+    def record_execution_accounting(self) -> None:
+        """Write exact call/output/judge counts from the final successful view."""
+
+        runner_view = self.human_audit_runner_input_view()
+        self._validate_human_runner_view()
+        output = self.analysis / "campaign-execution-accounting.json"
+        value = build_execution_accounting(
+            _load_cells(runner_view),
+            generated_from={
+                "human_audit_runner_input_view": descriptor(
+                    self.human_runner_view_receipt
+                ),
+                "human_audit_sampling_index": descriptor(
+                    self.human_runner_view_index
+                ),
+                "campaign_terminal_inventory": descriptor(
+                    self.analysis / "campaign-terminal-inventory.json"
+                ),
+            },
+        )
+        validate_execution_accounting(value)
+        write_new(output, canonical(value))
+        self.status(
+            "execution-accounting",
+            value["status"],
+            detail=(
+                "exact selected-input, target-call, retry, output and judge counts "
+                "without cross-stratum pooling"
+            ),
+            outputs=(output,),
+            limitations=(
+                {"retained_missing_outputs": value["totals"]["retained_missing_outputs"]}
+                if value["totals"]["retained_missing_outputs"]
+                else None
+            ),
+        )
+
     def record_runner_failures(self) -> None:
         """Expose every honest Phase 6 Runner failure as an explicit limitation."""
 
@@ -17182,6 +17223,7 @@ class AnalysisController:
             "kappa",
             "transfer-matrix",
             "analysis-boundaries",
+            "execution-accounting",
             *{f"llava-base-vs-rr-{corpus}" for corpus in IMAGE_ARMS},
             *{f"qwen-replay-vs-crescendo-{corpus}" for corpus in ADAPTIVE_ARMS},
             *{f"native-{engine}" for engine in NATIVE_ENGINES},
@@ -17201,7 +17243,7 @@ class AnalysisController:
             *local_hardware_fit_statuses,
             *stratum_statuses,
         }
-        expected_count = 36 + len(
+        expected_count = 37 + len(
             self.inputs["gate5"]["terminal_inventory"]
         ) + len(failed_runner_lanes) + len(followon_statuses) + len(
             seven_statuses
@@ -17431,6 +17473,7 @@ class AnalysisController:
         self.record_vllm_context_recovery_outcomes()
         self.record_local_hardware_fit_outcomes()
         self.run_level1()
+        self.record_execution_accounting()
         self.run_metric_strata()
         suite = self.run_suite_summary()
         level2 = self.run_level2()
