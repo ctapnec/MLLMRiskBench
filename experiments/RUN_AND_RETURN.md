@@ -1919,6 +1919,13 @@ passing each retained unit state through repeated `--state` arguments and using
 a fresh `--out` file. The inventory is structure-only: it records descriptors,
 IDs, counts, corrected configs and completed-ID selectors without retaining
 prompt, response or thinking text. Review it before any corrective execution.
+Run the reviewed artifact with
+`python -m experiments.local_campaign.local_truncation_recovery_execution_phase6`
+and bind its `--inventory-sha256`. The controller re-derives every source unit,
+materializes create-only selectors and native-maximum configs, and performs a
+fresh attestation, canary, projection and acquisition before each measured
+unit. It keeps `--target-answer-retries 1`, continues after retained per-row
+missing outputs, and does not schedule completed non-truncated rows.
 
 Runner 2.26 local adapters construct each vLLM/Ollama `Response` with the same
 deterministic dialog-fingerprint placeholder used by hosted adapters: the first

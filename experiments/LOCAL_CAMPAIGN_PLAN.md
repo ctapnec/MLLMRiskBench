@@ -1020,6 +1020,13 @@ current-roster local result. Each nonempty vLLM `finish_reason=length` and Ollam
 policy, with fresh admission artifacts and an exact completed-ID selector.
 Historical rows remain immutable. Retired RWKV conditions are not rescheduled,
 because they were explicitly removed from the current roster and task plan.
+After review, execute that inventory with
+`local_truncation_recovery_execution_phase6`. The controller must re-derive the
+bound structure from each source state, use create-only exact-ID selectors and
+native-maximum configs, then derive fresh attestation, canary, projection and
+acquisition artifacts before measured calls. One failed or missing model answer
+is retained under model stability and does not stop the unit; completed
+non-truncated identities are never scheduled again.
 
 Interactive shutdown owns SIGINT as well as SIGTERM. Runner records the signal,
 finishes model and framework teardown, restores both prior handlers and then

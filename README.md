@@ -244,6 +244,12 @@ remains a valid length-capped response and the observed text is still evaluated.
 Recovery reuses prior Ollama projections, attestations and canaries only when
 every exact per-model config is unchanged. A context/output-cap change retains
 the older artifacts as diagnostics and creates a fresh projected cohort.
+For retained local truncations, first create the structure-only exact-row
+inventory with `local_truncation_recovery_phase6`, then pass its path and digest
+to `local_truncation_recovery_execution_phase6`. The execution controller
+re-derives every inventory unit, creates fresh attestation, canary, projection
+and acquisition artifacts, keeps one configured answer retry, and runs only
+never-attempted, failed-output, or provider-declared length-ended identities.
 If every exact-config unit completed and only aggregate validation failed, the
 recovery revalidates that complete inventory without another model call.
 

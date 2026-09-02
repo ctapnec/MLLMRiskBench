@@ -355,6 +355,11 @@ with one repeated `--state` per retained unit and a create-only `--out` path to
 produce the structure-only inventory. The artifact contains descriptors,
 datapoint IDs, selectors, corrected local configs and counts, but no prompt,
 answer or thinking text. Execution consumes that reviewed inventory separately.
+Use `local_truncation_recovery_execution_phase6` with the inventory path and
+digest. It re-derives every bound source unit, writes create-only selectors and
+configs, obtains fresh admission artifacts, and runs only the exact recovery
+identities with one answer retry. A retained missing answer remains a row-level
+model-stability result and does not terminate the rest of its unit.
 
 Targeted Runner-output recovery is deliberately outside `launch_chain`. It is
 available only through the generated

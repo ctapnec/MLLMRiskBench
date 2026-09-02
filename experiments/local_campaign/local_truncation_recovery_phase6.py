@@ -222,6 +222,21 @@ def _response_rows(result_root: Path) -> list[Response]:
     return rows
 
 
+def _source_modality(selected_rows: Mapping[str, Sequence[Any]]) -> str:
+    modalities = {
+        modality
+        for rows in selected_rows.values()
+        for row in rows
+        for modality in row.modalities
+    }
+    physical = modalities & {"image", "audio", "video"}
+    if physical == {"image"}:
+        return "image"
+    if not physical:
+        return "text"
+    raise ValueError("local truncation source has an unsupported modality mixture")
+
+
 def derive_state_inventory(state_path: Path) -> dict[str, Any]:
     """Derive one exact structure-only recovery unit from retained state."""
 
@@ -234,6 +249,17 @@ def derive_state_inventory(state_path: Path) -> dict[str, Any]:
     if "," in spec or spec not in CURRENT_LOCAL_SPECS:
         raise ValueError("local truncation state is not one current-roster model")
     selected_rows, audits = _selected_rows(argv)
+    source_unit_id = state.get("unit_id")
+    source_lane = state.get("source_lane")
+    source_corpus = state.get("corpus")
+    if (
+        not isinstance(source_unit_id, str)
+        or not source_unit_id
+        or not isinstance(source_lane, str)
+        or not source_lane
+        or (source_corpus is not None and not isinstance(source_corpus, str))
+    ):
+        raise ValueError("local truncation source unit identity changed")
     eligible_rows = dict(selected_rows)
     if "--recovery-completed-prefix" in argv:
         old_recovery, _binding = run_matrix.load_recovery_completed_prefix(
@@ -290,6 +316,10 @@ def derive_state_inventory(state_path: Path) -> dict[str, Any]:
         "source_local_config": _descriptor(
             config_path, label="local truncation source config"
         ),
+        "source_unit_id": source_unit_id,
+        "source_lane": source_lane,
+        "source_corpus": source_corpus,
+        "modality": _source_modality(selected_rows),
         "local_spec": spec,
         "base_argv": _without_runtime_bindings(argv),
         "recovery_selection": selector,
