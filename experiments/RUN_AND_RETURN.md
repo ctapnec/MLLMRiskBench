@@ -786,6 +786,22 @@ exists. The measured-job registration field and CLI flag are
 named `admission_sha256` and `--admission-sha256`; this local campaign supplies
 the approved Gate 5 manifest digest as that value.
 
+The local campaign registration presents a 141-condition execution-accounting
+table in its Stats detail. Rows retain exact target locality/provider, model,
+framework or attacker, corpus family, logical arm, modality, seed, project
+revision and output-policy condition. Selected inputs, initial target calls,
+answer retries, successful generations, missing responses, local rules or
+guardrail decisions, source-authoritative decisions and later selected Haiku
+decisions are separate numeric fields. Physical retries and repeated judge
+applications never count as new experimental inputs or outputs. The local
+summary reconciles 42,882 prospective target calls before optional defense
+work, 8,680 source-authoritative R-Judge/GPTGeoChat rows and at most 34,202
+common-judge-eligible rows. The later hosted campaign may select at most 2,000
+retained local outputs for Haiku; that independently sealed judge stratum is
+attached without mutating the zero-hosted-call local report. The same validated
+table drives the response funnel, missing-output coverage, judge coverage,
+framework/source-arm composition and matched-input local/hosted diagrams.
+
 If Phase 6 ran under a pre-v2 deployment, repin first and then migrate its
 immutable operational rows without editing or deleting them:
 

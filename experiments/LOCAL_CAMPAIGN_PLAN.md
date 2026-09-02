@@ -1192,6 +1192,27 @@ Rig Web.
 Neither an external registration nor an inventory by itself grants evidence
 authority.
 
+The published Stats campaign detail also includes one execution-accounting
+table over the validated 141-condition inventory. Each row identifies target
+locality and provider, exact model, framework or attacker, corpus family,
+logical source arm, modality, seed, revision and output-policy stratum. Its
+separate count columns are selected input rows, initial target calls, answer
+retry calls, successful output generations, retained missing outputs, local
+rules or guardrail decisions, source-authoritative decisions, and later
+selected Haiku decisions. Retry calls and multiple judge applications never
+inflate the selected-input or successful-output counts. The campaign summary
+reconciles the prospective 42,882 local target calls before optional defense
+work, including 8,680 source-authoritative R-Judge or GPTGeoChat rows and at
+most 34,202 common-judge-eligible rows. The separately planned follow-on
+outputs may raise the Haiku-eligible planning inventory to 34,261, but the
+hosted plan selects at most 2,000 retained local outputs for Haiku. Local-only
+Phase 7 therefore reports zero hosted and zero Haiku calls; a later hosted
+comparison attaches its independently sealed Haiku stratum without rewriting
+the local report. The modal diagrams derive from the same table and show the
+input-to-output funnel, response and missing-output coverage, judge coverage,
+framework by source-arm composition, and matched-input local versus hosted
+contrasts when the separate hosted campaign exists.
+
 Gate 7: the complete Phase 6 terminal inventory validates as `complete` or
 `complete_with_failures`, at least one scheduled Runner lane is
 `measured_complete`, the validated lifecycle registry retains every typed lane
