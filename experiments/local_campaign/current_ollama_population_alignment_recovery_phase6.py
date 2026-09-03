@@ -32,7 +32,6 @@ from experiments.local_campaign.current_ollama_gate5 import (
 from experiments.local_campaign.current_ollama import (
     CURRENT_OLLAMA_BY_SPEC,
     PROSPECTIVE_OLLAMA_NUM_CTX,
-    PROSPECTIVE_OLLAMA_NUM_PREDICT,
 )
 from experiments.local_campaign.current_ollama_population_alignment_phase6 import (
     ALIGNMENT_LANES,
@@ -57,16 +56,17 @@ from experiments.local_campaign.vllm_stability_phase6 import (
     _run_unit,
     _validate_descriptor,
 )
+from experiments.local_model_profiles import apply_profile
 from ura.request_envelope import load_request_envelope_file
 from ura.runner import CODE_VERSION
 
 
-SCHEMA = "ura-current-ollama-population-alignment-recovery-phase6/4"
+SCHEMA = "ura-current-ollama-population-alignment-recovery-phase6/5"
 LAUNCH_SCHEMA = (
-    "ura-current-ollama-population-alignment-recovery-phase6-launch/4"
+    "ura-current-ollama-population-alignment-recovery-phase6-launch/5"
 )
 UNIT_STATE_SCHEMA = (
-    "ura-current-ollama-population-alignment-recovery-phase6-unit-state/4"
+    "ura-current-ollama-population-alignment-recovery-phase6-unit-state/5"
 )
 HEX40 = re.compile(r"[0-9a-f]{40}\Z")
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
@@ -458,8 +458,10 @@ def _failed_output_coverage(
     )
 
 
-def _configured_unit(item: Any, *, control_root: Path) -> Any:
-    """Bind the current explicit thinking policy for one Ollama continuation unit."""
+def _configured_unit(
+    item: Any, *, control_root: Path, profile_registry: Path
+) -> Any:
+    """Bind thinking, hardware-fit context and the approved output profile."""
 
     base = list(item.unit.spec["base_argv"])
     local = _option(base, "--local")
@@ -468,13 +470,19 @@ def _configured_unit(item: Any, *, control_root: Path) -> Any:
         raise ValueError(f"{item.unit.unit_id}: current Ollama identity changed")
     config_path = control_root / "configs" / f"{model.label}.json"
     if not config_path.exists():
-        model_config: dict[str, object] = {
+        unprofiled: dict[str, object] = {
             "digest": model.digest,
             "modalities": list(model.modalities),
             "num_ctx": PROSPECTIVE_OLLAMA_NUM_CTX,
-            "num_predict": PROSPECTIVE_OLLAMA_NUM_PREDICT,
             "think": model.think,
         }
+        model_config, profile = apply_profile(
+            model.spec, unprofiled, path=profile_registry
+        )
+        if profile is None:
+            raise ValueError(
+                f"{item.unit.unit_id}: current Ollama target has no readiness profile"
+            )
         _create_json(
             config_path,
             {model.spec: model_config},
@@ -570,6 +578,10 @@ def run(args: argparse.Namespace) -> int:
         _stable_file(project_revision, label="project revision")
     ).hexdigest() != args.project_revision_sha256:
         raise ValueError("project revision digest changed")
+    profile_source = args.profile_registry.resolve(strict=True)
+    profile_bytes = _stable_file(
+        profile_source, label="local-model profile registry"
+    )
     snapshot, _base, _base_launch, units = _base_inputs(
         base_completion,
         runner_root=runner_root,
@@ -604,10 +616,17 @@ def run(args: argparse.Namespace) -> int:
         raise ValueError("Ollama alignment continuation row count changed")
 
     control_root.mkdir(mode=0o700)
-    for name in ("units", "configs"):
+    for name in ("units", "configs", "inputs"):
         (control_root / name).mkdir(mode=0o700)
+    profile_snapshot = control_root / "inputs/local-model-profiles.json"
+    with profile_snapshot.open("xb") as handle:
+        handle.write(profile_bytes)
     by_lane = {
-        lane: _configured_unit(source_by_lane[lane], control_root=control_root)
+        lane: _configured_unit(
+            source_by_lane[lane],
+            control_root=control_root,
+            profile_registry=profile_snapshot,
+        )
         for lane in selected
     }
     launch = {
@@ -624,6 +643,9 @@ def run(args: argparse.Namespace) -> int:
         "hardware_fit_completion": hardware_fit_descriptor,
         "project_revision": _descriptor(
             project_revision, label="recovery project revision"
+        ),
+        "profile_registry": _descriptor(
+            profile_snapshot, label="local-model profile registry"
         ),
         "unit_order": selected,
         "extension_rows": EXPECTED_CONTINUATION_ROWS,
@@ -843,6 +865,7 @@ def validate_recovery_completion(
         "failed_output_recovery_completion",
         "hardware_fit_completion",
         "project_revision",
+        "profile_registry",
         "unit_order",
         "extension_rows",
         "no_completed_rows_repeated",
@@ -868,6 +891,11 @@ def validate_recovery_completion(
     _validate_descriptor(
         launch.get("project_revision"), label="recovery project revision"
     )
+    profile_registry = _validate_descriptor(
+        launch.get("profile_registry"), label="local-model profile registry"
+    )
+    if profile_registry != control_root / "inputs/local-model-profiles.json":
+        raise ValueError("alignment recovery profile-registry placement changed")
 
     by_lane = {item.unit.unit_id: item for item in units}
     recovered_roots: dict[str, str] = {}
@@ -911,13 +939,17 @@ def validate_recovery_completion(
         config = _load_json(config_path, label=f"{lane} local configuration")
         expected_config = None
         if model is not None:
-            expected_model_config: dict[str, object] = {
+            unprofiled: dict[str, object] = {
                 "digest": model.digest,
                 "modalities": list(model.modalities),
                 "num_ctx": PROSPECTIVE_OLLAMA_NUM_CTX,
-                "num_predict": PROSPECTIVE_OLLAMA_NUM_PREDICT,
                 "think": model.think,
             }
+            expected_model_config, profile = apply_profile(
+                model.spec, unprofiled, path=profile_registry
+            )
+            if profile is None:
+                raise ValueError(f"{lane}: readiness profile is missing")
             expected_config = {model.spec: expected_model_config}
         if (
             _option(argv, "--limit") != "100"
@@ -1105,6 +1137,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--expected-commit", required=True)
     parser.add_argument("--project-revision", type=Path, required=True)
     parser.add_argument("--project-revision-sha256", required=True)
+    parser.add_argument("--profile-registry", type=Path, required=True)
     parser.add_argument("--execution-scope-id", required=True)
     parser.add_argument("--tmux-socket", default="default")
     parser.add_argument("--tmux-session", required=True)

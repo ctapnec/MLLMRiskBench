@@ -396,14 +396,16 @@ response artifacts remain authoritative.
   transport attestation does not depend on a usable answer. The policy is
   implemented once in Runner and applies identically to vLLM and Ollama
   targets. The budget-fitted
-  hosted campaign instead pins target, harness transport and provider SDK
-  retries to 0, so every paid target and Haiku judgment has one attempt. Build
-  sets and locks the answer-retry field to 0 whenever a hosted target is
-  selected; server validation rejects a nonzero submitted value. The first
-  retained failed hosted-target output or target transport/network failure
-  opens the global `paid_provider` circuit before another paid call. An operator
-  must classify and resolve it before a fresh bound plan and explicit circuit
-  reset; paid execution never resumes automatically.
+  hosted campaign instead pins answer-quality and provider SDK retries to 0.
+  Build sets and locks the answer-retry field to 0 whenever a hosted target is
+  selected; server validation rejects a nonzero submitted value. The harness
+  permits three retries only after HTTP 408, 409, 425, 429 or 5xx status
+  responses, for at most four visible HTTP attempts per logical call. A valid
+  but unusable answer and a connection failure without an HTTP status are not
+  retried. The first retained failed output or exhausted/non-retryable transport
+  failure opens the global `paid_provider` circuit before another paid call. An
+  operator must classify and resolve it before a fresh bound plan and explicit
+  circuit reset; paid execution never resumes automatically.
 - Local context fit and response allowance are independent. vLLM
   `max_model_len=-1` and Ollama `num_ctx="fit"` retain maximum hardware-fitting
   context. A local response allowance and 120-second request deadline must come
@@ -438,7 +440,9 @@ response artifacts remain authoritative.
   already-local inputs omit that chain and must not invent an empty plan. A
   terminal population-alignment recovery selects only units that failed before
   measured state, retains every completed row, and exposes old and recovered
-  revisions as separate Phase 7 strata.
+  revisions as separate Phase 7 strata. It snapshots and applies the same
+  identity-bound local readiness profiles as the preceding bounded-output
+  recovery; it does not restore a campaign-wide fixed response allowance.
 - A live receipt matches one exact requested/base-resolved route, secret-free
   route configuration, execution scope, modality combination and observation
   time. Text+image is not a substitute for text. Synthetic live text and

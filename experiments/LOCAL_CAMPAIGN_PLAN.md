@@ -1051,7 +1051,8 @@ allowance is ineligible if any probe reaches it. Every policy, attempted
 allocation, and resolved value is visible in Build and retained in the run
 condition or response evidence. Hosted targets and hosted judges do not use
 this local mechanism: their explicit token limits remain derived from the paid
-campaign budget and they receive one attempt.
+campaign budget. They receive zero answer-quality retries and up to three
+harness retries only for the declared retryable HTTP status responses.
 
 ### 7.2 Runner 2.30 local execution-profile amendment
 

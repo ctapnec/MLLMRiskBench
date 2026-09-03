@@ -606,13 +606,17 @@ in a named tmux session with the exact base completion and SHA-256, the exact
 interrupted failed-output completion and SHA-256, the exact hardware-fit
 completion and SHA-256, current project-revision receipt and SHA-256, fresh
 control root, scope, work root, project root and project virtual-environment
-interpreter. The controller requires these additional flags:
+interpreter. Pass the completed rig profile registry with `--profile-registry`.
+The controller snapshots it and applies each exact model's approved response
+allowance and 120-second request deadline while retaining hardware-fit context.
+The controller requires these additional flags:
 
 ```text
 --failed-output-recovery-completion ABSOLUTE_COMPLETION_JSON
 --failed-output-recovery-completion-sha256 LOWERCASE_SHA256
 --hardware-fit-completion ABSOLUTE_COMPLETION_JSON
 --hardware-fit-completion-sha256 LOWERCASE_SHA256
+--profile-registry ABSOLUTE_PROFILE_REGISTRY_JSON
 ```
 
 It validates that DeepSeek's 1,909-row extension is already reconciled by 235

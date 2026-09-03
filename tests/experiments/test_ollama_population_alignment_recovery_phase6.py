@@ -54,13 +54,14 @@ def test_alignment_continuation_selects_only_six_never_started_units() -> None:
 def test_alignment_continuation_contract_binds_hardware_fit_successor() -> None:
     destinations = {action.dest for action in recovery.build_parser()._actions}  # noqa: SLF001
 
-    assert recovery.SCHEMA.endswith("/4")
     assert {
         "failed_output_recovery_completion",
         "failed_output_recovery_completion_sha256",
         "hardware_fit_completion",
         "hardware_fit_completion_sha256",
+        "profile_registry",
     } <= destinations
+    assert recovery.SCHEMA.endswith("/5")
 
 
 def test_alignment_continuation_separates_actual_replays_from_unique_rows() -> None:
@@ -144,7 +145,7 @@ def test_alignment_continuation_separates_actual_replays_from_unique_rows() -> N
         ("ollama:gpt-oss:20b", "low"),
     ),
 )
-def test_alignment_continuation_rebinds_explicit_thinking_policy(
+def test_alignment_continuation_rebinds_readiness_profile(
     tmp_path: Path,
     model_spec: str,
     expected_think: bool | str,
@@ -176,9 +177,33 @@ def test_alignment_continuation_rebinds_explicit_thinking_policy(
         by_corpus={},
         recovery={},
     )
+    model = recovery.CURRENT_OLLAMA_BY_SPEC[model_spec]
+    profile_registry = tmp_path / "profiles.json"
+    profile_registry.write_text(
+        json.dumps(
+            {
+                "schema": "ura-local-model-execution-profiles/1",
+                "models": {
+                    model_spec: {
+                        "generation_tokens": 25_000,
+                        "identity": {"digest": model.digest},
+                        "modalities": list(model.modalities),
+                        "readiness": {
+                            "path": "/evidence/readiness.json",
+                            "sha256": "a" * 64,
+                            "readiness_id": "b" * 64,
+                        },
+                        "request_timeout_seconds": 120,
+                    }
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
     configured = recovery._configured_unit(  # noqa: SLF001
-        item, control_root=control_root
+        item, control_root=control_root, profile_registry=profile_registry
     )
     argv = configured.unit.spec["base_argv"]
     config_path = Path(unit_runner._option(argv, "--local-config"))  # noqa: SLF001
@@ -186,13 +211,27 @@ def test_alignment_continuation_rebinds_explicit_thinking_policy(
 
     assert payload[model_spec]["think"] == expected_think
     assert payload[model_spec]["num_ctx"] == "fit"
-    assert payload[model_spec]["num_predict"] == 4096
+    assert payload[model_spec]["num_predict"] == 25_000
+    assert payload[model_spec]["timeout"] == 120
     assert (
         unit_runner._option(  # noqa: SLF001
             argv, "--local-config-sha256"
         )
         == hashlib.sha256(config_path.read_bytes()).hexdigest()
     )
+    missing_registry = tmp_path / "missing-profiles.json"
+    missing_registry.write_text(
+        '{"models":{},"schema":"ura-local-model-execution-profiles/1"}\n',
+        encoding="utf-8",
+    )
+    another_root = tmp_path / "missing-profile-continuation"
+    (another_root / "configs").mkdir(parents=True)
+    with pytest.raises(ValueError, match="has no readiness profile"):
+        recovery._configured_unit(  # noqa: SLF001
+            item,
+            control_root=another_root,
+            profile_registry=missing_registry,
+        )
 
 
 @pytest.mark.parametrize(
