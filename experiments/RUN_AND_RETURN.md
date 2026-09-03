@@ -1647,33 +1647,33 @@ python -m experiments.hosted_campaign_budget \
 ```
 
 It makes no provider call. It must report `budget_fit`, 590 target attempts,
-4,000 maximum Haiku calls, the 4,000-input/500-output expected calculation and
+1,180 maximum Haiku calls, the 4,000-input/500-output expected calculation and
 the configured-max-output reservation. If a
 provider would exceed Anthropic USD 50, OpenAI USD 20, Moonshot USD 7.50 or
 DeepSeek USD 5, reduce and reseal only the affected prospective limit before
 any target output exists. Never increase or outcome-select a limit later.
 
 After local and hosted completion, create one content-bound zero-target Haiku
-selector for at most 2,000 matched local/hosted output pairs. Both members bind
+selector for at most 590 matched local/hosted output pairs. Both members bind
 the same rendered prompt, media-reference digest, datapoint, source cluster,
 seed, arm/framework, modality, risk, expected behavior and source policy. The
 selector uses deterministic balanced round-robin sampling across local target,
 hosted target and those input strata, without output reuse. It preserves
-original judgments. Since the hosted campaign cap is 590, the 2,000-pair
+original judgments. Since the hosted campaign cap is 590, the 590-pair
 ceiling must include every eligible answered hosted output exactly once and
 assign one unused local counterpart; it is not a downsample of hosted results.
 It excludes missing responses plus source-authoritative
 R-Judge/GPTGeoChat rows from judge calls. Haiku target rows may be judged by
 Haiku under the operator's explicit decision, but must be labelled same-model
 and non-independent. Under the central 4,000-input/500-output assumption, the
-maximum 4,000 calls use 16.0 million input and 2.0 million output tokens and
-cost USD 26.00 standard or USD 13.00 Batch. The fixed 512-token judge maximum
-raises the standard planning bound only to USD 26.24 when every input is at
+maximum 1,180 calls use 4.72 million input and 590,000 output tokens and cost
+USD 7.67 standard or USD 3.835 Batch. The fixed 512-token judge maximum raises
+the standard planning bound only to USD 7.7408 when every input is at
 most 4,000 tokens.
 
 Do not emulate this re-adjudication with `run_matrix`: that would risk target
 regeneration. Create the paired cohort with the dedicated immutable zero-target
-path and one standard-API USD 27 ceiling. Use a private Haiku judge config that
+path and one standard-API USD 7.75 ceiling. Use a private Haiku judge config that
 fixes `max_tokens=512`; do not reuse the 2,048-token Haiku target condition:
 
 ```bash
@@ -1687,7 +1687,7 @@ python -m experiments.retained_response_judge_pair \
   --pricing-config "$URA_PRICING_CONFIG" \
   --pricing-config-sha256 "$URA_PRICING_CONFIG_SHA256" \
   --pricing-as-of "$URA_PRICING_AS_OF" \
-  --pair-limit 2000 --sample-seed 0 --max-cost-microusd 27000000 \
+  --pair-limit 590 --sample-seed 0 --max-cost-microusd 7750000 \
   --ack-hosted-judge-data-transfer --out "$HAIKU_PLAN"
 
 python -m experiments.retained_response_judge_pair_execute \

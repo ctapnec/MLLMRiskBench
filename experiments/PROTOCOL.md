@@ -302,7 +302,7 @@ it never sits outside the 590-call budget. Admission separately binds the
 4,000 input tokens plus each route's configured maximum output.
 
 After the local and hosted campaigns are sealed, a separate zero-target Haiku
-re-adjudication cohort selects at most 2,000 matched local/hosted row pairs.
+re-adjudication cohort selects at most 590 matched local/hosted row pairs.
 Both members have the same rendered-input, media-reference, source-cluster,
 seed, framework, modality and source-policy identity. Deterministic seed 0
 balanced round-robin sampling spans both target models and those input strata,
@@ -316,9 +316,9 @@ from constructing or calling any model under test. Its planning process stores
 only content digests and imports no target-under-test or Runner factory. The
 executor may construct only the exact Haiku judge, uses one application and
 transport attempt, and opens the global `paid_provider` circuit on the first
-judge output or transport failure. The paired plan has a USD 27 ceiling and a
-dedicated 512-token maximum output configuration. Its 4,000-call central
-forecast is USD 26.00 at 4,000 input and 500 output tokens per call.
+judge output or transport failure. The paired plan has a USD 7.75 ceiling and a
+dedicated 512-token maximum output configuration. Its 1,180-call central
+forecast is USD 7.67 at 4,000 input and 500 output tokens per call.
 
 Every hosted target lane uses the sealed local `rules,guardrail` cascade, so
 each answered hosted row retains its local judgment before Haiku selection.

@@ -122,7 +122,7 @@ Run `python -m experiments.hosted_campaign_budget` with the exact API config,
 pricing and budget files plus their SHA-256 values. Its create-only no-call
 artifact must reproduce the selected call counts, the 4,000-input/500-output
 expected cost, every route's configured maximum-output reservation, the
-4,000-call Haiku expected and 512-output maximum, and the 50 percent provider
+1,180-call Haiku expected and 512-output maximum, and the 50 percent provider
 reconciliation. A `blocked_budget` status does not admit a paid call.
 
 Gate A0: all subset proofs validate and current provider terms and prices have
