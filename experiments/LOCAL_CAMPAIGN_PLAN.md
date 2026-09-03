@@ -1088,7 +1088,10 @@ The one timed-out request and the diagnostic canary rows are invalid-condition
 diagnostics, not model-stability observations.
 
 Runner 2.32 stress-tests the local ceiling and lowers it until the first proven
-sub-120-second cap, then runs the responsiveness survey there. It also
+sub-120-second cap, then runs the responsiveness survey there. A request that
+reaches the deadline is torn down with its owning local runtime before the next
+candidate is submitted, so a cancelled vLLM request cannot remain queued and
+confound lower-cap timings. It also
 preserves typed answer and input failures across the sealed vLLM execution
 boundary, so a genuine later failure follows the same retry-and-retain rule as
 Ollama. Before continuing security work, all three downloaded vLLM targets and

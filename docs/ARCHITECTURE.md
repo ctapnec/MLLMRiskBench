@@ -277,7 +277,9 @@ seconds in text and, when declared, physical-image input. It then applies the se
 the recommendation to the exact revision or digest and modalities. Both CLI
 and Build use its hardware-fit context, vLLM `max_tokens`, Ollama `num_predict`
 and thinking mode, and request deadline; an explicit local config value cannot
-replace the approved profile.
+replace the approved profile. Each deadline event closes the owning local
+runtime before the next lower candidate. In particular, an interrupted vLLM
+request is never left in the engine queue to contaminate later measurements.
 Hosted targets and judges never read this registry: their explicit output caps
 remain paid-budget inputs and their retry count remains zero.
 

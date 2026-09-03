@@ -135,8 +135,16 @@ class GenerationStressTarget(AnsweringTarget):
         super().__init__()
         self.max_tokens = PROFILE_DEFAULT_GENERATION_TOKENS
         self.fail_at = fail_at
+        self.closed = 0
+        self.poisoned = False
+
+    def close(self) -> None:
+        self.closed += 1
+        self.poisoned = False
 
     def generate(self, dialog: list[DialogTurn], *, seed: int | None = None) -> Response:
+        if self.poisoned:
+            raise AssertionError("a timed-out request remained queued")
         prompt = dialog[0].content or ""
         if "generation-throughput calibration" not in prompt:
             return super().generate(dialog, seed=seed)
@@ -145,6 +153,7 @@ class GenerationStressTarget(AnsweringTarget):
             if self.fail_at is not None and self.max_tokens >= self.fail_at
             else 1.0
         )
+        self.poisoned = latency_ms >= 120_000.0
         return Response(
             attempt_id=f"readiness-{seed}",
             target="mock-local",
@@ -292,8 +301,9 @@ def test_readiness_approves_first_descending_passing_condition() -> None:
 
 
 def test_generation_profile_lowers_cap_at_first_120_second_failure() -> None:
+    target = GenerationStressTarget(fail_at=4_096)
     conditions, selected = _profile_generation_conditions(
-        GenerationStressTarget(fail_at=4_096),
+        target,
         spec="vllm:example/model",
         modalities=["text"],
     )
@@ -308,6 +318,21 @@ def test_generation_profile_lowers_cap_at_first_120_second_failure() -> None:
     ]
     assert [row["passed"] for row in conditions] == [False, False, False, False, True]
     assert conditions[0]["deadline_failures"] == 1
+    assert target.closed == 4
+
+
+def test_generation_profile_resets_between_timed_out_text_and_image() -> None:
+    target = GenerationStressTarget(fail_at=4_096)
+
+    conditions, selected = _profile_generation_conditions(
+        target,
+        spec="vllm:example/model",
+        modalities=["text", "image"],
+    )
+
+    assert selected == 2_048
+    assert len(conditions) == 5
+    assert target.closed == 8
 
 
 def test_generation_profile_rejects_early_stop_before_requested_cap() -> None:

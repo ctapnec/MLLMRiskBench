@@ -495,6 +495,17 @@ def _run_generation_stress(
     }
 
 
+def _reset_after_deadline(target: Any, observation: dict[str, object]) -> None:
+    """Discard a timed-out local runtime before another probe is submitted."""
+
+    if observation.get("deadline_passed") is True:
+        return
+    close = getattr(target, "close", None)
+    if not callable(close):
+        raise RuntimeError("timed-out local readiness target has no cleanup hook")
+    close()
+
+
 def _profile_generation_conditions(
     target: Any,
     *,
@@ -511,6 +522,7 @@ def _profile_generation_conditions(
             generation_tokens=generation_tokens,
             image=False,
         )
+        _reset_after_deadline(target, stress_text)
         stress_vision = (
             _run_generation_stress(
                 target,
@@ -520,6 +532,8 @@ def _profile_generation_conditions(
             if "image" in modalities
             else None
         )
+        if stress_vision is not None:
+            _reset_after_deadline(target, stress_vision)
         observations = [stress_text]
         if stress_vision is not None:
             observations.append(stress_vision)
