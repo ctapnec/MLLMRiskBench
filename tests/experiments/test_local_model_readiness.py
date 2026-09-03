@@ -307,6 +307,39 @@ def test_readiness_approves_first_descending_passing_condition() -> None:
         validate_readiness(value)
 
 
+def test_readiness_accepts_skipped_vision_only_after_failed_text_stress() -> None:
+    value = readiness_receipt()
+    original = value["execution_profile"]["conditions"][0]
+    failed_text = _stress_result(25_000)
+    failed_text["termination_reason"] = "stop"
+    failed_text["tokens"]["completion"] = 1
+    failed_text["reached_generation_cap"] = False
+    failed_text["passed"] = False
+    passing_tokens = 16_384
+    passing = {
+        **original,
+        "generation_tokens": passing_tokens,
+        "stress_text": _stress_result(passing_tokens),
+        "stress_vision": _stress_result(passing_tokens),
+    }
+    value["execution_profile"]["conditions"] = [
+        {
+            **original,
+            "generation_tokens": 25_000,
+            "passed": False,
+            "stress_text": failed_text,
+            "stress_vision": None,
+        },
+        passing,
+    ]
+    value["execution_profile"]["selected_generation_tokens"] = passing_tokens
+
+    assert validate_readiness(value)["status"] == "verified"
+    passing["stress_vision"] = None
+    with pytest.raises(ValueError, match="missing after passing text"):
+        validate_readiness(value)
+
+
 def test_generation_profile_lowers_cap_at_first_120_second_failure() -> None:
     target = GenerationStressTarget(fail_at=4_096)
     conditions, selected = _profile_generation_conditions(

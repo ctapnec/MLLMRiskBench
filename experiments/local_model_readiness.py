@@ -1098,12 +1098,19 @@ def validate_readiness(value: object, *, expected_spec: str | None = None) -> di
             stress_vision = condition["stress_vision"]
             observations = [stress_text]
             if "image" in modalities:
-                stress_vision = _validate_stress_result(
-                    stress_vision,
-                    generation_tokens=generation_tokens,
-                    label="vision",
-                )
-                observations.append(stress_vision)
+                if stress_vision is None:
+                    if stress_text.get("passed") is True:
+                        raise ValueError(
+                            "local-model vision stress evidence is missing after "
+                            "passing text"
+                        )
+                else:
+                    stress_vision = _validate_stress_result(
+                        stress_vision,
+                        generation_tokens=generation_tokens,
+                        label="vision",
+                    )
+                    observations.append(stress_vision)
             elif stress_vision is not None:
                 raise ValueError("text-only execution condition contains vision stress")
             deadline_failures = sum(
