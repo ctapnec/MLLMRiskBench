@@ -1081,8 +1081,11 @@ Runner 2.30 separated maximum hardware-fit input context from a finite response
 allowance and local request deadline, but its short-answer survey did not force
 the configured output cap. A Qwen GPTGeoChat recovery request consequently
 reached the 120-second ceiling under a nominally passing 25,000-token profile.
-The controller was stopped before the next measured unit. Its three timed-out
-rows are invalid-condition diagnostics, not model-stability observations.
+That measured unit selected three rows, but the first request timed out before
+any durable measured row was written. The controller was stopped during the
+following unit's diagnostic canary, before that unit's measured Runner began.
+The one timed-out request and the diagnostic canary rows are invalid-condition
+diagnostics, not model-stability observations.
 
 Runner 2.32 stress-tests the local ceiling and lowers it until the first proven
 sub-120-second cap, then runs the responsiveness survey there. It also
@@ -1095,7 +1098,8 @@ non-usable or unattempted rows in that LLaVA unit plus the 107 rows in the four
 later unstarted units, for 170 rows total. It requires and applies the exact
 model's profiled allowance and 120-second deadline, keeps one
 answer retry, and repeats no valid completed row. It also reselects the three
-Qwen rows attempted only under the invalid 25,000-token condition. The
+Qwen rows selected only under the invalid 25,000-token condition; one was
+attempted and none became durable. The
 interrupted controller is closed with a typed terminal marker; its artifacts are
 retained and never
 rewritten. After this continuation, the six-unit 2,350-row population alignment
