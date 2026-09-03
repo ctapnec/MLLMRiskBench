@@ -163,8 +163,10 @@ def extend_completed_selector(
         additions = [item for item in ordered if item in pending]
         pending.difference_update(additions)
         completed = sorted(set(prior) | set(additions))
-        if not set(completed).issubset(ordered) or len(completed) >= len(ordered):
-            raise ValueError(f"{corpus}: continuation selector is not a strict subset")
+        if not set(completed).issubset(ordered):
+            raise ValueError(f"{corpus}: continuation selector leaves the selection")
+        if len(completed) == len(ordered):
+            continue
         remaining = [item for item in ordered if item not in set(completed)]
         rebuilt[corpus] = {
             "completed_record_count": len(completed),
@@ -176,6 +178,8 @@ def extend_completed_selector(
         remaining_total += len(remaining)
     if pending:
         raise ValueError("durable interrupted rows are absent from the selection")
+    if not rebuilt or remaining_total < 1:
+        raise ValueError("interrupted continuation contains no unfinished row")
     return {
         "schema": "ura-recovery-completed-selection/1",
         "corpora": rebuilt,

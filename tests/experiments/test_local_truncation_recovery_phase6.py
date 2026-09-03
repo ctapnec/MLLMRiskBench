@@ -225,7 +225,7 @@ def test_execution_configures_exact_hardware_fit_unit(tmp_path) -> None:
 
 
 def test_interrupted_selector_excludes_every_durable_row_without_repeating() -> None:
-    selected = {"alpha": ["a", "b", "c"], "beta": ["d", "e", "f"]}
+    selected = {"alpha": ["a", "b", "c"], "beta": ["d", "e"]}
     selector = {
         "schema": "ura-recovery-completed-selection/1",
         "corpora": {
@@ -246,15 +246,12 @@ def test_interrupted_selector_excludes_every_durable_row_without_repeating() -> 
         newly_completed_ids=["b", "e"],
     )
 
-    assert remaining == 2
+    assert remaining == 1
     assert continued["corpora"]["alpha"]["completed_datapoint_ids"] == [
         "a",
         "b",
     ]
-    assert continued["corpora"]["beta"]["completed_datapoint_ids"] == [
-        "d",
-        "e",
-    ]
+    assert "beta" not in continued["corpora"]
     assert continued["corpora"]["alpha"]["remaining_datapoint_ids_sha256"] == (_sha256_json(["c"]))
 
 
