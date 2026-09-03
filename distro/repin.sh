@@ -123,6 +123,7 @@ if [ "$MODE" = "--focused-campaign-handoff" ]; then
   echo "verification mode: focused campaign handoff (${#DEPLOY_TESTS[@]} selectors)"
 elif [ "$MODE" = "--profile-recovery-handoff" ]; then
   DEPLOY_TESTS=(
+    tests/experiments/test_failed_output_recovery_phase6.py::test_durable_outcomes_accept_checkpoint_before_attempts_file
     tests/experiments/test_local_bounded_output_continuation_phase6.py
     tests/experiments/test_ollama_population_alignment_recovery_phase6.py
     tests/experiments/test_local_campaign_controllers.py::test_phase7_requires_local_hardware_fit_as_a_separate_stratum
