@@ -2339,6 +2339,26 @@ def private_model_execution(
     if error is not None and isinstance(error, Exception):
         error_type = _sanitize_private_error(type(error).__name__, checked_values)
         error_detail = _sanitize_private_error(str(error), checked_values)
+        # A sealed inference boundary must redact private locators without
+        # erasing the semantic distinction between an unusable model answer and
+        # an engine/integrity failure. Runner retries and retains the former as
+        # model-stability evidence. Recreate only the two explicitly safe,
+        # typed per-input exceptions after sanitization; every other exception
+        # remains a terminal ManagedModelLoadError.
+        from .targets.base import TargetAnswerError, TargetInputError
+
+        if isinstance(error, TargetAnswerError):
+            category = _sanitize_private_error(str(error.category), checked_values)
+            raise TargetAnswerError(
+                error_detail,
+                category=category or "unusable_output",
+            ) from None
+        if isinstance(error, TargetInputError):
+            category = _sanitize_private_error(str(error.category), checked_values)
+            raise TargetInputError(
+                error_detail,
+                category=category or "input_incompatible",
+            ) from None
         rendered_detail = f": {error_detail}" if error_detail else ""
         raise ManagedModelLoadError(
             f"sealed {role} execution failed ({error_type}){rendered_detail}"

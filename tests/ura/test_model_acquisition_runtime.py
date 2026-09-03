@@ -51,6 +51,7 @@ from ura.model_acquisition_runtime import (
 )
 from ura.runner import Runner
 from ura.targets.api import MockTarget
+from ura.targets.base import TargetAnswerError, TargetInputError
 
 
 REVISIONS = {
@@ -1209,6 +1210,39 @@ def test_private_execution_retains_blank_exception_type_without_private_paths(
     message = str(caught.value)
     assert message == "sealed guardrail_judge execution failed (StopIteration)"
     assert str(private) not in message
+    assert caught.value.__cause__ is None
+
+
+@pytest.mark.parametrize(
+    ("error_type", "category"),
+    [
+        (TargetAnswerError, "generation_timeout"),
+        (TargetInputError, "context_limit_exceeded"),
+    ],
+)
+def test_private_execution_preserves_sanitized_per_input_failure_semantics(
+    tmp_path: Path,
+    error_type: type[TargetAnswerError] | type[TargetInputError],
+    category: str,
+) -> None:
+    private = (tmp_path / "operator-private" / "model-snapshot").resolve()
+
+    def fail() -> None:
+        raise error_type(
+            f"typed failure at {private}",
+            category=category,
+        )
+
+    with pytest.raises(error_type) as caught:
+        runtime_module.private_model_execution(
+            fail,
+            role="vllm_target",
+            private_values=(private,),
+        )
+
+    assert caught.value.category == category
+    assert str(private) not in str(caught.value)
+    assert "[managed-model-private]" in str(caught.value)
     assert caught.value.__cause__ is None
 
 
