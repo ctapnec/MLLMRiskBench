@@ -1602,8 +1602,24 @@ may run only in the reviewed off-peak price window. Google and other candidate
 routes are outside this funded amendment.
 
 Before any paid call, derive each exact no-call population independently and
-measure the provider-token canary. Reserve exactly one attempt per target or
-judge call. If a
+measure the provider-token canary. Every paid readiness or canary request
+consumes the applicable global target cap; it does not extend the 590-call
+total. Reserve exactly one attempt per target or judge call. First create the
+content-bound cost projection:
+
+```bash
+python -m experiments.hosted_campaign_budget \
+  --api-config "$URA_API_CONFIG" \
+  --api-config-sha256 "$URA_API_CONFIG_SHA256" \
+  --pricing-config "$URA_PRICING_CONFIG" \
+  --pricing-config-sha256 "$URA_PRICING_CONFIG_SHA256" \
+  --budgets "$URA_BUDGETS" --budgets-sha256 "$URA_BUDGETS_SHA256" \
+  --pricing-as-of "$URA_PRICING_AS_OF" --out "$HOSTED_BUDGET_PROJECTION"
+```
+
+It makes no provider call. It must report `budget_fit`, 590 target attempts,
+4,000 maximum Haiku calls, the 4,000-input/500-output expected calculation and
+the configured-max-output reservation. If a
 provider would exceed Anthropic USD 50, OpenAI USD 20, Moonshot USD 7.50 or
 DeepSeek USD 5, reduce and reseal only the affected prospective limit before
 any target output exists. Never increase or outcome-select a limit later.

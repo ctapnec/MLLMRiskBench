@@ -634,11 +634,12 @@ def test_hosted_follow_on_is_a_no_retry_local_input_subset() -> None:
         "matched-input intersection",
         "full-corpus estimates",
         "target calls 0",
-        "USD 13.12 standard",
-        "8,734 target calls",
-        "USD 56.80",
-        "USD 69.92",
-        "`retained_response_judge_execute` executor",
+        "USD 26.00 standard",
+        "590 target attempts",
+        "USD 8.3130",
+        "USD 64.7876",
+        "experiments.hosted_campaign_budget",
+        "experiments.retained_response_judge_pair_execute",
     )
 
     def assert_contract(value: str) -> None:
@@ -650,16 +651,16 @@ def test_hosted_follow_on_is_a_no_retry_local_input_subset() -> None:
         assert "retry-use model-stability rates" not in value
         assert "use the same selected retry count" not in value
         for target, limit in (
-            ("Claude Fable 5", 1),
-            ("Claude Opus 5", 3),
-            ("Claude Sonnet 5", 5),
-            ("Claude Haiku 4.5", 10),
-            ("GPT-5.6 Sol", 2),
-            ("GPT-5.6 Terra", 5),
-            ("GPT-5.6 Luna", 20),
-            ("GPT-5.5", 1),
-            ("Kimi K3", 3),
-            ("DeepSeek V4-Pro", 20),
+            ("Claude Fable 5", 5),
+            ("Claude Opus 5", 10),
+            ("Claude Sonnet 5", 50),
+            ("Claude Haiku 4.5", 100),
+            ("GPT-5.6 Sol", 5),
+            ("GPT-5.6 Terra", 20),
+            ("GPT-5.6 Luna", 100),
+            ("GPT-5.5", 100),
+            ("Kimi K3", 100),
+            ("DeepSeek V4-Pro", 100),
         ):
             assert f"| {target} | {limit} |" in value
 
@@ -679,7 +680,7 @@ def test_hosted_follow_on_is_a_no_retry_local_input_subset() -> None:
     with pytest.raises(AssertionError):
         assert "global `paid_provider` circuit" in changed_plan
     cost_flat = " ".join(cost.split())
-    for forecast in ("8,734 target calls", "USD 56.80", "USD 69.92"):
+    for forecast in ("590 target-call cap", "USD 8.3130", "USD 64.7876"):
         changed_cost = cost_flat.replace(forecast, "MUTATED_FORECAST", 1)
         assert changed_cost != cost_flat
         with pytest.raises(AssertionError):

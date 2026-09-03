@@ -55,10 +55,12 @@ Limits were fixed before hosted outputs. Exact no-call projections or token
 canaries may reduce a limit before execution to satisfy the monetary gate.
 Observed answers or judgments may never change a selection.
 
-The table authorizes at most 590 hosted target calls. With 4,000 input and 500
-output tokens per call, current effective-dated rates predict USD 8.6380. With
+The table authorizes at most 590 hosted target calls, including every paid
+readiness and diagnostic canary. A canary consumes its target's global cap and
+does not add another paid request. With 4,000 input and 500
+output tokens per call, current effective-dated rates predict USD 8.3130. With
 the same input bound and every route consuming its configured maximum output,
-the target reservation is USD 39.7716. The exact per-model arithmetic is in
+the target reservation is USD 38.5476. The exact per-model arithmetic is in
 `HOSTED_CAMPAIGN_COST_ASSESSMENT.md` and must be regenerated from the retained
 pricing bytes before execution.
 
@@ -75,6 +77,8 @@ targets and Haiku judging, may use at most 50 percent of each configured budget.
 | DeepSeek | USD 10 | USD 5 | off-peak targets/probes at most USD 5 |
 
 Haiku receives one matched cohort of at most 2,000 local/hosted output pairs.
+That is at most 2,000 selected local outputs and 2,000 selected hosted outputs
+from their matched-input intersection.
 The local and hosted member of every pair has the same rendered-input identity,
 source cluster, seed, arm/framework, modality and source-policy stratum. Neither
 retained output may be reused in another pair. At the planning assumption of
@@ -96,6 +100,12 @@ Before projection, use the pricing fetch action to add any missing models from
 the current checked-in null roster and fetch supported rates. It must preserve
 all existing operator-entered models, rates and fields. Models whose current
 price cannot be fetched remain explicitly unpriced and block their own lane.
+Run `python -m experiments.hosted_campaign_budget` with the exact API config,
+pricing and budget files plus their SHA-256 values. Its create-only no-call
+artifact must reproduce the selected call counts, the 4,000-input/500-output
+expected cost, every route's configured maximum-output reservation, the
+4,000-call Haiku expected and 512-output maximum, and the 50 percent provider
+reconciliation. A `blocked_budget` status does not admit a paid call.
 
 Gate A0: all subset proofs validate and current provider terms and prices have
 an effective timestamp. Failure affects only the hosted condition.

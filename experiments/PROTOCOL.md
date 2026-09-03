@@ -296,6 +296,10 @@ follow-on may use at most 50 percent of each configured provider budget. Exact
 no-call projections may only reduce a condition before acquisition and execution if
 the provider-token canary shows that its registered monetary ceiling would be
 exceeded; an observed model outcome may never trigger a limit change.
+Every paid readiness or diagnostic canary consumes the applicable global cap;
+it never sits outside the 590-call budget. Admission separately binds the
+4,000-input/500-output expected-token cost and the reservation obtained from
+4,000 input tokens plus each route's configured maximum output.
 
 After the local and hosted campaigns are sealed, a separate zero-target Haiku
 re-adjudication cohort selects at most 2,000 matched local/hosted row pairs.

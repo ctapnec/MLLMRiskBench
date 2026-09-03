@@ -66,7 +66,7 @@ before authorization.
 |---|---:|---:|---:|---:|---:|---:|
 | Claude Fable 5 | 5 | 663 | 30.2328 | 593 | 1.9450 | 0.9725 |
 | Claude Opus 5 | 10 | 1,354 | 30.8712 | 1,199 | 3.9327 | 1.9664 |
-| Claude Sonnet 5 | 50 | 6,974 | 95.4043 | 5,979 | 19.6111 | 9.8056 |
+| Claude Sonnet 5 | 50 | 6,974 | 63.6029 | 5,979 | 19.6111 | 9.8056 |
 | Claude Haiku 4.5 | 100 | 12,215 | 55.7004 | 10,095 | 33.1116 raw | 16.5558 raw |
 | GPT-5.6 Sol | 5 | 663 | 12.0931 | 593 | 1.9450 | 0.9725 |
 | GPT-5.6 Terra | 20 | 2,742 | 27.8148 | 2,382 | 7.8130 | 3.9065 |
@@ -82,15 +82,15 @@ claim. The raw arithmetic is retained to make both totals reproducible.
 
 Excluding invalid Haiku self-judgment:
 
-- one-attempt target total: USD 761.3652;
+- one-attempt target total: USD 729.5638;
 - standard Haiku judge total: USD 162.3403;
 - Batch Haiku judge total: USD 81.1702;
-- one-attempt targets plus standard valid judging: USD 923.7055; and
-- one-attempt targets plus Batch valid judging: USD 842.5353.
+- one-attempt targets plus standard valid judging: USD 891.9041; and
+- one-attempt targets plus Batch valid judging: USD 810.7340.
 
 Including the explicitly allowed but non-independent Haiku self-judgment, the
 original requested scenario has USD 195.4519 standard or USD 97.7261 Batch
-judge cost, and USD 956.8171 or USD 859.0913 respectively including one-attempt
+judge cost, and USD 925.0157 or USD 827.2899 respectively including one-attempt
 targets.
 
 ## Configured budget fit
@@ -100,7 +100,7 @@ The rig budget registry records Anthropic USD 100, OpenAI USD 40, Moonshot USD
 reporting only; Runner admission is enforced by the exact sampling, target,
 judge, HTTP and deadline caps.
 
-Under the central one-attempt scenario, target costs alone are USD 212.2087 for
+Under the central one-attempt scenario, target costs alone are USD 180.4073 for
 the four Anthropic targets, USD 362.0712 for the four OpenAI targets, USD
 167.1012 for Kimi K3 and USD 19.9840 off-peak for DeepSeek V4-Pro. The requested
 matrix therefore does not fit the configured prepaid balances. Even a Batch
@@ -128,7 +128,7 @@ tokenization must enforce that input bound or reduce and reseal the selection.
 |---|---|---:|---:|---:|---:|---:|---:|
 | Anthropic | Claude Fable 5 | 5 | 10.00 | 50.00 | 25,000 | 0.3250 | 6.4500 |
 | Anthropic | Claude Opus 5 | 10 | 5.00 | 25.00 | 4,096 | 0.3250 | 1.2240 |
-| Anthropic | Claude Sonnet 5 | 50 | 3.00 | 15.00 | 4,096 | 0.9750 | 3.6720 |
+| Anthropic | Claude Sonnet 5 | 50 | 2.00 | 10.00 | 4,096 | 0.6500 | 2.4480 |
 | Anthropic | Claude Haiku 4.5 | 100 | 1.00 | 5.00 | 2,048 | 0.6500 | 1.4240 |
 | OpenAI | GPT-5.6 Sol | 5 | 4.00 | 20.00 | 25,000 | 0.1300 | 2.5800 |
 | OpenAI | GPT-5.6 Terra | 20 | 2.00 | 12.00 | 4,096 | 0.2800 | 1.1430 |
@@ -136,21 +136,29 @@ tokenization must enforce that input bound or reduce and reseal the selection.
 | OpenAI | GPT-5.5 | 100 | 5.00 | 30.00 | 4,096 | 3.5000 | 14.2880 |
 | Moonshot | Kimi K3 | 100 | 3.00 | 15.00 | 4,096 | 1.9500 | 7.3440 |
 | DeepSeek | DeepSeek V4-Pro off-peak | 100 | 0.66 | 1.98 | 4,096 | 0.3630 | 1.0750 |
-| **Total targets** | | **590** | | | | **8.6380** | **39.7716** |
+| **Total targets** | | **590** | | | | **8.3130** | **38.5476** |
 
+Expected target cost is USD 8.3130 under the stated average-token model.
 The matched Haiku plan adds at most 2,000 pairs or 4,000 judge calls. At 4,000
 input and 500 output tokens it costs USD 26.00. A dedicated judge config fixes
 `max_tokens=512`; if every judge input is at most 4,000 tokens, the maximum is
-USD 26.24. Thus the expected combined campaign is USD 34.6380 and the
-max-token reservation is USD 66.0116.
+USD 26.24. Thus the expected combined campaign is USD 34.3130 and the
+max-token reservation is USD 64.7876.
 
 Provider reconciliation remains inside the 50 percent rule: Anthropic target
-maximum USD 12.77 plus judge maximum USD 26.24 is USD 39.01 of USD 50; OpenAI
+maximum USD 11.546 plus judge maximum USD 26.24 is USD 37.786 of USD 50; OpenAI
 is USD 18.5826 of USD 20; Moonshot is USD 7.3440 of USD 7.50; and DeepSeek is
 USD 1.0750 of USD 5. These are monetary ceilings, not permission to spend.
 Exact no-call selection, provider token counting and one-call canaries must
 fit before authorization. If they do not, only the affected prospective count
 is reduced and resealed before any output is observed.
+
+The 590 target-call cap includes every paid readiness and diagnostic canary.
+Those calls consume their target's global cap rather than adding an unbudgeted
+request. The create-only `hosted_campaign_budget` projection reads and binds the
+exact API config, effective-dated pricing and budget registries, reproduces the
+expected and maximum-token columns, and reports a blocked status if any
+provider exceeds half its configured balance. It constructs no target or judge.
 
 Paid targets and Haiku judging use exactly one application attempt; target
 answer retries and harness transport retries are 0, and provider SDK retries
@@ -213,7 +221,7 @@ unmatched or different-revision rate is silently pooled.
 - OpenAI Terra: <https://developers.openai.com/api/docs/models/gpt-5.6-terra>
 - OpenAI Luna/model family: <https://developers.openai.com/api/docs/models>
 - OpenAI GPT-5.5: <https://developers.openai.com/api/docs/models/gpt-5.5>
-- Kimi: <https://platform.kimi.ai/>
+- Kimi: <https://platform.kimi.ai/docs/pricing/chat-k3>
 - DeepSeek: <https://api-docs.deepseek.com/quick_start/pricing/>
 
 All rates are effective-dated planning inputs and must be fetched and reviewed
