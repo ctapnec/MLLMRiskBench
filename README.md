@@ -512,8 +512,9 @@ and requires the configured minimum correct counts. Schema `/3` starts at the
 local output ceiling and lowers the candidate until a forced generation reaches
 that cap below 120 seconds, then runs the same responsiveness survey there. It
 watches each stress request from the parent process and terminates the child at
-the deadline before attempting a lower cap. It writes the approved output cap,
-hardware-fit context and Ollama thinking mode to
+the deadline before attempting a lower cap. A failed text stress rejects the
+candidate immediately; image stress runs only for a text-fitting cap. It writes
+the approved output cap, hardware-fit context and Ollama thinking mode to
 the immutable-model-bound machine-local profile registry.
 Schema `/2` remains historical evidence, but its short-answer probes did not
 exercise the configured ceiling and its schema-1 registry cannot admit new

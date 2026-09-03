@@ -2196,6 +2196,8 @@ measurement. The child writes a transient marker immediately before generation.
 The parent starts the 120-second clock from that marker and terminates the child
 at the boundary; model loading and graph compilation are therefore not charged
 to request latency, and delayed Python signal delivery cannot extend a request.
+A failed text stress rejects the candidate immediately; only a text-fitting cap
+is submitted to the physical-image stress check.
 It then runs the ten deterministic benign question calls and five deterministic
 synthetic-image calls at that selected cap. Admission requires at least five
 correct text answers and at least two correct image answers. The other five text

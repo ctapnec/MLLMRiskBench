@@ -531,11 +531,14 @@ def test_generation_profile_isolates_each_cap_and_modality(
     )
 
     assert selected == 2_048
-    assert len(calls) == 10
-    assert [kind for kind, _tokens, _out in calls] == [
-        kind
-        for _tokens in PROFILE_GENERATION_TOKEN_CANDIDATES[:5]
-        for kind in ("stress-text", "stress-image")
+    assert len(calls) == 6
+    assert [(kind, tokens) for kind, tokens, _out in calls] == [
+        ("stress-text", 25_000),
+        ("stress-text", 16_384),
+        ("stress-text", 8_192),
+        ("stress-text", 4_096),
+        ("stress-text", 2_048),
+        ("stress-image", 2_048),
     ]
     assert len({out for _kind, _tokens, out in calls}) == len(calls)
 

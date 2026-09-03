@@ -1095,7 +1095,8 @@ close can leave CUDA allocations alive; the separate process prevents a
 cancelled request from confounding lower-cap timings. The child marks the
 instant generation begins, so the parent-enforced deadline excludes model load
 and graph compilation while still terminating the process at 120 seconds; a
-delayed Python alarm cannot extend the request. It also
+delayed Python alarm cannot extend the request. A failed text stress immediately
+descends to the next candidate; image stress runs only after text fits. It also
 preserves typed answer and input failures across the sealed vLLM execution
 boundary, so a genuine later failure follows the same retry-and-retain rule as
 Ollama. Before continuing security work, all three downloaded vLLM targets and

@@ -876,7 +876,9 @@ def _profile_generation_conditions_isolated(
             raise ValueError("isolated local-model probe target identity differs")
         stress_text = text_probe["result"]
         stress_vision = None
-        if "image" in modalities:
+        # A failed text stress already rejects this cap. Do not spend another
+        # load and request on the image variant until the text condition fits.
+        if "image" in modalities and stress_text.get("passed") is True:
             vision_probe = _run_isolated_probe(
                 args,
                 kind="stress-image",
