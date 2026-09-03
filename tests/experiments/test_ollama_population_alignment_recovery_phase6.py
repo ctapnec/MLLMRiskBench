@@ -36,14 +36,8 @@ def test_alignment_continuation_selects_only_six_never_started_units() -> None:
     assert selected == list(recovery.CONTINUATION_LANES)
     assert len(selected) == 6
     assert recovery.FAILED_OUTPUT_COVERED_LANE not in selected
-    assert all(
-        lane.startswith(("rjudge-ollama-", "gptgeochat-ollama-"))
-        for lane in selected
-    )
-    expected_rows = sum(
-        50 if lane.startswith("rjudge-ollama-") else 1_075
-        for lane in selected
-    )
+    assert all(lane.startswith(("rjudge-ollama-", "gptgeochat-ollama-")) for lane in selected)
+    expected_rows = sum(50 if lane.startswith("rjudge-ollama-") else 1_075 for lane in selected)
     assert expected_rows == recovery.EXPECTED_CONTINUATION_ROWS == 2_350
 
     mutant = recovery._selected_failed_lanes(snapshot)  # noqa: SLF001
@@ -62,6 +56,15 @@ def test_alignment_continuation_contract_binds_hardware_fit_successor() -> None:
         "profile_registry",
     } <= destinations
     assert recovery.SCHEMA.endswith("/5")
+    source = Path(recovery.__file__).read_text(encoding="utf-8")
+    assert "validate_alignment_prerequisite" in source
+    mutant = source.replace(
+        "validate_alignment_prerequisite",
+        "validate_completion",
+    )
+    assert mutant != source
+    with pytest.raises(AssertionError):
+        assert "validate_alignment_prerequisite" in mutant
 
 
 def test_alignment_continuation_separates_actual_replays_from_unique_rows() -> None:
@@ -297,9 +300,7 @@ def test_run_unit_omits_hub_plan_for_local_only_lane(
         if log.name == "canary.run.log":
             root = log.parent / "canary"
             root.mkdir()
-            (root / "eligibility-fixture.eligibility.json").write_text(
-                "{}\n", encoding="utf-8"
-            )
+            (root / "eligibility-fixture.eligibility.json").write_text("{}\n", encoding="utf-8")
         elif log.name == "preflight.run.log":
             root = log.parent / "preflight"
             root.mkdir()
@@ -320,9 +321,7 @@ def test_run_unit_omits_hub_plan_for_local_only_lane(
         lambda *args, **kwargs: None,
     )
 
-    def fake_level1_counts(
-        *, lane_root: Path, **_kwargs: object
-    ) -> tuple[int, int, int]:
+    def fake_level1_counts(*, lane_root: Path, **_kwargs: object) -> tuple[int, int, int]:
         (lane_root / "level1.json").write_text("{}\n", encoding="utf-8")
         return 1, 1, 0
 
@@ -352,8 +351,7 @@ def test_run_unit_omits_hub_plan_for_local_only_lane(
 
 def test_phase7_uses_alignment_recovery_dispatcher() -> None:
     template = (
-        Path(__file__).parents[2]
-        / "experiments/local_campaign/templates/phase7_analysis.py.in"
+        Path(__file__).parents[2] / "experiments/local_campaign/templates/phase7_analysis.py.in"
     ).read_text(encoding="utf-8")
     required = (
         "current_ollama_population_alignment_recovery_phase6 import (",
@@ -365,12 +363,12 @@ def test_phase7_uses_alignment_recovery_dispatcher() -> None:
     )
     for token in required:
         assert token in template
-    current_method = template.split(
-        "def record_current_ollama_outcomes", 1
-    )[1].split("def record_current_ollama_stability_outcomes", 1)[0]
-    alignment_method = template.split(
-        "def record_current_ollama_alignment_outcomes", 1
-    )[1].split("def record_vllm_stability_outcomes", 1)[0]
+    current_method = template.split("def record_current_ollama_outcomes", 1)[1].split(
+        "def record_current_ollama_stability_outcomes", 1
+    )[0]
+    alignment_method = template.split("def record_current_ollama_alignment_outcomes", 1)[1].split(
+        "def record_vllm_stability_outcomes", 1
+    )[0]
     assert '"population_segments"' not in current_method
     assert '"population_segments"' in alignment_method
 
@@ -387,8 +385,7 @@ def test_phase7_uses_alignment_recovery_dispatcher() -> None:
 
 def test_phase8_excludes_split_alignment_lane_from_metric_sampling() -> None:
     template = (
-        Path(__file__).parents[2]
-        / "experiments/local_campaign/templates/phase8_human_audit.py.in"
+        Path(__file__).parents[2] / "experiments/local_campaign/templates/phase8_human_audit.py.in"
     ).read_text(encoding="utf-8")
     required = (
         "FAILED_OUTPUT_COVERED_LANE as CURRENT_OLLAMA_ALIGNMENT_SPLIT_LANE",

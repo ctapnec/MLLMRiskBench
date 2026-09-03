@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from experiments.local_campaign.local_bounded_output_continuation_phase6 import (
+    SCHEMA,
     bounded_local_config,
 )
 from ura.targets.local import (
@@ -12,6 +13,7 @@ from ura.targets.local import (
 
 
 def test_bounded_vllm_recovery_keeps_hardware_fit_context() -> None:
+    assert SCHEMA.endswith("/2")
     spec = "vllm:example/model"
     result = bounded_local_config(
         {

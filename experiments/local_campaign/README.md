@@ -395,6 +395,15 @@ launch artifact, use a fresh continuation root. The restart accepts only the
 unchanged marker and exit 125 bytes and does not repeat prior terminalization
 side effects.
 
+If the retained continuation reached its LLaVA suffix without a finite response
+allowance, stop it after the durable checkpoint and use
+`local_bounded_output_continuation_phase6`. It snapshots the completed local
+profile registry, retains the one usable row from the interrupted 64-row unit,
+and selects only its other 63 rows plus the 107 rows in later unstarted units.
+Its completion validator exposes the separately retained DeepSeek prerequisite
+to the 2,350-row population-alignment continuation without rewriting either
+historical root.
+
 Targeted Runner-output recovery is deliberately outside `launch_chain`. It is
 available only through the generated
 `launch_phase6_recovery_and_seven.sh`. The launcher starts one named tmux

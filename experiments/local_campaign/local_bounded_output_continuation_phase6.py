@@ -11,13 +11,12 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-from pathlib import Path
 import re
 import subprocess
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from experiments import run_matrix
-from experiments.local_model_profiles import apply_profile
 from experiments.local_campaign.console_events import (
     finish_child_controller,
     publish_target_execution,
@@ -30,8 +29,16 @@ from experiments.local_campaign.failed_output_recovery_phase6 import (
     _selected_rows,
 )
 from experiments.local_campaign.local_truncation_recovery_continuation_phase6 import (
+    SNAPSHOT_SCHEMA as PRIOR_SNAPSHOT_SCHEMA,
+)
+from experiments.local_campaign.local_truncation_recovery_continuation_phase6 import (
     STATE_SCHEMA as PRIOR_STATE_SCHEMA,
+)
+from experiments.local_campaign.local_truncation_recovery_continuation_phase6 import (
     _unit_order,
+)
+from experiments.local_campaign.local_truncation_recovery_execution_phase6 import (
+    STATE_SCHEMA as BASE_STATE_SCHEMA,
 )
 from experiments.local_campaign.local_truncation_recovery_execution_phase6 import (
     configure_units,
@@ -42,6 +49,9 @@ from experiments.local_campaign.local_truncation_recovery_phase6 import (
     length_ended_datapoint_ids,
 )
 from experiments.local_campaign.vllm_context_recovery_phase6 import _response_rows
+from experiments.local_campaign.vllm_input_recovery_phase6 import (
+    _validate_metric_result,
+)
 from experiments.local_campaign.vllm_stability_phase6 import (
     _create_json,
     _external_job_id,
@@ -51,13 +61,13 @@ from experiments.local_campaign.vllm_stability_phase6 import (
     _project_python,
     _run_unit,
     _utc_now,
+    _validate_descriptor,
 )
+from experiments.local_model_profiles import apply_profile
 from experiments.rig_web_app.external_measured import register_external_measured_terminal
 from ura.runner import CODE_VERSION
-from ura.targets.local import DEFAULT_LOCAL_REQUEST_TIMEOUT_SECONDS
 
-
-SCHEMA = "ura-local-bounded-output-continuation-phase6/1"
+SCHEMA = "ura-local-bounded-output-continuation-phase6/2"
 LAUNCH_SCHEMA = "ura-local-bounded-output-continuation-phase6-launch/1"
 SNAPSHOT_SCHEMA = "ura-local-bounded-output-prior-interruption/1"
 STATE_SCHEMA = "ura-local-bounded-output-continuation-phase6-unit-state/1"
@@ -110,9 +120,7 @@ def _canonical_campaign(path: Path, *, label: str) -> Path:
     return result
 
 
-def _completed_result(
-    *, unit_id: str, item: Mapping[str, Any], prior_root: Path
-) -> dict[str, Any]:
+def _completed_result(*, unit_id: str, item: Mapping[str, Any], prior_root: Path) -> dict[str, Any]:
     state_path = prior_root / "units" / unit_id / "state.json"
     level1_path = prior_root / "units" / unit_id / "level1.json"
     state = _load_json(state_path, label=f"{unit_id} retained state")
@@ -168,12 +176,8 @@ def _partial_selector(
         eligible_rows[corpus], _audit = run_matrix.apply_recovery_completed_prefix(
             corpus, rows, audits[corpus], prior_selector
         )
-    selected_ids = {
-        corpus: [row.id for row in rows] for corpus, rows in selected_rows.items()
-    }
-    eligible_ids = {
-        corpus: [row.id for row in rows] for corpus, rows in eligible_rows.items()
-    }
+    selected_ids = {corpus: [row.id for row in rows] for corpus, rows in selected_rows.items()}
+    eligible_ids = {corpus: [row.id for row in rows] for corpus, rows in eligible_rows.items()}
     length_ids = length_ended_datapoint_ids(attempts=attempts, responses=responses)
     selector, summary = build_truncation_selection(
         selected_ids=selected_ids,
@@ -193,8 +197,7 @@ def _partial_selector(
         raise ValueError("interrupted output-condition partition changed")
     return selector, {
         "attempt_files": [
-            _descriptor(path, label="interrupted bounded-output attempts")
-            for path in attempt_files
+            _descriptor(path, label="interrupted bounded-output attempts") for path in attempt_files
         ],
         "durable_rows": len(outcomes),
         "failed_output_rows": failed,
@@ -244,10 +247,9 @@ def inspect_prior(
         )
     for index in (20, 22, 23, 24):
         unit_id = order[index]
-        if (
-            (prior_root / "units" / unit_id / "state.json").exists()
-            or (runner_root / unit_id / prior_root.name).exists()
-        ):
+        if (prior_root / "units" / unit_id / "state.json").exists() or (
+            runner_root / unit_id / prior_root.name
+        ).exists():
             raise ValueError(f"{unit_id} is not an unstarted prior unit")
     partial_id = order[PARTIAL_INDEX - 1]
     selector, partial = _partial_selector(
@@ -264,9 +266,7 @@ def inspect_prior(
         unprofiled.pop("max_tokens", None)
         unprofiled.pop("num_predict", None)
         unprofiled.pop("timeout", None)
-        profiled, profile = apply_profile(
-            spec, unprofiled, path=profile_registry
-        )
+        profiled, profile = apply_profile(spec, unprofiled, path=profile_registry)
         if profile is None:
             raise ValueError(f"bounded-output recovery requires a profile for {spec!r}")
         generation_field = "max_tokens" if spec.startswith("vllm:") else "num_predict"
@@ -289,9 +289,7 @@ def inspect_prior(
         "partial": partial,
         "recovery_inventory": {"units": items},
         "retained_results": retained,
-        "retained_successful_generations": sum(
-            item["successful"] for item in retained.values()
-        ),
+        "retained_successful_generations": sum(item["successful"] for item in retained.values()),
         "retained_target_attempts": sum(item["attempted"] for item in retained.values()),
     }
 
@@ -315,7 +313,10 @@ def run(args: argparse.Namespace) -> int:
     ):
         raise ValueError("bounded-output root must be one direct engineering campaign")
     project_revision = args.project_revision.resolve(strict=True)
-    if hashlib.sha256(_stable_file(project_revision, label="project revision")).hexdigest() != args.project_revision_sha256:
+    if (
+        hashlib.sha256(_stable_file(project_revision, label="project revision")).hexdigest()
+        != args.project_revision_sha256
+    ):
         raise ValueError("project revision digest changed")
     inventory_path = args.inventory.resolve(strict=True)
     inventory = load_inventory(inventory_path, args.inventory_sha256)
@@ -359,9 +360,7 @@ def run(args: argparse.Namespace) -> int:
         control_root=prior_root,
         target_attempts=int(inspected["retained_target_attempts"]) + EXPECTED_DURABLE,
         successful_target_generations=(
-            int(inspected["retained_successful_generations"])
-            + EXPECTED_DURABLE
-            - EXPECTED_FAILED
+            int(inspected["retained_successful_generations"]) + EXPECTED_DURABLE - EXPECTED_FAILED
         ),
     )
     finish_child_controller(work_root=work_root, control_root=prior_root, exit_code=125)
@@ -386,12 +385,8 @@ def run(args: argparse.Namespace) -> int:
         "schema": AMENDMENT_SCHEMA,
         "approved_scope": "failed_length_ended_and_never_attempted_rows_only",
         "generation_tokens_by_model": dict(sorted(generation_by_model.items())),
-        "per_request_deadline_seconds_by_model": dict(
-            sorted(deadline_by_model.items())
-        ),
-        "profile_registry": _descriptor(
-            profile_snapshot, label="local-model profile registry"
-        ),
+        "per_request_deadline_seconds_by_model": dict(sorted(deadline_by_model.items())),
+        "profile_registry": _descriptor(profile_snapshot, label="local-model profile registry"),
         "selected_records": EXPECTED_RECOVERY_ROWS,
         "target_answer_retries": 1,
         "max_total_target_calls": EXPECTED_RECOVERY_ROWS * 2,
@@ -425,9 +420,7 @@ def run(args: argparse.Namespace) -> int:
         "inventory": _descriptor(inventory_path, label="hardware-fit inventory"),
         "prior_interruption": _descriptor(snapshot_path, label="prior interruption"),
         "gate5_amendment": _descriptor(amendment_path, label="Gate 5 amendment"),
-        "profile_registry": _descriptor(
-            profile_snapshot, label="local-model profile registry"
-        ),
+        "profile_registry": _descriptor(profile_snapshot, label="local-model profile registry"),
         "unit_order": recovery_order,
         "selected_records": EXPECTED_RECOVERY_ROWS,
         "target_answer_retries": 1,
@@ -493,9 +486,12 @@ def run(args: argparse.Namespace) -> int:
         "completed_at_utc": _utc_now(),
         "expected_commit": args.expected_commit,
         "runner_code_version": CODE_VERSION,
+        "target_answer_retries": 1,
         "prior_interruption": launch["prior_interruption"],
         "inventory": launch["inventory"],
         "gate5_amendment": launch["gate5_amendment"],
+        "profile_registry": launch["profile_registry"],
+        "launch": _descriptor(control_root / "launch.json", label="bounded-output launch"),
         "unit_order": recovery_order,
         "unit_results": results,
         "unit_failures": failures,
@@ -523,6 +519,151 @@ def run(args: argparse.Namespace) -> int:
     )
     finish_child_controller(work_root=work_root, control_root=control_root, exit_code=exit_code)
     return exit_code
+
+
+def validate_alignment_prerequisite(completion_path: Path, *, runner_root: Path) -> dict[str, Any]:
+    """Validate the bounded continuation and expose its retained DeepSeek unit."""
+
+    resolved = completion_path.resolve(strict=True)
+    control_root = resolved.parent
+    completion = _load_json(resolved, label="bounded-output completion")
+    fields = {
+        "schema",
+        "status",
+        "controller_exit_code",
+        "completed_at_utc",
+        "expected_commit",
+        "runner_code_version",
+        "target_answer_retries",
+        "prior_interruption",
+        "inventory",
+        "gate5_amendment",
+        "profile_registry",
+        "launch",
+        "unit_order",
+        "unit_results",
+        "unit_failures",
+        "target_execution",
+        "selected_records",
+        "successful_rows_repeated",
+        "historical_rows_mutated",
+        "cross_output_policy_pooling_permitted",
+        "paid_provider_calls",
+    }
+    if (
+        set(completion) != fields
+        or completion.get("schema") != SCHEMA
+        or completion.get("status") != "complete"
+        or completion.get("controller_exit_code") != 0
+        or _HEX40.fullmatch(str(completion.get("expected_commit", ""))) is None
+        or completion.get("runner_code_version") != CODE_VERSION
+        or completion.get("target_answer_retries") != 1
+        or completion.get("unit_failures") != {}
+        or completion.get("selected_records") != EXPECTED_RECOVERY_ROWS
+        or completion.get("successful_rows_repeated") != 0
+        or completion.get("historical_rows_mutated") is not False
+        or completion.get("cross_output_policy_pooling_permitted") is not False
+        or completion.get("paid_provider_calls") != 0
+    ):
+        raise ValueError("bounded-output completion contract changed")
+    inventory_path = _validate_descriptor(completion["inventory"], label="bounded-output inventory")
+    inventory = load_inventory(inventory_path, str(completion["inventory"].get("sha256", "")))
+    order = _unit_order(inventory)
+    recovery_order = order[FIRST_RECOVERY_INDEX - 1 :]
+    results = completion.get("unit_results")
+    if (
+        len(order) != EXPECTED_UNIT_COUNT
+        or completion.get("unit_order") != recovery_order
+        or not isinstance(results, dict)
+        or set(results) != set(recovery_order)
+    ):
+        raise ValueError("bounded-output recovery inventory changed")
+    completion_descriptor = _descriptor(resolved, label="bounded-output completion")
+    successful = missing = 0
+    for index, unit_id in enumerate(recovery_order, start=FIRST_RECOVERY_INDEX - 1):
+        item = inventory["units"][index]
+        selected = int(item["summary"]["recovery_records"])
+        if index == PARTIAL_INDEX - 1:
+            selected -= EXPECTED_USABLE
+        recovery_corpora = item["recovery_selection"]["corpora"]
+        corpus = next(iter(recovery_corpora)) if len(recovery_corpora) == 1 else None
+        validated = _validate_metric_result(
+            results[unit_id],
+            logical_lane=unit_id,
+            physical_unit=unit_id,
+            source_lane=str(item["source_lane"]),
+            corpus=corpus,
+            selected_records=selected,
+            runner_root=runner_root.resolve(strict=True),
+            control_root=control_root,
+            state_schema=STATE_SCHEMA,
+            completion=completion_descriptor,
+        )
+        successful += int(validated["successful"])
+        missing += int(validated["missing"])
+    if completion.get("target_execution") != {
+        "target_attempts": EXPECTED_RECOVERY_ROWS,
+        "successful_target_generations": successful,
+        "missing_responses": missing,
+    }:
+        raise ValueError("bounded-output recovery accounting changed")
+
+    snapshot_path = _validate_descriptor(
+        completion["prior_interruption"], label="bounded-output interruption"
+    )
+    snapshot = _load_json(snapshot_path, label="bounded-output interruption")
+    if (
+        snapshot_path != control_root / "prior-interruption.json"
+        or snapshot.get("schema") != SNAPSHOT_SCHEMA
+        or snapshot.get("prior_root") is None
+    ):
+        raise ValueError("bounded-output interruption changed")
+    prior_root = Path(str(snapshot["prior_root"])).resolve(strict=True)
+    prior_launch_path = _validate_descriptor(
+        snapshot.get("launch"), label="interrupted continuation launch"
+    )
+    if prior_launch_path != prior_root / "launch.json":
+        raise ValueError("interrupted continuation launch placement changed")
+    prior_launch = _load_json(prior_launch_path, label="interrupted continuation launch")
+    retained_snapshot_path = _validate_descriptor(
+        prior_launch.get("prior_interruption"), label="retained hardware-fit snapshot"
+    )
+    retained_snapshot = _load_json(retained_snapshot_path, label="retained hardware-fit snapshot")
+    retained = retained_snapshot.get("retained_results")
+    if (
+        retained_snapshot.get("schema") != PRIOR_SNAPSHOT_SCHEMA
+        or retained_snapshot.get("order") != order
+        or not isinstance(retained, dict)
+        or set(retained) != set(order[:2])
+    ):
+        raise ValueError("retained hardware-fit snapshot changed")
+    deepseek_id = order[0]
+    deepseek_item = inventory["units"][0]
+    retained_control_root = Path(str(retained_snapshot.get("prior_control_root", ""))).resolve(
+        strict=True
+    )
+    recovery_corpora = deepseek_item["recovery_selection"]["corpora"]
+    corpus = next(iter(recovery_corpora)) if len(recovery_corpora) == 1 else None
+    deepseek = _validate_metric_result(
+        retained[deepseek_id],
+        logical_lane=deepseek_id,
+        physical_unit=deepseek_id,
+        source_lane=str(deepseek_item["source_lane"]),
+        corpus=corpus,
+        selected_records=int(deepseek_item["summary"]["recovery_records"]),
+        runner_root=runner_root.resolve(strict=True),
+        control_root=retained_control_root,
+        state_schema=BASE_STATE_SCHEMA,
+        completion=_descriptor(retained_snapshot_path, label="retained hardware-fit snapshot"),
+    )
+    return {
+        "completion": completion_descriptor,
+        "deepseek_id": deepseek_id,
+        "deepseek_result": retained[deepseek_id],
+        "deepseek_revision": str(deepseek["revision"]),
+        "inventory": inventory,
+        "unit_order": order,
+    }
 
 
 def build_parser() -> argparse.ArgumentParser:

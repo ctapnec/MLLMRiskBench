@@ -11,13 +11,13 @@ from __future__ import annotations
 
 import argparse
 import copy
-from dataclasses import replace
-from datetime import datetime, timezone
 import hashlib
 import os
-from pathlib import Path
 import re
 import subprocess
+from dataclasses import replace
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from experiments.local_campaign.console_events import (
@@ -25,22 +25,28 @@ from experiments.local_campaign.console_events import (
     publish_target_execution,
     start_child_controller,
 )
-from experiments.local_campaign.current_ollama_gate5 import (
-    _descriptor,
-    _stable_file,
-)
 from experiments.local_campaign.current_ollama import (
     CURRENT_OLLAMA_BY_SPEC,
     PROSPECTIVE_OLLAMA_NUM_CTX,
 )
+from experiments.local_campaign.current_ollama_gate5 import (
+    _descriptor,
+    _stable_file,
+)
 from experiments.local_campaign.current_ollama_population_alignment_phase6 import (
     ALIGNMENT_LANES,
     EXPECTED_EXTENSION_ROWS,
-    RUNNER_CODE_VERSION as BASE_RUNNER_CODE_VERSION,
-    SCHEMA as BASE_SCHEMA,
     _validate_prefix_complete,
     build_alignment_units,
     hub_acquisition_required,
+)
+from experiments.local_campaign.current_ollama_population_alignment_phase6 import (
+    RUNNER_CODE_VERSION as BASE_RUNNER_CODE_VERSION,
+)
+from experiments.local_campaign.current_ollama_population_alignment_phase6 import (
+    SCHEMA as BASE_SCHEMA,
+)
+from experiments.local_campaign.current_ollama_population_alignment_phase6 import (
     validate_completion as validate_base_completion,
 )
 from experiments.local_campaign.vllm_input_recovery_phase6 import (
@@ -60,23 +66,14 @@ from experiments.local_model_profiles import apply_profile
 from ura.request_envelope import load_request_envelope_file
 from ura.runner import CODE_VERSION
 
-
 SCHEMA = "ura-current-ollama-population-alignment-recovery-phase6/5"
-LAUNCH_SCHEMA = (
-    "ura-current-ollama-population-alignment-recovery-phase6-launch/5"
-)
-UNIT_STATE_SCHEMA = (
-    "ura-current-ollama-population-alignment-recovery-phase6-unit-state/5"
-)
+LAUNCH_SCHEMA = "ura-current-ollama-population-alignment-recovery-phase6-launch/5"
+UNIT_STATE_SCHEMA = "ura-current-ollama-population-alignment-recovery-phase6-unit-state/5"
 HEX40 = re.compile(r"[0-9a-f]{40}\Z")
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
-FAILED_OUTPUT_COVERED_LANE = (
-    "ollama-deepseek-r1-distill-32b-text-primary-100-extension"
-)
+FAILED_OUTPUT_COVERED_LANE = "ollama-deepseek-r1-distill-32b-text-primary-100-extension"
 CONTINUATION_LANES = tuple(
-    lane
-    for lane in ALIGNMENT_LANES
-    if lane.startswith(("rjudge-ollama-", "gptgeochat-ollama-"))
+    lane for lane in ALIGNMENT_LANES if lane.startswith(("rjudge-ollama-", "gptgeochat-ollama-"))
 )
 EXPECTED_CONTINUATION_ROWS = 2_350
 EXPECTED_DEEPSEEK_COVERAGE = {
@@ -120,16 +117,12 @@ def _base_inputs(
         runner_root=runner_root,
         allow_incomplete=True,
     )
-    completion = _load_json(
-        completion_path, label="failed Ollama population-alignment completion"
-    )
+    completion = _load_json(completion_path, label="failed Ollama population-alignment completion")
     launch_path = _validate_descriptor(
         completion.get("launch"), label="failed Ollama alignment launch"
     )
     launch = _load_json(launch_path, label="failed Ollama alignment launch")
-    gate5_path = _validate_descriptor(
-        launch.get("gate5"), label="retained Ollama Gate 5"
-    )
+    gate5_path = _validate_descriptor(launch.get("gate5"), label="retained Ollama Gate 5")
     stability_path = _validate_descriptor(
         launch.get("stability_completion"),
         label="retained Ollama stability completion",
@@ -179,9 +172,12 @@ def _failed_output_coverage(
     if HEX64.fullmatch(completion_sha256) is None:
         raise ValueError("failed-output recovery digest is malformed")
     resolved = completion_path.resolve(strict=True)
-    if hashlib.sha256(
-        _stable_file(resolved, label="failed-output recovery completion")
-    ).hexdigest() != completion_sha256:
+    if (
+        hashlib.sha256(
+            _stable_file(resolved, label="failed-output recovery completion")
+        ).hexdigest()
+        != completion_sha256
+    ):
         raise ValueError("failed-output recovery completion digest changed")
 
     # Imported lazily because failed_output_recovery_phase6 imports _base_inputs
@@ -198,10 +194,12 @@ def _failed_output_coverage(
     )
     from experiments.local_campaign.failed_output_recovery_phase6 import (
         DEEPSEEK_UNIT,
+    )
+    from experiments.local_campaign.failed_output_recovery_phase6 import (
         _validate_metric_result as _validate_failed_output_metric_result,
     )
-    from experiments.local_campaign.local_truncation_recovery_execution_phase6 import (
-        validate_completion as validate_hardware_fit_completion,
+    from experiments.local_campaign.local_bounded_output_continuation_phase6 import (
+        validate_alignment_prerequisite,
     )
 
     completion = _load_json(resolved, label="interrupted failed-output completion")
@@ -228,12 +226,9 @@ def _failed_output_coverage(
         "paid_provider_calls",
     }
     failures = completion.get("unit_failures")
-    control_root = _canonical_control_root(
-        resolved, label="interrupted failed-output recovery"
-    )
+    control_root = _canonical_control_root(resolved, label="interrupted failed-output recovery")
     expected_error = (
-        "Runner exited 143; see "
-        f"{control_root}/units/{DEEPSEEK_PHYSICAL_UNIT}/measured.run.log"
+        f"Runner exited 143; see {control_root}/units/{DEEPSEEK_PHYSICAL_UNIT}/measured.run.log"
     )
     expected_failure = {
         "status": "failed",
@@ -252,8 +247,7 @@ def _failed_output_coverage(
         or completion.get("target_answer_retries") != 1
         or completion.get("unit_order") != list(EXPECTED_UNIT_ORDER)
         or completion.get("retained_unit_order") != list(RETAINED_UNIT_ORDER)
-        or completion.get("continuation_unit_order")
-        != list(CONTINUATION_UNIT_ORDER)
+        or completion.get("continuation_unit_order") != list(CONTINUATION_UNIT_ORDER)
         or failures != {DEEPSEEK_PHYSICAL_UNIT: expected_failure}
         or completion.get("target_execution")
         != {
@@ -271,12 +265,8 @@ def _failed_output_coverage(
     prior_path = _validate_descriptor(
         completion.get("prior_completion"), label="prior failed-output completion"
     )
-    prior, _prior_launch, prior_snapshot, prior_root = _validate_prior_completion(
-        prior_path
-    )
-    prior_descriptor = _descriptor(
-        prior_path, label="prior failed-output completion"
-    )
+    prior, _prior_launch, prior_snapshot, prior_root = _validate_prior_completion(prior_path)
+    prior_descriptor = _descriptor(prior_path, label="prior failed-output completion")
     launch_path = _validate_descriptor(
         completion.get("launch"), label="interrupted failed-output launch"
     )
@@ -285,14 +275,11 @@ def _failed_output_coverage(
         label="interrupted failed-output snapshot",
     )
     launch = _load_json(launch_path, label="interrupted failed-output launch")
-    snapshot = _load_json(
-        snapshot_path, label="interrupted failed-output snapshot"
-    )
+    snapshot = _load_json(snapshot_path, label="interrupted failed-output snapshot")
     if (
         launch_path != control_root / "launch.json"
         or snapshot_path != control_root / "input-snapshot.json"
-        or launch.get("schema")
-        != "ura-failed-output-recovery-continuation-phase6-launch/1"
+        or launch.get("schema") != "ura-failed-output-recovery-continuation-phase6-launch/1"
         or launch.get("runner_code_version") != "ura-runner/2.27"
         or launch.get("target_answer_retries") != 1
         or launch.get("prior_completion") != completion["prior_completion"]
@@ -301,8 +288,7 @@ def _failed_output_coverage(
         or launch.get("recovery_records") != EXPECTED_RECOVERY_COUNTS[4]
         or launch.get("successful_rows_repeated") != 0
         or launch.get("paid_provider_calls") != 0
-        or snapshot.get("schema")
-        != "ura-failed-output-recovery-continuation-input-snapshot/1"
+        or snapshot.get("schema") != "ura-failed-output-recovery-continuation-input-snapshot/1"
         or snapshot.get("recovery_records") != EXPECTED_RECOVERY_COUNTS[4]
         or snapshot.get("successful_rows_repeated") != 0
         or set(snapshot.get("units", {})) != {DEEPSEEK_PHYSICAL_UNIT}
@@ -318,18 +304,15 @@ def _failed_output_coverage(
         or EXPECTED_RECOVERY_COUNTS[4] != 1_674
         or not isinstance(results, dict)
         or set(results) != set(RETAINED_UNIT_ORDER)
-        or any(results[unit_id] != prior["unit_results"][unit_id] for unit_id in RETAINED_UNIT_ORDER)
+        or any(
+            results[unit_id] != prior["unit_results"][unit_id] for unit_id in RETAINED_UNIT_ORDER
+        )
     ):
         raise ValueError("failed-output DeepSeek recovery identity changed")
     deepseek_snapshot = snapshot.get("units", {}).get(DEEPSEEK_PHYSICAL_UNIT)
-    summary = (
-        deepseek_snapshot.get("summary")
-        if isinstance(deepseek_snapshot, dict)
-        else None
-    )
-    if (
-        not isinstance(summary, dict)
-        or any(summary.get(key) != value for key, value in EXPECTED_DEEPSEEK_COVERAGE.items())
+    summary = deepseek_snapshot.get("summary") if isinstance(deepseek_snapshot, dict) else None
+    if not isinstance(summary, dict) or any(
+        summary.get(key) != value for key, value in EXPECTED_DEEPSEEK_COVERAGE.items()
     ):
         raise ValueError("failed-output DeepSeek population coverage changed")
 
@@ -356,57 +339,33 @@ def _failed_output_coverage(
     if HEX64.fullmatch(hardware_fit_completion_sha256) is None:
         raise ValueError("hardware-fit completion digest is malformed")
     hardware_path = hardware_fit_completion_path.resolve(strict=True)
-    if hashlib.sha256(
-        _stable_file(hardware_path, label="hardware-fit completion")
-    ).hexdigest() != hardware_fit_completion_sha256:
+    if (
+        hashlib.sha256(_stable_file(hardware_path, label="hardware-fit completion")).hexdigest()
+        != hardware_fit_completion_sha256
+    ):
         raise ValueError("hardware-fit completion digest changed")
-    hardware = validate_hardware_fit_completion(
-        hardware_path, runner_root=runner_root
-    )
-    hardware_descriptor = _descriptor(
-        hardware_path, label="hardware-fit completion"
-    )
-    hardware_document = _load_json(
-        hardware_path, label="hardware-fit completion"
-    )
-    hardware_inventory_path = _validate_descriptor(
-        hardware_document.get("inventory"), label="hardware-fit inventory"
-    )
-    hardware_inventory = _load_json(
-        hardware_inventory_path, label="hardware-fit inventory"
-    )
+    hardware = validate_alignment_prerequisite(hardware_path, runner_root=runner_root)
+    hardware_descriptor = _descriptor(hardware_path, label="hardware-fit completion")
+    hardware_inventory = hardware["inventory"]
     hardware_units = hardware_inventory.get("units")
     hardware_order = hardware.get("unit_order")
     if (
-        hardware_document.get("status") != "complete"
-        or hardware_document.get("unit_failures") != {}
-        or not isinstance(hardware_units, list)
+        not isinstance(hardware_units, list)
         or len(hardware_units) != 25
         or not isinstance(hardware_order, list)
         or len(hardware_order) != 25
-        or any(
-            hardware.get("terminal_states", {}).get(unit_id)
-            != "measured_complete"
-            for unit_id in hardware_order
-        )
     ):
         raise ValueError("hardware-fit completion is not fully successful")
     hardware_deepseek = hardware_units[0]
-    hardware_deepseek_id = hardware_order[0]
     hardware_summary = (
-        hardware_deepseek.get("summary")
-        if isinstance(hardware_deepseek, dict)
-        else None
+        hardware_deepseek.get("summary") if isinstance(hardware_deepseek, dict) else None
     )
-    hardware_result = hardware_document.get("unit_results", {}).get(
-        hardware_deepseek_id
-    )
+    hardware_result = hardware.get("deepseek_result")
     if (
         not isinstance(hardware_deepseek, dict)
         or hardware_deepseek.get("source_unit_id") != DEEPSEEK_PHYSICAL_UNIT
         or hardware_deepseek.get("source_lane") != FAILED_OUTPUT_COVERED_LANE
-        or hardware_deepseek.get("local_spec")
-        != "ollama:deepseek-r1:32b-qwen-distill-q4_K_M"
+        or hardware_deepseek.get("local_spec") != "ollama:deepseek-r1:32b-qwen-distill-q4_K_M"
         or hardware_summary != EXPECTED_HARDWARE_DEEPSEEK_COVERAGE
         or not isinstance(hardware_result, dict)
         or hardware_result.get("target_attempts") != 931
@@ -419,9 +378,7 @@ def _failed_output_coverage(
 
     partial_successful = 771
     retained_partial_successful = 743
-    alignment_successful = (
-        retained_successful + retained_partial_successful + hardware_successful
-    )
+    alignment_successful = retained_successful + retained_partial_successful + hardware_successful
     alignment_missing = retained_missing + hardware_missing
     if alignment_successful + alignment_missing != 3_793:
         raise ValueError("combined alignment recovery coverage changed")
@@ -435,22 +392,16 @@ def _failed_output_coverage(
         "alignment_recovery_missing_responses": alignment_missing,
         "partial_deepseek_successful_target_generations": partial_successful,
         "partial_deepseek_missing_responses": 14,
-        "retained_partial_deepseek_successful_target_generations": (
-            retained_partial_successful
-        ),
+        "retained_partial_deepseek_successful_target_generations": (retained_partial_successful),
         "hardware_fit_deepseek_successful_target_generations": hardware_successful,
         "hardware_fit_deepseek_missing_responses": hardware_missing,
         "hardware_fit_replayed_partial_rows": 42,
     }
     return (
         {
-            "completion": _descriptor(
-                resolved, label="interrupted failed-output completion"
-            ),
+            "completion": _descriptor(resolved, label="interrupted failed-output completion"),
             "hardware_fit_completion": hardware_descriptor,
-            "project_revision_receipt_sha256": hardware[
-                "metric_project_revision_receipt_sha256"
-            ][hardware_deepseek_id],
+            "project_revision_receipt_sha256": hardware["deepseek_revision"],
         },
         _descriptor(resolved, label="interrupted failed-output completion"),
         hardware_descriptor,
@@ -458,9 +409,7 @@ def _failed_output_coverage(
     )
 
 
-def _configured_unit(
-    item: Any, *, control_root: Path, profile_registry: Path
-) -> Any:
+def _configured_unit(item: Any, *, control_root: Path, profile_registry: Path) -> Any:
     """Bind thinking, hardware-fit context and the approved output profile."""
 
     base = list(item.unit.spec["base_argv"])
@@ -476,13 +425,9 @@ def _configured_unit(
             "num_ctx": PROSPECTIVE_OLLAMA_NUM_CTX,
             "think": model.think,
         }
-        model_config, profile = apply_profile(
-            model.spec, unprofiled, path=profile_registry
-        )
+        model_config, profile = apply_profile(model.spec, unprofiled, path=profile_registry)
         if profile is None:
-            raise ValueError(
-                f"{item.unit.unit_id}: current Ollama target has no readiness profile"
-            )
+            raise ValueError(f"{item.unit.unit_id}: current Ollama target has no readiness profile")
         _create_json(
             config_path,
             {model.spec: model_config},
@@ -513,9 +458,7 @@ def _combined_target_execution(
         + coverage["prior_usable_records"]
         + coverage["alignment_recovery_successful_target_generations"]
     )
-    final_missing = (
-        continuation_missing + coverage["alignment_recovery_missing_responses"]
-    )
+    final_missing = continuation_missing + coverage["alignment_recovery_missing_responses"]
     actual_successful = (
         5_222
         + coverage["prior_usable_records"]
@@ -569,19 +512,21 @@ def run(args: argparse.Namespace) -> int:
     ):
         raise ValueError("alignment-recovery root must be one direct campaign")
     base_completion = args.base_completion.resolve(strict=True)
-    if hashlib.sha256(
-        _stable_file(base_completion, label="failed alignment completion")
-    ).hexdigest() != args.base_completion_sha256:
+    if (
+        hashlib.sha256(
+            _stable_file(base_completion, label="failed alignment completion")
+        ).hexdigest()
+        != args.base_completion_sha256
+    ):
         raise ValueError("failed alignment completion digest changed")
     project_revision = args.project_revision.resolve(strict=True)
-    if hashlib.sha256(
-        _stable_file(project_revision, label="project revision")
-    ).hexdigest() != args.project_revision_sha256:
+    if (
+        hashlib.sha256(_stable_file(project_revision, label="project revision")).hexdigest()
+        != args.project_revision_sha256
+    ):
         raise ValueError("project revision digest changed")
     profile_source = args.profile_registry.resolve(strict=True)
-    profile_bytes = _stable_file(
-        profile_source, label="local-model profile registry"
-    )
+    profile_bytes = _stable_file(profile_source, label="local-model profile registry")
     snapshot, _base, _base_launch, units = _base_inputs(
         base_completion,
         runner_root=runner_root,
@@ -598,16 +543,10 @@ def run(args: argparse.Namespace) -> int:
         args.hardware_fit_completion_sha256,
         runner_root=runner_root,
     )
-    selected = _selected_failed_lanes(
-        snapshot, covered_lanes=(FAILED_OUTPUT_COVERED_LANE,)
-    )
+    selected = _selected_failed_lanes(snapshot, covered_lanes=(FAILED_OUTPUT_COVERED_LANE,))
     if selected != list(CONTINUATION_LANES):
         raise ValueError("Ollama population-alignment continuation selection changed")
-    source_by_lane = {
-        item.unit.unit_id: item
-        for item in units
-        if item.unit.unit_id in selected
-    }
+    source_by_lane = {item.unit.unit_id: item for item in units if item.unit.unit_id in selected}
     if (
         list(source_by_lane) != selected
         or sum(source_by_lane[lane].unit.selected_records for lane in selected)
@@ -636,17 +575,11 @@ def run(args: argparse.Namespace) -> int:
         "runner_code_version": CODE_VERSION,
         "execution_scope_id": args.execution_scope_id,
         "target_answer_retries": 1,
-        "base_completion": _descriptor(
-            base_completion, label="failed alignment completion"
-        ),
+        "base_completion": _descriptor(base_completion, label="failed alignment completion"),
         "failed_output_recovery_completion": failed_output_descriptor,
         "hardware_fit_completion": hardware_fit_descriptor,
-        "project_revision": _descriptor(
-            project_revision, label="recovery project revision"
-        ),
-        "profile_registry": _descriptor(
-            profile_snapshot, label="local-model profile registry"
-        ),
+        "project_revision": _descriptor(project_revision, label="recovery project revision"),
+        "profile_registry": _descriptor(profile_snapshot, label="local-model profile registry"),
         "unit_order": selected,
         "extension_rows": EXPECTED_CONTINUATION_ROWS,
         "no_completed_rows_repeated": True,
@@ -711,9 +644,7 @@ def run(args: argparse.Namespace) -> int:
                 "target_answer_retries": 1,
             }
     attempts = sum(int(row["target_attempts"]) for row in results.values())
-    successful = sum(
-        int(row["successful_target_generations"]) for row in results.values()
-    )
+    successful = sum(int(row["successful_target_generations"]) for row in results.values())
     missing = sum(int(row["missing_responses"]) for row in results.values())
     status = "complete" if not failures else "complete_with_failures"
     completion = {
@@ -724,9 +655,7 @@ def run(args: argparse.Namespace) -> int:
         "expected_commit": args.expected_commit,
         "runner_code_version": CODE_VERSION,
         "target_answer_retries": 1,
-        "base_completion": _descriptor(
-            base_completion, label="failed alignment completion"
-        ),
+        "base_completion": _descriptor(base_completion, label="failed alignment completion"),
         "failed_output_recovery_completion": failed_output_descriptor,
         "hardware_fit_completion": hardware_fit_descriptor,
         "launch": _descriptor(launch_path, label="alignment recovery launch"),
@@ -817,9 +746,7 @@ def validate_recovery_completion(
         completion.get("hardware_fit_completion"),
         label="hardware-fit completion",
     )
-    launch_path = _validate_descriptor(
-        completion.get("launch"), label="alignment recovery launch"
-    )
+    launch_path = _validate_descriptor(completion.get("launch"), label="alignment recovery launch")
     if launch_path != control_root / "launch.json":
         raise ValueError("alignment recovery launch placement changed")
     base_snapshot, _base, _base_launch, units = _base_inputs(
@@ -838,13 +765,10 @@ def validate_recovery_completion(
         hashlib.sha256(hardware_fit_path.read_bytes()).hexdigest(),
         runner_root=runner_root,
     )
-    selected = _selected_failed_lanes(
-        base_snapshot, covered_lanes=(FAILED_OUTPUT_COVERED_LANE,)
-    )
+    selected = _selected_failed_lanes(base_snapshot, covered_lanes=(FAILED_OUTPUT_COVERED_LANE,))
     if (
         selected != list(CONTINUATION_LANES)
-        or completion.get("failed_output_recovery_completion")
-        != failed_output_descriptor
+        or completion.get("failed_output_recovery_completion") != failed_output_descriptor
         or completion.get("hardware_fit_completion") != hardware_fit_descriptor
     ):
         raise ValueError("alignment continuation prerequisite changed")
@@ -880,17 +804,14 @@ def validate_recovery_completion(
         or launch.get("base_completion") != completion["base_completion"]
         or launch.get("failed_output_recovery_completion")
         != completion["failed_output_recovery_completion"]
-        or launch.get("hardware_fit_completion")
-        != completion["hardware_fit_completion"]
+        or launch.get("hardware_fit_completion") != completion["hardware_fit_completion"]
         or launch.get("unit_order") != selected
         or launch.get("extension_rows") != EXPECTED_CONTINUATION_ROWS
         or launch.get("no_completed_rows_repeated") is not True
         or launch.get("paid_provider_calls") != 0
     ):
         raise ValueError("alignment recovery launch changed")
-    _validate_descriptor(
-        launch.get("project_revision"), label="recovery project revision"
-    )
+    _validate_descriptor(launch.get("project_revision"), label="recovery project revision")
     profile_registry = _validate_descriptor(
         launch.get("profile_registry"), label="local-model profile registry"
     )
@@ -907,9 +828,7 @@ def validate_recovery_completion(
     sources: set[str] = set()
     successful = 0
     missing = 0
-    recovery_descriptor = _descriptor(
-        completion_path, label="alignment recovery completion"
-    )
+    recovery_descriptor = _descriptor(completion_path, label="alignment recovery completion")
     for lane in selected:
         item = by_lane[lane]
         selector = base_path.parent / "inputs" / f"{lane}.completed-selection.json"
@@ -927,9 +846,7 @@ def validate_recovery_completion(
             state_schema=UNIT_STATE_SCHEMA,
             completion=recovery_descriptor,
         )
-        state_path = _validate_descriptor(
-            results[lane]["state"], label=f"{lane} recovered state"
-        )
+        state_path = _validate_descriptor(results[lane]["state"], label=f"{lane} recovered state")
         state = _load_json(state_path, label=f"{lane} recovered state")
         argv = state["runner_argv"]
         local = _option(argv, "--local")
@@ -956,17 +873,15 @@ def validate_recovery_completion(
             or _option(argv, "--sample-seed") != "0"
             or _option(argv, "--target-answer-retries") != "1"
             or _option(argv, "--recovery-completed-prefix") != str(selector)
-            or _option(argv, "--recovery-completed-prefix-sha256")
-            != selector_sha
+            or _option(argv, "--recovery-completed-prefix-sha256") != selector_sha
             or model is None
             or config_path != control_root / "configs" / f"{model.label}.json"
             or hashlib.sha256(config_path.read_bytes()).hexdigest() != config_sha
             or config != expected_config
         ):
             raise ValueError(f"{lane}: recovered population argv changed")
-        if (
-            item.unit.spec["metric_mode"] != "static"
-            and any(flag.startswith("--model-acquisition-") for flag in argv)
+        if item.unit.spec["metric_mode"] != "static" and any(
+            flag.startswith("--model-acquisition-") for flag in argv
         ):
             raise ValueError(f"{lane}: local-only lane gained Hub acquisition")
         envelopes = sorted(Path(validated["root"]).glob("*.request-envelope.json"))
@@ -1015,9 +930,7 @@ def validate_recovery_completion(
         "interrupted_failed_output_recovery_units": "ura-runner/2.27",
         "hardware_fit_recovery_units": "ura-runner/2.29",
     }
-    result["terminal_states"] = {
-        lane: "measured_complete" for lane in ALIGNMENT_LANES
-    }
+    result["terminal_states"] = {lane: "measured_complete" for lane in ALIGNMENT_LANES}
     metric_lanes = [lane for lane in ALIGNMENT_LANES if lane != FAILED_OUTPUT_COVERED_LANE]
     result["metric_lane_order"] = metric_lanes
     result["metric_roots"].update(recovered_roots)
@@ -1072,15 +985,11 @@ def validate_recovery_completion(
     result["revision_strata"] = revision_strata
     result["project_revision_receipt_sha256"] = next(iter(recovery_revisions))
     result["metric_project_revision_receipt_sha256"] = {
-        lane: revision
-        for revision, lanes in revision_strata.items()
-        for lane in lanes
+        lane: revision for revision, lanes in revision_strata.items() for lane in lanes
     }
     result["lifecycle_project_revision_receipt_sha256"] = {
         **result["metric_project_revision_receipt_sha256"],
-        FAILED_OUTPUT_COVERED_LANE: failed_output[
-            "project_revision_receipt_sha256"
-        ],
+        FAILED_OUTPUT_COVERED_LANE: failed_output["project_revision_receipt_sha256"],
     }
     result["target_execution"] = _combined_target_execution(
         base_execution=base_snapshot["target_execution"],
@@ -1122,12 +1031,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-completion", type=Path, required=True)
     parser.add_argument("--base-completion-sha256", required=True)
-    parser.add_argument(
-        "--failed-output-recovery-completion", type=Path, required=True
-    )
-    parser.add_argument(
-        "--failed-output-recovery-completion-sha256", required=True
-    )
+    parser.add_argument("--failed-output-recovery-completion", type=Path, required=True)
+    parser.add_argument("--failed-output-recovery-completion-sha256", required=True)
     parser.add_argument("--hardware-fit-completion", type=Path, required=True)
     parser.add_argument("--hardware-fit-completion-sha256", required=True)
     parser.add_argument("--control-root", type=Path, required=True)
