@@ -28,6 +28,7 @@ from ura.ollama_security import (
     OllamaProcessLock,
     model_identity_keys,
     ollama_lock_path,
+    read_bounded_response,
 )
 from ura.targets.base import TargetIntegrityError
 from ura.targets.local import LocalTargetOutputError, OllamaTarget
@@ -59,6 +60,17 @@ class _Response:
 
     def close(self) -> None:
         self.closed = True
+
+
+class _BlockingBodyResponse(_Response):
+    def __init__(self, release: threading.Event) -> None:
+        super().__init__(b"")
+        self.release = release
+
+    def read1(self, amount: int = -1) -> bytes:
+        del amount
+        self.release.wait(2.0)
+        return b""
 
 
 def _inventory(
@@ -637,6 +649,24 @@ def test_api_header_open_is_a_hard_wall_not_an_inactivity_timeout() -> None:
         with pytest.raises(OllamaUnavailable, match="unavailable"):
             api.tags()
         assert time.monotonic() - started < 0.5
+    finally:
+        release.set()
+
+
+def test_response_body_read_is_a_hard_wall_when_read1_never_wakes() -> None:
+    release = threading.Event()
+    response = _BlockingBodyResponse(release)
+    started = time.monotonic()
+    try:
+        with pytest.raises(TimeoutError, match="hard wall-clock deadline"):
+            read_bounded_response(
+                response,
+                maximum=1024,
+                deadline=time.monotonic() + 0.05,
+                label="Ollama stuck response body",
+            )
+        assert time.monotonic() - started < 0.5
+        assert response.closed is True
     finally:
         release.set()
 

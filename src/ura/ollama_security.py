@@ -24,6 +24,7 @@ _IDENTITY_SUFFIXES = {"base", "chat", "gguf", "hf", "instruct", "it"}
 _GENERIC_BASE_FAMILIES = {"base", "chat", "code", "instruct", "model", "vision"}
 _SHORT_BASE_FAMILIES = {"aya", "phi", "yi"}
 _OPEN_WORKERS = threading.BoundedSemaphore(8)
+_READ_WORKERS = threading.BoundedSemaphore(8)
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -262,7 +263,7 @@ def set_response_timeout(response: Any, timeout: float) -> None:
         candidates = next_candidates
 
 
-def read_bounded_response(
+def _read_bounded_response_inline(
     response: Any,
     *,
     maximum: int,
@@ -270,7 +271,7 @@ def read_bounded_response(
     monotonic: Callable[[], float] = time.monotonic,
     label: str,
 ) -> bytes:
-    """Read a response incrementally under byte and hard wall-clock bounds."""
+    """Read one response body in the caller-selected worker."""
 
     declared = getattr(response, "headers", {}).get("Content-Length")
     if declared is not None:
@@ -305,6 +306,73 @@ def read_bounded_response(
         if len(body) > maximum:
             raise ValueError(f"{label} exceeds the byte limit")
     return bytes(body)
+
+
+def read_bounded_response(
+    response: Any,
+    *,
+    maximum: int,
+    deadline: float,
+    monotonic: Callable[[], float] = time.monotonic,
+    label: str,
+) -> bytes:
+    """Read a response under a hard deadline even if its socket never wakes.
+
+    Setting a socket timeout is insufficient when a response wrapper cannot
+    expose its actual socket, or when a blocking ``read1`` implementation does
+    not honor a concurrent timeout update. Keep the bounded byte reader in a
+    daemon worker and make the requesting thread's monotonic deadline
+    authoritative. The semaphore prevents repeated stuck peers from creating
+    an unbounded number of workers.
+    """
+
+    remaining = remaining_seconds(deadline, monotonic, label=label)
+    acquired = _READ_WORKERS.acquire(timeout=remaining)
+    if not acquired:
+        raise TimeoutError(f"{label} exceeded its hard wall-clock deadline")
+    result: Queue[tuple[bool, Any]] = Queue(maxsize=1)
+    cancelled = threading.Event()
+
+    def worker() -> None:
+        try:
+            value = _read_bounded_response_inline(
+                response,
+                maximum=maximum,
+                deadline=deadline,
+                monotonic=monotonic,
+                label=label,
+            )
+            if not cancelled.is_set():
+                result.put_nowait((True, value))
+        except BaseException as exc:  # relayed in the requesting thread
+            if not cancelled.is_set():
+                try:
+                    result.put_nowait((False, exc))
+                except Exception:
+                    pass
+        finally:
+            _READ_WORKERS.release()
+
+    thread = threading.Thread(target=worker, name="ollama-http-read", daemon=True)
+    thread.start()
+    try:
+        wait_timeout = remaining_seconds(deadline, monotonic, label=label)
+        ok, value = result.get(timeout=wait_timeout)
+        remaining_seconds(deadline, monotonic, label=label)
+    except (Empty, TimeoutError) as exc:
+        cancelled.set()
+        try:
+            response.close()
+        except (AttributeError, OSError):
+            pass
+        try:
+            result.get_nowait()
+        except Empty:
+            pass
+        raise TimeoutError(f"{label} exceeded its hard wall-clock deadline") from exc
+    if ok:
+        return value
+    raise value
 
 
 def _bounded_identity_text(value: object, *, maximum: int = 512) -> str:
