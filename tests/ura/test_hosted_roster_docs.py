@@ -670,6 +670,7 @@ def test_hosted_follow_on_is_a_no_retry_local_input_subset() -> None:
             assert f"| {target} | {limit} |" in value
 
     assert_contract(combined)
+    assert "at most 2,000 matched local/hosted output pairs" not in combined
     assert "retained_response_local_judge" not in combined
     assert "Each hosted measured lane must use `--judges rules,guardrail`" in runbook
     assert "Every hosted target lane fixes `--judges rules,guardrail`" in plan
