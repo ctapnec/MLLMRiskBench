@@ -828,7 +828,7 @@ schema; older common or source-task report schemas are not Gate 8 evidence.
 
 Paired effects, judge sensitivity, kappa, transfer, and figures are computed
 only from completion-validated recorded artifacts and make no new target calls.
-The budget-fitted hosted follow-on selects at most 2,000 exact local/hosted
+The budget-fitted hosted follow-on selects at most 590 exact local/hosted
 retained-output pairs for Haiku. Every hosted lane already records the sealed
 local `rules,guardrail` cascade alongside its target response, so the later
 Haiku selector compares identical retained rows without a repeated target or

@@ -69,9 +69,9 @@ the target reservation is USD 38.5476. The exact per-model arithmetic is in
 `HOSTED_CAMPAIGN_COST_ASSESSMENT.md` and must be regenerated from the retained
 pricing bytes before execution.
 The target projection records 2.36 million input and 295,000 expected output
-tokens, with 2,420,880 output tokens at the configured maxima. Including 4,000
-Haiku calls gives 18.36 million input, 2.295 million expected output and
-4,468,880 maximum output tokens.
+tokens, with 2,420,880 output tokens at the configured maxima. Including at
+most 1,180 Haiku calls gives 7.08 million input, 885,000 expected output and
+3,025,040 maximum output tokens.
 
 ## Budget contract
 
@@ -80,26 +80,26 @@ targets and Haiku judging, may use at most 50 percent of each configured budget.
 
 | Provider | Configured | Follow-on maximum | Planning partition |
 |---|---:|---:|---|
-| Anthropic | USD 100 | USD 50 | targets/probes at most USD 13; Haiku at most USD 27; margin at least USD 10 |
+| Anthropic | USD 100 | USD 50 | targets/probes at most USD 13; Haiku at most USD 7.75; margin at least USD 29.25 |
 | OpenAI | USD 40 | USD 20 | targets/probes at most USD 19; margin at least USD 1 |
 | Moonshot | USD 15 | USD 7.50 | targets/probes at most USD 7.50 |
 | DeepSeek | USD 10 | USD 5 | off-peak targets/probes at most USD 5 |
 
-Haiku receives one matched cohort of at most 2,000 local/hosted output pairs.
-That is at most 2,000 selected local outputs and 2,000 selected hosted outputs
-from their matched-input intersection.
-Because the entire hosted target cap is 590, a pair limit of 2,000 selects every
-eligible answered hosted output exactly once; it is not a second sample of the
-hosted results. Each receives one deterministic unused local counterpart.
+Haiku receives one matched cohort of at most 590 local/hosted output pairs.
+That is at most 590 selected local outputs and 590 selected hosted outputs
+from their matched-input intersection. The pair limit equals the entire hosted
+target cap, so it selects every eligible answered hosted output exactly once;
+it is not a second sample of the hosted results. Each receives one deterministic
+unused local counterpart.
 The local and hosted member of every pair has the same rendered-input identity,
 source cluster, seed, arm/framework, modality and source-policy stratum. Neither
 retained output may be reused in another pair. At the planning assumption of
-4,000 input and 500 output tokens per judgment, the resulting maximum 4,000
-calls use 16.0 million input and 2.0 million output tokens and cost USD 26.00
-standard or USD 13.00 Batch. The dedicated judge route fixes `max_tokens=512`,
-making USD 26.24 the planning maximum when every selected judge input is at
+4,000 input and 500 output tokens per judgment, the resulting maximum 1,180
+calls use 4.72 million input and 590,000 output tokens and cost USD 7.67
+standard or USD 3.835 Batch. The dedicated judge route fixes `max_tokens=512`,
+making USD 7.7408 the planning maximum when every selected judge input is at
 most 4,000 tokens. Exact provider token counts replace the estimate. The
-selector shrinks before calls if that bound exceeds USD 27. Batch never
+selector shrinks before calls if that bound exceeds USD 7.75. Batch never
 authorizes an outcome-dependent expansion.
 
 Across the full hosted population, local scoring performs at most 590 rule
@@ -171,13 +171,13 @@ provider ledgers reconcile within all monetary ceilings.
 
 ## A4 - Zero-target matched Haiku re-adjudication
 
-Create one content-bound selector for at most 2,000 local/hosted pairs. A pair
+Create one content-bound selector for at most 590 local/hosted pairs. A pair
 is eligible only when both retained outputs bind the same rendered prompt,
 media-reference digest, datapoint, source cluster, seed, arm/framework,
 modality, risk, expected behavior and source-policy identity. Use deterministic
 seed-0 balanced round-robin selection across local target, hosted target and
 those input strata, without reusing an output. Preserve original judgments.
-When the eligible hosted population remains at or below 2,000, selection must
+When the eligible hosted population remains at or below 590, selection must
 include every eligible hosted output rather than downsample it.
 Missing responses and source-authoritative R-Judge/GPTGeoChat rows remain in
 coverage accounting but receive no judge call and cannot form a judged pair.
@@ -188,11 +188,11 @@ The re-adjudicator reads only content-bound retained responses and minimum
 grading context. Its planner cannot import a target-under-test or Runner
 factory. Its executor may construct only the exact Haiku judge; it cannot
 construct a model under test or reserve a target call. The paired plan receives
-one USD 27 ceiling. Its judgment strata record the hosted-transfer
+one USD 7.75 ceiling. Its judgment strata record the hosted-transfer
 acknowledgement and exactly one judge attempt per output.
 
-Gate A4: target calls 0, original mutations 0, Haiku calls at most 4,000,
-Haiku spend at most USD 27, and complete selected/missing/excluded accounting.
+Gate A4: target calls 0, original mutations 0, Haiku calls at most 1,180,
+Haiku spend at most USD 7.75, and complete selected/missing/excluded accounting.
 Every selected hosted member must bind the unchanged local cascade trail from
 its A3 result by retained-row digest.
 

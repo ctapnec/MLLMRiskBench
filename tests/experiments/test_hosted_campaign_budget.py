@@ -81,31 +81,32 @@ def test_projection_binds_expected_and_maximum_token_costs() -> None:
     assert value["status"] == "budget_fit"
     assert value["totals"] == {
         "target_paid_call_cap": 590,
-        "judge_paid_call_cap": 4_000,
+        "judge_paid_call_cap": 1_180,
         "target_expected_input_tokens": 2_360_000,
         "target_maximum_input_tokens": 2_360_000,
         "target_expected_output_tokens": 295_000,
         "target_maximum_output_tokens": 2_420_880,
-        "judge_expected_input_tokens": 16_000_000,
-        "judge_maximum_input_tokens": 16_000_000,
-        "judge_expected_output_tokens": 2_000_000,
-        "judge_maximum_output_tokens": 2_048_000,
-        "combined_expected_input_tokens": 18_360_000,
-        "combined_maximum_input_tokens": 18_360_000,
-        "combined_expected_output_tokens": 2_295_000,
-        "combined_maximum_output_tokens": 4_468_880,
+        "judge_expected_input_tokens": 4_720_000,
+        "judge_maximum_input_tokens": 4_720_000,
+        "judge_expected_output_tokens": 590_000,
+        "judge_maximum_output_tokens": 604_160,
+        "combined_expected_input_tokens": 7_080_000,
+        "combined_maximum_input_tokens": 7_080_000,
+        "combined_expected_output_tokens": 885_000,
+        "combined_maximum_output_tokens": 3_025_040,
         "target_expected_cost_microusd": 8_313_000,
         "target_maximum_cost_microusd": 38_547_568,
-        "judge_expected_cost_microusd": 26_000_000,
-        "judge_maximum_cost_microusd": 26_240_000,
-        "combined_expected_cost_microusd": 34_313_000,
-        "combined_maximum_cost_microusd": 64_787_568,
+        "judge_expected_cost_microusd": 7_670_000,
+        "judge_maximum_cost_microusd": 7_740_800,
+        "combined_expected_cost_microusd": 15_983_000,
+        "combined_maximum_cost_microusd": 46_288_368,
     }
     sonnet = next(row for row in value["routes"] if row["label"] == "Claude Sonnet 5")
     assert sonnet["expected_cost_microusd"] == 650_000
     assert sonnet["maximum_cost_microusd"] == 2_448_000
     assert all(row["paid_call_cap_includes_readiness_and_canaries"] for row in value["routes"])
     assert value["judge"]["maximum_output_tokens_per_call"] == 512
+    assert value["judge"]["selected_pair_cap"] == 590
     assert all(row["fits_campaign_cap"] for row in value["providers"])
 
 

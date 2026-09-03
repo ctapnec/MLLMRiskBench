@@ -399,15 +399,15 @@ response artifacts remain authoritative.
   must classify and resolve it before a fresh bound plan and explicit circuit
   reset; paid execution never resumes automatically.
 - Post-hoc Haiku re-adjudication does not use `run_matrix` and cannot regenerate
-  a target response. `retained_response_judge_pair` admits at most 2,000 pairs
+  a target response. `retained_response_judge_pair` admits at most 590 pairs
   from the exact local/hosted input-identity intersection, without reusing an
   output; `retained_response_judge_pair_execute` reconciles both validated
   Runner views and constructs only the named Haiku judge. It reserves zero
   target calls, uses one judge/HTTP attempt per selected output, checkpoints
   every paid decision, binds and revalidates the effective-dated pricing bytes,
   and opens its global `paid_provider` circuit on the first judge or transport
-  failure. Its one USD 27 ceiling covers at most 4,000 calls: USD 26.00 at the
-  4,000-input/500-output planning average and USD 26.24 at the fixed 512-token
+  failure. Its one USD 7.75 ceiling covers at most 1,180 calls: USD 7.67 at the
+  4,000-input/500-output planning average and USD 7.7408 at the fixed 512-token
   output maximum.
 - The hosted follow-on uses ten global target caps totaling 590 calls, including
   readiness and diagnostic canaries. `hosted_campaign_budget` creates a
@@ -415,7 +415,7 @@ response artifacts remain authoritative.
   budget bytes. It reports both the 4,000-input/500-output expectation and each
   route's configured-maximum-output reservation, and blocks any provider above
   half its configured balance. The current planning values are USD 8.3130 and
-  USD 38.5476 for targets, or USD 34.3130 and USD 64.7876 including Haiku.
+  USD 38.5476 for targets, or USD 15.9830 and USD 46.288368 including Haiku.
   Every hosted Runner lane uses the sealed local `rules,guardrail` cascade, so
   its retained response already has the local judgment later compared with
   Haiku on the exact paired row. The local cascade has no provider cost.

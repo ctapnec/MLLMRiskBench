@@ -628,16 +628,16 @@ def test_hosted_follow_on_is_a_no_retry_local_input_subset() -> None:
         "There is no automatic paid resumption",
         "Build sets and locks",
         "at most 50 percent",
-        "2,000 selected local",
-        "2,000 selected hosted",
+        "590 selected local",
+        "590 selected hosted",
         "same_model_judge=true",
         "matched-input intersection",
         "full-corpus estimates",
         "target calls 0",
-        "USD 26.00 standard",
+        "USD 7.67 standard",
         "590 target attempts",
         "USD 8.3130",
-        "USD 64.7876",
+        "USD 46.288368",
         "experiments.hosted_campaign_budget",
         "experiments.retained_response_judge_pair_execute",
         "--judges rules,guardrail",
@@ -688,7 +688,7 @@ def test_hosted_follow_on_is_a_no_retry_local_input_subset() -> None:
     with pytest.raises(AssertionError):
         assert "global `paid_provider` circuit" in changed_plan
     cost_flat = " ".join(cost.split())
-    for forecast in ("590 target-call cap", "USD 8.3130", "USD 64.7876"):
+    for forecast in ("590 target-call cap", "USD 8.3130", "USD 46.288368"):
         changed_cost = cost_flat.replace(forecast, "MUTATED_FORECAST", 1)
         assert changed_cost != cost_flat
         with pytest.raises(AssertionError):

@@ -27,7 +27,6 @@ EXPECTED_INPUT_TOKENS = 4_000
 MAX_INPUT_TOKENS = 4_000
 EXPECTED_OUTPUT_TOKENS = 500
 JUDGE_MAX_OUTPUT_TOKENS = 512
-JUDGE_CALL_CAP = 4_000
 JUDGE_MODEL = "claude-haiku-4-5-20251001"
 _HEX64 = re.compile(r"[0-9a-f]{64}")
 _MONEY = re.compile(r"\$(0|[1-9][0-9]*)(?:\.([0-9]{1,2}))?")
@@ -116,6 +115,9 @@ ROUTES: tuple[dict[str, Any], ...] = (
         "max_output_tokens": 4_096,
     },
 )
+HOSTED_TARGET_CALL_CAP = sum(int(route["call_cap"]) for route in ROUTES)
+JUDGE_PAIR_CAP = HOSTED_TARGET_CALL_CAP
+JUDGE_CALL_CAP = 2 * JUDGE_PAIR_CAP
 
 
 def _canonical(value: object) -> bytes:

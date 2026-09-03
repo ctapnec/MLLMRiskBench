@@ -1247,14 +1247,14 @@ reconciles the prospective 42,882 local target calls before optional defense
 work, including 8,680 source-authoritative R-Judge or GPTGeoChat rows and at
 most 34,202 common-judge-eligible rows. The separately planned follow-on
 outputs may raise the Haiku-eligible planning inventory to 34,261, but the
-hosted plan selects at most 2,000 matched local/hosted output pairs for Haiku.
+hosted plan selects at most 590 matched local/hosted output pairs for Haiku.
 Local-only Phase 7 therefore reports zero hosted and zero Haiku calls; a later
 hosted comparison attaches its sealed matched stratum without rewriting the
 local report. `retained_response_judge_pair` selects only identical input
 entries from the validated local and hosted Runner views, and
 `retained_response_judge_pair_execute` reconciles both views before constructing
 only the Haiku judge. The paired selector receives the combined standard-API
-USD 27 ceiling. It uses one judge/HTTP attempt per output, zero target calls, no
+USD 7.75 ceiling. It uses one judge/HTTP attempt per output, zero target calls, no
 automatic paid recovery, and a first-failure global circuit. The modal diagrams derive
 from the same table and show the
 input-to-output funnel, response and missing-output coverage, judge coverage,

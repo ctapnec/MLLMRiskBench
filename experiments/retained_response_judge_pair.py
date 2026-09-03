@@ -28,6 +28,8 @@ from experiments.retained_response_judge import (
 
 SCHEMA = "ura-retained-response-judge-pair-plan/1"
 ALGORITHM = "seeded_balanced_round_robin_matched_retained_output_pairs_v1"
+MAX_PAIR_LIMIT = 590
+MAX_COST_MICROUSD = 7_750_000
 _PAIR_DIMENSIONS = (
     "local_exact_model",
     "hosted_exact_model",
@@ -197,8 +199,14 @@ def _pair_edges(
 def _select_pairs(
     edges: Sequence[Mapping[str, Any]], *, limit: int, seed: int
 ) -> list[dict[str, Any]]:
-    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 2_000:
-        raise ValueError("matched retained judge pair limit must be in [1,2000]")
+    if (
+        isinstance(limit, bool)
+        or not isinstance(limit, int)
+        or not 1 <= limit <= MAX_PAIR_LIMIT
+    ):
+        raise ValueError(
+            f"matched retained judge pair limit must be in [1,{MAX_PAIR_LIMIT}]"
+        )
     if not edges:
         raise ValueError("local and hosted Runner views have no matched usable outputs")
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -249,9 +257,9 @@ def build_pair_plan(
     judge_model: str,
     api_config_sha256: str,
     pricing_condition: Mapping[str, object],
-    limit: int = 2_000,
+    limit: int = MAX_PAIR_LIMIT,
     seed: int = 0,
-    max_cost_microusd: int = 27_000_000,
+    max_cost_microusd: int = MAX_COST_MICROUSD,
 ) -> dict[str, Any]:
     judge_model = _text(judge_model, label="judge model")
     if not judge_model.startswith("anthropic:claude-haiku-"):
@@ -261,9 +269,11 @@ def build_pair_plan(
     if (
         isinstance(max_cost_microusd, bool)
         or not isinstance(max_cost_microusd, int)
-        or not 1 <= max_cost_microusd <= 27_000_000
+        or not 1 <= max_cost_microusd <= MAX_COST_MICROUSD
     ):
-        raise ValueError("matched Haiku cost ceiling must be positive and at most USD 27")
+        raise ValueError(
+            "matched Haiku cost ceiling must be positive and at most USD 7.75"
+        )
     edges, match_audit = _pair_edges(
         local_candidates, hosted_candidates, seed=seed
     )
@@ -383,7 +393,7 @@ def validate_pair_plan(value: object) -> dict[str, Any]:
         or _HEX64.fullmatch(str(condition.get("api_config_sha256", ""))) is None
         or _HEX64.fullmatch(str(condition.get("pricing_config_sha256", ""))) is None
         or not isinstance(condition.get("max_cost_microusd"), int)
-        or not 1 <= condition["max_cost_microusd"] <= 27_000_000
+        or not 1 <= condition["max_cost_microusd"] <= MAX_COST_MICROUSD
         or condition.get("judge_max_output_tokens") != 512
     ):
         raise ValueError("matched retained-response call contract changed")
@@ -401,7 +411,7 @@ def validate_pair_plan(value: object) -> dict[str, Any]:
         or selection.get("selected_outputs") != len(selected)
         or isinstance(requested_pair_limit, bool)
         or not isinstance(requested_pair_limit, int)
-        or not 1 <= len(pairs) <= requested_pair_limit <= 2_000
+        or not 1 <= len(pairs) <= requested_pair_limit <= MAX_PAIR_LIMIT
         or selection.get("pair_dimensions") != list(_PAIR_DIMENSIONS)
         or selection.get("input_identity_dimensions") != list(_MATCH_IDENTITY_FIELDS)
         or selection.get("retained_output_reuse_permitted") is not False
@@ -498,9 +508,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--pricing-config", type=Path, required=True)
     parser.add_argument("--pricing-config-sha256", required=True)
     parser.add_argument("--pricing-as-of", required=True)
-    parser.add_argument("--pair-limit", type=int, default=2_000)
+    parser.add_argument("--pair-limit", type=int, default=MAX_PAIR_LIMIT)
     parser.add_argument("--sample-seed", type=int, default=0)
-    parser.add_argument("--max-cost-microusd", type=int, default=27_000_000)
+    parser.add_argument("--max-cost-microusd", type=int, default=MAX_COST_MICROUSD)
     parser.add_argument("--ack-hosted-judge-data-transfer", action="store_true")
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)

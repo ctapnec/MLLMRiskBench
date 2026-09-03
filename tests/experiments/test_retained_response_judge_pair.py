@@ -118,7 +118,7 @@ def test_pair_ceiling_selects_every_eligible_hosted_output() -> None:
     local = [_candidate(index, cohort="local") for index in range(4)]
     hosted = [_candidate(index, cohort="hosted") for index in range(4)]
 
-    plan = _build(local, hosted, limit=2_000)
+    plan = _build(local, hosted, limit=subject.MAX_PAIR_LIMIT)
 
     assert plan["selection"]["selected_pairs"] == len(hosted)
     assert {
@@ -126,6 +126,14 @@ def test_pair_ceiling_selects_every_eligible_hosted_output() -> None:
         for row in plan["selected"]
         if row["cohort"] == "hosted"
     } == {row["retained_row_sha256"] for row in hosted}
+
+
+def test_pair_ceiling_cannot_exceed_the_complete_hosted_campaign() -> None:
+    local = [_candidate(0, cohort="local")]
+    hosted = [_candidate(0, cohort="hosted")]
+
+    with pytest.raises(ValueError, match=r"\[1,590\]"):
+        _build(local, hosted, limit=subject.MAX_PAIR_LIMIT + 1)
 
 
 def test_pair_selector_never_reuses_an_output() -> None:

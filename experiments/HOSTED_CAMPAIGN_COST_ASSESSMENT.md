@@ -142,17 +142,17 @@ Expected target cost is USD 8.3130 under the stated average-token model.
 The 590-call target projection contains 2.36 million input and 295,000 expected
 output tokens. Its configured maxima retain the same 2.36 million input bound
 and permit at most 2,420,880 output tokens.
-The matched Haiku plan adds at most 2,000 pairs or 4,000 judge calls. At 4,000
-input and 500 output tokens it costs USD 26.00. A dedicated judge config fixes
+The matched Haiku plan adds at most 590 pairs or 1,180 judge calls. At 4,000
+input and 500 output tokens it costs USD 7.67. A dedicated judge config fixes
 `max_tokens=512`; if every judge input is at most 4,000 tokens, the maximum is
-USD 26.24. Thus the expected combined campaign is USD 34.3130 and the
-max-token reservation is USD 64.7876.
-Across targets and judging, that is 18.36 million input plus 2.295 million
-expected output tokens, or at most 4,468,880 output tokens under the configured
-route maxima.
+USD 7.7408. Thus the expected combined campaign is USD 15.9830 and the
+max-token reservation is USD 46.288368.
+Across targets and judging, that is 7.08 million input plus 885,000 expected
+output tokens, or at most 3,025,040 output tokens under the configured route
+maxima.
 
 Provider reconciliation remains inside the 50 percent rule: Anthropic target
-maximum USD 11.546 plus judge maximum USD 26.24 is USD 37.786 of USD 50; OpenAI
+maximum USD 11.546 plus judge maximum USD 7.7408 is USD 19.2868 of USD 50; OpenAI
 is USD 18.5826 of USD 20; Moonshot is USD 7.3440 of USD 7.50; and DeepSeek is
 USD 1.0750 of USD 5. These are monetary ceilings, not permission to spend.
 Exact no-call selection, provider token counting and one-call canaries must
@@ -194,23 +194,23 @@ acknowledgement. The dedicated `retained_response_judge_pair` selector and
 they remain pending deployment and must not be replaced by a naive Runner rerun
 that could regenerate targets.
 
-The budget-fitted cohort selects at most 2,000 eligible local/hosted pairs, so
+The budget-fitted cohort selects at most 590 eligible local/hosted pairs, so
 the local and hosted judged populations contain the same input entries. Exact
 identity binds the rendered prompt, media-reference digest, datapoint, source
 cluster, seed, arm/framework, modality, risk, expected behavior and source
 policy. Seed-0 balanced round-robin sampling spans both target models and those
 input strata, and no retained output is reused. Missing responses remain in
 coverage statistics but require no judge call and cannot form a judged pair.
-The hosted campaign permits at most 590 target outputs, so the 2,000-pair limit
+The pair limit equals the hosted campaign's 590-target ceiling and therefore
 includes every eligible answered hosted output exactly once rather than drawing
 a smaller outcome-selected sample.
 Source-authoritative R-Judge and GPTGeoChat decisions are excluded. Haiku's own
 target outputs are included by explicit operator decision and labelled
 same-model, non-independent evidence.
-Under the central 4,000-input/500-output assumption, 4,000 judgments use 16.0
-million input and 2.0 million output tokens and cost USD 26.00 standard or USD
-13.00 with Batch pricing, within the USD 27 judging allocation. With the
-dedicated 512-token output cap, the corresponding maximum is USD 26.24. Exact
+Under the central 4,000-input/500-output assumption, 1,180 judgments use 4.72
+million input and 590,000 output tokens and cost USD 7.67 standard or USD
+3.835 with Batch pricing, within the USD 7.75 judging allocation. With the
+dedicated 512-token output cap, the corresponding maximum is USD 7.7408. Exact
 retained-output token counts may reduce the selected population before its
 immutable selector is sealed; they may not change it after judgments are
 observed.
