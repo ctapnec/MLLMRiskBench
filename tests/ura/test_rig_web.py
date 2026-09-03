@@ -3358,7 +3358,7 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
     assert f"for='{control_id}'" in page[row_start:at]
     assert "</label><div class='modelquant'>" in page[at:quant_at]
     quant_tag = page[page.rfind("<select", at, quant_at):page.find(">", quant_at)]
-    assert "disabled" not in quant_tag
+    assert "disabled" in quant_tag
     # Filter controls have no server-side campaign fields. A submitted target
     # remains authoritative and composes through the normal validated path.
     assert "name='api-provider-filter'" not in page

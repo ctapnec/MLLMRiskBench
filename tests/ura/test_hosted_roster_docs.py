@@ -677,7 +677,9 @@ def test_hosted_follow_on_is_a_no_retry_local_input_subset() -> None:
     assert changed != combined
     with pytest.raises(AssertionError):
         assert_contract(changed)
-    changed = combined.replace("HTTP-attempt ceiling", "HTTP ceiling removed")
+    changed = " ".join(combined.split()).replace(
+        "HTTP-attempt ceiling", "HTTP ceiling removed"
+    )
     assert changed != combined
     with pytest.raises(AssertionError):
         assert_contract(changed)
