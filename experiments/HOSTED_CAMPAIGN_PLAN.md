@@ -28,29 +28,39 @@ judge condition to hosted and local retained outputs.
   opens the same circuit. The retained row is diagnostic evidence, not
   permission to continue spending.
 
-For local arm a, let L_local(a) be its sealed limit and L_t the hosted target
-limit. Hosted selection uses the first min(L_t, L_local(a)) clusters from the
-same seed-0 permutation and retains every sibling row. Its create-only selector
-binds the local selection artifact, converted-corpus digest, ordered clusters,
-rendered-input digests and hosted subset digest. Set inclusion must validate
-before any provider call.
+The hosted quantity is a global retained-input cap per target, not Runner's
+per-arm `--limit`. One deterministic balanced selector draws that many exact
+rendered inputs from the validated local population across arm, framework,
+modality, risk and behavior strata. Each selected entry permits exactly one
+hosted target call. Framework/attacker labels record how the retained input was
+produced locally; the paid campaign does not regenerate adaptive trajectories.
+Its create-only selector binds the local selection artifact, converted-corpus
+digest, source cluster, seed, rendered-input and media digests, and hosted
+subset digest. Set inclusion must validate before any provider call.
 
-| Hosted target condition | Per-arm limit | Modalities |
-|---|---:|---|
-| Claude Fable 5 | 1 | registry/canary intersection |
-| Claude Opus 5 | 3 | registry/canary intersection |
-| Claude Sonnet 5 | 5 | registry/canary intersection |
-| Claude Haiku 4.5 | 10 | registry/canary intersection |
-| GPT-5.6 Sol | 2 | registry/canary intersection |
-| GPT-5.6 Terra | 5 | registry/canary intersection |
-| GPT-5.6 Luna | 20 | registry/canary intersection |
-| GPT-5.5 | 1 | registry/canary intersection |
-| Kimi K3 | 3 | text; image only after an exact image canary |
-| DeepSeek V4-Pro | 20 | text only, reviewed off-peak window |
+| Hosted target condition | Global input/call cap | Modalities | Max output tokens |
+|---|---:|---|---:|
+| Claude Fable 5 | 5 | registry/canary intersection | 25,000 |
+| Claude Opus 5 | 10 | registry/canary intersection | 4,096 |
+| Claude Sonnet 5 | 50 | registry/canary intersection | 4,096 |
+| Claude Haiku 4.5 | 100 | registry/canary intersection | 2,048 |
+| GPT-5.6 Sol | 5 | registry/canary intersection | 25,000 |
+| GPT-5.6 Terra | 20 | registry/canary intersection | 4,096 |
+| GPT-5.6 Luna | 100 | registry/canary intersection | 4,096 |
+| GPT-5.5 | 100 | registry/canary intersection | 4,096 |
+| Kimi K3 | 100 | text; image only after an exact image canary | 4,096 |
+| DeepSeek V4-Pro | 100 | text only, reviewed off-peak window | 4,096 |
 
 Limits were fixed before hosted outputs. Exact no-call projections or token
 canaries may reduce a limit before execution to satisfy the monetary gate.
 Observed answers or judgments may never change a selection.
+
+The table authorizes at most 590 hosted target calls. With 4,000 input and 500
+output tokens per call, current effective-dated rates predict USD 8.6380. With
+the same input bound and every route consuming its configured maximum output,
+the target reservation is USD 39.7716. The exact per-model arithmetic is in
+`HOSTED_CAMPAIGN_COST_ASSESSMENT.md` and must be regenerated from the retained
+pricing bytes before execution.
 
 ## Budget contract
 
@@ -59,18 +69,22 @@ targets and Haiku judging, may use at most 50 percent of each configured budget.
 
 | Provider | Configured | Follow-on maximum | Planning partition |
 |---|---:|---:|---|
-| Anthropic | USD 100 | USD 50 | targets/probes at most USD 32; Haiku at most USD 14; margin at least USD 4 |
+| Anthropic | USD 100 | USD 50 | targets/probes at most USD 13; Haiku at most USD 27; margin at least USD 10 |
 | OpenAI | USD 40 | USD 20 | targets/probes at most USD 19; margin at least USD 1 |
-| Moonshot | USD 15 | USD 7.50 | targets/probes at most USD 7; margin at least USD 0.50 |
+| Moonshot | USD 15 | USD 7.50 | targets/probes at most USD 7.50 |
 | DeepSeek | USD 10 | USD 5 | off-peak targets/probes at most USD 5 |
 
-Haiku receives at most 2,000 selected local outputs and 2,000 selected hosted
-outputs. At the planning assumption of 2,000 input and 256 output tokens per
-judgment, 4,000 calls use 8.0 million input and 1.024 million output tokens and
-cost USD 13.12 standard or USD 6.56 Batch. Exact token canaries and retained
-output sizes replace the estimate. The selector shrinks before calls if the
-standard-price upper bound exceeds USD 14. Batch never authorizes an
-outcome-dependent expansion.
+Haiku receives one matched cohort of at most 2,000 local/hosted output pairs.
+The local and hosted member of every pair has the same rendered-input identity,
+source cluster, seed, arm/framework, modality and source-policy stratum. Neither
+retained output may be reused in another pair. At the planning assumption of
+4,000 input and 500 output tokens per judgment, the resulting maximum 4,000
+calls use 16.0 million input and 2.0 million output tokens and cost USD 26.00
+standard or USD 13.00 Batch. The dedicated judge route fixes `max_tokens=512`,
+making USD 26.24 the planning maximum when every selected judge input is at
+most 4,000 tokens. Exact provider token counts replace the estimate. The
+selector shrinks before calls if that bound exceeds USD 27. Batch never
+authorizes an outcome-dependent expansion.
 
 ## A0 - Bind the retained local population
 
@@ -124,35 +138,32 @@ was called, and the provider ledgers reconcile within all monetary ceilings.
 
 ## A4 - Zero-target Haiku re-adjudication
 
-Create two content-bound selectors:
-
-1. up to 2,000 eligible local outputs; and
-2. up to 2,000 eligible hosted outputs.
-
-Use deterministic seed-0 balanced round-robin selection across target,
-modality, source arm, attacker, risk, expected behavior and output-policy/
-revision strata. Preserve original judgments. Exclude missing responses and
-source-authoritative R-Judge/GPTGeoChat rows from judge calls while retaining
-their coverage counts. Haiku target outputs are allowed by operator decision;
-mark them same_model_judge=true and never call them independent judge evidence.
+Create one content-bound selector for at most 2,000 local/hosted pairs. A pair
+is eligible only when both retained outputs bind the same rendered prompt,
+media-reference digest, datapoint, source cluster, seed, arm/framework,
+modality, risk, expected behavior and source-policy identity. Use deterministic
+seed-0 balanced round-robin selection across local target, hosted target and
+those input strata, without reusing an output. Preserve original judgments.
+Missing responses and source-authoritative R-Judge/GPTGeoChat rows remain in
+coverage accounting but receive no judge call and cannot form a judged pair.
+Haiku target outputs are allowed by operator decision; mark them
+same_model_judge=true and never call them independent judge evidence.
 
 The re-adjudicator reads only content-bound retained responses and minimum
 grading context. Its planner cannot import a target-under-test or Runner
 factory. Its executor may construct only the exact Haiku judge; it cannot
-construct a model under test or reserve a target call. The local and hosted
-plans each receive a USD 7 ceiling. Their new judgment strata record the
-hosted-transfer acknowledgement and exactly one judge attempt.
+construct a model under test or reserve a target call. The paired plan receives
+one USD 27 ceiling. Its judgment strata record the hosted-transfer
+acknowledgement and exactly one judge attempt per output.
 
 Gate A4: target calls 0, original mutations 0, Haiku calls at most 4,000,
-Haiku spend at most USD 14, and complete selected/missing/excluded accounting.
+Haiku spend at most USD 27, and complete selected/missing/excluded accounting.
 
 ## A5 - Selected comparison and diagrams
 
-Publish separate, non-pooled views for:
-
-- the API-selected cohort;
-- the local-selected cohort; and
-- the matched-input intersection with identical rendered-input identities.
+Publish separate, non-pooled views for the hosted and local members of the one
+matched-input cohort. Also publish the unpaired hosted/local input and response
+coverage that was excluded before judging.
 
 Each reports population and decision coverage before rates. Required tables and
 diagrams cover:

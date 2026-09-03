@@ -267,23 +267,23 @@ cohort whose target, judge and HTTP caps cover the complete grid.
 Current-campaign policy authorizes full mode only for all-local replication, not
 as a substitute for either bounded measured tier.
 
-Prospective hosted breadth uses the same seed-0 whole-cluster sampler, source
-instances, rendered inputs, attack configurations and source-policy strata as
-the compatible local cohort, but each target keeps its pre-registered positive
-per-arm limit:
+Prospective hosted breadth uses a seed-0 balanced selection of exact source
+instances, rendered inputs, attack provenance and source-policy strata from the
+compatible local cohort. Each target keeps a pre-registered global input/call
+cap; these values are not Runner per-arm limits:
 
-| Hosted target condition | Per-arm limit |
+| Hosted target condition | Global input/call cap |
 |---|---:|
-| Claude Fable 5 | 1 |
-| Claude Opus 5 | 3 |
-| Claude Sonnet 5 | 5 |
-| Claude Haiku 4.5 | 10 |
-| GPT-5.6 Sol | 2 |
-| GPT-5.6 Terra | 5 |
-| GPT-5.6 Luna | 20 |
-| GPT-5.5 | 1 |
-| Kimi K3 | 3 |
-| DeepSeek V4-Pro | 20 |
+| Claude Fable 5 | 5 |
+| Claude Opus 5 | 10 |
+| Claude Sonnet 5 | 50 |
+| Claude Haiku 4.5 | 100 |
+| GPT-5.6 Sol | 5 |
+| GPT-5.6 Terra | 20 |
+| GPT-5.6 Luna | 100 |
+| GPT-5.5 | 100 |
+| Kimi K3 | 100 |
+| DeepSeek V4-Pro | 100 |
 
 These budget-fitted limits supersede the larger planning scenario without
 changing the seed, sampler or compatible arm inventory. They are prospective
@@ -297,12 +297,12 @@ no-call projections may only reduce a condition before acquisition and execution
 the provider-token canary shows that its registered monetary ceiling would be
 exceeded; an observed model outcome may never trigger a limit change.
 
-After the local campaign is sealed, a separate zero-target Haiku
-re-adjudication cohort selects at most 2,000 eligible local rows. The hosted
-cohort selects at most 2,000 additional eligible target rows. Both
-use deterministic seed 0 balanced round-robin sampling across target,
-modality, source arm, attacker, risk, expected behavior and retained
-output-policy/revision strata. Missing responses and source-authoritative
+After the local and hosted campaigns are sealed, a separate zero-target Haiku
+re-adjudication cohort selects at most 2,000 matched local/hosted row pairs.
+Both members have the same rendered-input, media-reference, source-cluster,
+seed, framework, modality and source-policy identity. Deterministic seed 0
+balanced round-robin sampling spans both target models and those input strata,
+and neither output may be reused. Missing responses and source-authoritative
 R-Judge/GPTGeoChat rows are retained in their original accounting but are not
 sent to Haiku. Haiku target outputs may be judged by Haiku in this explicitly
 authorized cohort, but every table and diagram labels those rows as same-model,
@@ -312,8 +312,9 @@ from constructing or calling any model under test. Its planning process stores
 only content digests and imports no target-under-test or Runner factory. The
 executor may construct only the exact Haiku judge, uses one application and
 transport attempt, and opens the global `paid_provider` circuit on the first
-judge output or transport failure. The local and hosted plans each have a USD
-7 ceiling, giving the combined standard-API cohort a USD 14 ceiling.
+judge output or transport failure. The paired plan has a USD 27 ceiling and a
+dedicated 512-token maximum output configuration. Its 4,000-call central
+forecast is USD 26.00 at 4,000 input and 500 output tokens per call.
 
 Every condition requires a fresh no-call projection and a bounded text and, if
 declared, image readiness canary before measurement. A target without an

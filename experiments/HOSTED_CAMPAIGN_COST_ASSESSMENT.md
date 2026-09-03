@@ -6,10 +6,10 @@ call and reports no hosted-model result.
 The executable gate sequence and exact local-input subset rule are in
 [`HOSTED_CAMPAIGN_PLAN.md`](HOSTED_CAMPAIGN_PLAN.md).
 
-The proposed hosted breadth cohort uses the same seed-0 whole-cluster
-selection, source instances, rendered inputs, attacks and source-policy strata
-as the compatible local campaign. Its budget-fitted positive per-arm limits are
-fixed in `PROTOCOL.md`. The larger limits below are retained only as the
+The proposed hosted breadth cohort uses the same seed-0 source instances,
+rendered inputs, attacks and source-policy strata as the compatible local
+campaign. Its budget-fitted quantities are global retained-input caps, not
+Runner per-arm limits. The per-arm projections below are retained only as the
 superseded requested-cost baseline. A target receives only modalities declared
 by its exact route;
 an incompatible media lane is typed `N/A`, not captioned or silently assigned
@@ -48,7 +48,7 @@ The central planning scenario assumes, per target call:
 - no cache hit; and
 - one successful retained output per intended call.
 
-Each Haiku judgment assumes 2,000 input and 256 output tokens. Paid targets and
+Each revised Haiku judgment assumes 4,000 input and 500 output tokens. Paid targets and
 Haiku judging make exactly one application attempt: target answer retries and
 harness transport retries are 0, and provider SDK retries are disabled.
 There is no retry reserve in either the cost estimate or the executable
@@ -111,53 +111,50 @@ are observed.
 
 ### Budget-fitted execution plan
 
-The retained execution plan therefore replaces the larger requested breadth
-scenario with per-target nested-prefix limits. It keeps the same seed, arms and
-compatible modalities while reducing only the prospective cluster prefix:
+The funded plan uses the operator-requested quantities as global retained-input
+caps. It draws an exact balanced subset from the local Phase 7 inputs, and each
+selected entry permits one paid target call. This avoids the unintended
+per-arm multiplication in the superseded 8,734-call forecast. Adaptive local
+framework prompts are retained test inputs; the paid campaign does not create
+additional adaptive turns.
 
-| Provider | Target | Limit | One-attempt planning allocation |
-|---|---|---:|---:|
-| Anthropic | Claude Fable 5 | 1 | within shared USD 32 target ceiling |
-| Anthropic | Claude Opus 5 | 3 | within shared USD 32 target ceiling |
-| Anthropic | Claude Sonnet 5 | 5 | within shared USD 32 target ceiling |
-| Anthropic | Claude Haiku 4.5 | 10 | within shared USD 32 target ceiling |
-| OpenAI | GPT-5.6 Sol | 2 | within shared USD 19 target ceiling |
-| OpenAI | GPT-5.6 Terra | 5 | within shared USD 19 target ceiling |
-| OpenAI | GPT-5.6 Luna | 20 | within shared USD 19 target ceiling |
-| OpenAI | GPT-5.5 | 1 | within shared USD 19 target ceiling |
-| Moonshot | Kimi K3 | 3 | USD 7 ceiling |
-| DeepSeek | DeepSeek V4-Pro | 20 | USD 5 off-peak ceiling |
+The central estimate uses 4,000 billed input and 500 billed output tokens per
+target call. The maximum column instead uses the route's configured
+`max_tokens`; it is a budget reservation, not predicted output length. Both
+columns assume at most 4,000 input tokens per selected entry. Exact provider
+tokenization must enforce that input bound or reduce and reseal the selection.
 
-Before the exact no-call projector is run, the central cardinality forecast is
-132 Fable, 397 Opus, 663 Sonnet, 1,354 Haiku, 265 Sol, 663 Terra, 2,742
-Luna, 132 GPT-5.5, 311 Kimi and 2,075 DeepSeek target calls. That is 8,734
-target calls centrally, with a planning range of 8,667 to 8,837 for the
-positive limits whose exact small-prefix cluster boundaries have not yet been
-materialized. Under the stated token assumptions, the central target-cost
-forecast is USD 56.80. Adding 2,000 selected local and 2,000 selected hosted
-Haiku judgments gives USD 13.12 of standard-API judge cost and USD 69.92
-combined. The per-provider hard ceilings still total USD 77 (USD 63 targets
-plus USD 14 judging); neither forecast nor ceiling authorizes a call.
+| Provider | Target | Global calls | USD/M input | USD/M output | Max output tokens | Expected USD | Max-token USD |
+|---|---|---:|---:|---:|---:|---:|---:|
+| Anthropic | Claude Fable 5 | 5 | 10.00 | 50.00 | 25,000 | 0.3250 | 6.4500 |
+| Anthropic | Claude Opus 5 | 10 | 5.00 | 25.00 | 4,096 | 0.3250 | 1.2240 |
+| Anthropic | Claude Sonnet 5 | 50 | 3.00 | 15.00 | 4,096 | 0.9750 | 3.6720 |
+| Anthropic | Claude Haiku 4.5 | 100 | 1.00 | 5.00 | 2,048 | 0.6500 | 1.4240 |
+| OpenAI | GPT-5.6 Sol | 5 | 4.00 | 20.00 | 25,000 | 0.1300 | 2.5800 |
+| OpenAI | GPT-5.6 Terra | 20 | 2.00 | 12.00 | 4,096 | 0.2800 | 1.1430 |
+| OpenAI | GPT-5.6 Luna | 100 | 0.20 | 1.20 | 4,096 | 0.1400 | 0.5715 |
+| OpenAI | GPT-5.5 | 100 | 5.00 | 30.00 | 4,096 | 3.5000 | 14.2880 |
+| Moonshot | Kimi K3 | 100 | 3.00 | 15.00 | 4,096 | 1.9500 | 7.3440 |
+| DeepSeek | DeepSeek V4-Pro off-peak | 100 | 0.66 | 1.98 | 4,096 | 0.3630 | 1.0750 |
+| **Total targets** | | **590** | | | | **8.6380** | **39.7716** |
 
-Each provider may use at most 50 percent of its configured budget: Anthropic
-USD 50, OpenAI USD 20, Moonshot USD 7.50 and DeepSeek USD 5. The Anthropic share
-reserves at most USD 32 for one-attempt targets and USD 14 for Haiku
-judging, leaving at least USD 4 planning margin. OpenAI keeps USD 19 for
-one-attempt execution and at least USD 1 margin; Moonshot keeps USD 7 plus
-USD 0.50 margin; DeepSeek keeps USD 5 and may run only in the
-reviewed off-peak window. These are monetary ceilings, not permission to spend.
-Exact no-call population projections and provider-token canaries must fit
-beneath them before acquisition. If they do not, the affected limit or judging
-population is reduced and resealed before any output is observed.
+The matched Haiku plan adds at most 2,000 pairs or 4,000 judge calls. At 4,000
+input and 500 output tokens it costs USD 26.00. A dedicated judge config fixes
+`max_tokens=512`; if every judge input is at most 4,000 tokens, the maximum is
+USD 26.24. Thus the expected combined campaign is USD 34.6380 and the
+max-token reservation is USD 66.0116.
+
+Provider reconciliation remains inside the 50 percent rule: Anthropic target
+maximum USD 12.77 plus judge maximum USD 26.24 is USD 39.01 of USD 50; OpenAI
+is USD 18.5826 of USD 20; Moonshot is USD 7.3440 of USD 7.50; and DeepSeek is
+USD 1.0750 of USD 5. These are monetary ceilings, not permission to spend.
+Exact no-call selection, provider token counting and one-call canaries must
+fit before authorization. If they do not, only the affected prospective count
+is reduced and resealed before any output is observed.
 
 Paid targets and Haiku judging use exactly one application attempt; target
 answer retries and harness transport retries are 0, and provider SDK retries
-are disabled. Counts for limits 1, 2 and 3 are deliberately not
-interpolated into evidence.
-The rig must derive their exact whole-cluster populations with the normal
-no-call projector. The central token assumptions indicate that this schedule
-fits the stated one-attempt allocations, but only those exact projections
-and provider-token canaries can authorize execution.
+are disabled.
 
 Anthropic Batch gives a 50 percent input/output discount and is appropriate for
 post-hoc judging of immutable retained responses. Adaptive target trajectories
@@ -183,23 +180,27 @@ acknowledgement. The dedicated `retained_response_judge` selector and
 they remain pending deployment and must not be replaced by a naive Runner rerun
 that could regenerate targets.
 
-The budget-fitted cohort selects at most 2,000 eligible local outputs and at
-most 2,000 eligible hosted outputs. Seed-0 balanced round-robin
-sampling spans target, modality, source arm, attacker, risk, expected behavior
-and output-policy/revision strata. Missing responses remain in coverage
-statistics but require no judge call. Source-authoritative R-Judge and
-GPTGeoChat decisions are excluded. Haiku's own target outputs are included by
-explicit operator decision and labelled same-model, non-independent evidence.
-Under the central 2,000-input/256-output assumption, 4,000 judgments use 8.0
-million input and 1.024 million output tokens and cost USD 13.12 standard or
-USD 6.56 with Batch pricing, within the USD 14 judging allocation. Exact
+The budget-fitted cohort selects at most 2,000 eligible local/hosted pairs, so
+the local and hosted judged populations contain the same input entries. Exact
+identity binds the rendered prompt, media-reference digest, datapoint, source
+cluster, seed, arm/framework, modality, risk, expected behavior and source
+policy. Seed-0 balanced round-robin sampling spans both target models and those
+input strata, and no retained output is reused. Missing responses remain in
+coverage statistics but require no judge call and cannot form a judged pair.
+Source-authoritative R-Judge and GPTGeoChat decisions are excluded. Haiku's own
+target outputs are included by explicit operator decision and labelled
+same-model, non-independent evidence.
+Under the central 4,000-input/500-output assumption, 4,000 judgments use 16.0
+million input and 2.0 million output tokens and cost USD 26.00 standard or USD
+13.00 with Batch pricing, within the USD 27 judging allocation. With the
+dedicated 512-token output cap, the corresponding maximum is USD 26.24. Exact
 retained-output token counts may reduce the selected population before its
 immutable selector is sealed; they may not change it after judgments are
 observed.
 
-The later comparison is a selected-cohort analysis, not a full-corpus estimate.
-It publishes separate API-selected and local-selected tables plus a matched-
-input intersection wherever the same rendered input identity exists in both.
+The later comparison is a matched selected-cohort analysis, not a full-corpus
+estimate. It publishes separate hosted/local member tables from the identical
+pair inventory plus unpaired coverage counts.
 Its diagrams cover judgment outcomes with uncertainty, response/missingness,
 model stability, modality/source/attack composition, and billed token/cost
 usage. Same-model Haiku judging is visually and textually distinguished; no

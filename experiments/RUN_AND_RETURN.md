@@ -816,7 +816,7 @@ applications never count as new experimental inputs or outputs. The local
 summary reconciles 42,882 prospective target calls before optional defense
 work, 8,680 source-authoritative R-Judge/GPTGeoChat rows and at most 34,202
 common-judge-eligible rows. The later hosted campaign may select at most 2,000
-retained local outputs for Haiku; that independently sealed judge stratum is
+matched local/hosted output pairs for Haiku; that sealed pair stratum is
 attached without mutating the zero-hosted-call local report. The same validated
 table drives the response funnel, missing-output coverage, judge coverage,
 framework/source-arm composition and matched-input local/hosted diagrams.
@@ -1592,10 +1592,12 @@ Anthropic. Paid targets and Haiku judging use one application attempt,
 retries disabled. The first retained failed hosted-target output or target transport/network
 failure opens the global `paid_provider` circuit before another paid call. The
 operator must classify and resolve the failure before a fresh bound plan and
-explicit circuit reset; there is no automatic paid resumption. Use seed 0
-and the normal nested whole-cluster sampler with these per-target limits:
-Fable 1, Opus 3, Sonnet 5, Haiku 10, Sol 2, Terra 5, Luna 20, GPT-5.5 1, Kimi
-K3 3 and DeepSeek V4-Pro 20. DeepSeek
+explicit circuit reset; there is no automatic paid resumption. Use seed 0 and
+a create-only, balanced selection from exact retained local inputs. These are
+global input/call caps, not Runner's per-arm `--limit`: Fable 5, Opus 10,
+Sonnet 50, Haiku 100, Sol 5, Terra 20, Luna 100, GPT-5.5 100, Kimi K3 100 and
+DeepSeek V4-Pro 100. Every selected entry permits one target call; retained
+framework labels are provenance and no paid adaptive trajectory is regenerated. DeepSeek
 may run only in the reviewed off-peak price window. Google and other candidate
 routes are outside this funded amendment.
 
@@ -1606,39 +1608,46 @@ provider would exceed Anthropic USD 50, OpenAI USD 20, Moonshot USD 7.50 or
 DeepSeek USD 5, reduce and reseal only the affected prospective limit before
 any target output exists. Never increase or outcome-select a limit later.
 
-After local completion, create a content-bound zero-target Haiku selector for
-at most 2,000 eligible local outputs and another for at most 2,000 hosted
-outputs. The two selectors use deterministic balanced round-robin sampling
-across target, modality, source arm, attacker, risk, expected behavior and
-output-policy/revision strata. They preserve original judgments and exclude
-missing responses plus source-authoritative R-Judge/GPTGeoChat rows from judge
-calls. Haiku target rows may be judged by Haiku under the operator's explicit
-decision, but must be labelled same-model and non-independent. Under the
-central assumption the combined 4,000 calls use 8.0 million input and 1.024
-million output tokens and cost USD 13.12 standard or USD 6.56 Batch.
+After local and hosted completion, create one content-bound zero-target Haiku
+selector for at most 2,000 matched local/hosted output pairs. Both members bind
+the same rendered prompt, media-reference digest, datapoint, source cluster,
+seed, arm/framework, modality, risk, expected behavior and source policy. The
+selector uses deterministic balanced round-robin sampling across local target,
+hosted target and those input strata, without output reuse. It preserves
+original judgments and excludes missing responses plus source-authoritative
+R-Judge/GPTGeoChat rows from judge calls. Haiku target rows may be judged by
+Haiku under the operator's explicit decision, but must be labelled same-model
+and non-independent. Under the central 4,000-input/500-output assumption, the
+maximum 4,000 calls use 16.0 million input and 2.0 million output tokens and
+cost USD 26.00 standard or USD 13.00 Batch. The fixed 512-token judge maximum
+raises the standard planning bound only to USD 26.24 when every input is at
+most 4,000 tokens.
 
 Do not emulate this re-adjudication with `run_matrix`: that would risk target
-regeneration. Create each cohort with the dedicated immutable zero-target path.
-The local and hosted plans receive separate USD 7 ceilings, keeping their
-combined standard-API ceiling at USD 14:
+regeneration. Create the paired cohort with the dedicated immutable zero-target
+path and one standard-API USD 27 ceiling. Use a private Haiku judge config that
+fixes `max_tokens=512`; do not reuse the 2,048-token Haiku target condition:
 
 ```bash
-python -m experiments.retained_response_judge \
-  --runner-view "$FINAL_RUNNER_VIEW" \
+python -m experiments.retained_response_judge_pair \
+  --local-runner-view "$FINAL_LOCAL_RUNNER_VIEW" \
+  --hosted-runner-view "$FINAL_HOSTED_RUNNER_VIEW" \
   --source-receipt "$URA_SOURCE_CONFORMANCE_RECEIPT" \
   --source-receipt-sha256 "$URA_SOURCE_CONFORMANCE_RECEIPT_SHA256" \
   --judge-model anthropic:claude-haiku-4-5-20251001 \
-  --api-config-sha256 "$URA_API_TARGET_CONFIG_SHA256" \
+  --api-config-sha256 "$URA_HAIKU_JUDGE_CONFIG_SHA256" \
   --pricing-config "$URA_PRICING_CONFIG" \
   --pricing-config-sha256 "$URA_PRICING_CONFIG_SHA256" \
   --pricing-as-of "$URA_PRICING_AS_OF" \
-  --limit 2000 --sample-seed 0 --max-cost-microusd 7000000 \
+  --pair-limit 2000 --sample-seed 0 --max-cost-microusd 27000000 \
   --ack-hosted-judge-data-transfer --out "$HAIKU_PLAN"
 
-python -m experiments.retained_response_judge_execute \
-  --plan "$HAIKU_PLAN" --runner-view "$FINAL_RUNNER_VIEW" \
+python -m experiments.retained_response_judge_pair_execute \
+  --plan "$HAIKU_PLAN" \
+  --local-runner-view "$FINAL_LOCAL_RUNNER_VIEW" \
+  --hosted-runner-view "$FINAL_HOSTED_RUNNER_VIEW" \
   --source-receipt "$URA_SOURCE_CONFORMANCE_RECEIPT" \
-  --api-config "$URA_API_TARGET_CONFIG" \
+  --api-config "$URA_HAIKU_JUDGE_CONFIG" \
   --pricing-config "$URA_PRICING_CONFIG" --out "$HAIKU_RESULT" \
   --ack-paid-execution
 ```
@@ -1652,8 +1661,9 @@ enforces no retry in both the harness and provider SDK, fsyncs a reservation
 before every paid call, and stops the cohort on its first output or transport
 failure. An unresolved reservation after process loss requires manual provider
 audit and is never repeated automatically. Its analysis publishes separate
-API-selected, local-selected and matched-input-intersection tables and
-diagrams. These are selected-cohort results, never full-corpus estimates.
+hosted/local member tables and diagrams from the same matched pair inventory,
+plus unpaired coverage counts. These are selected-cohort results, never
+full-corpus estimates.
 
 ### 5.2 Bounded lane sampling (prospective amendment, 24 August 2026)
 

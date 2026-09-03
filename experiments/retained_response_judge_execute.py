@@ -470,13 +470,18 @@ def execute(
     pricing_config: Path,
     out: Path,
     judge_factory: Callable[[str, Mapping[str, object]], Any] = _build_haiku_judge,
+    plan_validator: Callable[[object], dict[str, Any]] = validate_plan,
+    selection_reconciler: Callable[
+        [Path, dict[str, Any], Mapping[str, object]],
+        list[tuple[dict[str, Any], str, str]],
+    ] = _reconcile_selection,
 ) -> Path:
     raw_plan, plan_descriptor = _read_regular(
         plan_path,
         label="retained-response judge plan",
         max_bytes=32 * 1024 * 1024,
     )
-    plan = validate_plan(raw_plan)
+    plan = plan_validator(raw_plan)
     source_descriptor = _regular_descriptor(
         source_receipt,
         str(plan["source"]["sha256"]),
@@ -497,7 +502,7 @@ def execute(
         judge_model=condition["model"],
         expected_sha256=condition["api_config_sha256"],
     )
-    items = _reconcile_selection(runner_view, plan, source_descriptor)
+    items = selection_reconciler(runner_view, plan, source_descriptor)
 
     root = Path(out)
     if root.is_symlink():

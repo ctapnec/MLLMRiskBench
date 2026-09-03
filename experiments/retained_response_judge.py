@@ -29,6 +29,21 @@ SCHEMA = "ura-retained-response-judge-plan/1"
 ALGORITHM = "seeded_balanced_round_robin_retained_outputs_v1"
 _HEX64 = re.compile(r"[0-9a-f]{64}")
 _PHYSICAL = frozenset({"image", "audio", "video"})
+_MATCH_IDENTITY_FIELDS = (
+    "framework",
+    "corpus",
+    "source",
+    "datapoint_id",
+    "source_cluster_id",
+    "requested_seed",
+    "modality",
+    "risk",
+    "expected_behavior",
+    "source_policy_id",
+    "source_policy_version",
+    "prompt_sha256",
+    "media_references_sha256",
+)
 _DIMENSIONS = (
     "exact_model",
     "framework",
@@ -231,7 +246,9 @@ def _project_revision_sha256(cell: Mapping[str, Any]) -> str:
     return digest
 
 
-def load_candidates(runner_view: Path) -> tuple[list[dict[str, Any]], dict[str, int]]:
+def load_candidates(
+    runner_view: Path, *, include_match_identity: bool = False
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Return common, evaluable, usable retained outputs from one validated view."""
 
     root = Path(runner_view).resolve(strict=True)
@@ -295,6 +312,27 @@ def load_candidates(runner_view: Path) -> tuple[list[dict[str, Any]], dict[str, 
                 response_text.encode("utf-8")
             ).hexdigest(),
         }
+        if include_match_identity:
+            row.update(
+                {
+                    "source_policy_id": _text(
+                        meta.get("source_policy_id"), label="source policy ID"
+                    ),
+                    "source_policy_version": _text(
+                        meta.get("source_policy_version"),
+                        label="source policy version",
+                    ),
+                    "media_references_sha256": hashlib.sha256(
+                        _text(
+                            meta.get("prepared_media_references"),
+                            label="prepared media references",
+                        ).encode("utf-8")
+                    ).hexdigest(),
+                }
+            )
+            row["input_identity_sha256"] = _sha(
+                {field: row[field] for field in _MATCH_IDENTITY_FIELDS}
+            )
         if isinstance(row["requested_seed"], bool) or not isinstance(
             row["requested_seed"], int
         ):
