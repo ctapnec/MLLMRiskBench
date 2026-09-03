@@ -786,15 +786,6 @@ class BuilderPageMixin:
                         disabled = " disabled"
                 execution_profile = entry.get("_execution_profile")
                 execution_profile_error = entry.get("_execution_profile_error")
-                if isinstance(execution_profile_error, str):
-                    local_config_error = local_config_error or execution_profile_error
-                    disabled = " disabled"
-                elif not isinstance(execution_profile, Mapping):
-                    local_config_error = (
-                        local_config_error
-                        or "passing local-model readiness profile required"
-                    )
-                    disabled = " disabled"
                 configured_quant = (
                     str(prefill.get(f"quantization::{value}", entry.get("quantization", "auto")))
                     .strip()
@@ -809,6 +800,12 @@ class BuilderPageMixin:
                         default_quantization=prefill.get("quantization", ""),
                         model_quantization=configured_quant,
                     )
+                    if isinstance(execution_profile_error, str):
+                        raise ValueError(execution_profile_error)
+                    if not isinstance(execution_profile, Mapping):
+                        raise ValueError(
+                            "passing local-model readiness profile required"
+                        )
                 except ValueError as exc:
                     local_config_error = durable_ui_text(exc)
                     disabled = " disabled"

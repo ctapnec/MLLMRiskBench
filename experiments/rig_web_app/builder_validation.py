@@ -1776,6 +1776,7 @@ class BuilderValidationMixin:
                     continue
                 if (
                     max_model_len is not None
+                    and max_model_len > 0
                     and max_tokens is not None
                     and max_tokens > max_model_len
                 ):

@@ -600,6 +600,9 @@ class BuilderModelsMixin:
             max_model_len = self._local_max_model_len(spec, entry)
             max_tokens = self._local_max_tokens(spec, entry)
             gpu_memory_utilization = self._local_gpu_memory_utilization(spec, entry)
+            modalities = self._validated_local_modalities(
+                spec, entry, project_richer=True
+            )
             if isinstance(execution_profile_error, str):
                 raise ValueError(execution_profile_error)
             if not isinstance(execution_profile, Mapping):
@@ -611,9 +614,7 @@ class BuilderModelsMixin:
                 identity_value = resolved.get(identity_key)
                 if isinstance(identity_value, str):
                     resolved[identity_key] = identity_value.lower()
-            resolved["modalities"] = self._validated_local_modalities(
-                spec, entry, project_richer=True
-            )
+            resolved["modalities"] = modalities
             resolved["gpu_memory_utilization"] = gpu_memory_utilization
             resolved["max_model_len"] = max_model_len
             resolved["max_tokens"] = max_tokens

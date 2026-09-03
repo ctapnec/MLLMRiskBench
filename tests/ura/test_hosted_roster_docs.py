@@ -673,7 +673,7 @@ def test_hosted_follow_on_is_a_no_retry_local_input_subset() -> None:
     assert "retained_response_local_judge" not in combined
     assert "Each hosted measured lane must use `--judges rules,guardrail`" in runbook
     assert "Every hosted target lane fixes `--judges rules,guardrail`" in plan
-    changed = combined.replace("zero answer-quality retries", "content retry enabled", 1)
+    changed = combined.replace("zero answer-quality retries", "content retry enabled")
     assert changed != combined
     with pytest.raises(AssertionError):
         assert_contract(changed)

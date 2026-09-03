@@ -2690,7 +2690,10 @@ def test_distro_repin_script_is_fail_closed_and_sources_canonical_ura_env_last()
     assert "set -euo pipefail" in text
     # the expected commit is a full 40-hex id, checked before anything runs
     assert '[[ "$REF_EXPECTED" =~ ^[0-9a-f]{40}$ ]] ||' in text
-    assert '[[ "$MODE" = "full" || "$MODE" = "--focused-campaign-handoff" ]]' in text
+    assert (
+        '[[ "$MODE" = "full" || "$MODE" = "--focused-campaign-handoff" '
+        '|| "$MODE" = "--profile-recovery-handoff" ]]' in text
+    )
     assert "unsupported re-pin verification mode" in text
     # hygiene (anchored module invocations) precedes the clean-env gate
     run_matrix_kill = text.index("pkill -f -- '-m experiments\\.run_matrix( |$)'")

@@ -3236,7 +3236,7 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
     assert "data-backend='ollama'" in ollama_row
     assert "digest pinned" in ollama_row
     assert "precision is fixed by the pulled Ollama artifact" in ollama_row
-    assert "automatic maximum GPU-fit context / maximum available output" in ollama_row
+    assert "automatic maximum GPU-fit context / output cap 4,096 tokens" in ollama_row
     assert "thinking disabled" in ollama_row
     assert "data-compatible" not in ollama_row
     assert "data-params-b" not in ollama_row
