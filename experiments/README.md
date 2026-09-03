@@ -409,15 +409,6 @@ response artifacts remain authoritative.
   failure. Its one USD 27 ceiling covers at most 4,000 calls: USD 26.00 at the
   4,000-input/500-output planning average and USD 26.24 at the fixed 512-token
   output maximum.
-- `retained_response_local_judge` derives a separate immutable plan selecting
-  exactly the hosted member of every Haiku pair and emits its sealed Llama
-  Guard acquisition plan. `retained_response_local_judge_execute` revalidates
-  the pair and both Runner views, then runs the local `rules,guardrail` cascade
-  post-factum. It checkpoints at most 2,000 local judgments, resumes without
-  repeating completed judgments, and has zero target, provider, HTTP and paid
-  calls. Stats compares it with Haiku only on common decided labels and reports
-  local abstention/decision coverage because Llama Guard cannot express benign
-  over-refusal.
 - The hosted follow-on uses ten global target caps totaling 590 calls, including
   readiness and diagnostic canaries. `hosted_campaign_budget` creates a
   zero-call projection from the exact API-config, effective-dated pricing and
@@ -425,6 +416,9 @@ response artifacts remain authoritative.
   route's configured-maximum-output reservation, and blocks any provider above
   half its configured balance. The current planning values are USD 8.3130 and
   USD 38.5476 for targets, or USD 34.3130 and USD 64.7876 including Haiku.
+  Every hosted Runner lane uses the sealed local `rules,guardrail` cascade, so
+  its retained response already has the local judgment later compared with
+  Haiku on the exact paired row. The local cascade has no provider cost.
 - Hub acquisition is conditional on the selected resources, not on the mere
   existence of a local target. Static lanes with Hub-backed assets retain the
   exact plan/receipt/store chain. Ollama R-Judge and GPTGeoChat lanes over

@@ -7986,6 +7986,24 @@ def test_hardware_fit_failed_unit_recovery_never_replays_retained_results() -> N
     with pytest.raises(AssertionError):
         assert_contract(changed)
 
+    root = Path(__file__).parents[2]
+    for document in (
+        root / "experiments" / "LOCAL_CAMPAIGN_PLAN.md",
+        root / "experiments" / "RUN_AND_RETURN.md",
+    ):
+        text = " ".join(document.read_text(encoding="utf-8").split())
+        assert "local_hardware_fit_failed_unit_recovery_phase6" in text
+        assert "three unattempted rows" in text
+
+    dispatcher = (
+        root
+        / "experiments"
+        / "local_campaign"
+        / "local_truncation_recovery_execution_phase6.py"
+    ).read_text(encoding="utf-8")
+    assert "ura-local-hardware-fit-failed-unit-recovery-phase6/1" in dispatcher
+    assert "validate_failed_unit_recovery" in dispatcher
+
 
 def test_vllm_stability_phase6_reads_retained_projection_descriptor(
     tmp_path: Path,

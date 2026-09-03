@@ -215,13 +215,13 @@ observed.
 The later comparison is a matched selected-cohort analysis, not a full-corpus
 estimate. It publishes separate hosted/local member tables from the identical
 pair inventory plus unpaired coverage counts.
-The same hosted member of every pair is also passed through the sealed local
-`rules,guardrail` cascade. This adds at most 2,000 rule evaluations and 2,000
-Llama Guard calls, but zero target, provider or HTTP calls and USD 0 in provider
-spend. It is a GPU-time allocation, not a token-billed budget item. Local versus
-Haiku agreement is reported only on comparable decided labels, with the local
-decision denominator and abstentions displayed because Llama Guard cannot
-express benign over-refusal when the rules stage is undecided.
+Every hosted target lane already applies the sealed local `rules,guardrail`
+cascade, adding at most 590 rule evaluations and 590 Llama Guard calls but no
+hosted-provider cost. The Haiku selector reuses those unchanged local trails on
+the exact hosted pair members. Local versus Haiku agreement is reported only on
+comparable decided labels, with the local decision denominator and abstentions
+displayed because Llama Guard cannot express benign over-refusal when the rules
+stage is undecided.
 Its diagrams cover judgment outcomes with uncertainty, response/missingness,
 model stability, modality/source/attack composition, local-versus-Haiku
 agreement and billed token/cost usage. Same-model Haiku judging is visually and

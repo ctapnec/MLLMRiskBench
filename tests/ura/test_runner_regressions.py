@@ -6283,6 +6283,16 @@ def test_local_attestation_and_response_independent_runs_defer_model_judges(
     ) is expected
 
 
+def test_hosted_guardrail_judging_remains_inline_with_the_paid_response() -> None:
+    assert not run_matrix._uses_post_factum_local_judging(
+        local_specs=[],
+        execution_purpose="measured_run",
+        attacker_names=["replay"],
+        judge_names=["rules", "guardrail"],
+        local_judge_spec=None,
+    )
+
+
 def test_typed_guardrail_na_checkpoint_resume_makes_no_second_target_call() -> None:
     corpus = [_benign_datapoint()]
     paid_target = _RecordingTarget()

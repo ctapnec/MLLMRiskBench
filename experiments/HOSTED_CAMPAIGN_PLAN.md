@@ -7,9 +7,9 @@ Run every controller on the rig in a named tmux session.
 This is a separate campaign, not a local-campaign phase and not product
 semantics. It compares bounded hosted-model conditions on content-bound subsets
 of inputs already used by the local campaign, then applies one selected Haiku
-judge condition to hosted and local retained outputs. The hosted member of
-every Haiku pair is also judged post-factum by the sealed local
-`rules,guardrail` cascade, without repeating a hosted target call.
+judge condition to hosted and local retained outputs. Every hosted lane uses
+the sealed local `rules,guardrail` cascade during its measured Runner execution,
+so the hosted member of every later Haiku pair already has its local judgment.
 
 ## Fixed design
 
@@ -29,6 +29,9 @@ every Haiku pair is also judged post-factum by the sealed local
   circuit before another paid call can start. A transport or network failure
   opens the same circuit. The retained row is diagnostic evidence, not
   permission to continue spending.
+- Every hosted target lane fixes `--judges rules,guardrail`, the admitted
+  Llama Guard identity and a local judge-call ceiling covering its selected
+  answered rows. This local scoring adds no hosted call or monetary spend.
 
 The hosted quantity is a global retained-input cap per target, not Runner's
 per-arm `--limit`. One deterministic balanced selector draws that many exact
@@ -96,13 +99,11 @@ most 4,000 tokens. Exact provider token counts replace the estimate. The
 selector shrinks before calls if that bound exceeds USD 27. Batch never
 authorizes an outcome-dependent expansion.
 
-The local comparison stage selects exactly the hosted member of each retained
-Haiku pair. It therefore evaluates at most 2,000 rows with 2,000 deterministic
-rule evaluations and at most 2,000 sealed Llama Guard calls. It has zero target,
-provider and HTTP calls and no monetary cost. The guardrail's safe/violation
-label space cannot decide benign over-refusal where the rules stage is also
-undecided, so local decision coverage and abstentions must accompany every
-local-versus-Haiku agreement result.
+Across the full hosted population, local scoring performs at most 590 rule
+evaluations and 590 sealed Llama Guard calls, with no hosted-provider cost.
+The guardrail's safe/violation label space cannot decide benign over-refusal
+where the rules stage is also undecided, so local decision coverage and
+abstentions must accompany every local-versus-Haiku agreement result.
 
 ## A0 - Bind the retained local population
 
@@ -128,7 +129,10 @@ an effective timestamp. Failure affects only the hosted condition.
 
 Create one selector and no-call projection per target. Record exact counts by
 modality, source arm, attacker/framework, risk and expected behavior. Bind
-target, judge, HTTP, deadline and monetary caps to the request. Prepared
+target, local judge, HTTP, deadline and monetary caps to the request. Every
+projected lane fixes `--judges rules,guardrail`, Llama Guard revision
+`7327bd9f6efbbe6101dc6cc4736302b3cbb6e425`, and its sealed acquisition
+identity. Prepared
 T3MP3ST, NanoGCG, IDEATOR and HarmBench rows retain their exact locally admitted
 artifacts. Native-only evidence is not converted into common Runner rows.
 
@@ -148,7 +152,8 @@ routes are typed failed or N/A and are never silently substituted.
 ## A3 - Measured hosted subset
 
 Execute only the A1 selectors with zero answer retries. Each completed row
-checkpoints independently. Empty, malformed, binary/control-like or symbol-only
+checkpoints independently and retains its `rules,guardrail` trail. Empty,
+malformed, binary/control-like or symbol-only
 output is durably retained as a model-stability missing response, then the
 global `paid_provider` circuit stops the grid before another paid call. A
 transport or network exception opens the same circuit without inventing a
@@ -157,10 +162,11 @@ separately from interrupted transport, resolve the route, derive a fresh bound
 plan, and explicitly reset the circuit. There is no automatic paid resumption.
 Identity, budget, request-binding or artifact drift still fails closed.
 
-Gate A3: every intended row is complete or typed missing, no non-subset input
-was called, and the provider ledgers reconcile within all monetary ceilings.
+Gate A3: every intended row is complete or typed missing, every answered row
+has its validated local cascade trail, no non-subset input was called, and the
+provider ledgers reconcile within all monetary ceilings.
 
-## A4 - Zero-target matched Haiku and local re-adjudication
+## A4 - Zero-target matched Haiku re-adjudication
 
 Create one content-bound selector for at most 2,000 local/hosted pairs. A pair
 is eligible only when both retained outputs bind the same rendered prompt,
@@ -180,19 +186,10 @@ construct a model under test or reserve a target call. The paired plan receives
 one USD 27 ceiling. Its judgment strata record the hosted-transfer
 acknowledgement and exactly one judge attempt per output.
 
-After the Haiku execution, create a separate immutable local-judge plan from
-the same pair-plan file and digest. It selects only the hosted member of each
-pair, revalidates both Runner views, and admits the exact sealed Llama Guard
-revision through the managed model store. It runs `rules,guardrail` after all
-target work, checkpoints each judgment, and resumes only after its last durable
-local judgment. It cannot construct a target-under-test and reserves no
-provider or HTTP call.
-
 Gate A4: target calls 0, original mutations 0, Haiku calls at most 4,000,
-Haiku spend at most USD 27, local rule evaluations at most 2,000, local
-guardrail calls at most 2,000, and complete selected/missing/excluded
-accounting. The Haiku and local judge inventories for hosted outputs must have
-identical pair IDs and retained-row digests.
+Haiku spend at most USD 27, and complete selected/missing/excluded accounting.
+Every selected hosted member must bind the unchanged local cascade trail from
+its A3 result by retained-row digest.
 
 ## A5 - Selected comparison and diagrams
 

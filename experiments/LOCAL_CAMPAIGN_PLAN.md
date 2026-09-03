@@ -1259,6 +1259,10 @@ from the same table and show the
 input-to-output funnel, response and missing-output coverage, judge coverage,
 framework by source-arm composition, and matched-input local versus hosted
 contrasts when the separate hosted campaign exists.
+Every hosted response in the separate campaign already carries its sealed local
+`rules,guardrail` trail. The joined selected-cohort view compares that retained
+trail with Haiku on the exact paired row, only on comparable decided labels,
+and displays local decision coverage and abstentions.
 
 The prospective 42,882-call population is not the physical retained-strata
 forecast. Before Phase 7 observes the final artifacts, the maintained execution

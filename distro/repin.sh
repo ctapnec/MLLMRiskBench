@@ -97,7 +97,8 @@ if [ "$MODE" = "--focused-campaign-handoff" ]; then
     tests/experiments/test_retained_response_judge.py
     tests/experiments/test_retained_response_judge_execute.py
     tests/experiments/test_retained_response_judge_pair.py
-    tests/experiments/test_retained_response_local_judge.py
+    tests/ura/test_runner_regressions.py::test_hosted_guardrail_judging_remains_inline_with_the_paid_response
+    tests/ura/test_runner_regressions.py::test_response_checkpoint_resumes_judging_without_rebilling_target
     tests/ura/test_current_contract_docs.py
     tests/ura/test_hosted_roster_docs.py
     tests/ura/test_local_campaign_stats_adapter.py

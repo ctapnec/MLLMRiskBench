@@ -677,6 +677,22 @@ from the full retained selection, keeps the three-row measured ceiling at six,
 and calls only those three unattempted rows. Supply its superseding completion
 to `--phase6-local-hardware-fit-completion` and to the population-alignment
 recovery. It remains the same 25-condition, 4,463-row hardware-fit stratum.
+
+```bash
+python -m experiments.local_campaign.local_hardware_fit_failed_unit_recovery_phase6 \
+  --prior-completion "$FAILED_HARDWARE_COMPLETION" \
+  --prior-completion-sha256 "$FAILED_HARDWARE_COMPLETION_SHA256" \
+  --control-root "$URA_WORK/runs/engineering/$HARDWARE_REPAIR_SESSION" \
+  --work-root "$URA_WORK" --project-root "$HOME/MLLMRiskBench" \
+  --python "$HOME/MLLMRiskBench/.venv/bin/python" \
+  --expected-commit "$REF_URA" \
+  --project-revision "$URA_PROJECT_REVISION_MANIFEST" \
+  --project-revision-sha256 "$URA_PROJECT_REVISION_SHA256" \
+  --execution-scope-id "$HARDWARE_REPAIR_SESSION" \
+  --tmux-socket "$HARDWARE_REPAIR_SESSION" \
+  --tmux-session "$HARDWARE_REPAIR_SESSION"
+```
+
 Its plan-owned terminal inventory has 141 logical rows after population
 alignment and failed-output recovery: 46 canonical, four output-policy
 amendment, three follow-on, 14
@@ -1681,50 +1697,16 @@ python -m experiments.retained_response_judge_pair_execute \
   --ack-paid-execution
 ```
 
-Judge the exact hosted member of every retained Haiku pair with the sealed
-local `rules,guardrail` cascade only after the paid target and Haiku stages are
-terminal. This creates a new plan; it does not mutate the pair-plan `/1`
-contract. The planner also emits the exact managed-model acquisition plan. Run
-the acquisition command in the ordinary guarded acquisition environment; an
-already sealed Llama Guard snapshot produces a new bound receipt without
-re-downloading model bytes:
-
-```bash
-python -m experiments.retained_response_local_judge \
-  --pair-plan "$HAIKU_PLAN" --pair-plan-sha256 "$HAIKU_PLAN_SHA256" \
-  --guardrail-model meta-llama/Llama-Guard-3-8B \
-  --guardrail-revision 7327bd9f6efbbe6101dc6cc4736302b3cbb6e425 \
-  --guardrail-device cuda:1 \
-  --acquisition-plan-dir "$LOCAL_JUDGE_ACQUISITION_PLAN_DIR" \
-  --out "$LOCAL_JUDGE_PLAN"
-
-python -m experiments.model_acquire \
-  --plan "$LOCAL_JUDGE_ACQUISITION_PLAN" \
-  --plan-sha256 "$LOCAL_JUDGE_ACQUISITION_PLAN_SHA256" \
-  --store "$URA_MODEL_ACQUISITION_STORE" \
-  --receipts-dir "$LOCAL_JUDGE_ACQUISITION_RECEIPT_DIR" \
-  --max-download-bytes 1 --min-free-bytes 1 --deadline-seconds 3600
-
-python -m experiments.retained_response_local_judge_execute \
-  --plan "$LOCAL_JUDGE_PLAN" --pair-plan "$HAIKU_PLAN" \
-  --local-runner-view "$FINAL_LOCAL_RUNNER_VIEW" \
-  --hosted-runner-view "$FINAL_HOSTED_RUNNER_VIEW" \
-  --source-receipt "$URA_SOURCE_CONFORMANCE_RECEIPT" \
-  --model-acquisition-plan "$LOCAL_JUDGE_ACQUISITION_PLAN" \
-  --model-acquisition-plan-sha256 "$LOCAL_JUDGE_ACQUISITION_PLAN_SHA256" \
-  --model-acquisition-receipt "$LOCAL_JUDGE_ACQUISITION_RECEIPT" \
-  --model-acquisition-receipt-sha256 "$LOCAL_JUDGE_ACQUISITION_RECEIPT_SHA256" \
-  --model-acquisition-store "$URA_MODEL_ACQUISITION_STORE" \
-  --out "$LOCAL_JUDGE_RESULT"
-```
-
-The local stage selects at most 2,000 hosted outputs, performs exactly one rule
-evaluation and at most one local guardrail call for each, and reserves zero
-target, provider or HTTP calls. Its create-only judgments form a strict durable
-prefix, so recovery restarts after the last retained local judgment. Analysis
-joins local and Haiku judgments by pair ID and retained-row digest. It reports
-local decision coverage and abstentions before agreement because the guardrail
-safe/violation labels cannot decide every benign over-refusal row.
+Each hosted measured lane must use `--judges rules,guardrail`, the exact sealed
+Llama Guard revision, and a judge-call ceiling covering its selected answered
+rows. The Runner checkpoints the paid response and its local cascade trail in
+the same retained cell. Consequently the Haiku selector above must bind the
+existing local trail on every selected hosted member by retained-row digest; it
+must not rerun either the target or the local judge. Across the 590-call hosted
+cap this permits at most 590 rule evaluations and 590 Llama Guard calls, with
+no additional provider cost. Analysis reports local decision coverage and
+abstentions before agreement because the guardrail safe/violation labels cannot
+decide every benign over-refusal row.
 
 The planner imports no target-under-test or Runner factory and stores only
 content hashes. It binds the exact effective-dated pricing file and refuses a

@@ -13,6 +13,7 @@ import hashlib
 from pathlib import Path
 import re
 import subprocess
+import sys
 from typing import Any
 
 from experiments.local_campaign.console_events import (
@@ -35,6 +36,7 @@ from experiments.local_campaign.vllm_input_recovery_phase6 import (
 from experiments.local_campaign.vllm_stability_phase6 import (
     Unit,
     _create_json,
+    _diagnostic_canary_target_cap,
     _framework_lock_id,
     _load_json,
     _option,
@@ -192,6 +194,7 @@ def validate_completion(
         "target_answer_retries": 1,
         "measured_max_total_target_calls": FAILED_SELECTED_RECORDS * 2,
         "diagnostic_canary_cap_source": "full_retained_selection",
+        "diagnostic_canary_max_total_target_calls": 4_040,
         "max_total_judge_calls": 0,
         "max_total_http_attempts": 0,
         "successful_rows_repeated": 0,
@@ -306,7 +309,9 @@ def validate_completion(
         "metric_lane_order": metric_order,
         "metric_roots": metric_roots,
         "metric_evidence": metric_evidence,
-        "metric_grids": [metric_evidence[candidate]["grid"] for candidate in metric_order],
+        "metric_grids": [
+            metric_evidence[candidate]["grid"] for candidate in metric_order
+        ],
         "metric_eligibility_plans": [
             metric_evidence[candidate]["eligibility_plan"] for candidate in metric_order
         ],
@@ -360,7 +365,8 @@ def run(args: argparse.Namespace) -> int:
         control_root=control_root,
     )
     prior_descriptor = _descriptor(
-        args.prior_completion.resolve(strict=True), label="failed hardware-fit completion"
+        args.prior_completion.resolve(strict=True),
+        label="failed hardware-fit completion",
     )
     amendment = {
         "schema": AMENDMENT_SCHEMA,
@@ -372,6 +378,9 @@ def run(args: argparse.Namespace) -> int:
         "target_answer_retries": 1,
         "measured_max_total_target_calls": FAILED_SELECTED_RECORDS * 2,
         "diagnostic_canary_cap_source": "full_retained_selection",
+        "diagnostic_canary_max_total_target_calls": (
+            _diagnostic_canary_target_cap(unit, FAILED_SELECTED_RECORDS * 2)
+        ),
         "max_total_judge_calls": 0,
         "max_total_http_attempts": 0,
         "successful_rows_repeated": 0,
@@ -432,14 +441,21 @@ def run(args: argparse.Namespace) -> int:
         )
         results[unit_id] = repaired
     except (
-        KeyError, OSError, RuntimeError, subprocess.SubprocessError, TypeError, ValueError
+        KeyError,
+        OSError,
+        RuntimeError,
+        subprocess.SubprocessError,
+        TypeError,
+        ValueError,
     ) as exc:
         failures[unit_id] = {
             "status": "failed",
             "error_type": type(exc).__name__,
             "error": str(exc)[:4000],
         }
-    results = {candidate: results[candidate] for candidate in order if candidate in results}
+    results = {
+        candidate: results[candidate] for candidate in order if candidate in results
+    }
     successful = int(retained["target_execution"]["successful_target_generations"])
     missing = int(retained["target_execution"]["missing_responses"])
     attempted = int(retained["target_execution"]["target_attempts"])
@@ -459,7 +475,9 @@ def run(args: argparse.Namespace) -> int:
         "inventory": dict(prior["inventory"]),
         "gate5_amendment": launch["gate5_amendment"],
         "unit_order": order,
-        "retained_unit_order": [candidate for candidate in order if candidate != unit_id],
+        "retained_unit_order": [
+            candidate for candidate in order if candidate != unit_id
+        ],
         "recovered_unit": unit_id,
         "unit_results": results,
         "unit_failures": failures,
@@ -487,7 +505,11 @@ def run(args: argparse.Namespace) -> int:
             0 if repaired is None else int(repaired["successful_target_generations"])
         ),
     )
-    finish_child_controller(work_root=work_root, control_root=control_root, exit_code=exit_code)
+    finish_child_controller(
+        work_root=work_root,
+        control_root=control_root,
+        exit_code=exit_code,
+    )
     return exit_code
 
 
@@ -513,7 +535,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         return run(args)
     except Exception as exc:  # noqa: BLE001 - terminal controller boundary
-        print(f"hardware-fit failed-unit recovery failed: {exc}", file=__import__("sys").stderr)
+        print(
+            f"hardware-fit failed-unit recovery failed: {exc}",
+            file=sys.stderr,
+        )
         return 1
 
 

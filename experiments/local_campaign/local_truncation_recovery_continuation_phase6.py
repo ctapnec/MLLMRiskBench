@@ -561,14 +561,16 @@ def _validate_phase7_completion(
             inputs = snapshot["continuation_inputs"].get(unit_id)
             state_path = control_root / "units" / unit_id / "state.json"
             level1_path = control_root / "units" / unit_id / "level1.json"
+            canary_log = control_root / "units" / unit_id / "canary.run.log"
             result_root = runner_root / unit_id / control_root.name
             if (
                 not isinstance(failure, dict)
                 or set(failure) != {"status", "error_type", "error"}
                 or failure.get("status") != "failed"
-                or failure.get("error_type") != "ValueError"
-                or "--max-total-target-calls=6 (need >= 20"
-                not in str(failure.get("error", ""))
+                or failure.get("error_type")
+                not in {"CalledProcessError", "ValueError"}
+                or not isinstance(failure.get("error"), str)
+                or not failure["error"]
                 or not isinstance(inputs, dict)
                 or set(inputs) != {"selector", "config", "selected_records"}
                 or inputs.get("selected_records") != selected
@@ -580,8 +582,22 @@ def _validate_phase7_completion(
                 or result_root.is_symlink()
             ):
                 raise ValueError(f"{unit_id} repairable canary-cap failure changed")
-            _validate_descriptor(inputs["selector"], label=f"{unit_id} failed selector")
-            _validate_descriptor(inputs["config"], label=f"{unit_id} failed config")
+            canary_error = _stable_file(
+                canary_log, label=f"{unit_id} failed canary log"
+            ).decode("utf-8")
+            if "--max-total-target-calls=6 (need >= 20" not in canary_error:
+                raise ValueError(f"{unit_id} canary-cap error changed")
+            selector_path = _validate_descriptor(
+                inputs["selector"], label=f"{unit_id} failed selector"
+            )
+            config_path = _validate_descriptor(
+                inputs["config"], label=f"{unit_id} failed config"
+            )
+            if (
+                selector_path != control_root / "inputs" / f"{unit_id}.json"
+                or config_path != control_root / "configs" / f"{unit_id}.json"
+            ):
+                raise ValueError(f"{unit_id} failed input placement changed")
             terminal_states[unit_id] = "failed"
             lifecycle_roots[unit_id] = None
             lifecycle_evidence[unit_id] = {

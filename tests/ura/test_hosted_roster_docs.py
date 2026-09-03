@@ -640,8 +640,8 @@ def test_hosted_follow_on_is_a_no_retry_local_input_subset() -> None:
         "USD 64.7876",
         "experiments.hosted_campaign_budget",
         "experiments.retained_response_judge_pair_execute",
-        "experiments.retained_response_local_judge_execute",
-        "2,000 Llama Guard calls",
+        "--judges rules,guardrail",
+        "590 Llama Guard calls",
         "local-versus-Haiku agreement",
     )
 
@@ -669,6 +669,9 @@ def test_hosted_follow_on_is_a_no_retry_local_input_subset() -> None:
             assert f"| {target} | {limit} |" in value
 
     assert_contract(combined)
+    assert "retained_response_local_judge" not in combined
+    assert "Every hosted measured lane must use `--judges rules,guardrail`" in runbook
+    assert "Every hosted target lane fixes `--judges rules,guardrail`" in plan
     changed = combined.replace("target_answer_retries is 0", "retry enabled", 1)
     assert changed != combined
     with pytest.raises(AssertionError):
