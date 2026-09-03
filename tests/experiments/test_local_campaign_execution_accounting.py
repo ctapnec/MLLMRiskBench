@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import re
 from pathlib import Path
 
 import pytest
@@ -196,3 +197,25 @@ def test_campaign_documents_separate_population_from_physical_call_forecast() ->
         assert "3,574 hardware-fit" in prose
         assert "59 prepared follow-on" in prose
         assert "889 hardware-fit" in prose
+        for label, count in (
+            ("Qwen3-VL", "12,506"),
+            ("LLaVA-family conditions", "7,736"),
+            ("Gemma 4", "11,076"),
+            ("Ministral 3", "9,144"),
+            ("DeepSeek-R1 Distill", "4,649"),
+            ("GPT-OSS", "4,426"),
+            ("replay", "44,928"),
+            ("Crescendo", "2,800"),
+            ("PyRIT", "150"),
+            ("DeepTeam", "150"),
+            ("h4rm3l", "600"),
+            ("Spikee", "600"),
+            ("PurpleLlama", "200"),
+            ("HarmBench", "50"),
+            ("T3MP3ST", "50"),
+            ("NanoGCG", "1"),
+            ("IDEATOR", "8"),
+        ):
+            assert re.search(
+                rf"{re.escape(label)}(?: \|)? {re.escape(count)}", prose
+            )

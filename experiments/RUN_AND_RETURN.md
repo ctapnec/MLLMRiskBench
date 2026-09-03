@@ -831,6 +831,14 @@ probes and diagnostic canaries are separate counters. Phase 7 must replace this
 forecast with the exact validated artifact counts and must not pool revisions or
 output policies.
 
+For the Stats reconciliation, the 49,537 initial-call forecast splits by local
+model or matched condition group as Qwen3-VL 12,506, LLaVA-family conditions
+7,736, Gemma 4 11,076, Ministral 3 9,144, DeepSeek-R1 Distill 4,649 and
+GPT-OSS 4,426. Its framework or attacker split is replay 44,928, Crescendo
+2,800, PyRIT 150, DeepTeam 150, h4rm3l 600, Spikee 600, PurpleLlama 200,
+HarmBench 50, T3MP3ST 50, NanoGCG 1 and IDEATOR 8. Each view sums to 49,537;
+neither is an observed result.
+
 If Phase 6 ran under a pre-v2 deployment, repin first and then migrate its
 immutable operational rows without editing or deleting them:
 

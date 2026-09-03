@@ -1262,6 +1262,34 @@ pre-analysis reconciliation rather than a benchmark result. Phase 7 replaces
 the forecast with exact observed counts while retaining revision and
 output-policy strata.
 
+The same 49,537 initial-call forecast has two exact marginal views for the
+planned Stats table:
+
+| Local model or matched condition group | Forecast initial calls |
+|---|---:|
+| Qwen3-VL | 12,506 |
+| LLaVA-family conditions | 7,736 |
+| Gemma 4 | 11,076 |
+| Ministral 3 | 9,144 |
+| DeepSeek-R1 Distill | 4,649 |
+| GPT-OSS | 4,426 |
+| Total | 49,537 |
+
+| Framework or attacker | Forecast initial calls |
+|---|---:|
+| replay | 44,928 |
+| Crescendo | 2,800 |
+| PyRIT | 150 |
+| DeepTeam | 150 |
+| h4rm3l | 600 |
+| Spikee | 600 |
+| PurpleLlama | 200 |
+| HarmBench | 50 |
+| T3MP3ST | 50 |
+| NanoGCG | 1 |
+| IDEATOR | 8 |
+| Total | 49,537 |
+
 Gate 7: the complete Phase 6 terminal inventory validates as `complete` or
 `complete_with_failures`, at least one scheduled Runner lane is
 `measured_complete`, the validated lifecycle registry retains every typed lane
