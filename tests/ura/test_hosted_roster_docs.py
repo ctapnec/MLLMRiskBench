@@ -642,6 +642,7 @@ def test_hosted_follow_on_is_a_no_retry_local_input_subset() -> None:
     )
 
     def assert_contract(value: str) -> None:
+        value = " ".join(value.split())
         for token in required:
             assert token in value
         assert "There is no retry reserve" in value
@@ -677,9 +678,10 @@ def test_hosted_follow_on_is_a_no_retry_local_input_subset() -> None:
     assert changed_plan != plan
     with pytest.raises(AssertionError):
         assert "global `paid_provider` circuit" in changed_plan
+    cost_flat = " ".join(cost.split())
     for forecast in ("8,734 target calls", "USD 56.80", "USD 69.92"):
-        changed_cost = cost.replace(forecast, "MUTATED_FORECAST", 1)
-        assert changed_cost != cost
+        changed_cost = cost_flat.replace(forecast, "MUTATED_FORECAST", 1)
+        assert changed_cost != cost_flat
         with pytest.raises(AssertionError):
             assert forecast in changed_cost
 
