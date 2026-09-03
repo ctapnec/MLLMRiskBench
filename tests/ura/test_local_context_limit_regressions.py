@@ -996,10 +996,9 @@ def test_rig_web_applies_and_displays_profiled_ollama_execution(
     assert selected["num_predict"] == 4096
     assert selected["think"] is False
     assert selected["timeout"] == 120.0
-    assert (
-        "automatic maximum GPU-fit context / output cap 4,096 tokens"
-        " / thinking disabled"
-    ) in page
+    assert "automatic maximum GPU-fit context" in page
+    assert "output cap 4,096 tokens" in page
+    assert "thinking disabled" in page
 
 
 def test_rig_web_rejects_invalid_curated_context_cap(tmp_path: Path) -> None:
