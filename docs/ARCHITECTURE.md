@@ -273,8 +273,13 @@ Runner 2.32 uses one provider-independent execution-profile boundary for local
 generative models. `local_model_readiness` starts at the 25,000-token local
 ceiling and descends until a forced generation reaches its cap below 120
 seconds in text and, when declared, physical-image input. It then applies the seeded 10-text and
-5-image responsiveness thresholds at that cap. A machine-local registry binds
-the recommendation to the exact revision or digest and modalities. Both CLI
+5-image responsiveness thresholds at that cap.
+Each stress child publishes a transient generation-start marker. Its parent
+enforces the deadline by terminating the isolated process, so setup time stays
+outside request latency and an uninterruptible CUDA call cannot overshoot the
+selection threshold.
+A machine-local registry binds the recommendation to the exact revision or
+digest and modalities. Both CLI
 and Build use its hardware-fit context, vLLM `max_tokens`, Ollama `num_predict`
 and thinking mode, and request deadline; an explicit local config value cannot
 replace the approved profile. Each text/image stress observation runs in a

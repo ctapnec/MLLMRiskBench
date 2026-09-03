@@ -93,7 +93,9 @@ product:
    Generative vLLM and Ollama models share an identity-bound local readiness
    profile. A descending 25,000 through 256-token stress ladder stops at the
    first cap actually reached below 120 seconds for text and, when declared,
-   physical-image input. The seeded
+   physical-image input. A transient generation-start marker lets the parent
+   terminate the isolated probe at the deadline even when an in-process CUDA
+   call cannot deliver a Python alarm promptly. The seeded
    10-text/5-image survey then runs at that cap. The resulting profile is
    required by CLI and Build. Hosted target and judge output caps are instead
    fixed only by their paid campaign budget and never consume this registry.

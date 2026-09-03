@@ -2192,7 +2192,10 @@ for text and, when declared, physical-image input.
 Every stress observation runs in its own process. Process exit, rather than an
 in-process engine close alone, is the cleanup boundary before the next cap, so
 a cancelled vLLM request cannot retain CUDA state or contaminate the lower-cap
-measurement.
+measurement. The child writes a transient marker immediately before generation.
+The parent starts the 120-second clock from that marker and terminates the child
+at the boundary; model loading and graph compilation are therefore not charged
+to request latency, and delayed Python signal delivery cannot extend a request.
 It then runs the ten deterministic benign question calls and five deterministic
 synthetic-image calls at that selected cap. Admission requires at least five
 correct text answers and at least two correct image answers. The other five text

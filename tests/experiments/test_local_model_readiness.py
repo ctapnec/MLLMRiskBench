@@ -358,31 +358,40 @@ def test_isolated_probe_uses_a_fresh_module_process(
     )
     calls: list[list[str]] = []
 
-    def run(command, *, cwd, check):
+    class Process:
+        returncode = 0
+
+        @staticmethod
+        def wait(timeout=None):
+            del timeout
+            return 0
+
+    def popen(command, *, cwd, start_new_session):
         assert cwd == readiness_module._REPO_ROOT
-        assert check is False
+        assert start_new_session is (readiness_module.os.name == "posix")
         calls.append(command)
         out.write_text(
             json.dumps(
                 {
                     "generation_tokens": 2_048,
-                    "kind": "stress-text",
+                    "kind": "survey-text",
                     "requested_spec": args.local,
                     "resolved_target": "vllm:example/model@" + "d" * 40,
-                    "result": _stress_result(2_048),
+                    "result": {"passed": True},
                     "schema": PROBE_SCHEMA,
                 }
             ),
             encoding="ascii",
         )
-        return SimpleNamespace(returncode=0)
+        return Process()
 
-    monkeypatch.setattr(readiness_module.subprocess, "run", run)
+    monkeypatch.setattr(readiness_module.subprocess, "Popen", popen)
 
     value = _run_isolated_probe(
         args,
-        kind="stress-text",
+        kind="survey-text",
         generation_tokens=2_048,
+        expected_target="vllm:example/model@" + "d" * 40,
         out=out,
     )
 
@@ -393,7 +402,107 @@ def test_isolated_probe_uses_a_fresh_module_process(
         "-m",
         "experiments.local_model_readiness",
     ]
-    assert calls[0][calls[0].index("--isolated-probe") + 1] == "stress-text"
+    assert calls[0][calls[0].index("--isolated-probe") + 1] == "survey-text"
+    assert "--probe-start-marker" not in calls[0]
+
+
+def test_stress_probe_parent_enforces_request_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    out = tmp_path / "probe.json"
+    args = SimpleNamespace(
+        local="vllm:example/model",
+        local_config=tmp_path / "config.json",
+        local_config_sha256="a" * 64,
+        model_acquisition_plan=tmp_path / "plan.json",
+        model_acquisition_plan_sha256="b" * 64,
+        model_acquisition_receipt=tmp_path / "receipt.json",
+        model_acquisition_receipt_sha256="c" * 64,
+        model_acquisition_store=tmp_path / "store",
+    )
+    calls: list[list[str]] = []
+    terminated: list[object] = []
+
+    class Process:
+        returncode = None
+
+        @staticmethod
+        def poll():
+            return None
+
+        @staticmethod
+        def wait(timeout=None):
+            raise readiness_module.subprocess.TimeoutExpired("probe", timeout)
+
+    def popen(command, *, cwd, start_new_session):
+        assert cwd == readiness_module._REPO_ROOT
+        assert start_new_session is (readiness_module.os.name == "posix")
+        calls.append(command)
+        marker = Path(command[command.index("--probe-start-marker") + 1])
+        readiness_module._write_probe_start_marker(
+            marker,
+            kind="stress-text",
+            requested_spec=args.local,
+            generation_tokens=2_048,
+        )
+        return Process()
+
+    monkeypatch.setattr(readiness_module.subprocess, "Popen", popen)
+    monkeypatch.setattr(
+        readiness_module,
+        "_terminate_isolated_probe",
+        lambda process: terminated.append(process),
+    )
+    monkeypatch.setattr(readiness_module, "PROFILE_REQUEST_DEADLINE_SECONDS", 0.01)
+
+    value = _run_isolated_probe(
+        args,
+        kind="stress-text",
+        generation_tokens=2_048,
+        expected_target="vllm:example/model@" + "d" * 40,
+        out=out,
+    )
+
+    assert terminated and value["result"]["passed"] is False
+    assert value["result"]["deadline_passed"] is False
+    assert value["result"]["error_category"] == "generation_timeout"
+    assert value["result"]["latency_ms"] == 10.0
+    assert value["resolved_target"] == "vllm:example/model@" + "d" * 40
+    assert out.exists()
+
+
+def test_stress_probe_marks_request_after_lazy_engine_preflight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events: list[str] = []
+
+    class Target:
+        @staticmethod
+        def preflight_base() -> None:
+            events.append("preflight")
+
+    monkeypatch.setattr(
+        readiness_module,
+        "_write_probe_start_marker",
+        lambda *_args, **_kwargs: events.append("marker"),
+    )
+    monkeypatch.setattr(
+        readiness_module,
+        "_run_generation_stress",
+        lambda *_args, **_kwargs: events.append("generation") or {"passed": True},
+    )
+
+    result = readiness_module._run_marked_generation_stress(
+        Target(),
+        marker=tmp_path / "probe.started",
+        kind="stress-text",
+        requested_spec="vllm:example/model",
+        generation_tokens=2_048,
+        image=False,
+    )
+
+    assert result == {"passed": True}
+    assert events == ["preflight", "marker", "generation"]
 
 
 def test_generation_profile_isolates_each_cap_and_modality(
@@ -401,7 +510,8 @@ def test_generation_profile_isolates_each_cap_and_modality(
 ) -> None:
     calls: list[tuple[str, int, Path]] = []
 
-    def probe(_args, *, kind, generation_tokens, out):
+    def probe(_args, *, kind, generation_tokens, expected_target, out):
+        assert expected_target == "vllm:example/model@" + "d" * 40
         calls.append((kind, generation_tokens, out))
         result = _stress_result(generation_tokens)
         if generation_tokens > 2_048:

@@ -13,8 +13,10 @@ import base64
 import binascii
 import hashlib
 import json
+import os
 import random
 import re
+import signal
 import struct
 import subprocess
 import tempfile
@@ -60,6 +62,7 @@ LEGACY_SCHEMA = "ura-local-model-readiness/1"
 BOUNDED_SCHEMA = "ura-local-model-readiness/2"
 SCHEMA = "ura-local-model-readiness/3"
 PROBE_SCHEMA = "ura-local-model-readiness-probe/1"
+PROBE_START_SCHEMA = "ura-local-model-readiness-probe-start/1"
 READINESS_SEED = 20260829
 TEXT_SAMPLE_SIZE = 10
 TEXT_MIN_CORRECT = 5
@@ -70,6 +73,7 @@ PROFILE_MAXIMUM_GENERATION_TOKENS = min(
     MAX_VLLM_GENERATION_TOKENS, MAX_OLLAMA_NUM_PREDICT
 )
 PROFILE_REQUEST_DEADLINE_SECONDS = DEFAULT_LOCAL_REQUEST_TIMEOUT_SECONDS
+PROFILE_PROBE_SETUP_DEADLINE_SECONDS = 600.0
 PROFILE_GENERATION_TOKEN_CANDIDATES = (
     PROFILE_MAXIMUM_GENERATION_TOKENS,
     16_384,
@@ -498,6 +502,160 @@ def _run_generation_stress(
     }
 
 
+def _write_probe_start_marker(
+    path: Path,
+    *,
+    kind: str,
+    requested_spec: str,
+    generation_tokens: int,
+) -> None:
+    """Publish the instant a child begins its one stress generation request."""
+
+    marker = {
+        "generation_tokens": generation_tokens,
+        "kind": kind,
+        "requested_spec": requested_spec,
+        "schema": PROBE_START_SCHEMA,
+        "started_monotonic_ns": time.monotonic_ns(),
+    }
+    temporary = path.with_name(path.name + f".tmp-{os.getpid()}")
+    try:
+        with temporary.open("xb") as handle:
+            handle.write(_canonical(marker))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _run_marked_generation_stress(
+    target: Any,
+    *,
+    marker: Path,
+    kind: str,
+    requested_spec: str,
+    generation_tokens: int,
+    image: bool,
+) -> dict[str, object]:
+    """Prepare a lazy engine, publish request start, and run one stress call."""
+
+    preflight = getattr(target, "preflight_base", None)
+    if callable(preflight):
+        # vLLM constructs its engine lazily. Keep engine loading and graph
+        # capture outside request time; the first real generation remains the
+        # measured stress request.
+        preflight()
+    _write_probe_start_marker(
+        marker,
+        kind=kind,
+        requested_spec=requested_spec,
+        generation_tokens=generation_tokens,
+    )
+    return _run_generation_stress(
+        target,
+        generation_tokens=generation_tokens,
+        image=image,
+    )
+
+
+def _read_probe_start_marker(
+    path: Path,
+    *,
+    kind: str,
+    requested_spec: str,
+    generation_tokens: int,
+) -> int:
+    marker = _read_json(path)
+    if (
+        not isinstance(marker, dict)
+        or set(marker)
+        != {
+            "generation_tokens",
+            "kind",
+            "requested_spec",
+            "schema",
+            "started_monotonic_ns",
+        }
+        or marker.get("schema") != PROBE_START_SCHEMA
+        or marker.get("kind") != kind
+        or marker.get("requested_spec") != requested_spec
+        or marker.get("generation_tokens") != generation_tokens
+        or isinstance(marker.get("started_monotonic_ns"), bool)
+        or not isinstance(marker.get("started_monotonic_ns"), int)
+        or marker["started_monotonic_ns"] <= 0
+    ):
+        raise ValueError("isolated local-model probe start marker is invalid")
+    return int(marker["started_monotonic_ns"])
+
+
+def _terminate_isolated_probe(process: subprocess.Popen[bytes]) -> None:
+    """Terminate one private probe process and wait until its GPU owner exits."""
+
+    if process.poll() is not None:
+        return
+    try:
+        if os.name == "posix":
+            os.killpg(process.pid, signal.SIGTERM)
+        else:  # pragma: no cover - live readiness runs on the Linux rig
+            process.terminate()
+    except (OSError, ProcessLookupError):
+        pass
+    try:
+        process.wait(timeout=5.0)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        if os.name == "posix":
+            os.killpg(process.pid, signal.SIGKILL)
+        else:  # pragma: no cover - live readiness runs on the Linux rig
+            process.kill()
+    except (OSError, ProcessLookupError):
+        pass
+    process.wait(timeout=5.0)
+
+
+def _deadline_stress_probe(
+    *,
+    kind: str,
+    requested_spec: str,
+    resolved_target: str,
+    generation_tokens: int,
+) -> dict[str, object]:
+    observation = _failed_observation(
+        TargetAnswerError(
+            f"local-model stress request reached the configured hard "
+            f"{PROFILE_REQUEST_DEADLINE_SECONDS:g}s deadline",
+            category="generation_timeout",
+        ),
+        latency_ms=PROFILE_REQUEST_DEADLINE_SECONDS * 1000.0,
+    )
+    minimum_tokens = max(
+        1,
+        (
+            generation_tokens * int(PROFILE_STRESS_MINIMUM_FRACTION * 100)
+            + 99
+        )
+        // 100,
+    )
+    return {
+        "generation_tokens": generation_tokens,
+        "kind": kind,
+        "requested_spec": requested_spec,
+        "resolved_target": resolved_target,
+        "result": {
+            **observation,
+            "deadline_passed": False,
+            "minimum_completion_tokens": minimum_tokens,
+            "passed": False,
+            "reached_generation_cap": False,
+            "requested_generation_tokens": generation_tokens,
+        },
+        "schema": PROBE_SCHEMA,
+    }
+
+
 def _reset_after_deadline(target: Any, observation: dict[str, object]) -> None:
     """Discard a timed-out local runtime before another probe is submitted."""
 
@@ -570,6 +728,7 @@ def _probe_argv(
     kind: str,
     generation_tokens: int,
     out: Path,
+    start_marker: Path | None = None,
 ) -> list[str]:
     """Build one private child invocation for exactly one model load/probe."""
 
@@ -591,6 +750,7 @@ def _probe_argv(
         str(generation_tokens),
     ]
     for flag, value in (
+        ("--probe-start-marker", start_marker),
         ("--model-acquisition-plan", args.model_acquisition_plan),
         ("--model-acquisition-plan-sha256", args.model_acquisition_plan_sha256),
         ("--model-acquisition-receipt", args.model_acquisition_receipt),
@@ -607,23 +767,71 @@ def _run_isolated_probe(
     *,
     kind: str,
     generation_tokens: int,
+    expected_target: str,
     out: Path,
 ) -> dict[str, object]:
     """Run one probe in a process whose exit is the GPU-cleanup boundary."""
 
-    completed = subprocess.run(  # noqa: S603 - fixed interpreter/module argv
+    stress = kind.startswith("stress-")
+    start_marker = out.with_suffix(out.suffix + ".started") if stress else None
+    process = subprocess.Popen(  # noqa: S603 - fixed interpreter/module argv
         _probe_argv(
             args,
             kind=kind,
             generation_tokens=generation_tokens,
             out=out,
+            start_marker=start_marker,
         ),
         cwd=_REPO_ROOT,
-        check=False,
+        start_new_session=os.name == "posix",
     )
-    if completed.returncode != 0:
+    timed_out = False
+    if start_marker is not None:
+        setup_deadline = time.monotonic() + PROFILE_PROBE_SETUP_DEADLINE_SECONDS
+        while not start_marker.exists():
+            returncode = process.poll()
+            if returncode is not None:
+                break
+            if time.monotonic() >= setup_deadline:
+                _terminate_isolated_probe(process)
+                raise ValueError("isolated local-model probe setup exceeded its deadline")
+            time.sleep(0.05)
+        if start_marker.exists():
+            try:
+                started_ns = _read_probe_start_marker(
+                    start_marker,
+                    kind=kind,
+                    requested_spec=args.local,
+                    generation_tokens=generation_tokens,
+                )
+            except Exception:
+                _terminate_isolated_probe(process)
+                raise
+            remaining = max(
+                0.0,
+                PROFILE_REQUEST_DEADLINE_SECONDS
+                - (time.monotonic_ns() - started_ns) / 1_000_000_000.0,
+            )
+            try:
+                process.wait(timeout=remaining)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                _terminate_isolated_probe(process)
+    else:
+        process.wait()
+    if timed_out:
+        value = _deadline_stress_probe(
+            kind=kind,
+            requested_spec=args.local,
+            resolved_target=expected_target,
+            generation_tokens=generation_tokens,
+        )
+        with out.open("xb") as handle:
+            handle.write(_canonical(value))
+    elif process.returncode != 0:
         raise ValueError(f"isolated local-model {kind} probe failed")
-    value = _read_json(out)
+    else:
+        value = _read_json(out)
     if (
         not isinstance(value, dict)
         or set(value) != {
@@ -661,6 +869,7 @@ def _profile_generation_conditions_isolated(
             args,
             kind="stress-text",
             generation_tokens=generation_tokens,
+            expected_target=expected_target,
             out=work / f"stress-text-{generation_tokens}.json",
         )
         if text_probe["resolved_target"] != expected_target:
@@ -672,6 +881,7 @@ def _profile_generation_conditions_isolated(
                 args,
                 kind="stress-image",
                 generation_tokens=generation_tokens,
+                expected_target=expected_target,
                 out=work / f"stress-image-{generation_tokens}.json",
             )
             if vision_probe["resolved_target"] != expected_target:
@@ -1026,6 +1236,7 @@ def main(argv: list[str] | None = None) -> int:
         help=argparse.SUPPRESS,
     )
     parser.add_argument("--generation-tokens", type=int, help=argparse.SUPPRESS)
+    parser.add_argument("--probe-start-marker", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
 
     if args.validate is not None:
@@ -1101,8 +1312,6 @@ def main(argv: list[str] | None = None) -> int:
             raise ModelAcquisitionError(
                 "vLLM readiness requires its exact acquisition plan and receipt"
             )
-        import os
-
         os.environ.update(hf_offline_environment_overrides())
         model_runtime, acquisition = admit_managed_model_runtime(
             selection=selection,
@@ -1129,24 +1338,38 @@ def main(argv: list[str] | None = None) -> int:
     if args.local.startswith("vllm:"):
         _require_local_hardware_fit(target, args.local, config, hardware)
     if args.isolated_probe is not None:
+        stress_probe = args.isolated_probe.startswith("stress-")
         if (
             args.profile_registry is not None
             or args.generation_tokens not in PROFILE_GENERATION_TOKEN_CANDIDATES
+            or stress_probe != (args.probe_start_marker is not None)
         ):
             parser.error("isolated readiness probe arguments are invalid")
+        if args.probe_start_marker is not None and (
+            args.probe_start_marker.parent != args.out.parent
+            or args.probe_start_marker
+            != args.out.with_suffix(args.out.suffix + ".started")
+        ):
+            parser.error("isolated readiness probe start marker is invalid")
         if "image" in args.isolated_probe and "image" not in config["modalities"]:
             parser.error("image readiness probe requires an image-capable target")
         _set_generation_tokens(target, args.local, args.generation_tokens)
         try:
             if args.isolated_probe == "stress-text":
-                result = _run_generation_stress(
+                result = _run_marked_generation_stress(
                     target,
+                    marker=args.probe_start_marker,
+                    kind=args.isolated_probe,
+                    requested_spec=args.local,
                     generation_tokens=args.generation_tokens,
                     image=False,
                 )
             elif args.isolated_probe == "stress-image":
-                result = _run_generation_stress(
+                result = _run_marked_generation_stress(
                     target,
+                    marker=args.probe_start_marker,
+                    kind=args.isolated_probe,
+                    requested_spec=args.local,
                     generation_tokens=args.generation_tokens,
                     image=True,
                 )
@@ -1190,6 +1413,7 @@ def main(argv: list[str] | None = None) -> int:
                     args,
                     kind="survey-text",
                     generation_tokens=selected_generation_tokens,
+                    expected_target=str(target.name),
                     out=work / "survey-text.json",
                 )
                 if text_probe["resolved_target"] != str(target.name):
@@ -1200,6 +1424,7 @@ def main(argv: list[str] | None = None) -> int:
                         args,
                         kind="survey-image",
                         generation_tokens=selected_generation_tokens,
+                        expected_target=str(target.name),
                         out=work / "survey-image.json",
                     )
                     if vision_probe["resolved_target"] != str(target.name):

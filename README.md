@@ -235,6 +235,9 @@ current profiler starts at 25,000 tokens and descends through 16,384, 8,192,
 4,096, 2,048, 1,024, 512, and 256. It stops at the first cap that is actually
 reached below 120 seconds for text and, when declared, physical-image input,
 and then runs the seeded 10-text/5-image responsiveness survey at that cap. The
+parent starts this clock from a transient generation-start marker and terminates
+the isolated probe process at the boundary; model loading is outside the request
+measurement, while a CUDA call cannot delay enforcement until it returns. The
 profile separately binds `max_model_len=-1`, so the engine selects the maximum
 hardware-fitting context without treating it as a response allowance.
 Rig Web preserves the field in its selected local config, and the normalized
@@ -508,7 +511,9 @@ synthetic images for image-capable models, treats empty responses as incorrect,
 and requires the configured minimum correct counts. Schema `/3` starts at the
 local output ceiling and lowers the candidate until a forced generation reaches
 that cap below 120 seconds, then runs the same responsiveness survey there. It
-writes the approved output cap, hardware-fit context and Ollama thinking mode to
+watches each stress request from the parent process and terminates the child at
+the deadline before attempting a lower cap. It writes the approved output cap,
+hardware-fit context and Ollama thinking mode to
 the immutable-model-bound machine-local profile registry.
 Schema `/2` remains historical evidence, but its short-answer probes did not
 exercise the configured ceiling and its schema-1 registry cannot admit new
