@@ -785,7 +785,11 @@ class BuilderPageMixin:
                         local_config_error = durable_ui_text(exc)
                         disabled = " disabled"
                 execution_profile = entry.get("_execution_profile")
-                if not isinstance(execution_profile, Mapping):
+                execution_profile_error = entry.get("_execution_profile_error")
+                if isinstance(execution_profile_error, str):
+                    local_config_error = local_config_error or execution_profile_error
+                    disabled = " disabled"
+                elif not isinstance(execution_profile, Mapping):
                     local_config_error = (
                         local_config_error
                         or "passing local-model readiness profile required"
@@ -1087,6 +1091,7 @@ class BuilderPageMixin:
             request_timeout: float | None = None
             live_entry = live_ollama_by_spec.get(value)
             execution_profile = entry.get("_execution_profile")
+            execution_profile_error = entry.get("_execution_profile_error")
             try:
                 self._validate_ollama_local_entry(value, entry)
                 context_limit = self._local_ollama_num_ctx(value, entry)
@@ -1095,7 +1100,9 @@ class BuilderPageMixin:
                 request_timeout = self._local_request_timeout(value, entry)
             except ValueError as exc:
                 problems.append(str(exc))
-            if not isinstance(execution_profile, Mapping):
+            if isinstance(execution_profile_error, str):
+                problems.append(execution_profile_error)
+            elif not isinstance(execution_profile, Mapping):
                 problems.append("passing local-model readiness profile required")
             manual = value in explicit_local
             if manual and live_entry is None:

@@ -3097,6 +3097,44 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
             },
         },
     }), encoding="utf-8")
+    evidence = repo / "profile-readiness.json"
+    evidence.write_text("{}\n", encoding="utf-8")
+    configured_entries = json.loads(
+        (rig / "local-targets.example.json").read_text(encoding="utf-8")
+    )
+    roster_entries = json.loads(
+        (rig / "vllm-roster.example.json").read_text(encoding="utf-8")
+    )["models"]
+    profiles: dict[str, object] = {}
+    for spec, entry in {**roster_entries, **configured_entries}.items():
+        identity_key = "revision" if "revision" in entry else "digest"
+        identity = entry.get(identity_key)
+        modalities = entry.get("modalities")
+        if (
+            not isinstance(identity, str)
+            or re.fullmatch(r"[0-9a-fA-F]{40,64}", identity) is None
+            or not isinstance(modalities, list)
+            or "text" not in modalities
+        ):
+            continue
+        profiles[spec] = {
+            "generation_tokens": 4096,
+            "identity": {identity_key: identity.lower()},
+            "modalities": list(modalities),
+            "readiness": {
+                "path": str(evidence.resolve()),
+                "sha256": "b" * 64,
+                "readiness_id": "c" * 64,
+            },
+            "request_timeout_seconds": 120.0,
+        }
+    (repo / "experiments" / "local-model-profiles.json").write_text(
+        json.dumps({
+            "schema": "ura-local-model-execution-profiles/1",
+            "models": profiles,
+        }),
+        encoding="utf-8",
+    )
     gpu_hardware = {
         "available": True, "source": "nvidia-smi", "gpu_count": 2,
         "aggregate_vram_gib": 47.98, "max_gpu_vram_gib": 23.99,
@@ -3212,8 +3250,9 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
             "digest": "a" * 64,
             "modalities": ["text"],
             "num_ctx": "fit",
-            "num_predict": -1,
+            "num_predict": 4096,
             "think": False,
+            "timeout": 120.0,
         }
     }
     from experiments.rig_web_app.ollama_service import OllamaService  # noqa: PLC0415
@@ -5429,6 +5468,11 @@ def test_every_ui_command_parses_with_its_real_module_parser() -> None:
              "--metadata": "runs/syn/meta.json", "--out": "runs/syn/out"},
         ],
         "local_targets": [{"--refresh": "on", "--vllm-version": "0.27.1"}],
+        "local_model_readiness": [{
+            "--validate": "runs/readiness.json",
+            "--sha256": "a" * 64,
+            "--expected-spec": "vllm:org/model",
+        }],
         "webui_selftest": [{"--selftest-sleep": "0"}],
     }
     # Typed controller commands with dedicated workflows; never generic forms.

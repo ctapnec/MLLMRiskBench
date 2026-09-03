@@ -213,7 +213,14 @@ class BuilderModelsMixin:
         from experiments.local_model_profiles import apply_profile  # noqa: PLC0415
 
         for spec, entry in list(catalog.items()):
-            profiled, profile = apply_profile(spec, entry, repo_root=self.repo_root)
+            try:
+                profiled, profile = apply_profile(
+                    spec, entry, repo_root=self.repo_root
+                )
+            except ValueError as exc:
+                profiled = dict(entry)
+                profiled["_execution_profile_error"] = str(exc)
+                profile = None
             if profile is not None:
                 profiled["_execution_profile"] = profile
             catalog[spec] = profiled
@@ -518,12 +525,15 @@ class BuilderModelsMixin:
                     f"local target {spec!r} is not in the local target catalog"
                 )
             execution_profile = entry.get("_execution_profile")
-            if not isinstance(execution_profile, Mapping):
-                raise ValueError(
-                    f"local target {spec!r} requires a passing readiness profile"
-                )
+            execution_profile_error = entry.get("_execution_profile_error")
             if spec.startswith("ollama:"):
                 self._validate_ollama_local_entry(spec, entry)
+                if isinstance(execution_profile_error, str):
+                    raise ValueError(execution_profile_error)
+                if not isinstance(execution_profile, Mapping):
+                    raise ValueError(
+                        f"local target {spec!r} requires a passing readiness profile"
+                    )
                 live_entry = live_ollama.get(spec) if require_live_ollama else None
                 if require_live_ollama:
                     if live_entry is None:
@@ -590,6 +600,12 @@ class BuilderModelsMixin:
             max_model_len = self._local_max_model_len(spec, entry)
             max_tokens = self._local_max_tokens(spec, entry)
             gpu_memory_utilization = self._local_gpu_memory_utilization(spec, entry)
+            if isinstance(execution_profile_error, str):
+                raise ValueError(execution_profile_error)
+            if not isinstance(execution_profile, Mapping):
+                raise ValueError(
+                    f"local target {spec!r} requires a passing readiness profile"
+                )
             resolved = {key: value for key, value in entry.items() if key in allowed}
             for identity_key in ("revision", "digest"):
                 identity_value = resolved.get(identity_key)

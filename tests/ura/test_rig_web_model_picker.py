@@ -100,14 +100,48 @@ def _repo_app(
         }),
         encoding="utf-8",
     )
-    (rig / "local-targets.example.json").write_text(
-        json.dumps(local or {
+    local_entries = local or {
             _LOCAL: {
                 "revision": "a" * 40,
                 "modalities": ["text"],
                 "parameter_count_b": 7,
                 "tensor_parallel_size": 1,
             },
+        }
+    (rig / "local-targets.example.json").write_text(
+        json.dumps(local_entries),
+        encoding="utf-8",
+    )
+    evidence = repo / "profile-readiness.json"
+    evidence.write_text("{}\n", encoding="utf-8")
+    profiles: dict[str, object] = {}
+    for spec, value in local_entries.items():
+        if not isinstance(value, dict):
+            continue
+        identity_key = "revision" if "revision" in value else "digest"
+        identity = value.get(identity_key)
+        modalities = value.get("modalities")
+        if (
+            not isinstance(identity, str)
+            or not isinstance(modalities, list)
+            or "text" not in modalities
+        ):
+            continue
+        profiles[spec] = {
+            "generation_tokens": 4096,
+            "identity": {identity_key: identity.lower()},
+            "modalities": list(modalities),
+            "readiness": {
+                "path": str(evidence.resolve()),
+                "sha256": "c" * 64,
+                "readiness_id": "d" * 64,
+            },
+            "request_timeout_seconds": 120.0,
+        }
+    (repo / "experiments" / "local-model-profiles.json").write_text(
+        json.dumps({
+            "schema": "ura-local-model-execution-profiles/1",
+            "models": profiles,
         }),
         encoding="utf-8",
     )

@@ -117,6 +117,39 @@ def _write_config(
     return path
 
 
+def _write_execution_profile(
+    repo: Path,
+    *,
+    spec: str,
+    config: dict[str, object],
+    generation_tokens: int = 4096,
+) -> None:
+    identity_key = "revision" if "revision" in config else "digest"
+    evidence = repo / "profile-readiness.json"
+    evidence.write_text("{}\n", encoding="utf-8")
+    registry = {
+        "schema": "ura-local-model-execution-profiles/1",
+        "models": {
+            spec: {
+                "generation_tokens": generation_tokens,
+                "identity": {
+                    identity_key: str(config[identity_key]).lower(),
+                },
+                "modalities": list(config["modalities"]),
+                "readiness": {
+                    "path": str(evidence.resolve()),
+                    "sha256": "a" * 64,
+                    "readiness_id": "b" * 64,
+                },
+                "request_timeout_seconds": 120.0,
+            }
+        },
+    }
+    (repo / "experiments" / "local-model-profiles.json").write_text(
+        json.dumps(registry), encoding="utf-8"
+    )
+
+
 def test_qwen_context_cap_survives_loader_target_and_portable_identity(
     tmp_path: Path,
 ) -> None:
@@ -766,7 +799,7 @@ def test_ollama_native_max_context_is_resolved_once_from_pinned_model_metadata(
     assert target._sampling_options() == {
         "temperature": 0.0,
         "num_ctx": 131_072,
-        "num_predict": -1,
+        "num_predict": 4096,
     }
 
 
@@ -901,6 +934,7 @@ def test_rig_web_preserves_and_displays_curated_context_cap(tmp_path: Path) -> N
     (rig / "vllm-roster.example.json").write_text(
         json.dumps({"models": {}}), encoding="utf-8"
     )
+    _write_execution_profile(repo, spec=SPEC, config=_config())
     app = RigWebApp(
         results_root=tmp_path / "runs",
         state_dir=tmp_path / "state",
@@ -926,18 +960,20 @@ def test_rig_web_preserves_and_displays_ollama_execution_caps(
     repo = tmp_path / "repo"
     rig = repo / "experiments" / "rig"
     rig.mkdir(parents=True)
+    config = {
+        "digest": "a" * 64,
+        "modalities": ["text"],
+        "num_ctx": 4096,
+        "num_predict": 256,
+    }
     (rig / "local-targets.example.json").write_text(
-        json.dumps({spec: {
-            "digest": "a" * 64,
-            "modalities": ["text"],
-            "num_ctx": 4096,
-            "num_predict": 256,
-        }}),
+        json.dumps({spec: config}),
         encoding="utf-8",
     )
     (rig / "vllm-roster.example.json").write_text(
         json.dumps({"models": {}}), encoding="utf-8"
     )
+    _write_execution_profile(repo, spec=spec, config=config)
     app = RigWebApp(
         results_root=tmp_path / "runs",
         state_dir=tmp_path / "state",
@@ -952,8 +988,9 @@ def test_rig_web_preserves_and_displays_ollama_execution_caps(
         app.close()
 
     assert selected["num_ctx"] == 4096
-    assert selected["num_predict"] == 256
-    assert "context cap 4,096 tokens / output cap 256 tokens" in page
+    assert selected["num_predict"] == 4096
+    assert selected["timeout"] == 120.0
+    assert "context cap 4,096 tokens / output cap 4,096 tokens" in page
 
 
 def test_rig_web_rejects_invalid_curated_context_cap(tmp_path: Path) -> None:

@@ -129,6 +129,18 @@ def apply_profile(
     profile = load_profiles(repo_root, path=path).get(spec)
     if profile is None:
         return result, None
+    from ura.targets.local import (
+        validate_local_request_timeout,
+        validate_ollama_num_predict,
+        validate_vllm_max_tokens,
+    )
+
+    if spec.startswith("vllm:") and "max_tokens" in result:
+        validate_vllm_max_tokens(result["max_tokens"])
+    if spec.startswith("ollama:") and "num_predict" in result:
+        validate_ollama_num_predict(result["num_predict"])
+    if "timeout" in result:
+        validate_local_request_timeout(result["timeout"])
     if _identity(result) != profile["identity"]:
         raise ValueError(f"local model profile identity differs for {spec!r}")
     if list(result.get("modalities", [])) != profile["modalities"]:
