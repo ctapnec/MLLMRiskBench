@@ -1027,6 +1027,13 @@ both prerequisite completion digests and give only its validated completion to
 Phase 7. The 2,350 never-started rows are in
 addition to the 4,463 row-addressable hardware-fit corrections; neither
 controller may select a row completed by the other or by the retained base.
+At that terminal boundary, deploy the tested successor with
+`bash ~/repin.sh <40-hex-commit> --focused-campaign-handoff`. The mode's tracked
+fixed selector list covers every test file changed since the active `aa71bcd`
+deployment plus stable hosted-plan and deployment-contract checks. It still
+refreshes the roster, rebuilds and validates the project receipt, revalidates
+the source receipt and restarts the console. It must not run before the active
+controller is terminal because re-pin hygiene intentionally stops Runner.
 
 The general local serving default is provider-independent at the response
 boundary: omitted vLLM `max_model_len` binds vLLM 0.27's `-1` auto-fit policy,

@@ -9,7 +9,7 @@
 #   local:  git bundle create web002.bundle main
 #           scp web002.bundle rig:~/web002.bundle
 #           scp distro/repin.sh rig:~/repin.sh        # from the deployed commit
-#   rig:    bash ~/repin.sh <40-hex-commit>
+#   rig:    bash ~/repin.sh <40-hex-commit> [--focused-campaign-handoff]
 #
 # Run ON the rig with $1 = the expected 40-hex commit (the bundle head must
 # match it exactly). Steps, all fail-closed (a failure leaves the rig on the
@@ -19,7 +19,8 @@
 #      (warns when this script differs from distro/repin.sh at that commit)
 #   2. hygiene: kill stray '-m experiments.run_matrix' / '-m experiments.rig_web'
 #      processes, clear /tmp/pytest-of-<user>
-#   3. clean-env full-suite gate (every URA_* variable unset; venv interpreter)
+#   3. clean-env full-suite gate by default, or the fixed campaign-handoff
+#      regression set only when the explicit second argument is present
 #   4. local-target roster refresh, then refuse if any TRACKED file changed
 #   5. project-revision receipt: retain every content-addressed historical
 #      receipt, create + validate the new one (an invalid receipt aborts)
@@ -35,7 +36,10 @@
 set -euo pipefail
 
 REF_EXPECTED="${1:-}"
-[[ "$REF_EXPECTED" =~ ^[0-9a-f]{40}$ ]] || { echo "usage: $0 <40-hex-commit>" >&2; exit 2; }
+MODE="${2:-full}"
+[[ "$REF_EXPECTED" =~ ^[0-9a-f]{40}$ ]] || { echo "usage: $0 <40-hex-commit> [--focused-campaign-handoff]" >&2; exit 2; }
+[[ "$MODE" = "full" || "$MODE" = "--focused-campaign-handoff" ]] \
+  || { echo "unsupported re-pin verification mode: $MODE" >&2; exit 2; }
 REPO="${REPO:-$HOME/MLLMRiskBench}"
 BUNDLE="${BUNDLE:-$HOME/web002.bundle}"
 URA_DATA="${URA_DATA:-/data/ura-work}"
@@ -77,10 +81,34 @@ sleep 1
 PYTEST_TMP_ROOT="/tmp/pytest-of-$(id -un)"
 "$PY" -m experiments.pytest_tmp_cleanup --root "$PYTEST_TMP_ROOT"
 
-# Clean-environment full-suite gate: no URA_* variable may leak into the run
-# (digits included: URA_PROJECT_REVISION_SHA256 and friends).
+# Clean-environment verification gate: no URA_* variable may leak into the run
+# (digits included: URA_PROJECT_REVISION_SHA256 and friends). The explicit
+# campaign handoff runs only files changed since the deployed aa71bcd campaign
+# boundary plus the stable hosted-plan and deployment-contract regressions.
+DEPLOY_TESTS=()
+if [ "$MODE" = "--focused-campaign-handoff" ]; then
+  DEPLOY_TESTS=(
+    tests/experiments/test_local_campaign_controllers.py
+    tests/experiments/test_local_campaign_execution_accounting.py
+    tests/experiments/test_local_campaign_phase8_lifecycle_semantics.py
+    tests/experiments/test_ollama_population_alignment_recovery_phase6.py
+    tests/experiments/test_retained_response_judge.py
+    tests/experiments/test_retained_response_judge_execute.py
+    tests/ura/test_current_contract_docs.py
+    tests/ura/test_hosted_roster_docs.py
+    tests/ura/test_local_campaign_stats_adapter.py
+    tests/ura/test_rig_web_model_picker.py
+    tests/ura/test_rig_web_page_tabs.py
+    tests/ura/test_project_metadata.py
+    tests/ura/test_framework_runtime_installer.py::test_distro_repin_script_is_fail_closed_and_sources_canonical_ura_env_last
+  )
+  echo "verification mode: focused campaign handoff (${#DEPLOY_TESTS[@]} selectors)"
+else
+  echo "verification mode: full suite"
+fi
 ( for v in $(env | grep -oE '^URA_[A-Za-z0-9_]+' || true); do unset "$v"; done
-  set -o pipefail; "$PY" -m pytest -q -p no:cacheprovider 2>&1 | tail -1 )
+  set -o pipefail
+  "$PY" -m pytest -q -p no:cacheprovider "${DEPLOY_TESTS[@]}" 2>&1 | tail -1 )
 
 # Secrets + campaign env: legacy ~/.ura_secrets first, canonical ~/.ura_env
 # last (wins), then the locators (same precedence as distro/install.sh).

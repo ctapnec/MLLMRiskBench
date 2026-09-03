@@ -2690,6 +2690,8 @@ def test_distro_repin_script_is_fail_closed_and_sources_canonical_ura_env_last()
     assert "set -euo pipefail" in text
     # the expected commit is a full 40-hex id, checked before anything runs
     assert '[[ "$REF_EXPECTED" =~ ^[0-9a-f]{40}$ ]] ||' in text
+    assert '[[ "$MODE" = "full" || "$MODE" = "--focused-campaign-handoff" ]]' in text
+    assert "unsupported re-pin verification mode" in text
     # hygiene (anchored module invocations) precedes the clean-env gate
     run_matrix_kill = text.index("pkill -f -- '-m experiments\\.run_matrix( |$)'")
     rig_web_kill = text.index("pkill -f -- '-m experiments\\.rig_web( |$)'")
@@ -2699,6 +2701,21 @@ def test_distro_repin_script_is_fail_closed_and_sources_canonical_ura_env_last()
     # the scrub unsets every URA_* name, digits included
     assert "grep -oE '^URA_[A-Za-z0-9_]+'" in text
     assert "^URA_[A-Z_]+" not in text
+    for selector in (
+        "tests/experiments/test_local_campaign_controllers.py",
+        "tests/experiments/test_local_campaign_execution_accounting.py",
+        "tests/experiments/test_local_campaign_phase8_lifecycle_semantics.py",
+        "tests/experiments/test_ollama_population_alignment_recovery_phase6.py",
+        "tests/experiments/test_retained_response_judge.py",
+        "tests/experiments/test_retained_response_judge_execute.py",
+        "tests/ura/test_current_contract_docs.py",
+        "tests/ura/test_hosted_roster_docs.py",
+        "tests/ura/test_local_campaign_stats_adapter.py",
+        "tests/ura/test_rig_web_model_picker.py",
+        "tests/ura/test_rig_web_page_tabs.py",
+        "tests/ura/test_project_metadata.py",
+    ):
+        assert selector in text
     # secrets: legacy ~/.ura_secrets first, canonical ~/.ura_env last (wins),
     # both in the top-level block and in the detached console child
     child_start = text.index("setsid bash -c '")

@@ -115,6 +115,15 @@ scp distro/repin.sh rig:~/repin.sh
 ssh rig 'bash ~/repin.sh <40-hex-commit>'
 ```
 
+The default command runs the complete clean-environment suite. The explicit
+`--focused-campaign-handoff` second argument is reserved for the in-flight
+local-campaign boundary after its current controller is terminal. It runs the
+fixed campaign, Stats, UI, hosted-plan, Haiku and deployment-contract selectors
+listed in the script; it does not accept an operator-authored test expression.
+Both modes perform every later receipt, roster and console step. Never invoke
+either mode while a measured controller is live because re-pin hygiene stops
+`run_matrix` before testing.
+
 Never run the in-tree copy (`bash ~/MLLMRiskBench/distro/repin.sh`): that file
 is the one at the CURRENTLY pinned commit - it may not exist yet (a rig pinned
 at 33a2c65 has no `distro/repin.sh` at all) or may lack later fixes, because the
@@ -132,8 +141,10 @@ checks it out, then:
    such as `experiments/rig_web_app/...` in an editor or `tail` is not matched)
    and clears `/tmp/pytest-of-<user>` before the gate (either makes the suite
    fail spuriously);
-2. clean-environment full-suite gate (every `URA_*` variable unset, names with
-   digits such as `URA_PROJECT_REVISION_SHA256` included);
+2. clean-environment full-suite gate by default, or the fixed focused campaign
+   handoff set after explicit `--focused-campaign-handoff` (every `URA_*`
+   variable unset, names with digits such as
+   `URA_PROJECT_REVISION_SHA256` included);
 3. `experiments.local_targets --refresh`, then refuses if any TRACKED file
    changed (`git diff --quiet`);
 4. project-revision receipt: preserves every prior content-addressed receipt at
