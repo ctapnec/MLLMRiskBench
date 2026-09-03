@@ -650,6 +650,15 @@ unfinished, typed failed-output, and provider-declared length-ended rows under
 the maximum local output and GPU-fit context policy. Successful metric roots
 and genuine terminal failures remain visible separately, and completed
 non-truncated rows are not repeated.
+The retained 2 September hardware-fit controller stopped after 1,749 durable
+rows when one Ollama response body outlived the advertised hard deadline. After
+terminating its exact process and tmux session, run
+`local_truncation_recovery_continuation_phase6`, not the original controller.
+It validates 931 and 394 complete rows, retains the next 424 as interrupted
+lifecycle evidence, extends that unit's completed-ID selector, and executes
+only its 611-row suffix plus the 2,103 unstarted rows. Supply the continuation
+completion to the unchanged Phase 7 option. The validator dispatches the new
+schema while keeping the original completion schema byte-compatible.
 Its plan-owned terminal inventory has 141 logical rows after population
 alignment and failed-output recovery: 46 canonical, four output-policy
 amendment, three follow-on, 14

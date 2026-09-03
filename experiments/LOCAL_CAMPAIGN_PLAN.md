@@ -1181,6 +1181,13 @@ Those 25 units cover exactly 4,463 unfinished, failed-output, or
 provider-declared length-ended rows. They use automatic GPU-fit context and
 maximum available local output, remain a separate condition, and never repeat
 an already completed non-truncated row.
+The first hardware-fit execution retained 1,749 durable rows before a response
+body exposed a non-enforced adapter deadline. Its exact continuation therefore
+adopts two complete units (931 and 394 rows), retains 424 rows from the
+interrupted third unit as lifecycle evidence, and executes only 2,714
+never-completed rows. The third-unit selector excludes those 424 exact
+datapoints. Restarting the original 4,463-row controller or promoting the
+partial unit as a terminal Runner grid is forbidden.
 The 12 population-alignment rows remain logical model/framework conditions, not
 12 necessarily single-root files. Eleven have one terminal metric root. The
 DeepSeek condition is population-complete across its retained Runner 2.26 usable

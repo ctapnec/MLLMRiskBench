@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from experiments.local_campaign.local_truncation_recovery_phase6 import (
     _source_modality,
     _without_runtime_bindings,
@@ -13,6 +15,10 @@ from experiments.local_campaign.local_truncation_recovery_phase6 import (
 from experiments.local_campaign.local_truncation_recovery_execution_phase6 import (
     configure_units,
 )
+from experiments.local_campaign.local_truncation_recovery_continuation_phase6 import (
+    extend_completed_selector,
+)
+from experiments.local_campaign.vllm_stability_phase6 import _sha256_json
 from ura.data_models import DataPoint, Response, RiskCategory
 
 
@@ -216,3 +222,66 @@ def test_execution_configures_exact_hardware_fit_unit(tmp_path) -> None:
     assert config[spec]["num_ctx"] == "fit"
     assert config[spec]["num_predict"] == -1
     assert argv[argv.index("--target-answer-retries") + 1] == "1"
+
+
+def test_interrupted_selector_excludes_every_durable_row_without_repeating() -> None:
+    selected = {"alpha": ["a", "b", "c"], "beta": ["d", "e", "f"]}
+    selector = {
+        "schema": "ura-recovery-completed-selection/1",
+        "corpora": {
+            corpus: {
+                "completed_record_count": 1,
+                "selected_datapoint_ids_sha256": _sha256_json(rows),
+                "completed_datapoint_ids": [rows[0]],
+                "completed_datapoint_ids_sha256": _sha256_json([rows[0]]),
+                "remaining_datapoint_ids_sha256": _sha256_json(rows[1:]),
+            }
+            for corpus, rows in selected.items()
+        },
+    }
+
+    continued, remaining = extend_completed_selector(
+        selector=selector,
+        selected_ids=selected,
+        newly_completed_ids=["b", "e"],
+    )
+
+    assert remaining == 2
+    assert continued["corpora"]["alpha"]["completed_datapoint_ids"] == [
+        "a",
+        "b",
+    ]
+    assert continued["corpora"]["beta"]["completed_datapoint_ids"] == [
+        "d",
+        "e",
+    ]
+    assert continued["corpora"]["alpha"]["remaining_datapoint_ids_sha256"] == (_sha256_json(["c"]))
+
+
+def test_interrupted_selector_rejects_unknown_or_duplicate_durable_identity() -> None:
+    selected = {"alpha": ["a", "b", "c"]}
+    selector = {
+        "schema": "ura-recovery-completed-selection/1",
+        "corpora": {
+            "alpha": {
+                "completed_record_count": 1,
+                "selected_datapoint_ids_sha256": _sha256_json(selected["alpha"]),
+                "completed_datapoint_ids": ["a"],
+                "completed_datapoint_ids_sha256": _sha256_json(["a"]),
+                "remaining_datapoint_ids_sha256": _sha256_json(["b", "c"]),
+            }
+        },
+    }
+
+    with pytest.raises(ValueError, match="absent from the selection"):
+        extend_completed_selector(
+            selector=selector,
+            selected_ids=selected,
+            newly_completed_ids=["unknown"],
+        )
+    with pytest.raises(ValueError, match="selector identity changed"):
+        extend_completed_selector(
+            selector=selector,
+            selected_ids=selected,
+            newly_completed_ids=["b", "b"],
+        )

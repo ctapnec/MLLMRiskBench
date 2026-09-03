@@ -62,6 +62,12 @@ def validate_completion(
     completion_path = completion_path.resolve(strict=True)
     runner_root = runner_root.resolve(strict=True)
     value = _load_json(completion_path, label="local hardware-fit completion")
+    if value.get("schema") == "ura-local-truncation-recovery-phase6-continuation/1":
+        from experiments.local_campaign.local_truncation_recovery_continuation_phase6 import (
+            validate_phase7_completion,
+        )
+
+        return validate_phase7_completion(completion_path, runner_root=runner_root)
     fields = {
         "schema",
         "status",

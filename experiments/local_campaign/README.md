@@ -370,6 +370,19 @@ configs, obtains fresh admission artifacts, and runs only the exact recovery
 identities with one answer retry. A retained missing answer remains a row-level
 model-stability result and does not terminate the rest of its unit.
 
+If that controller itself is interrupted after durable work, do not restart it
+or discard its output. Use
+`local_truncation_recovery_continuation_phase6` with the same inventory, the
+canonical interrupted control root and the terminated controller PID. The
+campaign-specific continuation accepts only the retained partition of two
+complete units, 424 durable rows in unit 3 and no starts in units 4-25. It marks
+the former controller and its active child Job interrupted, adds those 424
+datapoint identities to the completed-ID selector, and schedules only the 2,714
+never-completed rows. The 424 rows remain explicit lifecycle evidence because
+the interrupted Runner never produced its terminal grid; they are not silently
+promoted or called again. The body-read deadline regression must pass before
+this continuation is deployed.
+
 Targeted Runner-output recovery is deliberately outside `launch_chain`. It is
 available only through the generated
 `launch_phase6_recovery_and_seven.sh`. The launcher starts one named tmux
