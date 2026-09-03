@@ -82,6 +82,7 @@ def load_profiles(
             != {
                 "generation_tokens",
                 "identity",
+                "local_execution",
                 "modalities",
                 "readiness",
                 "request_timeout_seconds",
@@ -89,6 +90,7 @@ def load_profiles(
         ):
             raise ValueError("local model profile entry changed")
         identity = entry["identity"]
+        local_execution = entry["local_execution"]
         modalities = entry["modalities"]
         readiness = entry["readiness"]
         generation_tokens = entry["generation_tokens"]
@@ -105,6 +107,7 @@ def load_profiles(
                 for item in modalities
             )
             or len(set(modalities)) != len(modalities)
+            or not isinstance(local_execution, dict)
             or isinstance(generation_tokens, bool)
             or not isinstance(generation_tokens, int)
             or not 1 <= generation_tokens <= 25_000
@@ -119,6 +122,20 @@ def load_profiles(
             or _HEX64.fullmatch(str(readiness["readiness_id"])) is None
         ):
             raise ValueError(f"local model profile {spec!r} is invalid")
+        if spec.startswith("vllm:"):
+            expected_execution = {"max_model_len": -1}
+        else:
+            from ura.targets.local import validate_ollama_think
+
+            try:
+                thinking = validate_ollama_think(local_execution.get("think"))
+            except ValueError as exc:
+                raise ValueError(
+                    f"local model profile {spec!r} condition is invalid"
+                ) from exc
+            expected_execution = {"num_ctx": "fit", "think": thinking}
+        if local_execution != expected_execution:
+            raise ValueError(f"local model profile {spec!r} condition is invalid")
         profiles[spec] = dict(entry)
     return profiles
 
@@ -156,8 +173,10 @@ def apply_profile(
         raise ValueError(f"local model profile modalities differ for {spec!r}")
     if spec.startswith("vllm:"):
         result["max_tokens"] = profile["generation_tokens"]
+        result["max_model_len"] = -1
     else:
         result["num_predict"] = profile["generation_tokens"]
+        result.update(profile["local_execution"])
     result["timeout"] = profile["request_timeout_seconds"]
     return result, profile
 
@@ -183,6 +202,7 @@ def update_registry(
     if not isinstance(execution, dict):
         raise ValueError("readiness receipt omitted its execution profile")
     selected = execution.get("selected_generation_tokens")
+    local_execution = execution.get("local_execution")
     timeout = execution.get("per_request_deadline_seconds")
     target = (path or registry_path()).expanduser()
     if target.exists():
@@ -195,6 +215,7 @@ def update_registry(
     models[spec] = {
         "generation_tokens": selected,
         "identity": _identity(local_config),
+        "local_execution": local_execution,
         "modalities": list(local_config["modalities"]),
         "readiness": {
             "path": str(readiness_path.resolve(strict=True)),

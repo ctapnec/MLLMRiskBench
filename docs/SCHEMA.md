@@ -2,7 +2,7 @@
 
 `ura.data_models` is the typed Pydantic v2 contract shared by converters,
 attackers, targets, judges, persistence, and analysis. `SCHEMA_VERSION = "1.5"`
-is stamped on datapoints, checkpoints, and manifests. Runner 2.31 rejects mixed
+is stamped on datapoints, checkpoints, and manifests. Runner 2.32 rejects mixed
 schema versions and duplicate datapoint IDs before a target call.
 
 The 1.5 transition introduces isolated-engine identities and verified closing
@@ -631,7 +631,7 @@ an executed cell:
   `/6`: hosted targets require zero answer retries, and their first retained
   failed output or transport/network failure opens the global `paid_provider`
   circuit before another paid call.
-  Runner 2.31 also accepts `timeout` on vLLM and Ollama entries as a numeric
+  Runner 2.32 also accepts `timeout` on vLLM and Ollama entries as a numeric
   per-request wall-clock bound in 1..3,600 seconds. Omitted local generation
   and timeout values are filled from the exact model's validated machine-local
   profile. An unprofiled local generative model is rejected rather than given a
@@ -649,10 +649,10 @@ an executed cell:
   the target phase because they are part of the treatment.
 
 - `ura-local-model-readiness/3` retains the immutable target identity and
-  modalities, an ascending 256 through 25,000-token stress prefix, the first
-  failed condition if one occurs, the 120-second per-request deadline, and the
-  highest contiguous condition that reached at least 95 percent of its cap
-  below that deadline for text and, when declared, physical-image input. It
+  modalities, a descending 25,000 through 256-token stress prefix, every failed
+  larger candidate, the 120-second per-request deadline, and the first
+  condition that reached at least 95 percent of its cap below that deadline for
+  text and, when declared, physical-image input. It
   also retains the exact
   seeded 10-text/5-image survey at the selected cap. The thresholds remain 5 of
   10 text and 2 of 5 image, with empty or timed-out responses counted as
@@ -660,7 +660,8 @@ an executed cell:
   evidence but do not supply a current execution profile.
   `ura-local-model-execution-profiles/2` is a machine-local operational
   registry, not empirical evidence. Each row binds one vLLM revision or Ollama
-  digest, modalities, selected generation tokens, request deadline, and the
+  digest, modalities, hardware-fit context, selected generation tokens, Ollama
+  thinking mode where applicable, request deadline, and the
   exact `/3` readiness receipt path, ID, and digest. Registry schema `/1` is
   historical only. Identity or modality drift fails rather than transferring a
   recommendation to another model.

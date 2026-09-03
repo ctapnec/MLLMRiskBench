@@ -269,16 +269,15 @@ to current GPU capacity. An explicit integer in 1..1,000,000 must be at least
 `max_tokens`, is passed at engine construction, and is retained in normalized
 execution provenance.
 
-Runner 2.31 uses one provider-independent execution-profile boundary for local
-generative models. `local_model_readiness` forces an ascending output-token
-stress ladder in text and, when declared, physical-image input, stops at the
-first failed or 120-second generation, and selects the highest contiguous cap
-actually reached below the deadline. It then applies the seeded 10-text and
+Runner 2.32 uses one provider-independent execution-profile boundary for local
+generative models. `local_model_readiness` starts at the 25,000-token local
+ceiling and descends until a forced generation reaches its cap below 120
+seconds in text and, when declared, physical-image input. It then applies the seeded 10-text and
 5-image responsiveness thresholds at that cap. A machine-local registry binds
 the recommendation to the exact revision or digest and modalities. Both CLI
-and Build use its vLLM `max_tokens`, Ollama `num_predict`, and request deadline;
-an explicit local config value cannot replace the approved profile. The
-hardware-fit context is unchanged.
+and Build use its hardware-fit context, vLLM `max_tokens`, Ollama `num_predict`
+and thinking mode, and request deadline; an explicit local config value cannot
+replace the approved profile.
 Hosted targets and judges never read this registry: their explicit output caps
 remain paid-budget inputs and their retry count remains zero.
 
@@ -419,11 +418,11 @@ fraction of another device for later scoring, so target utilization and memory
 observations describe the target condition rather than target-judge
 co-residency.
 
-Runner 2.31 leaves unified schema 1.5 and retained Runner artifacts unchanged.
+Runner 2.32 leaves unified schema 1.5 and retained Runner artifacts unchanged.
 It adds `ura-local-model-readiness/3` and the machine-local
 `ura-local-model-execution-profiles/2` registry. Readiness schemas `/1` and `/2`
 and registry schema `/1` remain historical records but cannot supply a current
-execution profile. Runner 2.31 also preserves typed answer and input failures
+execution profile. Runner 2.32 also preserves typed answer and input failures
 across the sealed vLLM execution boundary, so the provider-independent retry,
 missing-response, and continuation policy applies to vLLM as well as Ollama.
 

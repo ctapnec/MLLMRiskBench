@@ -5,7 +5,7 @@ validity rules, then execute [RUN_AND_RETURN.md](RUN_AND_RETURN.md). A dry run,
 partial artifact family, source conversion, model-name assumption, native prompt
 export, or synthetic figure is not a measured thesis result.
 
-The maintained execution contract is Runner `ura-runner/2.31` with unified
+The maintained execution contract is Runner `ura-runner/2.32` with unified
 schema `1.5`. Runner 2.19/schema 1.4 artifacts remain runtime-free legacy
 compatibility only and are not mixed into the current measured cohort.
 Ignored local/rig engineering logs are operational diagnostics, not committed
@@ -91,9 +91,9 @@ product:
    GPU-resident. The Runner uses the daemon HTTP API directly;
    no Ollama Python SDK is required.
    Generative vLLM and Ollama models share an identity-bound local readiness
-   profile. An ascending 256 through 25,000-token stress ladder stops at its
-   first failed or 120-second condition and selects the highest contiguous cap
-   actually reached below the deadline in every declared modality. The seeded
+   profile. A descending 25,000 through 256-token stress ladder stops at the
+   first cap actually reached below 120 seconds for text and, when declared,
+   physical-image input. The seeded
    10-text/5-image survey then runs at that cap. The resulting profile is
    required by CLI and Build. Hosted target and judge output caps are instead
    fixed only by their paid campaign budget and never consume this registry.

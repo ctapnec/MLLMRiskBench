@@ -81,10 +81,9 @@ same-base unguarded/guarded local pair is the preferred defense effect;
 unrelated models cannot identify that effect.
 Fit and loadability do not by themselves admit a generative local target. Before
 security projection, canary or measurement, `experiments.local_model_readiness`
-forces an ascending response-cap stress ladder under a 120-second per-request
-deadline and stops at the first failed condition. It selects the highest
-contiguous cap actually reached below the deadline for text and, when declared,
-physical-image input. At that cap it selects ten benign questions
+starts at the local response ceiling and descends until a forced generation
+reaches its cap below a 120-second per-request deadline for text and, when
+declared, physical-image input. At that cap it selects ten benign questions
 deterministically from its fixed bank and requires at least five correct; the
 other five may be incorrect or empty. It adds five deterministic synthetic
 image checks for every image-capable target and requires at least two correct;

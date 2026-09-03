@@ -190,6 +190,10 @@ def test_alignment_continuation_rebinds_readiness_profile(
                     model_spec: {
                         "generation_tokens": 25_000,
                         "identity": {"digest": model.digest},
+                        "local_execution": {
+                            "num_ctx": "fit",
+                            "think": expected_think,
+                        },
                         "modalities": list(model.modalities),
                         "readiness": {
                             "path": "/evidence/readiness.json",

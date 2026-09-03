@@ -231,12 +231,12 @@ the largest allocation that fits live GPU memory. An explicit integer in
 1..1,000,000 remains available for a fixed experimental condition. An omitted
 `max_tokens` resolves through the identity-bound local readiness profile. A
 model without that approval is rejected before a security campaign. The
-current profiler drives an ascending 256, 512, 1,024, 2,048, 4,096, 8,192,
-16,384, and 25,000-token stress ladder. It stops at the first failed or
-120-second generation, stores the highest contiguous cap that was actually
-reached below the deadline for every declared modality, and then runs the
-seeded 10-text/5-image responsiveness survey at that cap. The approved value
-may not exceed an explicit positive `max_model_len`.
+current profiler starts at 25,000 tokens and descends through 16,384, 8,192,
+4,096, 2,048, 1,024, 512, and 256. It stops at the first cap that is actually
+reached below 120 seconds for text and, when declared, physical-image input,
+and then runs the seeded 10-text/5-image responsiveness survey at that cap. The
+profile separately binds `max_model_len=-1`, so the engine selects the maximum
+hardware-fitting context without treating it as a response allowance.
 Rig Web preserves the field in its selected local config, and the normalized
 value enters grid/run provenance. Each Build row labels either the explicit
 context cap or automatic maximum GPU-fit context.
@@ -505,11 +505,11 @@ Generative local vLLM and Ollama targets also require a passing
 `python -m experiments.local_model_readiness` receipt before security calls.
 The transport-neutral benign gate uses ten deterministic questions and five
 synthetic images for image-capable models, treats empty responses as incorrect,
-and requires the configured minimum correct counts. Schema `/3` first forces
-each candidate in the ascending output-token ladder until the first cap or
-120-second failure, then runs the same responsiveness survey at the highest
-contiguous cap actually reached below the deadline. It writes an
-immutable-model-bound recommendation to the machine-local profile registry.
+and requires the configured minimum correct counts. Schema `/3` starts at the
+local output ceiling and lowers the candidate until a forced generation reaches
+that cap below 120 seconds, then runs the same responsiveness survey there. It
+writes the approved output cap, hardware-fit context and Ollama thinking mode to
+the immutable-model-bound machine-local profile registry.
 Schema `/2` remains historical evidence, but its short-answer probes did not
 exercise the configured ceiling and its schema-1 registry cannot admit new
 inference. Runner CLI and Build consume only the current schema-2 registry; an
@@ -797,7 +797,7 @@ Runner `RunManifest`; the URA revision that performed their import is retained
 in the return-package/importer context rather than relabelled as an upstream
 native field.
 
-Runner `ura-runner/2.31` writes unified schema `1.5`. Runner 2.31 is the
+Runner `ura-runner/2.32` writes unified schema `1.5`. Runner 2.32 is the
 maintained execution contract. Runner 2.19/schema 1.4 artifacts remain readable
 only as runtime-free legacy compatibility and are not
 mixed into the current measured cohort. Immutable planning/source

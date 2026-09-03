@@ -21,10 +21,11 @@ from experiments.local_model_readiness import (
     TEXT_SAMPLE_SIZE,
     VISION_MIN_CORRECT,
     VISION_SAMPLE_SIZE,
+    _configure_readiness_condition,
+    _profile_generation_conditions,
     _run_text,
     _run_vision,
     _run_condition,
-    _profile_generation_conditions,
     bounded_readiness_policy,
     legacy_readiness_policy,
     readiness_policy,
@@ -172,6 +173,7 @@ def _stress_result(generation_tokens: int) -> dict[str, object]:
         "reached_generation_cap": True,
         "requested_generation_tokens": generation_tokens,
         "termination_reason": "length",
+        "thinking_output_observed": False,
         "tokens": {
             "prompt": 1,
             "completion": generation_tokens,
@@ -180,7 +182,13 @@ def _stress_result(generation_tokens: int) -> dict[str, object]:
     }
 
 
-def readiness_receipt(*, text_correct: int = 5, vision: bool = True) -> dict[str, object]:
+def readiness_receipt(
+    *,
+    text_correct: int = 5,
+    vision: bool = True,
+    spec: str = "vllm:example/model",
+    think: bool | str = False,
+) -> dict[str, object]:
     text = {
         "correct": text_correct,
         "minimum_correct": TEXT_MIN_CORRECT,
@@ -203,29 +211,31 @@ def readiness_receipt(*, text_correct: int = 5, vision: bool = True) -> dict[str
         if vision
         else None
     )
-    conditions = [
-        {
-            "deadline_failures": 0,
-            "generation_tokens": tokens,
-            "passed": True,
-            "stress_text": _stress_result(tokens),
-            "stress_vision": _stress_result(tokens) if vision else None,
-        }
-        for tokens in PROFILE_GENERATION_TOKEN_CANDIDATES
-    ]
+    tokens = PROFILE_GENERATION_TOKEN_CANDIDATES[0]
+    conditions = [{
+        "deadline_failures": 0,
+        "generation_tokens": tokens,
+        "passed": True,
+        "stress_text": _stress_result(tokens),
+        "stress_vision": _stress_result(tokens) if vision else None,
+    }]
+    local_execution = (
+        {"max_model_len": -1}
+        if spec.startswith("vllm:")
+        else {"num_ctx": "fit", "think": think}
+    )
     return {
         "execution_profile": {
             "conditions": conditions,
+            "local_execution": local_execution,
             "per_request_deadline_seconds": PROFILE_REQUEST_DEADLINE_SECONDS,
             "selected_generation_tokens": PROFILE_MAXIMUM_GENERATION_TOKENS,
-            "selection_basis": (
-                "highest_contiguous_stress_pass_before_first_failure"
-            ),
+            "selection_basis": "first_descending_stress_pass",
         },
         "modalities": ["text", "image"] if vision else ["text"],
         "policy": readiness_policy(),
         "readiness_id": "a" * 64,
-        "requested_spec": "vllm:example/model",
+        "requested_spec": spec,
         "schema": SCHEMA,
         "status": "verified",
         "text": text,
@@ -271,7 +281,7 @@ def test_readiness_validator_requires_text_and_image_thresholds() -> None:
     assert vision["nonresponses"] == 3
 
 
-def test_readiness_approves_highest_passing_profiled_condition() -> None:
+def test_readiness_approves_first_descending_passing_condition() -> None:
     value = readiness_receipt(vision=False)
     assert validate_readiness(value)["execution_profile"][
         "selected_generation_tokens"
@@ -290,14 +300,14 @@ def test_generation_profile_lowers_cap_at_first_120_second_failure() -> None:
 
     assert selected == 2_048
     assert [row["generation_tokens"] for row in conditions] == [
-        256,
-        512,
-        1_024,
-        2_048,
+        25_000,
+        16_384,
+        8_192,
         4_096,
+        2_048,
     ]
-    assert [row["passed"] for row in conditions] == [True, True, True, True, False]
-    assert conditions[-1]["deadline_failures"] == 1
+    assert [row["passed"] for row in conditions] == [False, False, False, False, True]
+    assert conditions[0]["deadline_failures"] == 1
 
 
 def test_generation_profile_rejects_early_stop_before_requested_cap() -> None:
@@ -323,26 +333,81 @@ def test_generation_profile_rejects_early_stop_before_requested_cap() -> None:
     )
 
     assert selected is None
-    assert len(conditions) == 1
-    assert conditions[0]["passed"] is False
+    assert len(conditions) == len(PROFILE_GENERATION_TOKEN_CANDIDATES)
+    assert all(condition["passed"] is False for condition in conditions)
+
+
+def test_thinking_only_stress_calibrates_without_replacing_answer_survey() -> None:
+    value = readiness_receipt(
+        vision=False,
+        spec="ollama:example:model",
+        think=True,
+    )
+    stress = value["execution_profile"]["conditions"][0]["stress_text"]
+    stress["characters"] = 0
+    stress["outcome"] = "model_nonresponse"
+    stress["preview"] = ""
+    stress["thinking_output_observed"] = True
+
+    assert validate_readiness(value)["status"] == "verified"
 
 
 def test_current_readiness_rejects_non_prefix_or_post_failure_conditions() -> None:
     value = readiness_receipt(vision=False)
-    value["execution_profile"]["conditions"][1]["generation_tokens"] = 1_024
+    value["execution_profile"]["conditions"][0]["generation_tokens"] = 16_384
     with pytest.raises(ValueError, match="conditions"):
         validate_readiness(value)
 
     value = readiness_receipt(vision=False)
-    failed = value["execution_profile"]["conditions"][3]
+    passing = value["execution_profile"]["conditions"][0]
+    failed = {
+        **passing,
+        "generation_tokens": 25_000,
+        "stress_text": _stress_result(25_000),
+    }
     failed["stress_text"]["termination_reason"] = "stop"
     failed["stress_text"]["tokens"]["completion"] = 1
     failed["stress_text"]["reached_generation_cap"] = False
     failed["stress_text"]["passed"] = False
     failed["passed"] = False
-    value["execution_profile"]["selected_generation_tokens"] = 1_024
+    passing = {
+        **passing,
+        "generation_tokens": 16_384,
+        "stress_text": _stress_result(16_384),
+    }
+    extra = {
+        **passing,
+        "generation_tokens": 8_192,
+        "stress_text": _stress_result(8_192),
+    }
+    value["execution_profile"]["conditions"] = [failed, passing, extra]
+    value["execution_profile"]["selected_generation_tokens"] = 16_384
     with pytest.raises(ValueError, match="condition status"):
         validate_readiness(value)
+
+
+def test_readiness_condition_forces_fit_context_and_preserves_thinking() -> None:
+    vllm_config = {"max_model_len": 12_288, "max_tokens": 512}
+    assert _configure_readiness_condition("vllm:example/model", vllm_config) == {
+        "max_model_len": -1
+    }
+    assert vllm_config == {
+        "max_model_len": -1,
+        "max_tokens": 25_000,
+        "timeout": 120.0,
+    }
+
+    ollama_config = {"num_ctx": 8_192, "num_predict": 512, "think": "low"}
+    assert _configure_readiness_condition("ollama:example:model", ollama_config) == {
+        "num_ctx": "fit",
+        "think": "low",
+    }
+    assert ollama_config == {
+        "num_ctx": "fit",
+        "num_predict": 25_000,
+        "think": "low",
+        "timeout": 120.0,
+    }
 
 
 def test_retained_schema_two_readiness_receipts_remain_valid() -> None:
@@ -428,10 +493,45 @@ def test_readiness_profile_registry_is_identity_bound_and_reused(
     assert evidence is not None
 
     overridden, _evidence = apply_profile(
-        "vllm:example/model", {**config, "max_tokens": 8192, "timeout": 90}
+        "vllm:example/model",
+        {**config, "max_model_len": 2_048, "max_tokens": 8192, "timeout": 90},
     )
     assert overridden["max_tokens"] == 25000
+    assert overridden["max_model_len"] == -1
     assert overridden["timeout"] == PROFILE_REQUEST_DEADLINE_SECONDS
+
+    ollama_receipt = readiness_receipt(
+        vision=False,
+        spec="ollama:example:model",
+        think=True,
+    )
+    ollama_path = tmp_path / "ollama.readiness.json"
+    ollama_raw = (
+        json.dumps(ollama_receipt, sort_keys=True, separators=(",", ":")) + "\n"
+    ).encode()
+    ollama_path.write_bytes(ollama_raw)
+    ollama_config = {
+        "digest": "d" * 64,
+        "modalities": ["text"],
+        "num_ctx": 8_192,
+        "think": False,
+    }
+    update_registry(
+        spec="ollama:example:model",
+        local_config=ollama_config,
+        readiness_path=ollama_path,
+        readiness_sha256=hashlib.sha256(ollama_raw).hexdigest(),
+        readiness=ollama_receipt,
+        path=registry,
+    )
+    profiled_ollama, _ = apply_profile(
+        "ollama:example:model",
+        ollama_config,
+        path=registry,
+    )
+    assert profiled_ollama["num_ctx"] == "fit"
+    assert profiled_ollama["num_predict"] == 25_000
+    assert profiled_ollama["think"] is True
 
     changed = {**config, "revision": "c" * 40}
     with pytest.raises(ValueError, match="identity differs"):

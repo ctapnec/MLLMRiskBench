@@ -3120,6 +3120,11 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
         profiles[spec] = {
             "generation_tokens": 4096,
             "identity": {identity_key: identity.lower()},
+            "local_execution": (
+                {"max_model_len": -1}
+                if spec.startswith("vllm:")
+                else {"num_ctx": "fit", "think": entry.get("think", False)}
+            ),
             "modalities": list(modalities),
             "readiness": {
                 "path": str(evidence.resolve()),

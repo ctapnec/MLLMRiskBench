@@ -38,7 +38,7 @@ REVISION = "6" * 40
 
 
 def test_current_runner_version_includes_local_context_contract() -> None:
-    assert CODE_VERSION == "ura-runner/2.31"
+    assert CODE_VERSION == "ura-runner/2.32"
     assert DEFAULT_VLLM_GENERATION_TOKENS == 4096
     assert DEFAULT_VLLM_MAX_MODEL_LEN == -1
     assert DEFAULT_OLLAMA_NUM_CTX == "fit"
@@ -135,6 +135,11 @@ def _write_execution_profile(
                 "identity": {
                     identity_key: str(config[identity_key]).lower(),
                 },
+                "local_execution": (
+                    {"max_model_len": -1}
+                    if spec.startswith("vllm:")
+                    else {"num_ctx": "fit", "think": config.get("think", False)}
+                ),
                 "modalities": list(config["modalities"]),
                 "readiness": {
                     "path": str(evidence.resolve()),

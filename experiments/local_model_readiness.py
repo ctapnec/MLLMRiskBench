@@ -39,6 +39,7 @@ from ura.targets.local import (  # noqa: E402
     DEFAULT_LOCAL_REQUEST_TIMEOUT_SECONDS,
     MAX_OLLAMA_NUM_PREDICT,
     MAX_VLLM_GENERATION_TOKENS,
+    validate_ollama_think,
 )
 from ura.model_acquisition import (  # noqa: E402
     ModelAcquisitionError,
@@ -67,14 +68,14 @@ PROFILE_MAXIMUM_GENERATION_TOKENS = min(
 )
 PROFILE_REQUEST_DEADLINE_SECONDS = DEFAULT_LOCAL_REQUEST_TIMEOUT_SECONDS
 PROFILE_GENERATION_TOKEN_CANDIDATES = (
-    256,
-    512,
-    1_024,
-    2_048,
-    4_096,
-    8_192,
-    16_384,
     PROFILE_MAXIMUM_GENERATION_TOKENS,
+    16_384,
+    8_192,
+    4_096,
+    2_048,
+    1_024,
+    512,
+    256,
 )
 PROFILE_STRESS_MINIMUM_FRACTION = 0.95
 TEXT_BANK = (
@@ -140,7 +141,7 @@ def _sha(value: object) -> str:
 def readiness_policy() -> dict[str, object]:
     return {
         "generation_conditions": list(PROFILE_GENERATION_TOKEN_CANDIDATES),
-        "generation_selection": "highest_contiguous_stress_pass_before_first_failure",
+        "generation_selection": "first_descending_stress_pass",
         "generation_stress_minimum_fraction": PROFILE_STRESS_MINIMUM_FRACTION,
         "nonresponses_count_as_incorrect": True,
         "per_request_deadline_seconds": PROFILE_REQUEST_DEADLINE_SECONDS,
@@ -241,6 +242,9 @@ def _observation(response: Response, text: str) -> dict[str, object]:
         "outcome": "generated_text" if text else "model_nonresponse",
         "preview": text[:500],
         "termination_reason": termination,
+        "thinking_output_observed": (
+            response.raw.get("thinking_output_observed") is True
+        ),
         "tokens": dict(response.tokens),
         "effective_generation": dict(generation) if isinstance(generation, dict) else {},
     }
@@ -258,6 +262,7 @@ def _failed_observation(
         "outcome": "model_nonresponse",
         "preview": "",
         "termination_reason": None,
+        "thinking_output_observed": False,
         "tokens": {},
     }
 
@@ -360,6 +365,26 @@ def _set_generation_tokens(target: Any, spec: str, value: int) -> None:
         raise ValueError("readiness profile supports only vLLM or Ollama")
 
 
+def _configure_readiness_condition(
+    spec: str,
+    config: dict[str, object],
+) -> dict[str, object]:
+    """Bind hardware-fit context and the selected model's thinking mode."""
+
+    config["timeout"] = PROFILE_REQUEST_DEADLINE_SECONDS
+    if spec.startswith("vllm:"):
+        config["max_model_len"] = -1
+        config["max_tokens"] = PROFILE_MAXIMUM_GENERATION_TOKENS
+        return {"max_model_len": -1}
+    if spec.startswith("ollama:"):
+        config["num_ctx"] = "fit"
+        config["num_predict"] = PROFILE_MAXIMUM_GENERATION_TOKENS
+        thinking = config.get("think", False)
+        config["think"] = thinking
+        return {"num_ctx": "fit", "think": thinking}
+    raise ValueError("readiness supports only local vLLM or Ollama targets")
+
+
 def _run_condition(
     target: Any,
     *,
@@ -453,10 +478,17 @@ def _run_generation_stress(
         **observation,
         "deadline_passed": deadline_passed,
         "minimum_completion_tokens": minimum_tokens,
+        # This is a throughput calibration, not an answer-quality result. A
+        # reasoning model may place these deliberately repetitive tokens in
+        # its separate thinking field. The later responsiveness survey still
+        # requires visible, correct answers at the selected cap.
         "passed": bool(
-            observation.get("outcome") == "generated_text"
-            and reached_cap
+            reached_cap
             and deadline_passed
+            and (
+                observation.get("outcome") == "generated_text"
+                or observation.get("thinking_output_observed") is True
+            )
         ),
         "reached_generation_cap": reached_cap,
         "requested_generation_tokens": generation_tokens,
@@ -469,7 +501,7 @@ def _profile_generation_conditions(
     spec: str,
     modalities: list[str],
 ) -> tuple[list[dict[str, object]], int | None]:
-    """Find the highest contiguous token cap proven below the hard deadline."""
+    """Start at the maximum and lower it until one cap meets the deadline."""
 
     conditions: list[dict[str, object]] = []
     for generation_tokens in PROFILE_GENERATION_TOKEN_CANDIDATES:
@@ -505,15 +537,12 @@ def _profile_generation_conditions(
             "stress_vision": stress_vision,
         }
         conditions.append(condition)
-        if condition["passed"] is not True:
+        if condition["passed"] is True:
             break
-    selected = max(
-        (
-            int(condition["generation_tokens"])
-            for condition in conditions
-            if condition["passed"] is True
-        ),
-        default=None,
+    selected = (
+        int(conditions[-1]["generation_tokens"])
+        if conditions and conditions[-1]["passed"] is True
+        else None
     )
     return conditions, selected
 
@@ -583,9 +612,12 @@ def _validate_stress_result(
         and float(latency_ms) < PROFILE_REQUEST_DEADLINE_SECONDS * 1000.0
     )
     expected_passed = bool(
-        value.get("outcome") == "generated_text"
-        and reached_cap
+        reached_cap
         and deadline_passed
+        and (
+            value.get("outcome") == "generated_text"
+            or value.get("thinking_output_observed") is True
+        )
     )
     if (
         value.get("requested_generation_tokens") != generation_tokens
@@ -615,6 +647,11 @@ def validate_readiness(value: object, *, expected_spec: str | None = None) -> di
         raise ValueError("local-model readiness policy is not terminal-passed")
     if expected_spec is not None and value.get("requested_spec") != expected_spec:
         raise ValueError("local-model readiness receipt names another target")
+    requested_spec = value.get("requested_spec")
+    if not isinstance(requested_spec, str) or not requested_spec.startswith(
+        ("vllm:", "ollama:")
+    ):
+        raise ValueError("local-model readiness target is invalid")
     modalities = value.get("modalities")
     text = value.get("text")
     vision = value.get("vision")
@@ -650,14 +687,14 @@ def validate_readiness(value: object, *, expected_spec: str | None = None) -> di
             or set(execution)
             != {
                 "conditions",
+                "local_execution",
                 "per_request_deadline_seconds",
                 "selected_generation_tokens",
                 "selection_basis",
             }
             or execution.get("per_request_deadline_seconds")
             != PROFILE_REQUEST_DEADLINE_SECONDS
-            or execution.get("selection_basis")
-            != "highest_contiguous_stress_pass_before_first_failure"
+            or execution.get("selection_basis") != "first_descending_stress_pass"
             or not isinstance(execution.get("conditions"), list)
             or not execution["conditions"]
         ):
@@ -675,8 +712,7 @@ def validate_readiness(value: object, *, expected_spec: str | None = None) -> di
         ):
             raise ValueError("local-model execution profile conditions are invalid")
         passing: list[int] = []
-        failed_seen = False
-        for condition in execution["conditions"]:
+        for index, condition in enumerate(execution["conditions"]):
             if not isinstance(condition, dict) or set(condition) != {
                 "deadline_failures",
                 "generation_tokens",
@@ -712,18 +748,27 @@ def validate_readiness(value: object, *, expected_spec: str | None = None) -> di
             if (
                 condition["deadline_failures"] != deadline_failures
                 or condition["passed"] is not expected_passed
-                or (failed_seen and expected_passed)
+                or (index < len(execution["conditions"]) - 1 and expected_passed)
             ):
                 raise ValueError("local-model execution condition status is invalid")
             if expected_passed:
                 passing.append(generation_tokens)
-            else:
-                failed_seen = True
-        if len(execution["conditions"]) < len(configured) and not failed_seen:
-            raise ValueError("local-model execution profile stopped before a failure")
-        selected = max(passing) if passing else None
+        selected = passing[-1] if passing else None
         if execution.get("selected_generation_tokens") != selected or selected is None:
             raise ValueError("local-model execution profile has no passing condition")
+        local_execution = execution.get("local_execution")
+        if requested_spec.startswith("vllm:"):
+            expected_local_execution = {"max_model_len": -1}
+        elif isinstance(local_execution, dict):
+            try:
+                thinking = validate_ollama_think(local_execution.get("think"))
+            except ValueError as exc:
+                raise ValueError("local-model execution condition changed") from exc
+            expected_local_execution = {"num_ctx": "fit", "think": thinking}
+        else:
+            expected_local_execution = None
+        if local_execution != expected_local_execution:
+            raise ValueError("local-model execution condition changed")
         return value
     if (
         not isinstance(execution, dict)
@@ -847,11 +892,7 @@ def main(argv: list[str] | None = None) -> int:
         expected_sha256=args.local_config_sha256,
     )
     config = local_configs[args.local]
-    config["timeout"] = PROFILE_REQUEST_DEADLINE_SECONDS
-    if args.local.startswith("vllm:"):
-        config["max_tokens"] = PROFILE_DEFAULT_GENERATION_TOKENS
-    else:
-        config["num_predict"] = PROFILE_DEFAULT_GENERATION_TOKENS
+    local_execution = _configure_readiness_condition(args.local, config)
     requirements = collect_run_requirements(
         target_specs=[args.local],
         local_configs=local_configs,
@@ -961,11 +1002,10 @@ def main(argv: list[str] | None = None) -> int:
         "modalities": list(config["modalities"]),
         "execution_profile": {
             "conditions": conditions,
+            "local_execution": local_execution,
             "per_request_deadline_seconds": PROFILE_REQUEST_DEADLINE_SECONDS,
             "selected_generation_tokens": selected_generation_tokens,
-            "selection_basis": (
-                "highest_contiguous_stress_pass_before_first_failure"
-            ),
+            "selection_basis": "first_descending_stress_pass",
         },
         "policy": readiness_policy(),
         "readiness_id": "0" * 64,

@@ -228,13 +228,14 @@ with seed 20260829 and requires at least five correct. The other five answers
 may be incorrect or empty. For an image-capable target, it adds five
 deterministic synthetic split-color images and requires at least two correct;
 the other three may be incorrect or empty. The current `/3` gate first forces
-one text generation and, when applicable, one physical-image generation through
-an ascending 256, 512, 1,024, 2,048, 4,096, 8,192, 16,384, and 25,000-token
-ladder. It stops at the first failed or 120-second condition and selects the
-highest contiguous cap that reached at least 95 percent of the requested output
-below the deadline in every declared modality. The 10-text/5-image survey then
+one text generation and, when applicable, one physical-image generation at
+25,000 tokens, then descends through 16,384, 8,192, 4,096, 2,048, 1,024, 512,
+and 256. It stops at the first cap that reaches at least 95 percent of the
+requested output below 120 seconds for text and physical-image input. The
+10-text/5-image survey then
 runs once at that cap. The identity-bound schema-2 rig profile is consumed by
-CLI and Build. Context remains maximum hardware-fit. An unprofiled local
+CLI and Build and binds maximum hardware-fit context plus Ollama thinking mode
+where applicable. An unprofiled local
 generative model is rejected, and the approved values replace campaign-local
 overrides. Readiness `/1` and `/2` and profile-registry `/1` remain historical
 evidence but cannot admit a new local inference call.
@@ -1067,7 +1068,7 @@ this local mechanism: their explicit token limits remain derived from the paid
 campaign budget. They receive zero answer-quality retries and up to three
 harness retries only for the declared retryable HTTP status responses.
 
-### 7.2 Runner 2.31 local execution-profile amendment
+### 7.2 Runner 2.32 local execution-profile amendment
 
 The 3 September hardware-fit continuation exposed a second execution-condition
 confound. Its LLaVA unit omitted `max_tokens`, so Runner 2.29 allowed the model
@@ -1083,8 +1084,8 @@ reached the 120-second ceiling under a nominally passing 25,000-token profile.
 The controller was stopped before the next measured unit. Its three timed-out
 rows are invalid-condition diagnostics, not model-stability observations.
 
-Runner 2.31 first stress-tests an ascending token ladder and then runs the
-responsiveness survey at the highest proven sub-120-second cap. It also
+Runner 2.32 stress-tests the local ceiling and lowers it until the first proven
+sub-120-second cap, then runs the responsiveness survey there. It also
 preserves typed answer and input failures across the sealed vLLM execution
 boundary, so a genuine later failure follows the same retry-and-retain rule as
 Ollama. Before continuing security work, all three downloaded vLLM targets and
