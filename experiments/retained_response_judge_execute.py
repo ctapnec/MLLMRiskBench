@@ -268,7 +268,10 @@ def _cost_bounds(
             forbidden_prompt=judge._forbidden_prompt(datapoint),
             response=judge._response_text(response),
         )
-        input_bound = len(rubric.encode("utf-8")) + 4_096
+        # A byte-level upper bound is deliberately conservative for the text
+        # tokenizer. The fixed allowance covers the system message and provider
+        # message framing without requiring an unbudgeted token-count API call.
+        input_bound = len(rubric.encode("utf-8")) + 256
         result[row["retained_row_sha256"]] = input_bound + max_output_tokens * 5
     return result
 
@@ -377,6 +380,53 @@ def _artifact_usage(value: Mapping[str, Any]) -> tuple[int, int, int]:
     return value["input_tokens"], value["output_tokens"], value["cost_microusd"]
 
 
+def _validate_completion(
+    value: object,
+    *,
+    plan: Mapping[str, Any],
+    ledger: Mapping[str, Any],
+    plan_sha256: str,
+) -> dict:
+    if not isinstance(value, dict) or set(value) != {
+        "schema",
+        "status",
+        "plan_id",
+        "plan_sha256",
+        "selected_outputs",
+        "target_calls",
+        "judge_calls",
+        "http_attempts",
+        "input_tokens",
+        "output_tokens",
+        "actual_cost_microusd",
+        "max_cost_microusd",
+        "independent_judge_rows",
+        "same_model_judge_rows",
+        "physical_media_sent_to_judge",
+    }:
+        raise ValueError("retained-response completion fields changed")
+    condition = plan["judge_condition"]
+    if (
+        value["schema"] != COMPLETION_SCHEMA
+        or value["status"] != "complete"
+        or value["plan_id"] != plan["plan_id"]
+        or value["plan_sha256"] != plan_sha256
+        or value["selected_outputs"] != len(plan["selected"])
+        or value["target_calls"] != 0
+        or value["judge_calls"] != ledger["completed_judgments"]
+        or value["http_attempts"] != ledger["http_attempts_reserved"]
+        or value["input_tokens"] != ledger["input_tokens"]
+        or value["output_tokens"] != ledger["output_tokens"]
+        or value["actual_cost_microusd"] != ledger["actual_cost_microusd"]
+        or value["max_cost_microusd"] != condition["max_cost_microusd"]
+        or value["independent_judge_rows"] != condition["independent_judge_rows"]
+        or value["same_model_judge_rows"] != condition["same_model_judge_rows"]
+        or value["physical_media_sent_to_judge"] is not False
+    ):
+        raise ValueError("retained-response completion contract changed")
+    return value
+
+
 def execute(
     *,
     plan_path: Path,
@@ -436,8 +486,8 @@ def execute(
             max_output_tokens=int(normalized_api["max_tokens"]),
         )
         conservative_total = sum(bounds.values())
-        if conservative_total > condition["max_cost_microusd"]:
-            raise ValueError("conservative Haiku token bound exceeds the sealed USD ceiling")
+        if bounds[items[0][0]["retained_row_sha256"]] > condition["max_cost_microusd"]:
+            raise ValueError("the first Haiku call could exceed the sealed USD ceiling")
 
         if ledger_path.exists() or ledger_path.is_symlink():
             raw_ledger, _descriptor = _read_regular(
@@ -527,11 +577,45 @@ def execute(
         if completion_path.exists() or completion_path.is_symlink():
             if completed != len(items) or ledger["state"] != "complete":
                 raise ValueError("completion exists before the execution ledger is complete")
+            completion_raw, _descriptor = _read_regular(
+                completion_path,
+                label="retained-response completion",
+                max_bytes=1024 * 1024,
+            )
+            _validate_completion(
+                completion_raw,
+                plan=plan,
+                ledger=ledger,
+                plan_sha256=plan_descriptor["sha256"],
+            )
             return completion_path.resolve(strict=True)
 
         for index in range(completed, len(items)):
             row, prompt, response_text = items[index]
             bound = bounds[row["retained_row_sha256"]]
+            if ledger["actual_cost_microusd"] + bound > condition["max_cost_microusd"]:
+                budget_circuit = {
+                    "schema": CIRCUIT_SCHEMA,
+                    "status": "open",
+                    "dependency": "budget",
+                    "plan_id": plan["plan_id"],
+                    "selection_index": index,
+                    "retained_row_sha256": row["retained_row_sha256"],
+                    "error_type": "HaikuCostCeiling",
+                    "error_category": "budget_ceiling",
+                    "call_audit": None,
+                    "target_calls": 0,
+                    "judge_calls_reserved": ledger["judge_calls_reserved"],
+                    "http_attempts_reserved": ledger["http_attempts_reserved"],
+                    "cost_status": "known_before_call",
+                }
+                _write_new(circuit_path, budget_circuit)
+                ledger["state"] = "circuit_open"
+                ledger["current_reservation"] = None
+                _write_atomic(ledger_path, ledger)
+                raise RuntimeError(
+                    "Haiku cost ceiling blocks the next call; no HTTP attempt was made"
+                )
             if ledger["judge_calls_reserved"] != index:
                 raise ValueError("paid judge reservation count is not a strict prefix")
             ledger["judge_calls_reserved"] += 1
@@ -631,6 +715,12 @@ def execute(
             "same_model_judge_rows": condition["same_model_judge_rows"],
             "physical_media_sent_to_judge": False,
         }
+        _validate_completion(
+            completion,
+            plan=plan,
+            ledger=ledger,
+            plan_sha256=plan_descriptor["sha256"],
+        )
         _write_new(completion_path, completion)
         return completion_path.resolve(strict=True)
 

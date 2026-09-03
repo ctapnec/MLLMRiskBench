@@ -196,6 +196,24 @@ def test_executes_exact_selection_once_and_completes_without_target_calls(
     ) == completion_path
     assert fake.calls == 2
 
+    completion["target_calls"] = 1
+    completion_path.write_text(json.dumps(completion) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="completion contract changed"):
+        subject.execute(
+            **{
+                key: prepared[key]
+                for key in (
+                    "plan_path",
+                    "runner_view",
+                    "source_receipt",
+                    "api_config",
+                    "out",
+                )
+            },
+            judge_factory=lambda _spec, _config: fake,
+        )
+    assert fake.calls == 2
+
 
 def test_first_judge_failure_opens_global_circuit_and_prevents_second_call(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -252,7 +270,7 @@ def test_conservative_cost_failure_makes_no_paid_call(
     prepared = _prepared(tmp_path, monkeypatch, max_cost_microusd=1)
     fake = FakeHaiku()
 
-    with pytest.raises(ValueError, match="conservative Haiku token bound"):
+    with pytest.raises(ValueError, match="first Haiku call could exceed"):
         subject.execute(
             **{key: prepared[key] for key in (
                 "plan_path", "runner_view", "source_receipt", "api_config", "out"
@@ -278,3 +296,38 @@ def test_executor_rejects_a_judge_transport_with_retries(
             judge_factory=lambda _spec, _config: fake,
         )
     assert fake.calls == 0
+
+
+def test_budget_guard_stops_before_the_next_http_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prepared = _prepared(tmp_path, monkeypatch, max_cost_microusd=300)
+    monkeypatch.setattr(
+        subject,
+        "_cost_bounds",
+        lambda _judge, items, max_output_tokens: {
+            row["retained_row_sha256"]: 200 for row, _prompt, _response in items
+        },
+    )
+    fake = FakeHaiku()
+
+    with pytest.raises(RuntimeError, match="no HTTP attempt was made"):
+        subject.execute(
+            **{
+                key: prepared[key]
+                for key in (
+                    "plan_path",
+                    "runner_view",
+                    "source_receipt",
+                    "api_config",
+                    "out",
+                )
+            },
+            judge_factory=lambda _spec, _config: fake,
+        )
+
+    assert fake.calls == 1
+    circuit = json.loads((prepared["out"] / "circuit.json").read_text(encoding="utf-8"))
+    assert circuit["dependency"] == "budget"
+    assert circuit["judge_calls_reserved"] == 1
+    assert circuit["http_attempts_reserved"] == 1
