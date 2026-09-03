@@ -24,6 +24,7 @@ from experiments.retained_response_judge import (
     load_candidates,
     load_pricing_condition,
 )
+from ura.targets.api import DEFAULT_HOSTED_HTTP_ERROR_RETRIES
 
 
 SCHEMA = "ura-retained-response-judge-pair-plan/1"
@@ -312,9 +313,10 @@ def build_pair_plan(
             "hosted_data_transfer_acknowledged": True,
             "target_calls": 0,
             "answer_retries": 0,
-            "transport_retries": 0,
+            "transport_retries": DEFAULT_HOSTED_HTTP_ERROR_RETRIES,
             "max_judge_calls": len(selected),
-            "max_http_attempts": len(selected),
+            "max_http_attempts": len(selected)
+            * (DEFAULT_HOSTED_HTTP_ERROR_RETRIES + 1),
             "max_cost_microusd": max_cost_microusd,
             "judge_max_output_tokens": 512,
             **dict(pricing_condition),
@@ -383,9 +385,10 @@ def validate_pair_plan(value: object) -> dict[str, Any]:
     if (
         condition.get("target_calls") != 0
         or condition.get("answer_retries") != 0
-        or condition.get("transport_retries") != 0
+        or condition.get("transport_retries") != DEFAULT_HOSTED_HTTP_ERROR_RETRIES
         or condition.get("max_judge_calls") != len(selected)
-        or condition.get("max_http_attempts") != len(selected)
+        or condition.get("max_http_attempts")
+        != len(selected) * (DEFAULT_HOSTED_HTTP_ERROR_RETRIES + 1)
         or condition.get("hosted_data_transfer_acknowledged") is not True
         or condition.get("input_microusd_per_token") != 1
         or condition.get("output_microusd_per_token") != 5

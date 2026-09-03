@@ -19,7 +19,11 @@ from pathlib import Path
 from typing import Any
 
 from experiments.rig_web_app.reports import rate_for
-from ura.targets.api import AnthropicFableTarget, OpenAIResponsesTarget
+from ura.targets.api import (
+    AnthropicFableTarget,
+    DEFAULT_HOSTED_HTTP_ERROR_RETRIES,
+    OpenAIResponsesTarget,
+)
 
 
 SCHEMA = "ura-hosted-campaign-budget-projection/1"
@@ -268,7 +272,8 @@ def _priced_row(
         "paid_call_cap": calls,
         "paid_call_cap_includes_readiness_and_canaries": True,
         "answer_retries": 0,
-        "transport_retries": 0,
+        "transport_retries": DEFAULT_HOSTED_HTTP_ERROR_RETRIES,
+        "maximum_http_attempts": calls * (DEFAULT_HOSTED_HTTP_ERROR_RETRIES + 1),
         "expected_input_tokens_per_call": EXPECTED_INPUT_TOKENS,
         "maximum_input_tokens_per_call": MAX_INPUT_TOKENS,
         "expected_output_tokens_per_call": EXPECTED_OUTPUT_TOKENS,
@@ -327,7 +332,9 @@ def build_projection(
         "selected_pair_cap": JUDGE_CALL_CAP // 2,
         "target_calls": 0,
         "answer_retries": 0,
-        "transport_retries": 0,
+        "transport_retries": DEFAULT_HOSTED_HTTP_ERROR_RETRIES,
+        "maximum_http_attempts": JUDGE_CALL_CAP
+        * (DEFAULT_HOSTED_HTTP_ERROR_RETRIES + 1),
         "expected_input_tokens_per_call": EXPECTED_INPUT_TOKENS,
         "maximum_input_tokens_per_call": MAX_INPUT_TOKENS,
         "expected_output_tokens_per_call": EXPECTED_OUTPUT_TOKENS,
@@ -401,7 +408,8 @@ def build_projection(
         "authority": {
             "provider_calls_made": 0,
             "target_answer_retries": 0,
-            "provider_transport_retries": 0,
+            "provider_transport_retries": DEFAULT_HOSTED_HTTP_ERROR_RETRIES,
+            "transport_retry_trigger": "retryable_http_status_only",
             "paid_target_call_cap_includes_readiness_and_canaries": True,
             "pricing_as_of": pricing_as_of,
             "budget_fraction_numerator": 1,

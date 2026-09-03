@@ -175,7 +175,6 @@ class BuilderModelsMixin:
         from experiments.local_targets import load_roster, _models_map  # noqa: PLC0415
         from ura.targets.local import (  # noqa: PLC0415
             DEFAULT_OLLAMA_NUM_CTX,
-            DEFAULT_OLLAMA_NUM_PREDICT,
         )
 
         roster = _models_map(load_roster(self.repo_root))
@@ -200,7 +199,6 @@ class BuilderModelsMixin:
                     "digest": digest,
                     "modalities": list(modalities),
                     "num_ctx": DEFAULT_OLLAMA_NUM_CTX,
-                    "num_predict": DEFAULT_OLLAMA_NUM_PREDICT,
                     "think": (
                         "low"
                         if spec.startswith("ollama:gpt-oss:")
@@ -212,6 +210,13 @@ class BuilderModelsMixin:
         for spec, entry in configured.items():
             if isinstance(entry, dict):
                 catalog[str(spec)] = dict(entry)
+        from experiments.local_model_profiles import apply_profile  # noqa: PLC0415
+
+        for spec, entry in list(catalog.items()):
+            profiled, profile = apply_profile(spec, entry, repo_root=self.repo_root)
+            if profile is not None:
+                profiled["_execution_profile"] = profile
+            catalog[spec] = profiled
         return catalog, explicit
 
     def _effective_local_profile(
@@ -362,6 +367,24 @@ class BuilderModelsMixin:
             raise ValueError(f"local target {spec!r} {exc}") from exc
 
     @staticmethod
+    def _local_request_timeout(
+        spec: str, entry: Mapping[str, object]
+    ) -> float:
+        """Validate the provider-independent per-request wall-clock bound."""
+
+        from ura.targets.local import (  # noqa: PLC0415
+            DEFAULT_LOCAL_REQUEST_TIMEOUT_SECONDS,
+            validate_local_request_timeout,
+        )
+
+        try:
+            return validate_local_request_timeout(
+                entry.get("timeout", DEFAULT_LOCAL_REQUEST_TIMEOUT_SECONDS)
+            )
+        except ValueError as exc:
+            raise ValueError(f"local target {spec!r} {exc}") from exc
+
+    @staticmethod
     def _local_gpu_memory_utilization(
         spec: str, entry: Mapping[str, object]
     ) -> float:
@@ -439,6 +462,7 @@ class BuilderModelsMixin:
         BuilderModelsMixin._local_ollama_num_ctx(spec, entry)
         BuilderModelsMixin._local_ollama_num_predict(spec, entry)
         BuilderModelsMixin._local_ollama_think(spec, entry)
+        BuilderModelsMixin._local_request_timeout(spec, entry)
 
     def _selected_local_config_payload(
         self,
@@ -482,6 +506,7 @@ class BuilderModelsMixin:
             "num_ctx",
             "num_predict",
             "think",
+            "timeout",
             "parameter_count_b",
             "multi_gpu_compatible",
             "quantization",
@@ -491,6 +516,11 @@ class BuilderModelsMixin:
             if entry is None:
                 raise ValueError(
                     f"local target {spec!r} is not in the local target catalog"
+                )
+            execution_profile = entry.get("_execution_profile")
+            if not isinstance(execution_profile, Mapping):
+                raise ValueError(
+                    f"local target {spec!r} requires a passing readiness profile"
                 )
             if spec.startswith("ollama:"):
                 self._validate_ollama_local_entry(spec, entry)
@@ -526,7 +556,18 @@ class BuilderModelsMixin:
                     "num_ctx": self._local_ollama_num_ctx(spec, entry),
                     "num_predict": self._local_ollama_num_predict(spec, entry),
                     "think": self._local_ollama_think(spec, entry),
+                    "timeout": self._local_request_timeout(spec, entry),
                 }
+                if (
+                    resolved_ollama["num_predict"]
+                    != execution_profile["generation_tokens"]
+                    or resolved_ollama["timeout"]
+                    != execution_profile["request_timeout_seconds"]
+                ):
+                    raise ValueError(
+                        f"local target {spec!r} differs from its approved "
+                        "readiness execution profile"
+                    )
                 selected[spec] = resolved_ollama
                 continue
             from ura.targets.local import (  # noqa: PLC0415
@@ -559,6 +600,17 @@ class BuilderModelsMixin:
             )
             resolved["gpu_memory_utilization"] = gpu_memory_utilization
             resolved["max_model_len"] = max_model_len
+            resolved["max_tokens"] = max_tokens
+            resolved["timeout"] = self._local_request_timeout(spec, entry)
+            if (
+                resolved["max_tokens"] != execution_profile["generation_tokens"]
+                or resolved["timeout"]
+                != execution_profile["request_timeout_seconds"]
+            ):
+                raise ValueError(
+                    f"local target {spec!r} differs from its approved "
+                    "readiness execution profile"
+                )
             if max_model_len > 0:
                 if max_tokens is not None and max_tokens > max_model_len:
                     raise ValueError(

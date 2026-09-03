@@ -186,7 +186,7 @@ def test_alignment_continuation_rebinds_explicit_thinking_policy(
 
     assert payload[model_spec]["think"] == expected_think
     assert payload[model_spec]["num_ctx"] == "fit"
-    assert payload[model_spec]["num_predict"] == -1
+    assert payload[model_spec]["num_predict"] == 4096
     assert (
         unit_runner._option(  # noqa: SLF001
             argv, "--local-config-sha256"

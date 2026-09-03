@@ -48,11 +48,13 @@ The central planning scenario assumes, per target call:
 - no cache hit; and
 - one successful retained output per intended call.
 
-Each revised Haiku judgment assumes 4,000 input and 500 output tokens. Paid targets and
-Haiku judging make exactly one application attempt: target answer retries and
-harness transport retries are 0, and provider SDK retries are disabled.
-There is no retry reserve in either the cost estimate or the executable
-campaign. A missing response receives no policy-judge call.
+Each revised Haiku judgment assumes 4,000 input and 500 output tokens. Paid
+targets and Haiku judging use zero answer-quality retries. The harness permits
+three retries only for status-bearing HTTP 408, 409, 425, 429, and 5xx errors;
+provider SDK retries remain disabled. The HTTP-attempt ceiling therefore
+reserves four attempts per logical call, while the token-cost ceiling remains
+bound to the successful logical calls that return usage. A missing or unusable
+response receives no content retry and no policy-judge call.
 
 This is not a monetary hard ceiling. Images have provider-specific tokenization,
 reasoning models may bill more output than the 512-token planning value, and
@@ -166,9 +168,9 @@ exact API config, effective-dated pricing and budget registries, reproduces the
 expected and maximum-token columns, and reports a blocked status if any
 provider exceeds half its configured balance. It constructs no target or judge.
 
-Paid targets and Haiku judging use exactly one application attempt; target
-answer retries and harness transport retries are 0, and provider SDK retries
-are disabled.
+Paid targets and Haiku judging use zero answer-quality retries and three
+harness retries only for the fixed status-bearing retryable HTTP errors.
+Provider SDK retries are disabled, so every HTTP attempt remains visible.
 
 Anthropic Batch gives a 50 percent input/output discount and is appropriate for
 post-hoc judging of immutable retained responses. Adaptive target trajectories

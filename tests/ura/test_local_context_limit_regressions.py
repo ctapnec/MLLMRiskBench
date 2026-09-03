@@ -21,6 +21,7 @@ from ura.model_acquisition_runtime import private_model_execution
 from ura.runner import CODE_VERSION, Runner, _component_config
 from ura.targets.base import TargetInputError
 from ura.targets.local import (
+    DEFAULT_LOCAL_REQUEST_TIMEOUT_SECONDS,
     DEFAULT_OLLAMA_NUM_CTX,
     DEFAULT_OLLAMA_NUM_PREDICT,
     DEFAULT_VLLM_GENERATION_TOKENS,
@@ -37,14 +38,14 @@ REVISION = "6" * 40
 
 
 def test_current_runner_version_includes_local_context_contract() -> None:
-    assert CODE_VERSION == "ura-runner/2.29"
-    assert DEFAULT_VLLM_GENERATION_TOKENS is None
+    assert CODE_VERSION == "ura-runner/2.30"
+    assert DEFAULT_VLLM_GENERATION_TOKENS == 4096
     assert DEFAULT_VLLM_MAX_MODEL_LEN == -1
     assert DEFAULT_OLLAMA_NUM_CTX == "fit"
-    assert DEFAULT_OLLAMA_NUM_PREDICT == -1
+    assert DEFAULT_OLLAMA_NUM_PREDICT == 4096
 
 
-def test_vllm_omitted_generation_cap_uses_local_maximum(
+def test_vllm_omitted_generation_cap_uses_finite_local_default(
     tmp_path: Path,
 ) -> None:
     config = _config(include_context_cap=False)
@@ -52,13 +53,28 @@ def test_vllm_omitted_generation_cap_uses_local_maximum(
     path = _write_config(tmp_path, config)
 
     loaded, _artifact = run_matrix._load_local_config(str(path), [SPEC])
-    assert "max_tokens" not in loaded[SPEC]
+    assert loaded[SPEC]["max_tokens"] == 4096
     target = run_matrix.build_target(SPEC, local_identity=loaded[SPEC])
-    assert target.max_tokens is None
+    assert target.max_tokens == 4096
+    assert target.timeout == DEFAULT_LOCAL_REQUEST_TIMEOUT_SECONDS
     direct_identity = dict(loaded[SPEC])
     direct_target = run_matrix.build_target(SPEC, local_identity=direct_identity)
-    assert direct_target.max_tokens is None
-    assert VLLMTarget("fixture", revision=REVISION).max_tokens is None
+    assert direct_target.max_tokens == 4096
+    assert VLLMTarget("fixture", revision=REVISION).max_tokens == 4096
+
+
+def test_live_runner_requires_an_approved_local_execution_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(
+        "URA_LOCAL_MODEL_PROFILE_REGISTRY", str(tmp_path / "missing-profiles.json")
+    )
+    path = _write_config(tmp_path, _config())
+
+    with pytest.raises(ValueError, match="no approved readiness profile"):
+        run_matrix._load_local_config(
+            str(path), [SPEC], require_execution_profiles=True
+        )
 
 
 def _rig_hardware() -> dict[str, object]:
@@ -379,8 +395,8 @@ def test_vllm_engine_receives_explicit_or_hardware_fit_context_policy(
     )
     assert os.environ["VLLM_ENABLE_V1_MULTIPROCESSING"] == "operator-value"
     assert engine_kwargs[1]["max_model_len"] == -1
-    assert sampling_kwargs[-1]["max_tokens"] is None
-    assert fit_response.raw["generation"]["max_tokens"] is None
+    assert sampling_kwargs[-1]["max_tokens"] == 4096
+    assert fit_response.raw["generation"]["max_tokens"] == 4096
     assert fit_response.raw["requested_max_model_len"] == -1
     assert fit_response.raw["max_model_len"] == 65_536
     assert fit_response.raw["max_model_len_policy"] == "hardware_fit"
@@ -718,7 +734,7 @@ def test_ollama_local_config_binds_context_and_output_caps(
     default_target = run_matrix.build_target(spec, local_identity=defaults[spec])
     assert default_target.num_ctx == "fit"
     assert "num_ctx" not in default_target._sampling_options()
-    assert default_target._sampling_options()["num_predict"] == -1
+    assert default_target._sampling_options()["num_predict"] == 4096
 
 
 def test_ollama_native_max_context_is_resolved_once_from_pinned_model_metadata(
@@ -855,6 +871,7 @@ def test_ollama_hardware_fit_revalidates_cached_context_after_unload(
         ("num_predict", -2, "num_predict must be -1 or an integer"),
         ("num_predict", 0, "num_predict must be -1 or an integer"),
         ("think", "extreme", "think must be boolean"),
+        ("timeout", 0, "timeout must be numeric"),
     ),
 )
 def test_ollama_local_config_rejects_invalid_execution_caps(

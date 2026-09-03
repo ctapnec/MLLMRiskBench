@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Mapping
 
+from ura.targets.local import DEFAULT_LOCAL_GENERATION_TOKENS
+
 # These constants describe the already-retained Gate 5 and initial Phase 6
 # condition.  They intentionally do not follow later product defaults.
 CURRENT_OLLAMA_NUM_CTX = 8_192
@@ -20,7 +22,7 @@ CURRENT_OLLAMA_NUM_PREDICT = 512
 # projection, acquisition, and measured artifacts before it can contribute
 # evidence.
 PROSPECTIVE_OLLAMA_NUM_CTX = "fit"
-PROSPECTIVE_OLLAMA_NUM_PREDICT = -1
+PROSPECTIVE_OLLAMA_NUM_PREDICT = DEFAULT_LOCAL_GENERATION_TOKENS
 
 
 @dataclass(frozen=True)

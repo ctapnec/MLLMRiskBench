@@ -544,8 +544,8 @@ def _combined_target_execution(
 
 
 def run(args: argparse.Namespace) -> int:
-    if CODE_VERSION != "ura-runner/2.29":
-        raise ValueError("Ollama alignment continuation requires Runner 2.29")
+    if CODE_VERSION != "ura-runner/2.30":
+        raise ValueError("Ollama alignment continuation requires Runner 2.30")
     if HEX40.fullmatch(args.expected_commit) is None:
         raise ValueError("expected commit must be one lowercase Git object ID")
     project_root = args.project_root.resolve(strict=True)
@@ -776,7 +776,7 @@ def validate_recovery_completion(
         or completion.get("status") != "complete"
         or completion.get("controller_exit_code") != 0
         or HEX40.fullmatch(str(completion.get("expected_commit", ""))) is None
-        or completion.get("runner_code_version") != "ura-runner/2.29"
+        or completion.get("runner_code_version") != "ura-runner/2.30"
         or completion.get("target_answer_retries") != 1
         or completion.get("unit_failures") != {}
         or completion.get("no_completed_rows_repeated") is not True
@@ -852,7 +852,7 @@ def validate_recovery_completion(
         set(launch) != launch_fields
         or launch.get("schema") != LAUNCH_SCHEMA
         or launch.get("expected_commit") != completion["expected_commit"]
-        or launch.get("runner_code_version") != "ura-runner/2.29"
+        or launch.get("runner_code_version") != "ura-runner/2.30"
         or launch.get("target_answer_retries") != 1
         or launch.get("base_completion") != completion["base_completion"]
         or launch.get("failed_output_recovery_completion")
@@ -979,7 +979,7 @@ def validate_recovery_completion(
     result["runner_code_version"] = "mixed"
     result["runner_code_versions"] = {
         "base_completed_units": BASE_RUNNER_CODE_VERSION,
-        "continuation_units": "ura-runner/2.29",
+        "continuation_units": "ura-runner/2.30",
         "interrupted_failed_output_recovery_units": "ura-runner/2.27",
         "hardware_fit_recovery_units": "ura-runner/2.29",
     }

@@ -92,7 +92,7 @@ def test_current_ollama_roster_is_exact_recent_thesis_cohort() -> None:
     assert CURRENT_OLLAMA_NUM_CTX == 8192
     assert CURRENT_OLLAMA_NUM_PREDICT == 512
     assert PROSPECTIVE_OLLAMA_NUM_CTX == "fit"
-    assert PROSPECTIVE_OLLAMA_NUM_PREDICT == -1
+    assert PROSPECTIVE_OLLAMA_NUM_PREDICT == 4096
 
 
 def test_current_ollama_gate5_binds_bounded_context_and_output_caps(

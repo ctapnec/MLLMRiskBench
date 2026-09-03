@@ -117,10 +117,11 @@ rate denominator. Exact model-identity drift, seal/configuration drift, durable
 budget exhaustion and operator time limits remain terminal. No retry weakens
 those gates. Projections reserve the target and transport upper bound for the
 initial call plus every configured answer retry. The separate budget-fitted
-hosted campaign pins answer, harness transport and provider SDK retries to 0;
-each paid target and Haiku judgment receives exactly one application attempt.
-The first durably retained failed hosted-target output, or any target transport
-or network failure, opens the global `paid_provider` circuit before another paid
+hosted campaign pins answer retries to 0 and provider SDK retries to 0. Its
+harness permits three retries only when an exception carries HTTP status 408,
+409, 425, 429, or 5xx, for at most four visible HTTP attempts per logical call.
+The first durably retained failed hosted-target output, or a non-retryable or
+exhausted transport failure, opens the global `paid_provider` circuit before another paid
 call starts. An operator must distinguish provider-completed empty output from
 interrupted transport and explicitly authorize a fresh bound plan and circuit
 reset after resolving the cause. Paid execution never resumes automatically.
@@ -288,10 +289,11 @@ cap; these values are not Runner per-arm limits:
 These budget-fitted limits supersede the larger planning scenario without
 changing the seed, sampler or compatible arm inventory. They are prospective
 and were fixed before hosted target outputs were observed. Paid target and
-Haiku judge calls use exactly one application attempt with
-`--target-answer-retries 0`; harness transport retries and provider SDK retries
-are disabled. The first retained failed target output or target
-transport/network failure stops the paid grid before another paid call. The complete
+Haiku judge calls use `--target-answer-retries 0`; provider SDK retries are
+disabled, while the harness permits three retries only for the fixed
+status-bearing HTTP errors. The first retained failed target output or
+non-retryable or exhausted target transport failure stops the paid grid before
+another paid call. The complete
 follow-on may use at most 50 percent of each configured provider budget. Exact
 no-call projections may only reduce a condition before acquisition and execution if
 the provider-token canary shows that its registered monetary ceiling would be
@@ -334,8 +336,8 @@ declared, image readiness canary before measurement. A target without an
 attested media route retains the corresponding media rows as typed structural
 `N/A`; it is not given captions in place of images and is not silently replaced
 by another model from the same provider. Unlike the local stability campaign,
-this paid cohort uses no answer or harness transport retry and reserves one
-target transport attempt per intended call. Provider budget
+this paid cohort uses no answer-quality retry. It reserves four visible HTTP
+attempts per intended call for the fixed three-retry HTTP-status policy. Provider budget
 entries are reporting metadata rather than execution admission, so the exact
 target, judge, HTTP and deadline caps must fit both the projection and the
 separately recorded prepaid ceiling before any paid call. Prices and observed

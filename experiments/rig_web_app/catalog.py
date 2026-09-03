@@ -112,6 +112,8 @@ _PARAM_HELP: dict[str, str] = {
     "--api-config": "Path to the hosted-target registry (experiments/api-targets.json).",
     "--api-config-sha256": "Exact byte SHA-256 for a read-once selected hosted config.",
     "--local-config-sha256": "Exact byte SHA-256 for a read-once selected local config.",
+    "--profile-registry": "Machine-local registry that retains identity-bound local-model "
+    "readiness recommendations for both CLI and Build. Hosted targets never use it.",
     "--out": "Output directory under the rig results root for this run's artifacts.",
     "--expected-revision": "The exact 40-hex project commit this checkout must "
     "match for the revision receipt.",
@@ -1003,6 +1005,28 @@ def _commands() -> dict[str, Command]:
             ),
         ),
         Command(
+            "local_model_readiness",
+            "experiments.local_model_readiness",
+            "Profile one vLLM or Ollama target with the seeded 10-text/5-image gate",
+            (
+                CommandParam("--local", "str"),
+                CommandParam("--local-config", "path"),
+                CommandParam("--local-config-sha256", "str"),
+                CommandParam("--model-acquisition-plan-only", "flag"),
+                CommandParam("--model-acquisition-plan-dir", "path"),
+                CommandParam("--model-acquisition-plan", "path"),
+                CommandParam("--model-acquisition-plan-sha256", "str"),
+                CommandParam("--model-acquisition-receipt", "path"),
+                CommandParam("--model-acquisition-receipt-sha256", "str"),
+                CommandParam("--model-acquisition-store", "path"),
+                CommandParam("--out", "path"),
+                CommandParam("--profile-registry", "path"),
+                CommandParam("--validate", "path"),
+                CommandParam("--sha256", "str"),
+                CommandParam("--expected-spec", "str"),
+            ),
+        ),
+        Command(
             "ollama_pull",
             "experiments.ollama_pull",
             "Pull one model through the fixed loopback Ollama daemon",
@@ -1079,7 +1103,7 @@ COMMAND_GROUPS: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
         "Targets and rosters",
         "coins",
         "runbook sections 5, 13",
-        ("local_targets",),
+        ("local_targets", "local_model_readiness"),
     ),
     (
         "Analysis and reporting",

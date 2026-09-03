@@ -3242,7 +3242,7 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
     assert ollama_target.__class__.__name__ == "OllamaTarget"
     assert ollama_target.num_ctx == "fit"
     assert "num_ctx" not in ollama_target._sampling_options()
-    assert ollama_target._sampling_options()["num_predict"] == -1
+    assert ollama_target._sampling_options()["num_predict"] == 4096
 
     # Rendering, validation, and generated execution config share one
     # precedence: per-model selection, then the submitted global default.

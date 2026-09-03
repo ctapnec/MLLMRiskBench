@@ -2,7 +2,7 @@
 
 `ura.data_models` is the typed Pydantic v2 contract shared by converters,
 attackers, targets, judges, persistence, and analysis. `SCHEMA_VERSION = "1.5"`
-is stamped on datapoints, checkpoints, and manifests. Runner 2.29 rejects mixed
+is stamped on datapoints, checkpoints, and manifests. Runner 2.30 rejects mixed
 schema versions and duplicate datapoint IDs before a target call.
 
 The 1.5 transition introduces isolated-engine identities and verified closing
@@ -631,6 +631,15 @@ an executed cell:
   `/6`: hosted targets require zero answer retries, and their first retained
   failed output or transport/network failure opens the global `paid_provider`
   circuit before another paid call.
+  Runner 2.30 also accepts `timeout` on vLLM and Ollama entries as a numeric
+  per-request wall-clock bound in 1..3,600 seconds. Omitted local generation
+  and timeout values are filled from the exact model's validated machine-local
+  profile. An unprofiled local generative model is rejected rather than given a
+  campaign fallback. vLLM
+  `max_model_len=-1` and Ollama `num_ctx="fit"` remain independent maximum
+  hardware-fit context policies. Hosted API configuration never reads or
+  inherits these local defaults; hosted maximum output is an explicit
+  budget-derived route field.
   Response-independent local attestation, diagnostic-canary, and measured runs
   with a model-backed scoring stage additionally bind
   `judge_execution_schedule=post_factum_after_target_release`. The response
@@ -638,6 +647,19 @@ an executed cell:
   then closed before the scoring model is loaded. Crescendo binds `inline`
   because a verdict controls its trajectory. Defense guardrails also execute in
   the target phase because they are part of the treatment.
+
+- `ura-local-model-readiness/2` retains the immutable target identity and
+  modalities, the exact seeded 10-text/5-image results at 4,096 and 25,000
+  output tokens, the 120-second per-request deadline, and the highest passing
+  condition for which no request reaches the deadline. The thresholds remain
+  5 of 10 text and 2 of 5 image, with empty or
+  timed-out responses counted as incorrect. `ura-local-model-readiness/1`
+  remains readable as historical admission but has no execution profile.
+  `ura-local-model-execution-profiles/1` is a machine-local operational
+  registry, not empirical evidence. Each row binds one vLLM revision or Ollama
+  digest, modalities, selected generation tokens, request deadline, and the
+  exact `/2` readiness receipt path, ID, and digest. Identity or modality drift
+  fails rather than transferring a recommendation to another model.
 
 - Hugging Face model bytes are a separate immutable evidence family, not part
   of `--local-config`. `ura-model-acquisition-selection/1` retains path-free

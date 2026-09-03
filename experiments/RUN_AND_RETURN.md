@@ -6,8 +6,8 @@ source-native evaluators. Experiments and the human audit are still pending.
 Preflight, dry-run, diagnostic-canary, and bounded transport-probe artifacts are
 diagnostics, not thesis results.
 
-The maintained artifact contract is Runner `ura-runner/2.29` with unified schema
-`1.5`. Runner 2.29 is the current executable contract used by this runbook.
+The maintained artifact contract is Runner `ura-runner/2.30` with unified schema
+`1.5`. Runner 2.30 is the current executable contract used by this runbook.
 Runner 2.19/schema 1.4 artifacts remain runtime-free legacy
 compatibility only; do not combine them with the current measured cohort.
 
@@ -475,8 +475,9 @@ missing-response artifact retains that normalized identity and compares it
 across the retry. This can satisfy route attestation without turning the absent
 answer into policy evidence. The current local campaign pins
 one answer retry for vLLM and Ollama. The budget-fitted hosted campaign pins
-answer, harness transport and provider SDK retries to 0, so paid targets and
-Haiku judgments receive exactly one application attempt. Build sets and locks
+answer and provider SDK retries to 0. The harness permits three retries only
+for status-bearing HTTP 408, 409, 425, 429, and 5xx failures, for at most four
+visible HTTP attempts per logical paid call. Build sets and locks
 the answer-retry field to 0 whenever a hosted target is selected, and server
 validation rejects a nonzero submitted value. The first durably retained failed
 hosted-target output, or any hosted target transport/network failure, opens the
@@ -1616,10 +1617,11 @@ its attestation probe or canary is removed, never substituted.
 The campaign run after the all-local plan supersedes the broader 13 August
 roster for that future execution only. It may consume no more than 50 percent
 of each configured provider budget, including Haiku judging charged to
-Anthropic. Paid targets and Haiku judging use one application attempt,
-`--target-answer-retries 0`, with harness transport retries and provider SDK
-retries disabled. The first retained failed hosted-target output or target transport/network
-failure opens the global `paid_provider` circuit before another paid call. The
+Anthropic. Paid targets and Haiku judging use `--target-answer-retries 0` and
+disable provider SDK retries. The harness permits three retries only for the
+fixed status-bearing HTTP errors. The first retained failed hosted-target
+output or non-retryable or exhausted transport failure opens the global
+`paid_provider` circuit before another paid call. The
 operator must classify and resolve the failure before a fresh bound plan and
 explicit circuit reset; there is no automatic paid resumption. Use seed 0 and
 a create-only, balanced selection from exact retained local inputs. These are
@@ -1633,7 +1635,8 @@ routes are outside this funded amendment.
 Before any paid call, derive each exact no-call population independently and
 measure the provider-token canary. Every paid readiness or canary request
 consumes the applicable global target cap; it does not extend the 590-call
-total. Reserve exactly one attempt per target or judge call. First create the
+total. Reserve four HTTP attempts per target or judge call while retaining one
+logical paid-call and token-cost reservation. First create the
 content-bound cost projection:
 
 ```bash
@@ -2010,8 +2013,10 @@ fields are forbidden. Ollama instead accepts `num_ctx` and `num_predict`. A
 newly selected config binds `num_ctx="fit"`; Runner reads the exact native
 ceiling from `/api/show`, then performs load-only probes from that ceiling
 downward until `/api/ps` proves the complete runtime is GPU-resident. Only then
-does it submit a real prompt, using the `num_predict=-1` maximum-output
-sentinel. The pulled
+does it submit a real prompt. The response allowance resolves from the exact
+model's required readiness profile. The 4,096-token baseline is an assessment
+input; the `num_predict=-1` sentinel remains historical, not an unprofiled
+campaign default. The pulled
 artifact fixes precision. Runner
 uses the daemon HTTP API through the Python standard library, so no Ollama
 Python SDK is required; the daemon and matching pulled tag must exist before a
@@ -2056,8 +2061,9 @@ provenance.
 separate from `max_tokens`, which remains the maximum generated response
 length. Omission binds `-1`, the installed vLLM auto-fit sentinel: vLLM derives
 the checkpoint ceiling and reduces it to live GPU capacity. An omitted
-`max_tokens` lets the pinned runtime generate until EOS or the remaining
-resolved context is spent. An explicit `max_model_len` must be a non-boolean
+`max_tokens` resolves from the required immutable-model-bound readiness
+profile. An explicit `max_model_len`
+must be a non-boolean
 integer in 1..1,000,000, and an explicit `max_tokens` must not exceed it; null,
 strings, floats, and
 out-of-range values fail before engine construction. Rig Web preserves the
@@ -2071,9 +2077,11 @@ For Ollama, `num_ctx` is the request context/KV policy and `num_predict` is the
 generated-token policy. Context accepts `"fit"`, explicit native maximum
 `"max"`, or positive integers up to 1,000,000; generation accepts the `-1`
 maximum-output sentinel or a positive finite cap up to 25,000. Rig Web selects
-`num_ctx="fit"`, shows `automatic maximum GPU-fit context`, selects
-`num_predict=-1`, and preserves configured overrides in the selected-config
-hash. Runner probes the pinned model's native context and successively smaller
+`num_ctx="fit"`, shows `automatic maximum GPU-fit context`, and requires the
+exact model's approved readiness profile for `num_predict` and the 120-second
+request deadline. The approved values replace stale configured overrides in
+the selected-config hash. Runner probes the pinned
+model's native context and successively smaller
 fractions with empty load-only requests. It accepts the first candidate only
 when `/api/ps` reports `size_vram >= size` and the exact requested
 `context_length`, then passes that resolved integer to `/api/chat` and records
@@ -2146,14 +2154,22 @@ config. For a Hub-backed vLLM target, first use
 `--model-acquisition-plan-only --model-acquisition-plan-dir`, acquire that exact
 plan with section 6.1, and then pass the resulting plan, receipt and managed
 store to the readiness command. An Ollama target needs no Hub-acquisition
-arguments. The command makes ten deterministic benign question calls and, for
-an image-capable target, five deterministic synthetic-image calls. Admission
-requires at least five correct text answers and at least two correct image
-answers. The other five text responses and three image responses may be
-incorrect or empty. Store each passing `ura-local-model-readiness/1`
-receipt and its SHA-256 under the operator-bound
-`URA_LOCAL_MODEL_READINESS_ROOT`; the local campaign controllers validate the
-exact target receipt before security calls. Empty survey observations remain
+arguments. The command runs the same ten deterministic benign question calls
+and, for an image-capable target, five deterministic synthetic-image calls at
+both 4,096 and 25,000 output tokens. Every request has a 120-second deadline.
+Admission requires at least five correct text answers and at least two correct
+image answers. The other five text responses and three image responses may be
+incorrect or empty. Store each passing `ura-local-model-readiness/2` receipt
+and its SHA-256 under the operator-bound `URA_LOCAL_MODEL_READINESS_ROOT`.
+Set `URA_LOCAL_MODEL_PROFILE_REGISTRY` to one regular file under `$URA_WORK` or
+pass `--profile-registry`; the command atomically records the highest passing
+allowance for which no probe reaches the deadline, bound to the exact
+revision/digest and modalities. CLI and Build require that same approved local
+output/time profile. Retained schema `/1` receipts
+stay valid historical admission but do not supply an execution profile. Hosted
+models and hosted judges never use this local registry; their explicit maximum
+output tokens are derived from the approved paid budget and they receive one
+attempt. Empty survey observations remain
 typed `model_nonresponse` rows. Later campaign statistics likewise retain them
 as missing response counts and decision-coverage loss, not decided safety
 labels. A failed target remains failed. A

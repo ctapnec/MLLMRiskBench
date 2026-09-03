@@ -619,7 +619,7 @@ def test_hosted_follow_on_is_a_no_retry_local_input_subset() -> None:
     )
     required = (
         "target_answer_retries is 0",
-        "harness transport max_retries is 0",
+        "permits three retries",
         "--target-answer-retries 0",
         "provider SDK retries are disabled",
         "global `paid_provider` circuit",
@@ -650,7 +650,7 @@ def test_hosted_follow_on_is_a_no_retry_local_input_subset() -> None:
         value = " ".join(value.split())
         for token in required:
             assert token in value
-        assert "There is no retry reserve" in value
+        assert "HTTP-attempt ceiling" in value
         assert "Retry-reserved target USD" not in value
         assert "retry-use model-stability rates" not in value
         assert "use the same selected retry count" not in value
@@ -677,7 +677,7 @@ def test_hosted_follow_on_is_a_no_retry_local_input_subset() -> None:
     assert changed != combined
     with pytest.raises(AssertionError):
         assert_contract(changed)
-    changed = combined.replace("There is no retry reserve", "Retry reserve enabled", 1)
+    changed = combined.replace("HTTP-attempt ceiling", "HTTP ceiling removed", 1)
     assert changed != combined
     with pytest.raises(AssertionError):
         assert_contract(changed)

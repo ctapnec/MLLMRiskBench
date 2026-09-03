@@ -529,7 +529,7 @@ def test_builder_sampling_control_and_local_wall_time_keep_cli_semantics(
             "api": "anthropic:claude-opus-5",
             "target_answer_retries": "1",
         })
-        assert "one application attempt only" in hosted_retry[
+        assert "no answer-quality retries" in hosted_retry[
             "target_answer_retries"
         ]
         assert "target_answer_retries" not in app._validate_builder({

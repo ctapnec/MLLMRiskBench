@@ -721,7 +721,7 @@ function syncHostedRetryPolicy(){
  var input=form.elements.namedItem('target_answer_retries');if(!input){return;}
  var hosted=checkedKind('api','data-model').length>0;
  if(hosted){input.value='0';input.readOnly=true;
- input.title='Paid hosted targets use one application attempt.';}
+ input.title='Paid hosted targets use no answer-quality retries.';}
  else{input.readOnly=false;input.removeAttribute('title');}}
 var samplePanel=document.getElementById('sample-size-control');
 var sampleRange=document.getElementById('sample-limit-range');
@@ -980,7 +980,8 @@ localOnlyMeasured?'0 (complete release)':'not set')+
  '; sample seed: '+namedValue('sample_seed','not set')+'; seeds: '+
  namedValue('seeds','not set')+'; queries: '+namedValue('max_queries','not set')+
  '; turns: '+namedValue('max_turns','not set')+'; answer retries: '+
- namedValue('target_answer_retries','1')+'; group: '+namedValue('group','CLI default')+
+ namedValue('target_answer_retries','1')+'; hosted HTTP-error retries: '+
+ (api.length?'3 (max 4 attempts)':'N/A')+'; group: '+namedValue('group','CLI default')+
  '; IDEATOR pair limit: '+namedValue('ideator_pair_limit','0 (all)')+
 '; exclude tool-conditioned: '+(checkedName('exclude_tool_conditioned')?'on':'off')+
 '; reset open circuits: '+(checkedName('reset_open_circuits')?'on':'off')+

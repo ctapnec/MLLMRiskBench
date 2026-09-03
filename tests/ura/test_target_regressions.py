@@ -874,9 +874,9 @@ def test_fable_omits_temperature_and_records_request_and_usage_provenance() -> N
         "fallbacks": "disabled",
         "tools": "disabled",
         "timeout_seconds": 600.0,
-        "max_retries": 0,
+        "max_retries": 3,
     }
-    assert target.max_transport_attempts_per_call == 1
+    assert target.max_transport_attempts_per_call == 4
     assert response.raw["transport_attempt_count"] == 1
     assert response.raw["transport_attempts"][0]["outcome"] == "success"
     assert response.raw["provider_usage"]["input_tokens"] == 11
@@ -1078,7 +1078,7 @@ def test_sol_pro_has_one_explicit_nonconflating_public_target_spec() -> None:
     assert target.reasoning_context == "all_turns"
     assert target.max_output_tokens == 25_000
     assert target.timeout == 600.0
-    assert target.max_transport_attempts_per_call == 1
+    assert target.max_transport_attempts_per_call == 4
 
     ordinary = build_api_target("openai:gpt-5.6-sol")
     assert type(ordinary) is OpenAITarget
@@ -1210,7 +1210,7 @@ def test_frontier_targets_disable_hidden_retries_and_audit_failure(
     else:
         target._client = SimpleNamespace(responses=SimpleNamespace(create=fail))
 
-    assert target.max_transport_attempts_per_call == 1
+    assert target.max_transport_attempts_per_call == 4
     with pytest.raises(ProviderTransportError) as caught:
         target.generate([DialogTurn(role="user", content="request")])
     expected_provider = (
@@ -1236,6 +1236,36 @@ def test_frontier_targets_disable_hidden_retries_and_audit_failure(
         "retryable": False,
         "latency_ms": caught.value.transport_attempts[0]["latency_ms"],
     }]
+
+
+@pytest.mark.parametrize("status_code", [409, 500])
+def test_hosted_transport_retries_status_bearing_http_failures_more_than_once(
+    status_code: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    attempts: list[int] = []
+
+    class StatusError(RuntimeError):
+        def __init__(self) -> None:
+            super().__init__(f"HTTP {status_code}")
+            self.status_code = status_code
+
+    def call(**_request):
+        attempts.append(len(attempts) + 1)
+        if len(attempts) < 3:
+            raise StatusError()
+        return SimpleNamespace(request_id="request-after-retries")
+
+    monkeypatch.setattr(api_module.time, "sleep", lambda _seconds: None)
+    result, audit = api_module._call_with_retry(
+        call,
+        {},
+        provider="fixture",
+        max_retries=3,
+    )
+
+    assert result.request_id == "request-after-retries"
+    assert attempts == [1, 2, 3]
+    assert [item["retryable"] for item in audit] == [True, True, None]
 
 
 def test_sol_pro_accepts_an_explicit_refusal_but_rejects_ambiguous_output() -> None:
@@ -1330,9 +1360,9 @@ def test_generic_anthropic_terminal_states_fail_closed() -> None:
     assert response.output_turns[0].content == "complete"
     assert response.raw["response_id"] == "msg-generic-1"
     assert response.raw["resolved_model"] == "claude-generic-20260801"
-    assert target.max_transport_attempts_per_call == 1
+    assert target.max_transport_attempts_per_call == 4
     assert response.raw["transport_attempt_count"] == 1
-    assert response.raw["generation"]["max_retries"] == 0
+    assert response.raw["generation"]["max_retries"] == 3
 
     _install_anthropic_fixture(
         target, _anthropic_result(text="partial", stop_reason="max_tokens")
@@ -1388,9 +1418,9 @@ def test_generic_openai_chat_terminal_states_fail_closed() -> None:
     assert response.raw["target_sampling_control"] == (
         "provider_seed_requested_best_effort"
     )
-    assert target.max_transport_attempts_per_call == 1
+    assert target.max_transport_attempts_per_call == 4
     assert response.raw["transport_attempt_count"] == 1
-    assert response.raw["generation"]["max_retries"] == 0
+    assert response.raw["generation"]["max_retries"] == 3
 
     _install_chat_fixture(
         target, _chat_result(content="partial", finish_reason="length")
@@ -1425,8 +1455,8 @@ def test_openai_compatible_response_retains_only_hashed_endpoint_identity() -> N
 
     response = target.generate([DialogTurn(role="user", content="request")])
 
-    assert target.max_transport_attempts_per_call == 1
-    assert response.raw["generation"]["max_retries"] == 0
+    assert target.max_transport_attempts_per_call == 4
+    assert response.raw["generation"]["max_retries"] == 3
     assert response.raw["endpoint_identity"] == (
         canonical_https_endpoint_identity(endpoint)
     )
@@ -1475,9 +1505,9 @@ def test_generic_gemini_terminal_states_fail_closed() -> None:
     response = target.generate([DialogTurn(role="user", content="request")])
     assert response.raw["response_id"] == "gemini-response-1"
     assert response.raw["finish_reason"] == "STOP"
-    assert target.max_transport_attempts_per_call == 1
+    assert target.max_transport_attempts_per_call == 4
     assert response.raw["transport_attempt_count"] == 1
-    assert response.raw["generation"]["max_retries"] == 0
+    assert response.raw["generation"]["max_retries"] == 3
 
     _install_gemini_fixture(
         target, _gemini_result(text="partial", finish_reason="MAX_TOKENS")

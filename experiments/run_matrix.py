@@ -1637,6 +1637,7 @@ def _load_local_config(
     quantization: str = "",
     hardware: dict[str, object] | None = None,
     expected_sha256: str = "",
+    require_execution_profiles: bool = False,
 ) -> tuple[dict[str, dict[str, object]], dict[str, object] | None]:
     """Load exact immutable identities and declared modalities for local targets."""
     if not selected_specs:
@@ -1726,7 +1727,7 @@ def _load_local_config(
         if not isinstance(config, dict) or set(config) - {
             "revision", "digest", "modalities", "tensor_parallel_size",
             "gpu_memory_utilization", "max_tokens", "max_model_len",
-            "num_ctx", "num_predict", "think",
+            "num_ctx", "num_predict", "think", "timeout",
             "parameter_count_b",
             "multi_gpu_compatible", "quantization", "allow_unknown_fit",
         }:
@@ -1757,6 +1758,27 @@ def _load_local_config(
         if isinstance(digest, str):
             digest = digest.lower()
             config["digest"] = digest
+        from experiments.local_model_profiles import apply_profile  # noqa: PLC0415
+
+        config, execution_profile = apply_profile(spec, config)
+        if require_execution_profiles:
+            if execution_profile is None:
+                raise ValueError(
+                    f"local config {display_spec!r} has no approved readiness profile"
+                )
+            generation_field = (
+                "max_tokens" if backend == "vllm" else "num_predict"
+            )
+            if (
+                config.get(generation_field)
+                != execution_profile["generation_tokens"]
+                or config.get("timeout")
+                != execution_profile["request_timeout_seconds"]
+            ):
+                raise ValueError(
+                    f"local config {display_spec!r} differs from its approved "
+                    "readiness execution profile"
+                )
         if backend == "vllm":
             from ura.targets.local import (  # noqa: PLC0415
                 VLLM_FORBIDDEN_LOCAL_CONFIG_FIELDS,
@@ -1792,6 +1814,8 @@ def _load_local_config(
             from ura.targets.local import (  # noqa: PLC0415
                 DEFAULT_VLLM_GENERATION_TOKENS,
                 DEFAULT_VLLM_MAX_MODEL_LEN,
+                DEFAULT_LOCAL_REQUEST_TIMEOUT_SECONDS,
+                validate_local_request_timeout,
                 validate_vllm_max_model_len,
                 validate_vllm_max_tokens,
             )
@@ -1802,7 +1826,7 @@ def _load_local_config(
                     max_tokens = validate_vllm_max_tokens(config["max_tokens"])
                 except ValueError as exc:
                     raise ValueError(f"vLLM config {display_spec!r} {exc}") from exc
-                config["max_tokens"] = max_tokens
+            config["max_tokens"] = max_tokens
             try:
                 max_model_len = validate_vllm_max_model_len(
                     config.get("max_model_len", DEFAULT_VLLM_MAX_MODEL_LEN)
@@ -1810,6 +1834,12 @@ def _load_local_config(
             except ValueError as exc:
                 raise ValueError(f"vLLM config {display_spec!r} {exc}") from exc
             config["max_model_len"] = max_model_len
+            try:
+                config["timeout"] = validate_local_request_timeout(
+                    config.get("timeout", DEFAULT_LOCAL_REQUEST_TIMEOUT_SECONDS)
+                )
+            except ValueError as exc:
+                raise ValueError(f"vLLM config {display_spec!r} {exc}") from exc
             if (
                 max_model_len > 0
                 and max_tokens is not None
@@ -1899,7 +1929,9 @@ def _load_local_config(
             from ura.targets.local import (  # noqa: PLC0415
                 DEFAULT_OLLAMA_NUM_CTX,
                 DEFAULT_OLLAMA_NUM_PREDICT,
+                DEFAULT_LOCAL_REQUEST_TIMEOUT_SECONDS,
                 OLLAMA_FORBIDDEN_LOCAL_CONFIG_FIELDS,
+                validate_local_request_timeout,
                 validate_ollama_num_ctx,
                 validate_ollama_num_predict,
                 validate_ollama_think,
@@ -1915,7 +1947,8 @@ def _load_local_config(
                 )
             unsupported = sorted(
                 set(config) - {
-                    "digest", "modalities", "num_ctx", "num_predict", "think"
+                    "digest", "modalities", "num_ctx", "num_predict", "think",
+                    "timeout",
                 }
             )
             if unsupported:
@@ -1932,6 +1965,9 @@ def _load_local_config(
                 )
                 config["think"] = validate_ollama_think(
                     config.get("think", False)
+                )
+                config["timeout"] = validate_local_request_timeout(
+                    config.get("timeout", DEFAULT_LOCAL_REQUEST_TIMEOUT_SECONDS)
                 )
             except ValueError as exc:
                 raise ValueError(f"Ollama config {spec!r} {exc}") from exc
@@ -2930,6 +2966,7 @@ def build_target(
             modalities = tuple(local_identity["modalities"])
             if backend == "vllm":
                 from ura.targets.local import (
+                    DEFAULT_LOCAL_REQUEST_TIMEOUT_SECONDS,
                     DEFAULT_VLLM_GENERATION_TOKENS,
                     DEFAULT_VLLM_MAX_MODEL_LEN,
                     VLLMTarget,
@@ -2949,6 +2986,9 @@ def build_target(
                     "max_model_len": local_identity.get(
                         "max_model_len", DEFAULT_VLLM_MAX_MODEL_LEN
                     ),
+                    "timeout": local_identity.get(
+                        "timeout", DEFAULT_LOCAL_REQUEST_TIMEOUT_SECONDS
+                    ),
                 }
                 resolved_quantization = str(
                     local_identity.get("quantization") or quantization
@@ -2963,7 +3003,10 @@ def build_target(
                 )
                 target.validate_research_identity()
                 return target
-            from ura.targets.local import OllamaTarget
+            from ura.targets.local import (
+                DEFAULT_LOCAL_REQUEST_TIMEOUT_SECONDS,
+                OllamaTarget,
+            )
             target = OllamaTarget(
                 model=model,
                 model_digest=str(local_identity["digest"]),
@@ -2971,6 +3014,9 @@ def build_target(
                 num_ctx=local_identity["num_ctx"],
                 num_predict=int(local_identity["num_predict"]),
                 think=local_identity["think"],
+                timeout=local_identity.get(
+                    "timeout", DEFAULT_LOCAL_REQUEST_TIMEOUT_SECONDS
+                ),
             )
             target.validate_research_identity()
             return target
@@ -5177,6 +5223,7 @@ def _main(argv=None) -> int:
             quantization=args.quantization,
             hardware=gpu_hardware,
             expected_sha256=args.local_config_sha256,
+            require_execution_profiles=True,
         )
         resolved_quantizations = {
             spec: str(config["quantization"])

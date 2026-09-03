@@ -20,9 +20,14 @@ so the hosted member of every later Haiku pair already has its local judgment.
 - A hosted row is eligible only if its rendered input identity occurs in the
   sealed local campaign and its hosted route declares that modality.
 - Incompatible modalities are N/A. They are never captioned or transformed.
-- Paid targets and Haiku judging use exactly one application attempt.
-  target_answer_retries is 0, harness transport max_retries is 0, and provider
-  SDK retries are disabled.
+- Paid targets and Haiku judging use zero answer-quality retries. The harness
+  permits three retries, for at most four HTTP attempts per logical call, only
+  when the provider exception carries status 408, 409, 425, 429, or 5xx.
+  Connection failures without an HTTP status and valid HTTP responses with
+  unusable content are not retried. Provider SDK retries are disabled.
+- Hosted output-token limits are the explicit budget-derived values in this
+  plan. They never inherit the vLLM/Ollama readiness profile, local 4,096-token
+  fallback, or local request deadline.
 - Missing responses remain selected-population and stability evidence but
   receive no Haiku call.
 - The first retained failed target output opens the global `paid_provider`
@@ -154,7 +159,8 @@ routes are typed failed or N/A and are never silently substituted.
 
 ## A3 - Measured hosted subset
 
-Execute only the A1 selectors with zero answer retries. Each completed row
+Execute only the A1 selectors with zero answer retries and the fixed
+three-retry status-bearing HTTP policy. Each completed row
 checkpoints independently and retains its `rules,guardrail` trail. Empty,
 malformed, binary/control-like or symbol-only
 output is durably retained as a model-stability missing response, then the
@@ -189,7 +195,8 @@ grading context. Its planner cannot import a target-under-test or Runner
 factory. Its executor may construct only the exact Haiku judge; it cannot
 construct a model under test or reserve a target call. The paired plan receives
 one USD 7.75 ceiling. Its judgment strata record the hosted-transfer
-acknowledgement and exactly one judge attempt per output.
+acknowledgement, one logical judge call per output, and at most four HTTP
+attempts under the status-only retry rule.
 
 Gate A4: target calls 0, original mutations 0, Haiku calls at most 1,180,
 Haiku spend at most USD 7.75, and complete selected/missing/excluded accounting.

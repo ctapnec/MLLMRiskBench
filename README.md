@@ -229,8 +229,11 @@ allocation policy, not the response-generation `max_tokens` bound. Omission
 binds `-1`: vLLM derives the checkpoint ceiling and automatically reduces it to
 the largest allocation that fits live GPU memory. An explicit integer in
 1..1,000,000 remains available for a fixed experimental condition. An omitted
-`max_tokens` lets the pinned runtime generate until EOS or the remaining
-resolved context is spent; an explicit value may not exceed an explicit
+`max_tokens` resolves through the identity-bound local readiness profile. A
+model without that approval is rejected before a security campaign. The
+profile compares the same seeded benign probes at 4,096 and the supported
+25,000-token ceiling and stores the highest passing allowance with no
+120-second request breach. The approved value may not exceed an explicit
 positive `max_model_len`.
 Rig Web preserves the field in its selected local config, and the normalized
 value enters grid/run provenance. Each Build row labels either the explicit
@@ -241,8 +244,10 @@ the selected local config. Runner and Build bind `num_ctx="fit"` by default.
 Runner reads the pinned model ceiling from `/api/show`, performs load-only
 probes from that ceiling downward, and accepts the largest tested native
 fraction for which `/api/ps` proves the complete allocation is GPU-resident.
-No real prompt is submitted while fit is unresolved. The default
-`num_predict=-1` is Ollama's maximum-output sentinel.
+No real prompt is submitted while fit is unresolved. `num_predict` uses the
+same required identity-bound readiness approval as vLLM. The `-1`
+maximum-output sentinel remains readable for historical configurations but is
+not an unprofiled campaign default.
 Explicit finite overrides are also passed to `/api/chat`, and the resolved choice is
 retained in config, grid, condition, and response provenance. Reaching an
 explicit finite `num_predict`
@@ -498,7 +503,15 @@ Generative local vLLM and Ollama targets also require a passing
 `python -m experiments.local_model_readiness` receipt before security calls.
 The transport-neutral benign gate uses ten deterministic questions and five
 synthetic images for image-capable models, treats empty responses as incorrect,
-and requires the configured minimum correct counts. It produces engineering
+and requires the configured minimum correct counts. Schema `/2` runs the same
+probes at the 4,096-token baseline and 25,000-token local ceiling under a
+120-second per-request deadline, selects the highest passing allowance with no
+deadline breach, and
+writes an immutable-model-bound recommendation to the machine-local profile
+registry. Runner CLI and Build consume that same registry unless the selected
+config contains an explicit override. This mechanism is local-only. Hosted
+target and judge output limits remain explicit budget-derived campaign inputs
+and never read the local profile registry. The receipt produces engineering
 admission evidence, not a safety metric. A failed model is recorded and any
 replacement is admitted as a new exact model condition.
 Once admitted, a generative model's assigned evaluation does not terminate for
@@ -517,8 +530,9 @@ evidence; a call that never established a strong identity remains explicitly
 unobserved.
 The detector, accounting, checkpoint and stability categories are
 provider-neutral, but retry count is an experiment condition. The funded hosted
-campaign selects zero answer retries and disables harness transport and SDK
-retries, giving each target and Haiku judgment exactly one application attempt.
+campaign selects zero answer retries and disables SDK retries. Its harness
+permits three retries only for status-bearing HTTP 408, 409, 425, 429, and 5xx
+errors, so each logical target or Haiku call has at most four visible HTTP attempts.
 Build sets and locks the answer-retry field to zero for a hosted target, and its
 server validation rejects a nonzero submitted value; local-only selection keeps
 the configurable default of one. The first retained failed hosted-target output
@@ -778,7 +792,7 @@ Runner `RunManifest`; the URA revision that performed their import is retained
 in the return-package/importer context rather than relabelled as an upstream
 native field.
 
-Runner `ura-runner/2.29` writes unified schema `1.5`. Runner 2.29 is the
+Runner `ura-runner/2.30` writes unified schema `1.5`. Runner 2.30 is the
 maintained execution contract. Runner 2.19/schema 1.4 artifacts remain readable
 only as runtime-free legacy compatibility and are not
 mixed into the current measured cohort. Immutable planning/source

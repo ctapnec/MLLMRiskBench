@@ -16,6 +16,7 @@ import json
 import random
 import re
 import struct
+import time
 import sys
 import zlib
 from pathlib import Path
@@ -32,6 +33,13 @@ from experiments.run_matrix import (  # noqa: E402
     build_target,
 )
 from ura.data_models import DialogTurn, MediaRef, Response  # noqa: E402
+from ura.targets.base import TargetAnswerError  # noqa: E402
+from ura.targets.local import (  # noqa: E402
+    DEFAULT_LOCAL_GENERATION_TOKENS,
+    DEFAULT_LOCAL_REQUEST_TIMEOUT_SECONDS,
+    MAX_OLLAMA_NUM_PREDICT,
+    MAX_VLLM_GENERATION_TOKENS,
+)
 from ura.model_acquisition import (  # noqa: E402
     ModelAcquisitionError,
     write_document_create_only,
@@ -45,12 +53,18 @@ from ura.model_acquisition_runtime import (  # noqa: E402
     public_selection_descriptor,
 )
 
-SCHEMA = "ura-local-model-readiness/1"
+LEGACY_SCHEMA = "ura-local-model-readiness/1"
+SCHEMA = "ura-local-model-readiness/2"
 READINESS_SEED = 20260829
 TEXT_SAMPLE_SIZE = 10
 TEXT_MIN_CORRECT = 5
 VISION_SAMPLE_SIZE = 5
 VISION_MIN_CORRECT = 2
+PROFILE_DEFAULT_GENERATION_TOKENS = DEFAULT_LOCAL_GENERATION_TOKENS
+PROFILE_MAXIMUM_GENERATION_TOKENS = min(
+    MAX_VLLM_GENERATION_TOKENS, MAX_OLLAMA_NUM_PREDICT
+)
+PROFILE_REQUEST_DEADLINE_SECONDS = DEFAULT_LOCAL_REQUEST_TIMEOUT_SECONDS
 TEXT_BANK = (
     ("sum-7-5", "Reply with only the integer result of 7 + 5.", r"\b12\b"),
     ("product-9-3", "Reply with only the integer result of 9 times 3.", r"\b27\b"),
@@ -113,6 +127,27 @@ def _sha(value: object) -> str:
 
 def readiness_policy() -> dict[str, object]:
     return {
+        "generation_conditions": [
+            PROFILE_DEFAULT_GENERATION_TOKENS,
+            PROFILE_MAXIMUM_GENERATION_TOKENS,
+        ],
+        "generation_selection": "highest_passing_condition",
+        "nonresponses_count_as_incorrect": True,
+        "per_request_deadline_seconds": PROFILE_REQUEST_DEADLINE_SECONDS,
+        "readiness_seed": READINESS_SEED,
+        "text_max_nonresponses_at_passing_threshold": TEXT_SAMPLE_SIZE - TEXT_MIN_CORRECT,
+        "text_min_correct": TEXT_MIN_CORRECT,
+        "text_sample_size": TEXT_SAMPLE_SIZE,
+        "vision_max_nonresponses_at_passing_threshold": VISION_SAMPLE_SIZE - VISION_MIN_CORRECT,
+        "vision_min_correct": VISION_MIN_CORRECT,
+        "vision_sample_size": VISION_SAMPLE_SIZE,
+    }
+
+
+def legacy_readiness_policy() -> dict[str, object]:
+    """Return the immutable policy carried by retained schema /1 receipts."""
+
+    return {
         "nonresponses_count_as_incorrect": True,
         "readiness_seed": READINESS_SEED,
         "text_max_nonresponses_at_passing_threshold": TEXT_SAMPLE_SIZE - TEXT_MIN_CORRECT,
@@ -167,12 +202,32 @@ def _response_text(response: Response) -> str:
 
 
 def _observation(response: Response, text: str) -> dict[str, object]:
+    termination = response.raw.get("finish_reason", response.raw.get("done_reason"))
+    generation = response.raw.get("generation")
     return {
         "characters": len(text),
         "latency_ms": round(float(response.latency_ms), 3),
         "outcome": "generated_text" if text else "model_nonresponse",
         "preview": text[:500],
+        "termination_reason": termination,
         "tokens": dict(response.tokens),
+        "effective_generation": dict(generation) if isinstance(generation, dict) else {},
+    }
+
+
+def _failed_observation(
+    exc: TargetAnswerError, *, latency_ms: float
+) -> dict[str, object]:
+    return {
+        "characters": 0,
+        "effective_generation": {},
+        "error_category": exc.category,
+        "error_type": type(exc).__name__,
+        "latency_ms": round(latency_ms, 3),
+        "outcome": "model_nonresponse",
+        "preview": "",
+        "termination_reason": None,
+        "tokens": {},
     }
 
 
@@ -180,13 +235,21 @@ def _run_text(target: Any) -> dict[str, object]:
     selected = random.Random(READINESS_SEED).sample(TEXT_BANK, TEXT_SAMPLE_SIZE)
     rows: list[dict[str, object]] = []
     for index, (question_id, prompt, expected) in enumerate(selected):
-        response = target.generate(
-            [DialogTurn(role="user", content=prompt)], seed=READINESS_SEED + index
-        )
-        text = _response_text(response)
+        started = time.perf_counter()
+        try:
+            response = target.generate(
+                [DialogTurn(role="user", content=prompt)], seed=READINESS_SEED + index
+            )
+            text = _response_text(response)
+            observation = _observation(response, text)
+        except TargetAnswerError as exc:
+            text = ""
+            observation = _failed_observation(
+                exc, latency_ms=(time.perf_counter() - started) * 1000.0
+            )
         rows.append(
             {
-                **_observation(response, text),
+                **observation,
                 "correct": re.search(expected, text, flags=re.IGNORECASE) is not None,
                 "expected_pattern": expected,
                 "prompt": prompt,
@@ -211,22 +274,30 @@ def _run_vision(target: Any) -> dict[str, object]:
     selected = random.Random(READINESS_SEED).sample(pairs, VISION_SAMPLE_SIZE)
     rows: list[dict[str, object]] = []
     for index, (left, right) in enumerate(selected):
-        response = target.generate(
-            [
-                DialogTurn(
-                    role="user",
-                    content="Name the left and right colors. Reply only as LEFT=<color>;RIGHT=<color>.",
-                    media=[_image_ref(left, right)],
-                )
-            ],
-            seed=READINESS_SEED + 100 + index,
-        )
-        text = _response_text(response)
+        started = time.perf_counter()
+        try:
+            response = target.generate(
+                [
+                    DialogTurn(
+                        role="user",
+                        content="Name the left and right colors. Reply only as LEFT=<color>;RIGHT=<color>.",
+                        media=[_image_ref(left, right)],
+                    )
+                ],
+                seed=READINESS_SEED + 100 + index,
+            )
+            text = _response_text(response)
+            observation = _observation(response, text)
+        except TargetAnswerError as exc:
+            text = ""
+            observation = _failed_observation(
+                exc, latency_ms=(time.perf_counter() - started) * 1000.0
+            )
         left_match = re.search(rf"\b{re.escape(left)}\b", text, flags=re.IGNORECASE)
         right_match = re.search(rf"\b{re.escape(right)}\b", text, flags=re.IGNORECASE)
         rows.append(
             {
-                **_observation(response, text),
+                **observation,
                 "correct": bool(
                     left_match and right_match and left_match.start() < right_match.start()
                 ),
@@ -249,48 +320,185 @@ def _run_vision(target: Any) -> dict[str, object]:
     }
 
 
+def _set_generation_tokens(target: Any, spec: str, value: int) -> None:
+    if spec.startswith("vllm:"):
+        target.max_tokens = value
+    elif spec.startswith("ollama:"):
+        target.num_predict = value
+    else:
+        raise ValueError("readiness profile supports only vLLM or Ollama")
+
+
+def _run_condition(
+    target: Any,
+    *,
+    spec: str,
+    modalities: list[str],
+    generation_tokens: int,
+) -> dict[str, object]:
+    _set_generation_tokens(target, spec, generation_tokens)
+    text = _run_text(target)
+    vision = _run_vision(target) if "image" in modalities else None
+    observations = [*text["observations"]]
+    if vision is not None:
+        observations.extend(vision["observations"])
+    deadline_failures = sum(
+        1
+        for observation in observations
+        if observation.get("error_category") == "generation_timeout"
+        or float(observation.get("latency_ms") or 0.0)
+        >= PROFILE_REQUEST_DEADLINE_SECONDS * 1000.0
+    )
+    return {
+        "deadline_failures": deadline_failures,
+        "generation_tokens": generation_tokens,
+        "passed": bool(
+            text["passed"]
+            and (vision is None or vision["passed"])
+            and deadline_failures == 0
+        ),
+        "text": text,
+        "vision": vision,
+    }
+
+
+def _validate_probe_result(
+    value: object,
+    *,
+    sample_size: int,
+    minimum_correct: int,
+    label: str,
+) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError(f"local-model {label} readiness evidence is invalid")
+    correct = value.get("correct")
+    nonresponses = value.get("nonresponses")
+    if (
+        isinstance(correct, bool)
+        or not isinstance(correct, int)
+        or isinstance(nonresponses, bool)
+        or not isinstance(nonresponses, int)
+        or value.get("passed") is not (correct >= minimum_correct)
+        or value.get("sample_size") != sample_size
+        or value.get("minimum_correct") != minimum_correct
+        or not 0 <= correct <= sample_size
+        or not 0 <= nonresponses <= sample_size - correct
+        or not isinstance(value.get("observations"), list)
+        or len(value["observations"]) != sample_size
+    ):
+        raise ValueError(f"local-model {label} readiness evidence is invalid")
+    return value
+
+
 def validate_readiness(value: object, *, expected_spec: str | None = None) -> dict[str, Any]:
-    if not isinstance(value, dict) or value.get("schema") != SCHEMA:
+    if not isinstance(value, dict) or value.get("schema") not in {LEGACY_SCHEMA, SCHEMA}:
         raise ValueError("local-model readiness receipt schema is invalid")
-    if value.get("policy") != readiness_policy() or value.get("status") != "verified":
+    expected_policy = (
+        legacy_readiness_policy()
+        if value.get("schema") == LEGACY_SCHEMA
+        else readiness_policy()
+    )
+    if value.get("policy") != expected_policy or value.get("status") != "verified":
         raise ValueError("local-model readiness policy is not terminal-passed")
     if expected_spec is not None and value.get("requested_spec") != expected_spec:
         raise ValueError("local-model readiness receipt names another target")
     modalities = value.get("modalities")
     text = value.get("text")
     vision = value.get("vision")
+    execution = value.get("execution_profile")
     if not isinstance(modalities, list) or "text" not in modalities or not isinstance(text, dict):
         raise ValueError("local-model readiness modalities are invalid")
-    if (
-        text.get("passed") is not True
-        or text.get("sample_size") != TEXT_SAMPLE_SIZE
-        or text.get("minimum_correct") != TEXT_MIN_CORRECT
-        or not isinstance(text.get("nonresponses"), int)
-        or not isinstance(text.get("correct"), int)
-        or text["correct"] < TEXT_MIN_CORRECT
-        or text["correct"] > TEXT_SAMPLE_SIZE
-        or not 0 <= text["nonresponses"] <= TEXT_SAMPLE_SIZE - text["correct"]
-        or not isinstance(text.get("observations"), list)
-        or len(text["observations"]) != TEXT_SAMPLE_SIZE
-    ):
+    _validate_probe_result(
+        text,
+        sample_size=TEXT_SAMPLE_SIZE,
+        minimum_correct=TEXT_MIN_CORRECT,
+        label="text",
+    )
+    if text.get("passed") is not True:
         raise ValueError("local-model text readiness evidence is invalid")
     if "image" in modalities:
-        if (
-            not isinstance(vision, dict)
-            or vision.get("passed") is not True
-            or vision.get("sample_size") != VISION_SAMPLE_SIZE
-            or vision.get("minimum_correct") != VISION_MIN_CORRECT
-            or not isinstance(vision.get("nonresponses"), int)
-            or not isinstance(vision.get("correct"), int)
-            or vision["correct"] < VISION_MIN_CORRECT
-            or vision["correct"] > VISION_SAMPLE_SIZE
-            or not 0 <= vision["nonresponses"] <= VISION_SAMPLE_SIZE - vision["correct"]
-            or not isinstance(vision.get("observations"), list)
-            or len(vision["observations"]) != VISION_SAMPLE_SIZE
-        ):
+        _validate_probe_result(
+            vision,
+            sample_size=VISION_SAMPLE_SIZE,
+            minimum_correct=VISION_MIN_CORRECT,
+            label="vision",
+        )
+        if vision.get("passed") is not True:
             raise ValueError("local-model vision readiness evidence is invalid")
     elif vision is not None:
         raise ValueError("text-only readiness receipt contains vision evidence")
+    if value.get("schema") == LEGACY_SCHEMA:
+        if execution is not None:
+            raise ValueError("legacy local-model readiness receipt changed")
+        return value
+    if (
+        not isinstance(execution, dict)
+        or set(execution)
+        != {
+            "conditions",
+            "per_request_deadline_seconds",
+            "selected_generation_tokens",
+            "selection_basis",
+        }
+        or execution.get("per_request_deadline_seconds")
+        != PROFILE_REQUEST_DEADLINE_SECONDS
+        or execution.get("selection_basis") != "highest_passing_condition"
+        or not isinstance(execution.get("conditions"), list)
+        or [item.get("generation_tokens") for item in execution["conditions"]]
+        != list(readiness_policy()["generation_conditions"])
+    ):
+        raise ValueError("local-model execution profile is invalid")
+    passing: list[int] = []
+    for condition in execution["conditions"]:
+        if not isinstance(condition, dict) or set(condition) != {
+            "deadline_failures", "generation_tokens", "passed", "text", "vision"
+        }:
+            raise ValueError("local-model execution condition is invalid")
+        condition_text = _validate_probe_result(
+            condition["text"],
+            sample_size=TEXT_SAMPLE_SIZE,
+            minimum_correct=TEXT_MIN_CORRECT,
+            label="text condition",
+        )
+        condition_vision = condition["vision"]
+        vision_passed = True
+        if "image" in modalities:
+            condition_vision = _validate_probe_result(
+                condition_vision,
+                sample_size=VISION_SAMPLE_SIZE,
+                minimum_correct=VISION_MIN_CORRECT,
+                label="vision condition",
+            )
+            vision_passed = bool(condition_vision["passed"])
+        elif condition_vision is not None:
+            raise ValueError("text-only execution condition contains vision evidence")
+        deadline_failures = condition["deadline_failures"]
+        if (
+            isinstance(deadline_failures, bool)
+            or not isinstance(deadline_failures, int)
+            or deadline_failures < 0
+            or deadline_failures > TEXT_SAMPLE_SIZE + (
+                VISION_SAMPLE_SIZE if "image" in modalities else 0
+            )
+        ):
+            raise ValueError("local-model execution deadline evidence is invalid")
+        expected_passed = bool(
+            condition_text["passed"]
+            and vision_passed
+            and deadline_failures == 0
+        )
+        if condition["passed"] is not expected_passed:
+            raise ValueError("local-model execution condition status is invalid")
+        if expected_passed:
+            passing.append(int(condition["generation_tokens"]))
+    selected = max(passing) if passing else None
+    if execution.get("selected_generation_tokens") != selected or selected is None:
+        raise ValueError("local-model execution profile has no passing condition")
+    selected_condition = next(
+        item for item in execution["conditions"] if item["generation_tokens"] == selected
+    )
+    if text != selected_condition["text"] or vision != selected_condition["vision"]:
+        raise ValueError("local-model selected readiness evidence changed")
     return value
 
 
@@ -313,6 +521,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--model-acquisition-receipt-sha256", default="")
     parser.add_argument("--model-acquisition-store", type=Path)
     parser.add_argument("--out", type=Path)
+    parser.add_argument("--profile-registry", type=Path)
     parser.add_argument("--validate", type=Path)
     parser.add_argument("--sha256", default="")
     parser.add_argument("--expected-spec")
@@ -344,8 +553,11 @@ def main(argv: list[str] | None = None) -> int:
         expected_sha256=args.local_config_sha256,
     )
     config = local_configs[args.local]
+    config["timeout"] = PROFILE_REQUEST_DEADLINE_SECONDS
     if args.local.startswith("vllm:"):
-        config["max_tokens"] = min(int(config.get("max_tokens", 512)), 256)
+        config["max_tokens"] = PROFILE_DEFAULT_GENERATION_TOKENS
+    else:
+        config["num_predict"] = PROFILE_DEFAULT_GENERATION_TOKENS
     requirements = collect_run_requirements(
         target_specs=[args.local],
         local_configs=local_configs,
@@ -420,17 +632,42 @@ def main(argv: list[str] | None = None) -> int:
     if args.local.startswith("vllm:"):
         _require_local_hardware_fit(target, args.local, config, hardware)
     try:
-        text = _run_text(target)
-        vision = _run_vision(target) if "image" in config["modalities"] else None
+        conditions = [
+            _run_condition(
+                target,
+                spec=args.local,
+                modalities=list(config["modalities"]),
+                generation_tokens=generation_tokens,
+            )
+            for generation_tokens in readiness_policy()["generation_conditions"]
+        ]
     finally:
         close = getattr(target, "close", None)
         if callable(close):
             close()
-    status = "verified" if text["passed"] and (vision is None or vision["passed"]) else "failed"
+    passing = [
+        condition for condition in conditions if condition["passed"] is True
+    ]
+    selected = max(
+        passing,
+        key=lambda condition: int(condition["generation_tokens"]),
+        default=None,
+    )
+    text = selected["text"] if selected is not None else conditions[0]["text"]
+    vision = selected["vision"] if selected is not None else conditions[0]["vision"]
+    status = "verified" if selected is not None else "failed"
     receipt: dict[str, object] = {
         "acquisition": acquisition,
         "local_config_sha256": _sha(local_configs),
         "modalities": list(config["modalities"]),
+        "execution_profile": {
+            "conditions": conditions,
+            "per_request_deadline_seconds": PROFILE_REQUEST_DEADLINE_SECONDS,
+            "selected_generation_tokens": (
+                int(selected["generation_tokens"]) if selected is not None else None
+            ),
+            "selection_basis": "highest_passing_condition",
+        },
         "policy": readiness_policy(),
         "readiness_id": "0" * 64,
         "requested_spec": args.local,
@@ -445,6 +682,17 @@ def main(argv: list[str] | None = None) -> int:
     with args.out.open("xb") as handle:
         handle.write(_canonical(receipt))
     digest = hashlib.sha256(args.out.read_bytes()).hexdigest()
+    if status == "verified":
+        from experiments.local_model_profiles import update_registry
+
+        update_registry(
+            spec=args.local,
+            local_config=config,
+            readiness_path=args.out,
+            readiness_sha256=digest,
+            readiness=receipt,
+            path=args.profile_registry,
+        )
     print(
         json.dumps(
             {"readiness_id": receipt["readiness_id"], "sha256": digest, "status": status},

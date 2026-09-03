@@ -104,8 +104,12 @@ def test_projection_binds_expected_and_maximum_token_costs() -> None:
     sonnet = next(row for row in value["routes"] if row["label"] == "Claude Sonnet 5")
     assert sonnet["expected_cost_microusd"] == 650_000
     assert sonnet["maximum_cost_microusd"] == 2_448_000
+    assert sonnet["transport_retries"] == 3
+    assert sonnet["maximum_http_attempts"] == 200
     assert all(row["paid_call_cap_includes_readiness_and_canaries"] for row in value["routes"])
     assert value["judge"]["maximum_output_tokens_per_call"] == 512
+    assert value["judge"]["transport_retries"] == 3
+    assert value["judge"]["maximum_http_attempts"] == 4_720
     assert value["judge"]["selected_pair_cap"] == 590
     assert all(row["fits_campaign_cap"] for row in value["providers"])
 

@@ -724,6 +724,7 @@ class BuilderPageMixin:
                 context_limit = None
                 generation_limit = None
                 thinking_control: bool | str | None = None
+                request_timeout: float | None = None
                 if private_identity_unavailable:
                     local_config_error = (
                         "private explicit checkpoint has no durable digest identity"
@@ -739,6 +740,9 @@ class BuilderPageMixin:
                             runtime_value, entry
                         )
                         thinking_control = self._local_ollama_think(
+                            runtime_value, entry
+                        )
+                        request_timeout = self._local_request_timeout(
                             runtime_value, entry
                         )
                     except ValueError as exc:
@@ -764,6 +768,9 @@ class BuilderPageMixin:
                         self._local_gpu_memory_utilization(runtime_value, entry)
                         context_limit = self._local_max_model_len(runtime_value, entry)
                         generation_limit = self._local_max_tokens(runtime_value, entry)
+                        request_timeout = self._local_request_timeout(
+                            runtime_value, entry
+                        )
                         if (
                             isinstance(context_limit, int)
                             and context_limit > 0
@@ -777,6 +784,13 @@ class BuilderPageMixin:
                     except ValueError as exc:
                         local_config_error = durable_ui_text(exc)
                         disabled = " disabled"
+                execution_profile = entry.get("_execution_profile")
+                if not isinstance(execution_profile, Mapping):
+                    local_config_error = (
+                        local_config_error
+                        or "passing local-model readiness profile required"
+                    )
+                    disabled = " disabled"
                 configured_quant = (
                     str(prefill.get(f"quantization::{value}", entry.get("quantization", "auto")))
                     .strip()
@@ -863,6 +877,12 @@ class BuilderPageMixin:
                         )
                 else:
                     context_text = "native model context / maximum available output"
+                if request_timeout is not None:
+                    context_text += f" / request deadline {request_timeout:g}s"
+                if isinstance(execution_profile, Mapping):
+                    name_html += " <span class='badge green'>readiness profiled</span>"
+                else:
+                    name_html += " <span class='badge amber'>readiness required</span>"
                 # A known non-fit stays disabled. Unknown fit is an explicit UI
                 # opt-in; a live run additionally requires a per-model precision.
                 if fit is False:
@@ -1064,14 +1084,19 @@ class BuilderPageMixin:
             context_limit = None
             generation_limit = None
             thinking_control: bool | str | None = None
+            request_timeout: float | None = None
             live_entry = live_ollama_by_spec.get(value)
+            execution_profile = entry.get("_execution_profile")
             try:
                 self._validate_ollama_local_entry(value, entry)
                 context_limit = self._local_ollama_num_ctx(value, entry)
                 generation_limit = self._local_ollama_num_predict(value, entry)
                 thinking_control = self._local_ollama_think(value, entry)
+                request_timeout = self._local_request_timeout(value, entry)
             except ValueError as exc:
                 problems.append(str(exc))
+            if not isinstance(execution_profile, Mapping):
+                problems.append("passing local-model readiness profile required")
             manual = value in explicit_local
             if manual and live_entry is None:
                 problems.append(
@@ -1117,6 +1142,16 @@ class BuilderPageMixin:
                     else ""
                 )
                 + (
+                    " <span class='badge green'>readiness profiled</span>"
+                    if isinstance(execution_profile, Mapping)
+                    else ""
+                )
+                + (
+                    " <span class='badge amber'>readiness required</span>"
+                    if not isinstance(execution_profile, Mapping)
+                    else ""
+                )
+                + (
                     " <span class='badge red'>invalid local config</span>"
                     if error
                     else ""
@@ -1140,6 +1175,8 @@ class BuilderPageMixin:
                 if isinstance(generation_limit, int)
                 else " / invalid output policy"
             )
+            if request_timeout is not None:
+                context_detail += f" / request deadline {request_timeout:g}s"
             detail = (
                 "<span class='fieldhint'>local Ollama daemon - "
                 + html.escape("/".join(mods))
@@ -2471,7 +2508,8 @@ class BuilderPageMixin:
                 "additional attempts for empty, malformed, binary/control-like, "
                 "or symbol-only output; exhausted answers remain model-stability "
                 "missing responses; local default 1; paid hosted target 0 and "
-                "its first failed output or transport failure stops the paid grid",
+                "its first failed output stops the paid grid; hosted transport "
+                "permits three retries only for retryable HTTP status errors",
                 default="1",
                 kind="number",
             )

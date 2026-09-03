@@ -17,6 +17,7 @@ import json
 import math
 import os
 import re
+import signal
 import threading
 import time
 import urllib.error
@@ -65,7 +66,9 @@ _OLLAMA_TAG = re.compile(
 )
 MAX_VLLM_MODEL_LEN = 1_000_000
 MAX_VLLM_GENERATION_TOKENS = 25_000
-DEFAULT_VLLM_GENERATION_TOKENS: None = None
+DEFAULT_LOCAL_GENERATION_TOKENS = 4_096
+DEFAULT_LOCAL_REQUEST_TIMEOUT_SECONDS = 120.0
+DEFAULT_VLLM_GENERATION_TOKENS = DEFAULT_LOCAL_GENERATION_TOKENS
 # vLLM 0.27's -1 sentinel derives the model-native ceiling and then reduces it
 # to the largest KV-cache allocation that fits the GPUs available at engine
 # construction. It is distinct from an omitted value, which requests the
@@ -80,8 +83,10 @@ DEFAULT_OLLAMA_NUM_CTX: Literal["fit"] = "fit"
 MAX_OLLAMA_NUM_CTX = 1_000_000
 MAX_OLLAMA_NUM_PREDICT = 25_000
 MIN_OLLAMA_HARDWARE_FIT_CONTEXT = 4_096
-# Ollama's -1 sentinel generates until EOS or the available context is spent.
-DEFAULT_OLLAMA_NUM_PREDICT = -1
+# Direct target construction uses a finite profiling baseline. Runner and Rig
+# Web reject local generative campaigns until an identity-bound readiness
+# profile replaces this value.
+DEFAULT_OLLAMA_NUM_PREDICT = DEFAULT_LOCAL_GENERATION_TOKENS
 VLLM_IN_PROCESS_EXECUTION_MODE = "in_process"
 _VLLM_MULTIPROCESSING_ENV = "VLLM_ENABLE_V1_MULTIPROCESSING"
 _VLLM_ENVIRONMENT_LOCK = threading.RLock()
@@ -90,6 +95,48 @@ _VLLM_CONTEXT_LIMIT_ERROR = re.compile(
     r"maximum model length of (?P<limit>[0-9]+)",
     re.IGNORECASE,
 )
+
+
+def validate_local_request_timeout(value: object) -> float:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+        or not 1.0 <= float(value) <= 3_600.0
+    ):
+        raise ValueError("timeout must be numeric in [1, 3600] seconds")
+    return float(value)
+
+
+@contextmanager
+def _vllm_generation_deadline(seconds: float) -> Iterator[None]:
+    """Bound one synchronous vLLM request on POSIX main-thread execution."""
+
+    if (
+        os.name != "posix"
+        or threading.current_thread() is not threading.main_thread()
+        or not hasattr(signal, "setitimer")
+    ):
+        yield
+        return
+
+    def expired(_signum: int, _frame: object) -> None:
+        raise LocalTargetAnswerError(
+            f"vLLM generation exceeded the configured hard {seconds:g}s deadline",
+            category="generation_timeout",
+        )
+
+    previous_handler = signal.getsignal(signal.SIGALRM)
+    previous_timer = signal.setitimer(signal.ITIMER_REAL, 0.0)
+    signal.signal(signal.SIGALRM, expired)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0.0)
+        signal.signal(signal.SIGALRM, previous_handler)
+        if previous_timer != (0.0, 0.0):
+            signal.setitimer(signal.ITIMER_REAL, *previous_timer)
 OLLAMA_FORBIDDEN_LOCAL_CONFIG_FIELDS = frozenset({
     "revision",
     "tensor_parallel_size",
@@ -493,6 +540,7 @@ class VLLMTarget(BaseTarget):
         quantization: Optional[str] = None,
         max_tokens: Optional[int] = DEFAULT_VLLM_GENERATION_TOKENS,
         max_model_len: Optional[int] = DEFAULT_VLLM_MAX_MODEL_LEN,
+        timeout: float = DEFAULT_LOCAL_REQUEST_TIMEOUT_SECONDS,
         temperature: float = 0.0,
         dtype: str = "auto",
         gpu_memory_utilization: float = 0.90,
@@ -542,6 +590,7 @@ class VLLMTarget(BaseTarget):
             if max_model_len is None
             else validate_vllm_max_model_len(max_model_len)
         )
+        self.timeout = validate_local_request_timeout(timeout)
         if (
             self.max_model_len is not None
             and self.max_model_len > 0
@@ -974,19 +1023,20 @@ class VLLMTarget(BaseTarget):
                 return {"vllm_context_limit_failure": context_failure}
 
         t0 = time.perf_counter()
-        if self._model_runtime is not None:
-            outputs = self._model_runtime.private_execution(
-                self._managed_model_role,
-                chat_once,
-            )
-        else:
-            from ..model_acquisition_runtime import private_model_execution
+        with _vllm_generation_deadline(self.timeout):
+            if self._model_runtime is not None:
+                outputs = self._model_runtime.private_execution(
+                    self._managed_model_role,
+                    chat_once,
+                )
+            else:
+                from ..model_acquisition_runtime import private_model_execution
 
-            outputs = private_model_execution(
-                chat_once,
-                role=self._managed_model_role,
-                private_values=(Path(self._runtime_model).expanduser(),),
-            )
+                outputs = private_model_execution(
+                    chat_once,
+                    role=self._managed_model_role,
+                    private_values=(Path(self._runtime_model).expanduser(),),
+                )
         latency_ms = (time.perf_counter() - t0) * 1000.0
 
         if (
@@ -1040,6 +1090,7 @@ class VLLMTarget(BaseTarget):
                     "temperature": self.temperature,
                     "max_tokens": self.max_tokens,
                     "max_model_len": self._resolved_max_model_len,
+                    "timeout_seconds": self.timeout,
                 },
             },
         )
@@ -1108,7 +1159,7 @@ class OllamaTarget(BaseTarget):
         num_ctx: int | Literal["fit", "max"] = DEFAULT_OLLAMA_NUM_CTX,
         num_predict: int = DEFAULT_OLLAMA_NUM_PREDICT,
         think: bool | str = False,
-        timeout: float = 300.0,
+        timeout: float = DEFAULT_LOCAL_REQUEST_TIMEOUT_SECONDS,
         modality_support: tuple[str, ...] = ("text",),
         media_roots: Optional[Iterable[str | Path]] = None,
         **options: Any,
@@ -1119,11 +1170,7 @@ class OllamaTarget(BaseTarget):
             or _OLLAMA_TAG.fullmatch(model.strip()) is None
         ):
             raise ValueError("OllamaTarget model must be a bounded exact tag")
-        if not isinstance(timeout, (int, float)) or isinstance(timeout, bool):
-            raise ValueError("OllamaTarget timeout must be numeric")
-        timeout = float(timeout)
-        if not math.isfinite(timeout) or not 0.1 <= timeout <= 3600.0:
-            raise ValueError("OllamaTarget timeout must be in [0.1, 3600] seconds")
+        timeout = validate_local_request_timeout(timeout)
         self.model = model.strip()
         self.model_digest = (
             model_digest.lower() if isinstance(model_digest, str) else model_digest
@@ -1899,6 +1946,7 @@ class OllamaTarget(BaseTarget):
                     "num_ctx": resolved_num_ctx,
                     "num_predict": self.num_predict,
                     "think": self.think,
+                    "timeout_seconds": self.timeout,
                 },
                 "hardware_fit_attempts": list(self._hardware_fit_attempts),
                 "loaded_runtime": loaded_runtime_profile,
@@ -2086,6 +2134,8 @@ REGISTRY.register(
 __all__ = [
     "DEFAULT_OLLAMA_NUM_CTX",
     "DEFAULT_OLLAMA_NUM_PREDICT",
+    "DEFAULT_LOCAL_GENERATION_TOKENS",
+    "DEFAULT_LOCAL_REQUEST_TIMEOUT_SECONDS",
     "DEFAULT_VLLM_GENERATION_TOKENS",
     "DEFAULT_VLLM_MAX_MODEL_LEN",
     "MAX_OLLAMA_NUM_CTX",

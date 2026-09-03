@@ -269,6 +269,18 @@ to current GPU capacity. An explicit integer in 1..1,000,000 must be at least
 `max_tokens`, is passed at engine construction, and is retained in normalized
 execution provenance.
 
+Runner 2.30 adds one provider-independent execution-profile boundary for local
+generative models. `local_model_readiness` applies the same seeded 10-text and
+5-image probe set at 4,096 and 25,000 output tokens, with a 120-second deadline
+per request, and selects the highest passing condition for which no request
+reaches that deadline. A machine-local
+registry binds that recommendation to the exact revision or digest and
+modalities. Both CLI and Build use its vLLM `max_tokens`, Ollama `num_predict`,
+and request deadline; an explicit local config value
+remains a distinct bound condition. The hardware-fit context is unchanged.
+Hosted targets and judges never read this registry: their explicit output caps
+remain paid-budget inputs and their retry count remains zero.
+
 The target boundary keeps output stability separate from input compatibility.
 Runner 2.26 retains an exact deterministic target-input rejection, such as a
 vLLM prompt exceeding the admitted context cap, as a typed missing response. It
@@ -405,6 +417,12 @@ selection and may use one or both GPUs. The target phase does not reserve a
 fraction of another device for later scoring, so target utilization and memory
 observations describe the target condition rather than target-judge
 co-residency.
+
+Runner 2.30 leaves unified schema 1.5 and retained Runner artifacts unchanged.
+It adds `ura-local-model-readiness/2` and the machine-local
+`ura-local-model-execution-profiles/1` registry. Schema `/1` readiness receipts
+remain valid historical admission records but cannot supply a recommended
+execution profile.
 
 An Ollama entry instead identifies a tag present in the live loopback daemon
 after a successful pull or discovery transaction. Rig Web may Start, Stop, and

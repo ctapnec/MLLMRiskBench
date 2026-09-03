@@ -5,7 +5,7 @@ validity rules, then execute [RUN_AND_RETURN.md](RUN_AND_RETURN.md). A dry run,
 partial artifact family, source conversion, model-name assumption, native prompt
 export, or synthetic figure is not a measured thesis result.
 
-The maintained execution contract is Runner `ura-runner/2.29` with unified
+The maintained execution contract is Runner `ura-runner/2.30` with unified
 schema `1.5`. Runner 2.19/schema 1.4 artifacts remain runtime-free legacy
 compatibility only and are not mixed into the current measured cohort.
 Ignored local/rig engineering logs are operational diagnostics, not committed
@@ -90,6 +90,12 @@ product:
    and admits the largest tested context reported by `/api/ps` as fully
    GPU-resident. The Runner uses the daemon HTTP API directly;
    no Ollama Python SDK is required.
+   Generative vLLM and Ollama models share an identity-bound local readiness
+   profile. The seeded 10-text/5-image survey runs at 4,096 and 25,000 output
+   tokens with a 120-second request deadline, stores the highest passing
+   allowance only when no request reaches the deadline, and is required by CLI
+   and Build. Hosted target and judge output caps are instead
+   fixed only by their paid campaign budget and never consume this registry.
    Response-independent local attestation, diagnostic-canary, and measured cells
    collect and durably checkpoint target responses first, release the target,
    and only then load their model-backed scoring judge. Crescendo remains inline
@@ -398,6 +404,13 @@ response artifacts remain authoritative.
   opens the global `paid_provider` circuit before another paid call. An operator
   must classify and resolve it before a fresh bound plan and explicit circuit
   reset; paid execution never resumes automatically.
+- Local context fit and response allowance are independent. vLLM
+  `max_model_len=-1` and Ollama `num_ctx="fit"` retain maximum hardware-fitting
+  context. A local response allowance and 120-second request deadline must come
+  from the exact revision/digest readiness profile; an unprofiled model is not
+  admitted to a security campaign. Hosted
+  routes use explicit budget-derived token limits and their existing paid-call
+  stop circuit instead.
 - Post-hoc Haiku re-adjudication does not use `run_matrix` and cannot regenerate
   a target response. `retained_response_judge_pair` admits at most 590 pairs
   from the exact local/hosted input-identity intersection, without reusing an

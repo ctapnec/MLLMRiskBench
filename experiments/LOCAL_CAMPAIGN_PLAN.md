@@ -227,7 +227,13 @@ same ten benign questions deterministically from a fixed twenty-question bank
 with seed 20260829 and requires at least five correct. The other five answers
 may be incorrect or empty. For an image-capable target, it adds five
 deterministic synthetic split-color images and requires at least two correct;
-the other three may be incorrect or empty. This applies to the
+the other three may be incorrect or empty. The current `/2` gate runs that same
+survey at 4,096 and 25,000 output tokens under a 120-second per-request
+deadline, then stores the highest passing allowance for which no request
+reaches that deadline in an identity-bound rig profile consumed by CLI and
+Build. Context remains maximum hardware-fit. An unprofiled local generative
+model is rejected, and the approved values replace campaign-local overrides.
+This applies to the
 three vLLM targets and all four Ollama targets. Guard and classifier checkpoints
 instead retain their role-specific classifier smoke because free-form Q&A is not
 their served interface. The readiness receipt is engineering admission evidence,
@@ -1037,11 +1043,37 @@ controller is terminal because re-pin hygiene intentionally stops Runner.
 
 The general local serving default is provider-independent at the response
 boundary: omitted vLLM `max_model_len` binds vLLM 0.27's `-1` auto-fit policy,
-while omitted `max_tokens` uses maximum available output. Ollama binds
-`num_ctx="fit"` and `num_predict=-1`; Runner derives and proves a fully
-GPU-resident context before a real prompt. Every policy, attempted allocation,
-and resolved value is visible in Build and retained in the run condition or
-response evidence.
+and Ollama binds `num_ctx="fit"`; both retain the largest hardware-fitting
+context. Their independent response allowance comes from the exact model's
+readiness profile. No local generative campaign is admitted before profiling.
+The profile also supplies the 120-second request deadline, and a candidate
+allowance is ineligible if any probe reaches it. Every policy, attempted
+allocation, and resolved value is visible in Build and retained in the run
+condition or response evidence. Hosted targets and hosted judges do not use
+this local mechanism: their explicit token limits remain derived from the paid
+campaign budget and they receive one attempt.
+
+### 7.2 Runner 2.30 local execution-profile amendment
+
+The 3 September hardware-fit continuation exposed a second execution-condition
+confound. Its LLaVA unit omitted `max_tokens`, so Runner 2.29 allowed the model
+to consume the 32,768-token context as response budget. At the controlled stop,
+36 of 64 rows were durable: 14 were failed outputs, 21 ended by length, one was
+usable, and 28 had never been attempted. Those calls took roughly ten minutes
+each. The one usable row remains immutable and excluded from recovery.
+
+Runner 2.30 separates maximum hardware-fit input context from a finite response
+allowance and local request deadline. Before continuing security work, all
+three downloaded vLLM targets and all four downloaded Ollama targets receive
+fresh `/2` readiness profiles. The successor controller selects exactly the 63
+non-usable or unattempted rows in that LLaVA unit plus the 107 rows in the four
+later unstarted units, for 170 rows total. It requires and applies the exact
+model's profiled allowance and 120-second deadline, keeps one
+answer retry, and repeats no valid completed row. The interrupted controller is
+closed with a typed terminal marker; its artifacts are retained and never
+rewritten. After this continuation, the six-unit 2,350-row population alignment
+continuation uses the same local profile contract. These are campaign-specific
+recovery strata, not changes to the hosted API campaign.
 
 Response-independent local attestation, diagnostic-canary, and measured cells
 use two GPU phases within the same bound run. The target completes a durable

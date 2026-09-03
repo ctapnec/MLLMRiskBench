@@ -23,6 +23,7 @@ from typing import Any
 from experiments.figure_results import _load_cells
 from experiments.human_audit import _joined_artifacts
 from experiments.rig_web_app.reports import rate_for
+from ura.targets.api import DEFAULT_HOSTED_HTTP_ERROR_RETRIES
 
 
 SCHEMA = "ura-retained-response-judge-plan/1"
@@ -436,9 +437,10 @@ def build_plan(
             "hosted_data_transfer_acknowledged": True,
             "target_calls": 0,
             "answer_retries": 0,
-            "transport_retries": 0,
+            "transport_retries": DEFAULT_HOSTED_HTTP_ERROR_RETRIES,
             "max_judge_calls": len(selected),
-            "max_http_attempts": len(selected),
+            "max_http_attempts": len(selected)
+            * (DEFAULT_HOSTED_HTTP_ERROR_RETRIES + 1),
             "max_cost_microusd": max_cost_microusd,
             **dict(pricing_condition),
             "independent_judge_rows": len(selected) - same_model_rows,
@@ -501,9 +503,10 @@ def validate_plan(value: object) -> dict[str, Any]:
     if (
         condition.get("target_calls") != 0
         or condition.get("answer_retries") != 0
-        or condition.get("transport_retries") != 0
+        or condition.get("transport_retries") != DEFAULT_HOSTED_HTTP_ERROR_RETRIES
         or condition.get("max_judge_calls") != selected_count
-        or condition.get("max_http_attempts") != selected_count
+        or condition.get("max_http_attempts")
+        != selected_count * (DEFAULT_HOSTED_HTTP_ERROR_RETRIES + 1)
         or condition.get("hosted_data_transfer_acknowledged") is not True
         or isinstance(condition.get("independent_judge_rows"), bool)
         or not isinstance(condition.get("independent_judge_rows"), int)

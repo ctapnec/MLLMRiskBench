@@ -60,9 +60,9 @@ def _audit(count: int) -> dict[str, int]:
 
 class FakeHaiku:
     name = JUDGE
-    max_retries = 0
+    max_retries = 3
     sdk_max_retries = 0
-    max_transport_attempts_per_call = 1
+    max_transport_attempts_per_call = 4
 
     def __init__(self, *, fail_at: int | None = None) -> None:
         self.calls = 0
@@ -217,6 +217,7 @@ def test_executes_exact_selection_once_and_completes_without_target_calls(
     assert fake.calls == 2
     assert completion["target_calls"] == 0
     assert completion["judge_calls"] == completion["http_attempts"] == 2
+    assert completion["http_attempts_reserved"] == 8
     assert completion["actual_cost_microusd"] == 320
     assert ledger["state"] == "complete"
     assert ledger["target_calls"] == 0
@@ -361,7 +362,7 @@ def test_executor_rejects_a_judge_transport_with_retries(
     fake = FakeHaiku()
     fake.max_retries = 1
 
-    with pytest.raises(ValueError, match="fixed to one attempt"):
+    with pytest.raises(ValueError, match="retry policy changed"):
         subject.execute(
             **{key: prepared[key] for key in (
                 "plan_path", "runner_view", "source_receipt", "api_config",
@@ -405,4 +406,4 @@ def test_budget_guard_stops_before_the_next_http_attempt(
     circuit = json.loads((prepared["out"] / "circuit.json").read_text(encoding="utf-8"))
     assert circuit["dependency"] == "budget"
     assert circuit["judge_calls_reserved"] == 1
-    assert circuit["http_attempts_reserved"] == 1
+    assert circuit["http_attempts_reserved"] == 4

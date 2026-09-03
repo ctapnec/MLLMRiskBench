@@ -86,6 +86,8 @@ _SDK_REQUEST_LOG_ENV = {
     "openai": "OPENAI_LOG",
     "anthropic": "ANTHROPIC_LOG",
 }
+DEFAULT_HOSTED_HTTP_ERROR_RETRIES = 3
+_RETRYABLE_HTTP_STATUS_CODES = frozenset({408, 409, 425, 429})
 
 
 def _reject_sdk_request_logging(module: str) -> None:
@@ -329,14 +331,9 @@ def _transport_request_id(value: Any) -> str | None:
 
 def _retryable_transport_error(exc: BaseException) -> bool:
     status = _transport_status_code(exc)
-    if status in {408, 409, 429} or (status is not None and status >= 500):
-        return True
-    return type(exc).__name__ in {
-        "APIConnectionError",
-        "APITimeoutError",
-        "InternalServerError",
-        "RateLimitError",
-    }
+    return status in _RETRYABLE_HTTP_STATUS_CODES or (
+        status is not None and 500 <= status <= 599
+    )
 
 
 def _call_with_retry(
@@ -856,7 +853,7 @@ class AnthropicTarget(BaseTarget):
         requested_spec: Optional[str] = None,
         temperature: float | None = 0.0,
         timeout: float = 120.0,
-        max_retries: int = 0,
+        max_retries: int = DEFAULT_HOSTED_HTTP_ERROR_RETRIES,
         media_roots: Optional[Iterable[str | Path]] = None,
         modality_support: Optional[Iterable[str]] = None,
         adaptive_thinking: bool = False,
@@ -1203,7 +1200,7 @@ class AnthropicFableTarget(AnthropicTarget):
         *,
         requested_spec: Optional[str] = None,
         timeout: float = 600.0,
-        max_retries: int = 0,
+        max_retries: int = DEFAULT_HOSTED_HTTP_ERROR_RETRIES,
         media_roots: Optional[Iterable[str | Path]] = None,
     ) -> None:
         if model != _ANTHROPIC_FABLE_MODEL:
@@ -1604,7 +1601,7 @@ class OpenAITarget(BaseTarget):
         requested_spec: Optional[str] = None,
         temperature: float | None = 0.0,
         timeout: float = 120.0,
-        max_retries: int = 0,
+        max_retries: int = DEFAULT_HOSTED_HTTP_ERROR_RETRIES,
         media_roots: Optional[Iterable[str | Path]] = None,
         supports_seed: bool = True,
         modality_support: Optional[Iterable[str]] = None,
@@ -1886,7 +1883,7 @@ class OpenAIResponsesTarget(OpenAITarget):
         *,
         requested_spec: Optional[str] = None,
         timeout: float = 600.0,
-        max_retries: int = 0,
+        max_retries: int = DEFAULT_HOSTED_HTTP_ERROR_RETRIES,
         media_roots: Optional[Iterable[str | Path]] = None,
     ) -> None:
         if model != _OPENAI_SOL_PRO_MODEL:
@@ -2474,7 +2471,7 @@ class OpenAICompatibleTarget(OpenAITarget):
         requested_spec: Optional[str] = None,
         temperature: float | None = 0.0,
         timeout: float = 120.0,
-        max_retries: int = 0,
+        max_retries: int = DEFAULT_HOSTED_HTTP_ERROR_RETRIES,
         media_roots: Optional[Iterable[str | Path]] = None,
         supports_seed: bool = False,
         modality_support: Optional[Iterable[str]] = None,
@@ -2534,7 +2531,7 @@ class GeminiTarget(BaseTarget):
         max_tokens: int = 1024,
         temperature: float | None = 0.0,
         timeout: float = 120.0,
-        max_retries: int = 0,
+        max_retries: int = DEFAULT_HOSTED_HTTP_ERROR_RETRIES,
         media_roots: Optional[Iterable[str | Path]] = None,
         supports_seed: bool = False,
         modality_support: Optional[Iterable[str]] = None,
@@ -3342,6 +3339,7 @@ def build_api_target(
 
 
 __all__ = [
+    "DEFAULT_HOSTED_HTTP_ERROR_RETRIES",
     "MockTarget",
     "AnthropicTarget",
     "AnthropicFableTarget",

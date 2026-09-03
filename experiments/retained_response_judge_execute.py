@@ -22,13 +22,17 @@ from experiments.retained_response_judge import (
 )
 from ura.data_models import DataPoint, DialogTurn, Judgment, Response
 from ura.judges.llm import LLMJudge
-from ura.targets.api import AnthropicTarget, normalize_api_target_config
+from ura.targets.api import (
+    AnthropicTarget,
+    DEFAULT_HOSTED_HTTP_ERROR_RETRIES,
+    normalize_api_target_config,
+)
 
 
-EXECUTION_SCHEMA = "ura-retained-response-judge-execution/1"
-JUDGMENT_SCHEMA = "ura-retained-response-judge-artifact/1"
-CIRCUIT_SCHEMA = "ura-retained-response-judge-circuit/1"
-COMPLETION_SCHEMA = "ura-retained-response-judge-completion/1"
+EXECUTION_SCHEMA = "ura-retained-response-judge-execution/2"
+JUDGMENT_SCHEMA = "ura-retained-response-judge-artifact/2"
+CIRCUIT_SCHEMA = "ura-retained-response-judge-circuit/2"
+COMPLETION_SCHEMA = "ura-retained-response-judge-completion/2"
 _LEDGER_FIELDS = frozenset(
     {
         "schema",
@@ -38,6 +42,7 @@ _LEDGER_FIELDS = frozenset(
         "target_calls",
         "judge_calls_reserved",
         "http_attempts_reserved",
+        "http_attempts_observed",
         "completed_judgments",
         "input_tokens",
         "output_tokens",
@@ -175,7 +180,7 @@ def _build_haiku_judge(spec: str, config: Mapping[str, object]) -> AnthropicTarg
             None if config["temperature"] is None else float(config["temperature"])
         ),
         modality_support=config["modalities"],
-        max_retries=0,
+        max_retries=DEFAULT_HOSTED_HTTP_ERROR_RETRIES,
     )
 
 
@@ -301,6 +306,7 @@ def _validate_ledger(value: object, plan: Mapping[str, Any], plan_sha256: str) -
         "target_calls",
         "judge_calls_reserved",
         "http_attempts_reserved",
+        "http_attempts_observed",
         "completed_judgments",
         "input_tokens",
         "output_tokens",
@@ -320,7 +326,10 @@ def _validate_ledger(value: object, plan: Mapping[str, Any], plan_sha256: str) -
         or value["plan_sha256"] != plan_sha256
         or value["selected_outputs"] != selected
         or value["target_calls"] != 0
-        or value["judge_calls_reserved"] != value["http_attempts_reserved"]
+        or value["http_attempts_reserved"]
+        != value["judge_calls_reserved"] * (DEFAULT_HOSTED_HTTP_ERROR_RETRIES + 1)
+        or value["http_attempts_observed"] > value["http_attempts_reserved"]
+        or value["http_attempts_observed"] < value["completed_judgments"]
         or value["completed_judgments"] > value["judge_calls_reserved"]
         or value["judge_calls_reserved"] > selected
         or value["actual_cost_microusd"] != value["input_tokens"]
@@ -396,7 +405,11 @@ def _validate_artifact(
         or judgment.raw.get("judge_model") != plan["judge_condition"]["model"]
         or judgment.raw.get("judge_model_queried") is not True
         or not isinstance(call, dict)
-        or call.get("transport_attempt_count") != 1
+        or isinstance(call.get("transport_attempt_count"), bool)
+        or not isinstance(call.get("transport_attempt_count"), int)
+        or not 1
+        <= call["transport_attempt_count"]
+        <= DEFAULT_HOSTED_HTTP_ERROR_RETRIES + 1
     ):
         raise ValueError("retained-response judgment artifact contract changed")
     input_tokens = value.get("input_tokens")
@@ -412,6 +425,11 @@ def _validate_artifact(
 
 def _artifact_usage(value: Mapping[str, Any]) -> tuple[int, int, int]:
     return value["input_tokens"], value["output_tokens"], value["cost_microusd"]
+
+
+def _artifact_http_attempts(value: Mapping[str, Any]) -> int:
+    judgment = Judgment.model_validate(value["judgment"])
+    return int(judgment.raw["judge_call"]["transport_attempt_count"])
 
 
 def _validate_completion(
@@ -430,6 +448,7 @@ def _validate_completion(
         "target_calls",
         "judge_calls",
         "http_attempts",
+        "http_attempts_reserved",
         "input_tokens",
         "output_tokens",
         "actual_cost_microusd",
@@ -448,7 +467,8 @@ def _validate_completion(
         or value["selected_outputs"] != len(plan["selected"])
         or value["target_calls"] != 0
         or value["judge_calls"] != ledger["completed_judgments"]
-        or value["http_attempts"] != ledger["http_attempts_reserved"]
+        or value["http_attempts"] != ledger["http_attempts_observed"]
+        or value["http_attempts_reserved"] != ledger["http_attempts_reserved"]
         or value["input_tokens"] != ledger["input_tokens"]
         or value["output_tokens"] != ledger["output_tokens"]
         or value["actual_cost_microusd"] != ledger["actual_cost_microusd"]
@@ -522,11 +542,13 @@ def execute(
             raise RuntimeError("paid_provider circuit is open; investigate before new work")
         judge_target = judge_factory(condition["model"], normalized_api)
         if (
-            getattr(judge_target, "max_retries", None) != 0
+            getattr(judge_target, "max_retries", None)
+            != DEFAULT_HOSTED_HTTP_ERROR_RETRIES
             or getattr(judge_target, "sdk_max_retries", None) != 0
-            or getattr(judge_target, "max_transport_attempts_per_call", None) != 1
+            or getattr(judge_target, "max_transport_attempts_per_call", None)
+            != DEFAULT_HOSTED_HTTP_ERROR_RETRIES + 1
         ):
-            raise ValueError("Haiku judge transport is not fixed to one attempt")
+            raise ValueError("Haiku judge HTTP-error retry policy changed")
         judge = LLMJudge(judge_target)
         bounds = _cost_bounds(
             judge,
@@ -555,6 +577,7 @@ def execute(
                 "target_calls": 0,
                 "judge_calls_reserved": 0,
                 "http_attempts_reserved": 0,
+                "http_attempts_observed": 0,
                 "completed_judgments": 0,
                 "input_tokens": 0,
                 "output_tokens": 0,
@@ -602,6 +625,7 @@ def execute(
             )
             input_tokens, output_tokens, cost = _artifact_usage(artifact)
             ledger["completed_judgments"] += 1
+            ledger["http_attempts_observed"] += _artifact_http_attempts(artifact)
             ledger["input_tokens"] += input_tokens
             ledger["output_tokens"] += output_tokens
             ledger["actual_cost_microusd"] += cost
@@ -667,7 +691,7 @@ def execute(
             if ledger["judge_calls_reserved"] != index:
                 raise ValueError("paid judge reservation count is not a strict prefix")
             ledger["judge_calls_reserved"] += 1
-            ledger["http_attempts_reserved"] += 1
+            ledger["http_attempts_reserved"] += DEFAULT_HOSTED_HTTP_ERROR_RETRIES + 1
             ledger["state"] = "reserved"
             ledger["current_reservation"] = {
                 "selection_index": index,
@@ -710,6 +734,19 @@ def execute(
                 _write_new(_judgment_path(root, index, row), artifact)
             except Exception as exc:
                 call_audit = getattr(exc, "call_audit", None)
+                observed_attempts = (
+                    call_audit.get("transport_attempt_count")
+                    if isinstance(call_audit, dict)
+                    else None
+                )
+                if (
+                    isinstance(observed_attempts, int)
+                    and not isinstance(observed_attempts, bool)
+                    and 1
+                    <= observed_attempts
+                    <= DEFAULT_HOSTED_HTTP_ERROR_RETRIES + 1
+                ):
+                    ledger["http_attempts_observed"] += observed_attempts
                 circuit = {
                     "schema": CIRCUIT_SCHEMA,
                     "status": "open",
@@ -735,6 +772,7 @@ def execute(
 
             input_tokens, output_tokens, cost = _artifact_usage(artifact)
             ledger["completed_judgments"] += 1
+            ledger["http_attempts_observed"] += _artifact_http_attempts(artifact)
             ledger["input_tokens"] += input_tokens
             ledger["output_tokens"] += output_tokens
             ledger["actual_cost_microusd"] += cost
@@ -754,7 +792,8 @@ def execute(
             "selected_outputs": len(items),
             "target_calls": 0,
             "judge_calls": ledger["completed_judgments"],
-            "http_attempts": ledger["http_attempts_reserved"],
+            "http_attempts": ledger["http_attempts_observed"],
+            "http_attempts_reserved": ledger["http_attempts_reserved"],
             "input_tokens": ledger["input_tokens"],
             "output_tokens": ledger["output_tokens"],
             "actual_cost_microusd": ledger["actual_cost_microusd"],

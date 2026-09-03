@@ -1764,6 +1764,7 @@ class BuilderValidationMixin:
                     self._local_gpu_memory_utilization(spec, entry)
                     max_model_len = self._local_max_model_len(spec, entry)
                     max_tokens = self._local_max_tokens(spec, entry)
+                    self._local_request_timeout(spec, entry)
                     fit = self._effective_local_profile(
                         spec,
                         entry,
@@ -1918,7 +1919,7 @@ class BuilderValidationMixin:
             and api
         ):
             errors["target_answer_retries"] = (
-                "paid hosted targets allow one application attempt only; set "
+                "paid hosted targets allow no answer-quality retries; set "
                 "additional answer retries to 0"
             )
         if ideator_requirements is not None:
