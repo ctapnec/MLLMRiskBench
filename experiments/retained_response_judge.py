@@ -45,6 +45,7 @@ _SELECTED_FIELDS = frozenset(
         "attempt_id",
         "datapoint_id",
         "source_cluster_id",
+        "requested_seed",
         *_DIMENSIONS,
         "prompt_sha256",
         "response_sha256",
@@ -188,6 +189,7 @@ def load_candidates(runner_view: Path) -> tuple[list[dict[str, Any]], dict[str, 
             "source_cluster_id": _text(
                 meta.get("source_cluster_id"), label="source cluster ID"
             ),
+            "requested_seed": meta.get("requested_seed"),
             **context,
             "source": _text(meta.get("source"), label="source"),
             "modality": modality,
@@ -200,6 +202,10 @@ def load_candidates(runner_view: Path) -> tuple[list[dict[str, Any]], dict[str, 
                 response_text.encode("utf-8")
             ).hexdigest(),
         }
+        if isinstance(row["requested_seed"], bool) or not isinstance(
+            row["requested_seed"], int
+        ):
+            raise ValueError("retained response lacks its requested seed")
         material = {
             **row,
             "physical_media_sent_to_judge": False,
@@ -302,6 +308,8 @@ def build_plan(
             "max_judge_calls": len(selected),
             "max_http_attempts": len(selected),
             "max_cost_microusd": max_cost_microusd,
+            "input_microusd_per_token": 1,
+            "output_microusd_per_token": 5,
             "independent_judge_rows": len(selected) - same_model_rows,
             "same_model_judge_rows": same_model_rows,
         },
@@ -372,6 +380,8 @@ def validate_plan(value: object) -> dict[str, Any]:
         or condition["independent_judge_rows"]
         + condition["same_model_judge_rows"]
         != selected_count
+        or condition.get("input_microusd_per_token") != 1
+        or condition.get("output_microusd_per_token") != 5
         or not isinstance(condition.get("max_cost_microusd"), int)
         or not 1 <= condition["max_cost_microusd"] <= 14_000_000
         or not str(condition.get("model", "")).startswith(
@@ -395,12 +405,16 @@ def validate_plan(value: object) -> dict[str, Any]:
     for row in selected:
         if not isinstance(row, dict) or set(row) != _SELECTED_FIELDS:
             raise ValueError("retained-response judge selected-row fields changed")
-        for field in _SELECTED_FIELDS - {"same_model_judge"}:
+        for field in _SELECTED_FIELDS - {"requested_seed", "same_model_judge"}:
             item = row[field]
             if not isinstance(item, str) or not item:
                 raise ValueError("retained-response judge selected-row value is invalid")
         if not isinstance(row["same_model_judge"], bool):
             raise ValueError("retained-response judge relationship is invalid")
+        if isinstance(row["requested_seed"], bool) or not isinstance(
+            row["requested_seed"], int
+        ):
+            raise ValueError("retained-response judge selected seed is invalid")
         expected_same_model = row["exact_model"] == condition["model"]
         if row["same_model_judge"] is not expected_same_model:
             raise ValueError("retained-response judge relationship changed")

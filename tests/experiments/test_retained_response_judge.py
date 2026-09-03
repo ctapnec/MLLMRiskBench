@@ -44,6 +44,7 @@ def _candidate(index: int, *, model: str = "ollama:ministral-3:14b") -> dict:
         "attempt_id": f"attempt-{index}",
         "datapoint_id": f"datapoint-{index}",
         "source_cluster_id": f"cluster-{index}",
+        "requested_seed": 0,
         **dimensions,
         "prompt_sha256": _sha({"prompt": index}),
         "response_sha256": _sha({"response": index}),
@@ -100,6 +101,8 @@ def test_selector_is_deterministic_balanced_and_does_not_copy_content() -> None:
         "max_judge_calls": 3,
         "max_http_attempts": 3,
         "max_cost_microusd": 14_000_000,
+        "input_microusd_per_token": 1,
+        "output_microusd_per_token": 5,
         "independent_judge_rows": 3,
         "same_model_judge_rows": 0,
     }
