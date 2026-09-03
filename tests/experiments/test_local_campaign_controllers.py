@@ -7880,6 +7880,113 @@ def test_vllm_stability_preflight_omits_measured_attestation_scope() -> None:
     assert recovery._option(measured, "--live-attestation-max-age-hours") == "24"
 
 
+def test_recovery_canary_cap_covers_full_cluster_without_expanding_measured_cap() -> None:
+    from experiments.local_campaign import vllm_stability_phase6 as recovery
+
+    unit = recovery.Unit(
+        unit_id="three-row-suffix",
+        source_lane="gptgeochat-qwen3-vl",
+        corpus="gptgeochat_release",
+        spec={},
+        selected_records=3,
+        recovery={
+            "schema": "ura-recovery-completed-selection/1",
+            "corpora": {
+                "gptgeochat_release": {"completed_record_count": 2017},
+            },
+        },
+    )
+
+    measured_cap = unit.selected_records * 2
+    assert measured_cap == 6
+    assert recovery._diagnostic_canary_target_cap(unit, measured_cap) == 4040
+
+    changed = copy.deepcopy(unit.recovery)
+    changed["corpora"]["gptgeochat_release"].pop("completed_record_count")
+    malformed = recovery.Unit(
+        unit_id=unit.unit_id,
+        source_lane=unit.source_lane,
+        corpus=unit.corpus,
+        spec=unit.spec,
+        selected_records=unit.selected_records,
+        recovery=changed,
+    )
+    with pytest.raises(ValueError, match="completed-record count changed"):
+        recovery._diagnostic_canary_target_cap(malformed, measured_cap)
+
+
+def test_hardware_fit_failed_unit_recovery_selects_only_the_three_missing_rows(
+    tmp_path: Path,
+) -> None:
+    from experiments.local_campaign import (
+        local_hardware_fit_failed_unit_recovery_phase6 as recovery,
+    )
+
+    root = tmp_path / "repair"
+    (root / "inputs").mkdir(parents=True)
+    (root / "configs").mkdir()
+    item = {
+        "source_lane": "gptgeochat-qwen3-vl",
+        "modality": "image",
+        "summary": {"recovery_records": 3},
+        "recovery_selection": {
+            "schema": "ura-recovery-completed-selection/1",
+            "corpora": {
+                "gptgeochat_release": {
+                    "completed_record_count": 2017,
+                },
+            },
+        },
+        "hardware_fit_local_config": {"context_policy": "fixture"},
+        "base_argv": [
+            "--local-config", "/old/config.json",
+            "--local-config-sha256", "a" * 64,
+            "--corpora", "gptgeochat_release",
+        ],
+    }
+
+    unit, selector, selector_sha, config, config_sha = recovery._configure_unit(
+        item,
+        unit_id="local-hardware-fit-021-fixture",
+        control_root=root,
+    )
+
+    assert unit.selected_records == 3
+    assert unit.recovery == item["recovery_selection"]
+    assert unit.spec["modality"] == "image"
+    assert recovery._option(unit.spec["base_argv"], "--local-config") == str(config)
+    assert recovery._option(
+        unit.spec["base_argv"], "--local-config-sha256"
+    ) == config_sha
+    assert hashlib.sha256(selector.read_bytes()).hexdigest() == selector_sha
+
+
+def test_hardware_fit_failed_unit_recovery_never_replays_retained_results() -> None:
+    from experiments.local_campaign import (
+        local_hardware_fit_failed_unit_recovery_phase6 as recovery,
+    )
+
+    source = Path(recovery.__file__).read_text(encoding="utf-8")
+
+    def assert_contract(candidate: str) -> None:
+        assert "results = dict(prior[\"unit_results\"])" in candidate
+        assert "results[unit_id] = repaired" in candidate
+        assert "successful_rows_repeated\": 0" in candidate
+        assert "FAILED_SELECTED_RECORDS = 3" in candidate
+        assert "allow_failed_unit=failed_unit" in candidate
+        assert "exact_pre_runner_canary_cap_failure_only" in candidate
+
+    assert_contract(source)
+    changed = source.replace(
+        "results = dict(prior[\"unit_results\"])",
+        "results = {}",
+        1,
+    )
+    assert changed != source
+    with pytest.raises(AssertionError):
+        assert_contract(changed)
+
+
 def test_vllm_stability_phase6_reads_retained_projection_descriptor(
     tmp_path: Path,
 ) -> None:

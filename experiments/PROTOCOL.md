@@ -320,6 +320,16 @@ judge output or transport failure. The paired plan has a USD 27 ceiling and a
 dedicated 512-token maximum output configuration. Its 4,000-call central
 forecast is USD 26.00 at 4,000 input and 500 output tokens per call.
 
+The hosted member of every retained pair is additionally judged by the sealed
+local `rules,guardrail` cascade. A separate immutable plan binds the pair-plan
+file and digest and selects exactly those hosted rows; it does not alter the
+Haiku pair-plan contract. This post-factum stage permits at most 2,000 rule
+evaluations and 2,000 Llama Guard calls, makes zero target/provider/HTTP calls,
+and costs no provider budget. Local-versus-Haiku agreement is reported only on
+comparable decided labels. The local decision coverage and abstention count are
+always shown because Llama Guard's safe/violation label space cannot express
+benign over-refusal when the rule stage is undecided.
+
 Every condition requires a fresh no-call projection and a bounded text and, if
 declared, image readiness canary before measurement. A target without an
 attested media route retains the corresponding media rows as typed structural

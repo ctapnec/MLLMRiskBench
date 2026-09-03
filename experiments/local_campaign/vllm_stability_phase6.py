@@ -755,6 +755,27 @@ def _without_recovery_selection(argv: Sequence[str]) -> list[str]:
     return result
 
 
+def _diagnostic_canary_target_cap(unit: Unit, measured_cap: int) -> int:
+    """Cover one whole source cluster even when only a tiny suffix remains."""
+
+    recovery = unit.recovery
+    corpora = recovery.get("corpora") if isinstance(recovery, Mapping) else None
+    if not isinstance(corpora, Mapping):
+        return measured_cap
+    completed = 0
+    for value in corpora.values():
+        if not isinstance(value, Mapping):
+            raise ValueError("recovery corpus selection changed")
+        count = value.get("completed_record_count")
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            raise ValueError("recovery corpus completed-record count changed")
+        completed += count
+    # The diagnostic removes the completed-row selector before applying
+    # --limit 1. Its breaker must therefore cover a cluster drawn from the
+    # full retained selection, while the measured breaker stays suffix-only.
+    return max(measured_cap, (completed + unit.selected_records) * 2)
+
+
 def _probe_args(
     unit: Unit,
     *,
@@ -981,7 +1002,7 @@ def _run_unit(
             out=canary_root,
             scope=scope,
             attestation=attestation,
-            target_cap=target_cap,
+            target_cap=_diagnostic_canary_target_cap(unit, target_cap),
             canary=True,
         )
         canary_acquisition_root = unit_root / "canary-acquisition"

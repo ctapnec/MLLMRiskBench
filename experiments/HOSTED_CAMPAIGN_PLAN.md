@@ -7,7 +7,9 @@ Run every controller on the rig in a named tmux session.
 This is a separate campaign, not a local-campaign phase and not product
 semantics. It compares bounded hosted-model conditions on content-bound subsets
 of inputs already used by the local campaign, then applies one selected Haiku
-judge condition to hosted and local retained outputs.
+judge condition to hosted and local retained outputs. The hosted member of
+every Haiku pair is also judged post-factum by the sealed local
+`rules,guardrail` cascade, without repeating a hosted target call.
 
 ## Fixed design
 
@@ -63,6 +65,10 @@ the same input bound and every route consuming its configured maximum output,
 the target reservation is USD 38.5476. The exact per-model arithmetic is in
 `HOSTED_CAMPAIGN_COST_ASSESSMENT.md` and must be regenerated from the retained
 pricing bytes before execution.
+The target projection records 2.36 million input and 295,000 expected output
+tokens, with 2,420,880 output tokens at the configured maxima. Including 4,000
+Haiku calls gives 18.36 million input, 2.295 million expected output and
+4,468,880 maximum output tokens.
 
 ## Budget contract
 
@@ -89,6 +95,14 @@ making USD 26.24 the planning maximum when every selected judge input is at
 most 4,000 tokens. Exact provider token counts replace the estimate. The
 selector shrinks before calls if that bound exceeds USD 27. Batch never
 authorizes an outcome-dependent expansion.
+
+The local comparison stage selects exactly the hosted member of each retained
+Haiku pair. It therefore evaluates at most 2,000 rows with 2,000 deterministic
+rule evaluations and at most 2,000 sealed Llama Guard calls. It has zero target,
+provider and HTTP calls and no monetary cost. The guardrail's safe/violation
+label space cannot decide benign over-refusal where the rules stage is also
+undecided, so local decision coverage and abstentions must accompany every
+local-versus-Haiku agreement result.
 
 ## A0 - Bind the retained local population
 
@@ -146,7 +160,7 @@ Identity, budget, request-binding or artifact drift still fails closed.
 Gate A3: every intended row is complete or typed missing, no non-subset input
 was called, and the provider ledgers reconcile within all monetary ceilings.
 
-## A4 - Zero-target Haiku re-adjudication
+## A4 - Zero-target matched Haiku and local re-adjudication
 
 Create one content-bound selector for at most 2,000 local/hosted pairs. A pair
 is eligible only when both retained outputs bind the same rendered prompt,
@@ -166,8 +180,19 @@ construct a model under test or reserve a target call. The paired plan receives
 one USD 27 ceiling. Its judgment strata record the hosted-transfer
 acknowledgement and exactly one judge attempt per output.
 
+After the Haiku execution, create a separate immutable local-judge plan from
+the same pair-plan file and digest. It selects only the hosted member of each
+pair, revalidates both Runner views, and admits the exact sealed Llama Guard
+revision through the managed model store. It runs `rules,guardrail` after all
+target work, checkpoints each judgment, and resumes only after its last durable
+local judgment. It cannot construct a target-under-test and reserves no
+provider or HTTP call.
+
 Gate A4: target calls 0, original mutations 0, Haiku calls at most 4,000,
-Haiku spend at most USD 27, and complete selected/missing/excluded accounting.
+Haiku spend at most USD 27, local rule evaluations at most 2,000, local
+guardrail calls at most 2,000, and complete selected/missing/excluded
+accounting. The Haiku and local judge inventories for hosted outputs must have
+identical pair IDs and retained-row digests.
 
 ## A5 - Selected comparison and diagrams
 
@@ -179,11 +204,14 @@ Each reports population and decision coverage before rates. Required tables and
 diagrams cover:
 
 1. selected, answered, missing and judged counts by target/modality;
-2. Haiku outcome rates with cluster-aware uncertainty;
+2. Haiku and local-cascade outcome rates with cluster-aware uncertainty;
 3. failed-output model-stability rates and one-attempt response coverage;
 4. source-arm, attack/framework, risk and behavior composition;
 5. matched-input model contrasts where support exists; and
-6. billed input/output tokens and cost against each 50 percent provider cap.
+6. billed input/output tokens and cost against each 50 percent provider cap;
+   and
+7. local-versus-Haiku agreement on the same hosted outputs, with comparable
+   label support, decision coverage and abstentions shown separately.
 
 Self-Haiku rows have a visible same-model annotation in every applicable table,
 tooltip and figure. These are selected-cohort results, never full-corpus

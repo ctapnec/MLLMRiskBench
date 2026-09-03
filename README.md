@@ -828,6 +828,12 @@ schema; older common or source-task report schemas are not Gate 8 evidence.
 
 Paired effects, judge sensitivity, kappa, transfer, and figures are computed
 only from completion-validated recorded artifacts and make no new target calls.
+The budget-fitted hosted follow-on selects at most 2,000 exact local/hosted
+retained-output pairs for Haiku. The hosted member of each pair is also scored
+post-factum by the sealed local `rules,guardrail` cascade, so local-versus-Haiku
+agreement uses identical retained rows and no repeated target calls. That local
+stage reports decision coverage and abstentions before agreement because the
+guardrail cannot decide every benign over-refusal case.
 Until the real matrix and human audit exist, these tools demonstrate analysis
 capability rather than empirical findings.
 

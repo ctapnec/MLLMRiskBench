@@ -664,6 +664,19 @@ after the exact prior interruption marker and exit 125 are written but before
 the new launch artifact, restart into a fresh continuation root. The restart
 validates those immutable bytes and does not repeat terminalization side
 effects.
+If that continuation terminal contains only the three-row GPTGeoChat unit as a
+failure with `--max-total-target-calls=6 (need >= 20 ...)`, do not rerun the
+continuation. Deploy the diagnostic-cap fix and run
+`experiments.local_campaign.local_hardware_fit_failed_unit_recovery_phase6` in
+a fresh named tmux session. Supply the failed continuation completion and its
+SHA-256 plus the standard work root, project root, project interpreter, current
+project-revision receipt and SHA-256, execution scope, tmux socket/session and
+fresh control root. The controller accepts only that exact pre-Runner failure,
+retains the other 24 results, gives the one-cluster canary a ceiling derived
+from the full retained selection, keeps the three-row measured ceiling at six,
+and calls only those three unattempted rows. Supply its superseding completion
+to `--phase6-local-hardware-fit-completion` and to the population-alignment
+recovery. It remains the same 25-condition, 4,463-row hardware-fit stratum.
 Its plan-owned terminal inventory has 141 logical rows after population
 alignment and failed-output recovery: 46 canonical, four output-policy
 amendment, three follow-on, 14
@@ -1668,6 +1681,51 @@ python -m experiments.retained_response_judge_pair_execute \
   --ack-paid-execution
 ```
 
+Judge the exact hosted member of every retained Haiku pair with the sealed
+local `rules,guardrail` cascade only after the paid target and Haiku stages are
+terminal. This creates a new plan; it does not mutate the pair-plan `/1`
+contract. The planner also emits the exact managed-model acquisition plan. Run
+the acquisition command in the ordinary guarded acquisition environment; an
+already sealed Llama Guard snapshot produces a new bound receipt without
+re-downloading model bytes:
+
+```bash
+python -m experiments.retained_response_local_judge \
+  --pair-plan "$HAIKU_PLAN" --pair-plan-sha256 "$HAIKU_PLAN_SHA256" \
+  --guardrail-model meta-llama/Llama-Guard-3-8B \
+  --guardrail-revision 7327bd9f6efbbe6101dc6cc4736302b3cbb6e425 \
+  --guardrail-device cuda:1 \
+  --acquisition-plan-dir "$LOCAL_JUDGE_ACQUISITION_PLAN_DIR" \
+  --out "$LOCAL_JUDGE_PLAN"
+
+python -m experiments.model_acquire \
+  --plan "$LOCAL_JUDGE_ACQUISITION_PLAN" \
+  --plan-sha256 "$LOCAL_JUDGE_ACQUISITION_PLAN_SHA256" \
+  --store "$URA_MODEL_ACQUISITION_STORE" \
+  --receipts-dir "$LOCAL_JUDGE_ACQUISITION_RECEIPT_DIR" \
+  --max-download-bytes 1 --min-free-bytes 1 --deadline-seconds 3600
+
+python -m experiments.retained_response_local_judge_execute \
+  --plan "$LOCAL_JUDGE_PLAN" --pair-plan "$HAIKU_PLAN" \
+  --local-runner-view "$FINAL_LOCAL_RUNNER_VIEW" \
+  --hosted-runner-view "$FINAL_HOSTED_RUNNER_VIEW" \
+  --source-receipt "$URA_SOURCE_CONFORMANCE_RECEIPT" \
+  --model-acquisition-plan "$LOCAL_JUDGE_ACQUISITION_PLAN" \
+  --model-acquisition-plan-sha256 "$LOCAL_JUDGE_ACQUISITION_PLAN_SHA256" \
+  --model-acquisition-receipt "$LOCAL_JUDGE_ACQUISITION_RECEIPT" \
+  --model-acquisition-receipt-sha256 "$LOCAL_JUDGE_ACQUISITION_RECEIPT_SHA256" \
+  --model-acquisition-store "$URA_MODEL_ACQUISITION_STORE" \
+  --out "$LOCAL_JUDGE_RESULT"
+```
+
+The local stage selects at most 2,000 hosted outputs, performs exactly one rule
+evaluation and at most one local guardrail call for each, and reserves zero
+target, provider or HTTP calls. Its create-only judgments form a strict durable
+prefix, so recovery restarts after the last retained local judgment. Analysis
+joins local and Haiku judgments by pair ID and retained-row digest. It reports
+local decision coverage and abstentions before agreement because the guardrail
+safe/violation labels cannot decide every benign over-refusal row.
+
 The planner imports no target-under-test or Runner factory and stores only
 content hashes. It binds the exact effective-dated pricing file and refuses a
 rate other than the funded USD 1 input / USD 5 output per million-token
@@ -1676,10 +1734,10 @@ the selected Haiku judge,
 enforces no retry in both the harness and provider SDK, fsyncs a reservation
 before every paid call, and stops the cohort on its first output or transport
 failure. An unresolved reservation after process loss requires manual provider
-audit and is never repeated automatically. Its analysis publishes separate
+audit and is never repeated automatically. Analysis publishes separate
 hosted/local member tables and diagrams from the same matched pair inventory,
-plus unpaired coverage counts. These are selected-cohort results, never
-full-corpus estimates.
+plus unpaired coverage counts and local-versus-Haiku agreement on the exact
+hosted members. These are selected-cohort results, never full-corpus estimates.
 
 ### 5.2 Bounded lane sampling (prospective amendment, 24 August 2026)
 

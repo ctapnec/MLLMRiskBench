@@ -419,6 +419,7 @@ def _validate_phase7_completion(
     completion_path: Path,
     *,
     runner_root: Path,
+    allow_failed_unit: str | None = None,
 ) -> dict[str, Any]:
     resolved = completion_path.resolve(strict=True)
     control_root = resolved.parent
@@ -450,12 +451,17 @@ def _validate_phase7_completion(
     if (
         set(completion) != fields
         or completion.get("schema") != SCHEMA
-        or completion.get("status") != "complete"
-        or completion.get("controller_exit_code") != 0
+        or completion.get("status")
+        != ("complete_with_failures" if allow_failed_unit else "complete")
+        or completion.get("controller_exit_code")
+        != (1 if allow_failed_unit else 0)
         or HEX40.fullmatch(str(completion.get("expected_commit", ""))) is None
         or completion.get("runner_code_version") != CODE_VERSION
         or completion.get("target_answer_retries") != 1
-        or completion.get("unit_failures") != {}
+        or (
+            allow_failed_unit is None
+            and completion.get("unit_failures") != {}
+        )
         or completion.get("planned_unique_rows") != EXPECTED_TOTAL_ROWS
         or completion.get("successful_rows_repeated") != 0
         or completion.get("cross_condition_pooling_permitted") is not False
@@ -507,12 +513,21 @@ def _validate_phase7_completion(
             _validate_descriptor(descriptor, label=f"partial {field}")
 
     results = completion.get("unit_results")
-    if not isinstance(results, dict) or set(results) != set(order):
+    failures = completion.get("unit_failures")
+    excluded = {allow_failed_unit} if allow_failed_unit else set()
+    expected_results = set(order) - excluded
+    if (
+        not isinstance(results, dict)
+        or set(results) != expected_results
+        or not isinstance(failures, dict)
+        or set(failures) != ({allow_failed_unit} if allow_failed_unit else set())
+        or (allow_failed_unit is not None and allow_failed_unit not in order)
+    ):
         raise ValueError("continued hardware-fit result inventory changed")
     completion_descriptor = _descriptor(resolved, label="continued hardware-fit completion")
     snapshot_descriptor = _descriptor(snapshot_path, label="hardware-fit interruption")
     terminal_states: dict[str, str] = {}
-    lifecycle_roots: dict[str, str] = {}
+    lifecycle_roots: dict[str, str | None] = {}
     lifecycle_evidence: dict[str, dict[str, object]] = {}
     lifecycle_revisions: dict[str, str] = {}
     metric_roots: dict[str, str] = {}
@@ -524,6 +539,7 @@ def _validate_phase7_completion(
     sources: set[str] = set()
     successful = int(snapshot["retained_accounting"]["successful_target_generations"])
     missing = int(snapshot["retained_accounting"]["missing_responses"])
+    attempted = int(snapshot["retained_accounting"]["target_attempts"])
 
     for index, (unit_id, item) in enumerate(zip(order, inventory["units"], strict=True)):
         if index < RETAINED_COMPLETE_COUNT:
@@ -540,6 +556,39 @@ def _validate_phase7_completion(
             evidence_completion = completion_descriptor
         recovery_corpora = item["recovery_selection"]["corpora"]
         corpus = next(iter(recovery_corpora)) if len(recovery_corpora) == 1 else None
+        if unit_id == allow_failed_unit:
+            failure = failures[unit_id]
+            inputs = snapshot["continuation_inputs"].get(unit_id)
+            state_path = control_root / "units" / unit_id / "state.json"
+            level1_path = control_root / "units" / unit_id / "level1.json"
+            result_root = runner_root / unit_id / control_root.name
+            if (
+                not isinstance(failure, dict)
+                or set(failure) != {"status", "error_type", "error"}
+                or failure.get("status") != "failed"
+                or failure.get("error_type") != "ValueError"
+                or "--max-total-target-calls=6 (need >= 20"
+                not in str(failure.get("error", ""))
+                or not isinstance(inputs, dict)
+                or set(inputs) != {"selector", "config", "selected_records"}
+                or inputs.get("selected_records") != selected
+                or state_path.exists()
+                or state_path.is_symlink()
+                or level1_path.exists()
+                or level1_path.is_symlink()
+                or result_root.exists()
+                or result_root.is_symlink()
+            ):
+                raise ValueError(f"{unit_id} repairable canary-cap failure changed")
+            _validate_descriptor(inputs["selector"], label=f"{unit_id} failed selector")
+            _validate_descriptor(inputs["config"], label=f"{unit_id} failed config")
+            terminal_states[unit_id] = "failed"
+            lifecycle_roots[unit_id] = None
+            lifecycle_evidence[unit_id] = {
+                "completion": dict(completion_descriptor),
+                "failure": dict(failure),
+            }
+            continue
         validated = _validate_metric_result(
             results[unit_id],
             logical_lane=unit_id,
@@ -596,10 +645,11 @@ def _validate_phase7_completion(
         metric_revisions[unit_id] = str(validated["revision"])
         sources.add(str(validated["source"]))
         if index >= RETAINED_COMPLETE_COUNT:
+            attempted += selected
             successful += int(validated["successful"])
             missing += int(validated["missing"])
     accounting = {
-        "target_attempts": EXPECTED_TOTAL_ROWS,
+        "target_attempts": attempted,
         "successful_target_generations": successful,
         "missing_responses": missing,
     }
@@ -607,8 +657,9 @@ def _validate_phase7_completion(
         raise ValueError("continued hardware-fit accounting changed")
     revision_strata: dict[str, list[str]] = {}
     lifecycle_strata: dict[str, list[str]] = {}
-    for unit_id in order:
+    for unit_id in metric_revisions:
         revision_strata.setdefault(metric_revisions[unit_id], []).append(unit_id)
+    for unit_id in lifecycle_revisions:
         lifecycle_strata.setdefault(lifecycle_revisions[unit_id], []).append(unit_id)
     return {
         "completion": completion_descriptor,
@@ -621,7 +672,7 @@ def _validate_phase7_completion(
         "lifecycle_evidence": lifecycle_evidence,
         "lifecycle_revision_strata": lifecycle_strata,
         "lifecycle_project_revision_receipt_sha256": lifecycle_revisions,
-        "metric_lane_order": order,
+        "metric_lane_order": list(metric_roots),
         "metric_roots": metric_roots,
         "metric_evidence": metric_evidence,
         "metric_grids": metric_grids,

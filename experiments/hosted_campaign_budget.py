@@ -271,6 +271,10 @@ def _priced_row(
         "maximum_input_tokens_per_call": MAX_INPUT_TOKENS,
         "expected_output_tokens_per_call": EXPECTED_OUTPUT_TOKENS,
         "maximum_output_tokens_per_call": maximum_output,
+        "expected_total_input_tokens": calls * EXPECTED_INPUT_TOKENS,
+        "maximum_total_input_tokens": calls * MAX_INPUT_TOKENS,
+        "expected_total_output_tokens": calls * EXPECTED_OUTPUT_TOKENS,
+        "maximum_total_output_tokens": calls * maximum_output,
         "input_usd_per_million_tokens": str(input_rate),
         "output_usd_per_million_tokens": str(output_rate),
         "pricing_effective_date": rate["effective_date"],
@@ -326,6 +330,10 @@ def build_projection(
         "maximum_input_tokens_per_call": MAX_INPUT_TOKENS,
         "expected_output_tokens_per_call": EXPECTED_OUTPUT_TOKENS,
         "maximum_output_tokens_per_call": JUDGE_MAX_OUTPUT_TOKENS,
+        "expected_total_input_tokens": JUDGE_CALL_CAP * EXPECTED_INPUT_TOKENS,
+        "maximum_total_input_tokens": JUDGE_CALL_CAP * MAX_INPUT_TOKENS,
+        "expected_total_output_tokens": JUDGE_CALL_CAP * EXPECTED_OUTPUT_TOKENS,
+        "maximum_total_output_tokens": JUDGE_CALL_CAP * JUDGE_MAX_OUTPUT_TOKENS,
         "input_usd_per_million_tokens": str(judge_input_rate),
         "output_usd_per_million_tokens": str(judge_output_rate),
         "expected_cost_microusd": _cost_microusd(
@@ -370,6 +378,18 @@ def build_projection(
         )
     target_expected = sum(int(row["expected_cost_microusd"]) for row in rows)
     target_maximum = sum(int(row["maximum_cost_microusd"]) for row in rows)
+    target_expected_input = sum(
+        int(row["expected_total_input_tokens"]) for row in rows
+    )
+    target_maximum_input = sum(
+        int(row["maximum_total_input_tokens"]) for row in rows
+    )
+    target_expected_output = sum(
+        int(row["expected_total_output_tokens"]) for row in rows
+    )
+    target_maximum_output = sum(
+        int(row["maximum_total_output_tokens"]) for row in rows
+    )
     value: dict[str, Any] = {
         "schema": SCHEMA,
         "status": (
@@ -392,6 +412,26 @@ def build_projection(
         "totals": {
             "target_paid_call_cap": sum(int(row["paid_call_cap"]) for row in rows),
             "judge_paid_call_cap": JUDGE_CALL_CAP,
+            "target_expected_input_tokens": target_expected_input,
+            "target_maximum_input_tokens": target_maximum_input,
+            "target_expected_output_tokens": target_expected_output,
+            "target_maximum_output_tokens": target_maximum_output,
+            "judge_expected_input_tokens": judge["expected_total_input_tokens"],
+            "judge_maximum_input_tokens": judge["maximum_total_input_tokens"],
+            "judge_expected_output_tokens": judge["expected_total_output_tokens"],
+            "judge_maximum_output_tokens": judge["maximum_total_output_tokens"],
+            "combined_expected_input_tokens": (
+                target_expected_input + int(judge["expected_total_input_tokens"])
+            ),
+            "combined_maximum_input_tokens": (
+                target_maximum_input + int(judge["maximum_total_input_tokens"])
+            ),
+            "combined_expected_output_tokens": (
+                target_expected_output + int(judge["expected_total_output_tokens"])
+            ),
+            "combined_maximum_output_tokens": (
+                target_maximum_output + int(judge["maximum_total_output_tokens"])
+            ),
             "target_expected_cost_microusd": target_expected,
             "target_maximum_cost_microusd": target_maximum,
             "judge_expected_cost_microusd": judge["expected_cost_microusd"],

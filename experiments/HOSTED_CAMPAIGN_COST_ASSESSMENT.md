@@ -139,11 +139,17 @@ tokenization must enforce that input bound or reduce and reseal the selection.
 | **Total targets** | | **590** | | | | **8.3130** | **38.5476** |
 
 Expected target cost is USD 8.3130 under the stated average-token model.
+The 590-call target projection contains 2.36 million input and 295,000 expected
+output tokens. Its configured maxima retain the same 2.36 million input bound
+and permit at most 2,420,880 output tokens.
 The matched Haiku plan adds at most 2,000 pairs or 4,000 judge calls. At 4,000
 input and 500 output tokens it costs USD 26.00. A dedicated judge config fixes
 `max_tokens=512`; if every judge input is at most 4,000 tokens, the maximum is
 USD 26.24. Thus the expected combined campaign is USD 34.3130 and the
 max-token reservation is USD 64.7876.
+Across targets and judging, that is 18.36 million input plus 2.295 million
+expected output tokens, or at most 4,468,880 output tokens under the configured
+route maxima.
 
 Provider reconciliation remains inside the 50 percent rule: Anthropic target
 maximum USD 11.546 plus judge maximum USD 26.24 is USD 37.786 of USD 50; OpenAI
@@ -170,7 +176,7 @@ such as Crescendo cannot be flattened into independent target batches. Kimi's
 published Batch support must not be assumed for K3 unless its exact model is
 listed by the provider at launch time.
 
-## Haiku re-adjudication of local outputs
+## Matched Haiku and local re-adjudication
 
 The planned local population has 42,882 intended target calls before optional
 local defense work. Removing 8,680 source-authoritative R-Judge/GPTGeoChat rows
@@ -209,9 +215,17 @@ observed.
 The later comparison is a matched selected-cohort analysis, not a full-corpus
 estimate. It publishes separate hosted/local member tables from the identical
 pair inventory plus unpaired coverage counts.
+The same hosted member of every pair is also passed through the sealed local
+`rules,guardrail` cascade. This adds at most 2,000 rule evaluations and 2,000
+Llama Guard calls, but zero target, provider or HTTP calls and USD 0 in provider
+spend. It is a GPU-time allocation, not a token-billed budget item. Local versus
+Haiku agreement is reported only on comparable decided labels, with the local
+decision denominator and abstentions displayed because Llama Guard cannot
+express benign over-refusal when the rules stage is undecided.
 Its diagrams cover judgment outcomes with uncertainty, response/missingness,
-model stability, modality/source/attack composition, and billed token/cost
-usage. Same-model Haiku judging is visually and textually distinguished; no
+model stability, modality/source/attack composition, local-versus-Haiku
+agreement and billed token/cost usage. Same-model Haiku judging is visually and
+textually distinguished; no
 unmatched or different-revision rate is silently pooled.
 
 ## Pricing sources

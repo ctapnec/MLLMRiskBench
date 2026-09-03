@@ -2711,6 +2711,7 @@ def test_distro_repin_script_is_fail_closed_and_sources_canonical_ura_env_last()
         "tests/experiments/test_retained_response_judge.py",
         "tests/experiments/test_retained_response_judge_execute.py",
         "tests/experiments/test_retained_response_judge_pair.py",
+        "tests/experiments/test_retained_response_local_judge.py",
         "tests/ura/test_current_contract_docs.py",
         "tests/ura/test_hosted_roster_docs.py",
         "tests/ura/test_local_campaign_stats_adapter.py",

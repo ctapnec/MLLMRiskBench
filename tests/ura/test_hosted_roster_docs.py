@@ -640,6 +640,9 @@ def test_hosted_follow_on_is_a_no_retry_local_input_subset() -> None:
         "USD 64.7876",
         "experiments.hosted_campaign_budget",
         "experiments.retained_response_judge_pair_execute",
+        "experiments.retained_response_local_judge_execute",
+        "2,000 Llama Guard calls",
+        "local-versus-Haiku agreement",
     )
 
     def assert_contract(value: str) -> None:

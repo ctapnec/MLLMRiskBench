@@ -409,6 +409,15 @@ response artifacts remain authoritative.
   failure. Its one USD 27 ceiling covers at most 4,000 calls: USD 26.00 at the
   4,000-input/500-output planning average and USD 26.24 at the fixed 512-token
   output maximum.
+- `retained_response_local_judge` derives a separate immutable plan selecting
+  exactly the hosted member of every Haiku pair and emits its sealed Llama
+  Guard acquisition plan. `retained_response_local_judge_execute` revalidates
+  the pair and both Runner views, then runs the local `rules,guardrail` cascade
+  post-factum. It checkpoints at most 2,000 local judgments, resumes without
+  repeating completed judgments, and has zero target, provider, HTTP and paid
+  calls. Stats compares it with Haiku only on common decided labels and reports
+  local abstention/decision coverage because Llama Guard cannot express benign
+  over-refusal.
 - The hosted follow-on uses ten global target caps totaling 590 calls, including
   readiness and diagnostic canaries. `hosted_campaign_budget` creates a
   zero-call projection from the exact API-config, effective-dated pricing and

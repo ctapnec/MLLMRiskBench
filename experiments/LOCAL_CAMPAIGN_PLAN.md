@@ -1193,6 +1193,18 @@ stops after the exact interruption marker and exit 125 are written but before
 the continuation launch artifact, only a fresh root may resume it. That restart
 validates the immutable terminal bytes and does not repeat terminalization side
 effects or durable responses.
+One later continuation unit exposed a distinct pre-Runner controller defect:
+its recovery selection contained only three GPTGeoChat rows, so the controller
+gave the measured condition and its diagnostic canary the same six-call
+ceiling. The canary removes the recovery selector and its one selected source
+cluster contains ten rows, requiring a 20-call ceiling with one answer retry.
+The measured three-row ceiling remains six. The corrected shared driver derives
+only the canary ceiling from the full retained selection. If the terminal
+continuation contains exactly that one zero-measured-call failure, run
+`local_hardware_fit_failed_unit_recovery_phase6` in a fresh tmux session. It
+retains the other 24 unit results by content identity, executes only the three
+unattempted rows, and publishes a superseding 25-unit completion for the
+unchanged Phase 7 input. No logical condition or planned row is added.
 The 12 population-alignment rows remain logical model/framework conditions, not
 12 necessarily single-root files. Eleven have one terminal metric root. The
 DeepSeek condition is population-complete across its retained Runner 2.26 usable
