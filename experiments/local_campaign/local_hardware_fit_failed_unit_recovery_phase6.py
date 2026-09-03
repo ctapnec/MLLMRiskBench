@@ -36,7 +36,6 @@ from experiments.local_campaign.vllm_input_recovery_phase6 import (
 from experiments.local_campaign.vllm_stability_phase6 import (
     Unit,
     _create_json,
-    _diagnostic_canary_target_cap,
     _framework_lock_id,
     _load_json,
     _option,
@@ -55,6 +54,7 @@ AMENDMENT_SCHEMA = "ura-gate5-local-hardware-fit-failed-unit-recovery/1"
 STATE_SCHEMA = "ura-local-hardware-fit-failed-unit-recovery-state/1"
 FAILED_UNIT_INDEX = 21
 FAILED_SELECTED_RECORDS = 3
+FAILED_CANARY_TARGET_CALLS = 20
 HEX40 = re.compile(r"[0-9a-f]{40}\Z")
 
 
@@ -193,8 +193,8 @@ def validate_completion(
         "selected_records": FAILED_SELECTED_RECORDS,
         "target_answer_retries": 1,
         "measured_max_total_target_calls": FAILED_SELECTED_RECORDS * 2,
-        "diagnostic_canary_cap_source": "full_retained_selection",
-        "diagnostic_canary_max_total_target_calls": 4_040,
+        "diagnostic_canary_cap_source": "observed_bound_one_cluster_projection",
+        "diagnostic_canary_max_total_target_calls": FAILED_CANARY_TARGET_CALLS,
         "max_total_judge_calls": 0,
         "max_total_http_attempts": 0,
         "successful_rows_repeated": 0,
@@ -377,10 +377,8 @@ def run(args: argparse.Namespace) -> int:
         "selected_records": FAILED_SELECTED_RECORDS,
         "target_answer_retries": 1,
         "measured_max_total_target_calls": FAILED_SELECTED_RECORDS * 2,
-        "diagnostic_canary_cap_source": "full_retained_selection",
-        "diagnostic_canary_max_total_target_calls": (
-            _diagnostic_canary_target_cap(unit, FAILED_SELECTED_RECORDS * 2)
-        ),
+        "diagnostic_canary_cap_source": "observed_bound_one_cluster_projection",
+        "diagnostic_canary_max_total_target_calls": FAILED_CANARY_TARGET_CALLS,
         "max_total_judge_calls": 0,
         "max_total_http_attempts": 0,
         "successful_rows_repeated": 0,
@@ -438,6 +436,7 @@ def run(args: argparse.Namespace) -> int:
             tmux_socket=args.tmux_socket,
             tmux_session=args.tmux_session,
             state_schema=STATE_SCHEMA,
+            diagnostic_canary_target_cap=FAILED_CANARY_TARGET_CALLS,
         )
         results[unit_id] = repaired
     except (

@@ -1203,8 +1203,9 @@ only the canary ceiling from the full retained selection. If the terminal
 continuation contains exactly that one zero-measured-call failure, run
 `local_hardware_fit_failed_unit_recovery_phase6` in a fresh tmux session. It
 retains the other 24 unit results by content identity, executes only the three
-unattempted rows, and publishes a superseding 25-unit completion for the
-unchanged Phase 7 input. No logical condition or planned row is added.
+unattempted rows, binds the observed one-cluster canary ceiling to exactly 20,
+and publishes a superseding 25-unit completion for the unchanged Phase 7 input.
+No logical condition or planned row is added.
 The 12 population-alignment rows remain logical model/framework conditions, not
 12 necessarily single-root files. Eleven have one terminal metric root. The
 DeepSeek condition is population-complete across its retained Runner 2.26 usable

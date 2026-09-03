@@ -7975,6 +7975,8 @@ def test_hardware_fit_failed_unit_recovery_never_replays_retained_results() -> N
         assert "FAILED_SELECTED_RECORDS = 3" in candidate
         assert "allow_failed_unit=failed_unit" in candidate
         assert "exact_pre_runner_canary_cap_failure_only" in candidate
+        assert "FAILED_CANARY_TARGET_CALLS = 20" in candidate
+        assert "diagnostic_canary_target_cap=FAILED_CANARY_TARGET_CALLS" in candidate
 
     assert_contract(source)
     changed = source.replace(

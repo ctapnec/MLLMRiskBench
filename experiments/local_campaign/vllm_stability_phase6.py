@@ -967,7 +967,14 @@ def _run_unit(
     state_schema: str = "ura-vllm-stability-phase6-unit-state/1",
     validated_canary_root: Path | None = None,
     hub_acquisition_required: bool = True,
+    diagnostic_canary_target_cap: int | None = None,
 ) -> dict[str, Any]:
+    if diagnostic_canary_target_cap is not None and (
+        isinstance(diagnostic_canary_target_cap, bool)
+        or not isinstance(diagnostic_canary_target_cap, int)
+        or diagnostic_canary_target_cap <= 0
+    ):
+        raise ValueError("diagnostic canary target cap must be a positive integer")
     unit_root = control_root / "units" / unit.unit_id
     unit_root.mkdir(parents=True, mode=0o700)
     base = _base_argv(
@@ -1002,7 +1009,11 @@ def _run_unit(
             out=canary_root,
             scope=scope,
             attestation=attestation,
-            target_cap=_diagnostic_canary_target_cap(unit, target_cap),
+            target_cap=(
+                diagnostic_canary_target_cap
+                if diagnostic_canary_target_cap is not None
+                else _diagnostic_canary_target_cap(unit, target_cap)
+            ),
             canary=True,
         )
         canary_acquisition_root = unit_root / "canary-acquisition"

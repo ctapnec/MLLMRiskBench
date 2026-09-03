@@ -672,9 +672,9 @@ a fresh named tmux session. Supply the failed continuation completion and its
 SHA-256 plus the standard work root, project root, project interpreter, current
 project-revision receipt and SHA-256, execution scope, tmux socket/session and
 fresh control root. The controller accepts only that exact pre-Runner failure,
-retains the other 24 results, gives the one-cluster canary a ceiling derived
-from the full retained selection, keeps the three-row measured ceiling at six,
-and calls only those three unattempted rows. Supply its superseding completion
+retains the other 24 results, gives the observed one-cluster canary its exact
+20-call ceiling, keeps the three-row measured ceiling at six, and calls only
+those three unattempted rows. Supply its superseding completion
 to `--phase6-local-hardware-fit-completion` and to the population-alignment
 recovery. It remains the same 25-condition, 4,463-row hardware-fit stratum.
 
