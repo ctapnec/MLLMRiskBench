@@ -309,3 +309,43 @@ def test_durable_outcomes_include_prejudging_response_checkpoint(tmp_path) -> No
         "alpha.responses.jsonl",
         "beta.responses.checkpoint.jsonl",
     ]
+
+
+def test_durable_outcomes_accept_checkpoint_before_attempts_file(tmp_path) -> None:
+    checkpoint_attempt = {
+        "id": "attempt-b",
+        "datapoint_id": "b",
+        "attacker": "replay",
+        "target": "target",
+        "rendered_input": [{"role": "user", "content": "b"}],
+        "run_id": "run-b",
+    }
+    checkpoint_response = {
+        "attempt_id": "attempt-b",
+        "target": "target",
+        "output_turns": [],
+        "raw": {"model_stability_status": "failed_output"},
+        "run_id": "run-b",
+    }
+    (tmp_path / "beta.responses.checkpoint.jsonl").write_text(
+        json.dumps({
+            "schema_version": SCHEMA_VERSION,
+            "run_id": "run-b",
+            "attempt": checkpoint_attempt,
+            "response": checkpoint_response,
+            "budget_after_target": None,
+        })
+        + "\n",
+        encoding="utf-8",
+    )
+
+    attempts, outcomes, attempt_files, response_files = _durable_outcomes(
+        tmp_path
+    )
+
+    assert attempts == {"attempt-b": "b"}
+    assert outcomes == {"b": "failed_output"}
+    assert attempt_files == []
+    assert [path.name for path in response_files] == [
+        "beta.responses.checkpoint.jsonl"
+    ]

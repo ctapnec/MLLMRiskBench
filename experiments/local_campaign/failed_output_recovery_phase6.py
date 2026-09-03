@@ -353,8 +353,20 @@ def _durable_outcomes(
 ) -> tuple[dict[str, str], dict[str, str], list[Path], list[Path]]:
     """Load terminal outcomes from final rows and pre-judging checkpoints."""
 
-    attempt_files = _active_jsonl(result_root, "attempts")
     response_files = _active_jsonl(result_root, "responses")
+    # Response checkpoints embed the exact Attempt alongside each Response and
+    # are written during target execution, before the terminal attempts JSONL.
+    # An interrupted pre-judging run can therefore have durable responses but
+    # no standalone attempts file yet.
+    try:
+        attempt_files = _active_jsonl(result_root, "attempts")
+    except ValueError as exc:
+        if str(exc) != "result root has no durable attempts JSONL" or not any(
+            path.name.endswith(".responses.checkpoint.jsonl")
+            for path in response_files
+        ):
+            raise
+        attempt_files = []
     attempts: dict[str, str] = {}
     attempt_payloads: dict[str, dict[str, Any]] = {}
 
