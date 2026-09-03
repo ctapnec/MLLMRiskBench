@@ -17,7 +17,8 @@ from typing import Any, Mapping
 from ura.strict_json import strict_json_loads
 
 
-SCHEMA = "ura-local-model-execution-profiles/1"
+LEGACY_SCHEMA = "ura-local-model-execution-profiles/1"
+SCHEMA = "ura-local-model-execution-profiles/2"
 _HEX40_64 = re.compile(r"[0-9a-f]{40,64}\Z")
 _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 _MAX_BYTES = 4 * 1024 * 1024
@@ -48,7 +49,10 @@ def _read_document(path: Path) -> dict[str, Any]:
     if not 0 < len(raw) <= _MAX_BYTES:
         raise ValueError("local model profile registry exceeds its size bound")
     value = strict_json_loads(raw.decode("utf-8"))
-    if not isinstance(value, dict) or value.get("schema") != SCHEMA:
+    if not isinstance(value, dict) or value.get("schema") not in {
+        LEGACY_SCHEMA,
+        SCHEMA,
+    }:
         raise ValueError("local model profile registry schema changed")
     models = value.get("models")
     if not isinstance(models, dict):
@@ -63,6 +67,11 @@ def load_profiles(
     if not selected_path.exists():
         return {}
     value = _read_document(selected_path)
+    if value["schema"] == LEGACY_SCHEMA:
+        # Schema /1 was derived from short-answer probes that did not exercise
+        # the configured generation ceiling. It remains readable historical
+        # state but cannot configure a new local inference call.
+        return {}
     profiles: dict[str, dict[str, Any]] = {}
     for spec, entry in value["models"].items():
         if (
@@ -178,6 +187,8 @@ def update_registry(
     target = (path or registry_path()).expanduser()
     if target.exists():
         document = _read_document(target)
+        if document["schema"] == LEGACY_SCHEMA:
+            document = {"schema": SCHEMA, "models": {}}
     else:
         document = {"schema": SCHEMA, "models": {}}
     models = dict(document["models"])
@@ -219,4 +230,11 @@ def update_registry(
     return target
 
 
-__all__ = ["SCHEMA", "apply_profile", "load_profiles", "registry_path", "update_registry"]
+__all__ = [
+    "LEGACY_SCHEMA",
+    "SCHEMA",
+    "apply_profile",
+    "load_profiles",
+    "registry_path",
+    "update_registry",
+]

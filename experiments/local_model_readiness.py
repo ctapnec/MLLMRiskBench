@@ -54,7 +54,8 @@ from ura.model_acquisition_runtime import (  # noqa: E402
 )
 
 LEGACY_SCHEMA = "ura-local-model-readiness/1"
-SCHEMA = "ura-local-model-readiness/2"
+BOUNDED_SCHEMA = "ura-local-model-readiness/2"
+SCHEMA = "ura-local-model-readiness/3"
 READINESS_SEED = 20260829
 TEXT_SAMPLE_SIZE = 10
 TEXT_MIN_CORRECT = 5
@@ -65,6 +66,17 @@ PROFILE_MAXIMUM_GENERATION_TOKENS = min(
     MAX_VLLM_GENERATION_TOKENS, MAX_OLLAMA_NUM_PREDICT
 )
 PROFILE_REQUEST_DEADLINE_SECONDS = DEFAULT_LOCAL_REQUEST_TIMEOUT_SECONDS
+PROFILE_GENERATION_TOKEN_CANDIDATES = (
+    256,
+    512,
+    1_024,
+    2_048,
+    4_096,
+    8_192,
+    16_384,
+    PROFILE_MAXIMUM_GENERATION_TOKENS,
+)
+PROFILE_STRESS_MINIMUM_FRACTION = 0.95
 TEXT_BANK = (
     ("sum-7-5", "Reply with only the integer result of 7 + 5.", r"\b12\b"),
     ("product-9-3", "Reply with only the integer result of 9 times 3.", r"\b27\b"),
@@ -126,6 +138,25 @@ def _sha(value: object) -> str:
 
 
 def readiness_policy() -> dict[str, object]:
+    return {
+        "generation_conditions": list(PROFILE_GENERATION_TOKEN_CANDIDATES),
+        "generation_selection": "highest_contiguous_stress_pass_before_first_failure",
+        "generation_stress_minimum_fraction": PROFILE_STRESS_MINIMUM_FRACTION,
+        "nonresponses_count_as_incorrect": True,
+        "per_request_deadline_seconds": PROFILE_REQUEST_DEADLINE_SECONDS,
+        "readiness_seed": READINESS_SEED,
+        "text_max_nonresponses_at_passing_threshold": TEXT_SAMPLE_SIZE - TEXT_MIN_CORRECT,
+        "text_min_correct": TEXT_MIN_CORRECT,
+        "text_sample_size": TEXT_SAMPLE_SIZE,
+        "vision_max_nonresponses_at_passing_threshold": VISION_SAMPLE_SIZE - VISION_MIN_CORRECT,
+        "vision_min_correct": VISION_MIN_CORRECT,
+        "vision_sample_size": VISION_SAMPLE_SIZE,
+    }
+
+
+def bounded_readiness_policy() -> dict[str, object]:
+    """Return the immutable policy carried by retained schema /2 receipts."""
+
     return {
         "generation_conditions": [
             PROFILE_DEFAULT_GENERATION_TOKENS,
@@ -362,6 +393,131 @@ def _run_condition(
     }
 
 
+def _stress_dialog(
+    generation_tokens: int,
+    *,
+    image: bool,
+) -> list[DialogTurn]:
+    prompt = (
+        "This is a generation-throughput calibration, not a knowledge test. "
+        f"Emit at least {generation_tokens} tokens by repeating the sequence "
+        "alpha beta gamma delta epsilon followed by a space. Do not summarize, "
+        "explain, conclude, or stop voluntarily; continue until the runtime "
+        "generation limit stops you."
+    )
+    return [
+        DialogTurn(
+            role="user",
+            content=prompt,
+            media=[_image_ref("red", "blue")] if image else [],
+        )
+    ]
+
+
+def _run_generation_stress(
+    target: Any,
+    *,
+    generation_tokens: int,
+    image: bool,
+) -> dict[str, object]:
+    started = time.perf_counter()
+    try:
+        response = target.generate(
+            _stress_dialog(generation_tokens, image=image),
+            seed=READINESS_SEED + (10_000 if image else 1_000) + generation_tokens,
+        )
+        text = _response_text(response)
+        observation = _observation(response, text)
+    except TargetAnswerError as exc:
+        observation = _failed_observation(
+            exc,
+            latency_ms=(time.perf_counter() - started) * 1000.0,
+        )
+    completion_tokens = observation["tokens"].get("completion", 0)
+    if isinstance(completion_tokens, bool) or not isinstance(completion_tokens, int):
+        completion_tokens = 0
+    minimum_tokens = max(
+        1,
+        (generation_tokens * int(PROFILE_STRESS_MINIMUM_FRACTION * 100) + 99) // 100,
+    )
+    latency_ms = float(observation.get("latency_ms") or 0.0)
+    reached_cap = bool(
+        observation.get("termination_reason") == "length"
+        and completion_tokens >= minimum_tokens
+    )
+    deadline_passed = bool(
+        observation.get("error_category") != "generation_timeout"
+        and latency_ms < PROFILE_REQUEST_DEADLINE_SECONDS * 1000.0
+    )
+    return {
+        **observation,
+        "deadline_passed": deadline_passed,
+        "minimum_completion_tokens": minimum_tokens,
+        "passed": bool(
+            observation.get("outcome") == "generated_text"
+            and reached_cap
+            and deadline_passed
+        ),
+        "reached_generation_cap": reached_cap,
+        "requested_generation_tokens": generation_tokens,
+    }
+
+
+def _profile_generation_conditions(
+    target: Any,
+    *,
+    spec: str,
+    modalities: list[str],
+) -> tuple[list[dict[str, object]], int | None]:
+    """Find the highest contiguous token cap proven below the hard deadline."""
+
+    conditions: list[dict[str, object]] = []
+    for generation_tokens in PROFILE_GENERATION_TOKEN_CANDIDATES:
+        _set_generation_tokens(target, spec, generation_tokens)
+        stress_text = _run_generation_stress(
+            target,
+            generation_tokens=generation_tokens,
+            image=False,
+        )
+        stress_vision = (
+            _run_generation_stress(
+                target,
+                generation_tokens=generation_tokens,
+                image=True,
+            )
+            if "image" in modalities
+            else None
+        )
+        observations = [stress_text]
+        if stress_vision is not None:
+            observations.append(stress_vision)
+        deadline_failures = sum(
+            observation.get("deadline_passed") is not True
+            for observation in observations
+        )
+        condition = {
+            "deadline_failures": deadline_failures,
+            "generation_tokens": generation_tokens,
+            "passed": bool(
+                all(observation.get("passed") is True for observation in observations)
+            ),
+            "stress_text": stress_text,
+            "stress_vision": stress_vision,
+        }
+        conditions.append(condition)
+        if condition["passed"] is not True:
+            break
+    selected = max(
+        (
+            int(condition["generation_tokens"])
+            for condition in conditions
+            if condition["passed"] is True
+        ),
+        default=None,
+    )
+    return conditions, selected
+
+
 def _validate_probe_result(
     value: object,
     *,
@@ -390,14 +546,71 @@ def _validate_probe_result(
     return value
 
 
-def validate_readiness(value: object, *, expected_spec: str | None = None) -> dict[str, Any]:
-    if not isinstance(value, dict) or value.get("schema") not in {LEGACY_SCHEMA, SCHEMA}:
-        raise ValueError("local-model readiness receipt schema is invalid")
-    expected_policy = (
-        legacy_readiness_policy()
-        if value.get("schema") == LEGACY_SCHEMA
-        else readiness_policy()
+def _validate_stress_result(
+    value: object,
+    *,
+    generation_tokens: int,
+    label: str,
+) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError(f"local-model {label} stress evidence is invalid")
+    latency_ms = value.get("latency_ms")
+    tokens = value.get("tokens")
+    if (
+        isinstance(latency_ms, bool)
+        or not isinstance(latency_ms, (int, float))
+        or float(latency_ms) < 0.0
+        or not isinstance(tokens, dict)
+    ):
+        raise ValueError(f"local-model {label} stress evidence is invalid")
+    completion_tokens = tokens.get("completion", 0)
+    if (
+        isinstance(completion_tokens, bool)
+        or not isinstance(completion_tokens, int)
+        or completion_tokens < 0
+    ):
+        raise ValueError(f"local-model {label} stress token evidence is invalid")
+    minimum_tokens = max(
+        1,
+        (generation_tokens * int(PROFILE_STRESS_MINIMUM_FRACTION * 100) + 99) // 100,
     )
+    reached_cap = bool(
+        value.get("termination_reason") == "length"
+        and completion_tokens >= minimum_tokens
+    )
+    deadline_passed = bool(
+        value.get("error_category") != "generation_timeout"
+        and float(latency_ms) < PROFILE_REQUEST_DEADLINE_SECONDS * 1000.0
+    )
+    expected_passed = bool(
+        value.get("outcome") == "generated_text"
+        and reached_cap
+        and deadline_passed
+    )
+    if (
+        value.get("requested_generation_tokens") != generation_tokens
+        or value.get("minimum_completion_tokens") != minimum_tokens
+        or value.get("reached_generation_cap") is not reached_cap
+        or value.get("deadline_passed") is not deadline_passed
+        or value.get("passed") is not expected_passed
+    ):
+        raise ValueError(f"local-model {label} stress status is invalid")
+    return value
+
+
+def validate_readiness(value: object, *, expected_spec: str | None = None) -> dict[str, Any]:
+    if not isinstance(value, dict) or value.get("schema") not in {
+        LEGACY_SCHEMA,
+        BOUNDED_SCHEMA,
+        SCHEMA,
+    }:
+        raise ValueError("local-model readiness receipt schema is invalid")
+    schema = value.get("schema")
+    expected_policy = {
+        LEGACY_SCHEMA: legacy_readiness_policy,
+        BOUNDED_SCHEMA: bounded_readiness_policy,
+        SCHEMA: readiness_policy,
+    }[schema]()
     if value.get("policy") != expected_policy or value.get("status") != "verified":
         raise ValueError("local-model readiness policy is not terminal-passed")
     if expected_spec is not None and value.get("requested_spec") != expected_spec:
@@ -431,6 +644,87 @@ def validate_readiness(value: object, *, expected_spec: str | None = None) -> di
         if execution is not None:
             raise ValueError("legacy local-model readiness receipt changed")
         return value
+    if schema == SCHEMA:
+        if (
+            not isinstance(execution, dict)
+            or set(execution)
+            != {
+                "conditions",
+                "per_request_deadline_seconds",
+                "selected_generation_tokens",
+                "selection_basis",
+            }
+            or execution.get("per_request_deadline_seconds")
+            != PROFILE_REQUEST_DEADLINE_SECONDS
+            or execution.get("selection_basis")
+            != "highest_contiguous_stress_pass_before_first_failure"
+            or not isinstance(execution.get("conditions"), list)
+            or not execution["conditions"]
+        ):
+            raise ValueError("local-model execution profile is invalid")
+        configured = list(PROFILE_GENERATION_TOKEN_CANDIDATES)
+        observed = [
+            item.get("generation_tokens")
+            for item in execution["conditions"]
+            if isinstance(item, dict)
+        ]
+        if (
+            len(observed) != len(execution["conditions"])
+            or len(observed) > len(configured)
+            or observed != configured[: len(observed)]
+        ):
+            raise ValueError("local-model execution profile conditions are invalid")
+        passing: list[int] = []
+        failed_seen = False
+        for condition in execution["conditions"]:
+            if not isinstance(condition, dict) or set(condition) != {
+                "deadline_failures",
+                "generation_tokens",
+                "passed",
+                "stress_text",
+                "stress_vision",
+            }:
+                raise ValueError("local-model execution condition is invalid")
+            generation_tokens = int(condition["generation_tokens"])
+            stress_text = _validate_stress_result(
+                condition["stress_text"],
+                generation_tokens=generation_tokens,
+                label="text",
+            )
+            stress_vision = condition["stress_vision"]
+            observations = [stress_text]
+            if "image" in modalities:
+                stress_vision = _validate_stress_result(
+                    stress_vision,
+                    generation_tokens=generation_tokens,
+                    label="vision",
+                )
+                observations.append(stress_vision)
+            elif stress_vision is not None:
+                raise ValueError("text-only execution condition contains vision stress")
+            deadline_failures = sum(
+                observation.get("deadline_passed") is not True
+                for observation in observations
+            )
+            expected_passed = bool(
+                all(observation.get("passed") is True for observation in observations)
+            )
+            if (
+                condition["deadline_failures"] != deadline_failures
+                or condition["passed"] is not expected_passed
+                or (failed_seen and expected_passed)
+            ):
+                raise ValueError("local-model execution condition status is invalid")
+            if expected_passed:
+                passing.append(generation_tokens)
+            else:
+                failed_seen = True
+        if len(execution["conditions"]) < len(configured) and not failed_seen:
+            raise ValueError("local-model execution profile stopped before a failure")
+        selected = max(passing) if passing else None
+        if execution.get("selected_generation_tokens") != selected or selected is None:
+            raise ValueError("local-model execution profile has no passing condition")
+        return value
     if (
         not isinstance(execution, dict)
         or set(execution)
@@ -445,7 +739,7 @@ def validate_readiness(value: object, *, expected_spec: str | None = None) -> di
         or execution.get("selection_basis") != "highest_passing_condition"
         or not isinstance(execution.get("conditions"), list)
         or [item.get("generation_tokens") for item in execution["conditions"]]
-        != list(readiness_policy()["generation_conditions"])
+        != list(bounded_readiness_policy()["generation_conditions"])
     ):
         raise ValueError("local-model execution profile is invalid")
     passing: list[int] = []
@@ -632,30 +926,35 @@ def main(argv: list[str] | None = None) -> int:
     if args.local.startswith("vllm:"):
         _require_local_hardware_fit(target, args.local, config, hardware)
     try:
-        conditions = [
-            _run_condition(
-                target,
-                spec=args.local,
-                modalities=list(config["modalities"]),
-                generation_tokens=generation_tokens,
+        conditions, selected_generation_tokens = _profile_generation_conditions(
+            target,
+            spec=args.local,
+            modalities=list(config["modalities"]),
+        )
+        if selected_generation_tokens is not None:
+            _set_generation_tokens(target, args.local, selected_generation_tokens)
+            text = _run_text(target)
+            vision = (
+                _run_vision(target) if "image" in config["modalities"] else None
             )
-            for generation_tokens in readiness_policy()["generation_conditions"]
-        ]
+        else:
+            text = {"status": "not_run_no_safe_generation_cap"}
+            vision = (
+                {"status": "not_run_no_safe_generation_cap"}
+                if "image" in config["modalities"]
+                else None
+            )
     finally:
         close = getattr(target, "close", None)
         if callable(close):
             close()
-    passing = [
-        condition for condition in conditions if condition["passed"] is True
-    ]
-    selected = max(
-        passing,
-        key=lambda condition: int(condition["generation_tokens"]),
-        default=None,
+    status = (
+        "verified"
+        if selected_generation_tokens is not None
+        and text.get("passed") is True
+        and (vision is None or vision.get("passed") is True)
+        else "failed"
     )
-    text = selected["text"] if selected is not None else conditions[0]["text"]
-    vision = selected["vision"] if selected is not None else conditions[0]["vision"]
-    status = "verified" if selected is not None else "failed"
     receipt: dict[str, object] = {
         "acquisition": acquisition,
         "local_config_sha256": _sha(local_configs),
@@ -663,10 +962,10 @@ def main(argv: list[str] | None = None) -> int:
         "execution_profile": {
             "conditions": conditions,
             "per_request_deadline_seconds": PROFILE_REQUEST_DEADLINE_SECONDS,
-            "selected_generation_tokens": (
-                int(selected["generation_tokens"]) if selected is not None else None
+            "selected_generation_tokens": selected_generation_tokens,
+            "selection_basis": (
+                "highest_contiguous_stress_pass_before_first_failure"
             ),
-            "selection_basis": "highest_passing_condition",
         },
         "policy": readiness_policy(),
         "readiness_id": "0" * 64,

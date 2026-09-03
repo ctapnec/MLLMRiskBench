@@ -140,7 +140,7 @@ def _repo_app(
         }
     (repo / "experiments" / "local-model-profiles.json").write_text(
         json.dumps({
-            "schema": "ura-local-model-execution-profiles/1",
+            "schema": "ura-local-model-execution-profiles/2",
             "models": profiles,
         }),
         encoding="utf-8",

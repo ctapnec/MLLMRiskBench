@@ -125,9 +125,11 @@ elif [ "$MODE" = "--profile-recovery-handoff" ]; then
   DEPLOY_TESTS=(
     tests/experiments/test_failed_output_recovery_phase6.py::test_durable_outcomes_accept_checkpoint_before_attempts_file
     tests/experiments/test_local_bounded_output_continuation_phase6.py
+    tests/experiments/test_local_model_readiness.py
     tests/experiments/test_ollama_population_alignment_recovery_phase6.py
     tests/experiments/test_local_campaign_controllers.py::test_phase7_requires_local_hardware_fit_as_a_separate_stratum
     tests/ura/test_model_acquisition_runtime.py::test_private_execution_preserves_sanitized_per_input_failure_semantics
+    tests/ura/test_current_contract_docs.py
     tests/ura/test_local_context_limit_regressions.py
     tests/ura/test_hosted_roster_docs.py::test_hosted_follow_on_is_a_no_retry_local_input_subset
     tests/ura/test_rig_web.py::test_builder_model_filters_and_quantization_warning_are_rendered

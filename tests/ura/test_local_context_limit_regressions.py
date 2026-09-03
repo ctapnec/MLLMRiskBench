@@ -38,7 +38,7 @@ REVISION = "6" * 40
 
 
 def test_current_runner_version_includes_local_context_contract() -> None:
-    assert CODE_VERSION == "ura-runner/2.30"
+    assert CODE_VERSION == "ura-runner/2.31"
     assert DEFAULT_VLLM_GENERATION_TOKENS == 4096
     assert DEFAULT_VLLM_MAX_MODEL_LEN == -1
     assert DEFAULT_OLLAMA_NUM_CTX == "fit"
@@ -128,7 +128,7 @@ def _write_execution_profile(
     evidence = repo / "profile-readiness.json"
     evidence.write_text("{}\n", encoding="utf-8")
     registry = {
-        "schema": "ura-local-model-execution-profiles/1",
+        "schema": "ura-local-model-execution-profiles/2",
         "models": {
             spec: {
                 "generation_tokens": generation_tokens,

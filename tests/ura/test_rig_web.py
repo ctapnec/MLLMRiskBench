@@ -3130,7 +3130,7 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
         }
     (repo / "experiments" / "local-model-profiles.json").write_text(
         json.dumps({
-            "schema": "ura-local-model-execution-profiles/1",
+            "schema": "ura-local-model-execution-profiles/2",
             "models": profiles,
         }),
         encoding="utf-8",

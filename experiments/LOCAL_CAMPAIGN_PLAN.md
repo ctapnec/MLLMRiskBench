@@ -227,12 +227,17 @@ same ten benign questions deterministically from a fixed twenty-question bank
 with seed 20260829 and requires at least five correct. The other five answers
 may be incorrect or empty. For an image-capable target, it adds five
 deterministic synthetic split-color images and requires at least two correct;
-the other three may be incorrect or empty. The current `/2` gate runs that same
-survey at 4,096 and 25,000 output tokens under a 120-second per-request
-deadline, then stores the highest passing allowance for which no request
-reaches that deadline in an identity-bound rig profile consumed by CLI and
-Build. Context remains maximum hardware-fit. An unprofiled local generative
-model is rejected, and the approved values replace campaign-local overrides.
+the other three may be incorrect or empty. The current `/3` gate first forces
+one text generation and, when applicable, one physical-image generation through
+an ascending 256, 512, 1,024, 2,048, 4,096, 8,192, 16,384, and 25,000-token
+ladder. It stops at the first failed or 120-second condition and selects the
+highest contiguous cap that reached at least 95 percent of the requested output
+below the deadline in every declared modality. The 10-text/5-image survey then
+runs once at that cap. The identity-bound schema-2 rig profile is consumed by
+CLI and Build. Context remains maximum hardware-fit. An unprofiled local
+generative model is rejected, and the approved values replace campaign-local
+overrides. Readiness `/1` and `/2` and profile-registry `/1` remain historical
+evidence but cannot admit a new local inference call.
 This applies to the
 three vLLM targets and all four Ollama targets. Guard and classifier checkpoints
 instead retain their role-specific classifier smoke because free-form Q&A is not
@@ -1027,10 +1032,14 @@ acquisition plan. Reintroducing DeepSeek into this selection or changing the
 
 The first alignment-recovery launch at commit `8296f76` stopped after its
 controller-start record and before any unit state or population call. It is not
-a completion. After the 25-unit automatic hardware-fit correction finishes,
-run the maintained six-unit `/4` continuation in a fresh named rig session with
-both prerequisite completion digests and give only its validated completion to
-Phase 7. The 2,350 never-started rows are in
+a completion. The first 25-unit automatic hardware-fit correction was stopped
+after its first three selected rows proved that short-answer `/2` readiness had
+not exercised the 25,000-token ceiling. Re-profile all seven generative local
+models under `ura-local-model-readiness/3`, then run a fresh successor that
+selects only the invalid-condition or never-started rows. After that successor
+validates, run the maintained six-unit population continuation in a fresh named
+rig session with all prerequisite completion digests and give only its validated
+completion to Phase 7. The 2,350 never-started rows are in
 addition to the 4,463 row-addressable hardware-fit corrections; neither
 controller may select a row completed by the other or by the retained base.
 At that terminal boundary, deploy the tested successor with
@@ -1058,7 +1067,7 @@ this local mechanism: their explicit token limits remain derived from the paid
 campaign budget. They receive zero answer-quality retries and up to three
 harness retries only for the declared retryable HTTP status responses.
 
-### 7.2 Runner 2.30 local execution-profile amendment
+### 7.2 Runner 2.31 local execution-profile amendment
 
 The 3 September hardware-fit continuation exposed a second execution-condition
 confound. Its LLaVA unit omitted `max_tokens`, so Runner 2.29 allowed the model
@@ -1067,15 +1076,27 @@ to consume the 32,768-token context as response budget. At the controlled stop,
 usable, and 28 had never been attempted. Those calls took roughly ten minutes
 each. The one usable row remains immutable and excluded from recovery.
 
-Runner 2.30 separates maximum hardware-fit input context from a finite response
-allowance and local request deadline. Before continuing security work, all
-three downloaded vLLM targets and all four downloaded Ollama targets receive
-fresh `/2` readiness profiles. The successor controller selects exactly the 63
+Runner 2.30 separated maximum hardware-fit input context from a finite response
+allowance and local request deadline, but its short-answer survey did not force
+the configured output cap. A Qwen GPTGeoChat recovery request consequently
+reached the 120-second ceiling under a nominally passing 25,000-token profile.
+The controller was stopped before the next measured unit. Its three timed-out
+rows are invalid-condition diagnostics, not model-stability observations.
+
+Runner 2.31 first stress-tests an ascending token ladder and then runs the
+responsiveness survey at the highest proven sub-120-second cap. It also
+preserves typed answer and input failures across the sealed vLLM execution
+boundary, so a genuine later failure follows the same retry-and-retain rule as
+Ollama. Before continuing security work, all three downloaded vLLM targets and
+all four downloaded Ollama targets receive fresh `/3` readiness profiles and a
+schema-2 machine registry. The successor controller selects exactly the 63
 non-usable or unattempted rows in that LLaVA unit plus the 107 rows in the four
 later unstarted units, for 170 rows total. It requires and applies the exact
 model's profiled allowance and 120-second deadline, keeps one
-answer retry, and repeats no valid completed row. The interrupted controller is
-closed with a typed terminal marker; its artifacts are retained and never
+answer retry, and repeats no valid completed row. It also reselects the three
+Qwen rows attempted only under the invalid 25,000-token condition. The
+interrupted controller is closed with a typed terminal marker; its artifacts are
+retained and never
 rewritten. After this continuation, the six-unit 2,350-row population alignment
 continuation uses the same local profile contract. These are campaign-specific
 recovery strata, not changes to the hosted API campaign.

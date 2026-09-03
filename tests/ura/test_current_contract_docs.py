@@ -18,7 +18,7 @@ def test_current_runner_contract_docs_match_code_version() -> None:
         _ROOT / "experiments" / "RUN_AND_RETURN.md",
     )
 
-    assert CODE_VERSION == "ura-runner/2.30"
+    assert CODE_VERSION == "ura-runner/2.31"
     for path in documents:
         text = path.read_text(encoding="utf-8")
         assert text.count(expected) == 1, path
@@ -34,8 +34,8 @@ def test_maintained_docs_name_the_current_runner() -> None:
     for path in documents:
         text = path.read_text(encoding="utf-8")
         assert "Runner 2.20" not in text, path
-        assert "Runner 2.30" in text, path
-        mutant = text.replace("Runner 2.30", "Runner 2.20", 1)
+        assert "Runner 2.31" in text, path
+        mutant = text.replace("Runner 2.31", "Runner 2.20", 1)
         assert mutant != text
         assert "Runner 2.20" in mutant
 

@@ -6,8 +6,8 @@ source-native evaluators. Experiments and the human audit are still pending.
 Preflight, dry-run, diagnostic-canary, and bounded transport-probe artifacts are
 diagnostics, not thesis results.
 
-The maintained artifact contract is Runner `ura-runner/2.30` with unified schema
-`1.5`. Runner 2.30 is the current executable contract used by this runbook.
+The maintained artifact contract is Runner `ura-runner/2.31` with unified schema
+`1.5`. Runner 2.31 is the current executable contract used by this runbook.
 Runner 2.19/schema 1.4 artifacts remain runtime-free legacy
 compatibility only; do not combine them with the current measured cohort.
 
@@ -2036,9 +2036,9 @@ newly selected config binds `num_ctx="fit"`; Runner reads the exact native
 ceiling from `/api/show`, then performs load-only probes from that ceiling
 downward until `/api/ps` proves the complete runtime is GPU-resident. Only then
 does it submit a real prompt. The response allowance resolves from the exact
-model's required readiness profile. The 4,096-token baseline is an assessment
-input; the `num_predict=-1` sentinel remains historical, not an unprofiled
-campaign default. The pulled
+model's required readiness profile. The current ascending stress ladder is an
+assessment input; the `num_predict=-1` sentinel remains historical, not an
+unprofiled campaign default. The pulled
 artifact fixes precision. Runner
 uses the daemon HTTP API through the Python standard library, so no Ollama
 Python SDK is required; the daemon and matching pulled tag must exist before a
@@ -2176,19 +2176,25 @@ config. For a Hub-backed vLLM target, first use
 `--model-acquisition-plan-only --model-acquisition-plan-dir`, acquire that exact
 plan with section 6.1, and then pass the resulting plan, receipt and managed
 store to the readiness command. An Ollama target needs no Hub-acquisition
-arguments. The command runs the same ten deterministic benign question calls
-and, for an image-capable target, five deterministic synthetic-image calls at
-both 4,096 and 25,000 output tokens. Every request has a 120-second deadline.
-Admission requires at least five correct text answers and at least two correct
-image answers. The other five text responses and three image responses may be
-incorrect or empty. Store each passing `ura-local-model-readiness/2` receipt
-and its SHA-256 under the operator-bound `URA_LOCAL_MODEL_READINESS_ROOT`.
-Set `URA_LOCAL_MODEL_PROFILE_REGISTRY` to one regular file under `$URA_WORK` or
-pass `--profile-registry`; the command atomically records the highest passing
-allowance for which no probe reaches the deadline, bound to the exact
-revision/digest and modalities. CLI and Build require that same approved local
-output/time profile. Retained schema `/1` receipts
-stay valid historical admission but do not supply an execution profile. Hosted
+arguments. The command first forces one text generation and, for an
+image-capable target, one physical-image generation at each ascending candidate
+cap: 256, 512, 1,024, 2,048, 4,096, 8,192, 16,384, and 25,000 tokens. Every
+request has a 120-second deadline. Testing stops at the first failed condition
+and selects the highest contiguous condition whose response reached at least 95
+percent of the cap and finished below the deadline in every declared modality.
+It then runs the ten deterministic benign question calls and five deterministic
+synthetic-image calls at that selected cap. Admission requires at least five
+correct text answers and at least two correct image answers. The other five text
+responses and three image responses may be incorrect or empty. Store each
+passing `ura-local-model-readiness/3` receipt and its SHA-256 under the
+operator-bound `URA_LOCAL_MODEL_READINESS_ROOT`. Set
+`URA_LOCAL_MODEL_PROFILE_REGISTRY` to one regular file under `$URA_WORK` or pass
+`--profile-registry`; the command atomically records the proven allowance bound
+to the exact revision/digest and modalities. CLI and Build require the current
+`ura-local-model-execution-profiles/2` registry and apply that output/time
+profile even if a local config carries another value. Retained readiness schemas
+`/1` and `/2` and registry schema `/1` remain historical evidence but do not
+supply a current execution profile. Hosted
 models and hosted judges never use this local registry; their explicit maximum
 output tokens are derived from the approved paid budget and they receive one
 attempt. Empty survey observations remain

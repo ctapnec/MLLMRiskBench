@@ -185,7 +185,7 @@ def test_alignment_continuation_rebinds_readiness_profile(
     profile_registry.write_text(
         json.dumps(
             {
-                "schema": "ura-local-model-execution-profiles/1",
+                "schema": "ura-local-model-execution-profiles/2",
                 "models": {
                     model_spec: {
                         "generation_tokens": 25_000,
@@ -224,7 +224,7 @@ def test_alignment_continuation_rebinds_readiness_profile(
     )
     missing_registry = tmp_path / "missing-profiles.json"
     missing_registry.write_text(
-        '{"models":{},"schema":"ura-local-model-execution-profiles/1"}\n',
+        '{"models":{},"schema":"ura-local-model-execution-profiles/2"}\n',
         encoding="utf-8",
     )
     another_root = tmp_path / "missing-profile-continuation"
