@@ -929,7 +929,7 @@ def test_ollama_local_config_rejects_invalid_execution_caps(
         run_matrix._load_local_config(str(path), [spec])
 
 
-def test_rig_web_preserves_and_displays_curated_context_cap(tmp_path: Path) -> None:
+def test_rig_web_applies_and_displays_profiled_vllm_context(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     rig = repo / "experiments" / "rig"
     rig.mkdir(parents=True)
@@ -953,12 +953,12 @@ def test_rig_web_preserves_and_displays_curated_context_cap(tmp_path: Path) -> N
     finally:
         app.close()
 
-    assert selected["max_model_len"] == 12288
+    assert selected["max_model_len"] == -1
     assert selected["max_tokens"] == 4096
-    assert "context cap 12,288 tokens" in page
+    assert "automatic maximum GPU-fit context / output cap 4,096 tokens" in page
 
 
-def test_rig_web_preserves_and_displays_ollama_execution_caps(
+def test_rig_web_applies_and_displays_profiled_ollama_execution(
     tmp_path: Path,
 ) -> None:
     spec = "ollama:fixture:latest"
@@ -992,10 +992,14 @@ def test_rig_web_preserves_and_displays_ollama_execution_caps(
     finally:
         app.close()
 
-    assert selected["num_ctx"] == 4096
+    assert selected["num_ctx"] == "fit"
     assert selected["num_predict"] == 4096
+    assert selected["think"] is False
     assert selected["timeout"] == 120.0
-    assert "context cap 4,096 tokens / output cap 4,096 tokens" in page
+    assert (
+        "automatic maximum GPU-fit context / output cap 4,096 tokens"
+        " / thinking disabled"
+    ) in page
 
 
 def test_rig_web_rejects_invalid_curated_context_cap(tmp_path: Path) -> None:
