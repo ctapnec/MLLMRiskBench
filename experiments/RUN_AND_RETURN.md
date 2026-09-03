@@ -2019,9 +2019,11 @@ cleaned up. Pull is a typed Jobs entry whose live activity is `model_download`.
 After a successful UI pull, the console discovers the exact installed digest
 and modalities and automatically launches `local_model_readiness` as a linked
 Jobs entry. That follow-up descends from the local response ceiling until the
-first sub-120-second cap, runs the seeded 10-text/5-image gate there, keeps
-thinking explicitly disabled for this generic post-pull assessment, and writes
-the passing hardware-bound profile to the shared registry. A pull
+first sub-120-second cap, runs each text/image stress observation in a fresh
+child process, and then runs the seeded 10-text/5-image gate there. Automatic
+Ollama profiling binds the known family control: GPT-OSS uses low thinking,
+DeepSeek-R1 keeps thinking enabled, and other discovered families disable it.
+The passing hardware-bound profile is written to the shared registry. A pull
 alone never makes an unprofiled model selectable for scrutiny.
 The selectable live roster accepts at most 64 installed models under a
 five-second aggregate discovery budget, requires exact tag/digest stability
@@ -2187,6 +2189,10 @@ and descending through 16,384, 8,192, 4,096, 2,048, 1,024, 512, and 256. Every
 request has a 120-second deadline. Testing stops at the first condition whose
 response reached at least 95 percent of the cap and finished below the deadline
 for text and, when declared, physical-image input.
+Every stress observation runs in its own process. Process exit, rather than an
+in-process engine close alone, is the cleanup boundary before the next cap, so
+a cancelled vLLM request cannot retain CUDA state or contaminate the lower-cap
+measurement.
 It then runs the ten deterministic benign question calls and five deterministic
 synthetic-image calls at that selected cap. Admission requires at least five
 correct text answers and at least two correct image answers. The other five text

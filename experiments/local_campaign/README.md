@@ -354,8 +354,10 @@ context for which `/api/ps` reports the whole runtime in VRAM. It binds
 the exact model's `/3` readiness recommendation after fit succeeds. There is no
 unprofiled campaign fallback. vLLM and Ollama profiles start at the local
 generation ceiling and descend until a forced response reaches its cap below
-the 120-second per-request deadline. The seeded 10-text/5-image survey runs at
-that cap. The hardware-fit context, output cap and applicable Ollama thinking
+the 120-second per-request deadline. Each text/image stress observation uses a
+fresh child process, whose exit releases CUDA state before the next candidate.
+The seeded 10-text/5-image survey runs at that cap. The hardware-fit context,
+output cap and applicable Ollama thinking
 mode are shared by Runner CLI and Build through the schema-2 profile registry. Hosted API
 models and judges never use this registry because their output caps are
 budget-derived and their attempt count is one. Retained `finish_reason=length` or

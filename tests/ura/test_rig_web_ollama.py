@@ -1210,9 +1210,10 @@ def test_successful_pull_automatically_starts_identity_bound_readiness(
                 "models": [
                     {
                         "digest": "d" * 64,
+                        "capabilities": ["thinking"],
                         "modalities": ["text", "image"],
-                        "spec": "ollama:fixture:latest",
-                        "tag": "fixture:latest",
+                        "spec": "ollama:deepseek-r1:32b-qwen-distill-q4_K_M",
+                        "tag": "deepseek-r1:32b-qwen-distill-q4_K_M",
                     }
                 ],
             }
@@ -1221,10 +1222,18 @@ def test_successful_pull_automatically_starts_identity_bound_readiness(
     parent = Job(
         "terminal-download",
         "ollama_pull",
-        ["python", "-m", "experiments.ollama_pull", "--model", "fixture:latest"],
+        [
+            "python",
+            "-m",
+            "experiments.ollama_pull",
+            "--model",
+            "deepseek-r1:32b-qwen-distill-q4_K_M",
+        ],
         tmp_path / "state" / "terminal-download",
         process=_FakeProcess(code=0),
-        builder_params={"ollama_model": "fixture:latest"},
+        builder_params={
+            "ollama_model": "deepseek-r1:32b-qwen-distill-q4_K_M"
+        },
     )
     captured: dict[str, object] = {}
 
@@ -1238,21 +1247,23 @@ def test_successful_pull_automatically_starts_identity_bound_readiness(
         assert result.job_id == "readiness-job"
         assert captured["command"] == "local_model_readiness"
         values = captured["values"]
-        assert values["--local"] == "ollama:fixture:latest"
+        assert values["--local"] == (
+            "ollama:deepseek-r1:32b-qwen-distill-q4_K_M"
+        )
         assert values["--profile-registry"]
         config_path = Path(values["--local-config"])
         payload = config_path.read_bytes()
         assert values["--local-config-sha256"] == hashlib.sha256(payload).hexdigest()
         assert json.loads(payload) == {
-            "ollama:fixture:latest": {
+            "ollama:deepseek-r1:32b-qwen-distill-q4_K_M": {
                 "digest": "d" * 64,
                 "modalities": ["text", "image"],
                 "num_ctx": "fit",
-                "think": False,
+                "think": True,
             }
         }
         assert captured["kwargs"]["builder_params"] == {
-            "local": "ollama:fixture:latest",
+            "local": "ollama:deepseek-r1:32b-qwen-distill-q4_K_M",
             "readiness_parent_job_id": "terminal-download",
             "readiness_trigger": "successful_ollama_pull",
         }

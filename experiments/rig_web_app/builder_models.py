@@ -167,6 +167,21 @@ class BuilderModelsMixin:
                 options.append((spec, spec, mods, "local"))
         return options
 
+    @staticmethod
+    def _default_ollama_think(
+        spec: str, capabilities: object
+    ) -> bool | str:
+        """Choose the model-family control used by automatic readiness."""
+
+        supports_thinking = (
+            isinstance(capabilities, list) and "thinking" in capabilities
+        )
+        if supports_thinking and spec.startswith("ollama:gpt-oss:"):
+            return "low"
+        if supports_thinking and spec.startswith("ollama:deepseek-r1:"):
+            return True
+        return False
+
     def _local_entry_catalog(
         self,
     ) -> tuple[dict[str, dict[str, object]], set[str]]:
@@ -199,12 +214,8 @@ class BuilderModelsMixin:
                     "digest": digest,
                     "modalities": list(modalities),
                     "num_ctx": DEFAULT_OLLAMA_NUM_CTX,
-                    "think": (
-                        "low"
-                        if spec.startswith("ollama:gpt-oss:")
-                        and isinstance(model.get("capabilities"), list)
-                        and "thinking" in model["capabilities"]
-                        else False
+                    "think": self._default_ollama_think(
+                        spec, model.get("capabilities")
                     ),
                 }
         for spec, entry in configured.items():

@@ -527,7 +527,9 @@ class LifecycleMixin:
                 "digest": digest,
                 "modalities": list(modalities),
                 "num_ctx": "fit",
-                "think": False,
+                "think": self._default_ollama_think(
+                    spec, row.get("capabilities")
+                ),
             }
         }
         payload = (

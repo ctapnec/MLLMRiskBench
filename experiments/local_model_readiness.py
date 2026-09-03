@@ -16,6 +16,8 @@ import json
 import random
 import re
 import struct
+import subprocess
+import tempfile
 import time
 import sys
 import zlib
@@ -57,6 +59,7 @@ from ura.model_acquisition_runtime import (  # noqa: E402
 LEGACY_SCHEMA = "ura-local-model-readiness/1"
 BOUNDED_SCHEMA = "ura-local-model-readiness/2"
 SCHEMA = "ura-local-model-readiness/3"
+PROBE_SCHEMA = "ura-local-model-readiness-probe/1"
 READINESS_SEED = 20260829
 TEXT_SAMPLE_SIZE = 10
 TEXT_MIN_CORRECT = 5
@@ -561,6 +564,145 @@ def _profile_generation_conditions(
     return conditions, selected
 
 
+def _probe_argv(
+    args: argparse.Namespace,
+    *,
+    kind: str,
+    generation_tokens: int,
+    out: Path,
+) -> list[str]:
+    """Build one private child invocation for exactly one model load/probe."""
+
+    command = [
+        sys.executable,
+        "-m",
+        "experiments.local_model_readiness",
+        "--local",
+        args.local,
+        "--local-config",
+        str(args.local_config),
+        "--local-config-sha256",
+        args.local_config_sha256,
+        "--out",
+        str(out),
+        "--isolated-probe",
+        kind,
+        "--generation-tokens",
+        str(generation_tokens),
+    ]
+    for flag, value in (
+        ("--model-acquisition-plan", args.model_acquisition_plan),
+        ("--model-acquisition-plan-sha256", args.model_acquisition_plan_sha256),
+        ("--model-acquisition-receipt", args.model_acquisition_receipt),
+        ("--model-acquisition-receipt-sha256", args.model_acquisition_receipt_sha256),
+        ("--model-acquisition-store", args.model_acquisition_store),
+    ):
+        if value:
+            command.extend((flag, str(value)))
+    return command
+
+
+def _run_isolated_probe(
+    args: argparse.Namespace,
+    *,
+    kind: str,
+    generation_tokens: int,
+    out: Path,
+) -> dict[str, object]:
+    """Run one probe in a process whose exit is the GPU-cleanup boundary."""
+
+    completed = subprocess.run(  # noqa: S603 - fixed interpreter/module argv
+        _probe_argv(
+            args,
+            kind=kind,
+            generation_tokens=generation_tokens,
+            out=out,
+        ),
+        cwd=_REPO_ROOT,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise ValueError(f"isolated local-model {kind} probe failed")
+    value = _read_json(out)
+    if (
+        not isinstance(value, dict)
+        or set(value) != {
+            "generation_tokens",
+            "kind",
+            "requested_spec",
+            "resolved_target",
+            "result",
+            "schema",
+        }
+        or value.get("schema") != PROBE_SCHEMA
+        or value.get("kind") != kind
+        or value.get("requested_spec") != args.local
+        or value.get("generation_tokens") != generation_tokens
+        or not isinstance(value.get("resolved_target"), str)
+        or not value["resolved_target"]
+        or not isinstance(value.get("result"), dict)
+    ):
+        raise ValueError("isolated local-model probe artifact is invalid")
+    return value
+
+
+def _profile_generation_conditions_isolated(
+    args: argparse.Namespace,
+    *,
+    modalities: list[str],
+    expected_target: str,
+    work: Path,
+) -> tuple[list[dict[str, object]], int | None]:
+    """Profile caps with a fresh OS process for every text/image observation."""
+
+    conditions: list[dict[str, object]] = []
+    for generation_tokens in PROFILE_GENERATION_TOKEN_CANDIDATES:
+        text_probe = _run_isolated_probe(
+            args,
+            kind="stress-text",
+            generation_tokens=generation_tokens,
+            out=work / f"stress-text-{generation_tokens}.json",
+        )
+        if text_probe["resolved_target"] != expected_target:
+            raise ValueError("isolated local-model probe target identity differs")
+        stress_text = text_probe["result"]
+        stress_vision = None
+        if "image" in modalities:
+            vision_probe = _run_isolated_probe(
+                args,
+                kind="stress-image",
+                generation_tokens=generation_tokens,
+                out=work / f"stress-image-{generation_tokens}.json",
+            )
+            if vision_probe["resolved_target"] != expected_target:
+                raise ValueError("isolated local-model probe target identity differs")
+            stress_vision = vision_probe["result"]
+        observations = [stress_text]
+        if stress_vision is not None:
+            observations.append(stress_vision)
+        condition = {
+            "deadline_failures": sum(
+                observation.get("deadline_passed") is not True
+                for observation in observations
+            ),
+            "generation_tokens": generation_tokens,
+            "passed": all(
+                observation.get("passed") is True for observation in observations
+            ),
+            "stress_text": stress_text,
+            "stress_vision": stress_vision,
+        }
+        conditions.append(condition)
+        if condition["passed"] is True:
+            break
+    selected = (
+        int(conditions[-1]["generation_tokens"])
+        if conditions and conditions[-1]["passed"] is True
+        else None
+    )
+    return conditions, selected
+
+
 def _validate_probe_result(
     value: object,
     *,
@@ -878,6 +1020,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--validate", type=Path)
     parser.add_argument("--sha256", default="")
     parser.add_argument("--expected-spec")
+    parser.add_argument(
+        "--isolated-probe",
+        choices=("stress-text", "stress-image", "survey-text", "survey-image"),
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument("--generation-tokens", type=int, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
 
     if args.validate is not None:
@@ -980,25 +1128,94 @@ def main(argv: list[str] | None = None) -> int:
     )
     if args.local.startswith("vllm:"):
         _require_local_hardware_fit(target, args.local, config, hardware)
+    if args.isolated_probe is not None:
+        if (
+            args.profile_registry is not None
+            or args.generation_tokens not in PROFILE_GENERATION_TOKEN_CANDIDATES
+        ):
+            parser.error("isolated readiness probe arguments are invalid")
+        if "image" in args.isolated_probe and "image" not in config["modalities"]:
+            parser.error("image readiness probe requires an image-capable target")
+        _set_generation_tokens(target, args.local, args.generation_tokens)
+        try:
+            if args.isolated_probe == "stress-text":
+                result = _run_generation_stress(
+                    target,
+                    generation_tokens=args.generation_tokens,
+                    image=False,
+                )
+            elif args.isolated_probe == "stress-image":
+                result = _run_generation_stress(
+                    target,
+                    generation_tokens=args.generation_tokens,
+                    image=True,
+                )
+            elif args.isolated_probe == "survey-text":
+                result = _run_text(target)
+            else:
+                result = _run_vision(target)
+        finally:
+            close = getattr(target, "close", None)
+            if callable(close):
+                close()
+        probe = {
+            "generation_tokens": args.generation_tokens,
+            "kind": args.isolated_probe,
+            "requested_spec": args.local,
+            "resolved_target": str(target.name),
+            "result": result,
+            "schema": PROBE_SCHEMA,
+        }
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        with args.out.open("xb") as handle:
+            handle.write(_canonical(probe))
+        print(json.dumps({"kind": args.isolated_probe, "status": "recorded"}, sort_keys=True))
+        return 0
     try:
-        conditions, selected_generation_tokens = _profile_generation_conditions(
-            target,
-            spec=args.local,
-            modalities=list(config["modalities"]),
-        )
-        if selected_generation_tokens is not None:
-            _set_generation_tokens(target, args.local, selected_generation_tokens)
-            text = _run_text(target)
-            vision = (
-                _run_vision(target) if "image" in config["modalities"] else None
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(
+            prefix=".readiness-probes-", dir=args.out.parent
+        ) as temporary:
+            work = Path(temporary)
+            conditions, selected_generation_tokens = (
+                _profile_generation_conditions_isolated(
+                    args,
+                    modalities=list(config["modalities"]),
+                    expected_target=str(target.name),
+                    work=work,
+                )
             )
-        else:
-            text = {"status": "not_run_no_safe_generation_cap"}
-            vision = (
-                {"status": "not_run_no_safe_generation_cap"}
-                if "image" in config["modalities"]
-                else None
-            )
+            if selected_generation_tokens is not None:
+                text_probe = _run_isolated_probe(
+                    args,
+                    kind="survey-text",
+                    generation_tokens=selected_generation_tokens,
+                    out=work / "survey-text.json",
+                )
+                if text_probe["resolved_target"] != str(target.name):
+                    raise ValueError("isolated local-model probe target identity differs")
+                text = text_probe["result"]
+                if "image" in config["modalities"]:
+                    vision_probe = _run_isolated_probe(
+                        args,
+                        kind="survey-image",
+                        generation_tokens=selected_generation_tokens,
+                        out=work / "survey-image.json",
+                    )
+                    if vision_probe["resolved_target"] != str(target.name):
+                        raise ValueError(
+                            "isolated local-model probe target identity differs"
+                        )
+                    vision = vision_probe["result"]
+                else:
+                    vision = None
+            else:
+                text = {"status": "not_run_no_safe_generation_cap"}
+                vision = (
+                    {"status": "not_run_no_safe_generation_cap"}
+                    if "image" in config["modalities"]
+                    else None
+                )
     finally:
         close = getattr(target, "close", None)
         if callable(close):

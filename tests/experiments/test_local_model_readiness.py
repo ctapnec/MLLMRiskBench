@@ -3,8 +3,12 @@ from __future__ import annotations
 import hashlib
 import json
 import random
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+
+import experiments.local_model_readiness as readiness_module
 
 from experiments.local_model_readiness import (
     BOUNDED_SCHEMA,
@@ -14,6 +18,7 @@ from experiments.local_model_readiness import (
     PROFILE_GENERATION_TOKEN_CANDIDATES,
     PROFILE_MAXIMUM_GENERATION_TOKENS,
     PROFILE_REQUEST_DEADLINE_SECONDS,
+    PROBE_SCHEMA,
     READINESS_SEED,
     SCHEMA,
     TEXT_BANK,
@@ -23,6 +28,8 @@ from experiments.local_model_readiness import (
     VISION_SAMPLE_SIZE,
     _configure_readiness_condition,
     _profile_generation_conditions,
+    _profile_generation_conditions_isolated,
+    _run_isolated_probe,
     _run_text,
     _run_vision,
     _run_condition,
@@ -333,6 +340,94 @@ def test_generation_profile_resets_between_timed_out_text_and_image() -> None:
     assert selected == 2_048
     assert len(conditions) == 5
     assert target.closed == 8
+
+
+def test_isolated_probe_uses_a_fresh_module_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    out = tmp_path / "probe.json"
+    args = SimpleNamespace(
+        local="vllm:example/model",
+        local_config=tmp_path / "config.json",
+        local_config_sha256="a" * 64,
+        model_acquisition_plan=tmp_path / "plan.json",
+        model_acquisition_plan_sha256="b" * 64,
+        model_acquisition_receipt=tmp_path / "receipt.json",
+        model_acquisition_receipt_sha256="c" * 64,
+        model_acquisition_store=tmp_path / "store",
+    )
+    calls: list[list[str]] = []
+
+    def run(command, *, cwd, check):
+        assert cwd == readiness_module._REPO_ROOT
+        assert check is False
+        calls.append(command)
+        out.write_text(
+            json.dumps(
+                {
+                    "generation_tokens": 2_048,
+                    "kind": "stress-text",
+                    "requested_spec": args.local,
+                    "resolved_target": "vllm:example/model@" + "d" * 40,
+                    "result": _stress_result(2_048),
+                    "schema": PROBE_SCHEMA,
+                }
+            ),
+            encoding="ascii",
+        )
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(readiness_module.subprocess, "run", run)
+
+    value = _run_isolated_probe(
+        args,
+        kind="stress-text",
+        generation_tokens=2_048,
+        out=out,
+    )
+
+    assert value["result"]["passed"] is True
+    assert len(calls) == 1
+    assert calls[0][:3] == [
+        readiness_module.sys.executable,
+        "-m",
+        "experiments.local_model_readiness",
+    ]
+    assert calls[0][calls[0].index("--isolated-probe") + 1] == "stress-text"
+
+
+def test_generation_profile_isolates_each_cap_and_modality(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[tuple[str, int, Path]] = []
+
+    def probe(_args, *, kind, generation_tokens, out):
+        calls.append((kind, generation_tokens, out))
+        result = _stress_result(generation_tokens)
+        if generation_tokens > 2_048:
+            result["deadline_passed"] = False
+            result["passed"] = False
+        return {
+            "resolved_target": "vllm:example/model@" + "d" * 40,
+            "result": result,
+        }
+
+    monkeypatch.setattr(readiness_module, "_run_isolated_probe", probe)
+    conditions, selected = _profile_generation_conditions_isolated(
+        SimpleNamespace(),
+        modalities=["text", "image"],
+        expected_target="vllm:example/model@" + "d" * 40,
+        work=tmp_path,
+    )
+
+    assert selected == 2_048
+    assert len(calls) == 10
+    assert [kind for kind, _tokens, _out in calls] == [
+        kind
+        for _tokens in PROFILE_GENERATION_TOKEN_CANDIDATES[:5]
+        for kind in ("stress-text", "stress-image")
+    ]
+    assert len({out for _kind, _tokens, out in calls}) == len(calls)
 
 
 def test_generation_profile_rejects_early_stop_before_requested_cap() -> None:
