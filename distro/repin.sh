@@ -93,8 +93,10 @@ if [ "$MODE" = "--focused-campaign-handoff" ]; then
     tests/experiments/test_local_campaign_phase8_lifecycle_semantics.py
     tests/experiments/test_local_truncation_recovery_phase6.py
     tests/experiments/test_ollama_population_alignment_recovery_phase6.py
+    tests/experiments/test_hosted_campaign_budget.py
     tests/experiments/test_retained_response_judge.py
     tests/experiments/test_retained_response_judge_execute.py
+    tests/experiments/test_retained_response_judge_pair.py
     tests/ura/test_current_contract_docs.py
     tests/ura/test_hosted_roster_docs.py
     tests/ura/test_local_campaign_stats_adapter.py
