@@ -88,6 +88,9 @@ targets and Haiku judging, may use at most 50 percent of each configured budget.
 Haiku receives one matched cohort of at most 2,000 local/hosted output pairs.
 That is at most 2,000 selected local outputs and 2,000 selected hosted outputs
 from their matched-input intersection.
+Because the entire hosted target cap is 590, a pair limit of 2,000 selects every
+eligible answered hosted output exactly once; it is not a second sample of the
+hosted results. Each receives one deterministic unused local counterpart.
 The local and hosted member of every pair has the same rendered-input identity,
 source cluster, seed, arm/framework, modality and source-policy stratum. Neither
 retained output may be reused in another pair. At the planning assumption of
@@ -174,6 +177,8 @@ media-reference digest, datapoint, source cluster, seed, arm/framework,
 modality, risk, expected behavior and source-policy identity. Use deterministic
 seed-0 balanced round-robin selection across local target, hosted target and
 those input strata, without reusing an output. Preserve original judgments.
+When the eligible hosted population remains at or below 2,000, selection must
+include every eligible hosted output rather than downsample it.
 Missing responses and source-authoritative R-Judge/GPTGeoChat rows remain in
 coverage accounting but receive no judge call and cannot form a judged pair.
 Haiku target outputs are allowed by operator decision; mark them

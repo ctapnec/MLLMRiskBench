@@ -114,6 +114,20 @@ def test_pair_selector_is_deterministic_and_uses_identical_inputs() -> None:
     )
 
 
+def test_pair_ceiling_selects_every_eligible_hosted_output() -> None:
+    local = [_candidate(index, cohort="local") for index in range(4)]
+    hosted = [_candidate(index, cohort="hosted") for index in range(4)]
+
+    plan = _build(local, hosted, limit=2_000)
+
+    assert plan["selection"]["selected_pairs"] == len(hosted)
+    assert {
+        row["retained_row_sha256"]
+        for row in plan["selected"]
+        if row["cohort"] == "hosted"
+    } == {row["retained_row_sha256"] for row in hosted}
+
+
 def test_pair_selector_never_reuses_an_output() -> None:
     local = [
         _candidate(0, cohort="local", input_index=0),

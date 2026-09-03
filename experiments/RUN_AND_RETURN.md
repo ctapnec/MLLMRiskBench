@@ -1659,7 +1659,10 @@ the same rendered prompt, media-reference digest, datapoint, source cluster,
 seed, arm/framework, modality, risk, expected behavior and source policy. The
 selector uses deterministic balanced round-robin sampling across local target,
 hosted target and those input strata, without output reuse. It preserves
-original judgments and excludes missing responses plus source-authoritative
+original judgments. Since the hosted campaign cap is 590, the 2,000-pair
+ceiling must include every eligible answered hosted output exactly once and
+assign one unused local counterpart; it is not a downsample of hosted results.
+It excludes missing responses plus source-authoritative
 R-Judge/GPTGeoChat rows from judge calls. Haiku target rows may be judged by
 Haiku under the operator's explicit decision, but must be labelled same-model
 and non-independent. Under the central 4,000-input/500-output assumption, the

@@ -201,6 +201,9 @@ cluster, seed, arm/framework, modality, risk, expected behavior and source
 policy. Seed-0 balanced round-robin sampling spans both target models and those
 input strata, and no retained output is reused. Missing responses remain in
 coverage statistics but require no judge call and cannot form a judged pair.
+The hosted campaign permits at most 590 target outputs, so the 2,000-pair limit
+includes every eligible answered hosted output exactly once rather than drawing
+a smaller outcome-selected sample.
 Source-authoritative R-Judge and GPTGeoChat decisions are excluded. Haiku's own
 target outputs are included by explicit operator decision and labelled
 same-model, non-independent evidence.

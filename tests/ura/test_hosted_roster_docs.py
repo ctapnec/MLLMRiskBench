@@ -643,6 +643,7 @@ def test_hosted_follow_on_is_a_no_retry_local_input_subset() -> None:
         "--judges rules,guardrail",
         "590 Llama Guard calls",
         "local-versus-Haiku agreement",
+        "every eligible answered hosted output exactly once",
     )
 
     def assert_contract(value: str) -> None:
