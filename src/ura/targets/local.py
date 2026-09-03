@@ -18,6 +18,7 @@ import math
 import os
 import re
 import signal
+import sys
 import threading
 import time
 import urllib.error
@@ -762,6 +763,15 @@ class VLLMTarget(BaseTarget):
                 # stdout, stderr, logs, and errors are still path-redacted.
                 engine_holder.clear()
                 gc.collect()
+                # Engine shutdown releases live tensors, but PyTorch's caching
+                # allocator can otherwise retain the freed blocks in this
+                # process. A readiness deadline is followed by a lower-cap
+                # engine construction, so release that cache before returning.
+                torch = sys.modules.get("torch")
+                cuda = getattr(torch, "cuda", None) if torch is not None else None
+                empty_cache = getattr(cuda, "empty_cache", None)
+                if callable(empty_cache):
+                    empty_cache()
             if shutdown_failed:
                 raise RuntimeError("vLLM engine shutdown failed") from None
 

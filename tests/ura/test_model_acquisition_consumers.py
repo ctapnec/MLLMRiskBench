@@ -343,6 +343,41 @@ def test_vllm_close_does_not_manually_join_or_destroy_third_party_zmq() -> None:
     assert target._llm is None
 
 
+def test_vllm_close_releases_torch_cuda_allocator_cache(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+
+    class Runtime:
+        @staticmethod
+        def private_execution(_role, callback):
+            return callback()
+
+    class Core:
+        def shutdown(self) -> None:
+            events.append("shutdown")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "torch",
+        SimpleNamespace(
+            cuda=SimpleNamespace(empty_cache=lambda: events.append("empty-cache"))
+        ),
+    )
+    target = VLLMTarget(
+        "Org/Target",
+        revision="a" * 40,
+        modality_support=("text",),
+        model_runtime=Runtime(),
+    )
+    target._llm = SimpleNamespace(llm_engine=SimpleNamespace(engine_core=Core()))
+
+    target.close()
+
+    assert events == ["shutdown", "empty-cache"]
+    assert target._llm is None
+
+
 def test_vllm_close_collects_destructor_inside_private_output(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
