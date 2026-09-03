@@ -1099,7 +1099,10 @@ cancelled request from confounding lower-cap timings. The child marks the
 instant generation begins, so the parent-enforced deadline excludes model load
 and graph compilation while still terminating the process at 120 seconds; a
 delayed Python alarm cannot extend the request. A failed text stress immediately
-descends to the next candidate; the image check runs only after text fits. It also
+descends to the next candidate. Before and after an isolated Ollama probe, the
+parent locks inference and unloads only stale residency whose exact tag and
+digest match the selected model. Foreign or co-resident state remains a hard
+failure and is not mutated. The image check runs only after text fits. It also
 preserves typed answer and input failures across the sealed vLLM execution
 boundary, so a genuine later failure follows the same retry-and-retain rule as
 Ollama. Before continuing security work, all three downloaded vLLM targets and

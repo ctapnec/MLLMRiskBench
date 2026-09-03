@@ -240,6 +240,9 @@ The seeded 10-text/5-image responsiveness survey then runs at that cap. The
 parent starts this clock from a transient generation-start marker and terminates
 the isolated probe process at the boundary; model loading is outside the request
 measurement, while a CUDA call cannot delay enforcement until it returns. The
+parent then acquires the Ollama inference lock and unloads only a stale resident
+model whose exact tag and digest match the profiled target. Foreign or co-resident
+models remain a hard failure and are never mutated. The
 profile separately binds `max_model_len=-1`, vLLM tensor-parallel topology, and
 GPU memory utilization, so the engine selects the maximum hardware-fitting
 context for the exact tested topology without treating it as a response allowance.

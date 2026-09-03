@@ -1743,6 +1743,44 @@ class OllamaTarget(BaseTarget):
         self._residency_owned = False
         return done_reason
 
+    def prepare_isolated_probe(self) -> str:
+        """Clear only verified stale self-residency between readiness children."""
+
+        deadline = self._monotonic() + self.timeout
+        acquired = False
+        try:
+            self._acquire_transaction_lock(deadline=deadline)
+            acquired = True
+            self._acquire_lifetime_leases(deadline=deadline)
+            self._verify_daemon_identity(deadline=deadline)
+            inventory = self._loaded_inventory(deadline=deadline)
+            rows = inventory.get("models") if isinstance(inventory, dict) else None
+            if not isinstance(rows, list) or len(rows) > _MAX_OLLAMA_MODELS:
+                raise LocalTargetOutputError(
+                    "Ollama returned an invalid loaded-model inventory before "
+                    "isolated readiness probe"
+                )
+            if not rows:
+                return "already-empty"
+            if len(rows) != 1:
+                raise LocalTargetOutputError(
+                    "isolated readiness cleanup refuses co-resident models"
+                )
+            self._verified_inventory_digest(
+                inventory,
+                model=self.model,
+                purpose="loaded-model inventory before isolated readiness probe",
+            )
+            done_reason = self._unload_model(deadline=deadline)
+            self._wait_for_empty_loaded_inventory(deadline=deadline)
+            return done_reason
+        except TimeoutError as exc:
+            raise LocalTargetOutputError(str(exc)) from exc
+        finally:
+            self._release_lifetime_leases()
+            if acquired:
+                self._transaction_lock.release()
+
     def close(self) -> None:
         """Release model residency retained for this Runner process.
 

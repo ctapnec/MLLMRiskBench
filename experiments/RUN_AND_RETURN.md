@@ -602,7 +602,7 @@ unit completes that selection.
 
 If the 25-unit continuation was stopped in its LLaVA suffix because response
 length was not bounded independently of context, do not restart it. After all
-seven exact local models have a passing current `/3` readiness profile, run
+seven exact local models have a passing current `/4` readiness profile, run
 `python -m experiments.local_campaign.local_bounded_output_continuation_phase6`
 in a fresh named tmux session. Pass the original interrupted continuation root,
 the separate stopped 25,000-token attempt as `--invalid-condition-root`, that
@@ -2200,6 +2200,10 @@ measurement. The child writes a transient marker immediately before generation.
 The parent starts the 120-second clock from that marker and terminates the child
 at the boundary; model loading and graph compilation are therefore not charged
 to request latency, and delayed Python signal delivery cannot extend a request.
+A killed Ollama child can leave its model resident in the daemon. Before and
+after every isolated Ollama probe, the parent therefore acquires the inference
+lock, verifies the exact tag and digest, and unloads only that matching stale
+residency. Any foreign or co-resident model fails closed without mutation.
 A failed text stress rejects the candidate immediately; only a text-fitting cap
 is submitted to the physical-image responsiveness check.
 It then runs the ten deterministic benign question calls and five deterministic

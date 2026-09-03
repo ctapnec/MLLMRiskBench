@@ -879,9 +879,37 @@ def _run_isolated_probe(
     return value
 
 
+def _run_prepared_isolated_probe(
+    target: Any,
+    args: argparse.Namespace,
+    *,
+    kind: str,
+    generation_tokens: int,
+    expected_target: str,
+    out: Path,
+) -> dict[str, object]:
+    """Run one child between exact-model stale-residency cleanup checks."""
+
+    prepare = getattr(target, "prepare_isolated_probe", None)
+    if callable(prepare):
+        prepare()
+    try:
+        return _run_isolated_probe(
+            args,
+            kind=kind,
+            generation_tokens=generation_tokens,
+            expected_target=expected_target,
+            out=out,
+        )
+    finally:
+        if callable(prepare):
+            prepare()
+
+
 def _profile_generation_conditions_isolated(
     args: argparse.Namespace,
     *,
+    target: Any = None,
     modalities: list[str],
     expected_target: str,
     work: Path,
@@ -890,7 +918,8 @@ def _profile_generation_conditions_isolated(
 
     conditions: list[dict[str, object]] = []
     for generation_tokens in PROFILE_GENERATION_TOKEN_CANDIDATES:
-        text_probe = _run_isolated_probe(
+        text_probe = _run_prepared_isolated_probe(
+            target,
             args,
             kind="stress-text",
             generation_tokens=generation_tokens,
@@ -904,7 +933,8 @@ def _profile_generation_conditions_isolated(
         # A failed text stress already rejects this cap. Do not spend another
         # load and request on the image variant until the text condition fits.
         if "image" in modalities and stress_text.get("passed") is True:
-            vision_probe = _run_isolated_probe(
+            vision_probe = _run_prepared_isolated_probe(
+                target,
                 args,
                 kind="stress-image",
                 generation_tokens=generation_tokens,
@@ -1465,13 +1495,15 @@ def main(argv: list[str] | None = None) -> int:
             conditions, selected_generation_tokens = (
                 _profile_generation_conditions_isolated(
                     args,
+                    target=target,
                     modalities=list(config["modalities"]),
                     expected_target=str(target.name),
                     work=work,
                 )
             )
             if selected_generation_tokens is not None:
-                text_probe = _run_isolated_probe(
+                text_probe = _run_prepared_isolated_probe(
+                    target,
                     args,
                     kind="survey-text",
                     generation_tokens=selected_generation_tokens,
@@ -1482,7 +1514,8 @@ def main(argv: list[str] | None = None) -> int:
                     raise ValueError("isolated local-model probe target identity differs")
                 text = text_probe["result"]
                 if "image" in config["modalities"]:
-                    vision_probe = _run_isolated_probe(
+                    vision_probe = _run_prepared_isolated_probe(
+                        target,
                         args,
                         kind="survey-image",
                         generation_tokens=selected_generation_tokens,

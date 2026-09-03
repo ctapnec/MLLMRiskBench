@@ -592,6 +592,11 @@ class BuilderCaptureMixin:
             params = {key: str(value) for key, value in params.items()}
         else:
             params = self._bind_selected_execution_config_identity(params)
+        if params.get("api") and not params.get("target_answer_retries"):
+            # The browser synchronizes this field, but composition is also a
+            # server-side boundary. A direct or restored hosted form must not
+            # fall through to Runner's local default of one answer retry.
+            params["target_answer_retries"] = "0"
         values: dict[str, str] = {}
         for source, flag in (
             ("corpora", "--corpora"),

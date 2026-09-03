@@ -96,6 +96,15 @@ _PARAM_HELP: dict[str, str] = {
     "clusters. An explicit value is retained in request and projection identity.",
     "--max-queries": "Max target queries per trajectory (turn budget upper bound).",
     "--max-turns": "Max conversation turns per trajectory.",
+    "--target-answer-retries": "Additional attempts after an empty, malformed, "
+    "binary/control-like, or symbol-only model answer. Local default is one. "
+    "Paid hosted targets require zero; their bounded transport retries are "
+    "separate and apply only to retryable HTTP status errors.",
+    "--recovery-completed-prefix": "Validated create-only recovery selection "
+    "that removes only exact already-completed input identities from the "
+    "unchanged requested population.",
+    "--recovery-completed-prefix-sha256": "Exact byte SHA-256 paired with the "
+    "recovery completed-prefix artifact.",
     "--max-total-target-calls": "Hard circuit-breaker: abort the lane after "
     "this many target calls. A budget guard.",
     "--max-total-judge-calls": "Hard circuit-breaker on model-backed judge "
@@ -651,6 +660,9 @@ _MATRIX_PARAMS = (
     CommandParam("--seeds", "str", suggest="seeds"),
     CommandParam("--max-queries", "int"),
     CommandParam("--max-turns", "int"),
+    CommandParam("--target-answer-retries", "int"),
+    CommandParam("--recovery-completed-prefix", "path"),
+    CommandParam("--recovery-completed-prefix-sha256", "str"),
     CommandParam("--max-total-target-calls", "int"),
     CommandParam("--max-total-judge-calls", "int"),
     CommandParam("--max-total-http-attempts", "int"),
@@ -1027,6 +1039,59 @@ def _commands() -> dict[str, Command]:
             ),
         ),
         Command(
+            "hosted_campaign_budget",
+            "experiments.hosted_campaign_budget",
+            "Project the sealed hosted target and Haiku judge budget without calls",
+            (
+                CommandParam("--api-config", "path", required=True),
+                CommandParam("--api-config-sha256", "str", required=True),
+                CommandParam("--pricing-config", "path", required=True),
+                CommandParam("--pricing-config-sha256", "str", required=True),
+                CommandParam("--budgets", "path", required=True),
+                CommandParam("--budgets-sha256", "str", required=True),
+                CommandParam("--pricing-as-of", "str", required=True),
+                CommandParam("--out", "path", required=True),
+            ),
+        ),
+        Command(
+            "retained_response_judge_pair",
+            "experiments.retained_response_judge_pair",
+            "Select matched retained local and hosted outputs for bounded Haiku judging",
+            (
+                CommandParam("--local-runner-view", "path", required=True),
+                CommandParam("--hosted-runner-view", "path", required=True),
+                CommandParam("--source-receipt", "path", required=True),
+                CommandParam("--source-receipt-sha256", "str", required=True),
+                CommandParam("--judge-model", "str", required=True),
+                CommandParam("--api-config-sha256", "str", required=True),
+                CommandParam("--pricing-config", "path", required=True),
+                CommandParam("--pricing-config-sha256", "str", required=True),
+                CommandParam("--pricing-as-of", "str", required=True),
+                CommandParam("--pair-limit", "int"),
+                CommandParam("--sample-seed", "int"),
+                CommandParam("--max-cost-microusd", "int"),
+                CommandParam(
+                    "--ack-hosted-judge-data-transfer", "flag", required=True
+                ),
+                CommandParam("--out", "path", required=True),
+            ),
+        ),
+        Command(
+            "retained_response_judge_pair_execute",
+            "experiments.retained_response_judge_pair_execute",
+            "Execute one sealed matched local and hosted Haiku judging plan",
+            (
+                CommandParam("--plan", "path", required=True),
+                CommandParam("--local-runner-view", "path", required=True),
+                CommandParam("--hosted-runner-view", "path", required=True),
+                CommandParam("--source-receipt", "path", required=True),
+                CommandParam("--api-config", "path", required=True),
+                CommandParam("--pricing-config", "path", required=True),
+                CommandParam("--out", "path", required=True),
+                CommandParam("--ack-paid-execution", "flag", required=True),
+            ),
+        ),
+        Command(
             "ollama_pull",
             "experiments.ollama_pull",
             "Pull one model through the fixed loopback Ollama daemon",
@@ -1118,6 +1183,16 @@ COMMAND_GROUPS: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
             "judge_sensitivity",
             "kappa",
             "transfer_matrix",
+        ),
+    ),
+    (
+        "Hosted budget and retained judging",
+        "coins",
+        "runbook sections 19-20",
+        (
+            "hosted_campaign_budget",
+            "retained_response_judge_pair",
+            "retained_response_judge_pair_execute",
         ),
     ),
     ("Human audit", "users", "runbook sections 15, 15.1", ("human_audit",)),

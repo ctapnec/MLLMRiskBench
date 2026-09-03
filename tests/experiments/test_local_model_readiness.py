@@ -215,6 +215,8 @@ def readiness_receipt(
     vision: bool = True,
     spec: str = "vllm:example/model",
     think: bool | str = False,
+    tensor_parallel_size: int = 2,
+    gpu_memory_utilization: float = 0.9,
 ) -> dict[str, object]:
     text = {
         "correct": text_correct,
@@ -248,9 +250,9 @@ def readiness_receipt(
     }]
     local_execution = (
         {
-            "gpu_memory_utilization": 0.9,
+            "gpu_memory_utilization": gpu_memory_utilization,
             "max_model_len": -1,
-            "tensor_parallel_size": 1,
+            "tensor_parallel_size": tensor_parallel_size,
         }
         if spec.startswith("vllm:")
         else {"num_ctx": "fit", "think": think}
@@ -591,6 +593,34 @@ def test_generation_profile_isolates_each_cap_and_modality(
     assert len({out for _kind, _tokens, out in calls}) == len(calls)
 
 
+def test_prepared_isolated_probe_cleans_before_and_after_child_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events: list[str] = []
+
+    class Target:
+        @staticmethod
+        def prepare_isolated_probe() -> None:
+            events.append("prepare")
+
+    def fail(*_args, **_kwargs):
+        events.append("child")
+        raise ValueError("probe failed")
+
+    monkeypatch.setattr(readiness_module, "_run_isolated_probe", fail)
+    with pytest.raises(ValueError, match="probe failed"):
+        readiness_module._run_prepared_isolated_probe(
+            Target(),
+            SimpleNamespace(),
+            kind="stress-text",
+            generation_tokens=2_048,
+            expected_target="ollama:example:model@sha256:" + "d" * 64,
+            out=tmp_path / "probe.json",
+        )
+
+    assert events == ["prepare", "child", "prepare"]
+
+
 def test_generation_profile_rejects_early_stop_before_requested_cap() -> None:
     target = GenerationStressTarget()
     original_generate = target.generate
@@ -781,7 +811,7 @@ def test_retained_schema_one_readiness_receipts_remain_valid() -> None:
 def test_readiness_profile_registry_is_identity_bound_and_reused(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    receipt = readiness_receipt(vision=False)
+    receipt = readiness_receipt(vision=False, gpu_memory_utilization=0.85)
     receipt_path = tmp_path / "model.readiness.json"
     raw = (json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n").encode()
     receipt_path.write_bytes(raw)

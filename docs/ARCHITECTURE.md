@@ -279,7 +279,10 @@ and 5-image responsiveness thresholds at that cap.
 Each stress child publishes a transient generation-start marker. Its parent
 enforces the deadline by terminating the isolated process, so setup time stays
 outside request latency and an uninterruptible CUDA call cannot overshoot the
-selection threshold.
+selection threshold. Before and after each isolated Ollama child, the parent
+holds the cross-process inference lock and clears only residency whose exact tag
+and digest match that target. It refuses foreign or co-resident models instead
+of adopting or unloading them.
 A machine-local registry binds the recommendation to the exact revision or
 digest and modalities. Both CLI and Build use its hardware-fit context, vLLM
 tensor-parallel size and GPU memory utilization, vLLM `max_tokens`, Ollama

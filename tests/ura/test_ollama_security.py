@@ -410,6 +410,31 @@ def test_target_refuses_to_adopt_selected_model_preloaded_by_another_owner(
     assert calls == ["tags", "ps"]
 
 
+def test_readiness_cleanup_unloads_only_the_verified_selected_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target, calls = _target_with_sequence(
+        monkeypatch,
+        [_inventory(), _inventory(), _unload(), {"models": []}],
+    )
+
+    assert target.prepare_isolated_probe() == "unload"
+    assert calls == ["tags", "ps", "generate", "ps"]
+
+
+def test_readiness_cleanup_refuses_foreign_preloaded_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target, calls = _target_with_sequence(
+        monkeypatch,
+        [_inventory(), _inventory(model="foreign:latest")],
+    )
+
+    with pytest.raises(LocalTargetOutputError, match="exactly one"):
+        target.prepare_isolated_probe()
+    assert calls == ["tags", "ps"]
+
+
 def test_invalid_chat_is_unloaded_before_the_original_error_is_raised(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

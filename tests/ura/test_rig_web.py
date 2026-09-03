@@ -652,6 +652,15 @@ def test_explicit_local_path_is_launch_only_not_durable_console_state(
             "gpu_memory_utilization": 0.9,
             "parameter_count_b": 1,
             "quantization": "none",
+            "_execution_profile": {
+                "generation_tokens": 4096,
+                "local_execution": {
+                    "gpu_memory_utilization": 0.9,
+                    "max_model_len": -1,
+                    "tensor_parallel_size": 1,
+                },
+                "request_timeout_seconds": 120.0,
+            },
         }
     }
     monkeypatch.setattr(
@@ -1143,7 +1152,8 @@ def test_builder_page_renders_full_surface(tmp_path: Path) -> None:
     assert "id='sample-limit-range'" in text
     assert "id='prepared-ideator'" in text
     assert "addatt" in text  # repeatable receipt rows
-    assert "first failed output or transport failure stops the paid grid" in text
+    assert "first failed output stops the paid grid" in text
+    assert "hosted transport permits three retries only for retryable HTTP status errors" in text
 
 
 def test_attacker_registry_parity_and_full_inventory() -> None:
@@ -2618,6 +2628,7 @@ def test_builder_preflight_consumes_private_project_receipt_and_makes_no_calls(
     }
     assert app._validate_builder(form) == {}
     command, values, _params = app._compose_from_builder(form)
+    assert values["--target-answer-retries"] == "0"
     private_revision = Path(values["--project-revision"])
     assert private_revision != receipt_path
     assert private_revision.parent.name == ".private-project-revision"
@@ -2958,14 +2969,30 @@ def test_builder_targets_split_hosted_and_local_vllm_roster(tmp_path: Path) -> N
     roster = local_targets.roster_models(include_unfit=True)
     assert len(roster) > 10
     assert any("audio" in m["modalities"] for m in roster)
+    spec = "vllm:Qwen/Qwen3-VL-8B-Instruct"
+    catalog, explicit = app._local_entry_catalog()
+    entry = catalog[spec]
+    tensor_parallel_size = entry.get("tensor_parallel_size", 2)
+    gpu_memory_utilization = entry.get("gpu_memory_utilization", 0.9)
+    entry.update({"max_model_len": -1, "max_tokens": 4096, "timeout": 120.0})
+    entry["_execution_profile"] = {
+        "generation_tokens": 4096,
+        "local_execution": {
+            "gpu_memory_utilization": gpu_memory_utilization,
+            "max_model_len": -1,
+            "tensor_parallel_size": tensor_parallel_size,
+        },
+        "request_timeout_seconds": 120.0,
+    }
+    app._local_entry_catalog = lambda: (catalog, explicit)  # type: ignore[method-assign]
     # A build with a local target composes --local and binds --local-config
     # only when a local target is selected.
     _cmd, values, _params = app._compose_from_builder({
         "mode": "measured", "corpora": "synth",
-        "local": "vllm:Qwen/Qwen3-VL-8B-Instruct", "attackers": "replay",
+        "local": spec, "attackers": "replay",
         "judges": "rules", "out": "runs/x",
     })
-    assert values["--local"] == "vllm:Qwen/Qwen3-VL-8B-Instruct"
+    assert values["--local"] == spec
     assert "--api" not in values
     app.close()
 
@@ -5191,7 +5218,7 @@ def test_stats_runs_card_records_lane_jobs(tmp_path: Path) -> None:
     # level1_evidence is not a run kind, so no run row; the Stats page still
     # renders the (empty) runs card without error.
     status, _, body = app.handle("GET", "/stats")
-    assert status == 200 and b"Campaign runs" in body
+    assert status == 200 and b"Model campaign runs" in body
 
 
 def test_stats_corrects_stale_no_call_run_kind_from_persisted_argv(
@@ -5361,6 +5388,9 @@ def test_every_ui_command_parses_with_its_real_module_parser() -> None:
             "--approximate-common-metrics": "on",
             "--sample-seed": "0", "--seeds": "0", "--max-queries": "1",
             "--max-turns": "1", "--group": "model,source",
+            "--target-answer-retries": "1",
+            "--recovery-completed-prefix": "runs/recovery-prefix.json",
+            "--recovery-completed-prefix-sha256": "9" * 64,
             "--defense": "both", "--defense-guard": "guardrail",
             "--guardrail-model": "m", "--guardrail-revision": "c" * 40,
             "--guardrail-device": "cpu", "--defense-guardrail-model": "n",
@@ -5489,6 +5519,42 @@ def test_every_ui_command_parses_with_its_real_module_parser() -> None:
             "--validate": "runs/readiness.json",
             "--sha256": "a" * 64,
             "--expected-spec": "vllm:org/model",
+        }],
+        "hosted_campaign_budget": [{
+            "--api-config": "experiments/api.json",
+            "--api-config-sha256": "a" * 64,
+            "--pricing-config": "experiments/pricing.json",
+            "--pricing-config-sha256": "b" * 64,
+            "--budgets": "runs/budgets.json",
+            "--budgets-sha256": "c" * 64,
+            "--pricing-as-of": "2026-09-04",
+            "--out": "runs/hosted-budget.json",
+        }],
+        "retained_response_judge_pair": [{
+            "--local-runner-view": "runs/local",
+            "--hosted-runner-view": "runs/hosted",
+            "--source-receipt": "runs/source.json",
+            "--source-receipt-sha256": "a" * 64,
+            "--judge-model": "anthropic:claude-haiku-fixture",
+            "--api-config-sha256": "b" * 64,
+            "--pricing-config": "experiments/pricing.json",
+            "--pricing-config-sha256": "c" * 64,
+            "--pricing-as-of": "2026-09-04",
+            "--pair-limit": "10",
+            "--sample-seed": "0",
+            "--max-cost-microusd": "1000000",
+            "--ack-hosted-judge-data-transfer": "on",
+            "--out": "runs/judge-pair-plan.json",
+        }],
+        "retained_response_judge_pair_execute": [{
+            "--plan": "runs/judge-pair-plan.json",
+            "--local-runner-view": "runs/local",
+            "--hosted-runner-view": "runs/hosted",
+            "--source-receipt": "runs/source.json",
+            "--api-config": "experiments/api.json",
+            "--pricing-config": "experiments/pricing.json",
+            "--out": "runs/judge-pair-results",
+            "--ack-paid-execution": "on",
         }],
         "webui_selftest": [{"--selftest-sleep": "0"}],
     }
@@ -5677,10 +5743,11 @@ def test_models_flag_runs_an_offline_dry_lane(tmp_path: Path) -> None:
     }), encoding="utf-8")
     assert run_matrix.main([
         "--dry-run", "--models", "anthropic:claude-haiku-4-5-20251001",
-        "--api-config", str(api_cfg), "--corpora", "synth", "--limit", "1",
-        "--seeds", "0", "--attackers", "replay", "--judges", "rules",
-        "--max-queries", "1", "--max-turns", "1",
-        "--out", str(tmp_path / "dry"),
+            "--api-config", str(api_cfg), "--corpora", "synth", "--limit", "1",
+            "--seeds", "0", "--attackers", "replay", "--judges", "rules",
+            "--max-queries", "1", "--max-turns", "1",
+            "--target-answer-retries", "0",
+            "--out", str(tmp_path / "dry"),
     ]) == 0
 
 
@@ -5799,6 +5866,29 @@ def _probe_receipt(
         "tensor_parallel_size": 1, "gpu_memory_utilization": 0.5,
         "max_tokens": 64,
     }}), encoding="utf-8")
+    readiness = tmp_path / "fixture.readiness.json"
+    readiness.write_text("{}\n", encoding="utf-8")
+    profile_registry = tmp_path / "local-model-profiles.json"
+    profile_registry.write_text(json.dumps({
+        "schema": "ura-local-model-execution-profiles/3",
+        "models": {spec: {
+            "generation_tokens": 64,
+            "identity": {"revision": local_revision},
+            "local_execution": {
+                "gpu_memory_utilization": 0.5,
+                "max_model_len": -1,
+                "tensor_parallel_size": 1,
+            },
+            "modalities": ["text"],
+            "readiness": {
+                "path": str(readiness.resolve()),
+                "sha256": "c" * 64,
+                "readiness_id": "d" * 64,
+            },
+            "request_timeout_seconds": 120.0,
+        }},
+    }), encoding="utf-8")
+    monkeypatch.setenv("URA_LOCAL_MODEL_PROFILE_REGISTRY", str(profile_registry))
     monkeypatch.setattr(
         run_matrix, "build_target", lambda *_a, **_kw: _StableLocalTarget()
     )
