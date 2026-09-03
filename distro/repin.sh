@@ -9,7 +9,7 @@
 #   local:  git bundle create web002.bundle main
 #           scp web002.bundle rig:~/web002.bundle
 #           scp distro/repin.sh rig:~/repin.sh        # from the deployed commit
-#   rig:    bash ~/repin.sh <40-hex-commit> [--focused-campaign-handoff]
+#   rig:    bash ~/repin.sh <40-hex-commit> [--focused-campaign-handoff|--profile-recovery-handoff]
 #
 # Run ON the rig with $1 = the expected 40-hex commit (the bundle head must
 # match it exactly). Steps, all fail-closed (a failure leaves the rig on the
@@ -37,8 +37,8 @@ set -euo pipefail
 
 REF_EXPECTED="${1:-}"
 MODE="${2:-full}"
-[[ "$REF_EXPECTED" =~ ^[0-9a-f]{40}$ ]] || { echo "usage: $0 <40-hex-commit> [--focused-campaign-handoff]" >&2; exit 2; }
-[[ "$MODE" = "full" || "$MODE" = "--focused-campaign-handoff" ]] \
+[[ "$REF_EXPECTED" =~ ^[0-9a-f]{40}$ ]] || { echo "usage: $0 <40-hex-commit> [--focused-campaign-handoff|--profile-recovery-handoff]" >&2; exit 2; }
+[[ "$MODE" = "full" || "$MODE" = "--focused-campaign-handoff" || "$MODE" = "--profile-recovery-handoff" ]] \
   || { echo "unsupported re-pin verification mode: $MODE" >&2; exit 2; }
 REPO="${REPO:-$HOME/MLLMRiskBench}"
 BUNDLE="${BUNDLE:-$HOME/web002.bundle}"
@@ -121,6 +121,19 @@ if [ "$MODE" = "--focused-campaign-handoff" ]; then
     tests/ura/test_framework_runtime_installer.py::test_distro_repin_script_is_fail_closed_and_sources_canonical_ura_env_last
   )
   echo "verification mode: focused campaign handoff (${#DEPLOY_TESTS[@]} selectors)"
+elif [ "$MODE" = "--profile-recovery-handoff" ]; then
+  DEPLOY_TESTS=(
+    tests/ura/test_local_context_limit_regressions.py
+    tests/ura/test_hosted_roster_docs.py::test_hosted_follow_on_is_a_no_retry_local_input_subset
+    tests/ura/test_rig_web.py::test_builder_model_filters_and_quantization_warning_are_rendered
+    tests/ura/test_rig_web.py::test_builder_rejects_malformed_local_runtime_config_before_job
+    tests/ura/test_rig_web.py::test_every_ui_command_parses_with_its_real_module_parser
+    tests/ura/test_rig_web_model_picker.py::test_server_validates_explicit_judge_and_local_engine_conflicts
+    tests/ura/test_rig_web_model_picker.py::test_paid_ticket_burns_when_selected_local_registry_changes
+    tests/ura/test_rig_web_model_picker.py::test_web_compose_materializes_local_judge_but_dry_mode_stays_mock
+    tests/ura/test_framework_runtime_installer.py::test_distro_repin_script_is_fail_closed_and_sources_canonical_ura_env_last
+  )
+  echo "verification mode: profile recovery handoff (${#DEPLOY_TESTS[@]} selectors)"
 else
   echo "verification mode: full suite"
 fi
