@@ -100,7 +100,7 @@ def test_selector_is_deterministic_balanced_and_does_not_copy_content() -> None:
         "transport_retries": 0,
         "max_judge_calls": 3,
         "max_http_attempts": 3,
-        "max_cost_microusd": 14_000_000,
+        "max_cost_microusd": 7_000_000,
         "input_microusd_per_token": 1,
         "output_microusd_per_token": 5,
         "independent_judge_rows": 3,
@@ -132,7 +132,7 @@ def test_same_model_haiku_rows_are_annotated_per_row() -> None:
         ),
         (
             lambda plan: plan["judge_condition"].__setitem__(
-                "max_cost_microusd", 14_000_001
+                "max_cost_microusd", 7_000_001
             ),
             "call or cost contract",
         ),

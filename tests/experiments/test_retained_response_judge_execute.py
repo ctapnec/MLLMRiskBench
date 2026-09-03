@@ -99,7 +99,7 @@ def _prepared(
     monkeypatch: pytest.MonkeyPatch,
     *,
     count: int = 2,
-    max_cost_microusd: int = 14_000_000,
+    max_cost_microusd: int = 7_000_000,
 ) -> dict:
     receipt = tmp_path / "source.json"
     receipt.write_text("{}\n", encoding="utf-8")

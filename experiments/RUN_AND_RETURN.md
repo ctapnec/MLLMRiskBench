@@ -1586,10 +1586,35 @@ central assumption the combined 4,000 calls use 8.0 million input and 1.024
 million output tokens and cost USD 13.12 standard or USD 6.56 Batch.
 
 Do not emulate this re-adjudication with `run_matrix`: that would risk target
-regeneration. Use the dedicated immutable zero-target path after it has focused
-regression, mutation and rig validation. Its analysis publishes separate API-
-selected, local-selected and matched-input-intersection tables and diagrams.
-These are selected-cohort results, never full-corpus estimates.
+regeneration. Create each cohort with the dedicated immutable zero-target path.
+The local and hosted plans receive separate USD 7 ceilings, keeping their
+combined standard-API ceiling at USD 14:
+
+```bash
+python -m experiments.retained_response_judge \
+  --runner-view "$FINAL_RUNNER_VIEW" \
+  --source-receipt "$URA_SOURCE_CONFORMANCE_RECEIPT" \
+  --source-receipt-sha256 "$URA_SOURCE_CONFORMANCE_RECEIPT_SHA256" \
+  --judge-model anthropic:claude-haiku-4-5-20251001 \
+  --api-config-sha256 "$URA_API_TARGET_CONFIG_SHA256" \
+  --limit 2000 --sample-seed 0 --max-cost-microusd 7000000 \
+  --ack-hosted-judge-data-transfer --out "$HAIKU_PLAN"
+
+python -m experiments.retained_response_judge_execute \
+  --plan "$HAIKU_PLAN" --runner-view "$FINAL_RUNNER_VIEW" \
+  --source-receipt "$URA_SOURCE_CONFORMANCE_RECEIPT" \
+  --api-config "$URA_API_TARGET_CONFIG" --out "$HAIKU_RESULT" \
+  --ack-paid-execution
+```
+
+The planner imports no target-under-test or Runner factory and stores only
+content hashes. The executor reconstructs only the selected Haiku judge,
+enforces no retry in both the harness and provider SDK, fsyncs a reservation
+before every paid call, and stops the cohort on its first output or transport
+failure. An unresolved reservation after process loss requires manual provider
+audit and is never repeated automatically. Its analysis publishes separate
+API-selected, local-selected and matched-input-intersection tables and
+diagrams. These are selected-cohort results, never full-corpus estimates.
 
 ### 5.2 Bounded lane sampling (prospective amendment, 24 August 2026)
 

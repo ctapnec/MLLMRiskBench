@@ -272,7 +272,7 @@ def build_plan(
     api_config_sha256: str,
     limit: int = 2_000,
     seed: int = 0,
-    max_cost_microusd: int = 14_000_000,
+    max_cost_microusd: int = 7_000_000,
 ) -> dict[str, Any]:
     """Build the immutable no-call selector and its exact judge-call ceiling."""
 
@@ -284,9 +284,9 @@ def build_plan(
     if (
         isinstance(max_cost_microusd, bool)
         or not isinstance(max_cost_microusd, int)
-        or not 1 <= max_cost_microusd <= 14_000_000
+        or not 1 <= max_cost_microusd <= 7_000_000
     ):
-        raise ValueError("Haiku cost ceiling must be positive and at most USD 14")
+        raise ValueError("one Haiku cohort cost ceiling must be positive and at most USD 7")
     selected = _select(candidates, limit, seed)
     for row in selected:
         row["same_model_judge"] = row["exact_model"] == judge_model
@@ -383,7 +383,7 @@ def validate_plan(value: object) -> dict[str, Any]:
         or condition.get("input_microusd_per_token") != 1
         or condition.get("output_microusd_per_token") != 5
         or not isinstance(condition.get("max_cost_microusd"), int)
-        or not 1 <= condition["max_cost_microusd"] <= 14_000_000
+        or not 1 <= condition["max_cost_microusd"] <= 7_000_000
         or not str(condition.get("model", "")).startswith(
             "anthropic:claude-haiku-"
         )
@@ -502,7 +502,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--api-config-sha256", required=True)
     parser.add_argument("--limit", type=int, default=2_000)
     parser.add_argument("--sample-seed", type=int, default=0)
-    parser.add_argument("--max-cost-microusd", type=int, default=14_000_000)
+    parser.add_argument("--max-cost-microusd", type=int, default=7_000_000)
     parser.add_argument("--ack-hosted-judge-data-transfer", action="store_true")
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)

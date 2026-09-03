@@ -133,9 +133,11 @@ their coverage counts. Haiku target outputs are allowed by operator decision;
 mark them same_model_judge=true and never call them independent judge evidence.
 
 The re-adjudicator reads only content-bound retained responses and minimum
-grading context. It cannot import a target factory, construct a target or
-reserve a target call. Its new judgment stratum records the hosted-transfer
-acknowledgement and exactly one judge attempt.
+grading context. Its planner cannot import a target-under-test or Runner
+factory. Its executor may construct only the exact Haiku judge; it cannot
+construct a model under test or reserve a target call. The local and hosted
+plans each receive a USD 7 ceiling. Their new judgment strata record the
+hosted-transfer acknowledgement and exactly one judge attempt.
 
 Gate A4: target calls 0, original mutations 0, Haiku calls at most 4,000,
 Haiku spend at most USD 14, and complete selected/missing/excluded accounting.

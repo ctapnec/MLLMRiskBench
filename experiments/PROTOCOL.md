@@ -308,7 +308,12 @@ sent to Haiku. Haiku target outputs may be judged by Haiku in this explicitly
 authorized cohort, but every table and diagram labels those rows as same-model,
 non-independent evidence. Selection is content-bound before a judge call,
 original judgments are preserved, and the re-adjudication path is forbidden
-from constructing or calling any target.
+from constructing or calling any model under test. Its planning process stores
+only content digests and imports no target-under-test or Runner factory. The
+executor may construct only the exact Haiku judge, uses one application and
+transport attempt, and opens the global `paid_provider` circuit on the first
+judge output or transport failure. The local and hosted plans each have a USD
+7 ceiling, giving the combined standard-API cohort a USD 14 ceiling.
 
 Every condition requires a fresh no-call projection and a bounded text and, if
 declared, image readiness canary before measurement. A target without an

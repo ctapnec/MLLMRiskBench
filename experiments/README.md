@@ -398,6 +398,15 @@ response artifacts remain authoritative.
   opens the global `paid_provider` circuit before another paid call. An operator
   must classify and resolve it before a fresh bound plan and explicit circuit
   reset; paid execution never resumes automatically.
+- Post-hoc Haiku re-adjudication does not use `run_matrix` and cannot regenerate
+  a target response. `retained_response_judge` creates a content-bound,
+  create-only selection plan from the validated final Runner view;
+  `retained_response_judge_execute` reconciles the same retained content and
+  constructs only the named Haiku judge. It reserves zero target calls, uses
+  one judge/HTTP attempt per selected output, checkpoints every paid decision,
+  and opens its global `paid_provider` circuit on the first judge or transport
+  failure. The local and hosted cohorts each have a USD 7 ceiling, so their
+  combined standard-API ceiling is USD 14.
 - Hub acquisition is conditional on the selected resources, not on the mere
   existence of a local target. Static lanes with Hub-backed assets retain the
   exact plan/receipt/store chain. Ollama R-Judge and GPTGeoChat lanes over

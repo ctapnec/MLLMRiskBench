@@ -1218,7 +1218,14 @@ outputs may raise the Haiku-eligible planning inventory to 34,261, but the
 hosted plan selects at most 2,000 retained local outputs for Haiku. Local-only
 Phase 7 therefore reports zero hosted and zero Haiku calls; a later hosted
 comparison attaches its independently sealed Haiku stratum without rewriting
-the local report. The modal diagrams derive from the same table and show the
+the local report. `retained_response_judge` seals that at-most-2,000-output
+local selection from the validated final Runner view, and
+`retained_response_judge_execute` reconciles it before constructing only the
+Haiku judge. The local selector receives a USD 7 ceiling; the hosted selector
+receives the other USD 7 of the combined standard-API USD 14 ceiling. Both use
+one judge/HTTP attempt per selected output, zero target calls, no automatic
+paid recovery, and a first-failure global circuit. The modal diagrams derive
+from the same table and show the
 input-to-output funnel, response and missing-output coverage, judge coverage,
 framework by source-arm composition, and matched-input local versus hosted
 contrasts when the separate hosted campaign exists.
