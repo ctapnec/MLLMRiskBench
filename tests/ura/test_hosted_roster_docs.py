@@ -650,6 +650,7 @@ def test_hosted_follow_on_is_a_no_retry_local_input_subset() -> None:
         assert "Retry-reserved target USD" not in value
         assert "retry-use model-stability rates" not in value
         assert "use the same selected retry count" not in value
+        assert "`retained_response_judge` selector" not in value
         for target, limit in (
             ("Claude Fable 5", 5),
             ("Claude Opus 5", 10),

@@ -183,8 +183,8 @@ retained outputs and missing responses.
 Re-adjudication must use a new immutable output root, bind the source response
 and former completion by content identity, make zero target calls, preserve the
 original judgments, and record the new judge/model identity and transfer
-acknowledgement. The dedicated `retained_response_judge` selector and
-`retained_response_judge_execute` executor implement that zero-target path;
+acknowledgement. The dedicated `retained_response_judge_pair` selector and
+`retained_response_judge_pair_execute` executor implement that zero-target path;
 they remain pending deployment and must not be replaced by a naive Runner rerun
 that could regenerate targets.
 
