@@ -205,8 +205,12 @@ def _reconcile_selection(
         meta = metadata.get(row["sample_key"])
         if not isinstance(meta, dict):
             raise ValueError("selected retained response disappeared from the Runner view")
-        prompt = str(meta.get("prepared_prompt") or "").strip()
-        response = str(meta.get("prepared_response") or "").strip()
+        prompt_value = meta.get("prepared_prompt")
+        response_value = meta.get("prepared_response")
+        if not isinstance(prompt_value, str) or not isinstance(response_value, str):
+            raise ValueError("selected retained-response content is not text")
+        prompt = prompt_value
+        response = response_value.strip()
         if (
             not prompt
             or not response
@@ -307,6 +311,8 @@ def _validate_ledger(value: object, plan: Mapping[str, Any], plan_sha256: str) -
         or value["judge_calls_reserved"] != value["http_attempts_reserved"]
         or value["completed_judgments"] > value["judge_calls_reserved"]
         or value["judge_calls_reserved"] > selected
+        or value["actual_cost_microusd"] != value["input_tokens"]
+        + value["output_tokens"] * 5
         or value["actual_cost_microusd"]
         > plan["judge_condition"]["max_cost_microusd"]
         or value["state"] not in {"active", "reserved", "circuit_open", "complete"}
@@ -318,6 +324,22 @@ def _validate_ledger(value: object, plan: Mapping[str, Any], plan_sha256: str) -
             value["state"] != "reserved"
             and value["current_reservation"] is not None
         )
+        or (
+            value["state"] == "active"
+            and value["judge_calls_reserved"] != value["completed_judgments"]
+        )
+        or (
+            value["state"] == "reserved"
+            and value["judge_calls_reserved"] != value["completed_judgments"] + 1
+        )
+        or (
+            value["state"] == "complete"
+            and (
+                value["completed_judgments"] != selected
+                or value["judge_calls_reserved"] != selected
+            )
+        )
+        or value["state"] == "circuit_open"
     ):
         raise ValueError("retained-response execution ledger contract changed")
     return value
