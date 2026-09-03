@@ -188,10 +188,11 @@ def test_campaign_documents_separate_population_from_physical_call_forecast() ->
     )
 
     for document in (plan, runbook):
-        assert "46,537 selected input identities" in document
-        assert "49,537 initial target calls" in document
-        assert "2,792 failed-output" in document
-        assert "230 larger-context" in document
-        assert "3,574 hardware-fit" in document
-        assert "59 prepared follow-on" in document
-        assert "889 hardware-fit" in document
+        prose = " ".join(document.split())
+        assert "46,537 selected input identities" in prose
+        assert "49,537 initial target calls" in prose
+        assert "2,792 failed-output" in prose
+        assert "230 larger-context" in prose
+        assert "3,574 hardware-fit" in prose
+        assert "59 prepared follow-on" in prose
+        assert "889 hardware-fit" in prose
