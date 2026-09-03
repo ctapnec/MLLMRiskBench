@@ -4945,7 +4945,12 @@ def test_phase6_rr_runtime_terminals_are_required_but_never_scheduled() -> None:
     assert core.count("def rr_tree_descriptor(") == 2
     assert native.count("def rr_tree_descriptor(") == 2
     assert "revalidate_rr_runtime_terminal_artifact(" in core
-    assert native.count("validate_rr_runtime_terminal_artifact(shared") == 2
+    assert len(
+        re.findall(
+            r"validate_rr_runtime_terminal_artifact\(\s*shared,",
+            native,
+        )
+    ) == 2
     native_self_test_start = native.index("def gate5_contract_self_test(")
     native_self_test_end = native.index(
         "def validate_plan(", native_self_test_start
@@ -6359,11 +6364,15 @@ def test_ollama_canaries_allow_completed_zero_decision_observations() -> None:
         'if not isinstance(support.get("decision_coverage"), (int, float)):',
         'raise SystemExit("canary lacks numeric decision coverage")',
         'item.get("guardrail_queried") is not True',
-        'item.get("judge_model_identity") != f"{guard_model}@{guard_revision}"',
     )
 
     def assert_contract(value: str) -> None:
         _assert_source_contract(value, required)
+        assert re.search(
+            r'item\.get\("judge_model_identity"\)\s*'
+            r'!=\s*f"\{guard_model\}@\{guard_revision\}"',
+            value,
+        )
         assert "static canary lacks decided support" not in value
         assert 'support.get("decided", 0) <= 0' not in value
 
@@ -7357,7 +7366,11 @@ def test_length_capped_output_documentation_matches_runner_policy() -> None:
     for path in documents:
         source = path.read_text(encoding="utf-8")
         assert_contract(source)
-        changed = source.replace("selected evaluator", "terminal classifier")
+        changed = re.sub(
+            r"selected\s+evaluator",
+            "terminal classifier",
+            source,
+        )
         assert changed != source
         with pytest.raises(AssertionError):
             assert_contract(changed)
