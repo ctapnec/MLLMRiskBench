@@ -3340,15 +3340,17 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
     })
     assert "serves ['text']" in audio_errors["models"]
     assert "requires all of ['audio', 'text']" in audio_errors["models"]
-    # A lower, compatible roster row remains a standard labelled radio even
-    # before its live revision is pinned; its quantization control is separate
-    # from the checkbox label, so neither control captures the other's clicks.
+    # An unpinned and therefore unprofiled roster row remains visible but is
+    # disabled; its quantization control is still separate from the radio.
     lower = "vllm:org/Lower-7B"
     marker = f"data-model='{lower}'"
     at = page.index(marker)
     input_tag = page[page.rfind("<input", 0, at):page.find(">", at)]
     assert "type='radio'" in input_tag and "name='local_choice'" in input_tag
-    assert "disabled" not in input_tag
+    assert "disabled" in input_tag
+    assert "readiness required" in page[
+        page.rfind("<div class='modelrow'", 0, at):page.find("</div>", at)
+    ]
     id_start = input_tag.index("id='") + len("id='")
     control_id = input_tag[id_start:input_tag.index("'", id_start)]
     row_start = page.rfind("<div class='modelrow'", 0, at)
