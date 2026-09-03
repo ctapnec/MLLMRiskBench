@@ -10,6 +10,7 @@ change this selection after outcomes are observed.
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import hashlib
 import json
 import os
@@ -21,6 +22,7 @@ from typing import Any
 
 from experiments.figure_results import _load_cells
 from experiments.human_audit import _joined_artifacts
+from experiments.rig_web_app.reports import rate_for
 
 
 SCHEMA = "ura-retained-response-judge-plan/1"
@@ -66,6 +68,27 @@ _TOP_FIELDS = frozenset(
         "stratum_population",
         "selected",
         "plan_id",
+    }
+)
+_CONDITION_FIELDS = frozenset(
+    {
+        "model",
+        "api_config_sha256",
+        "hosted_data_transfer_acknowledged",
+        "target_calls",
+        "answer_retries",
+        "transport_retries",
+        "max_judge_calls",
+        "max_http_attempts",
+        "max_cost_microusd",
+        "pricing_config_sha256",
+        "pricing_as_of",
+        "pricing_effective_date",
+        "pricing_currency",
+        "input_microusd_per_token",
+        "output_microusd_per_token",
+        "independent_judge_rows",
+        "same_model_judge_rows",
     }
 )
 
@@ -115,6 +138,76 @@ def _regular_descriptor(path_value: Path, expected_sha256: str) -> dict[str, obj
     ):
         raise ValueError("source receipt identity or bytes changed")
     return {"file": path.name, "sha256": observed, "bytes": len(payload)}
+
+
+def load_pricing_condition(
+    path_value: Path,
+    *,
+    expected_sha256: str,
+    judge_model: str,
+    as_of: str,
+) -> dict[str, object]:
+    if _HEX64.fullmatch(expected_sha256) is None:
+        raise ValueError("pricing SHA-256 must be 64 lowercase hex")
+    try:
+        dt.date.fromisoformat(as_of)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("pricing as-of date must be ISO YYYY-MM-DD") from exc
+    unresolved = Path(path_value)
+    if unresolved.is_symlink():
+        raise ValueError("pricing config must be a regular non-symlink file")
+    path = unresolved.resolve(strict=True)
+    before = path.stat()
+    if not path.is_file() or before.st_size <= 0 or before.st_size > 1024 * 1024:
+        raise ValueError("pricing config must be a regular file of at most 1 MiB")
+    payload = path.read_bytes()
+    after = path.stat()
+    observed = hashlib.sha256(payload).hexdigest()
+    if (
+        before.st_dev != after.st_dev
+        or before.st_ino != after.st_ino
+        or before.st_size != after.st_size
+        or len(payload) != before.st_size
+        or observed != expected_sha256
+    ):
+        raise ValueError("pricing config identity or bytes changed")
+
+    def pairs(items: list[tuple[str, object]]) -> dict[str, object]:
+        value: dict[str, object] = {}
+        for key, item in items:
+            if key in value:
+                raise ValueError(f"pricing config contains duplicate key {key!r}")
+            value[key] = item
+        return value
+
+    try:
+        pricing = json.loads(payload.decode("utf-8"), object_pairs_hook=pairs)
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError("pricing config is not strict UTF-8 JSON") from exc
+    if not isinstance(pricing, dict) or pricing.get("schema") != "ura-console-pricing/1":
+        raise ValueError("pricing config schema changed")
+    if not judge_model.startswith("anthropic:claude-haiku-"):
+        raise ValueError("pricing condition requires an exact Anthropic Haiku route")
+    provider, model = judge_model.split(":", 1)
+    rate, why = rate_for(pricing, provider, model, on_date=as_of)
+    if rate is None:
+        raise ValueError(f"Haiku price is unavailable: {why}")
+    per_million = rate.get("per_million_tokens")
+    if (
+        rate.get("currency") != "USD"
+        or not isinstance(per_million, Mapping)
+        or per_million.get("input") != 1
+        or per_million.get("output") != 5
+    ):
+        raise ValueError("Haiku standard price differs from the funded USD 1/5 plan")
+    return {
+        "pricing_config_sha256": observed,
+        "pricing_as_of": as_of,
+        "pricing_effective_date": rate["effective_date"],
+        "pricing_currency": "USD",
+        "input_microusd_per_token": 1,
+        "output_microusd_per_token": 5,
+    }
 
 
 def _output_policy_sha256(cell: Mapping[str, Any]) -> str:
@@ -270,6 +363,7 @@ def build_plan(
     source_descriptor: Mapping[str, object],
     judge_model: str,
     api_config_sha256: str,
+    pricing_condition: Mapping[str, object],
     limit: int = 2_000,
     seed: int = 0,
     max_cost_microusd: int = 7_000_000,
@@ -308,8 +402,7 @@ def build_plan(
             "max_judge_calls": len(selected),
             "max_http_attempts": len(selected),
             "max_cost_microusd": max_cost_microusd,
-            "input_microusd_per_token": 1,
-            "output_microusd_per_token": 5,
+            **dict(pricing_condition),
             "independent_judge_rows": len(selected) - same_model_rows,
             "same_model_judge_rows": same_model_rows,
         },
@@ -346,6 +439,7 @@ def validate_plan(value: object) -> dict[str, Any]:
         or value.get("authority") != "selected_followon_not_full_corpus"
         or not isinstance(value.get("source"), dict)
         or not isinstance(condition, dict)
+        or set(condition) != _CONDITION_FIELDS
         or not isinstance(selection, dict)
         or not isinstance(population, dict)
         or not isinstance(strata, dict)
@@ -382,6 +476,8 @@ def validate_plan(value: object) -> dict[str, Any]:
         != selected_count
         or condition.get("input_microusd_per_token") != 1
         or condition.get("output_microusd_per_token") != 5
+        or _HEX64.fullmatch(str(condition.get("pricing_config_sha256", ""))) is None
+        or condition.get("pricing_currency") != "USD"
         or not isinstance(condition.get("max_cost_microusd"), int)
         or not 1 <= condition["max_cost_microusd"] <= 7_000_000
         or not str(condition.get("model", "")).startswith(
@@ -390,6 +486,13 @@ def validate_plan(value: object) -> dict[str, Any]:
         or _HEX64.fullmatch(str(condition.get("api_config_sha256", ""))) is None
     ):
         raise ValueError("retained-response judge call or cost contract changed")
+    try:
+        pricing_as_of = dt.date.fromisoformat(condition["pricing_as_of"])
+        pricing_effective = dt.date.fromisoformat(condition["pricing_effective_date"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("retained-response judge pricing date is invalid") from exc
+    if pricing_effective > pricing_as_of:
+        raise ValueError("retained-response judge price is not yet effective")
     if (
         selection.get("algorithm") != ALGORITHM
         or selection.get("sample_seed") != 0
@@ -500,6 +603,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--source-receipt-sha256", required=True)
     parser.add_argument("--judge-model", required=True)
     parser.add_argument("--api-config-sha256", required=True)
+    parser.add_argument("--pricing-config", type=Path, required=True)
+    parser.add_argument("--pricing-config-sha256", required=True)
+    parser.add_argument("--pricing-as-of", required=True)
     parser.add_argument("--limit", type=int, default=2_000)
     parser.add_argument("--sample-seed", type=int, default=0)
     parser.add_argument("--max-cost-microusd", type=int, default=7_000_000)
@@ -517,6 +623,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
         judge_model=args.judge_model,
         api_config_sha256=args.api_config_sha256,
+        pricing_condition=load_pricing_condition(
+            args.pricing_config,
+            expected_sha256=args.pricing_config_sha256,
+            judge_model=args.judge_model,
+            as_of=args.pricing_as_of,
+        ),
         limit=args.limit,
         seed=args.sample_seed,
         max_cost_microusd=args.max_cost_microusd,

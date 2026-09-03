@@ -17,6 +17,7 @@ from experiments.retained_response_judge import (
     _regular_descriptor,
     build_plan,
     load_candidates,
+    load_pricing_condition,
     validate_plan,
 )
 from ura.data_models import DataPoint, DialogTurn, Judgment, Response
@@ -190,6 +191,17 @@ def _reconcile_selection(
         source_descriptor=source_descriptor,
         judge_model=plan["judge_condition"]["model"],
         api_config_sha256=plan["judge_condition"]["api_config_sha256"],
+        pricing_condition={
+            field: plan["judge_condition"][field]
+            for field in (
+                "pricing_config_sha256",
+                "pricing_as_of",
+                "pricing_effective_date",
+                "pricing_currency",
+                "input_microusd_per_token",
+                "output_microusd_per_token",
+            )
+        },
         limit=plan["selection"]["requested_limit"],
         seed=plan["selection"]["sample_seed"],
         max_cost_microusd=plan["judge_condition"]["max_cost_microusd"],
@@ -455,6 +467,7 @@ def execute(
     runner_view: Path,
     source_receipt: Path,
     api_config: Path,
+    pricing_config: Path,
     out: Path,
     judge_factory: Callable[[str, Mapping[str, object]], Any] = _build_haiku_judge,
 ) -> Path:
@@ -471,6 +484,14 @@ def execute(
     if source_descriptor != plan["source"]:
         raise ValueError("source receipt descriptor differs from the sealed plan")
     condition = plan["judge_condition"]
+    observed_pricing = load_pricing_condition(
+        pricing_config,
+        expected_sha256=condition["pricing_config_sha256"],
+        judge_model=condition["model"],
+        as_of=condition["pricing_as_of"],
+    )
+    if any(condition[field] != item for field, item in observed_pricing.items()):
+        raise ValueError("pricing condition differs from the sealed plan")
     normalized_api, _api_descriptor = _load_api_config(
         api_config,
         judge_model=condition["model"],
@@ -753,6 +774,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--runner-view", type=Path, required=True)
     parser.add_argument("--source-receipt", type=Path, required=True)
     parser.add_argument("--api-config", type=Path, required=True)
+    parser.add_argument("--pricing-config", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--ack-paid-execution", action="store_true")
     args = parser.parse_args(argv)
@@ -764,6 +786,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             runner_view=args.runner_view,
             source_receipt=args.source_receipt,
             api_config=args.api_config,
+            pricing_config=args.pricing_config,
             out=args.out,
         )
     )

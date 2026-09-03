@@ -125,6 +125,35 @@ def _prepared(
         encoding="utf-8",
     )
     api_sha = hashlib.sha256(api.read_bytes()).hexdigest()
+    pricing = tmp_path / "pricing.json"
+    pricing.write_text(
+        json.dumps(
+            {
+                "schema": "ura-console-pricing/1",
+                "providers": {
+                    "anthropic": {
+                        "models": {
+                            "claude-haiku-4-5-20251001": {
+                                "rates": [
+                                    {
+                                        "currency": "USD",
+                                        "effective_date": "2026-09-01",
+                                        "per_million_tokens": {
+                                            "input": 1,
+                                            "output": 5,
+                                        },
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    pricing_sha = hashlib.sha256(pricing.read_bytes()).hexdigest()
     candidates = [_candidate(index) for index in range(count)]
     plan = planner.build_plan(
         candidates,
@@ -132,6 +161,12 @@ def _prepared(
         source_descriptor=source_descriptor,
         judge_model=JUDGE,
         api_config_sha256=api_sha,
+        pricing_condition=planner.load_pricing_condition(
+            pricing,
+            expected_sha256=pricing_sha,
+            judge_model=JUDGE,
+            as_of="2026-09-03",
+        ),
         limit=count,
         max_cost_microusd=max_cost_microusd,
     )
@@ -158,6 +193,7 @@ def _prepared(
         "runner_view": view,
         "source_receipt": receipt,
         "api_config": api,
+        "pricing_config": pricing,
         "out": tmp_path / "out",
     }
 
@@ -170,7 +206,8 @@ def test_executes_exact_selection_once_and_completes_without_target_calls(
 
     completion_path = subject.execute(
         **{key: prepared[key] for key in (
-            "plan_path", "runner_view", "source_receipt", "api_config", "out"
+            "plan_path", "runner_view", "source_receipt", "api_config",
+            "pricing_config", "out"
         )},
         judge_factory=lambda _spec, _config: fake,
     )
@@ -190,7 +227,8 @@ def test_executes_exact_selection_once_and_completes_without_target_calls(
 
     assert subject.execute(
         **{key: prepared[key] for key in (
-            "plan_path", "runner_view", "source_receipt", "api_config", "out"
+            "plan_path", "runner_view", "source_receipt", "api_config",
+            "pricing_config", "out"
         )},
         judge_factory=lambda _spec, _config: fake,
     ) == completion_path
@@ -207,6 +245,7 @@ def test_executes_exact_selection_once_and_completes_without_target_calls(
                     "runner_view",
                     "source_receipt",
                     "api_config",
+                    "pricing_config",
                     "out",
                 )
             },
@@ -221,7 +260,8 @@ def test_first_judge_failure_opens_global_circuit_and_prevents_second_call(
     prepared = _prepared(tmp_path, monkeypatch)
     fake = FakeHaiku(fail_at=1)
     kwargs = {key: prepared[key] for key in (
-        "plan_path", "runner_view", "source_receipt", "api_config", "out"
+        "plan_path", "runner_view", "source_receipt", "api_config",
+        "pricing_config", "out"
     )}
 
     with pytest.raises(RuntimeError, match="circuit opened"):
@@ -256,8 +296,40 @@ def test_content_drift_fails_before_judge_construction(
     with pytest.raises(ValueError, match="plan no longer matches"):
         subject.execute(
             **{key: prepared[key] for key in (
-                "plan_path", "runner_view", "source_receipt", "api_config", "out"
+                "plan_path", "runner_view", "source_receipt", "api_config",
+                "pricing_config", "out"
             )},
+            judge_factory=factory,
+        )
+    assert constructed is False
+    assert not prepared["out"].exists()
+
+
+def test_pricing_drift_fails_before_judge_construction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prepared = _prepared(tmp_path, monkeypatch)
+    prepared["pricing_config"].write_text("{}\n", encoding="utf-8")
+    constructed = False
+
+    def factory(_spec, _config):
+        nonlocal constructed
+        constructed = True
+        return FakeHaiku()
+
+    with pytest.raises(ValueError, match="pricing config identity or bytes changed"):
+        subject.execute(
+            **{
+                key: prepared[key]
+                for key in (
+                    "plan_path",
+                    "runner_view",
+                    "source_receipt",
+                    "api_config",
+                    "pricing_config",
+                    "out",
+                )
+            },
             judge_factory=factory,
         )
     assert constructed is False
@@ -273,7 +345,8 @@ def test_conservative_cost_failure_makes_no_paid_call(
     with pytest.raises(ValueError, match="first Haiku call could exceed"):
         subject.execute(
             **{key: prepared[key] for key in (
-                "plan_path", "runner_view", "source_receipt", "api_config", "out"
+                "plan_path", "runner_view", "source_receipt", "api_config",
+                "pricing_config", "out"
             )},
             judge_factory=lambda _spec, _config: fake,
         )
@@ -291,7 +364,8 @@ def test_executor_rejects_a_judge_transport_with_retries(
     with pytest.raises(ValueError, match="fixed to one attempt"):
         subject.execute(
             **{key: prepared[key] for key in (
-                "plan_path", "runner_view", "source_receipt", "api_config", "out"
+                "plan_path", "runner_view", "source_receipt", "api_config",
+                "pricing_config", "out"
             )},
             judge_factory=lambda _spec, _config: fake,
         )
@@ -320,6 +394,7 @@ def test_budget_guard_stops_before_the_next_http_attempt(
                     "runner_view",
                     "source_receipt",
                     "api_config",
+                    "pricing_config",
                     "out",
                 )
             },

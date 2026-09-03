@@ -404,9 +404,10 @@ response artifacts remain authoritative.
   `retained_response_judge_execute` reconciles the same retained content and
   constructs only the named Haiku judge. It reserves zero target calls, uses
   one judge/HTTP attempt per selected output, checkpoints every paid decision,
-  and opens its global `paid_provider` circuit on the first judge or transport
-  failure. The local and hosted cohorts each have a USD 7 ceiling, so their
-  combined standard-API ceiling is USD 14.
+  binds and revalidates the effective-dated pricing bytes, and opens its global
+  `paid_provider` circuit on the first judge or transport failure. The local
+  and hosted cohorts each have a USD 7 ceiling, so their combined standard-API
+  ceiling is USD 14.
 - Hub acquisition is conditional on the selected resources, not on the mere
   existence of a local target. Static lanes with Hub-backed assets retain the
   exact plan/receipt/store chain. Ollama R-Judge and GPTGeoChat lanes over

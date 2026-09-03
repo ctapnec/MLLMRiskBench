@@ -1597,18 +1597,25 @@ python -m experiments.retained_response_judge \
   --source-receipt-sha256 "$URA_SOURCE_CONFORMANCE_RECEIPT_SHA256" \
   --judge-model anthropic:claude-haiku-4-5-20251001 \
   --api-config-sha256 "$URA_API_TARGET_CONFIG_SHA256" \
+  --pricing-config "$URA_PRICING_CONFIG" \
+  --pricing-config-sha256 "$URA_PRICING_CONFIG_SHA256" \
+  --pricing-as-of "$URA_PRICING_AS_OF" \
   --limit 2000 --sample-seed 0 --max-cost-microusd 7000000 \
   --ack-hosted-judge-data-transfer --out "$HAIKU_PLAN"
 
 python -m experiments.retained_response_judge_execute \
   --plan "$HAIKU_PLAN" --runner-view "$FINAL_RUNNER_VIEW" \
   --source-receipt "$URA_SOURCE_CONFORMANCE_RECEIPT" \
-  --api-config "$URA_API_TARGET_CONFIG" --out "$HAIKU_RESULT" \
+  --api-config "$URA_API_TARGET_CONFIG" \
+  --pricing-config "$URA_PRICING_CONFIG" --out "$HAIKU_RESULT" \
   --ack-paid-execution
 ```
 
 The planner imports no target-under-test or Runner factory and stores only
-content hashes. The executor reconstructs only the selected Haiku judge,
+content hashes. It binds the exact effective-dated pricing file and refuses a
+rate other than the funded USD 1 input / USD 5 output per million-token
+condition. The executor revalidates the same pricing bytes, reconstructs only
+the selected Haiku judge,
 enforces no retry in both the harness and provider SDK, fsyncs a reservation
 before every paid call, and stops the cohort on its first output or transport
 failure. An unresolved reservation after process loss requires manual provider

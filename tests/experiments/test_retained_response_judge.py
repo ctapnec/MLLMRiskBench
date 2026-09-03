@@ -14,6 +14,14 @@ from experiments import retained_response_judge as subject
 JUDGE = "anthropic:claude-haiku-4-5-20251001"
 HEX_A = "a" * 64
 HEX_B = "b" * 64
+PRICING = {
+    "pricing_config_sha256": HEX_A,
+    "pricing_as_of": "2026-09-03",
+    "pricing_effective_date": "2026-09-01",
+    "pricing_currency": "USD",
+    "input_microusd_per_token": 1,
+    "output_microusd_per_token": 5,
+}
 
 
 def _sha(value: object) -> str:
@@ -70,6 +78,7 @@ def _build(candidates: list[dict], *, limit: int = 4) -> dict:
         source_descriptor={"file": "source.json", "sha256": HEX_A, "bytes": 123},
         judge_model=JUDGE,
         api_config_sha256=HEX_B,
+        pricing_condition=PRICING,
         limit=limit,
     )
 
@@ -101,8 +110,7 @@ def test_selector_is_deterministic_balanced_and_does_not_copy_content() -> None:
         "max_judge_calls": 3,
         "max_http_attempts": 3,
         "max_cost_microusd": 7_000_000,
-        "input_microusd_per_token": 1,
-        "output_microusd_per_token": 5,
+        **PRICING,
         "independent_judge_rows": 3,
         "same_model_judge_rows": 0,
     }
@@ -153,6 +161,12 @@ def test_same_model_haiku_rows_are_annotated_per_row() -> None:
             ),
             "eligible population changed",
         ),
+        (
+            lambda plan: plan["judge_condition"].__setitem__(
+                "pricing_effective_date", "2026-09-04"
+            ),
+            "price is not yet effective",
+        ),
     ],
 )
 def test_validator_rejects_resigned_contract_mutations(mutation, message: str) -> None:
@@ -189,6 +203,35 @@ def test_cli_requires_transfer_ack_and_writes_create_only(
     receipt = tmp_path / "receipt.json"
     receipt.write_text("{}\n", encoding="utf-8")
     receipt_sha = hashlib.sha256(receipt.read_bytes()).hexdigest()
+    pricing = tmp_path / "pricing.json"
+    pricing.write_text(
+        json.dumps(
+            {
+                "schema": "ura-console-pricing/1",
+                "providers": {
+                    "anthropic": {
+                        "models": {
+                            "claude-haiku-4-5-20251001": {
+                                "rates": [
+                                    {
+                                        "currency": "USD",
+                                        "effective_date": "2026-09-01",
+                                        "per_million_tokens": {
+                                            "input": 1,
+                                            "output": 5,
+                                        },
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    pricing_sha = hashlib.sha256(pricing.read_bytes()).hexdigest()
     out = tmp_path / "plan.json"
     args = [
         "--runner-view",
@@ -201,6 +244,12 @@ def test_cli_requires_transfer_ack_and_writes_create_only(
         JUDGE,
         "--api-config-sha256",
         HEX_B,
+        "--pricing-config",
+        str(pricing),
+        "--pricing-config-sha256",
+        pricing_sha,
+        "--pricing-as-of",
+        "2026-09-03",
         "--limit",
         "2",
         "--out",
