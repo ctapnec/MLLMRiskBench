@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -1086,6 +1087,7 @@ def test_build_renders_owned_boundaries_and_pull_controls_without_nested_forms(
         assert "action='/ollama/start'" in page
         assert "action='/ollama/stop'" in page
         assert "action='/ollama/pull'" in page
+        assert "automatically starts the 10-text/5-image readiness" in page
         assert page.index("action='/ollama/start'") < page.index("id='builder'")
         assert "name='action_token'" not in page
         assert page.count("<div class='modelrow'") == page.count(
@@ -1167,7 +1169,9 @@ def test_job_activity_schema_migrates_persists_and_restores(tmp_path: Path) -> N
         db.close()
 
 
-def test_terminal_pull_clears_activity_and_invalidates_roster(tmp_path: Path) -> None:
+def test_terminal_pull_clears_activity_and_invalidates_roster(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     service = _ControlService()
     app = _app(tmp_path, service)
     job = Job(
@@ -1179,11 +1183,79 @@ def test_terminal_pull_clears_activity_and_invalidates_roster(tmp_path: Path) ->
         activity="model_download",
     )
     app.jobs[job.job_id] = job
+    readiness_parents: list[Job] = []
+    monkeypatch.setattr(
+        app,
+        "_start_automatic_ollama_readiness",
+        lambda parent: readiness_parents.append(parent),
+    )
     try:
         app._reconcile()
         assert job.activity is None
         assert service.invalidated == 1
+        assert readiness_parents == [job]
         assert app.db.load_jobs()[0]["activity"] is None
+    finally:
+        app.close()
+
+
+def test_successful_pull_automatically_starts_identity_bound_readiness(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class ProfileService(_ControlService):
+        def roster(self, _entries, *, force=False):
+            assert force is True
+            return {
+                "available": True,
+                "models": [
+                    {
+                        "digest": "d" * 64,
+                        "modalities": ["text", "image"],
+                        "spec": "ollama:fixture:latest",
+                        "tag": "fixture:latest",
+                    }
+                ],
+            }
+
+    app = _app(tmp_path, ProfileService())
+    parent = Job(
+        "terminal-download",
+        "ollama_pull",
+        ["python", "-m", "experiments.ollama_pull", "--model", "fixture:latest"],
+        tmp_path / "state" / "terminal-download",
+        process=_FakeProcess(code=0),
+        builder_params={"ollama_model": "fixture:latest"},
+    )
+    captured: dict[str, object] = {}
+
+    def start_job(command, values, **kwargs):
+        captured.update(command=command, values=values, kwargs=kwargs)
+        return SimpleNamespace(job_id="readiness-job")
+
+    monkeypatch.setattr(app, "start_job", start_job)
+    try:
+        result = app._start_automatic_ollama_readiness(parent)
+        assert result.job_id == "readiness-job"
+        assert captured["command"] == "local_model_readiness"
+        values = captured["values"]
+        assert values["--local"] == "ollama:fixture:latest"
+        assert values["--profile-registry"]
+        config_path = Path(values["--local-config"])
+        payload = config_path.read_bytes()
+        assert values["--local-config-sha256"] == hashlib.sha256(payload).hexdigest()
+        assert json.loads(payload) == {
+            "ollama:fixture:latest": {
+                "digest": "d" * 64,
+                "modalities": ["text", "image"],
+                "num_ctx": "fit",
+                "think": False,
+            }
+        }
+        assert captured["kwargs"]["builder_params"] == {
+            "local": "ollama:fixture:latest",
+            "readiness_parent_job_id": "terminal-download",
+            "readiness_trigger": "successful_ollama_pull",
+        }
     finally:
         app.close()
 

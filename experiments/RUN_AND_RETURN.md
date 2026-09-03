@@ -2012,6 +2012,12 @@ controls. Status, Start, Stop, and Pull operate only on the default literal
 loopback API. A daemon found there is external and cannot be stopped by Rig Web;
 only the dedicated process group started by the current console is owned and
 cleaned up. Pull is a typed Jobs entry whose live activity is `model_download`.
+After a successful UI pull, the console discovers the exact installed digest
+and modalities and automatically launches `local_model_readiness` as a linked
+Jobs entry. That follow-up runs the seeded 10-text/5-image gate at the baseline
+and maximum response allowances, keeps thinking disabled for the assessment,
+and writes the passing hardware-bound profile to the shared registry. A pull
+alone never makes an unprofiled model selectable for scrutiny.
 The selectable live roster accepts at most 64 installed models under a
 five-second aggregate discovery budget, requires exact tag/digest stability
 across two `/api/tags` reads, and gets text/image modalities only from explicit

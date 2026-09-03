@@ -134,6 +134,9 @@ elif [ "$MODE" = "--profile-recovery-handoff" ]; then
     tests/ura/test_rig_web_model_picker.py::test_server_validates_explicit_judge_and_local_engine_conflicts
     tests/ura/test_rig_web_model_picker.py::test_paid_ticket_burns_when_selected_local_registry_changes
     tests/ura/test_rig_web_model_picker.py::test_web_compose_materializes_local_judge_but_dry_mode_stays_mock
+    tests/ura/test_rig_web_ollama.py::test_build_renders_owned_boundaries_and_pull_controls_without_nested_forms
+    tests/ura/test_rig_web_ollama.py::test_terminal_pull_clears_activity_and_invalidates_roster
+    tests/ura/test_rig_web_ollama.py::test_successful_pull_automatically_starts_identity_bound_readiness
     tests/ura/test_framework_runtime_installer.py::test_distro_repin_script_is_fail_closed_and_sources_canonical_ura_env_last
   )
   echo "verification mode: profile recovery handoff (${#DEPLOY_TESTS[@]} selectors)"

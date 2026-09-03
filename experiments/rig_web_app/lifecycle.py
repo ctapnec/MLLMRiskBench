@@ -423,7 +423,8 @@ class LifecycleMixin:
         """
 
         pin = os.environ.get("REF_URA", "")
-        for job in self.jobs.values():
+        automatic_ollama_readiness: list[Job] = []
+        for job in list(self.jobs.values()):
             if job.process is None:
                 self._reconcile_restored_model_acquisition(job)
                 continue
@@ -440,6 +441,8 @@ class LifecycleMixin:
             if job.ended_at is None:
                 job.ended_at = time.time()
             if job.run_recorded:
+                if job.command == "ollama_pull" and code == 0:
+                    automatic_ollama_readiness.append(job)
                 continue
             self._finish_log_capture(job.job_id)
             self._close_handles(job)
@@ -476,6 +479,93 @@ class LifecycleMixin:
                     usage_rows = []
             if self.db.record_terminal(job, job.pin, usage_rows, state=state, exit_code=code):
                 job.run_recorded = True
+                if job.command == "ollama_pull" and code == 0:
+                    automatic_ollama_readiness.append(job)
+        for parent in automatic_ollama_readiness:
+            try:
+                self._start_automatic_ollama_readiness(parent)
+            except (OllamaError, OSError, TypeError, ValueError):
+                # Discovery can be temporarily unavailable immediately after a
+                # pull. A later reconciliation retries this idempotent handoff.
+                continue
+
+    def _start_automatic_ollama_readiness(self, parent: Job) -> Job | None:
+        """Start exactly one readiness job after one successful Ollama pull."""
+
+        params = parent.builder_params or {}
+        tag = validate_ollama_tag(str(params.get("ollama_model", "")))
+        for existing in self.jobs.values():
+            existing_params = existing.builder_params or {}
+            if existing_params.get("readiness_parent_job_id") == parent.job_id:
+                return existing
+        roster = self.ollama.roster({}, force=True)
+        rows = roster.get("models")
+        if roster.get("available") is not True or not isinstance(rows, list):
+            raise ValueError("Ollama readiness discovery is unavailable")
+        matches = [
+            row
+            for row in rows
+            if isinstance(row, Mapping) and row.get("tag") == tag
+        ]
+        if len(matches) != 1:
+            raise ValueError("pulled Ollama model is absent or ambiguous in discovery")
+        row = matches[0]
+        spec = str(row.get("spec", ""))
+        digest = str(row.get("digest", "")).lower()
+        modalities = row.get("modalities")
+        if (
+            spec != f"ollama:{tag}"
+            or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+            or not isinstance(modalities, list)
+            or not modalities
+            or "text" not in modalities
+            or any(item not in {"text", "image"} for item in modalities)
+        ):
+            raise ValueError("pulled Ollama discovery identity is invalid")
+        config = {
+            spec: {
+                "digest": digest,
+                "modalities": list(modalities),
+                "num_ctx": "fit",
+                "think": False,
+            }
+        }
+        payload = (
+            json.dumps(
+                config,
+                ensure_ascii=False,
+                allow_nan=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n"
+        ).encode("utf-8")
+        root = self.results_root.resolve() / "local-model-readiness" / parent.job_id
+        root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        config_path = root / "local-config.json"
+        if config_path.exists():
+            if config_path.is_symlink() or config_path.read_bytes() != payload:
+                raise ValueError("automatic Ollama readiness config changed")
+        else:
+            with config_path.open("xb") as handle:
+                handle.write(payload)
+        from experiments.local_model_profiles import registry_path  # noqa: PLC0415
+
+        return self.start_job(
+            "local_model_readiness",
+            {
+                "--local": spec,
+                "--local-config": str(config_path),
+                "--local-config-sha256": hashlib.sha256(payload).hexdigest(),
+                "--out": str(root / "readiness.json"),
+                "--profile-registry": str(registry_path(self.repo_root)),
+            },
+            builder_params={
+                "local": spec,
+                "readiness_parent_job_id": parent.job_id,
+                "readiness_trigger": "successful_ollama_pull",
+            },
+        )
 
     # -- job lifecycle -----------------------------------------------------
 

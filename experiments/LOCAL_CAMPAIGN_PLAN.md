@@ -1046,6 +1046,10 @@ boundary: omitted vLLM `max_model_len` binds vLLM 0.27's `-1` auto-fit policy,
 and Ollama binds `num_ctx="fit"`; both retain the largest hardware-fitting
 context. Their independent response allowance comes from the exact model's
 readiness profile. No local generative campaign is admitted before profiling.
+Rig Web applies the same rule at installation time for Ollama: a successful
+pull automatically creates a linked readiness Job, and the tag remains
+unavailable to Build until the exact digest passes the 10-text/5-image gate
+and receives its approved response allowance.
 The profile also supplies the 120-second request deadline, and a candidate
 allowance is ineligible if any probe reaches it. Every policy, attempted
 allocation, and resolved value is visible in Build and retained in the run

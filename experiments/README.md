@@ -413,6 +413,10 @@ response artifacts remain authoritative.
   admitted to a security campaign. Hosted
   routes use explicit budget-derived token limits and their existing paid-call
   stop circuit instead.
+- A successful Rig Web Ollama pull automatically starts the same seeded
+  10-text/5-image readiness and response-allowance assessment as a separate
+  linked Job. The downloaded tag remains unavailable to Build until that
+  identity-bound follow-up writes a passing profile.
 - Post-hoc Haiku re-adjudication does not use `run_matrix` and cannot regenerate
   a target response. `retained_response_judge_pair` admits at most 590 pairs
   from the exact local/hosted input-identity intersection, without reusing an
