@@ -635,6 +635,10 @@ def test_hosted_follow_on_is_a_no_retry_local_input_subset() -> None:
         "full-corpus estimates",
         "target calls 0",
         "USD 13.12 standard",
+        "8,734 target calls",
+        "USD 56.80",
+        "USD 69.92",
+        "`retained_response_judge_execute` executor",
     )
 
     def assert_contract(value: str) -> None:
@@ -673,6 +677,11 @@ def test_hosted_follow_on_is_a_no_retry_local_input_subset() -> None:
     assert changed_plan != plan
     with pytest.raises(AssertionError):
         assert "global `paid_provider` circuit" in changed_plan
+    for forecast in ("8,734 target calls", "USD 56.80", "USD 69.92"):
+        changed_cost = cost.replace(forecast, "MUTATED_FORECAST", 1)
+        assert changed_cost != cost
+        with pytest.raises(AssertionError):
+            assert forecast in changed_cost
 
 
 def test_follow_on_runbook_keeps_purpose_and_media_contracts() -> None:

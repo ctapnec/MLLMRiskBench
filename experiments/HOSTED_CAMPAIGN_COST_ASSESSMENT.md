@@ -128,6 +128,17 @@ compatible modalities while reducing only the prospective cluster prefix:
 | Moonshot | Kimi K3 | 3 | USD 7 ceiling |
 | DeepSeek | DeepSeek V4-Pro | 20 | USD 5 off-peak ceiling |
 
+Before the exact no-call projector is run, the central cardinality forecast is
+132 Fable, 397 Opus, 663 Sonnet, 1,354 Haiku, 265 Sol, 663 Terra, 2,742
+Luna, 132 GPT-5.5, 311 Kimi and 2,075 DeepSeek target calls. That is 8,734
+target calls centrally, with a planning range of 8,667 to 8,837 for the
+positive limits whose exact small-prefix cluster boundaries have not yet been
+materialized. Under the stated token assumptions, the central target-cost
+forecast is USD 56.80. Adding 2,000 selected local and 2,000 selected hosted
+Haiku judgments gives USD 13.12 of standard-API judge cost and USD 69.92
+combined. The per-provider hard ceilings still total USD 77 (USD 63 targets
+plus USD 14 judging); neither forecast nor ceiling authorizes a call.
+
 Each provider may use at most 50 percent of its configured budget: Anthropic
 USD 50, OpenAI USD 20, Moonshot USD 7.50 and DeepSeek USD 5. The Anthropic share
 reserves at most USD 32 for one-attempt targets and USD 14 for Haiku
@@ -167,8 +178,10 @@ retained outputs and missing responses.
 Re-adjudication must use a new immutable output root, bind the source response
 and former completion by content identity, make zero target calls, preserve the
 original judgments, and record the new judge/model identity and transfer
-acknowledgement. The current Runner does not yet expose that general post-hoc
-path; a naive rerun would risk regenerating targets and is not authorized.
+acknowledgement. The dedicated `retained_response_judge` selector and
+`retained_response_judge_execute` executor implement that zero-target path;
+they remain pending deployment and must not be replaced by a naive Runner rerun
+that could regenerate targets.
 
 The budget-fitted cohort selects at most 2,000 eligible local outputs and at
 most 2,000 eligible hosted outputs. Seed-0 balanced round-robin
