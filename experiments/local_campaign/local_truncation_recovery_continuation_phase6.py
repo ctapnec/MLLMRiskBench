@@ -80,6 +80,41 @@ def _canonical_control_root(path: Path, *, label: str) -> Path:
     return root
 
 
+def _prior_terminalized(prior_root: Path) -> bool:
+    marker_path = prior_root / "interruption.json"
+    exit_path = prior_root / ".exit"
+    marker_present = marker_path.exists() or marker_path.is_symlink()
+    exit_present = exit_path.exists() or exit_path.is_symlink()
+    if not marker_present and not exit_present:
+        return False
+    if not marker_present or not exit_present:
+        raise ValueError("prior hardware-fit terminal bootstrap is incomplete")
+    marker = _load_json(marker_path, label="hardware-fit interruption marker")
+    if (
+        set(marker)
+        != {
+            "schema",
+            "status",
+            "reason",
+            "exit_code",
+            "interrupted_at_utc",
+            "durable_rows",
+            "successful_rows_repeated",
+        }
+        or marker.get("schema") != "ura-local-hardware-fit-interrupted/1"
+        or marker.get("status") != "interrupted"
+        or marker.get("reason") != "ollama_response_body_deadline_not_enforced"
+        or marker.get("exit_code") != 125
+        or not isinstance(marker.get("interrupted_at_utc"), str)
+        or marker.get("durable_rows") != EXPECTED_RETAINED_ROWS
+        or marker.get("successful_rows_repeated") != 0
+        or _stable_file(exit_path, label="hardware-fit interrupted exit") != b"125\n"
+        or (prior_root / "completion.json").exists()
+    ):
+        raise ValueError("prior hardware-fit terminal bootstrap changed")
+    return True
+
+
 def _unit_order(inventory: Mapping[str, Any]) -> list[str]:
     units = inventory.get("units")
     if not isinstance(units, list):
@@ -285,8 +320,9 @@ def inspect_interrupted_campaign(
         or sum(int(item["summary"]["recovery_records"]) for item in units) != EXPECTED_TOTAL_ROWS
     ):
         raise ValueError("interrupted hardware-fit inventory changed")
-    if (prior_root / "completion.json").exists() or (prior_root / ".exit").exists():
-        raise ValueError("prior hardware-fit campaign is already terminal")
+    if (prior_root / "completion.json").exists():
+        raise ValueError("prior hardware-fit campaign already completed")
+    prior_terminalized = _prior_terminalized(prior_root)
     launch_path = prior_root / "launch.json"
     launch = _load_json(launch_path, label="interrupted hardware-fit launch")
     inventory_descriptor = launch.get("inventory")
@@ -375,6 +411,7 @@ def inspect_interrupted_campaign(
             "missing_responses": retained_missing + partial_missing,
         },
         "order": order,
+        "prior_terminalized": prior_terminalized,
     }
 
 
@@ -663,35 +700,40 @@ def run(args: argparse.Namespace) -> int:
     control_root.mkdir(mode=0o700)
     for name in ("units", "inputs", "configs"):
         (control_root / name).mkdir(mode=0o700)
-    marker = {
-        "schema": "ura-local-hardware-fit-interrupted/1",
-        "status": "interrupted",
-        "reason": "ollama_response_body_deadline_not_enforced",
-        "exit_code": 125,
-        "interrupted_at_utc": _utc_now(),
-        "durable_rows": EXPECTED_RETAINED_ROWS,
-        "successful_rows_repeated": 0,
-    }
     marker_path = prior_root / "interruption.json"
-    _create_json(marker_path, marker)
-    with (prior_root / ".exit").open("xb") as handle:
-        handle.write(b"125\n")
-    register_external_measured_terminal(
-        work_root / "runs",
-        job_id=_external_job_id(prior_root, inspected["order"][2]),
-        exit_code=125,
-    )
-    publish_target_execution(
-        work_root=work_root,
-        control_root=prior_root,
-        target_attempts=EXPECTED_RETAINED_ROWS,
-        successful_target_generations=int(
-            inspected["retained_accounting"]["successful_target_generations"]
-        ),
-    )
-    finish_child_controller(work_root=work_root, control_root=prior_root, exit_code=125)
+    if not inspected["prior_terminalized"]:
+        marker = {
+            "schema": "ura-local-hardware-fit-interrupted/1",
+            "status": "interrupted",
+            "reason": "ollama_response_body_deadline_not_enforced",
+            "exit_code": 125,
+            "interrupted_at_utc": _utc_now(),
+            "durable_rows": EXPECTED_RETAINED_ROWS,
+            "successful_rows_repeated": 0,
+        }
+        _create_json(marker_path, marker)
+        with (prior_root / ".exit").open("xb") as handle:
+            handle.write(b"125\n")
+        register_external_measured_terminal(
+            work_root / "runs",
+            job_id=_external_job_id(prior_root, inspected["order"][2]),
+            exit_code=125,
+        )
+        publish_target_execution(
+            work_root=work_root,
+            control_root=prior_root,
+            target_attempts=EXPECTED_RETAINED_ROWS,
+            successful_target_generations=int(
+                inspected["retained_accounting"]["successful_target_generations"]
+            ),
+        )
+        finish_child_controller(work_root=work_root, control_root=prior_root, exit_code=125)
 
-    configured = configure_units(inspected["continuation_inventory"], control_root=control_root)
+    configured = configure_units(
+        inspected["continuation_inventory"],
+        control_root=control_root,
+        start_index=PARTIAL_UNIT_INDEX,
+    )
     continuation_order = [unit.unit_id for unit, _path, _sha in configured]
     expected_continuation = inspected["order"][PARTIAL_UNIT_INDEX - 1 :]
     remaining_rows = sum(unit.selected_records for unit, _path, _sha in configured)

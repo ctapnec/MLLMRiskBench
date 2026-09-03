@@ -1188,6 +1188,11 @@ interrupted third unit as lifecycle evidence, and executes only 2,714
 never-completed rows. The third-unit selector excludes those 424 exact
 datapoints. Restarting the original 4,463-row controller or promoting the
 partial unit as a terminal Runner grid is forbidden.
+The continuation suffix preserves original unit numbers 3-25. If bootstrap
+stops after the exact interruption marker and exit 125 are written but before
+the continuation launch artifact, only a fresh root may resume it. That restart
+validates the immutable terminal bytes and does not repeat terminalization side
+effects or durable responses.
 The 12 population-alignment rows remain logical model/framework conditions, not
 12 necessarily single-root files. Eleven have one terminal metric root. The
 DeepSeek condition is population-complete across its retained Runner 2.26 usable

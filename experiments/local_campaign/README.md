@@ -383,6 +383,12 @@ the interrupted Runner never produced its terminal grid; they are not silently
 promoted or called again. The body-read deadline regression must pass before
 this continuation is deployed.
 
+The continuation preserves original unit numbers 3-25 for that suffix. If it
+stops after writing the exact prior interruption marker but before its own
+launch artifact, use a fresh continuation root. The restart accepts only the
+unchanged marker and exit 125 bytes and does not repeat prior terminalization
+side effects.
+
 Targeted Runner-output recovery is deliberately outside `launch_chain`. It is
 available only through the generated
 `launch_phase6_recovery_and_seven.sh`. The launcher starts one named tmux

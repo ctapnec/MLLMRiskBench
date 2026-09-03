@@ -659,6 +659,11 @@ lifecycle evidence, extends that unit's completed-ID selector, and executes
 only its 611-row suffix plus the 2,103 unstarted rows. Supply the continuation
 completion to the unchanged Phase 7 option. The validator dispatches the new
 schema while keeping the original completion schema byte-compatible.
+The suffix keeps original unit numbers 3-25. If continuation bootstrap stops
+after the exact prior interruption marker and exit 125 are written but before
+the new launch artifact, restart into a fresh continuation root. The restart
+validates those immutable bytes and does not repeat terminalization side
+effects.
 Its plan-owned terminal inventory has 141 logical rows after population
 alignment and failed-output recovery: 46 canonical, four output-policy
 amendment, three follow-on, 14

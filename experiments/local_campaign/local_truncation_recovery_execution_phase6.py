@@ -408,16 +408,22 @@ def _safe_unit_id(index: int, item: Mapping[str, Any]) -> str:
 
 
 def configure_units(
-    inventory: Mapping[str, Any], *, control_root: Path
+    inventory: Mapping[str, Any], *, control_root: Path, start_index: int = 1
 ) -> list[tuple[Unit, Path, str]]:
     """Materialize exact selectors/configs and return executable units."""
 
     units = inventory.get("units")
     if not isinstance(units, list):
         raise ValueError("local truncation recovery units changed")
+    if (
+        isinstance(start_index, bool)
+        or not isinstance(start_index, int)
+        or start_index < 1
+    ):
+        raise ValueError("local truncation recovery start index is invalid")
     configured: list[tuple[Unit, Path, str]] = []
     identities: set[str] = set()
-    for index, item in enumerate(units, 1):
+    for index, item in enumerate(units, start_index):
         if not isinstance(item, dict):
             raise ValueError("local truncation recovery unit changed")
         unit_id = _safe_unit_id(index, item)

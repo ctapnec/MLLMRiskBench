@@ -16,6 +16,7 @@ from experiments.local_campaign.local_truncation_recovery_execution_phase6 impor
     configure_units,
 )
 from experiments.local_campaign.local_truncation_recovery_continuation_phase6 import (
+    _prior_terminalized,
     extend_completed_selector,
 )
 from experiments.local_campaign.vllm_stability_phase6 import _sha256_json
@@ -222,6 +223,48 @@ def test_execution_configures_exact_hardware_fit_unit(tmp_path) -> None:
     assert config[spec]["num_ctx"] == "fit"
     assert config[spec]["num_predict"] == -1
     assert argv[argv.index("--target-answer-retries") + 1] == "1"
+
+    continued_control = tmp_path / "continued-control"
+    (continued_control / "inputs").mkdir(parents=True)
+    (continued_control / "configs").mkdir()
+    continued = configure_units(
+        inventory,
+        control_root=continued_control,
+        start_index=3,
+    )
+    assert continued[0][0].unit_id.startswith("local-hardware-fit-003-")
+
+
+def test_prior_terminal_bootstrap_is_exact_and_restartable(tmp_path: Path) -> None:
+    prior = tmp_path / "prior"
+    prior.mkdir()
+    assert _prior_terminalized(prior) is False
+
+    marker = {
+        "schema": "ura-local-hardware-fit-interrupted/1",
+        "status": "interrupted",
+        "reason": "ollama_response_body_deadline_not_enforced",
+        "exit_code": 125,
+        "interrupted_at_utc": "2026-09-03T01:00:00Z",
+        "durable_rows": 1_749,
+        "successful_rows_repeated": 0,
+    }
+    (prior / "interruption.json").write_text(
+        json.dumps(marker, sort_keys=True),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="bootstrap is incomplete"):
+        _prior_terminalized(prior)
+    (prior / ".exit").write_bytes(b"125\n")
+    assert _prior_terminalized(prior) is True
+
+    marker["durable_rows"] = 1_748
+    (prior / "interruption.json").write_text(
+        json.dumps(marker, sort_keys=True),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="bootstrap changed"):
+        _prior_terminalized(prior)
 
 
 def test_interrupted_selector_excludes_every_durable_row_without_repeating() -> None:
