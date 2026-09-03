@@ -602,15 +602,19 @@ unit completes that selection.
 
 If the 25-unit continuation was stopped in its LLaVA suffix because response
 length was not bounded independently of context, do not restart it. After all
-seven exact local models have a passing `/2` profile, run
+seven exact local models have a passing current `/3` readiness profile, run
 `python -m experiments.local_campaign.local_bounded_output_continuation_phase6`
-in a fresh named tmux session. Pass the interrupted continuation root and dead
-controller PID, the exact inventory and digest, the profile registry, current
-project-revision receipt and digest, and the usual work/project/scope/session
-arguments. It retains the one usable durable row, schedules the remaining 63
-identities in that unit plus 107 later unstarted identities, and writes a
-170-row completion. Give only that completion to the population-alignment
-recovery below.
+in a fresh named tmux session. Pass the original interrupted continuation root,
+the separate stopped 25,000-token attempt as `--invalid-condition-root`, that
+controller's dead PID, the exact inventory and digest, the profile registry,
+current project-revision receipt and digest, and the usual
+work/project/scope/session arguments. The controller proves that the stopped
+attempt reserved one target call but wrote zero durable measured rows, closes
+its UI lifecycle, then schedules all 170 identities under their model-specific
+profiles. It retains the one usable durable row from the original continuation,
+selects its other 63 identities plus 107 later identities, and writes a 170-row
+completion. Give only that completion to the population-alignment recovery
+below.
 
 After the 25-unit hardware-fit completion is terminal, run
 `python -m experiments.local_campaign.current_ollama_population_alignment_recovery_phase6`

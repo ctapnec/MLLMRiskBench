@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import inspect
+import json
+from pathlib import Path
 
 import pytest
 
 from experiments.local_campaign.local_bounded_output_continuation_phase6 import (
     SCHEMA,
+    _validate_invalid_result_root,
     bounded_local_config,
     validate_alignment_prerequisite,
     validate_completion,
@@ -17,7 +20,7 @@ from ura.targets.local import (
 
 
 def test_bounded_vllm_recovery_keeps_hardware_fit_context() -> None:
-    assert SCHEMA.endswith("/2")
+    assert SCHEMA.endswith("/3")
     spec = "vllm:example/model"
     result = bounded_local_config(
         {
@@ -85,3 +88,59 @@ def test_bounded_recovery_validators_follow_the_named_prior_launch_descriptor() 
     assert 'snapshot.get("launch")' not in alignment_source
     assert 'snapshot["prior_launch"]' in completion_source
     assert 'snapshot["launch"]' not in completion_source
+
+
+def test_invalid_output_condition_requires_zero_durable_measured_rows(tmp_path: Path) -> None:
+    root = tmp_path / "result"
+    root.mkdir()
+    for suffix in ("attempts", "responses", "results", "trails"):
+        (root / f"run.{suffix}.jsonl").write_bytes(b"")
+    (root / "run.manifest.json").write_text(
+        json.dumps(
+            {
+                "code_version": "ura-runner/2.30",
+                "config": {
+                    "components": {
+                        "target": {
+                            "max_model_len": -1,
+                            "max_tokens": 25_000,
+                            "timeout": 120.0,
+                        }
+                    }
+                },
+                "n_datapoints": 3,
+                "n_attempts": 0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (root / "run.error.json").write_text(
+        json.dumps(
+            {
+                "call_budget_snapshot": {
+                    "http_attempts": 0,
+                    "judge_calls": 0,
+                    "max_target_calls": 6,
+                    "target_calls": 1,
+                },
+                "completed_attempts": 0,
+                "exception_type": "ExternalCallFailure",
+                "execution_started": True,
+                "message": (
+                    "target_call failed: generation exceeded the configured hard "
+                    "120s deadline"
+                ),
+                "status": "error",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    evidence = _validate_invalid_result_root(root)
+
+    assert evidence["measured_target_attempts"] == 1
+    assert evidence["durable_measured_rows"] == 0
+
+    (root / "run.responses.jsonl").write_text('{"response":"must not be rerun"}\n')
+    with pytest.raises(ValueError, match="durable row"):
+        _validate_invalid_result_root(root)

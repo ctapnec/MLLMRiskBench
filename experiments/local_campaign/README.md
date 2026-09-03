@@ -401,6 +401,12 @@ allowance, stop it after the durable checkpoint and use
 `local_bounded_output_continuation_phase6`. It snapshots the completed local
 profile registry, retains the one usable row from the interrupted 64-row unit,
 and selects only its other 63 rows plus the 107 rows in later unstarted units.
+If an attempted successor used the unexercised 25,000-token default and stopped
+after one timed-out target reservation but before any durable measured row,
+pass that separate root with `--invalid-condition-root`. The controller
+validates the zero-row result and its failed external Job, marks the abandoned
+controller terminal, and reselects all 170 identities under the measured
+per-model profiles. Diagnostic canary output is not promoted as benchmark data.
 Its completion validator exposes the separately retained DeepSeek prerequisite
 to the 2,350-row population-alignment continuation without rewriting either
 historical root.

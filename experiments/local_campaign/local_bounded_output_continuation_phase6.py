@@ -1,10 +1,12 @@
 """Resume the interrupted hardware-fit tail under a finite output profile.
 
-The prior controller is immutable evidence of a bad execution condition: an
+The original controller is immutable evidence of a bad execution condition: an
 omitted vLLM output cap allowed LLaVA to spend its full 32,768-token context on
-individual answers. This successor retains completed metric units, excludes
-the one usable durable row in the interrupted unit, and runs only the failed,
-length-ended, or never-attempted rows plus later unstarted units.
+individual answers. A stopped successor then exercised an unprofiled
+25,000-token cap, reserved one target call and produced no durable measured row.
+This successor validates both roots, retains completed metric units, excludes
+the one usable durable row in the original interrupted unit, and runs only the
+remaining 170 identities under measured per-model profiles.
 """
 
 from __future__ import annotations
@@ -64,15 +66,20 @@ from experiments.local_campaign.vllm_stability_phase6 import (
     _validate_descriptor,
 )
 from experiments.local_model_profiles import apply_profile
-from experiments.rig_web_app.external_measured import register_external_measured_terminal
+from experiments.rig_web_app.external_measured import load_external_measured_job
 from ura.runner import CODE_VERSION
 
-SCHEMA = "ura-local-bounded-output-continuation-phase6/2"
-LAUNCH_SCHEMA = "ura-local-bounded-output-continuation-phase6-launch/1"
-SNAPSHOT_SCHEMA = "ura-local-bounded-output-prior-interruption/1"
-STATE_SCHEMA = "ura-local-bounded-output-continuation-phase6-unit-state/1"
-AMENDMENT_SCHEMA = "ura-gate5-local-bounded-output-continuation/1"
+SCHEMA = "ura-local-bounded-output-continuation-phase6/3"
+LAUNCH_SCHEMA = "ura-local-bounded-output-continuation-phase6-launch/2"
+SNAPSHOT_SCHEMA = "ura-local-bounded-output-prior-interruption/2"
+STATE_SCHEMA = "ura-local-bounded-output-continuation-phase6-unit-state/2"
+AMENDMENT_SCHEMA = "ura-gate5-local-bounded-output-continuation/2"
 PRIOR_ROOT_SCHEMA = "ura-local-truncation-recovery-phase6-continuation-launch/1"
+INVALID_LAUNCH_SCHEMA = "ura-local-bounded-output-continuation-phase6-launch/1"
+INVALID_SNAPSHOT_SCHEMA = "ura-local-bounded-output-prior-interruption/1"
+INVALID_STATE_SCHEMA = "ura-local-bounded-output-continuation-phase6-unit-state/1"
+INVALID_RUNNER_VERSION = "ura-runner/2.30"
+INVALID_EXPECTED_COMMIT = "24a6bb8268cde80709515dc7c5a202db59de5a40"
 EXPECTED_UNIT_COUNT = 25
 FIRST_RECOVERY_INDEX = 21
 PARTIAL_INDEX = 22
@@ -85,6 +92,243 @@ EXPECTED_RECOVERY_ROWS = 170
 EXPECTED_TOTAL_ROWS = 4_463
 _HEX40 = re.compile(r"[0-9a-f]{40}\Z")
 _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
+
+
+def _validate_prior_terminal(prior_root: Path) -> dict[str, Any]:
+    marker_path = prior_root / "interruption.json"
+    marker = _load_json(marker_path, label="prior bounded-output interruption marker")
+    if (
+        set(marker)
+        != {
+            "schema",
+            "status",
+            "reason",
+            "exit_code",
+            "interrupted_at_utc",
+            "durable_partial_rows",
+            "successful_rows_repeated",
+        }
+        or marker.get("schema") != "ura-local-hardware-fit-continuation-interrupted/1"
+        or marker.get("status") != "interrupted"
+        or marker.get("reason") != "unbounded_generation_output_policy"
+        or marker.get("exit_code") != 125
+        or not isinstance(marker.get("interrupted_at_utc"), str)
+        or marker.get("durable_partial_rows") != EXPECTED_DURABLE
+        or marker.get("successful_rows_repeated") != 0
+        or _stable_file(prior_root / ".exit", label="prior bounded-output exit") != b"125\n"
+        or (prior_root / "completion.json").exists()
+    ):
+        raise ValueError("prior bounded-output terminal changed")
+    return _descriptor(marker_path, label="prior bounded-output interruption marker")
+
+
+def _one_file(root: Path, pattern: str, *, label: str) -> Path:
+    paths = sorted(root.glob(pattern))
+    if len(paths) != 1:
+        raise ValueError(f"{label} did not resolve exactly one file")
+    return paths[0]
+
+
+def _validate_invalid_result_root(result_root: Path) -> dict[str, Any]:
+    """Prove the abandoned condition produced no durable measured response."""
+
+    empty_files = {
+        label: _one_file(result_root, pattern, label=label)
+        for label, pattern in {
+            "attempts": "*.attempts.jsonl",
+            "responses": "*.responses.jsonl",
+            "results": "*.results.jsonl",
+            "trails": "*.trails.jsonl",
+        }.items()
+    }
+    if any(_stable_file(path, label=f"invalid-condition {label}") for label, path in empty_files.items()):
+        raise ValueError("invalid output condition unexpectedly produced a durable row")
+    if list(result_root.glob("*.complete.json")):
+        raise ValueError("invalid output condition unexpectedly completed")
+    manifest_path = _one_file(result_root, "*.manifest.json", label="invalid-condition manifest")
+    manifest = _load_json(manifest_path, label="invalid-condition manifest")
+    target = manifest.get("config", {}).get("components", {}).get("target", {})
+    if (
+        manifest.get("code_version") != INVALID_RUNNER_VERSION
+        or manifest.get("n_datapoints") != 3
+        or manifest.get("n_attempts") != 0
+        or not isinstance(target, dict)
+        or target.get("max_model_len") != -1
+        or target.get("max_tokens") != 25_000
+        or target.get("timeout") != 120.0
+    ):
+        raise ValueError("invalid output-condition manifest changed")
+    error_path = _one_file(result_root, "*.error.json", label="invalid-condition error")
+    error = _load_json(error_path, label="invalid-condition error")
+    budget = error.get("call_budget_snapshot")
+    message = error.get("message")
+    if (
+        error.get("status") != "error"
+        or error.get("exception_type") != "ExternalCallFailure"
+        or error.get("execution_started") is not True
+        or error.get("completed_attempts") != 0
+        or not isinstance(budget, dict)
+        or budget.get("target_calls") != 1
+        or budget.get("judge_calls") != 0
+        or budget.get("http_attempts") != 0
+        or budget.get("max_target_calls") != 6
+        or not isinstance(message, str)
+        or "generation exceeded the configured hard 120s deadline" not in message
+    ):
+        raise ValueError("invalid output-condition failure changed")
+    return {
+        "error": _descriptor(error_path, label="invalid-condition error"),
+        "manifest": _descriptor(manifest_path, label="invalid-condition manifest"),
+        "measured_target_attempts": 1,
+        "durable_measured_rows": 0,
+    }
+
+
+def inspect_invalid_condition(
+    *,
+    invalid_root: Path,
+    prior_root: Path,
+    inventory: Mapping[str, Any],
+    runner_root: Path,
+    work_root: Path,
+) -> dict[str, Any]:
+    """Validate the stopped 25,000-token attempt before superseding it."""
+
+    order = _unit_order(inventory)
+    if any(
+        (invalid_root / name).exists()
+        for name in ("completion.json", "interruption.json", ".exit")
+    ):
+        raise ValueError("invalid output-condition controller is already terminal")
+    launch_path = invalid_root / "launch.json"
+    launch = _load_json(launch_path, label="invalid output-condition launch")
+    inventory_descriptor = launch.get("inventory")
+    if not isinstance(inventory_descriptor, dict):
+        raise ValueError("invalid output-condition launch changed")
+    invalid_inventory_path = _validate_descriptor(
+        inventory_descriptor, label="invalid output-condition inventory"
+    )
+    if _load_json(invalid_inventory_path, label="invalid output-condition inventory") != inventory:
+        raise ValueError("invalid output-condition inventory changed")
+    prior_snapshot_path = _validate_descriptor(
+        launch.get("prior_interruption"), label="invalid output-condition prior snapshot"
+    )
+    prior_snapshot = _load_json(
+        prior_snapshot_path, label="invalid output-condition prior snapshot"
+    )
+    if (
+        launch.get("schema") != INVALID_LAUNCH_SCHEMA
+        or launch.get("expected_commit") != INVALID_EXPECTED_COMMIT
+        or launch.get("runner_code_version") != INVALID_RUNNER_VERSION
+        or launch.get("unit_order") != order[FIRST_RECOVERY_INDEX - 1 :]
+        or launch.get("selected_records") != EXPECTED_RECOVERY_ROWS
+        or launch.get("target_answer_retries") != 1
+        or launch.get("no_valid_rows_repeated") is not True
+        or launch.get("paid_provider_calls") != 0
+        or prior_snapshot_path != invalid_root / "prior-interruption.json"
+        or prior_snapshot.get("schema") != INVALID_SNAPSHOT_SCHEMA
+        or prior_snapshot.get("prior_root") != str(prior_root)
+    ):
+        raise ValueError("invalid output-condition launch changed")
+    state_paths = sorted(invalid_root.glob("units/*/state.json"))
+    first_id = order[FIRST_RECOVERY_INDEX - 1]
+    state_path = invalid_root / "units" / first_id / "state.json"
+    if state_paths != [state_path]:
+        raise ValueError("invalid output-condition measured-state partition changed")
+    state = _load_json(state_path, label="invalid output-condition measured state")
+    result_root = Path(str(state.get("result_root", ""))).resolve(strict=True)
+    expected_result_root = (runner_root / first_id / invalid_root.name).resolve(strict=True)
+    if (
+        state.get("schema") != INVALID_STATE_SCHEMA
+        or state.get("unit_id") != first_id
+        or state.get("source_lane")
+        != inventory["units"][FIRST_RECOVERY_INDEX - 1].get("source_lane")
+        or state.get("selected_records") != 3
+        or state.get("target_answer_retries") != 1
+        or state.get("target_call_cap") != 6
+        or result_root != expected_result_root
+    ):
+        raise ValueError("invalid output-condition measured state changed")
+    for unit_id in order[FIRST_RECOVERY_INDEX:]:
+        if (runner_root / unit_id / invalid_root.name).exists():
+            raise ValueError(f"{unit_id} unexpectedly has an invalid-condition measured root")
+    measured = _validate_invalid_result_root(result_root)
+    job = load_external_measured_job(
+        work_root / "runs", _external_job_id(invalid_root, first_id), probe_session=False
+    )
+    if (
+        job is None
+        or job.state != "failed"
+        or job.exit_code != 1
+        or job.expected_commit != INVALID_EXPECTED_COMMIT
+        or job.out_dir != result_root
+    ):
+        raise ValueError("invalid output-condition external job terminal changed")
+    return {
+        **measured,
+        "external_terminal": _descriptor(
+            job.registration_dir / "terminal.json", label="invalid-condition external terminal"
+        ),
+        "launch": _descriptor(launch_path, label="invalid output-condition launch"),
+        "root": str(invalid_root),
+        "state": _descriptor(state_path, label="invalid output-condition measured state"),
+    }
+
+
+def _validate_invalid_snapshot(value: object) -> Path:
+    if not isinstance(value, dict) or set(value) != {
+        "durable_measured_rows",
+        "error",
+        "external_terminal",
+        "launch",
+        "manifest",
+        "marker",
+        "measured_target_attempts",
+        "root",
+        "state",
+    }:
+        raise ValueError("invalid output-condition snapshot changed")
+    root = Path(str(value.get("root", ""))).resolve(strict=True)
+    if root.is_symlink() or root.parent.name != "engineering":
+        raise ValueError("invalid output-condition snapshot root changed")
+    launch_path = _validate_descriptor(value["launch"], label="invalid-condition launch")
+    state_path = _validate_descriptor(value["state"], label="invalid-condition state")
+    marker_path = _validate_descriptor(value["marker"], label="invalid-condition marker")
+    _validate_descriptor(value["error"], label="invalid-condition error")
+    _validate_descriptor(value["manifest"], label="invalid-condition manifest")
+    _validate_descriptor(value["external_terminal"], label="invalid-condition terminal")
+    marker = _load_json(marker_path, label="invalid-condition marker")
+    if (
+        launch_path != root / "launch.json"
+        or state_path.parent.parent.parent != root
+        or marker_path != root / "interruption.json"
+        or value.get("measured_target_attempts") != 1
+        or value.get("durable_measured_rows") != 0
+        or set(marker)
+        != {
+            "schema",
+            "status",
+            "reason",
+            "exit_code",
+            "interrupted_at_utc",
+            "measured_target_attempts",
+            "durable_measured_rows",
+            "successful_rows_repeated",
+        }
+        or marker.get("schema")
+        != "ura-local-bounded-output-invalid-condition-interrupted/1"
+        or marker.get("status") != "interrupted"
+        or marker.get("reason") != "unexercised_readiness_profile"
+        or marker.get("exit_code") != 125
+        or marker.get("measured_target_attempts") != 1
+        or marker.get("durable_measured_rows") != 0
+        or marker.get("successful_rows_repeated") != 0
+        or not isinstance(marker.get("interrupted_at_utc"), str)
+        or _stable_file(root / ".exit", label="invalid-condition exit") != b"125\n"
+        or (root / "completion.json").exists()
+    ):
+        raise ValueError("invalid output-condition terminal snapshot changed")
+    return root
 
 
 def bounded_local_config(
@@ -304,6 +548,11 @@ def run(args: argparse.Namespace) -> int:
     work_root = args.work_root.resolve(strict=True)
     runner_root = (work_root / "runs/thesis/runner").resolve(strict=True)
     prior_root = _canonical_campaign(args.prior_continuation_root, label="prior root")
+    invalid_root = _canonical_campaign(
+        args.invalid_condition_root, label="invalid output-condition root"
+    )
+    if invalid_root == prior_root:
+        raise ValueError("invalid output-condition root must differ from the prior root")
     control_root = args.control_root
     if control_root.exists() or control_root.is_symlink():
         raise FileExistsError("fresh bounded-output continuation root already exists")
@@ -328,6 +577,14 @@ def run(args: argparse.Namespace) -> int:
         runner_root=runner_root,
         profile_registry=profile_source,
     )
+    prior_marker = _validate_prior_terminal(prior_root)
+    invalid = inspect_invalid_condition(
+        invalid_root=invalid_root,
+        prior_root=prior_root,
+        inventory=inventory,
+        runner_root=runner_root,
+        work_root=work_root,
+    )
 
     control_root.mkdir(mode=0o700)
     for name in ("units", "inputs", "configs"):
@@ -335,35 +592,27 @@ def run(args: argparse.Namespace) -> int:
     profile_snapshot = control_root / "inputs/local-model-profiles.json"
     with profile_snapshot.open("xb") as handle:
         handle.write(profile_bytes)
-    marker_path = prior_root / "interruption.json"
-    if marker_path.exists() or (prior_root / ".exit").exists():
-        raise FileExistsError("prior bounded-output terminal marker already exists")
+    marker_path = invalid_root / "interruption.json"
     marker = {
-        "schema": "ura-local-hardware-fit-continuation-interrupted/1",
+        "schema": "ura-local-bounded-output-invalid-condition-interrupted/1",
         "status": "interrupted",
-        "reason": "unbounded_generation_output_policy",
+        "reason": "unexercised_readiness_profile",
         "exit_code": 125,
         "interrupted_at_utc": _utc_now(),
-        "durable_partial_rows": EXPECTED_DURABLE,
+        "measured_target_attempts": invalid["measured_target_attempts"],
+        "durable_measured_rows": invalid["durable_measured_rows"],
         "successful_rows_repeated": 0,
     }
     _create_json(marker_path, marker)
-    with (prior_root / ".exit").open("xb") as handle:
+    with (invalid_root / ".exit").open("xb") as handle:
         handle.write(b"125\n")
-    register_external_measured_terminal(
-        work_root / "runs",
-        job_id=_external_job_id(prior_root, inspected["order"][PARTIAL_INDEX - 1]),
-        exit_code=125,
-    )
     publish_target_execution(
         work_root=work_root,
-        control_root=prior_root,
-        target_attempts=int(inspected["retained_target_attempts"]) + EXPECTED_DURABLE,
-        successful_target_generations=(
-            int(inspected["retained_successful_generations"]) + EXPECTED_DURABLE - EXPECTED_FAILED
-        ),
+        control_root=invalid_root,
+        target_attempts=int(invalid["measured_target_attempts"]),
+        successful_target_generations=0,
     )
-    finish_child_controller(work_root=work_root, control_root=prior_root, exit_code=125)
+    finish_child_controller(work_root=work_root, control_root=invalid_root, exit_code=125)
 
     configured = configure_units(
         inspected["recovery_inventory"],
@@ -404,7 +653,11 @@ def run(args: argparse.Namespace) -> int:
         "created_at_utc": _utc_now(),
         "prior_root": str(prior_root),
         "prior_launch": inspected["launch"],
-        "prior_marker": _descriptor(marker_path, label="prior interruption marker"),
+        "prior_marker": prior_marker,
+        "invalid_condition_attempt": {
+            **invalid,
+            "marker": _descriptor(marker_path, label="invalid-condition interruption marker"),
+        },
         "partial": inspected["partial"],
         "retained_results": inspected["retained_results"],
     }
@@ -636,9 +889,23 @@ def validate_alignment_prerequisite(completion_path: Path, *, runner_root: Path)
         snapshot_path != control_root / "prior-interruption.json"
         or snapshot.get("schema") != SNAPSHOT_SCHEMA
         or snapshot.get("prior_root") is None
+        or set(snapshot)
+        != {
+            "schema",
+            "created_at_utc",
+            "prior_root",
+            "prior_launch",
+            "prior_marker",
+            "invalid_condition_attempt",
+            "partial",
+            "retained_results",
+        }
     ):
         raise ValueError("bounded-output interruption changed")
+    _validate_invalid_snapshot(snapshot["invalid_condition_attempt"])
     prior_root = Path(str(snapshot["prior_root"])).resolve(strict=True)
+    if snapshot["prior_marker"] != _validate_prior_terminal(prior_root):
+        raise ValueError("prior bounded-output terminal descriptor changed")
     prior_launch_path = _validate_descriptor(
         snapshot.get("prior_launch"), label="interrupted continuation launch"
     )
@@ -835,6 +1102,7 @@ def validate_completion(completion_path: Path, *, runner_root: Path) -> dict[str
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--prior-continuation-root", type=Path, required=True)
+    parser.add_argument("--invalid-condition-root", type=Path, required=True)
     parser.add_argument("--interrupted-controller-pid", type=int, required=True)
     parser.add_argument("--inventory", type=Path, required=True)
     parser.add_argument("--inventory-sha256", required=True)
