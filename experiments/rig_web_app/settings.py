@@ -110,10 +110,20 @@ class SettingsMixin:
                     f"but matched 0 of {len(unmatched)} model(s) - the page "
                     "layout may have changed; enter these rates by hand</li>"
                 )
+        added = summary.get("models_added", [])
+        added_note = ""
+        if isinstance(added, list) and added:
+            added_note = (
+                " <strong>Added "
+                + html.escape(str(len(added)))
+                + " missing current-roster model(s).</strong>"
+            )
         return (
             "<div class='notice blue'><strong>Fetched provider pricing ("
             + html.escape(str(summary.get("rates_written", 0)))
-            + " rate(s) written).</strong><p class='note'>Auto-fetched rates "
+            + " rate(s) written).</strong>"
+            + added_note
+            + "<p class='note'>Auto-fetched rates "
             "are stamped with their source and date; verify each against the "
             "provider's page before relying on the calculated cost. A model you "
             "have priced by hand is left untouched, and editing a fetched rate "

@@ -43,6 +43,7 @@ config-backups).  Use the console button while the console is running.
 from __future__ import annotations
 
 import argparse
+import copy
 import html
 import json
 import os
@@ -692,6 +693,62 @@ def _write_pricing_atomically(
     os.replace(tmp, pricing_path)
 
 
+def _merge_missing_example_models(
+    pricing: dict[str, Any], repo_root: Path
+) -> list[str]:
+    """Add new checked-in roster entries without changing operator data.
+
+    Long-lived deployments legitimately retain an older ``pricing.json``.
+    Fetching must still discover model rows added to the current checked-in
+    null roster; otherwise a new API target can never receive a fetched price.
+    Existing providers, models, rates and arbitrary operator fields are left
+    byte-for-byte equivalent after JSON decoding.
+    """
+
+    example_path = repo_root / _PRICING_EXAMPLE
+    try:
+        raw = example_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return []
+    except OSError as exc:
+        raise ValueError(f"{_PRICING_EXAMPLE} could not be read ({exc})") from exc
+    try:
+        example = strict_json_loads(raw)
+    except (UnicodeError, ValueError, RecursionError) as exc:
+        raise ValueError(f"{_PRICING_EXAMPLE} is not valid JSON ({exc})") from exc
+    if not isinstance(example, dict) or not isinstance(example.get("providers"), dict):
+        raise ValueError(f"{_PRICING_EXAMPLE} has no provider roster")
+
+    providers = pricing.setdefault("providers", {})
+    if not isinstance(providers, dict):
+        raise ValueError("experiments/pricing.json 'providers' is not a JSON object")
+    added: list[str] = []
+    for provider, example_provider in sorted(example["providers"].items()):
+        if not isinstance(example_provider, dict):
+            continue
+        example_models = example_provider.get("models")
+        if not isinstance(example_models, dict):
+            continue
+        provider_entry = providers.get(provider)
+        if provider_entry is None:
+            provider_entry = {"models": {}}
+            providers[provider] = provider_entry
+        if not isinstance(provider_entry, dict):
+            continue
+        provider_models = provider_entry.get("models")
+        if provider_models is None:
+            provider_models = {}
+            provider_entry["models"] = provider_models
+        if not isinstance(provider_models, dict):
+            continue
+        for model, example_model in sorted(example_models.items()):
+            if model in provider_models or not isinstance(example_model, dict):
+                continue
+            provider_models[model] = copy.deepcopy(example_model)
+            added.append(f"{provider}:{model}")
+    return added
+
+
 def fetch_pricing(
     repo_root: Path = _REPO_ROOT,
     *,
@@ -727,9 +784,21 @@ def fetch_pricing(
             "fetched_at": today, "providers": {}, "rates_written": 0,
             "error": "experiments/pricing.json 'providers' is not a JSON object",
         }
+    try:
+        models_added = _merge_missing_example_models(pricing, repo_root)
+    except ValueError as exc:
+        return {
+            "fetched_at": today,
+            "providers": {},
+            "rates_written": 0,
+            "error": str(exc),
+        }
 
     summary: dict[str, Any] = {
-        "fetched_at": today, "providers": {}, "rates_written": 0,
+        "fetched_at": today,
+        "providers": {},
+        "rates_written": 0,
+        "models_added": models_added,
     }
     for provider, config in sorted(sources.get("providers", {}).items()):
         url = str(config.get("url", "")).strip() if isinstance(config, dict) else ""

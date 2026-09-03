@@ -283,6 +283,58 @@ def test_fetch_pricing_merges_with_provenance(tmp_path: Path) -> None:
     assert rate["effective_date"] == "2026-08-16"
 
 
+def test_fetch_pricing_adds_missing_current_roster_models_without_overwrite(
+    tmp_path: Path,
+) -> None:
+    operator = {
+        "effective_date": "2026-08-15",
+        "currency": "USD",
+        "per_million_tokens": {"input": 9.0, "output": 45.0},
+    }
+    repo = _write_repo(
+        tmp_path,
+        pricing={
+            "providers": {
+                "anthropic": {
+                    "models": {"claude-fable-5": {"rates": [operator]}}
+                }
+            }
+        },
+        sources={"providers": {"anthropic": {"url": "https://a/pricing"}}},
+    )
+    example = Path(__file__).parents[2] / "experiments/rig/pricing.example.json"
+    (repo / "experiments/rig/pricing.example.json").write_bytes(example.read_bytes())
+
+    summary = pf.fetch_pricing(
+        repo,
+        today="2026-08-16",
+        fetcher=_fetcher_for({"https://a/pricing": _fixture("anthropic.html")}),
+    )
+    written = json.loads((repo / "experiments/pricing.json").read_text("utf-8"))
+    models = written["providers"]["anthropic"]["models"]
+
+    assert models["claude-fable-5"]["rates"] == [operator]
+    assert set(summary["models_added"]) >= {
+        "anthropic:claude-opus-5",
+        "anthropic:claude-sonnet-5",
+        "openai:gpt-5.5",
+        "openai:gpt-5.6-luna",
+        "openai:gpt-5.6-terra",
+    }
+    assert summary["providers"]["anthropic"]["matched"] == [
+        "claude-fable-5",
+        "claude-haiku-4-5-20251001",
+        "claude-opus-5",
+        "claude-sonnet-5",
+    ]
+    for model in (
+        "claude-haiku-4-5-20251001",
+        "claude-opus-5",
+        "claude-sonnet-5",
+    ):
+        assert models[model]["rates"][-1]["auto_fetched"] is True
+
+
 def test_fetch_pricing_never_overwrites_operator_rate(tmp_path: Path) -> None:
     # An operator-entered rate (no auto_fetched) on today's date must survive:
     # a same-valued fetch does not append, and even a differing fetch appends

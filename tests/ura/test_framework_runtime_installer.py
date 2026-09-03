@@ -2712,6 +2712,8 @@ def test_distro_repin_script_is_fail_closed_and_sources_canonical_ura_env_last()
         "tests/ura/test_current_contract_docs.py",
         "tests/ura/test_hosted_roster_docs.py",
         "tests/ura/test_local_campaign_stats_adapter.py",
+        "tests/ura/test_pricing_fetch.py",
+        "tests/ura/test_rig_web.py::test_pricing_fetch_banner_reports_added_roster_models",
         "tests/ura/test_rig_web_model_picker.py",
         "tests/ura/test_rig_web_page_tabs.py",
         "tests/ura/test_project_metadata.py",

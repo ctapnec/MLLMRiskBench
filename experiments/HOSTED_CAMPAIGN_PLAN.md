@@ -78,6 +78,10 @@ Validate the sealed local Phase 7 inventory, its project/source receipts,
 selection and rendering evidence, prepared attacks, and current provider
 registry/prices/budgets. Every prospective hosted row must prove membership in
 one exact local input selection without printing prompt or response text.
+Before projection, use the pricing fetch action to add any missing models from
+the current checked-in null roster and fetch supported rates. It must preserve
+all existing operator-entered models, rates and fields. Models whose current
+price cannot be fetched remain explicitly unpriced and block their own lane.
 
 Gate A0: all subset proofs validate and current provider terms and prices have
 an effective timestamp. Failure affects only the hosted condition.

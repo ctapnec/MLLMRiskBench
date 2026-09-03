@@ -8307,6 +8307,23 @@ def test_pricing_fetch_banner_reports_zero_match_provider() -> None:
     assert "matched 0 of 1 model" in banner
 
 
+def test_pricing_fetch_banner_reports_added_roster_models() -> None:
+    summary = {
+        "rates_written": 3,
+        "models_added": [
+            "anthropic:claude-opus-5",
+            "anthropic:claude-sonnet-5",
+            "openai:gpt-5.6-terra",
+        ],
+        "providers": {},
+    }
+
+    banner = RigWebApp._pricing_fetch_banner(json.dumps(summary))
+
+    assert "3 rate(s) written" in banner
+    assert "Added 3 missing current-roster model(s)" in banner
+
+
 def test_set_secret_atomic_write_preserves_prior_file_on_fault(
     tmp_path: Path, clean_secret_env, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

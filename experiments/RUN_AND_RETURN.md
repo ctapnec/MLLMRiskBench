@@ -5052,6 +5052,9 @@ semantics, and diagnostic evidence it displays never authorizes a campaign.
 The per-model rates can be filled by hand or pulled from each provider's
 published pricing page by the fetcher (`experiments/pricing_fetch`, also the
 Config section's "Fetch from provider pricing pages" action). The fetcher does
+first add model entries missing from an older local file by copying only their
+null placeholders from the current checked-in roster; it never replaces an
+existing provider, model, rate or operator field. It then does
 read-only HTTPS GETs of the URLs in `experiments/pricing-sources.json`, matches
 model ids exactly, and merges the rates it can read with `auto_fetched` /
 `source_url` / `fetched_at` provenance; it never fabricates a price (Anthropic,
