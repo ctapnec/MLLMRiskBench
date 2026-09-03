@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import inspect
+
 import pytest
 
 from experiments.local_campaign.local_bounded_output_continuation_phase6 import (
     SCHEMA,
     bounded_local_config,
+    validate_alignment_prerequisite,
+    validate_completion,
 )
 from ura.targets.local import (
     DEFAULT_LOCAL_REQUEST_TIMEOUT_SECONDS,
@@ -71,3 +75,13 @@ def test_bounded_recovery_refuses_non_hardware_fit_context(
             generation_tokens=MAX_VLLM_GENERATION_TOKENS,
             timeout=DEFAULT_LOCAL_REQUEST_TIMEOUT_SECONDS,
         )
+
+
+def test_bounded_recovery_validators_follow_the_named_prior_launch_descriptor() -> None:
+    alignment_source = inspect.getsource(validate_alignment_prerequisite)
+    completion_source = inspect.getsource(validate_completion)
+
+    assert 'snapshot.get("prior_launch")' in alignment_source
+    assert 'snapshot.get("launch")' not in alignment_source
+    assert 'snapshot["prior_launch"]' in completion_source
+    assert 'snapshot["launch"]' not in completion_source

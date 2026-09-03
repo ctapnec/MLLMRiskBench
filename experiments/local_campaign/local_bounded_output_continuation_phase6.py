@@ -566,6 +566,26 @@ def validate_alignment_prerequisite(completion_path: Path, *, runner_root: Path)
         or completion.get("paid_provider_calls") != 0
     ):
         raise ValueError("bounded-output completion contract changed")
+    launch_path = _validate_descriptor(completion["launch"], label="bounded-output launch")
+    profile_path = _validate_descriptor(
+        completion["profile_registry"], label="local-model profile registry"
+    )
+    launch = _load_json(launch_path, label="bounded-output launch")
+    if (
+        launch_path != control_root / "launch.json"
+        or profile_path != control_root / "inputs/local-model-profiles.json"
+        or launch.get("schema") != LAUNCH_SCHEMA
+        or launch.get("profile_registry") != completion["profile_registry"]
+        or launch.get("inventory") != completion["inventory"]
+        or launch.get("prior_interruption") != completion["prior_interruption"]
+        or launch.get("gate5_amendment") != completion["gate5_amendment"]
+        or launch.get("unit_order") != completion["unit_order"]
+        or launch.get("selected_records") != EXPECTED_RECOVERY_ROWS
+        or launch.get("target_answer_retries") != 1
+        or launch.get("no_valid_rows_repeated") is not True
+        or launch.get("paid_provider_calls") != 0
+    ):
+        raise ValueError("bounded-output launch contract changed")
     inventory_path = _validate_descriptor(completion["inventory"], label="bounded-output inventory")
     inventory = load_inventory(inventory_path, str(completion["inventory"].get("sha256", "")))
     order = _unit_order(inventory)
@@ -620,7 +640,7 @@ def validate_alignment_prerequisite(completion_path: Path, *, runner_root: Path)
         raise ValueError("bounded-output interruption changed")
     prior_root = Path(str(snapshot["prior_root"])).resolve(strict=True)
     prior_launch_path = _validate_descriptor(
-        snapshot.get("launch"), label="interrupted continuation launch"
+        snapshot.get("prior_launch"), label="interrupted continuation launch"
     )
     if prior_launch_path != prior_root / "launch.json":
         raise ValueError("interrupted continuation launch placement changed")
@@ -663,6 +683,152 @@ def validate_alignment_prerequisite(completion_path: Path, *, runner_root: Path)
         "deepseek_revision": str(deepseek["revision"]),
         "inventory": inventory,
         "unit_order": order,
+    }
+
+
+def validate_completion(completion_path: Path, *, runner_root: Path) -> dict[str, Any]:
+    """Validate all final row strata for Phase 7 without pooling them."""
+
+    prerequisite = validate_alignment_prerequisite(completion_path, runner_root=runner_root)
+    resolved = completion_path.resolve(strict=True)
+    control_root = resolved.parent
+    completion = _load_json(resolved, label="bounded-output completion")
+    inventory = prerequisite["inventory"]
+    order = prerequisite["unit_order"]
+    completion_descriptor = prerequisite["completion"]
+    snapshot_path = _validate_descriptor(
+        completion["prior_interruption"], label="bounded-output interruption"
+    )
+    snapshot = _load_json(snapshot_path, label="bounded-output interruption")
+    prior_root = Path(str(snapshot["prior_root"])).resolve(strict=True)
+    prior_launch_path = _validate_descriptor(
+        snapshot["prior_launch"], label="interrupted continuation launch"
+    )
+    prior_launch = _load_json(prior_launch_path, label="interrupted continuation launch")
+    retained_snapshot_path = _validate_descriptor(
+        prior_launch["prior_interruption"], label="retained hardware-fit snapshot"
+    )
+    retained_snapshot = _load_json(retained_snapshot_path, label="retained hardware-fit snapshot")
+    base_root = Path(str(retained_snapshot["prior_control_root"])).resolve(strict=True)
+    base_results = retained_snapshot["retained_results"]
+    middle_results = snapshot.get("retained_results")
+    final_results = completion["unit_results"]
+    if (
+        not isinstance(middle_results, dict)
+        or set(middle_results) != set(order[2:20])
+        or set(final_results) != set(order[20:])
+    ):
+        raise ValueError("bounded-output retained result partition changed")
+
+    terminal_states: dict[str, str] = {}
+    lifecycle_roots: dict[str, str] = {}
+    lifecycle_evidence: dict[str, dict[str, object]] = {}
+    metric_roots: dict[str, str] = {}
+    metric_evidence: dict[str, dict[str, object]] = {}
+    metric_grids: list[dict[str, object]] = []
+    metric_eligibility: list[dict[str, object]] = []
+    metric_markers: list[dict[str, object]] = []
+    metric_revisions: dict[str, str] = {}
+    sources: set[str] = set()
+    successful = missing = selected_total = 0
+    for index, (unit_id, item) in enumerate(zip(order, inventory["units"], strict=True)):
+        if index < 2:
+            result = base_results[unit_id]
+            physical_root = base_root
+            state_schema = BASE_STATE_SCHEMA
+            evidence_completion = _descriptor(
+                retained_snapshot_path, label="retained hardware-fit snapshot"
+            )
+        elif index < 20:
+            result = middle_results[unit_id]
+            physical_root = prior_root
+            state_schema = PRIOR_STATE_SCHEMA
+            evidence_completion = _descriptor(snapshot_path, label="bounded-output interruption")
+        else:
+            result = final_results[unit_id]
+            physical_root = control_root
+            state_schema = STATE_SCHEMA
+            evidence_completion = completion_descriptor
+        selected = int(item["summary"]["recovery_records"])
+        if index == PARTIAL_INDEX - 1:
+            selected -= EXPECTED_USABLE
+        recovery_corpora = item["recovery_selection"]["corpora"]
+        corpus = next(iter(recovery_corpora)) if len(recovery_corpora) == 1 else None
+        validated = _validate_metric_result(
+            result,
+            logical_lane=unit_id,
+            physical_unit=unit_id,
+            source_lane=str(item["source_lane"]),
+            corpus=corpus,
+            selected_records=selected,
+            runner_root=runner_root.resolve(strict=True),
+            control_root=physical_root,
+            state_schema=state_schema,
+            completion=evidence_completion,
+        )
+        terminal_states[unit_id] = "measured_complete"
+        lifecycle_roots[unit_id] = str(validated["root"])
+        evidence = dict(validated["evidence"])
+        if index == PARTIAL_INDEX - 1:
+            evidence["interrupted_usable_row"] = dict(snapshot["partial"])
+        lifecycle_evidence[unit_id] = evidence
+        metric_roots[unit_id] = str(validated["root"])
+        metric_evidence[unit_id] = dict(validated["evidence"])
+        metric_grids.append(dict(validated["grid"]))
+        metric_eligibility.append(dict(validated["eligibility_plan"]))
+        metric_markers.extend(validated["completion_markers"])
+        metric_revisions[unit_id] = str(validated["revision"])
+        sources.add(str(validated["source"]))
+        selected_total += selected
+        successful += int(validated["successful"])
+        missing += int(validated["missing"])
+    selected_total += EXPECTED_USABLE
+    successful += EXPECTED_USABLE
+    if (
+        selected_total != EXPECTED_TOTAL_ROWS
+        or successful + missing != EXPECTED_TOTAL_ROWS
+        or len(sources) != 1
+    ):
+        raise ValueError("bounded-output final population accounting changed")
+    revision_strata: dict[str, list[str]] = {}
+    for lane, revision in metric_revisions.items():
+        revision_strata.setdefault(revision, []).append(lane)
+    partial_id = order[PARTIAL_INDEX - 1]
+    return {
+        "completion": completion_descriptor,
+        "inventory": dict(completion["inventory"]),
+        "runner_code_version": "mixed",
+        "output_policy_stratum": "mixed_retained_and_profiled_response_allowance",
+        "unit_order": order,
+        "terminal_states": terminal_states,
+        "lifecycle_roots": lifecycle_roots,
+        "lifecycle_evidence": lifecycle_evidence,
+        "lifecycle_revision_strata": dict(revision_strata),
+        "lifecycle_project_revision_receipt_sha256": dict(metric_revisions),
+        "metric_lane_order": list(order),
+        "metric_roots": metric_roots,
+        "metric_evidence": metric_evidence,
+        "metric_grids": metric_grids,
+        "metric_eligibility_plans": metric_eligibility,
+        "metric_completion_markers": metric_markers,
+        "revision_strata": revision_strata,
+        "metric_project_revision_receipt_sha256": metric_revisions,
+        "source_conformance_sha256": next(iter(sources)),
+        "target_execution": {
+            "target_attempts": EXPECTED_TOTAL_ROWS,
+            "successful_target_generations": successful,
+            "missing_responses": missing,
+        },
+        "planned_unique_rows": EXPECTED_TOTAL_ROWS,
+        "population_segments": {
+            partial_id: {
+                "profiled_rows": EXPECTED_PARTIAL_SELECTED - EXPECTED_USABLE,
+                "retained_usable_rows": EXPECTED_USABLE,
+                "security_metric_pooling_permitted": False,
+            }
+        },
+        "successful_rows_repeated": 0,
+        "cross_condition_pooling_permitted": False,
     }
 
 

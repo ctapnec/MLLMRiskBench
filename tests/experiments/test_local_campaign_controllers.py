@@ -1560,6 +1560,8 @@ def test_phase7_requires_local_hardware_fit_as_a_separate_stratum() -> None:
     )
     phase8 = (root / "phase8_human_audit.py.in").read_text(encoding="utf-8")
     required = (
+        "local_bounded_output_continuation_phase6 import (",
+        '"population_segments": current.get("population_segments", {}),',
         "validate_local_hardware_fit_completion(",
         '"local_hardware_fit_recovery": local_hardware_fit_recovery,',
         "local_hardware_fit_recovery=local_hardware_fit_recovery,",

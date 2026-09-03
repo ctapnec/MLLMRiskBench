@@ -60,7 +60,7 @@ from experiments.local_campaign.vllm_context_recovery_phase6 import (
     UNIT_ID as VLLM_CONTEXT_RECOVERY_UNIT,
     validate_completion as validate_vllm_context_recovery_completion,
 )
-from experiments.local_campaign.local_truncation_recovery_execution_phase6 import (
+from experiments.local_campaign.local_bounded_output_continuation_phase6 import (
     validate_completion as validate_local_hardware_fit_completion,
 )
 from experiments.local_campaign.failed_output_recovery_phase6 import (
@@ -16541,6 +16541,7 @@ class AnalysisController:
             "output_policy_stratum": current["output_policy_stratum"],
             "target_execution": current["target_execution"],
             "planned_unique_rows": current["planned_unique_rows"],
+            "population_segments": current.get("population_segments", {}),
             "missing_responses_retained": True,
             "successful_rows_repeated": current["successful_rows_repeated"],
             "cross_condition_pooling_permitted": False,
