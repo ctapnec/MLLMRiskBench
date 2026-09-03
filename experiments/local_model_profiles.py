@@ -18,7 +18,8 @@ from ura.strict_json import strict_json_loads
 
 
 LEGACY_SCHEMA = "ura-local-model-execution-profiles/1"
-SCHEMA = "ura-local-model-execution-profiles/2"
+UNBOUND_TOPOLOGY_SCHEMA = "ura-local-model-execution-profiles/2"
+SCHEMA = "ura-local-model-execution-profiles/3"
 _HEX40_64 = re.compile(r"[0-9a-f]{40,64}\Z")
 _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 _MAX_BYTES = 4 * 1024 * 1024
@@ -51,6 +52,7 @@ def _read_document(path: Path) -> dict[str, Any]:
     value = strict_json_loads(raw.decode("utf-8"))
     if not isinstance(value, dict) or value.get("schema") not in {
         LEGACY_SCHEMA,
+        UNBOUND_TOPOLOGY_SCHEMA,
         SCHEMA,
     }:
         raise ValueError("local model profile registry schema changed")
@@ -67,10 +69,11 @@ def load_profiles(
     if not selected_path.exists():
         return {}
     value = _read_document(selected_path)
-    if value["schema"] == LEGACY_SCHEMA:
-        # Schema /1 was derived from short-answer probes that did not exercise
-        # the configured generation ceiling. It remains readable historical
-        # state but cannot configure a new local inference call.
+    if value["schema"] in {LEGACY_SCHEMA, UNBOUND_TOPOLOGY_SCHEMA}:
+        # Schema /1 did not exercise the generation ceiling and schema /2 did
+        # not bind the vLLM topology that determines hardware-fit context.
+        # Both remain readable historical state but cannot configure a new
+        # local inference call.
         return {}
     profiles: dict[str, dict[str, Any]] = {}
     for spec, entry in value["models"].items():
@@ -123,7 +126,21 @@ def load_profiles(
         ):
             raise ValueError(f"local model profile {spec!r} is invalid")
         if spec.startswith("vllm:"):
-            expected_execution = {"max_model_len": -1}
+            tp = local_execution.get("tensor_parallel_size")
+            utilization = local_execution.get("gpu_memory_utilization")
+            if (
+                isinstance(tp, bool)
+                or tp not in {1, 2}
+                or isinstance(utilization, bool)
+                or not isinstance(utilization, (int, float))
+                or not 0.1 <= float(utilization) <= 0.95
+            ):
+                raise ValueError(f"local model profile {spec!r} condition is invalid")
+            expected_execution = {
+                "gpu_memory_utilization": utilization,
+                "max_model_len": -1,
+                "tensor_parallel_size": tp,
+            }
         else:
             from ura.targets.local import validate_ollama_think
 
@@ -173,7 +190,7 @@ def apply_profile(
         raise ValueError(f"local model profile modalities differ for {spec!r}")
     if spec.startswith("vllm:"):
         result["max_tokens"] = profile["generation_tokens"]
-        result["max_model_len"] = -1
+        result.update(profile["local_execution"])
     else:
         result["num_predict"] = profile["generation_tokens"]
         result.update(profile["local_execution"])
@@ -207,7 +224,7 @@ def update_registry(
     target = (path or registry_path()).expanduser()
     if target.exists():
         document = _read_document(target)
-        if document["schema"] == LEGACY_SCHEMA:
+        if document["schema"] in {LEGACY_SCHEMA, UNBOUND_TOPOLOGY_SCHEMA}:
             document = {"schema": SCHEMA, "models": {}}
     else:
         document = {"schema": SCHEMA, "models": {}}

@@ -2019,8 +2019,9 @@ cleaned up. Pull is a typed Jobs entry whose live activity is `model_download`.
 After a successful UI pull, the console discovers the exact installed digest
 and modalities and automatically launches `local_model_readiness` as a linked
 Jobs entry. That follow-up descends from the local response ceiling until the
-first sub-120-second cap, runs each text/image stress observation in a fresh
-child process, and then runs the seeded 10-text/5-image gate there. Automatic
+first text-throughput cap that is reached below 120 seconds, checks that one
+physical-image response is nonempty and below the deadline when applicable,
+and then runs the seeded 10-text/5-image gate there. Automatic
 Ollama profiling binds the known family control: GPT-OSS uses low thinking,
 DeepSeek-R1 keeps thinking enabled, and other discovered families disable it.
 The passing hardware-bound profile is written to the shared registry. A pull
@@ -2188,7 +2189,10 @@ image-capable target, one physical-image generation starting at 25,000 tokens
 and descending through 16,384, 8,192, 4,096, 2,048, 1,024, 512, and 256. Every
 request has a 120-second deadline. Testing stops at the first condition whose
 response reached at least 95 percent of the cap and finished below the deadline
-for text and, when declared, physical-image input.
+in the text-throughput stress. When image is declared, one physical-image
+response must also be nonempty and finish below the deadline. It need not
+exhaust the output allowance: a normal end-of-sequence is responsiveness, not a
+throughput failure.
 Every stress observation runs in its own process. Process exit, rather than an
 in-process engine close alone, is the cleanup boundary before the next cap, so
 a cancelled vLLM request cannot retain CUDA state or contaminate the lower-cap
@@ -2197,21 +2201,23 @@ The parent starts the 120-second clock from that marker and terminates the child
 at the boundary; model loading and graph compilation are therefore not charged
 to request latency, and delayed Python signal delivery cannot extend a request.
 A failed text stress rejects the candidate immediately; only a text-fitting cap
-is submitted to the physical-image stress check.
+is submitted to the physical-image responsiveness check.
 It then runs the ten deterministic benign question calls and five deterministic
 synthetic-image calls at that selected cap. Admission requires at least five
 correct text answers and at least two correct image answers. The other five text
 responses and three image responses may be incorrect or empty. Store each
-passing `ura-local-model-readiness/3` receipt and its SHA-256 under the
+passing `ura-local-model-readiness/4` receipt and its SHA-256 under the
 operator-bound `URA_LOCAL_MODEL_READINESS_ROOT`. Set
 `URA_LOCAL_MODEL_PROFILE_REGISTRY` to one regular file under `$URA_WORK` or pass
 `--profile-registry`; the command atomically records the proven allowance,
-hardware-fit context, and Ollama thinking mode bound to the exact
+hardware-fit context, exact vLLM tensor-parallel size and GPU memory
+utilization, and Ollama thinking mode bound to the exact
 revision/digest and modalities. CLI and Build require the current
-`ura-local-model-execution-profiles/2` registry and apply that execution profile
-even if a local config carries another value. Retained readiness schemas
-`/1` and `/2` and registry schema `/1` remain historical evidence but do not
-supply a current execution profile. Hosted
+`ura-local-model-execution-profiles/3` registry and apply that execution profile
+even if a local config carries another value. Retained readiness schemas `/1`
+through `/3` and registry schemas `/1` and `/2` remain historical evidence but
+do not supply a current execution profile; registry `/2` did not bind the vLLM
+topology that determines hardware-fit context. Hosted
 models and hosted judges never use this local registry; their explicit maximum
 output tokens are derived from the approved paid budget and they receive one
 attempt. Empty survey observations remain

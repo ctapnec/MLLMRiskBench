@@ -128,7 +128,7 @@ def _write_execution_profile(
     evidence = repo / "profile-readiness.json"
     evidence.write_text("{}\n", encoding="utf-8")
     registry = {
-        "schema": "ura-local-model-execution-profiles/2",
+        "schema": "ura-local-model-execution-profiles/3",
         "models": {
             spec: {
                 "generation_tokens": generation_tokens,
@@ -136,7 +136,15 @@ def _write_execution_profile(
                     identity_key: str(config[identity_key]).lower(),
                 },
                 "local_execution": (
-                    {"max_model_len": -1}
+                    {
+                        "gpu_memory_utilization": config.get(
+                            "gpu_memory_utilization", 0.9
+                        ),
+                        "max_model_len": -1,
+                        "tensor_parallel_size": config.get(
+                            "tensor_parallel_size", 1
+                        ),
+                    }
                     if spec.startswith("vllm:")
                     else {"num_ctx": "fit", "think": config.get("think", False)}
                 ),

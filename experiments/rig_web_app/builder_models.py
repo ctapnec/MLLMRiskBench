@@ -656,8 +656,16 @@ class BuilderModelsMixin:
                 # The operator has explicitly chosen the precision for a model
                 # whose size is unknown. The CLI re-checks this opt-in before run.
                 resolved["allow_unknown_fit"] = True
-            # Hardware-auto TP: persist exactly what the model row displays.
-            resolved["tensor_parallel_size"] = profile["recommended_tensor_parallel_size"]
+            # A readiness profile binds the topology that produced its context
+            # and timing evidence. Only an unprofiled catalogue row may use the
+            # generic hardware recommendation.
+            profiled_execution = execution_profile.get("local_execution")
+            resolved["tensor_parallel_size"] = (
+                int(profiled_execution["tensor_parallel_size"])
+                if isinstance(profiled_execution, Mapping)
+                and profiled_execution.get("tensor_parallel_size") in {1, 2}
+                else profile["recommended_tensor_parallel_size"]
+            )
             selected[spec] = resolved
         return (
             json.dumps(

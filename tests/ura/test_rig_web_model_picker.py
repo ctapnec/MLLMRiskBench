@@ -131,7 +131,17 @@ def _repo_app(
             "generation_tokens": 4096,
             "identity": {identity_key: identity.lower()},
             "local_execution": (
-                {"max_model_len": -1}
+                {
+                    "gpu_memory_utilization": value.get(
+                        "gpu_memory_utilization", 0.9
+                    ),
+                    "max_model_len": -1,
+                    "tensor_parallel_size": (
+                        value.get("tensor_parallel_size")
+                        if value.get("tensor_parallel_size") in {1, 2}
+                        else 1
+                    ),
+                }
                 if spec.startswith("vllm:")
                 else {"num_ctx": "fit", "think": value.get("think", False)}
             ),
@@ -145,7 +155,7 @@ def _repo_app(
         }
     (repo / "experiments" / "local-model-profiles.json").write_text(
         json.dumps({
-            "schema": "ura-local-model-execution-profiles/2",
+            "schema": "ura-local-model-execution-profiles/3",
             "models": profiles,
         }),
         encoding="utf-8",
@@ -357,6 +367,31 @@ def test_picker_has_one_selector_per_hosted_vllm_and_ollama_row_and_safe_layout(
     ):
         assert contract in style
     app.close()
+
+
+def test_profiled_vllm_topology_reaches_materialized_ui_config(
+    tmp_path: Path,
+) -> None:
+    app = _repo_app(
+        tmp_path,
+        local={
+            _LOCAL: {
+                "revision": "a" * 40,
+                "modalities": ["text"],
+                "parameter_count_b": 7,
+                "tensor_parallel_size": 2,
+                "gpu_memory_utilization": 0.85,
+            }
+        },
+    )
+    try:
+        path = app._materialize_selected_local_config([_LOCAL])
+        selected = json.loads(path.read_text(encoding="utf-8"))[_LOCAL]
+        assert selected["tensor_parallel_size"] == 2
+        assert selected["gpu_memory_utilization"] == 0.85
+        assert "TP2" in app._build_page().decode("utf-8")
+    finally:
+        app.close()
 
 
 def test_expensive_warning_comes_from_comparable_pricing_and_is_judge_only(

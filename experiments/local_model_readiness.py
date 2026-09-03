@@ -60,7 +60,8 @@ from ura.model_acquisition_runtime import (  # noqa: E402
 
 LEGACY_SCHEMA = "ura-local-model-readiness/1"
 BOUNDED_SCHEMA = "ura-local-model-readiness/2"
-SCHEMA = "ura-local-model-readiness/3"
+CAP_STRESS_SCHEMA = "ura-local-model-readiness/3"
+SCHEMA = "ura-local-model-readiness/4"
 PROBE_SCHEMA = "ura-local-model-readiness-probe/1"
 PROBE_START_SCHEMA = "ura-local-model-readiness-probe-start/1"
 READINESS_SEED = 20260829
@@ -149,6 +150,10 @@ def readiness_policy() -> dict[str, object]:
     return {
         "generation_conditions": list(PROFILE_GENERATION_TOKEN_CANDIDATES),
         "generation_selection": "first_descending_stress_pass",
+        "generation_stress_by_modality": {
+            "text": "reach_cap_under_deadline",
+            "image": "nonempty_under_deadline",
+        },
         "generation_stress_minimum_fraction": PROFILE_STRESS_MINIMUM_FRACTION,
         "nonresponses_count_as_incorrect": True,
         "per_request_deadline_seconds": PROFILE_REQUEST_DEADLINE_SECONDS,
@@ -160,6 +165,14 @@ def readiness_policy() -> dict[str, object]:
         "vision_min_correct": VISION_MIN_CORRECT,
         "vision_sample_size": VISION_SAMPLE_SIZE,
     }
+
+
+def cap_stress_readiness_policy() -> dict[str, object]:
+    """Return the immutable policy carried by retained schema /3 receipts."""
+
+    policy = readiness_policy()
+    policy.pop("generation_stress_by_modality")
+    return policy
 
 
 def bounded_readiness_policy() -> dict[str, object]:
@@ -380,9 +393,17 @@ def _configure_readiness_condition(
 
     config["timeout"] = PROFILE_REQUEST_DEADLINE_SECONDS
     if spec.startswith("vllm:"):
+        tensor_parallel_size = config.get("tensor_parallel_size", 2)
+        gpu_memory_utilization = config.get("gpu_memory_utilization", 0.90)
         config["max_model_len"] = -1
         config["max_tokens"] = PROFILE_MAXIMUM_GENERATION_TOKENS
-        return {"max_model_len": -1}
+        config["tensor_parallel_size"] = tensor_parallel_size
+        config["gpu_memory_utilization"] = gpu_memory_utilization
+        return {
+            "gpu_memory_utilization": gpu_memory_utilization,
+            "max_model_len": -1,
+            "tensor_parallel_size": tensor_parallel_size,
+        }
     if spec.startswith("ollama:"):
         config["num_ctx"] = "fit"
         config["num_predict"] = PROFILE_MAXIMUM_GENERATION_TOKENS
@@ -451,6 +472,7 @@ def _run_generation_stress(
     *,
     generation_tokens: int,
     image: bool,
+    require_cap: bool = True,
 ) -> dict[str, object]:
     started = time.perf_counter()
     try:
@@ -490,7 +512,7 @@ def _run_generation_stress(
         # its separate thinking field. The later responsiveness survey still
         # requires visible, correct answers at the selected cap.
         "passed": bool(
-            reached_cap
+            (reached_cap or not require_cap)
             and deadline_passed
             and (
                 observation.get("outcome") == "generated_text"
@@ -556,6 +578,7 @@ def _run_marked_generation_stress(
         target,
         generation_tokens=generation_tokens,
         image=image,
+        require_cap=not image,
     )
 
 
@@ -682,6 +705,7 @@ def _profile_generation_conditions(
             target,
             generation_tokens=generation_tokens,
             image=False,
+            require_cap=True,
         )
         _reset_after_deadline(target, stress_text)
         stress_vision = (
@@ -689,6 +713,7 @@ def _profile_generation_conditions(
                 target,
                 generation_tokens=generation_tokens,
                 image=True,
+                require_cap=False,
             )
             if "image" in modalities
             else None
@@ -948,6 +973,7 @@ def _validate_stress_result(
     *,
     generation_tokens: int,
     label: str,
+    require_cap: bool = True,
 ) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"local-model {label} stress evidence is invalid")
@@ -980,7 +1006,7 @@ def _validate_stress_result(
         and float(latency_ms) < PROFILE_REQUEST_DEADLINE_SECONDS * 1000.0
     )
     expected_passed = bool(
-        reached_cap
+        (reached_cap or not require_cap)
         and deadline_passed
         and (
             value.get("outcome") == "generated_text"
@@ -1002,6 +1028,7 @@ def validate_readiness(value: object, *, expected_spec: str | None = None) -> di
     if not isinstance(value, dict) or value.get("schema") not in {
         LEGACY_SCHEMA,
         BOUNDED_SCHEMA,
+        CAP_STRESS_SCHEMA,
         SCHEMA,
     }:
         raise ValueError("local-model readiness receipt schema is invalid")
@@ -1009,6 +1036,7 @@ def validate_readiness(value: object, *, expected_spec: str | None = None) -> di
     expected_policy = {
         LEGACY_SCHEMA: legacy_readiness_policy,
         BOUNDED_SCHEMA: bounded_readiness_policy,
+        CAP_STRESS_SCHEMA: cap_stress_readiness_policy,
         SCHEMA: readiness_policy,
     }[schema]()
     if value.get("policy") != expected_policy or value.get("status") != "verified":
@@ -1049,7 +1077,7 @@ def validate_readiness(value: object, *, expected_spec: str | None = None) -> di
         if execution is not None:
             raise ValueError("legacy local-model readiness receipt changed")
         return value
-    if schema == SCHEMA:
+    if schema in {CAP_STRESS_SCHEMA, SCHEMA}:
         if (
             not isinstance(execution, dict)
             or set(execution)
@@ -1094,6 +1122,7 @@ def validate_readiness(value: object, *, expected_spec: str | None = None) -> di
                 condition["stress_text"],
                 generation_tokens=generation_tokens,
                 label="text",
+                require_cap=True,
             )
             stress_vision = condition["stress_vision"]
             observations = [stress_text]
@@ -1109,6 +1138,7 @@ def validate_readiness(value: object, *, expected_spec: str | None = None) -> di
                         stress_vision,
                         generation_tokens=generation_tokens,
                         label="vision",
+                        require_cap=schema == CAP_STRESS_SCHEMA,
                     )
                     observations.append(stress_vision)
             elif stress_vision is not None:
@@ -1133,7 +1163,30 @@ def validate_readiness(value: object, *, expected_spec: str | None = None) -> di
             raise ValueError("local-model execution profile has no passing condition")
         local_execution = execution.get("local_execution")
         if requested_spec.startswith("vllm:"):
-            expected_local_execution = {"max_model_len": -1}
+            if schema == CAP_STRESS_SCHEMA:
+                expected_local_execution = {"max_model_len": -1}
+            else:
+                expected_local_execution = local_execution
+                if (
+                    not isinstance(local_execution, dict)
+                    or set(local_execution)
+                    != {
+                        "gpu_memory_utilization",
+                        "max_model_len",
+                        "tensor_parallel_size",
+                    }
+                    or local_execution.get("max_model_len") != -1
+                    or isinstance(local_execution.get("tensor_parallel_size"), bool)
+                    or local_execution.get("tensor_parallel_size") not in {1, 2}
+                    or isinstance(local_execution.get("gpu_memory_utilization"), bool)
+                    or not isinstance(
+                        local_execution.get("gpu_memory_utilization"), (int, float)
+                    )
+                    or not 0.1
+                    <= float(local_execution["gpu_memory_utilization"])
+                    <= 0.95
+                ):
+                    expected_local_execution = None
         elif isinstance(local_execution, dict):
             try:
                 thinking = validate_ollama_think(local_execution.get("think"))

@@ -981,6 +981,12 @@ class BuilderPageMixin:
                         + html.escape(local_config_error, quote=True)
                         + "'>invalid local config</span>"
                     )
+                displayed_tp = (
+                    entry.get("tensor_parallel_size")
+                    if isinstance(execution_profile, Mapping)
+                    and entry.get("tensor_parallel_size") in {1, 2}
+                    else profile.get("recommended_tensor_parallel_size", 1)
+                )
                 detail = (
                     "<span class='fieldhint'>"
                     + html.escape(
@@ -989,7 +995,7 @@ class BuilderPageMixin:
                         f"{profile.get('estimated_vram_gib', '?')} GiB "
                         f"estimated / {profile.get('available_vram_gib', 0)} GiB available "
                         f"· {fit_text} · {quant_label} · TP"
-                        f"{profile.get('recommended_tensor_parallel_size', 1)} · "
+                        f"{displayed_tp} · "
                         f"multi-GPU {basis} · {context_text} · "
                         f"{'pinned' if pinned else 'revision required'}"
                         + (

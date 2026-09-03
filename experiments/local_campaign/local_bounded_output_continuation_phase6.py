@@ -376,6 +376,35 @@ def bounded_local_config(
     return {spec: entry}
 
 
+def profiled_bounded_local_config(
+    config: Mapping[str, Any],
+    *,
+    spec: str,
+    profile_registry: Path,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Apply the complete approved profile, including vLLM topology."""
+
+    if set(config) != {spec} or not isinstance(config[spec], dict):
+        raise ValueError("bounded-output config changed identity")
+    unprofiled = dict(config[spec])
+    unprofiled.pop("max_tokens", None)
+    unprofiled.pop("num_predict", None)
+    unprofiled.pop("timeout", None)
+    profiled, profile = apply_profile(spec, unprofiled, path=profile_registry)
+    if profile is None:
+        raise ValueError(f"bounded-output recovery requires a profile for {spec!r}")
+    generation_field = "max_tokens" if spec.startswith("vllm:") else "num_predict"
+    return (
+        bounded_local_config(
+            {spec: profiled},
+            spec=spec,
+            generation_tokens=int(profiled[generation_field]),
+            timeout=float(profiled["timeout"]),
+        ),
+        profile,
+    )
+
+
 def _canonical_campaign(path: Path, *, label: str) -> Path:
     result = path.resolve(strict=True)
     if result.is_symlink() or result.parent.name != "engineering":
@@ -525,19 +554,10 @@ def inspect_prior(
         copied = dict(inventory["units"][index])
         copied["summary"] = dict(copied["summary"])
         spec = str(copied["local_spec"])
-        unprofiled = dict(copied["hardware_fit_local_config"][spec])
-        unprofiled.pop("max_tokens", None)
-        unprofiled.pop("num_predict", None)
-        unprofiled.pop("timeout", None)
-        profiled, profile = apply_profile(spec, unprofiled, path=profile_registry)
-        if profile is None:
-            raise ValueError(f"bounded-output recovery requires a profile for {spec!r}")
-        generation_field = "max_tokens" if spec.startswith("vllm:") else "num_predict"
-        copied["hardware_fit_local_config"] = bounded_local_config(
+        copied["hardware_fit_local_config"], _profile = profiled_bounded_local_config(
             copied["hardware_fit_local_config"],
             spec=spec,
-            generation_tokens=int(profiled[generation_field]),
-            timeout=float(profiled["timeout"]),
+            profile_registry=profile_registry,
         )
         if index == PARTIAL_INDEX - 1:
             copied["recovery_selection"] = selector

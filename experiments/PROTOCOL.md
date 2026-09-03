@@ -82,15 +82,17 @@ unrelated models cannot identify that effect.
 Fit and loadability do not by themselves admit a generative local target. Before
 security projection, canary or measurement, `experiments.local_model_readiness`
 starts at the local response ceiling and descends until a forced generation
-reaches its cap below a 120-second per-request deadline for text and, when
-declared, physical-image input. At that cap it selects ten benign questions
+reaches its cap below a 120-second per-request deadline in the text-throughput
+stress. An image-capable target must also return a nonempty physical-image
+response below the deadline, without treating a valid end-of-sequence as a
+throughput failure. At that cap it selects ten benign questions
 deterministically from its fixed bank and requires at least five correct; the
 other five may be incorrect or empty. It adds five deterministic synthetic
 image checks for every image-capable target and requires at least two correct;
 the other three may be incorrect or empty. The
-content-addressed readiness receipt binds the
-exact requested target, normalized local configuration, acquisition selection,
-modalities and policy. It is engineering admission evidence and contributes no
+content-addressed readiness receipt binds the exact requested target,
+normalized local configuration, vLLM topology and memory utilization,
+acquisition selection, modalities and policy. It is engineering admission evidence and contributes no
 safety metric. Each empty item remains a typed `model_nonresponse`; later
 campaign statistics retain the same outcome as missing response evidence and
 report missingness and decision coverage without treating it as a decided

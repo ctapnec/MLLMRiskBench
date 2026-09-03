@@ -272,17 +272,19 @@ execution provenance.
 Runner 2.32 uses one provider-independent execution-profile boundary for local
 generative models. `local_model_readiness` starts at the 25,000-token local
 ceiling and descends until a forced generation reaches its cap below 120
-seconds in text and, when declared, physical-image input. It then applies the seeded 10-text and
-5-image responsiveness thresholds at that cap.
+seconds in the text-throughput stress. An image-capable target must additionally
+return a nonempty physical-image response below the deadline; a valid early stop
+does not negate the throughput measurement. It then applies the seeded 10-text
+and 5-image responsiveness thresholds at that cap.
 Each stress child publishes a transient generation-start marker. Its parent
 enforces the deadline by terminating the isolated process, so setup time stays
 outside request latency and an uninterruptible CUDA call cannot overshoot the
 selection threshold.
 A machine-local registry binds the recommendation to the exact revision or
-digest and modalities. Both CLI
-and Build use its hardware-fit context, vLLM `max_tokens`, Ollama `num_predict`
-and thinking mode, and request deadline; an explicit local config value cannot
-replace the approved profile. Each text/image stress observation runs in a
+digest and modalities. Both CLI and Build use its hardware-fit context, vLLM
+tensor-parallel size and GPU memory utilization, vLLM `max_tokens`, Ollama
+`num_predict` and thinking mode, and request deadline; an explicit local config
+value cannot replace the approved profile. Each text/image stress observation runs in a
 fresh child process. That process exits before the next lower candidate, so an
 interrupted vLLM request cannot retain CUDA state or contaminate later
 measurements.
@@ -427,10 +429,10 @@ observations describe the target condition rather than target-judge
 co-residency.
 
 Runner 2.32 leaves unified schema 1.5 and retained Runner artifacts unchanged.
-It adds `ura-local-model-readiness/3` and the machine-local
-`ura-local-model-execution-profiles/2` registry. Readiness schemas `/1` and `/2`
-and registry schema `/1` remain historical records but cannot supply a current
-execution profile. Runner 2.32 also preserves typed answer and input failures
+Its current pre-execution gate writes `ura-local-model-readiness/4` and the
+machine-local `ura-local-model-execution-profiles/3` registry. Readiness schemas
+`/1` through `/3` and registry schemas `/1` and `/2` remain historical records
+but cannot supply a current execution profile. Runner 2.32 also preserves typed answer and input failures
 across the sealed vLLM execution boundary, so the provider-independent retry,
 missing-response, and continuation policy applies to vLLM as well as Ollama.
 

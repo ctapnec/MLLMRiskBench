@@ -2,7 +2,7 @@
   "vllm:Qwen/Qwen3-VL-8B-Instruct": {
     "revision": "60595ebc30ec8e3b1d3b9e65d4943ca011c0006a",
     "modalities": ["text", "image"],
-    "tensor_parallel_size": 1,
+    "tensor_parallel_size": 2,
     "gpu_memory_utilization": 0.90
   },
   "vllm:llava-hf/llava-v1.6-mistral-7b-hf": {

@@ -92,12 +92,15 @@ product:
    no Ollama Python SDK is required.
    Generative vLLM and Ollama models share an identity-bound local readiness
    profile. A descending 25,000 through 256-token stress ladder stops at the
-   first cap actually reached below 120 seconds for text and, when declared,
-   physical-image input. A transient generation-start marker lets the parent
+   first cap actually reached below 120 seconds by the text throughput stress.
+   An image-capable target must also return a nonempty physical-image response
+   below that deadline, without requiring it to ignore a valid end-of-sequence
+   decision. A transient generation-start marker lets the parent
    terminate the isolated probe at the deadline even when an in-process CUDA
    call cannot deliver a Python alarm promptly. The seeded
-   10-text/5-image survey then runs at that cap. The resulting profile is
-   required by CLI and Build. Hosted target and judge output caps are instead
+   10-text/5-image survey then runs at that cap. The resulting profile binds
+   the exact vLLM topology and memory utilization and is required by CLI and
+   Build. Hosted target and judge output caps are instead
    fixed only by their paid campaign budget and never consume this registry.
    Response-independent local attestation, diagnostic-canary, and measured cells
    collect and durably checkpoint target responses first, release the target,

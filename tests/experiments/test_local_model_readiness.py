@@ -12,6 +12,7 @@ import experiments.local_model_readiness as readiness_module
 
 from experiments.local_model_readiness import (
     BOUNDED_SCHEMA,
+    CAP_STRESS_SCHEMA,
     COLORS,
     LEGACY_SCHEMA,
     PROFILE_DEFAULT_GENERATION_TOKENS,
@@ -34,6 +35,7 @@ from experiments.local_model_readiness import (
     _run_vision,
     _run_condition,
     bounded_readiness_policy,
+    cap_stress_readiness_policy,
     legacy_readiness_policy,
     readiness_policy,
     validate_readiness,
@@ -41,6 +43,7 @@ from experiments.local_model_readiness import (
 from experiments.local_model_profiles import (
     LEGACY_SCHEMA as LEGACY_PROFILE_SCHEMA,
     SCHEMA as PROFILE_SCHEMA,
+    UNBOUND_TOPOLOGY_SCHEMA,
     apply_profile,
     load_profiles,
     update_registry,
@@ -198,6 +201,14 @@ def _stress_result(generation_tokens: int) -> dict[str, object]:
     }
 
 
+def _responsive_image_stress_result(generation_tokens: int) -> dict[str, object]:
+    result = _stress_result(generation_tokens)
+    result["termination_reason"] = "stop"
+    result["tokens"] = {"prompt": 1, "completion": 9, "total": 10}
+    result["reached_generation_cap"] = False
+    return result
+
+
 def readiness_receipt(
     *,
     text_correct: int = 5,
@@ -233,10 +244,14 @@ def readiness_receipt(
         "generation_tokens": tokens,
         "passed": True,
         "stress_text": _stress_result(tokens),
-        "stress_vision": _stress_result(tokens) if vision else None,
+        "stress_vision": _responsive_image_stress_result(tokens) if vision else None,
     }]
     local_execution = (
-        {"max_model_len": -1}
+        {
+            "gpu_memory_utilization": 0.9,
+            "max_model_len": -1,
+            "tensor_parallel_size": 1,
+        }
         if spec.startswith("vllm:")
         else {"num_ctx": "fit", "think": think}
     )
@@ -320,7 +335,7 @@ def test_readiness_accepts_skipped_vision_only_after_failed_text_stress() -> Non
         **original,
         "generation_tokens": passing_tokens,
         "stress_text": _stress_result(passing_tokens),
-        "stress_vision": _stress_result(passing_tokens),
+        "stress_vision": _responsive_image_stress_result(passing_tokens),
     }
     value["execution_profile"]["conditions"] = [
         {
@@ -603,6 +618,19 @@ def test_generation_profile_rejects_early_stop_before_requested_cap() -> None:
     assert all(condition["passed"] is False for condition in conditions)
 
 
+def test_current_image_stress_accepts_a_prompt_responsive_early_stop() -> None:
+    value = readiness_receipt()
+    image = value["execution_profile"]["conditions"][0]["stress_vision"]
+    assert image["reached_generation_cap"] is False
+    assert validate_readiness(value)["status"] == "verified"
+
+    image["outcome"] = "model_nonresponse"
+    image["passed"] = False
+    value["execution_profile"]["conditions"][0]["passed"] = False
+    with pytest.raises(ValueError, match="no passing condition"):
+        validate_readiness(value)
+
+
 def test_thinking_only_stress_calibrates_without_replacing_answer_survey() -> None:
     value = readiness_receipt(
         vision=False,
@@ -653,13 +681,22 @@ def test_current_readiness_rejects_non_prefix_or_post_failure_conditions() -> No
 
 
 def test_readiness_condition_forces_fit_context_and_preserves_thinking() -> None:
-    vllm_config = {"max_model_len": 12_288, "max_tokens": 512}
+    vllm_config = {
+        "gpu_memory_utilization": 0.85,
+        "max_model_len": 12_288,
+        "max_tokens": 512,
+        "tensor_parallel_size": 2,
+    }
     assert _configure_readiness_condition("vllm:example/model", vllm_config) == {
-        "max_model_len": -1
+        "gpu_memory_utilization": 0.85,
+        "max_model_len": -1,
+        "tensor_parallel_size": 2,
     }
     assert vllm_config == {
         "max_model_len": -1,
         "max_tokens": 25_000,
+        "gpu_memory_utilization": 0.85,
+        "tensor_parallel_size": 2,
         "timeout": 120.0,
     }
 
@@ -704,6 +741,18 @@ def test_retained_schema_two_readiness_receipts_remain_valid() -> None:
     assert validate_readiness(value)["schema"] == BOUNDED_SCHEMA
 
 
+def test_retained_schema_three_readiness_receipts_remain_valid() -> None:
+    value = readiness_receipt()
+    value["schema"] = CAP_STRESS_SCHEMA
+    value["policy"] = cap_stress_readiness_policy()
+    value["execution_profile"]["local_execution"] = {"max_model_len": -1}
+    value["execution_profile"]["conditions"][0]["stress_vision"] = _stress_result(
+        PROFILE_MAXIMUM_GENERATION_TOKENS
+    )
+
+    assert validate_readiness(value)["schema"] == CAP_STRESS_SCHEMA
+
+
 def test_readiness_never_approves_a_condition_with_a_120_second_request() -> None:
     result = _run_condition(
         SlowReportedTarget(),
@@ -740,6 +789,8 @@ def test_readiness_profile_registry_is_identity_bound_and_reused(
     config = {
         "revision": "b" * 40,
         "modalities": ["text"],
+        "tensor_parallel_size": 2,
+        "gpu_memory_utilization": 0.85,
         "max_model_len": -1,
     }
     update_registry(
@@ -755,6 +806,8 @@ def test_readiness_profile_registry_is_identity_bound_and_reused(
     assert load_profiles()["vllm:example/model"]["generation_tokens"] == 25000
     profiled, evidence = apply_profile("vllm:example/model", config)
     assert profiled["max_tokens"] == 25000
+    assert profiled["tensor_parallel_size"] == 2
+    assert profiled["gpu_memory_utilization"] == 0.85
     assert profiled["timeout"] == PROFILE_REQUEST_DEADLINE_SECONDS
     assert evidence is not None
 
@@ -764,6 +817,8 @@ def test_readiness_profile_registry_is_identity_bound_and_reused(
     )
     assert overridden["max_tokens"] == 25000
     assert overridden["max_model_len"] == -1
+    assert overridden["tensor_parallel_size"] == 2
+    assert overridden["gpu_memory_utilization"] == 0.85
     assert overridden["timeout"] == PROFILE_REQUEST_DEADLINE_SECONDS
 
     ollama_receipt = readiness_receipt(
@@ -833,6 +888,11 @@ def test_legacy_profile_registry_cannot_configure_new_local_inference(
         encoding="ascii",
     )
 
+    assert load_profiles(path=registry) == {}
+
+    document = json.loads(registry.read_text(encoding="ascii"))
+    document["schema"] = UNBOUND_TOPOLOGY_SCHEMA
+    registry.write_text(json.dumps(document), encoding="ascii")
     assert load_profiles(path=registry) == {}
 
 

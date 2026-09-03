@@ -3121,7 +3121,17 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
             "generation_tokens": 4096,
             "identity": {identity_key: identity.lower()},
             "local_execution": (
-                {"max_model_len": -1}
+                {
+                    "gpu_memory_utilization": entry.get(
+                        "gpu_memory_utilization", 0.9
+                    ),
+                    "max_model_len": -1,
+                    "tensor_parallel_size": (
+                        entry.get("tensor_parallel_size")
+                        if entry.get("tensor_parallel_size") in {1, 2}
+                        else 1
+                    ),
+                }
                 if spec.startswith("vllm:")
                 else {"num_ctx": "fit", "think": entry.get("think", False)}
             ),
@@ -3135,7 +3145,7 @@ def test_builder_model_filters_and_quantization_warning_are_rendered(
         }
     (repo / "experiments" / "local-model-profiles.json").write_text(
         json.dumps({
-            "schema": "ura-local-model-execution-profiles/2",
+            "schema": "ura-local-model-execution-profiles/3",
             "models": profiles,
         }),
         encoding="utf-8",

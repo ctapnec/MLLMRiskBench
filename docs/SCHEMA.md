@@ -648,23 +648,27 @@ an executed cell:
   because a verdict controls its trajectory. Defense guardrails also execute in
   the target phase because they are part of the treatment.
 
-- `ura-local-model-readiness/3` retains the immutable target identity and
-  modalities, a descending 25,000 through 256-token stress prefix, every failed
-  larger candidate, the 120-second per-request deadline, and the first
-  condition that reached at least 95 percent of its cap below that deadline for
-  text and, when declared, physical-image input. It
-  also retains the exact
+- `ura-local-model-readiness/4` retains the immutable target identity and
+  modalities, a descending 25,000 through 256-token text-throughput stress
+  prefix, every failed larger candidate, the 120-second per-request deadline,
+  and the first condition that reached at least 95 percent of its cap below
+  that deadline. An image-capable target must also return a nonempty
+  physical-image response below the deadline, but a valid voluntary stop does
+  not fail throughput already proven by the text stress. It also retains the exact
   seeded 10-text/5-image survey at the selected cap. The thresholds remain 5 of
   10 text and 2 of 5 image, with empty or timed-out responses counted as
-  incorrect. Readiness schemas `/1` and `/2` remain readable historical
-  evidence but do not supply a current execution profile.
-  `ura-local-model-execution-profiles/2` is a machine-local operational
+  incorrect. Readiness schemas `/1` through `/3` remain readable historical
+  evidence. Schema `/3` required the image response itself to exhaust the cap
+  and cannot supply a current execution profile.
+  `ura-local-model-execution-profiles/3` is a machine-local operational
   registry, not empirical evidence. Each row binds one vLLM revision or Ollama
-  digest, modalities, hardware-fit context, selected generation tokens, Ollama
-  thinking mode where applicable, request deadline, and the
-  exact `/3` readiness receipt path, ID, and digest. Registry schema `/1` is
-  historical only. Identity or modality drift fails rather than transferring a
-  recommendation to another model.
+  digest, modalities, hardware-fit context, selected generation tokens, exact
+  vLLM tensor-parallel size and GPU memory utilization, Ollama thinking mode
+  where applicable, request deadline, and the exact `/4` readiness receipt
+  path, ID, and digest. Registry schemas `/1` and `/2` are historical only;
+  `/2` did not bind the vLLM topology that determines its resolved context.
+  Identity or modality drift fails rather than transferring a recommendation
+  to another model.
 
 - Hugging Face model bytes are a separate immutable evidence family, not part
   of `--local-config`. `ura-model-acquisition-selection/1` retains path-free

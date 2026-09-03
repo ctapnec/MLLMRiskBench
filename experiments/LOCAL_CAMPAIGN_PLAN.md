@@ -199,7 +199,7 @@ CLI plan -> acquire -> run chain, for:
 
 | Role | Identity | Size | Placement |
 |---|---|---|---|
-| target | `vllm:Qwen/Qwen3-VL-8B-Instruct` @ exact revision (text+image) | 16.34 GiB | GPU 0, BF16, TP 1, max_model_len 12288 |
+| target | `vllm:Qwen/Qwen3-VL-8B-Instruct` @ exact revision (text+image) | 16.34 GiB | two GPUs, BF16, TP 2, hardware-fit context |
 | target | `vllm:llava-hf/llava-v1.6-mistral-7b-hf` @ exact revision (text+image) | 14.10 GiB | GPU 0 |
 | target | `vllm:GraySwanAI/llava-v1.6-mistral-7b-hf-RR` @ exact revision (same-base defense pair) | 27.59 GiB | GPU 0 |
 | scoring guard | `meta-llama/Llama-Guard-3-8B` (gated; HF_TOKEN) | 29.93 GiB | GPU 1 (`--guardrail-device cuda:1`) |
@@ -227,18 +227,19 @@ same ten benign questions deterministically from a fixed twenty-question bank
 with seed 20260829 and requires at least five correct. The other five answers
 may be incorrect or empty. For an image-capable target, it adds five
 deterministic synthetic split-color images and requires at least two correct;
-the other three may be incorrect or empty. The current `/3` gate first forces
-one text generation and, when applicable, one physical-image generation at
-25,000 tokens, then descends through 16,384, 8,192, 4,096, 2,048, 1,024, 512,
-and 256. It stops at the first cap that reaches at least 95 percent of the
-requested output below 120 seconds for text and physical-image input. The
-10-text/5-image survey then
-runs once at that cap. The identity-bound schema-2 rig profile is consumed by
-CLI and Build and binds maximum hardware-fit context plus Ollama thinking mode
+the other three may be incorrect or empty. The current `/4` gate first forces
+one text generation at 25,000 tokens, then descends through 16,384, 8,192,
+4,096, 2,048, 1,024, 512, and 256. It stops at the first cap that reaches at
+least 95 percent of the requested output below 120 seconds. An image-capable
+target must also return a nonempty physical-image response below that deadline;
+a valid voluntary stop is not confused with failed text throughput. The
+10-text/5-image survey then runs once at that cap. The identity-bound schema-3
+rig profile is consumed by CLI and Build and binds maximum hardware-fit context,
+vLLM tensor-parallel size and GPU memory utilization, plus Ollama thinking mode
 where applicable. An unprofiled local
 generative model is rejected, and the approved values replace campaign-local
-overrides. Readiness `/1` and `/2` and profile-registry `/1` remain historical
-evidence but cannot admit a new local inference call.
+overrides. Readiness `/1` through `/3` and profile registries `/1` and `/2`
+remain historical evidence but cannot admit a new local inference call.
 This applies to the
 three vLLM targets and all four Ollama targets. Guard and classifier checkpoints
 instead retain their role-specific classifier smoke because free-form Q&A is not
@@ -1036,7 +1037,7 @@ controller-start record and before any unit state or population call. It is not
 a completion. The first 25-unit automatic hardware-fit correction was stopped
 after its first three selected rows proved that short-answer `/2` readiness had
 not exercised the 25,000-token ceiling. Re-profile all seven generative local
-models under `ura-local-model-readiness/3`, then run a fresh successor that
+models under `ura-local-model-readiness/4`, then run a fresh successor that
 selects only the invalid-condition or never-started rows. After that successor
 validates, run the maintained six-unit population continuation in a fresh named
 rig session with all prerequisite completion digests and give only its validated
@@ -1054,8 +1055,9 @@ controller is terminal because re-pin hygiene intentionally stops Runner.
 The general local serving default is provider-independent at the response
 boundary: omitted vLLM `max_model_len` binds vLLM 0.27's `-1` auto-fit policy,
 and Ollama binds `num_ctx="fit"`; both retain the largest hardware-fitting
-context. Their independent response allowance comes from the exact model's
-readiness profile. No local generative campaign is admitted before profiling.
+context for the profile's exact topology. Their independent response allowance
+comes from the exact model's readiness profile. No local generative campaign is
+admitted before profiling.
 Rig Web applies the same rule at installation time for Ollama: a successful
 pull automatically creates a linked readiness Job, and the tag remains
 unavailable to Build until the exact digest passes the 10-text/5-image gate
@@ -1088,7 +1090,8 @@ The one timed-out request and the diagnostic canary rows are invalid-condition
 diagnostics, not model-stability observations.
 
 Runner 2.32 stress-tests the local ceiling and lowers it until the first proven
-sub-120-second cap, then runs the responsiveness survey there. A request that
+sub-120-second text cap, checks physical-image responsiveness below the same
+deadline where applicable, then runs the responsiveness survey there. A request that
 reaches the deadline ends with its owning child process before the next
 candidate is submitted. Process exit is required because an in-process vLLM
 close can leave CUDA allocations alive; the separate process prevents a
@@ -1096,12 +1099,14 @@ cancelled request from confounding lower-cap timings. The child marks the
 instant generation begins, so the parent-enforced deadline excludes model load
 and graph compilation while still terminating the process at 120 seconds; a
 delayed Python alarm cannot extend the request. A failed text stress immediately
-descends to the next candidate; image stress runs only after text fits. It also
+descends to the next candidate; the image check runs only after text fits. It also
 preserves typed answer and input failures across the sealed vLLM execution
 boundary, so a genuine later failure follows the same retry-and-retain rule as
 Ollama. Before continuing security work, all three downloaded vLLM targets and
-all four downloaded Ollama targets receive fresh `/3` readiness profiles and a
-schema-2 machine registry. The successor controller selects exactly the 63
+all four downloaded Ollama targets receive fresh `/4` readiness profiles and a
+schema-3 machine registry. The registry binds the exact tested vLLM topology and
+memory utilization rather than silently recomputing TP at campaign time. The
+successor controller selects exactly the 63
 non-usable or unattempted rows in that LLaVA unit plus the 107 rows in the four
 later unstarted units, for 170 rows total. It requires and applies the exact
 model's profiled allowance and 120-second deadline, keeps one
@@ -1113,6 +1118,16 @@ retained and never
 rewritten. After this continuation, the six-unit 2,350-row population alignment
 continuation uses the same local profile contract. These are campaign-specific
 recovery strata, not changes to the hosted API campaign.
+
+The retained Qwen GPTGeoChat suffix proves why topology is part of the profile:
+230 rows were rejected under the old 12,288-token condition, with prompt lengths
+from 12,290 through 16,705 tokens. A TP1 automatic-fit probe exposed only 13,040
+tokens and therefore cannot cover that retained selection. Before the successor
+runs, Qwen must pass its `/4` profile at TP2 and the receipt's resolved context
+must cover the longest selected prompt plus the selected response allowance.
+LLaVA base and GraySwan RR may retain TP1 only when their resolved checkpoint
+context covers their selected inputs. The 120-second output-cap ladder remains
+independent of this input-context requirement.
 
 Response-independent local attestation, diagnostic-canary, and measured cells
 use two GPU phases within the same bound run. The target completes a durable

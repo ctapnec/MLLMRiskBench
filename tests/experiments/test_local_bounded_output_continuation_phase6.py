@@ -10,6 +10,7 @@ from experiments.local_campaign.local_bounded_output_continuation_phase6 import 
     SCHEMA,
     _validate_invalid_result_root,
     bounded_local_config,
+    profiled_bounded_local_config,
     validate_alignment_prerequisite,
     validate_completion,
 )
@@ -59,6 +60,49 @@ def test_bounded_ollama_recovery_keeps_hardware_fit_context() -> None:
     assert result[spec]["num_ctx"] == "fit"
     assert result[spec]["num_predict"] == MAX_VLLM_GENERATION_TOKENS
     assert result[spec]["timeout"] == DEFAULT_LOCAL_REQUEST_TIMEOUT_SECONDS
+
+
+def test_profiled_bounded_recovery_reuses_the_approved_vllm_topology(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = "vllm:example/model"
+
+    def profile(selected_spec, config, *, path):
+        assert selected_spec == spec
+        assert path == tmp_path / "profiles.json"
+        return (
+            {
+                **config,
+                "gpu_memory_utilization": 0.85,
+                "max_model_len": -1,
+                "max_tokens": 4_096,
+                "tensor_parallel_size": 2,
+                "timeout": 120.0,
+            },
+            {"generation_tokens": 4_096},
+        )
+
+    monkeypatch.setattr(
+        "experiments.local_campaign.local_bounded_output_continuation_phase6.apply_profile",
+        profile,
+    )
+    result, evidence = profiled_bounded_local_config(
+        {
+            spec: {
+                "gpu_memory_utilization": 0.9,
+                "max_model_len": -1,
+                "max_tokens": 25_000,
+                "tensor_parallel_size": 1,
+                "timeout": 120.0,
+            }
+        },
+        spec=spec,
+        profile_registry=tmp_path / "profiles.json",
+    )
+
+    assert evidence == {"generation_tokens": 4_096}
+    assert result[spec]["tensor_parallel_size"] == 2
+    assert result[spec]["gpu_memory_utilization"] == 0.85
 
 
 @pytest.mark.parametrize(
