@@ -399,15 +399,23 @@ response artifacts remain authoritative.
   must classify and resolve it before a fresh bound plan and explicit circuit
   reset; paid execution never resumes automatically.
 - Post-hoc Haiku re-adjudication does not use `run_matrix` and cannot regenerate
-  a target response. `retained_response_judge` creates a content-bound,
-  create-only selection plan from the validated final Runner view;
-  `retained_response_judge_execute` reconciles the same retained content and
-  constructs only the named Haiku judge. It reserves zero target calls, uses
-  one judge/HTTP attempt per selected output, checkpoints every paid decision,
-  binds and revalidates the effective-dated pricing bytes, and opens its global
-  `paid_provider` circuit on the first judge or transport failure. The local
-  and hosted cohorts each have a USD 7 ceiling, so their combined standard-API
-  ceiling is USD 14.
+  a target response. `retained_response_judge_pair` admits at most 2,000 pairs
+  from the exact local/hosted input-identity intersection, without reusing an
+  output; `retained_response_judge_pair_execute` reconciles both validated
+  Runner views and constructs only the named Haiku judge. It reserves zero
+  target calls, uses one judge/HTTP attempt per selected output, checkpoints
+  every paid decision, binds and revalidates the effective-dated pricing bytes,
+  and opens its global `paid_provider` circuit on the first judge or transport
+  failure. Its one USD 27 ceiling covers at most 4,000 calls: USD 26.00 at the
+  4,000-input/500-output planning average and USD 26.24 at the fixed 512-token
+  output maximum.
+- The hosted follow-on uses ten global target caps totaling 590 calls, including
+  readiness and diagnostic canaries. `hosted_campaign_budget` creates a
+  zero-call projection from the exact API-config, effective-dated pricing and
+  budget bytes. It reports both the 4,000-input/500-output expectation and each
+  route's configured-maximum-output reservation, and blocks any provider above
+  half its configured balance. The current planning values are USD 8.3130 and
+  USD 38.5476 for targets, or USD 34.3130 and USD 64.7876 including Haiku.
 - Hub acquisition is conditional on the selected resources, not on the mere
   existence of a local target. Static lanes with Hub-backed assets retain the
   exact plan/receipt/store chain. Ollama R-Judge and GPTGeoChat lanes over
