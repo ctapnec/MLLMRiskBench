@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from pathlib import Path
 
 import pytest
 
@@ -175,3 +176,22 @@ def test_execution_accounting_is_validated_and_rendered_as_quantitative_stats() 
         "href='/artifacts?path=analysis/campaign-execution-accounting.json'"
         in rendered
     )
+
+
+def test_campaign_documents_separate_population_from_physical_call_forecast() -> None:
+    root = Path(__file__).resolve().parents[2]
+    plan = (root / "experiments" / "LOCAL_CAMPAIGN_PLAN.md").read_text(
+        encoding="utf-8"
+    )
+    runbook = (root / "experiments" / "RUN_AND_RETURN.md").read_text(
+        encoding="utf-8"
+    )
+
+    for document in (plan, runbook):
+        assert "46,537 selected input identities" in document
+        assert "49,537 initial target calls" in document
+        assert "2,792 failed-output" in document
+        assert "230 larger-context" in document
+        assert "3,574 hardware-fit" in document
+        assert "59 prepared follow-on" in document
+        assert "889 hardware-fit" in document

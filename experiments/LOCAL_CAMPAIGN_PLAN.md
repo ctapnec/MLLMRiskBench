@@ -1249,6 +1249,19 @@ input-to-output funnel, response and missing-output coverage, judge coverage,
 framework by source-arm composition, and matched-input local versus hosted
 contrasts when the separate hosted campaign exists.
 
+The prospective 42,882-call population is not the physical retained-strata
+forecast. Before Phase 7 observes the final artifacts, the maintained execution
+chain predicts 46,537 selected input identities and 49,537 initial target calls:
+42,882 population calls, 2,792 failed-output correction calls, 230 larger-context
+Qwen calls, 3,574 hardware-fit repeats of failed or length-ended rows, and 59
+prepared follow-on calls. The 889 hardware-fit rows that had never previously
+started already belong to the 42,882 population and are not added twice. Answer
+retries are reported separately and do not inflate either initial-call count.
+This arithmetic excludes readiness probes and diagnostic canaries, and it is a
+pre-analysis reconciliation rather than a benchmark result. Phase 7 replaces
+the forecast with exact observed counts while retaining revision and
+output-policy strata.
+
 Gate 7: the complete Phase 6 terminal inventory validates as `complete` or
 `complete_with_failures`, at least one scheduled Runner lane is
 `measured_complete`, the validated lifecycle registry retains every typed lane

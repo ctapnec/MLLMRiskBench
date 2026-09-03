@@ -821,6 +821,16 @@ attached without mutating the zero-hosted-call local report. The same validated
 table drives the response funnel, missing-output coverage, judge coverage,
 framework/source-arm composition and matched-input local/hosted diagrams.
 
+Keep the population total separate from the retained-strata forecast. The
+planned chain predicts 46,537 selected input identities and 49,537 initial
+target calls after adding 2,792 failed-output corrections, 230 larger-context
+Qwen calls, 3,574 hardware-fit repeats and 59 prepared follow-on calls to the
+42,882-call population. The 889 hardware-fit records that had never started are
+already population rows and are not added again. Answer retries, readiness
+probes and diagnostic canaries are separate counters. Phase 7 must replace this
+forecast with the exact validated artifact counts and must not pool revisions or
+output policies.
+
 If Phase 6 ran under a pre-v2 deployment, repin first and then migrate its
 immutable operational rows without editing or deleting them:
 
