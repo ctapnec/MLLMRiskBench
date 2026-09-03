@@ -129,6 +129,25 @@ def _one_file(root: Path, pattern: str, *, label: str) -> Path:
     return paths[0]
 
 
+def _stable_empty_file(path: Path, *, label: str) -> None:
+    if path.is_symlink() or not path.is_file() or path.resolve(strict=True) != path:
+        raise ValueError(f"{label} is not one canonical regular file")
+    before = path.stat()
+    raw = path.read_bytes()
+    after = path.stat()
+    if (
+        raw != b""
+        or before.st_size != 0
+        or after.st_size != 0
+        or before.st_dev != after.st_dev
+        or before.st_ino != after.st_ino
+        or before.st_mtime_ns != after.st_mtime_ns
+        or before.st_nlink != 1
+        or after.st_nlink != 1
+    ):
+        raise ValueError("invalid output condition unexpectedly produced a durable row")
+
+
 def _validate_invalid_result_root(result_root: Path) -> dict[str, Any]:
     """Prove the abandoned condition produced no durable measured response."""
 
@@ -141,8 +160,8 @@ def _validate_invalid_result_root(result_root: Path) -> dict[str, Any]:
             "trails": "*.trails.jsonl",
         }.items()
     }
-    if any(_stable_file(path, label=f"invalid-condition {label}") for label, path in empty_files.items()):
-        raise ValueError("invalid output condition unexpectedly produced a durable row")
+    for label, path in empty_files.items():
+        _stable_empty_file(path, label=f"invalid-condition {label}")
     if list(result_root.glob("*.complete.json")):
         raise ValueError("invalid output condition unexpectedly completed")
     manifest_path = _one_file(result_root, "*.manifest.json", label="invalid-condition manifest")
