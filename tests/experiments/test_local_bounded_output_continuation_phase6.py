@@ -18,6 +18,7 @@ from experiments.local_campaign.local_bounded_output_cuda_recovery_phase6 import
     EXPECTED_DURABLE_ROWS as CUDA_DURABLE_ROWS,
     EXPECTED_RECOVERY_ROWS as CUDA_RECOVERY_ROWS,
     EXPECTED_TAIL_ROWS as CUDA_TAIL_ROWS,
+    _partial_partition as cuda_partial_partition,
     inspect_interrupted_campaign as inspect_cuda_interruption,
     run as run_cuda_recovery,
 )
@@ -204,8 +205,10 @@ def test_cuda_recovery_selects_only_the_unfinished_tail_and_reuses_canaries() ->
     assert CUDA_DURABLE_ROWS + CUDA_RECOVERY_ROWS == CUDA_TAIL_ROWS == 170
 
     inspection = inspect.getsource(inspect_cuda_interruption)
+    partition = inspect.getsource(cuda_partial_partition)
     execution = inspect.getsource(run_cuda_recovery)
-    assert "extend_completed_selector(" in inspection
-    assert "durable_ids != eligible_ids[:EXPECTED_PARTIAL_ROWS]" in inspection
+    assert "_partial_partition(" in inspection
+    assert "extend_completed_selector(" in partition
+    assert "durable_ids != eligible_ids[:EXPECTED_PARTIAL_ROWS]" in partition
     assert 'validated_canary_root=(prior_canary if prior_canary.is_dir() else None)' in execution
     assert '"successful_rows_repeated": 0' in execution
