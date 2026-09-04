@@ -7909,7 +7909,9 @@ def _vllm_grid_process_recycling(
     system reclaim that child before another incomplete cell is resumed.
     """
 
-    if _PROCESS_ENVIRON.get(_VLLM_GRID_CHILD_ENV) == "1":
+    if _PROCESS_ENVIRON.get(_VLLM_GRID_CHILD_ENV) == "1" or not any(
+        value == "--local" or value.startswith("--local=") for value in argv
+    ):
         return None
     args = build_parser().parse_args(argv)
     if (
