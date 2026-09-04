@@ -23,6 +23,7 @@ from experiments.local_campaign.local_bounded_output_cuda_recovery_phase6 import
     _validate_pre_state_root,
     inspect_interrupted_campaign as inspect_cuda_interruption,
     run as run_cuda_recovery,
+    validate_completion as validate_cuda_completion,
 )
 from ura.targets.local import (
     DEFAULT_LOCAL_REQUEST_TIMEOUT_SECONDS,
@@ -234,3 +235,15 @@ def test_cuda_recovery_accepts_only_exact_pre_state_evidence(tmp_path: Path) -> 
     (root / "run.manifest.json").write_text("{}\n", encoding="utf-8")
     with pytest.raises(ValueError, match="measured or ambiguous"):
         _validate_pre_state_root(root)
+
+
+def test_phase7_dispatches_cuda_recovery_without_pooling_retained_rows() -> None:
+    dispatch = inspect.getsource(validate_completion)
+    validation = inspect.getsource(validate_cuda_completion)
+
+    assert 'candidate.get("schema") == "ura-local-bounded-output-cuda-recovery-phase6/1"' in dispatch
+    assert "validate_cuda_recovery_completion(" in dispatch
+    assert 'evidence["interrupted_cuda_rows"]' in validation
+    assert '"retained_predecessor_rows": EXPECTED_PARTIAL_ROWS' in validation
+    assert '"security_metric_pooling_permitted": False' in validation
+    assert '"successful_rows_repeated": 0' in validation
