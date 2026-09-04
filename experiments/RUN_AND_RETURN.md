@@ -615,6 +615,10 @@ profiles. It retains the one usable durable row from the original continuation,
 selects its other 63 identities plus 107 later identities, and writes a 170-row
 completion. Give only that completion to the population-alignment recovery
 below.
+For that zero-row proof, the stopped Runner root must contain the exact empty
+attempt, judgment, response and trail streams named by its manifest stem. Its
+`*.results.jsonl` export may be absent because the first target call failed
+before export creation; if present, it must be that exact stem and empty.
 
 After the 25-unit hardware-fit completion is terminal, run
 `python -m experiments.local_campaign.current_ollama_population_alignment_recovery_phase6`

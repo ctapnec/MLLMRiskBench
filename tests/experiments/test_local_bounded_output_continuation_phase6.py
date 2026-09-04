@@ -137,8 +137,11 @@ def test_bounded_recovery_validators_follow_the_named_prior_launch_descriptor() 
 def test_invalid_output_condition_requires_zero_durable_measured_rows(tmp_path: Path) -> None:
     root = tmp_path / "result"
     root.mkdir()
-    for suffix in ("attempts", "responses", "results", "trails"):
+    for suffix in ("attempts", "responses", "trails"):
         (root / f"run.{suffix}.jsonl").write_bytes(b"")
+    # The real first-call failure creates the judgment stream but reaches no
+    # result-export stage, so run.jsonl is empty and run.results.jsonl absent.
+    (root / "run.jsonl").write_bytes(b"")
     (root / "run.manifest.json").write_text(
         json.dumps(
             {

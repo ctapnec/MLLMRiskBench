@@ -151,20 +151,30 @@ def _stable_empty_file(path: Path, *, label: str) -> None:
 def _validate_invalid_result_root(result_root: Path) -> dict[str, Any]:
     """Prove the abandoned condition produced no durable measured response."""
 
+    manifest_path = _one_file(
+        result_root, "*.manifest.json", label="invalid-condition manifest"
+    )
+    stem = manifest_path.name.removesuffix(".manifest.json")
     empty_files = {
-        label: _one_file(result_root, pattern, label=label)
-        for label, pattern in {
-            "attempts": "*.attempts.jsonl",
-            "responses": "*.responses.jsonl",
-            "results": "*.results.jsonl",
-            "trails": "*.trails.jsonl",
-        }.items()
+        "attempts": result_root / f"{stem}.attempts.jsonl",
+        "judgments": result_root / f"{stem}.jsonl",
+        "responses": result_root / f"{stem}.responses.jsonl",
+        "trails": result_root / f"{stem}.trails.jsonl",
     }
     for label, path in empty_files.items():
         _stable_empty_file(path, label=f"invalid-condition {label}")
+    # Runner creates the result export only after judgments exist. A failure
+    # in the first target call therefore has no *.results.jsonl on the real
+    # path. If a partially created export is present, it must still be the
+    # exact cell file and empty; either shape proves zero durable result rows.
+    result_path = result_root / f"{stem}.results.jsonl"
+    result_files = sorted(result_root.glob("*.results.jsonl"))
+    if result_files:
+        if result_files != [result_path]:
+            raise ValueError("invalid output condition result export is ambiguous")
+        _stable_empty_file(result_path, label="invalid-condition results")
     if list(result_root.glob("*.complete.json")):
         raise ValueError("invalid output condition unexpectedly completed")
-    manifest_path = _one_file(result_root, "*.manifest.json", label="invalid-condition manifest")
     manifest = _load_json(manifest_path, label="invalid-condition manifest")
     target = manifest.get("config", {}).get("components", {}).get("target", {})
     if (

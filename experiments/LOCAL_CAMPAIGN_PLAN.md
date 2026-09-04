@@ -1088,6 +1088,11 @@ any durable measured row was written. The controller was stopped during the
 following unit's diagnostic canary, before that unit's measured Runner began.
 The one timed-out request and the diagnostic canary rows are invalid-condition
 diagnostics, not model-stability observations.
+The real first-call failure retains empty attempt, judgment, response and trail
+streams but no `*.results.jsonl`, because Runner creates that export only after
+judgments exist. The successor derives the exact cell stem from its manifest,
+requires those four streams to be empty, and accepts the result export only when
+it is either absent or the exact empty cell file.
 
 Runner 2.32 stress-tests the local ceiling and lowers it until the first proven
 sub-120-second text cap, checks physical-image responsiveness below the same
