@@ -206,6 +206,37 @@ def _partial_partition(
     return selector, evidence, EXPECTED_PARTIAL_ROWS - missing, missing
 
 
+def _validate_pre_state_root(path: Path) -> list[dict[str, Any]] | None:
+    """Accept only acquisition-copied evidence before measured state existed."""
+
+    if not path.exists() and not path.is_symlink():
+        return None
+    root = path.resolve(strict=True)
+    if path.is_symlink() or not root.is_dir():
+        raise ValueError("pre-state result root is not one canonical directory")
+    files = sorted(root.iterdir())
+    patterns = (
+        "live-attestation-*.json",
+        "project-revision-*.project-revision.json",
+        "request-envelope-*.request-envelope.json",
+        "source-conformance-*.json",
+    )
+    expected: list[Path] = []
+    for pattern in patterns:
+        matches = sorted(root.glob(pattern))
+        if len(matches) != 1:
+            raise ValueError("pre-state result evidence shape changed")
+        expected.extend(matches)
+    if files != sorted(expected) or any(
+        candidate.is_symlink() or not candidate.is_file() for candidate in files
+    ):
+        raise ValueError("pre-state result contains measured or ambiguous artifacts")
+    return [
+        _descriptor(candidate, label="pre-state result evidence")
+        for candidate in files
+    ]
+
+
 def inspect_interrupted_campaign(
     *, prior_root: Path, inventory: Mapping[str, Any], runner_root: Path
 ) -> dict[str, Any]:
@@ -245,13 +276,14 @@ def inspect_interrupted_campaign(
         prior_root=prior_root,
         runner_root=runner_root,
     )
+    pre_state_units: dict[str, list[dict[str, Any]]] = {}
     for index in range(PARTIAL_UNIT_INDEX, EXPECTED_UNIT_COUNT):
         unit_id = order[index]
-        if (
-            (prior_root / "units" / unit_id / "state.json").exists()
-            or (runner_root / unit_id / prior_root.name).exists()
-        ):
+        if (prior_root / "units" / unit_id / "state.json").exists():
             raise ValueError(f"{unit_id} is not an unstarted retained unit")
+        pre_state = _validate_pre_state_root(runner_root / unit_id / prior_root.name)
+        if pre_state is not None:
+            pre_state_units[unit_id] = pre_state
 
     continuation_items: list[dict[str, Any]] = []
     for index in range(PARTIAL_UNIT_INDEX - 1, EXPECTED_UNIT_COUNT):
@@ -280,6 +312,7 @@ def inspect_interrupted_campaign(
         "tail_order": tail_order,
         "retained_results": retained,
         "partial": partial,
+        "pre_state_units": pre_state_units,
         "continuation_inventory": {"units": continuation_items},
         "retained_accounting": {
             "target_attempts": retained_attempts + EXPECTED_PARTIAL_ROWS,
@@ -386,6 +419,7 @@ def run(args: argparse.Namespace) -> int:
         "prior_marker": prior_marker,
         "retained_results": inspected["retained_results"],
         "partial": inspected["partial"],
+        "pre_state_units": inspected["pre_state_units"],
         "retained_accounting": inspected["retained_accounting"],
     }
     snapshot_path = control_root / "prior-interruption.json"

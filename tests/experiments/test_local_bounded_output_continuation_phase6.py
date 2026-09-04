@@ -20,6 +20,7 @@ from experiments.local_campaign.local_bounded_output_cuda_recovery_phase6 import
     EXPECTED_TAIL_ROWS as CUDA_TAIL_ROWS,
     _completed_result as cuda_completed_result,
     _partial_partition as cuda_partial_partition,
+    _validate_pre_state_root,
     inspect_interrupted_campaign as inspect_cuda_interruption,
     run as run_cuda_recovery,
 )
@@ -215,3 +216,21 @@ def test_cuda_recovery_selects_only_the_unfinished_tail_and_reuses_canaries() ->
     assert "durable_ids != eligible_ids[:EXPECTED_PARTIAL_ROWS]" in partition
     assert 'validated_canary_root=(prior_canary if prior_canary.is_dir() else None)' in execution
     assert '"successful_rows_repeated": 0' in execution
+
+
+def test_cuda_recovery_accepts_only_exact_pre_state_evidence(tmp_path: Path) -> None:
+    root = tmp_path / "result"
+    root.mkdir()
+    for name in (
+        "live-attestation-a.json",
+        "project-revision-a.project-revision.json",
+        "request-envelope-a.request-envelope.json",
+        "source-conformance-a.json",
+    ):
+        (root / name).write_text("{}\n", encoding="utf-8")
+
+    assert len(_validate_pre_state_root(root) or []) == 4
+
+    (root / "run.manifest.json").write_text("{}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="measured or ambiguous"):
+        _validate_pre_state_root(root)
