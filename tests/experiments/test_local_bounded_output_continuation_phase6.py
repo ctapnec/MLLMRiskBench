@@ -14,6 +14,13 @@ from experiments.local_campaign.local_bounded_output_continuation_phase6 import 
     validate_alignment_prerequisite,
     validate_completion,
 )
+from experiments.local_campaign.local_bounded_output_cuda_recovery_phase6 import (
+    EXPECTED_DURABLE_ROWS as CUDA_DURABLE_ROWS,
+    EXPECTED_RECOVERY_ROWS as CUDA_RECOVERY_ROWS,
+    EXPECTED_TAIL_ROWS as CUDA_TAIL_ROWS,
+    inspect_interrupted_campaign as inspect_cuda_interruption,
+    run as run_cuda_recovery,
+)
 from ura.targets.local import (
     DEFAULT_LOCAL_REQUEST_TIMEOUT_SECONDS,
     MAX_VLLM_GENERATION_TOKENS,
@@ -189,3 +196,16 @@ def test_invalid_output_condition_requires_zero_durable_measured_rows(tmp_path: 
     (root / "run.responses.jsonl").write_text('{"response":"must not be rerun"}\n')
     with pytest.raises(ValueError, match="durable row"):
         _validate_invalid_result_root(root)
+
+
+def test_cuda_recovery_selects_only_the_unfinished_tail_and_reuses_canaries() -> None:
+    assert CUDA_DURABLE_ROWS == 76
+    assert CUDA_RECOVERY_ROWS == 94
+    assert CUDA_DURABLE_ROWS + CUDA_RECOVERY_ROWS == CUDA_TAIL_ROWS == 170
+
+    inspection = inspect.getsource(inspect_cuda_interruption)
+    execution = inspect.getsource(run_cuda_recovery)
+    assert "extend_completed_selector(" in inspection
+    assert "durable_ids != eligible_ids[:EXPECTED_PARTIAL_ROWS]" in inspection
+    assert 'validated_canary_root=(prior_canary if prior_canary.is_dir() else None)' in execution
+    assert '"successful_rows_repeated": 0' in execution
