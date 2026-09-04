@@ -1332,7 +1332,8 @@ controller `local_bounded_output_cuda_recovery_phase6` retains the observed 76
 rows and executes only the remaining 94. Phase 7 preserves the partial unit's
 10-row predecessor prefix and 35-row current suffix as separate revision
 segments, while the planned population remains 4,463 rows and no completed row
-is repeated.
+is repeated. The same validated successor supplies the retained DeepSeek
+prerequisite for the six-unit Ollama population-alignment continuation.
 The 12 population-alignment rows remain logical model/framework conditions, not
 12 necessarily single-root files. Eleven have one terminal metric root. The
 DeepSeek condition is population-complete across its retained Runner 2.26 usable

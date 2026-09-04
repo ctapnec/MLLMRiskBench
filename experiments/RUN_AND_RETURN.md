@@ -713,7 +713,8 @@ exact durable prefix of the partial unit, and selects only the remaining rows.
 The Phase 7 validator dispatches this completion schema through the same
 `--phase6-local-hardware-fit-completion` option. The retained prefix and new
 suffix are separate revision segments and are not pooled into one security
-rate.
+rate. The Ollama population-alignment continuation uses the same schema-aware
+prerequisite validator when it binds the retained DeepSeek result.
 
 ```bash
 python -m experiments.local_campaign.local_hardware_fit_failed_unit_recovery_phase6 \
