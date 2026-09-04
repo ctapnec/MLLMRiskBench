@@ -676,7 +676,8 @@ def test_lazy_job_detail_binds_only_the_selected_job_report(tmp_path: Path) -> N
     assert status == 200 and content_type == "text/html; charset=utf-8"
     assert "metric_a" in detail and "target-a" in detail
     assert "metric_b" not in detail and "target-b" not in detail
-    assert detail.count("class='barchart'") == 1
+    assert detail.count("class='barchart'") == 2
+    assert "Model stability - failed-output rate" in detail
     assert "/artifacts?path=thesis/analysis/a.json" in detail
     assert "<!doctype html>" not in detail
     full = app.handle("GET", "/stats/job/job-a")[2].decode("utf-8")
@@ -1204,7 +1205,8 @@ def test_stats_renders_owned_external_report_without_unresolvable_links(
         "GET", "/stats/job/job-external-report?fragment=1"
     )[2].decode("utf-8")
     assert "external_owned_metric" in detail
-    assert detail.count("class='barchart'") == 1
+    assert detail.count("class='barchart'") == 2
+    assert "Model stability - failed-output rate" in detail
     assert "level2.json" in detail
     assert "outside the configured artifact root" in detail
     assert "/artifacts?path=" not in detail

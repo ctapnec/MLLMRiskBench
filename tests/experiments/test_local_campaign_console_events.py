@@ -201,7 +201,9 @@ def test_child_controller_uses_native_jobs_index_and_detail_routes(
     assert terminal.task_outcomes == (("controller", "passed", "support"),)
     assert "model tasks: not applicable - support only" in terminal.progress
     assert "model execution: not applicable - support only" in terminal.progress
-    terminal_jobs = app.handle("GET", "/jobs")[2].decode("utf-8")
+    terminal_jobs = app.handle(
+        "GET", "/jobs?from_ms=0&to_ms=9999999999999"
+    )[2].decode("utf-8")
     terminal_detail = app.handle(
         "GET", f"/jobs/campaign/{control.name}"
     )[2].decode("utf-8")
