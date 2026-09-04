@@ -2,7 +2,8 @@
 
 The retained 12,288-token condition stays immutable. This controller verifies
 its typed context-limit outcomes, builds an exact completed-ID selector, and
-runs only those rows with vLLM's automatic GPU-fit context and maximum output.
+runs only those rows with vLLM's automatic GPU-fit context and the exact
+model's readiness-approved output allowance.
 """
 
 from __future__ import annotations
@@ -132,7 +133,7 @@ def build_context_selection(
 
 
 def with_larger_context(config: Mapping[str, Any]) -> dict[str, Any]:
-    """Use vLLM automatic GPU-fit context and maximum output."""
+    """Use automatic GPU-fit context and the registered readiness output cap."""
 
     if len(config) != 1:
         raise ValueError("Qwen context recovery config must contain one model")

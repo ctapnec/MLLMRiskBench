@@ -523,7 +523,8 @@ environment interpreter. The controller verifies every retained outcome as
 `LocalTargetInputError/context_limit_exceeded`, creates a content-bound
 completed-ID selector that leaves only those 230 IDs, removes Qwen's explicit
 12,288-token `max_model_len` and 4,096-token `max_tokens`, and therefore uses
-the pinned runtime's native context and maximum available output. One local
+vLLM's automatic hardware-fit context and Qwen's exact readiness-approved
+output allowance. One local
 answer retry remains. It derives a fresh attestation, canary,
 projection and acquisition binding before measured calls. Treat the result as
 a separate context-condition stratum; join disjoint IDs for population

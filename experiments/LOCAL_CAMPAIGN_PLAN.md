@@ -233,8 +233,9 @@ one text generation at 25,000 tokens, then descends through 16,384, 8,192,
 least 95 percent of the requested output below 120 seconds. An image-capable
 target must also return a nonempty physical-image response below that deadline;
 a valid voluntary stop is not confused with failed text throughput. The
-10-text/5-image survey then runs once at that cap. The identity-bound schema-3
-rig profile is consumed by CLI and Build and binds maximum hardware-fit context,
+10-text/5-image survey then runs once at that cap. The identity-bound readiness
+schema `/4` is retained through the execution-profile registry schema `/3` and
+consumed by CLI and Build. It binds maximum hardware-fit context,
 vLLM tensor-parallel size and GPU memory utilization, plus Ollama thinking mode
 where applicable. An unprofiled local
 generative model is rejected, and the approved values replace campaign-local
@@ -990,7 +991,8 @@ incompatibilities because they require a different context condition rather
 than an answer retry. The dedicated vLLM context-recovery controller verifies
 and selects that exact 230-row set, derives a fresh route attestation, canary
 and no-call projection, then runs it without explicit `max_model_len` or
-`max_tokens`, using the pinned runtime's native limits. Old rows stay
+`max_tokens`, using vLLM's automatic hardware-fit context and the exact model's
+readiness-approved output allowance. Old rows stay
 immutable lifecycle evidence. Only the old
 successful rows and their fresh recovery rows form the eventual complete
 selected population, and their Runner/output-policy/revision strata remain
