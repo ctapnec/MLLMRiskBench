@@ -540,6 +540,13 @@ rate denominators, shown in missing-response coverage and followed by the next
 assigned row. The Build page exposes the same 0 through 10 control and Stats
 charts the failed-output rate. Identity/seal drift and explicit call/time caps
 remain terminal.
+For a measured local vLLM request containing multiple response-independent
+cells, the CLI may resume the unchanged request in fresh child processes.
+This is required because vLLM 0.27.1 can retain CUDA allocations after its
+documented in-process shutdown. A new child is allowed only after the prior
+child added a verified completion marker; completed cells remain call-free and
+a child that makes no durable progress stops the request immediately. Rig Web
+uses the same CLI behavior.
 If the adapter verified a strong runtime/model identity before detecting the
 unusable answer, Runner retains only that normalized identity in the missing-
 response row and checks it for drift across retries. This supports exact live-

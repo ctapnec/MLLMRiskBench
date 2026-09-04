@@ -1083,6 +1083,15 @@ the grid immediately, and the number of children is bounded by the requested
 cell count. Context, output allowance, seed, selection, budgets and receipts do
 not change across children.
 
+The 4 September bounded-output tail exposed this condition after 76 of its 170
+rows were durable: units 21 and 22 were complete, and the first 10 rows of unit
+23 were complete. Seven later unit-23 cells failed before target calls because
+the prior LLaVA allocation remained live. The tracked CUDA-recovery successor
+retains those 76 rows, accepts unit 24's exact four-file acquisition-only root
+as pre-state rather than measured evidence, reuses the already validated unit
+23 and 24 canaries, and selects exactly the remaining 94 rows. It does not run
+the historical request under changed code or change a retained project receipt.
+
 ### 7.2 Runner 2.32 local execution-profile amendment
 
 The 3 September hardware-fit continuation exposed a second execution-condition

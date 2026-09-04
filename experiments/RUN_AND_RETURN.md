@@ -2136,6 +2136,15 @@ and contaminate target resource observations. Crescendo must remain inline
 because each verdict controls the next turn. A defense guard also remains in the
 target phase because it changes the treatment rather than merely scoring it.
 
+When one measured local vLLM request contains multiple response-independent
+cells, Runner owns a bounded outer process recycler. The unchanged command is
+started again in a fresh child only when the preceding child created at least
+one new verified completion marker. Existing completed cells are call-free,
+the request envelope and budgets remain unchanged, and a no-progress child
+stops immediately. This prevents vLLM 0.27.1 allocations retained after its
+official in-process shutdown from blocking the next cell. The same rule applies
+to commands composed by Rig Web.
+
 After verified target teardown, the judge performs a fresh hardware-fit
 selection and may use one or both GPUs under its own local configuration. Do
 not reserve an arbitrary fraction of the second GPU during target measurement.

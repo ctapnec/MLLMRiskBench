@@ -376,6 +376,15 @@ completion marker. Completed cells remain call-free, a no-progress error stops
 immediately, and every request, selection, budget and model profile stays byte
 identical across children. This rule also covers jobs composed through Rig Web
 because they invoke the same CLI entry point.
+The 4 September bounded-output interruption is resumed by
+`python -m experiments.local_campaign.local_bounded_output_cuda_recovery_phase6`.
+It validates 76 durable rows, including the exact 10-row prefix of the partial
+LLaVA image unit, and creates completed-ID selectors for only the 94 unfinished
+rows. A result directory containing only the copied attestation, project
+receipt, request envelope and source receipt is retained as acquisition-only
+pre-state evidence; any additional file makes that admission fail. Previously
+validated canaries are reused, while measured results are written beneath the
+successor root.
 Use `python -m experiments.local_campaign.local_truncation_recovery_phase6`
 with one repeated `--state` per retained unit and a create-only `--out` path to
 produce the structure-only inventory. The artifact contains descriptors,
