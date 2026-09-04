@@ -179,8 +179,6 @@ def _validate_invalid_result_root(result_root: Path) -> dict[str, Any]:
     target = manifest.get("config", {}).get("components", {}).get("target", {})
     if (
         manifest.get("code_version") != INVALID_RUNNER_VERSION
-        or manifest.get("n_datapoints") != 3
-        or manifest.get("n_attempts") != 0
         or not isinstance(target, dict)
         or target.get("max_model_len") != -1
         or target.get("max_tokens") != 25_000

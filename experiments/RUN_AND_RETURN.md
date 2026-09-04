@@ -618,7 +618,9 @@ below.
 For that zero-row proof, the stopped Runner root must contain the exact empty
 attempt, judgment, response and trail streams named by its manifest stem. Its
 `*.results.jsonl` export may be absent because the first target call failed
-before export creation; if present, it must be that exact stem and empty.
+before export creation; if present, it must be that exact stem and empty. The
+Runner manifest has no attempt or selected-row count fields; use the controller
+state, typed error accounting and empty streams for those facts.
 
 After the 25-unit hardware-fit completion is terminal, run
 `python -m experiments.local_campaign.current_ollama_population_alignment_recovery_phase6`

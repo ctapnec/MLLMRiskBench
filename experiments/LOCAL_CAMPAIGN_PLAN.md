@@ -1092,7 +1092,10 @@ The real first-call failure retains empty attempt, judgment, response and trail
 streams but no `*.results.jsonl`, because Runner creates that export only after
 judgments exist. The successor derives the exact cell stem from its manifest,
 requires those four streams to be empty, and accepts the result export only when
-it is either absent or the exact empty cell file.
+it is either absent or the exact empty cell file. Runner's manifest does not
+carry attempt or selected-datapoint counts; the controller proves the three-row
+selection from its state and the zero completed attempts from the typed error
+and empty durable streams.
 
 Runner 2.32 stress-tests the local ceiling and lowers it until the first proven
 sub-120-second text cap, checks physical-image responsiveness below the same

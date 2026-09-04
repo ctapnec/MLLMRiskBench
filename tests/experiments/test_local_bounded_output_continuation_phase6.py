@@ -155,8 +155,6 @@ def test_invalid_output_condition_requires_zero_durable_measured_rows(tmp_path: 
                         }
                     }
                 },
-                "n_datapoints": 3,
-                "n_attempts": 0,
             }
         ),
         encoding="utf-8",
