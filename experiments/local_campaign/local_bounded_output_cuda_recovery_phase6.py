@@ -798,6 +798,57 @@ def validate_completion(completion_path: Path, *, runner_root: Path) -> dict[str
     }
 
 
+def validate_alignment_prerequisite(
+    completion_path: Path, *, runner_root: Path
+) -> dict[str, Any]:
+    """Expose the retained DeepSeek unit after validating the full successor."""
+
+    view = validate_completion(completion_path, runner_root=runner_root)
+    inventory_descriptor = view["inventory"]
+    inventory_path = _validate_descriptor(
+        inventory_descriptor, label="CUDA recovery inventory"
+    )
+    inventory = load_inventory(
+        inventory_path, str(inventory_descriptor.get("sha256", ""))
+    )
+    order = list(view["unit_order"])
+    completion = _load_json(completion_path, label="CUDA recovery completion")
+    snapshot_path = _validate_descriptor(
+        completion["prior_interruption"], label="CUDA predecessor snapshot"
+    )
+    snapshot = _load_json(snapshot_path, label="CUDA predecessor snapshot")
+    prior_launch_path = _validate_descriptor(
+        snapshot["prior_launch"], label="bounded-output predecessor launch"
+    )
+    prior_launch = _load_json(prior_launch_path, label="bounded-output predecessor launch")
+    prior_snapshot_path = _validate_descriptor(
+        prior_launch["prior_interruption"], label="bounded-output predecessor snapshot"
+    )
+    prior_snapshot = _load_json(
+        prior_snapshot_path, label="bounded-output predecessor snapshot"
+    )
+    middle_launch_path = _validate_descriptor(
+        prior_snapshot["prior_launch"], label="middle predecessor launch"
+    )
+    middle_launch = _load_json(middle_launch_path, label="middle predecessor launch")
+    retained_snapshot_path = _validate_descriptor(
+        middle_launch["prior_interruption"], label="base retained snapshot"
+    )
+    retained_snapshot = _load_json(retained_snapshot_path, label="base retained snapshot")
+    deepseek_id = order[0]
+    deepseek_result = retained_snapshot["retained_results"][deepseek_id]
+    return {
+        "completion": dict(view["completion"]),
+        "deepseek_id": deepseek_id,
+        "deepseek_result": deepseek_result,
+        "deepseek_revision": view["metric_project_revision_receipt_sha256"][
+            deepseek_id
+        ],
+        "inventory": inventory,
+        "unit_order": order,
+    }
+
+
 def run(args: argparse.Namespace) -> int:
     if HEX40.fullmatch(args.expected_commit) is None:
         raise ValueError("expected commit must be one lowercase Git object ID")

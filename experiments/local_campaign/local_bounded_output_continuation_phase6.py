@@ -824,6 +824,16 @@ def run(args: argparse.Namespace) -> int:
 def validate_alignment_prerequisite(completion_path: Path, *, runner_root: Path) -> dict[str, Any]:
     """Validate the bounded continuation and expose its retained DeepSeek unit."""
 
+    candidate = _load_json(completion_path, label="bounded-output completion")
+    if candidate.get("schema") == "ura-local-bounded-output-cuda-recovery-phase6/1":
+        from experiments.local_campaign.local_bounded_output_cuda_recovery_phase6 import (
+            validate_alignment_prerequisite as validate_cuda_alignment_prerequisite,
+        )
+
+        return validate_cuda_alignment_prerequisite(
+            completion_path, runner_root=runner_root
+        )
+
     resolved = completion_path.resolve(strict=True)
     control_root = resolved.parent
     completion = _load_json(resolved, label="bounded-output completion")

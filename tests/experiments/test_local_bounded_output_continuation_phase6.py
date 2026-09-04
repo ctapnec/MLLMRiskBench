@@ -24,6 +24,7 @@ from experiments.local_campaign.local_bounded_output_cuda_recovery_phase6 import
     _validate_pre_state_root,
     inspect_interrupted_campaign as inspect_cuda_interruption,
     run as run_cuda_recovery,
+    validate_alignment_prerequisite as validate_cuda_alignment_prerequisite,
     validate_completion as validate_cuda_completion,
 )
 from ura.targets.local import (
@@ -271,3 +272,33 @@ def test_phase7_dispatches_cuda_recovery_without_pooling_retained_rows(
     assert '"retained_predecessor_rows": EXPECTED_PARTIAL_ROWS' in validation
     assert '"security_metric_pooling_permitted": False' in validation
     assert '"successful_rows_repeated": 0' in validation
+
+
+def test_alignment_prerequisite_dispatches_cuda_recovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    completion = tmp_path / "completion.json"
+    completion.write_text(
+        json.dumps({"schema": "ura-local-bounded-output-cuda-recovery-phase6/1"}),
+        encoding="utf-8",
+    )
+    expected = {"deepseek_result": {"target_attempts": 931}}
+    observed: dict[str, Path] = {}
+
+    def validate(path: Path, *, runner_root: Path) -> dict[str, object]:
+        observed["completion"] = path
+        observed["runner_root"] = runner_root
+        return expected
+
+    monkeypatch.setattr(
+        local_bounded_output_cuda_recovery_phase6,
+        "validate_alignment_prerequisite",
+        validate,
+    )
+    assert validate_alignment_prerequisite(completion, runner_root=tmp_path) is expected
+    assert observed == {"completion": completion, "runner_root": tmp_path}
+
+    dispatch = inspect.getsource(validate_alignment_prerequisite)
+    validation = inspect.getsource(validate_cuda_alignment_prerequisite)
+    assert "validate_cuda_alignment_prerequisite(" in dispatch
+    assert 'deepseek_result = retained_snapshot["retained_results"][deepseek_id]' in validation
