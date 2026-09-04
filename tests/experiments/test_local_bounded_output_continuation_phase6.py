@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from experiments.local_campaign import local_bounded_output_cuda_recovery_phase6
 from experiments.local_campaign.local_bounded_output_continuation_phase6 import (
     SCHEMA,
     _validate_invalid_result_root,
@@ -237,7 +238,30 @@ def test_cuda_recovery_accepts_only_exact_pre_state_evidence(tmp_path: Path) -> 
         _validate_pre_state_root(root)
 
 
-def test_phase7_dispatches_cuda_recovery_without_pooling_retained_rows() -> None:
+def test_phase7_dispatches_cuda_recovery_without_pooling_retained_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    completion = tmp_path / "completion.json"
+    completion.write_text(
+        json.dumps({"schema": "ura-local-bounded-output-cuda-recovery-phase6/1"}),
+        encoding="utf-8",
+    )
+    expected = {"validated": True}
+    observed: dict[str, Path] = {}
+
+    def validate(path: Path, *, runner_root: Path) -> dict[str, bool]:
+        observed["completion"] = path
+        observed["runner_root"] = runner_root
+        return expected
+
+    monkeypatch.setattr(
+        local_bounded_output_cuda_recovery_phase6,
+        "validate_completion",
+        validate,
+    )
+    assert validate_completion(completion, runner_root=tmp_path) is expected
+    assert observed == {"completion": completion, "runner_root": tmp_path}
+
     dispatch = inspect.getsource(validate_completion)
     validation = inspect.getsource(validate_cuda_completion)
 
