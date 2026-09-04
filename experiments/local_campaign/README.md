@@ -368,6 +368,14 @@ with the target. Runner first completes the response checkpoint, releases the
 target, then loads the judge and finishes the same bound run. Crescendo remains
 inline because its verdict is trajectory input, and a defense guard remains in
 the target phase because it is part of the evaluated condition.
+When one vLLM request contains multiple response-independent cells, the CLI
+owns a bounded outer process recycler. vLLM 0.27.1 can retain an in-process CUDA
+allocation after its official shutdown hook, so the next incomplete cell is
+resumed in a fresh child only after the previous child created a new verified
+completion marker. Completed cells remain call-free, a no-progress error stops
+immediately, and every request, selection, budget and model profile stays byte
+identical across children. This rule also covers jobs composed through Rig Web
+because they invoke the same CLI entry point.
 Use `python -m experiments.local_campaign.local_truncation_recovery_phase6`
 with one repeated `--state` per retained unit and a create-only `--out` path to
 produce the structure-only inventory. The artifact contains descriptors,

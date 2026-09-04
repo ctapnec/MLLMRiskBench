@@ -65,6 +65,8 @@ from datetime import datetime, timezone
 from importlib import metadata
 from pathlib import Path
 
+_PROCESS_ENVIRON = os.environ
+
 # make `import ura` and `import experiments.*` work when run as a script
 # (`python experiments/run_matrix.py ...`), not only as `python -m experiments.run_matrix`
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -7907,7 +7909,7 @@ def _vllm_grid_process_recycling(
     system reclaim that child before another incomplete cell is resumed.
     """
 
-    if os.environ.get(_VLLM_GRID_CHILD_ENV) == "1":
+    if _PROCESS_ENVIRON.get(_VLLM_GRID_CHILD_ENV) == "1":
         return None
     args = build_parser().parse_args(argv)
     if (
@@ -7961,7 +7963,7 @@ def _completion_marker_count(root: Path) -> int:
 def _run_recyclable_vllm_grid(argv: list[str], *, out: Path, cell_bound: int) -> int:
     """Resume a multi-cell vLLM grid across bounded fresh child processes."""
 
-    environment = dict(os.environ)
+    environment = dict(_PROCESS_ENVIRON)
     environment[_VLLM_GRID_CHILD_ENV] = "1"
     command = [sys.executable, str(Path(__file__).resolve()), *argv]
     for _cycle in range(cell_bound + 1):

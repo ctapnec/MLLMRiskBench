@@ -1072,6 +1072,17 @@ this local mechanism: their explicit token limits remain derived from the paid
 campaign budget. They receive zero answer-quality retries and up to three
 harness retries only for the declared retryable HTTP status responses.
 
+Measured multi-cell vLLM grids use a fresh child process when post-factum local
+judging requires the target to be reopened between cells. This is an execution
+lifecycle rule, not a model-parameter fallback. The installed vLLM 0.27.1
+in-process shutdown can retain CUDA allocations after its official cleanup
+hook. The parent therefore submits the unchanged, content-bound request again
+only when the prior child added at least one verified completion marker. Those
+completed cells are call-free on resume. A child that adds no completion stops
+the grid immediately, and the number of children is bounded by the requested
+cell count. Context, output allowance, seed, selection, budgets and receipts do
+not change across children.
+
 ### 7.2 Runner 2.32 local execution-profile amendment
 
 The 3 September hardware-fit continuation exposed a second execution-condition
