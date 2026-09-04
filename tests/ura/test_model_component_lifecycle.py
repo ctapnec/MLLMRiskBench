@@ -12,6 +12,72 @@ from ura.judges.rules import RuleJudge
 from ura.targets.api import MockTarget
 
 
+def _multi_corpus_vllm_args(out: Path) -> list[str]:
+    return [
+        "--local",
+        "vllm:Org/Model",
+        "--corpora",
+        "first,second",
+        "--attackers",
+        "replay",
+        "--judges",
+        "rules,guardrail",
+        "--out",
+        str(out),
+    ]
+
+
+def test_multi_cell_vllm_grid_recycles_only_after_durable_progress(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    out = tmp_path / "run"
+    calls: list[tuple[list[str], dict[str, str]]] = []
+
+    def child(command, *, env, check):
+        assert check is False
+        calls.append((list(command), dict(env)))
+        out.mkdir(exist_ok=True)
+        if len(calls) == 1:
+            (out / "first.complete.json").write_text("{}", encoding="utf-8")
+            return SimpleNamespace(returncode=1)
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.delenv(run_matrix._VLLM_GRID_CHILD_ENV, raising=False)
+    monkeypatch.setattr(run_matrix.subprocess, "run", child)
+    monkeypatch.setattr(
+        run_matrix,
+        "_main",
+        lambda _argv: pytest.fail("the recycling parent must not load a model"),
+    )
+
+    argv = _multi_corpus_vllm_args(out)
+    assert run_matrix.main(argv) == 0
+    assert len(calls) == 2
+    assert all(call[0][2:] == argv for call in calls)
+    assert all(
+        call[1][run_matrix._VLLM_GRID_CHILD_ENV] == "1" for call in calls
+    )
+
+
+def test_multi_cell_vllm_grid_stops_when_failed_child_made_no_progress(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    def child(_command, *, env, check):
+        nonlocal calls
+        assert env[run_matrix._VLLM_GRID_CHILD_ENV] == "1"
+        assert check is False
+        calls += 1
+        return SimpleNamespace(returncode=1)
+
+    monkeypatch.delenv(run_matrix._VLLM_GRID_CHILD_ENV, raising=False)
+    monkeypatch.setattr(run_matrix.subprocess, "run", child)
+
+    assert run_matrix.main(_multi_corpus_vllm_args(tmp_path / "run")) == 1
+    assert calls == 1
+
+
 def test_run_matrix_closes_target_and_judge_after_partial_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

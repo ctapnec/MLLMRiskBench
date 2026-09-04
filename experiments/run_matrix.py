@@ -57,6 +57,7 @@ import re
 import secrets
 import signal
 import stat
+import subprocess
 import sys
 import time
 from collections import Counter, defaultdict
@@ -7891,8 +7892,108 @@ def _main(argv=None) -> int:
     return 1 if n_errors else 0
 
 
+_VLLM_GRID_CHILD_ENV = "URA_INTERNAL_VLLM_GRID_CHILD"
+
+
+def _vllm_grid_process_recycling(
+    argv: list[str],
+) -> tuple[Path, int] | None:
+    """Return the output root and cell bound for a recyclable vLLM grid.
+
+    vLLM 0.27's synchronous in-process engine can retain its CUDA allocations
+    after its official shutdown hook.  A multi-cell post-factum run would then
+    fail while reopening the same model for its next cell.  Keep each attempt
+    inside the normal in-process admission boundary, but let the operating
+    system reclaim that child before another incomplete cell is resumed.
+    """
+
+    if os.environ.get(_VLLM_GRID_CHILD_ENV) == "1":
+        return None
+    args = build_parser().parse_args(argv)
+    if (
+        args.dry_run
+        or args.preflight_only
+        or args.model_acquisition_plan_only
+        or args.attestation_probe
+        or args.diagnostic_canary
+    ):
+        return None
+    local_specs = [
+        value.strip() for value in args.local.split(",") if value.strip()
+    ]
+    corpora = [value.strip() for value in args.corpora.split(",") if value.strip()]
+    attackers = [
+        value.strip() for value in args.attackers.split(",") if value.strip()
+    ]
+    judges = [value.strip() for value in args.judges.split(",") if value.strip()]
+    local_judge = (
+        args.judge_model
+        if "llm" in judges and args.judge_model.startswith(("vllm:", "ollama:"))
+        else None
+    )
+    if (
+        len(local_specs) != 1
+        or not local_specs[0].startswith("vllm:")
+        or not _uses_post_factum_local_judging(
+            local_specs=local_specs,
+            execution_purpose="measured_run",
+            attacker_names=attackers,
+            judge_names=judges,
+            local_judge_spec=local_judge,
+        )
+    ):
+        return None
+    cell_bound = len(corpora) * len(attackers)
+    if cell_bound <= 1:
+        return None
+    return Path(args.out), cell_bound
+
+
+def _completion_marker_count(root: Path) -> int:
+    if not root.is_dir():
+        return 0
+    return sum(
+        path.is_file() and not path.is_symlink()
+        for path in root.glob("*.complete.json")
+    )
+
+
+def _run_recyclable_vllm_grid(argv: list[str], *, out: Path, cell_bound: int) -> int:
+    """Resume a multi-cell vLLM grid across bounded fresh child processes."""
+
+    environment = dict(os.environ)
+    environment[_VLLM_GRID_CHILD_ENV] = "1"
+    command = [sys.executable, str(Path(__file__).resolve()), *argv]
+    for _cycle in range(cell_bound + 1):
+        completed_before = _completion_marker_count(out)
+        child = subprocess.run(command, env=environment, check=False)
+        return_code = int(child.returncode)
+        if return_code == 0:
+            return 0
+        completed_after = _completion_marker_count(out)
+        if completed_after <= completed_before:
+            return 128 + abs(return_code) if return_code < 0 else return_code
+        print(
+            "vLLM grid retained a newly completed cell; resuming remaining "
+            "cells in a fresh process",
+            file=sys.stderr,
+        )
+    print("vLLM grid process-recycling bound exhausted", file=sys.stderr)
+    return 1
+
+
 def main(argv=None) -> int:
     """Run one matrix and tear down every admitted runtime/model owner."""
+
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    recycling = _vllm_grid_process_recycling(raw_argv)
+    if recycling is not None:
+        out, cell_bound = recycling
+        return _run_recyclable_vllm_grid(
+            raw_argv,
+            out=out,
+            cell_bound=cell_bound,
+        )
 
     global _ACTIVE_ENGINE_RUNTIME_SELECTION
     if _ACTIVE_ENGINE_RUNTIME_SELECTION is not None:
@@ -7929,7 +8030,7 @@ def main(argv=None) -> int:
             if pending_signal is not None:
                 raise _EngineRuntimeTermination(pending_signal)
             try:
-                result = _main(argv)
+                result = _main(raw_argv)
             except _EngineRuntimeTermination as exc:
                 pending_signal = exc.signum
                 result = 128 + exc.signum
