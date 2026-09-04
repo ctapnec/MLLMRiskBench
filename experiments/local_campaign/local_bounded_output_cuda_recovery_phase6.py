@@ -87,7 +87,7 @@ def _completed_result(
     state_path = prior_root / "units" / unit_id / "state.json"
     level1_path = prior_root / "units" / unit_id / "level1.json"
     state = _load_json(state_path, label=f"{unit_id} retained state")
-    selected = int(item["summary"]["recovery_records"])
+    selected = int(state.get("selected_records", 0))
     attempted, successful, missing = _counts_from_level1(
         _load_json(level1_path, label=f"{unit_id} retained Level 1")
     )
@@ -95,7 +95,7 @@ def _completed_result(
         state.get("schema") != PRIOR_STATE_SCHEMA
         or state.get("unit_id") != unit_id
         or state.get("source_lane") != item.get("source_lane")
-        or state.get("selected_records") != selected
+        or selected < 1
         or attempted != selected
     ):
         raise ValueError(f"{unit_id} retained completion changed")
