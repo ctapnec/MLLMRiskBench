@@ -1325,6 +1325,14 @@ retains the other 24 unit results by content identity, executes only the three
 unattempted rows, binds the observed one-cluster canary ceiling to exactly 20,
 and publishes a superseding 25-unit completion for the unchanged Phase 7 input.
 No logical condition or planned row is added.
+If vLLM retains its CUDA allocation after a completed cell in that continuation,
+the generic Runner process recycler resumes the unchanged measured request in a
+fresh child and skips every completion-marked cell. The one-time campaign
+controller `local_bounded_output_cuda_recovery_phase6` retains the observed 76
+rows and executes only the remaining 94. Phase 7 preserves the partial unit's
+10-row predecessor prefix and 35-row current suffix as separate revision
+segments, while the planned population remains 4,463 rows and no completed row
+is repeated.
 The 12 population-alignment rows remain logical model/framework conditions, not
 12 necessarily single-root files. Eleven have one terminal metric root. The
 DeepSeek condition is population-complete across its retained Runner 2.26 usable

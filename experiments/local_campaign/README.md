@@ -308,6 +308,11 @@ GPTGeoChat suffix form seven logical metric lanes in separate revision strata.
 The failed unit's 375-row prefix remains lifecycle evidence and is never pooled
 with the suffix. Completed Runner 2.24 Qwen text and Crescendo lanes are not
 repeated and remain in their historical output-policy stratum.
+When the bounded-output tail uses the CUDA-recovery successor, pass that
+successor's `completion.json` through the same local-hardware-fit option. Its
+validator reconstructs the 25 logical units from the retained roots and the
+94-row suffix, records the split partial unit in `population_segments`, and
+forbids cross-revision pooling.
 
 For this retained campaign,
 `--phase6-current-ollama-population-alignment-completion` names the terminal

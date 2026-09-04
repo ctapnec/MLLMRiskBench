@@ -706,6 +706,15 @@ those three unattempted rows. Supply its superseding completion
 to `--phase6-local-hardware-fit-completion` and to the population-alignment
 recovery. It remains the same 25-condition, 4,463-row hardware-fit stratum.
 
+If the bounded-output continuation instead retains CUDA allocations between
+vLLM cells, use `local_bounded_output_cuda_recovery_phase6` once. It accepts
+only the exact terminalized predecessor, preserves the complete units and the
+exact durable prefix of the partial unit, and selects only the remaining rows.
+The Phase 7 validator dispatches this completion schema through the same
+`--phase6-local-hardware-fit-completion` option. The retained prefix and new
+suffix are separate revision segments and are not pooled into one security
+rate.
+
 ```bash
 python -m experiments.local_campaign.local_hardware_fit_failed_unit_recovery_phase6 \
   --prior-completion "$FAILED_HARDWARE_COMPLETION" \
