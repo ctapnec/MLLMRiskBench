@@ -131,3 +131,10 @@ def test_transfer_repeated_model_is_explicitly_unavailable_without_arbitrary_sel
     assert len(result) == 3
     assert all(audit["comparison_unavailable_reason"] == "multiple_completed_runs_for_same_model_in_exact_cohort"
                for _records, audit in result.values())
+
+
+def test_historical_transfer_still_checks_exact_attempt_judgment_lineage(tmp_path, cells, monkeypatch):
+    cells[0]["judgments"][0]["raw"]["transfer_key"] = "changed"
+    monkeypatch.setattr(transfer_matrix, "load_analysis_cells", lambda *a, **kw: cells)
+    with pytest.raises(ValueError, match="Attempt/Judgment transfer_key mismatch"):
+        transfer_matrix.load_facets(tmp_path, historical_code_repository=tmp_path)

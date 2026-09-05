@@ -271,11 +271,24 @@ def test_haiku_reader_and_reconciliation_use_historical_join(tmp_path, monkeypat
     from experiments import retained_response_judge as judge
 
     _grid(tmp_path)
-    expected = ([{"run_id": "one"}], {"sample": {"prepared_response": "answer"}}, {}, {})
-    monkeypatch.setattr(subject, "load_joined", lambda root: expected)
+    cells = [{"run_id": "one", "judgments": []}]
+    metadata = {"sample": {"prepared_response": "answer"}}
+    binding = {"sha256": "b" * 64}
+    audit = {"frame": "common", "policy_evaluable_samples": 1, "judge_configuration_binding": binding}
+    partition = {"cells": cells, "validator_commit": COMMIT,
+                 "joined_by_configuration": {binding["sha256"]: [{}, metadata, {"sample": {}}, audit]}}
+    calls = []
+    def read(root, **kwargs):
+        assert root == tmp_path
+        calls.append(kwargs)
+        return [partition]
+    monkeypatch.setattr(subject, "read_partitions", read)
     monkeypatch.setattr(judge, "_joined_artifacts", lambda *a, **k: pytest.fail("current-only join"))
-    assert judge._read_view(tmp_path) == expected
-    assert judge.load_retained_metadata(tmp_path) == expected[1]
+    result = judge._read_view(tmp_path)
+    assert result[:3] == (cells, metadata, {"sample": {}})
+    assert result[3]["source_configuration_audits"][0]["configuration_audits"] == {binding["sha256"]: audit}
+    assert judge.load_retained_metadata(tmp_path) == metadata
+    assert calls == [{"joined": True, "frame": "common", "separate_judge_configurations": True}] * 2
 
 
 @pytest.mark.parametrize("failure", [None, "full-grid", "omit-row", "orphan-prediction", "wrong-config", "zero-results"])
@@ -383,6 +396,7 @@ def test_grouped_worker_validates_full_grid_before_exact_disjoint_source_joins(
         exec(subject._WORKER, {})
         result = json.loads(capsys.readouterr().out)
         assert "joined" not in result
+        assert [cell["run_id"] for cell in result["analysis_cells"]] == ["run-0", "run-1"]
         groups = result["joined_by_configuration"]
         assert set(groups) == {"1" * 64, "2" * 64}
         assert groups["1" * 64][0]["rules"] == {"run-0|model|attempt": "violation"}
