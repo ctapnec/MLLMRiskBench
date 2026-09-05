@@ -4670,7 +4670,11 @@ def current_phase6_failure_record(
         invalid = (
             set(failure) != EXTENDED_LANE_FAILURE_FIELDS
             or failure.get("stage")
-            not in {"lane", "measured", "approved-wall-time-ceiling"}
+            not in {"lane", "measured", "gate5", "approved-wall-time-ceiling"}
+            or (failure.get("stage") == "gate5" and (
+                failure.get("exact_measured_argv") is not None
+                or not isinstance(failure.get("pre_runner_failure"), dict)
+            ))
             or failure.get("reason_code")
             != (
                 "approved_wall_time_exceeded"

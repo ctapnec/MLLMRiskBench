@@ -583,6 +583,42 @@ def test_measured_grid_binds_runner_resolved_ollama_digest(
         phase7._measured_model_selector(selector, spec)
 
 
+def test_historical_extended_failure_retains_pre_runner_gate5_stage(
+    phase7: ModuleType, tmp_path: Path
+) -> None:
+    lane = "local-llava-rr-text-primary-100"
+    attempt = tmp_path / "attempts" / "20260827T180000Z-73c5331"
+    attempt.mkdir(parents=True)
+    spec_path = tmp_path / "lane-spec.json"
+    spec_path.write_text("{}", encoding="utf-8")
+    pre_runner = tmp_path / "pre-runner.json"
+    pre_runner.write_text("{}", encoding="utf-8")
+    failure = {
+        "schema": "ura-phase6-extended-lane-failure/1", "stage": "gate5",
+        "status": "failed", "attempt": attempt.name, "lane_id": lane,
+        "evidence_eligible": False, "error_type": "ControllerCommandFailed",
+        "error": "preflight failed before measured execution",
+        "approved_wall_time_seconds": 86400, "exact_measured_argv": None,
+        "failed_at_utc": "2026-08-29T00:08:56.826230Z",
+        "lane_spec": phase7.descriptor(spec_path),
+        "pre_runner_failure": phase7.descriptor(pre_runner),
+        "reason_code": "lane_controller_exception", "result_root": str(tmp_path),
+    }
+    path = attempt / f"{lane}.failure.json"
+    path.write_text(json.dumps(failure), encoding="utf-8")
+    result = phase7.current_phase6_failure_record(
+        phase7.descriptor(path), lane=lane, attempt=attempt, label="historical failure"
+    )
+    assert result == (path, failure, spec_path)
+    for field, value in (("pre_runner_failure", None), ("exact_measured_argv", {}),
+                         ("stage", "unknown"), ("evidence_eligible", True)):
+        path.write_text(json.dumps({**failure, field: value}), encoding="utf-8")
+        with pytest.raises(phase7.Phase7Error, match="failure record changed"):
+            phase7.current_phase6_failure_record(
+                phase7.descriptor(path), lane=lane, attempt=attempt, label="historical failure"
+            )
+
+
 def test_seven_declared_profile_does_not_replace_canonical_gate5_counts(phase7: ModuleType) -> None:
     historical = {"rows": 46, "runnable": 18, "typed_terminal": 28,
                   "target_runtime_terminal": 3}
