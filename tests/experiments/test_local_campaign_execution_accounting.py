@@ -127,6 +127,26 @@ def test_execution_accounting_separates_inputs_calls_outputs_and_judges() -> Non
     assert source["common_local_judgments"] == 0
 
 
+def test_input_context_rejection_is_not_a_successful_generation() -> None:
+    cell = _cell(
+        model="vllm:Qwen/Qwen3-VL-8B-Instruct",
+        corpus="gptgeochat_release", source="gptgeochat",
+        attempt_rows=[("a0", "gptgeochat:1", 0, None, 0, "runner")],
+    )
+    cell["responses"]["a0"]["raw"] = {
+        "empty_completion_observed": True,
+        "target_input_status": "incompatible",
+        "target_input_category": "context_limit_exceeded",
+    }
+    cell["judgments"][0]["label"] = "not_applicable"
+    cell["judgments"][0]["raw"]["policy_evaluation_status"] = "model_nonresponse"
+    report = build_execution_accounting([cell], generated_from={"fixture": True})
+    assert report["totals"]["initial_target_calls"] == 1
+    assert report["totals"]["retained_missing_outputs"] == 1
+    assert report["totals"]["successful_output_generations"] == 0
+    assert report["totals"]["source_authoritative_decisions"] == 0
+
+
 @pytest.mark.parametrize(
     "mutation",
     ("retry_total", "row_output", "judge_overflow", "haiku", "order", "identity"),

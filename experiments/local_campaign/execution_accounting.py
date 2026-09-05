@@ -127,6 +127,8 @@ def _stability_retry_count(response: Mapping[str, Any]) -> int:
 
 def _missing_output(response: Mapping[str, Any]) -> bool:
     raw = _object(response.get("raw"), label="response raw")
+    if raw.get("target_input_status") == "incompatible":
+        return True
     status = raw.get("model_stability_status")
     if status is None:
         return False
