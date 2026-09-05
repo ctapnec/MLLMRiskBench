@@ -5577,7 +5577,7 @@ def validate_project_and_source(
         note_project.get("artifact") != descriptor(project_path)
     ):
         raise Phase7Error("Gate 5 RUNNOTE project-revision descriptor differs")
-    if note_project.get("binding") != binding:
+    if note_project.get("binding") != experiment_binding:
         raise Phase7Error("Gate 5 RUNNOTE project-revision binding differs")
     if note_source.get("artifact") != descriptor(source_path):
         raise Phase7Error("Gate 5 RUNNOTE source-conformance descriptor differs")

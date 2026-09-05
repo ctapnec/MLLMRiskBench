@@ -4517,6 +4517,56 @@ def test_gate5_expands_project_receipt_descriptor_to_experiment_binding(
     assert calls == [(receipt, descriptor_binding)]
 
 
+def test_phase7_compares_the_expanded_gate5_revision_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import ura.project_revision as revisions
+    import ura.source_conformance as sources
+
+    namespace = _rendered_phase7_namespace(tmp_path)
+    project = tmp_path / "project"
+    (project / "experiments").mkdir(parents=True)
+    registry = project / "experiments" / "source-instances.json"
+    registry.write_text("{}\n", encoding="utf-8")
+    receipt_path = tmp_path / "project-revision.json"
+    receipt_path.write_text("{}\n", encoding="utf-8")
+    source_path = tmp_path / "source-conformance.json"
+    source_path.write_text("{}\n", encoding="utf-8")
+    descriptor = namespace["descriptor"]
+    commit = "1" * 40
+    receipt = {"revision_id": "fixture", "repository": {
+        "expected_commit": commit, "observed_commit": commit, "clean": True,
+    }}
+    file_binding = {"file": receipt_path.name, "sha256": descriptor(receipt_path)["sha256"],
+                    "bytes": receipt_path.stat().st_size, "revision_id": "fixture"}
+    expanded = {**file_binding, "mode": "verified", "expected_commit": commit,
+                "observed_commit": commit, "head_tree": "2" * 40,
+                "harness_source_sha256": "3" * 64, "driver_source_sha256": "4" * 64}
+    monkeypatch.setattr(revisions, "load_project_revision_file", lambda *_a, **_k: (
+        receipt, file_binding
+    ))
+    seen = []
+    monkeypatch.setattr(revisions, "project_revision_binding", lambda r, b: (
+        seen.append((r, b)) or expanded
+    ))
+    monkeypatch.setattr(sources, "validate_source_conformance_manifest", lambda v: v)
+    namespace["validate_exact_source_portfolio"] = lambda *_args: {"admitted": 44}
+    note = {
+        "project_revision": {"artifact": descriptor(receipt_path), "binding": expanded},
+        "source_conformance": {"artifact": descriptor(source_path)},
+    }
+    kwargs = {"project": project, "note": note, "code_identity": {"expected_commit": commit},
+              "promotion": {"inputs": {"project_revision": descriptor(receipt_path),
+                                         "source_conformance": descriptor(source_path)}}}
+    validated = namespace["validate_project_and_source"](**kwargs)
+    assert validated["project_revision"]["experiment_binding"] == expanded
+    assert seen == [(receipt, file_binding)]
+    for wrong in (file_binding, {**expanded, "head_tree": "5" * 40}):
+        note["project_revision"]["binding"] = wrong
+        with pytest.raises(namespace["Phase7Error"], match="binding differs"):
+            namespace["validate_project_and_source"](**kwargs)
+
+
 def test_gate5_promoter_compares_the_normalized_project_revision_binding(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
