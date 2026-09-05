@@ -225,7 +225,40 @@ def validated_prefix(snapshot: dict, *, runner_root: Path, project: Path) -> tup
                    "evidence_scope": PREFIX_SCOPE, "old_grid_promoted": False}
 
 
-def validate(completion_path: Path, *, work: Path, project: Path) -> tuple[dict, dict, list[dict], list[dict]]:
+def _retry_results(paths: Sequence[Path], *, original_launch: Path, work: Path) -> dict:
+    replacements = {}
+    for path_value in paths:
+        path = path_value.resolve(strict=True)
+        value = _load_json(path, label="RR retry completion")
+        launch_path = _validate_descriptor(value["launch"], label="RR retry launch")
+        launch = _load_json(launch_path, label="RR retry launch")
+        _same_launch(value, launch)
+        bound_original = _validate_descriptor(launch["original_launch"], label="RR retry original launch")
+        worker_path = _validate_descriptor(launch["original_worker_completion"], label="RR retry original worker")
+        if (path.parent.parent != work / "runs/engineering" or launch_path != path.parent / "launch.json"
+                or value.get("schema") != campaign.RETRY_SCHEMA or value.get("status") != "complete"
+                or value.get("failures") != {} or bound_original != original_launch):
+            raise ValueError("RR retry lacks its exact successful terminal and original launch")
+        _old, units, evidence = campaign.template_retry_selection(bound_original, worker_path, launch["physical_gpu"])
+        revision = _load_json(_validate_descriptor(launch["project_revision"], label="RR retry revision"), label="RR retry revision")
+        if (launch["units"] != [campaign.asdict(unit) for unit in units] or launch["failure_evidence"] != evidence
+                or set(value["results"]) != {unit.unit_id for unit in units}
+                or any(revision.get("repository", {}).get(key) != launch["expected_commit"] for key in ("expected_commit", "observed_commit"))
+                or value["target_attempts"] != sum(result["target_attempts"] for result in value["results"].values())
+                or value["successful_generations"] != sum(result["successful_target_generations"] for result in value["results"].values())):
+            raise ValueError("RR retry changed its qualified failures, selection, revision or accounting")
+        for unit in units:
+            terminal = _load_json(path.parent / f"{unit.unit_id}.terminal.json", label="RR retry unit terminal")
+            if unit.unit_id in replacements or terminal != {"result": value["results"][unit.unit_id], "failure": None}:
+                raise ValueError("RR retry repeats a unit or changed its terminal result")
+            replacements[unit.unit_id] = {"result": value["results"][unit.unit_id], "root": path.parent,
+                "completion": _descriptor(path), "original_worker": launch["original_worker_completion"],
+                "revision": launch["project_revision"], "commit": launch["expected_commit"], "gpu": launch["physical_gpu"]}
+    return replacements
+
+
+def validate(completion_path: Path, *, work: Path, project: Path,
+             retry_completions: Sequence[Path] = ()) -> tuple[dict, dict, list[dict], list[dict]]:
     path = completion_path.resolve(strict=True)
     root = path.parent
     if root.parent != work / "runs/engineering":
@@ -234,8 +267,10 @@ def validate(completion_path: Path, *, work: Path, project: Path) -> tuple[dict,
     launch_path = _validate_descriptor(value["launch"], label="RR parallel launch")
     launch = _load_json(launch_path, label="RR parallel launch")
     if (launch_path != root / "launch.json" or value.get("schema") != campaign.SCHEMA
-            or value.get("status") != "responses_complete_pending_prefix_validation"
-            or value.get("worker_exit_codes") != {"0": 0, "1": 0}
+            or value.get("status") not in ({"responses_complete_pending_prefix_validation", "complete_with_failures"}
+                                          if retry_completions else {"responses_complete_pending_prefix_validation"})
+            or (not retry_completions and value.get("worker_exit_codes") != {"0": 0, "1": 0})
+            or set(value.get("worker_exit_codes", {})) != {"0", "1"}
             or set(value.get("worker_completions", {})) != {"0", "1"}
             or launch.get("original_population") != 7606 or launch.get("max_tokens") != 4096
             or launch.get("tensor_parallel_size") != 1 or launch.get("target_answer_retries") != 1
@@ -247,12 +282,16 @@ def validate(completion_path: Path, *, work: Path, project: Path) -> tuple[dict,
     units = [Unit(**item) for item in launch["units"]]
     if launch["queues"] != campaign.balanced_queues(units):
         raise ValueError("RR parallel analysis queue assignment changed")
+    replacements = _retry_results(retry_completions, original_launch=launch_path, work=work)
     snapshot_path = _validate_descriptor(launch["interruption"], label="RR interrupted prefix")
     snapshot = _load_json(snapshot_path, label="RR interrupted prefix")
     prefix_cells, prefix = validated_prefix(snapshot, runner_root=work / "runs/thesis/runner", project=project)
-    measured_coverage = campaign.coverage(launch)
+    original_coverage = campaign.coverage(launch)
+    measured_coverage = (campaign.coverage(launch, replacement_roots={
+        key: work / "runs/thesis/runner" / key / item["root"].name for key, item in replacements.items()})
+        if replacements else original_coverage)
     if (not measured_coverage["complete"] or measured_coverage["expected_inputs"] != 7606
-            or measured_coverage != value.get("coverage")):
+            or original_coverage != value.get("coverage")):
         raise ValueError("RR parallel analysis requires the exact 7,606-input disjoint union")
     revision_path = _validate_descriptor(launch["project_revision"], label="RR parallel revision")
     revision = _load_json(revision_path, label="RR parallel revision")["repository"]
@@ -261,29 +300,42 @@ def validate(completion_path: Path, *, work: Path, project: Path) -> tuple[dict,
     by_id = {unit.unit_id: unit for unit in units}
     validated, cells = {}, []
     source_strata = set()
+    replaced = set()
     for gpu in ("0", "1"):
         worker_root = root.with_name(root.name + f"-gpu{gpu}")
         worker_path = _validate_descriptor(value["worker_completions"][gpu], label="RR worker completion")
         worker = _load_json(worker_path, label="RR worker completion")
         worker_launch_path = _validate_descriptor(worker["launch"], label="RR worker launch")
         worker_launch = _load_json(worker_launch_path, label="RR worker launch")
+        failures = worker.get("failures", {})
+        retried = {key for key, item in replacements.items() if item["gpu"] == gpu}
         if (launch["workers"][gpu] != str(worker_root) or worker_path != worker_root / "completion.json"
                 or worker_launch_path != worker_root / "launch.json"
                 or worker_launch != {"schema": campaign.SCHEMA, "parent": value["launch"],
                                      "physical_gpu": gpu, "unit_order": launch["queues"][gpu]}
-                or worker.get("schema") != campaign.SCHEMA or worker.get("status") != "complete"
-                or worker.get("physical_gpu") != gpu or worker.get("failures") != {}
-                or set(worker.get("results", {})) != set(launch["queues"][gpu])):
+                or worker.get("schema") != campaign.SCHEMA
+                or worker.get("status") != ("complete_with_failures" if failures else "complete")
+                or value["worker_exit_codes"][gpu] != int(bool(failures))
+                or worker.get("physical_gpu") != gpu or set(failures) != retried
+                or set(worker.get("results", {})) & retried
+                or set(worker.get("results", {})) | retried != set(launch["queues"][gpu])):
             raise ValueError("RR worker terminal or original GPU assignment changed")
         worker_cells = []
         for unit_id in launch["queues"][gpu]:
             unit = by_id[unit_id]
+            retry = replacements.get(unit_id)
+            if retry and retry["original_worker"] != value["worker_completions"][gpu]:
+                raise ValueError("RR retry refers to a different original worker completion")
+            segment_root = retry["root"] if retry else worker_root
+            completion = retry["completion"] if retry else value["worker_completions"][gpu]
+            result = retry["result"] if retry else worker["results"][unit_id]
+            revision_descriptor = retry["revision"] if retry else launch["project_revision"]
             item = _validate_metric_result(
-                worker["results"][unit_id], logical_lane=unit.source_lane, physical_unit=unit_id,
+                result, logical_lane=unit.source_lane, physical_unit=unit_id,
                 source_lane=unit.source_lane, corpus=unit.corpus, selected_records=unit.selected_records,
-                runner_root=work / "runs/thesis/runner", control_root=worker_root,
-                state_schema=campaign.STATE_SCHEMA, completion=value["worker_completions"][gpu])
-            if item["revision"] != launch["project_revision"]["sha256"]:
+                runner_root=work / "runs/thesis/runner", control_root=segment_root,
+                state_schema=campaign.STATE_SCHEMA, completion=completion)
+            if item["revision"] != revision_descriptor["sha256"]:
                 raise ValueError("RR segment execution revision changed")
             state = _load_json(Path(item["evidence"]["state"]["path"]), label="RR segment state")
             if (_option(state["runner_argv"], "--guardrail-device") != "cuda:0"
@@ -300,11 +352,19 @@ def validate(completion_path: Path, *, work: Path, project: Path) -> tuple[dict,
                 raise ValueError("RR segment completed cells do not match the exact remaining input set")
             source_strata.add(item["source"])
             validated[unit_id] = {**item, "physical_gpu": gpu, "source_lane": unit.source_lane, "corpus": unit.corpus}
-            worker_cells.extend(current)
+            if retry:
+                replaced.add(unit_id)
+                cells.extend(current)
+            else:
+                worker_cells.extend(current)
         if (worker.get("target_attempts") != sum(len(cell["responses"]) for cell in worker_cells)
-                or worker.get("successful_generations") != sum(validated[key]["successful"] for key in launch["queues"][gpu])):
+                or worker.get("successful_generations") != sum(validated[key]["successful"] for key in worker["results"])):
             raise ValueError("RR worker terminal response accounting changed")
         cells.extend(worker_cells)
+    if replaced != set(replacements):
+        raise ValueError("RR retry coverage omitted or added a failed unit")
+    if value["status"] != ("complete_with_failures" if replaced else "responses_complete_pending_prefix_validation"):
+        raise ValueError("RR original parent terminal status changed")
     if len(source_strata) != 1 or len({cell["run_id"] for cell in [*prefix_cells, *cells]}) != len(prefix_cells) + len(cells):
         raise ValueError("RR supplement has duplicate cells or mixed source conformance")
     handoff = {"schema": SCHEMA, "status": "complete" if prefix["judging_complete"] else "complete_with_pending_prefix_judging",
@@ -315,6 +375,10 @@ def validate(completion_path: Path, *, work: Path, project: Path) -> tuple[dict,
                "source_validated_prefix_markers": [_descriptor(cell["complete_path"]) for cell in prefix_cells],
                "historical_144_conditions_replaced": False, "old_grid_promoted": False,
                "cross_condition_pooling_permitted": False, "target_calls": 0, "judge_calls": 0}
+    if replacements:
+        handoff.update(retry_completions=[_descriptor(path) for path in retry_completions],
+                       original_coverage=original_coverage,
+                       retry_execution_commits=sorted({item["commit"] for item in replacements.values()}))
     return handoff, validated, cells, prefix_cells
 
 
@@ -352,7 +416,10 @@ def load_judge_view(root: Path, *, project: Path = retained._REPOSITORY):
     source_path = _validate_descriptor(saved["source_completion"], label="RR analysis source completion")
     source = _load_json(source_path, label="RR analysis source completion")
     work = Path(source["work_root"]).resolve(strict=True)
-    fresh, units, cells, prefix_cells = validate(source_path, work=work, project=project)
+    retry_paths = [_validate_descriptor(item, label="RR retained retry completion")
+                   for item in saved.get("retry_completions", [])]
+    retry_options = {"retry_completions": retry_paths} if retry_paths else {}
+    fresh, units, cells, prefix_cells = validate(source_path, work=work, project=project, **retry_options)
     if (fresh["status"] != "complete" or not fresh["prefix"]["judging_complete"]
             or any(saved.get(key) != value for key, value in fresh.items())):
         raise ValueError("RR judging handoff changed its complete coverage/source bindings")
@@ -420,9 +487,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.add_argument(f"--{name}", type=Path, required=True)
     for name in ("tmux-socket", "tmux-session"):
         parser.add_argument(f"--{name}", required=True)
+    parser.add_argument("--retry-completion", type=Path, action="append", default=[])
     args = parser.parse_args(argv)
     work, project = args.work_root.resolve(strict=True), args.project_root.resolve(strict=True)
-    handoff, units, cells, prefix_cells = validate(args.completion, work=work, project=project)
+    retry_options = {"retry_completions": args.retry_completion} if args.retry_completion else {}
+    handoff, units, cells, prefix_cells = validate(args.completion, work=work, project=project, **retry_options)
     handoff["analysis_commit"] = retained._git(project, "rev-parse", "HEAD")
     output = args.out
     if not output.is_absolute() or output.exists() or not output.is_relative_to(work / "runs"):

@@ -360,3 +360,111 @@ def test_judge_view_merge_rejects_ambiguous_accounting(tmp_path, change):
         counts["policy_evaluable_samples"] = -1 if change == "negative" else True
     with pytest.raises(ValueError):
         mod._merge_judge_views([(rows, meta, labels, counts)])
+
+
+@pytest.fixture
+def retried(complete, monkeypatch):
+    f = complete
+    gpu = next(gpu for gpu, queue in f.launch["queues"].items() if "u0" in queue)
+    unit = next(mod.Unit(**item) for item in f.launch["units"] if item["unit_id"] == "u0")
+    worker = f.workers[gpu]
+    worker["results"].pop("u0")
+    worker.update(status="complete_with_failures", failures={"u0": {"error": "template"}})
+    worker["target_attempts"] -= unit.selected_records
+    worker["successful_generations"] -= unit.selected_records
+    f.value["worker_completions"][gpu] = write(Path(f.launch["workers"][gpu]) / "completion.json", worker)
+    f.value["worker_exit_codes"][gpu] = 1
+    f.value["status"] = "complete_with_failures"
+    old_coverage = {**f.coverage, "complete": False, "retained_inputs": 7606 - unit.selected_records}
+    f.value["coverage"] = old_coverage
+    write(f.path, f.value)
+    root = f.work / "runs/engineering/retry"
+    result_root = f.work / "runs/thesis/runner/u0/retry"
+    revision = write(root / "revision.json", {"repository": {"expected_commit": "d" * 40, "observed_commit": "d" * 40}})
+    result = {"unit_id": "u0", "target_attempts": unit.selected_records,
+              "successful_target_generations": unit.selected_records}
+    admission = {"schema": mod.campaign.RETRY_SCHEMA, "original_launch": f.value["launch"],
+                 "original_worker_completion": f.value["worker_completions"][gpu], "physical_gpu": gpu,
+                 "project_revision": revision, "expected_commit": "d" * 40,
+                 "units": [asdict(unit)], "failure_evidence": {"u0": {"bound": True}}}
+    value = {**admission, "status": "complete", "launch": write(root / "launch.json", admission),
+             "results": {"u0": result}, "failures": {}, "target_attempts": unit.selected_records,
+             "successful_generations": unit.selected_records}
+    path = root / "completion.json"
+    write(path, value)
+    write(root / "u0.terminal.json", {"result": result, "failure": None})
+    old_root = Path(f.results["u0"]["root"])
+    rows = f.cells[old_root][0]["attempts"]
+    f.cells[result_root] = [cell(result_root, [row["datapoint_id"] for row in rows.values()], run_id="retry-u0")]
+    f.results["u0"].update(root=str(result_root), revision=revision["sha256"],
+        evidence={"state": write(root / "units/u0/state.json", {"runner_argv": [
+            "--guardrail-device", "cuda:0", "--local-config-sha256", "b" * 64]})},
+        grid=write(result_root / "grid.grid.json", {"status": "complete"}))
+    def coverage(launch, **kwargs):
+        if kwargs:
+            assert kwargs == {"replacement_roots": {"u0": result_root}}
+            return f.coverage
+        return old_coverage
+    monkeypatch.setattr(mod.campaign, "coverage", coverage)
+    monkeypatch.setattr(mod.campaign, "template_retry_selection", lambda *a: (f.launch, [unit], admission["failure_evidence"]))
+    return SimpleNamespace(base=f, root=root, path=path, value=value, unit=unit, admission=admission, result_root=result_root)
+
+
+def test_analysis_keeps_failed_parent_and_validates_complete_retry_union_separately(retried):
+    f = retried
+    original = f.base.path.read_bytes()
+    handoff, units, cells, _prefix = mod.validate(f.base.path, work=f.base.work, project=f.base.work,
+                                                retry_completions=[f.path])
+    assert f.base.path.read_bytes() == original
+    assert handoff["status"] == "complete" and handoff["coverage"]["retained_inputs"] == 7606
+    assert handoff["original_coverage"]["complete"] is False
+    assert handoff["retry_completions"] == [mod._descriptor(f.path)]
+    assert handoff["retry_execution_commits"] == ["d" * 40]
+    assert units["u0"]["root"] == str(f.result_root)
+    assert "retry-u0" in {row["run_id"] for row in cells} and "u0" not in {row["run_id"] for row in cells}
+    assert len({item["revision"] for item in units.values()}) == 2
+
+
+@pytest.mark.parametrize("change", ["missing", "duplicate", "input", "missing_row", "running_grid", "revision", "terminal", "pending", "selection"])
+def test_retry_analysis_rejects_incomplete_duplicate_or_changed_union(retried, monkeypatch, change):
+    f = retried
+    paths = [f.path]
+    if change == "missing":
+        paths = []
+    elif change == "duplicate":
+        paths *= 2
+    elif change == "input":
+        rows = f.base.cells[f.result_root][0]["attempts"]
+        rows[next(iter(rows))]["datapoint_id"] = "foreign"
+    elif change == "missing_row":
+        rows = f.base.cells[f.result_root][0]["attempts"]
+        rows.pop(next(iter(rows)))
+    elif change == "running_grid":
+        write(Path(f.base.results["u0"]["grid"]["path"]), {"status": "running"})
+    elif change == "revision":
+        f.base.results["u0"]["revision"] = "e" * 64
+    elif change == "terminal":
+        write(f.root / "u0.terminal.json", {"result": None, "failure": {"error": "failed"}})
+    elif change == "pending":
+        f.value["status"] = "complete_with_failures"
+        write(f.path, f.value)
+    else:
+        monkeypatch.setattr(mod.campaign, "template_retry_selection", lambda *a: (f.base.launch, [], {}))
+    with pytest.raises(ValueError):
+        mod.validate(f.base.path, work=f.base.work, project=f.base.work, retry_completions=paths)
+
+
+def test_haiku_view_revalidates_exact_optional_retry_descriptors(judge_handoff, monkeypatch):
+    f = judge_handoff
+    retry = write(f.work / "retry/completion.json", {"bound": True})
+    f.saved["retry_completions"] = f.fresh["retry_completions"] = [retry]
+    write(f.root / "completion.json", f.saved)
+    original = mod.validate
+    def validate(path, *, retry_completions, **kwargs):
+        assert retry_completions == [Path(retry["path"])]
+        return original(path, **kwargs)
+    monkeypatch.setattr(mod, "validate", validate)
+    assert len(mod.load_judge_view(f.root, project=f.work)[0]) == 2
+    Path(retry["path"]).write_text("{}")
+    with pytest.raises(ValueError):
+        mod.load_judge_view(f.root, project=f.work)

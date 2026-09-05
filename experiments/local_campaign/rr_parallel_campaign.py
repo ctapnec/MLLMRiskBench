@@ -28,6 +28,8 @@ SCHEMA = "ura-rr-parallel-campaign/1"
 SNAPSHOT_SCHEMA = "ura-rr-interrupted-prefix/1"
 OBSERVATION_SCHEMA = "ura-rr-process-observation/1"
 STATE_SCHEMA = "ura-rr-parallel-unit-state/1"
+RETRY_SCHEMA = "ura-rr-parallel-template-retry/1"
+_ROLE_ERROR = "Conversation roles must alternate user/assistant/user/assistant/..."
 MODULE = "experiments.local_campaign.rr_parallel_campaign"
 OUTCOMES = {"usable_first_response", "recovered_after_retry", "failed_output", "input_incompatible"}
 
@@ -252,11 +254,14 @@ def _worker_units(launch: dict, gpu: str) -> list[Unit]:
     return [by_id[key] for key in launch["queues"][gpu]]
 
 
-def coverage(launch: dict) -> dict:
+def coverage(launch: dict, *, replacement_roots: dict[str, Path] | None = None) -> dict:
     snapshot_path = _validate_descriptor(launch["interruption"], label="RR interrupted prefix")
     snapshot = _load_json(snapshot_path, label="RR interrupted prefix")
     work = Path(launch["work_root"])
     seen = {lane: set(item["outcomes"]) for lane, item in snapshot["lanes"].items()}
+    replacement_roots = replacement_roots or {}
+    if set(replacement_roots) - {unit["unit_id"] for unit in launch["units"]}:
+        raise ValueError("RR coverage replacement is outside the original unit selection")
     segments = []
     for gpu, queue in launch["queues"].items():
         worker_root = Path(launch["workers"][gpu])
@@ -265,6 +270,7 @@ def coverage(launch: dict) -> dict:
             unit = by_id[unit_id]
             lane, arm = unit["source_lane"], unit["corpus"]
             result_root = work / "runs/thesis/runner" / unit_id / worker_root.name
+            result_root = replacement_roots.get(unit_id, result_root)
             outcomes = {}
             if list(result_root.glob("*.responses*.jsonl")):
                 _attempts, outcomes, _af, _rf = prior._durable_outcomes(result_root)
@@ -336,6 +342,160 @@ def worker(launch_path: Path, digest: str, gpu: str) -> int:
                              successful_target_generations=successful)
     finish_child_controller(work_root=work, control_root=root, exit_code=int(bool(failures)))
     return int(bool(failures))
+
+
+def _require_worker_stopped(launch_path: Path, launch: dict, gpu: str) -> None:
+    """Check exact original worker/output tokens, never signal any process."""
+    outputs = {str(Path(launch["work_root"]) / "runs/thesis/runner" / key /
+                   Path(launch["workers"][gpu]).name) for key in launch["queues"][gpu]}
+    old_units = Path(launch["workers"][gpu]) / "units"
+    for directory in Path("/proc").iterdir():
+        if not directory.name.isdigit() or int(directory.name) == os.getpid():
+            continue
+        try:
+            if directory.stat().st_uid != os.getuid():
+                continue
+            argv = (directory / "cmdline").read_bytes().decode().rstrip("\0").split("\0")
+        except FileNotFoundError:
+            continue
+        if (outputs.intersection(argv) or any(Path(token).is_absolute() and Path(token).is_relative_to(old_units) for token in argv)
+                or (MODULE in argv and "worker" in argv
+                and str(launch_path) in argv and _option(argv, "--gpu") == gpu)):
+            raise ValueError("original RR worker or one of its measured children is still live")
+
+
+def template_retry_selection(launch_path: Path, worker_path: Path, gpu: str) -> tuple[dict, list[Unit], dict]:
+    """Qualify only terminal, pre-measured legacy-template failures."""
+    launch = _load_json(launch_path, label="original parallel launch")
+    units = [Unit(**item) for item in launch["units"]]
+    if (launch.get("schema") != SCHEMA or launch.get("original_population") != 7606
+            or launch.get("max_tokens") != 4096 or launch.get("tensor_parallel_size") != 1
+            or launch.get("target_answer_retries") != 1 or gpu not in {"0", "1"}
+            or launch["queues"] != balanced_queues(units)):
+        raise ValueError("RR retry original selection or 4096-token TP1 policy changed")
+    worker_root = launch_path.parent.with_name(launch_path.parent.name + f"-gpu{gpu}")
+    worker = _load_json(worker_path, label="original RR worker completion")
+    original = prior._descriptor(launch_path, label="original parallel launch")
+    worker_launch = _load_json(_validate_descriptor(worker["launch"], label="original worker launch"), label="original worker launch")
+    queue = launch["queues"][gpu]
+    failures, results = worker.get("failures", {}), worker.get("results", {})
+    if (Path(launch["workers"][gpu]) != worker_root or worker_path != worker_root / "completion.json"
+            or worker.get("schema") != SCHEMA or worker.get("status") != "complete_with_failures"
+            or worker.get("physical_gpu") != gpu or not failures or set(failures) & set(results)
+            or set(failures) | set(results) != set(queue)
+            or worker_launch != {"schema": SCHEMA, "parent": original, "physical_gpu": gpu, "unit_order": queue}
+            or Path(worker["launch"]["path"]) != worker_root / "launch.json"):
+        raise ValueError("RR retry requires its exact terminal failed worker")
+    _require_worker_stopped(launch_path, launch, gpu)
+    snapshot = _load_json(_validate_descriptor(launch["interruption"], label="RR prefix"), label="RR prefix")
+    if snapshot["selected_ids_sha256"] != _sha256_json(snapshot["selected_ids"]):
+        raise ValueError("RR retry original input IDs changed")
+    selected, evidence = [], {}
+    for unit in units:
+        if unit.unit_id not in failures:
+            continue
+        unit_root = worker_root / "units" / unit.unit_id
+        terminal = worker_root / f"{unit.unit_id}.terminal.json"
+        if _load_json(terminal, label="original unit failure") != {"result": None, "failure": failures[unit.unit_id]}:
+            raise ValueError("RR retry changed its bound unit failure")
+        errors = sorted((unit_root / "canary").glob("*.error.json"))
+        if len(errors) != 1:
+            continue
+        error = _load_json(errors[0], label="original canary error")
+        if not (error.get("exception_type") == "ExternalCallFailure"
+                and str(error.get("message", "")).endswith(_ROLE_ERROR)):
+            continue
+        old_result = Path(launch["work_root"]) / "runs/thesis/runner" / unit.unit_id / worker_root.name
+        if ((unit_root / "state.json").exists() or any(path.stat().st_size for path in old_result.glob("*.responses*.jsonl"))
+                or error.get("completed_attempts") != 0 or error.get("corpus") != unit.corpus
+                or error.get("model_spec") != prior.RR_SPEC):
+            raise ValueError("RR template retry requires zero original measured responses and no measured state")
+        base = unit.spec["base_argv"]
+        config = _bound(Path(_option(base, "--local-config")), _option(base, "--local-config-sha256"), "RR retry model config")[prior.RR_SPEC]
+        rows, _audit = prior._selected_rows(_replace_option(base, "--corpora", unit.corpus))
+        expected = snapshot["selected_ids"][unit.source_lane][unit.corpus]
+        completed = set(snapshot["lanes"][unit.source_lane]["outcomes"])
+        selector, _count = prior.checkpoint_selection(snapshot["selected_ids"][unit.source_lane], list(completed))
+        entry = selector["corpora"][unit.corpus]
+        recovery = {"schema": selector["schema"], "corpora": {unit.corpus: entry}} if entry["completed_record_count"] else None
+        bound_selector = launch["selectors"].get(unit.unit_id)
+        if (config.get("max_tokens") != 4096 or config.get("tensor_parallel_size") != 1
+                or config.get("revision") != prior.RR_REVISION or _option(base, "--local") != prior.RR_SPEC
+                or _option(base, "--limit") != "100" or _option(base, "--sample-seed") != "0"
+                or _option(base, "--seeds") != "0" or _option(base, "--attackers") != "replay"
+                or set(rows) != {unit.corpus} or [row.id for row in rows[unit.corpus]] != expected
+                or unit.selected_records != len(set(expected) - completed) or unit.recovery != recovery
+                or (bound_selector is not None) != (recovery is not None)):
+            raise ValueError("RR retry changed original model settings, selector or input IDs")
+        if bound_selector and _load_json(_validate_descriptor(bound_selector, label="RR retry selector"), label="RR retry selector") != recovery:
+            raise ValueError("RR retry original selector bytes changed")
+        selected.append(unit)
+        files = [terminal, errors[0], unit_root / "canary.run.log"]
+        files.extend(sorted((unit_root / "canary").glob("*.grid.json")))
+        evidence[unit.unit_id] = {"failure": failures[unit.unit_id],
+            "artifacts": [prior._descriptor(path, label="RR original failure artifact") for path in files],
+            "remaining_ids_sha256": _sha256_json([key for key in expected if key not in completed])}
+    if not selected:
+        raise ValueError("terminal RR worker has no qualified zero-measured template failures")
+    return launch, selected, evidence
+
+
+def retry(args: argparse.Namespace) -> int:
+    launch_path = _validate_descriptor(prior._descriptor(args.launch, label="original RR launch"), label="original RR launch")
+    _bound(launch_path, args.launch_sha256, "original RR launch")
+    worker_path = _validate_descriptor(prior._descriptor(args.worker_completion, label="original RR worker"), label="original RR worker")
+    _bound(worker_path, args.worker_completion_sha256, "original RR worker")
+    launch, units, failures = template_retry_selection(launch_path, worker_path, args.gpu)
+    _worker_units(launch, args.gpu)  # Same single-visible-physical-GPU guard.
+    work, project = Path(launch["work_root"]).resolve(strict=True), args.project_root.resolve(strict=True)
+    python = _project_python(project, project / ".venv/bin/python")
+    revision = prior._descriptor(args.project_revision, label="RR retry project revision")
+    receipt = _bound(args.project_revision, args.project_revision_sha256, "RR retry project revision")
+    if any(receipt.get("repository", {}).get(key) != args.expected_commit for key in ("expected_commit", "observed_commit")):
+        raise ValueError("RR retry source revision changed")
+    root = args.control_root
+    if not root.is_absolute() or root.exists() or root.is_symlink() or root.parent != work / "runs/engineering":
+        raise ValueError("RR template retry needs a fresh canonical engineering root")
+    for unit in units:
+        if any(path.stat().st_size for path in (work / "runs/thesis/runner" / unit.unit_id).glob("*/*.responses*.jsonl")):
+            raise ValueError("RR retry found measured responses; use checkpoint continuation, never repeat them")
+    root.mkdir(mode=0o700)
+    admission = {"schema": RETRY_SCHEMA, "original_launch": prior._descriptor(launch_path, label="RR launch"),
+                 "original_worker_completion": prior._descriptor(worker_path, label="RR worker"), "physical_gpu": args.gpu,
+                 "project_revision": revision, "expected_commit": args.expected_commit, "project_root": str(project),
+                 "work_root": str(work), "units": [asdict(unit) for unit in units], "failure_evidence": failures,
+                 "execution_scope_id": args.execution_scope_id, "tmux_socket": args.tmux_socket, "tmux_session": args.tmux_session}
+    _create_json(root / "launch.json", admission)
+    descriptor = prior._descriptor(root / "launch.json", label="RR retry launch")
+    start_child_controller(work_root=work, control_root=root, campaign_id=root.name, release_commit=args.expected_commit,
+                           evidence_class="measured_rr_template_retry", hard_stop_hours=168,
+                           tmux_socket=args.tmux_socket, tmux_session=args.tmux_session, target_execution=True)
+    results, failed = {}, {}
+    for unit in units:
+        selector = launch["selectors"].get(unit.unit_id)
+        try:
+            results[unit.unit_id] = _run_unit(unit, python=python, work_root=work, control_root=root,
+                project_revision=args.project_revision, project_revision_sha256=revision["sha256"], scope=args.execution_scope_id,
+                recovery_path=Path(selector["path"]) if selector else None, recovery_sha256=selector["sha256"] if selector else None,
+                expected_commit=args.expected_commit, framework_lock_id=_framework_lock_id(), admission_sha256=descriptor["sha256"],
+                tmux_socket=args.tmux_socket, tmux_session=args.tmux_session, state_schema=STATE_SCHEMA,
+                measured_wall_time_seconds=259200, live_attestation_max_age_hours=96, scoring_device="cuda:0")
+        except Exception as exc:
+            failed[unit.unit_id] = {"error_type": type(exc).__name__, "error": str(exc)}
+        _create_json(root / f"{unit.unit_id}.terminal.json", {"result": results.get(unit.unit_id), "failure": failed.get(unit.unit_id)})
+    attempts = successful = 0
+    for unit in units:
+        result_root = work / "runs/thesis/runner" / unit.unit_id / root.name
+        if list(result_root.glob("*.responses*.jsonl")):
+            _a, outcomes, _af, _rf = prior._durable_outcomes(result_root)
+            attempts += len(outcomes)
+            successful += sum(value in {"usable_first_response", "recovered_after_retry"} for value in outcomes.values())
+    _create_json(root / "completion.json", {**admission, "launch": descriptor,
+        "status": "complete_with_failures" if failed else "complete", "results": results, "failures": failed,
+        "target_attempts": attempts, "successful_generations": successful})
+    publish_target_execution(work_root=work, control_root=root, target_attempts=attempts, successful_target_generations=successful)
+    finish_child_controller(work_root=work, control_root=root, exit_code=int(bool(failed)))
+    return int(bool(failed))
 
 
 def run(args: argparse.Namespace) -> int:
@@ -424,6 +584,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     child.add_argument("--launch", type=Path, required=True)
     child.add_argument("--launch-sha256", required=True)
     child.add_argument("--gpu", choices=("0", "1"), required=True)
+    again = commands.add_parser("retry")
+    for name in ("launch", "worker-completion", "project-root", "project-revision", "control-root"):
+        again.add_argument(f"--{name}", type=Path, required=True)
+    for name in ("launch-sha256", "worker-completion-sha256", "project-revision-sha256", "expected-commit",
+                 "execution-scope-id", "tmux-socket", "tmux-session"):
+        again.add_argument(f"--{name}", required=True)
+    again.add_argument("--gpu", choices=("0", "1"), required=True)
     parent = commands.add_parser("run")
     for name in ("project-root", "work-root", "control-root", "project-revision", "source-spec-root", "profile-registry", "interruption"):
         parent.add_argument(f"--{name}", type=Path, required=True)
@@ -439,6 +606,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if args.command == "worker":
         return worker(args.launch, args.launch_sha256, args.gpu)
+    if args.command == "retry":
+        return retry(args)
     return run(args)
 
 
