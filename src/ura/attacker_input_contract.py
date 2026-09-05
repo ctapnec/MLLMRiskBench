@@ -1719,6 +1719,8 @@ def retained_replay_contract(
     refs = ([ref for turn in datapoint.dialog_history for ref in turn.media]
             if datapoint.dialog_history else list(datapoint.media))
     occurrences = _media_identity_occurrences(refs, origin="source", require_declared_sha256=True)
+    source_ids = {ref.media_id for ref in source_media}
+    source_occurrences = tuple(item.media_id for item in occurrences)
     generated, turns = {}, []
     for index, entry in enumerate(entries):
         dialog = retained_dialog(entry["rendered_input"])
@@ -1731,13 +1733,21 @@ def retained_replay_contract(
                     item = media_input_identity(media, origin="attacker_generated", require_declared_sha256=True)
                     generated[item.media_id] = item
                 media_ids.append(item.media_id)
+        carried_source = tuple(item for item in media_ids if item in source_ids)
+        if carried_source and (
+            not source_occurrences
+            or len(carried_source) % len(source_occurrences)
+            or carried_source != source_occurrences * (len(carried_source) // len(source_occurrences))
+        ):
+            raise AttackerInputContractError(
+                "retained replay source-media subset/order is unsupported by the existing input contract"
+            )
         text = _last_user_text(dialog)
         encoded = text.encode("utf-8") if text is not None else None
         turns.append(PlannedTargetInput(
             logical_turn=index, combination=_dialog_input_combination(dialog),
             policy_evaluable=evaluable, media_ids=tuple(media_ids),
-            source_media_policy="all" if any(item in {ref.media_id for ref in source_media}
-                                             for item in media_ids) else "none",
+            source_media_policy="all" if carried_source else "none",
             bound_text_sha256=hashlib.sha256(encoded).hexdigest() if encoded else None,
             bound_text_bytes=len(encoded) if encoded else None,
         ))

@@ -398,6 +398,10 @@ class Runner:
             else "measured"
         )
         self.seeds = list(seeds) if seeds else [budget.seed]
+        if getattr(attacker, "retained_replay_id", None) is not None and (
+            self.seeds != [0] or self.target_answer_retries != 0
+        ):
+            raise ValueError("retained input materialization requires seed 0 and answer retries 0")
         if len(set(self.seeds)) != len(self.seeds):
             raise ValueError("Runner seeds must be unique")
 
