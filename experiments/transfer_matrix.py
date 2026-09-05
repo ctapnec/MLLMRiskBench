@@ -48,6 +48,7 @@ from ura.model_acquisition_runtime import (  # noqa: E402
     validate_model_acquisition_role_projection_binding,
 )
 from experiments.analysis_integrity import analysis_source_identity  # noqa: E402
+from experiments.retained_artifact_reader import load_analysis_cells  # noqa: E402
 from ura.runner import (  # noqa: E402
     CODE_VERSION,
     realized_identity_summary,
@@ -893,11 +894,15 @@ def load(
     attacker: str = "replay",
     corpus: str | None = None,
     defense: str = "none",
+    historical_code_repository: Path | None = None,
 ) -> tuple[dict[str, dict[str, TransferRecord]], dict[str, Any]]:
     """Load one complete, compatible run per model and audit every row."""
-    per_model: dict[str, dict[str, TransferRecord]] = defaultdict(dict)
-    excluded: dict[str, int] = defaultdict(int)
-    rows = 0
+    if historical_code_repository is not None:
+        facets = load_facets(results, attacker=attacker, corpus=corpus, defense=defense,
+                             historical_code_repository=historical_code_repository)
+        if len(facets) != 1:
+            raise ValueError("historical transfer spans multiple exact cohorts; use load_facets()")
+        return next(iter(facets.values()))
     discovered = _discover_facets(results)
     error_files = sorted(results.rglob("*.error.json"))
     if error_files:
@@ -932,6 +937,18 @@ def load(
         defense=defense,
         cells=cells,
     )
+    return _load_validated_cells(cells, attacker=attacker, effective_corpus=effective_corpus,
+                                 defense=defense, grid_audit=grid_audit, discovered_count=len(discovered))
+
+
+def _load_validated_cells(
+    cells: list[dict], *, attacker: str, effective_corpus: str, defense: str,
+    grid_audit: dict, discovered_count: int,
+) -> tuple[dict[str, dict[str, TransferRecord]], dict[str, Any]]:
+    """Unchanged row accounting after current or exact-original cell validation."""
+    per_model: dict[str, dict[str, TransferRecord]] = defaultdict(dict)
+    excluded: dict[str, int] = defaultdict(int)
+    rows = 0
 
     signatures = {cell["cohort_signature"] for cell in cells}
     if len(signatures) != 1:
@@ -1178,9 +1195,9 @@ def load(
             "corpus": effective_corpus,
             "defense": defense,
         },
-        "discovered_judgment_cells": len(discovered),
-        "selected_judgment_cells": len(selected),
-        "not_selected_other_facets": len(discovered) - len(selected),
+        "discovered_judgment_cells": discovered_count,
+        "selected_judgment_cells": len(cells),
+        "not_selected_other_facets": discovered_count - len(cells),
         "grid_audit": grid_audit,
         "source_identity_validated": all(
             cell["source_identity_validated"] is True for cell in cells
@@ -1197,8 +1214,43 @@ def load_facets(
     attacker: str = "replay",
     corpus: str | None = None,
     defense: str = "none",
+    historical_code_repository: Path | None = None,
 ) -> dict[str, tuple[dict[str, dict[str, TransferRecord]], dict[str, Any]]]:
     """Load one strict transfer cohort per corpus for one attacker/defense."""
+    if historical_code_repository is not None:
+        cells = load_analysis_cells(results, code_repository=historical_code_repository)
+        grouped: dict[tuple[str, str], list[dict]] = defaultdict(list)
+        for cell in cells:
+            run = cell["manifest"]["config"]["run"]
+            if (run["attacker"] == attacker and run["defense"] == defense
+                    and (corpus is None or run["corpus"] == corpus)):
+                grouped[(run["corpus"], cell["cohort_signature"])].append(cell)
+        if not grouped:
+            raise ValueError("no historical transfer facets match the explicit selector")
+        facets = {}
+        for (name, signature), cohort in sorted(grouped.items()):
+            facet = f"{name}__{signature}" if sum(key[0] == name for key in grouped) > 1 else name
+            duplicate_models = len({cell["model"] for cell in cohort}) != len(cohort)
+            # No arbitrary run selection or pooling across repeated conditions.
+            # Retain each run as unavailable for this ordered comparison.
+            subsets = [[cell] for cell in cohort] if duplicate_models else [cohort]
+            for selected in subsets:
+                audits = [cell["grid_audit"] for cell in selected]
+                if any(audit["mode"] != "grid_accounted" for audit in audits):
+                    raise ValueError("historical transfer requires original grid accounting")
+                grid_audit = {"mode": "grid_accounted",
+                    "grid_ids": sorted({key for audit in audits for key in audit["grid_ids"]}),
+                    "grid_files": sorted({key for audit in audits for key in audit["grid_files"]}),
+                    "selected_cells": len(selected), "unexplained_exclusions": 0}
+                records, audit = _load_validated_cells(selected, attacker=attacker, effective_corpus=name,
+                    defense=defense, grid_audit=grid_audit, discovered_count=len(cells))
+                audit["retained_source_validations"] = [cell["retained_source_validation"] for cell in selected]
+                key = facet
+                if duplicate_models:
+                    key += "__" + selected[0]["run_id"]
+                    audit["comparison_unavailable_reason"] = "multiple_completed_runs_for_same_model_in_exact_cohort"
+                facets[key] = records, audit
+        return facets
     discovered = _discover_facets(results)
     corpora = sorted({
         item["corpus"] for item in discovered
@@ -1500,6 +1552,8 @@ def build_matrix(
         "analysis_readiness_checks": analysis_readiness_checks,
         "analysis_source": analysis_source_identity([
             Path(__file__), Path(__file__).resolve().parents[1] / "src" / "ura" / "metrics.py",
+            *([Path(__file__).with_name("retained_artifact_reader.py")]
+              if "retained_source_validations" in audit else []),
         ]),
         "load_audit": audit,
     }
@@ -1594,6 +1648,7 @@ def _print_matrix(result: dict[str, Any], *, corpus: str) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Exact-input transferability matrix")
     parser.add_argument("--results", type=Path, required=True)
+    parser.add_argument("--historical-code-repository", type=Path)
     parser.add_argument("--bootstrap", type=int, default=2000)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
@@ -1633,6 +1688,8 @@ def main(argv: list[str] | None = None) -> int:
             attacker=args.attacker,
             corpus=args.corpus,
             defense=args.defense,
+            **({"historical_code_repository": args.historical_code_repository}
+               if args.historical_code_repository is not None else {}),
         )
     except ValueError as exc:
         print(f"transfer input validation failed: {exc}", file=sys.stderr)
@@ -1654,7 +1711,7 @@ def main(argv: list[str] | None = None) -> int:
                     }
                     continue
                 not_applicable[corpus_name] = {
-                    "reason": "insufficient_eligible_models",
+                    "reason": audit.get("comparison_unavailable_reason", "insufficient_eligible_models"),
                     "eligible_models": sorted(per_model),
                     "eligible_model_count": len(per_model),
                     "minimum_required": 2,
@@ -1724,6 +1781,8 @@ def main(argv: list[str] | None = None) -> int:
                 "analysis_source": analysis_source_identity([
                     Path(__file__),
                     Path(__file__).resolve().parents[1] / "src" / "ura" / "metrics.py",
+                    *([Path(__file__).with_name("retained_artifact_reader.py")]
+                      if args.historical_code_repository is not None else []),
                 ]),
             }
             _write_json_create_only(output, index)

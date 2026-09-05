@@ -131,6 +131,9 @@ if request["joined"]:
             if (cell["manifest"] != original["manifest"]
                 or cell["artifacts"] != original["artifacts"]):
                 raise ValueError("human-audit validated cell identity differs")
+        # Preserve the ORIGINAL auxiliary validator's cohort signatures. The
+        # current postprocessors must not recompute historical conditions.
+        result["analysis_cells"] = validated_cells
         groups = {}
         expected_keys = set()
         for cell in validated_cells:
@@ -455,6 +458,8 @@ def read_partitions(
                     raise ValueError("retained validator returned an invalid cell inventory")
                 for cell in value["cells"]:
                     _restore_cell_paths(cell)
+                for cell in value.get("analysis_cells", []):
+                    _restore_cell_paths(cell)
                 results.append(value)
         finally:
             if installed:
@@ -472,6 +477,37 @@ def load_cells(root: Path, *, code_repository: Path = _REPOSITORY) -> list[dict[
             if cell["run_id"] in seen:
                 raise ValueError("retained view contains a duplicate completed run")
             seen.add(cell["run_id"])
+            cells.append(cell)
+    return cells
+
+
+def load_analysis_cells(root: Path, *, code_repository: Path = _REPOSITORY) -> list[dict[str, Any]]:
+    """Reuse full original grid and auxiliary checks, including condition hashes."""
+    cells, seen = [], set()
+    for partition in read_partitions(
+        root, joined=True, separate_judge_configurations=True,
+        code_repository=code_repository,
+    ):
+        original = {cell["run_id"]: cell for cell in partition["cells"]}
+        auxiliary = partition.get("analysis_cells", [])
+        if (len(original) != len(partition["cells"])
+                or len(auxiliary) != len(original)
+                or {cell["run_id"] for cell in auxiliary} != original.keys()):
+            raise ValueError("retained analysis auxiliary inventory differs from original validated cells")
+        for cell in auxiliary:
+            prior = original[cell["run_id"]]
+            if (cell["run_id"] in seen or cell["manifest"] != prior["manifest"]
+                    or cell["artifacts"] != prior["artifacts"]
+                    or cell.get("source_identity_validated") is not True
+                    or not isinstance(cell.get("cohort_signature"), str)
+                    or not cell.get("cohort_signature")):
+                raise ValueError("retained analysis auxiliary cell or cohort identity differs")
+            seen.add(cell["run_id"])
+            cell["retained_source_validation"] = {
+                "validator_commit": partition["validator_commit"],
+                "original_figure_grid_validation": "passed",
+                "auxiliary_compatibility": partition.get("audit_join_compatibility"),
+            }
             cells.append(cell)
     return cells
 

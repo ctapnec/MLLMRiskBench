@@ -28,6 +28,7 @@ from experiments.human_audit import (  # noqa: E402
     load_trails as _strict_load_trails,
 )
 from experiments.analysis_integrity import analysis_source_identity  # noqa: E402
+from experiments.retained_artifact_reader import load_analysis_cells  # noqa: E402
 from ura import metrics  # noqa: E402
 
 
@@ -37,9 +38,11 @@ def load_trail_facets(
     attacker: str = "replay",
     corpus: str | None = None,
     defense: str = "none",
+    historical_code_repository: Path | None = None,
 ) -> dict[str, tuple[dict[str, dict[str, str]], dict[str, dict], dict]]:
     """Load strict, completion-backed trail cohorts faceted by corpus."""
-    _, cells = _validated_artifacts(results)
+    cells = (load_analysis_cells(results, code_repository=historical_code_repository)
+             if historical_code_repository is not None else _validated_artifacts(results)[1])
     grouped: dict[str, list[dict]] = {}
     excluded_other_defense: dict[str, int] = {}
     for cell in cells:
@@ -63,7 +66,9 @@ def load_trail_facets(
                 excluded_other_defense.get(cell_corpus, 0) + 1
             )
             continue
-        grouped.setdefault(cell_corpus, []).append(cell)
+        facet = ((cell_corpus, cell["cohort_signature"])
+                 if historical_code_repository is not None else cell_corpus)
+        grouped.setdefault(facet, []).append(cell)
     if not grouped:
         raise ValueError(
             f"no completed trail cohorts for attacker={attacker!r}, "
@@ -71,7 +76,11 @@ def load_trail_facets(
         )
 
     facets = {}
-    for corpus_name, cohort in sorted(grouped.items()):
+    for facet, cohort in sorted(grouped.items()):
+        corpus_name = facet[0] if isinstance(facet, tuple) else facet
+        facet_name = (f"{corpus_name}__{facet[1]}"
+                      if isinstance(facet, tuple) and sum(key[0] == corpus_name for key in grouped) > 1
+                      else corpus_name)
         signatures = {cell["cohort_signature"] for cell in cohort}
         if len(signatures) != 1:
             raise ValueError(
@@ -122,7 +131,7 @@ def load_trail_facets(
             )
         for key, current in cluster_metadata.items():
             metadata[key].update(current)
-        facets[corpus_name] = (
+        facets[facet_name] = (
             per_judge,
             metadata,
             {
@@ -152,6 +161,8 @@ def load_trail_facets(
                     corpus_name, 0
                 ),
                 "unexplained_exclusions": 0,
+                **({"retained_source_validations": [cell["retained_source_validation"] for cell in cohort]}
+                   if historical_code_repository is not None else {}),
             },
         )
     if not facets:
@@ -167,6 +178,7 @@ def load_trails(
     attacker: str = "replay",
     corpus: str | None = None,
     defense: str = "none",
+    historical_code_repository: Path | None = None,
 ) -> tuple[dict[str, dict[str, str]], dict[str, dict]]:
     """Compatibility wrapper requiring one explicit/available corpus facet."""
     facets = load_trail_facets(
@@ -174,6 +186,8 @@ def load_trails(
         attacker=attacker,
         corpus=corpus,
         defense=defense,
+        **({"historical_code_repository": historical_code_repository}
+           if historical_code_repository is not None else {}),
     )
     if len(facets) != 1:
         raise ValueError(f"multiple corpus facets found: {sorted(facets)!r}; select --corpus")
@@ -318,6 +332,7 @@ def _analyse_facet(
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Inter-judge agreement (pooled and stratified).")
     parser.add_argument("--results", type=Path, required=True)
+    parser.add_argument("--historical-code-repository", type=Path)
     parser.add_argument("--attacker", default="replay")
     parser.add_argument("--corpus", default=None)
     parser.add_argument("--defense", default="none")
@@ -340,6 +355,8 @@ def main(argv=None) -> int:
             attacker=args.attacker,
             corpus=args.corpus,
             defense=args.defense,
+            **({"historical_code_repository": args.historical_code_repository}
+               if args.historical_code_repository is not None else {}),
         )
     except ValueError as exc:
         print(f"kappa input validation failed: {exc}", file=sys.stderr)
@@ -387,6 +404,8 @@ def main(argv=None) -> int:
     output["analysis_source"] = analysis_source_identity([
         Path(__file__), _REPO_ROOT / "experiments" / "human_audit.py",
         _REPO_ROOT / "src" / "ura" / "metrics.py",
+        *([_REPO_ROOT / "experiments" / "retained_artifact_reader.py"]
+          if args.historical_code_repository is not None else []),
     ])
     output["selector"] = {
         "attacker": args.attacker,

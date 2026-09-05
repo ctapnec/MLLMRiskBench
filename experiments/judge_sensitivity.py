@@ -22,6 +22,7 @@ sys.path.insert(0, str(_REPO_ROOT))
 sys.path.insert(0, str(_REPO_ROOT / "src"))
 
 from experiments.human_audit import _validated_artifacts  # noqa: E402
+from experiments.retained_artifact_reader import load_analysis_cells  # noqa: E402
 from experiments.analysis_integrity import analysis_source_identity  # noqa: E402
 from ura.strict_json import strict_json_loads  # noqa: E402
 
@@ -887,8 +888,10 @@ def analyse(
     attacker: str = "replay",
     corpus: str | None = None,
     defense: str = "none",
+    historical_code_repository: Path | None = None,
 ) -> dict[str, Any]:
-    _, cells = _validated_artifacts(results)
+    cells = (load_analysis_cells(results, code_repository=historical_code_repository)
+             if historical_code_repository is not None else _validated_artifacts(results)[1])
     selected: list[dict[str, Any]] = []
     excluded: list[dict[str, Any]] = []
     for cell in cells:
@@ -916,6 +919,8 @@ def analyse(
     for cell in selected:
         try:
             facets[cell["stem"]] = _analyse_cell(cell)
+            if historical_code_repository is not None:
+                facets[cell["stem"]]["retained_source_validation"] = cell["retained_source_validation"]
         except (KeyError, TypeError) as exc:
             raise ValueError(
                 f"malformed sensitivity artifact in completed cell {cell['stem']!r}: {exc}"
@@ -951,6 +956,8 @@ def analyse(
         "artifact_root": str(results),
         "analysis_source": analysis_source_identity([
             Path(__file__), _REPO_ROOT / "experiments" / "human_audit.py",
+            *([_REPO_ROOT / "experiments" / "retained_artifact_reader.py"]
+              if historical_code_repository is not None else []),
         ]),
         "selection_accounting": {
             "validated_completed_cells": len(cells),
@@ -971,6 +978,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     )
     parser.add_argument("--results", type=Path, required=True)
+    parser.add_argument("--historical-code-repository", type=Path)
     parser.add_argument("--attacker", default="replay")
     parser.add_argument("--corpus", default=None)
     parser.add_argument(
@@ -985,11 +993,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"judge-sensitivity output already exists: {output}", file=sys.stderr)
         return 1
     try:
+        historical = ({"historical_code_repository": args.historical_code_repository}
+                      if args.historical_code_repository is not None else {})
         result = analyse(
             args.results,
             attacker=args.attacker,
             corpus=args.corpus,
             defense=args.defense,
+            **historical,
         )
     except ValueError as exc:
         print(f"judge-sensitivity validation failed: {exc}", file=sys.stderr)
