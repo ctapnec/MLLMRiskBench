@@ -92,9 +92,10 @@ def test_source_admission_precedes_checkout_or_worker(tmp_path, monkeypatch, unt
     assert all(args[0] != "worktree" for args in calls)
 
 
+@pytest.mark.parametrize("frame", ["common", "source_task"])
 @pytest.mark.parametrize("worker_fails", [False, True])
 def test_reader_uses_exact_source_and_removes_only_its_private_checkout(
-    tmp_path, monkeypatch, worker_fails,
+    tmp_path, monkeypatch, worker_fails, frame,
 ):
     _grid(tmp_path)
     git_calls = []
@@ -118,6 +119,7 @@ def test_reader_uses_exact_source_and_removes_only_its_private_checkout(
         assert request["commit"] == COMMIT
         assert request["tree"] == TREE
         assert request["results"] == str(tmp_path)
+        assert request["frame"] == frame
         assert "def _portable_media_references" in request["media_export_source"]
         return SimpleNamespace(
             returncode=int(worker_fails), stderr="original validator refused",
@@ -129,9 +131,9 @@ def test_reader_uses_exact_source_and_removes_only_its_private_checkout(
     monkeypatch.setenv("FAKE_API_KEY", "test-placeholder")
     if worker_fails:
         with pytest.raises(ValueError, match="original validator refused"):
-            subject.read_partitions(tmp_path, joined=False, code_repository=tmp_path)
+            subject.read_partitions(tmp_path, joined=False, frame=frame, code_repository=tmp_path)
     else:
-        result = subject.read_partitions(tmp_path, joined=False, code_repository=tmp_path)
+        result = subject.read_partitions(tmp_path, joined=False, frame=frame, code_repository=tmp_path)
         assert result[0]["cells"][0]["manifest_path"] == tmp_path / "cell.manifest.json"
         assert isinstance(result[0]["cells"][0]["artifacts"]["responses"], Path)
     assert len(worker_requests) == 1
@@ -163,6 +165,105 @@ def test_joined_reader_retains_strata_and_rejects_duplicate_identity(tmp_path, m
     partitions[1]["joined"][2] = {"a": {}}
     with pytest.raises(ValueError, match="duplicate joined"):
         subject.load_joined(tmp_path)
+
+
+def test_source_task_joined_reader_selects_frame_and_repository(tmp_path, monkeypatch):
+    calls = []
+    partitions = [{"cells": [{"run_id": "source-task"}], "joined": [
+        {}, {"sample": {"source_task_family": "classification"}}, {"sample": {}}, {
+            "policy_evaluable_samples": 1,
+            "common_eligible_rows_excluded_from_source_task_frame": 3,
+        },
+    ]}]
+    monkeypatch.setattr(subject, "read_partitions", lambda *args, **kwargs:
+                        calls.append((args, kwargs)) or partitions)
+    result = subject.load_joined(tmp_path, frame="source_task", code_repository=tmp_path)
+    assert calls == [((tmp_path,), {
+        "joined": True, "frame": "source_task", "code_repository": tmp_path,
+    })]
+    assert result[1]["sample"]["source_task_family"] == "classification"
+    assert result[3] == {
+        "policy_evaluable_samples": 1,
+        "common_eligible_rows_excluded_from_source_task_frame": 3,
+    }
+
+
+@pytest.mark.parametrize("entrypoint", ["load_joined", "read_partitions"])
+def test_joined_reader_rejects_unknown_frame_before_source_operations(tmp_path, monkeypatch, entrypoint):
+    monkeypatch.setattr(subject, "grid_partitions", lambda *args: pytest.fail("opened source artifacts"))
+    kwargs = {"joined": True} if entrypoint == "read_partitions" else {}
+    with pytest.raises(ValueError, match="unknown human-audit frame"):
+        getattr(subject, entrypoint)(tmp_path, frame="both", **kwargs)
+
+
+@pytest.mark.parametrize("frame,eligibility,changed", [
+    (None, [True, False], False),
+    ("source_task", [True, False], False),
+    ("source_task", [False], False),
+    ("common", [False], False),
+    ("source_task", [True], False),
+    ("source_task", [False], True),
+])
+def test_joined_worker_dispatches_frame_after_exact_source_validation(
+    tmp_path, monkeypatch, capsys, frame, eligibility, changed,
+):
+    from experiments import figure_results, human_audit
+    from ura import runner
+
+    revision = {
+        "expected_commit": COMMIT, "observed_commit": COMMIT, "head_tree": TREE,
+        "harness_source_sha256": "e" * 64 if changed else "c" * 64,
+        "driver_source_sha256": hashlib.sha256(b"driver").hexdigest(),
+    }
+    cells = [{"manifest": {"config": {"run": {"project_revision": revision}}},
+              "judgments": [{"raw": {"common_metrics_eligible": value,
+                                     "policy_evaluable_turn": True}}
+                            for value in eligibility]}]
+    calls = []
+    selected_frame = frame or "common"
+    selected_eligibility = selected_frame == "common"
+    selected_count = eligibility.count(selected_eligibility)
+    excluded = ("common_ineligible_evaluable_rows_excluded" if selected_frame == "common"
+                else "common_eligible_rows_excluded_from_source_task_frame")
+    expected_audit = {"policy_evaluable_samples": selected_count,
+                      excluded: len(eligibility) - selected_count}
+    expected_join = [{"original_judge": {"sample": "safe"}},
+                     {"sample": {"frame": selected_frame}}, {"sample": {}}, expected_audit]
+
+    def original_join(root, *, frame):
+        assert calls == ["source cells"]
+        assert root == tmp_path
+        assert frame == selected_frame
+        assert human_audit._portable_media_references([]) == "current exporter"
+        calls.append("original source join")
+        return expected_join
+
+    monkeypatch.setattr(figure_results, "_load_cells", lambda root:
+                        calls.append("source cells") or cells)
+    monkeypatch.setattr(human_audit, "_joined_artifacts", original_join)
+    # Register the attribute with monkeypatch before worker exec replaces it.
+    monkeypatch.setattr(human_audit, "_portable_media_references", lambda turns: "old exporter")
+    monkeypatch.setattr(runner, "_harness_source_identity", lambda: {"sha256": "c" * 64})
+    original_read = Path.read_bytes
+    monkeypatch.setattr(Path, "read_bytes", lambda path: b"driver"
+                        if str(path) == "experiments/run_matrix.py" else original_read(path))
+    request = {
+        "results": str(tmp_path), "commit": COMMIT, "tree": TREE, "joined": True,
+        "media_export_source": 'def _portable_media_references(turns): return "current exporter"',
+    }
+    if frame is not None:
+        request["frame"] = frame
+    monkeypatch.setattr(subject.sys, "stdin", io.StringIO(json.dumps(request)))
+    if changed:
+        with pytest.raises(ValueError, match="exact validator checkout"):
+            exec(subject._WORKER, {})
+        assert calls == ["source cells"]
+    else:
+        exec(subject._WORKER, {})
+        result = json.loads(capsys.readouterr().out)
+        assert result["joined"] == (expected_join if selected_count else [{}, {}, {}, expected_audit])
+        assert result["validator_commit"] == COMMIT
+        assert calls == (["source cells", "original source join"] if selected_count else ["source cells"])
 
 
 def test_haiku_reader_and_reconciliation_use_historical_join(tmp_path, monkeypatch):

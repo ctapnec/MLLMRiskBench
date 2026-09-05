@@ -51,17 +51,32 @@ for cell in cells:
         raise ValueError("retained source does not match its exact validator checkout")
 result = {"cells": cells, "validator_commit": request["commit"]}
 if request["joined"]:
+    frame = request.get("frame", "common")
+    if frame not in {"common", "source_task"}:
+        raise ValueError(f"unknown human-audit frame {frame!r}")
     # The source is supplied by this reader, never by the retained artifacts.
     exec(request["media_export_source"], human_audit.__dict__)
-    eligible = any(row["raw"].get("common_metrics_eligible") is True
-                   for cell in cells for row in cell["judgments"])
+    rows = [row["raw"] for cell in cells for row in cell["judgments"]]
+    eligible = any(
+        raw.get("common_metrics_eligible") is True if frame == "common"
+        else (raw.get("common_metrics_eligible") is False
+              and raw.get("policy_evaluable_turn") is True)
+        for raw in rows
+    )
     if eligible:
-        result["joined"] = human_audit._joined_artifacts(root, frame="common")
-    else:
+        result["joined"] = human_audit._joined_artifacts(root, frame=frame)
+    elif frame == "common":
         result["joined"] = [{}, {}, {}, {
             "policy_evaluable_samples": 0,
             "common_ineligible_evaluable_rows_excluded": sum(
                 len(cell["judgments"]) for cell in cells),
+        }]
+    else:
+        result["joined"] = [{}, {}, {}, {
+            "policy_evaluable_samples": 0,
+            "common_eligible_rows_excluded_from_source_task_frame": sum(
+                raw.get("common_metrics_eligible") is True
+                and raw.get("policy_evaluable_turn") is True for raw in rows),
         }]
 def json_default(value):
     if isinstance(value, Path):
@@ -263,9 +278,12 @@ def grid_partitions(root: Path) -> list[tuple[Path, str, str]]:
 
 
 def read_partitions(
-    root: Path, *, joined: bool, code_repository: Path = _REPOSITORY,
+    root: Path, *, joined: bool, frame: str = "common",
+    code_repository: Path = _REPOSITORY,
 ) -> list[dict[str, Any]]:
     """Validate each grid without changing the caller's code or result files."""
+    if frame not in {"common", "source_task"}:
+        raise ValueError(f"unknown human-audit frame {frame!r}")
     from experiments.human_audit import _portable_media_references
 
     partitions = grid_partitions(root)
@@ -298,6 +316,7 @@ def read_partitions(
                 request = {
                     "results": str(grid_root), "commit": commit, "tree": tree,
                     "joined": joined, "media_export_source": export_source,
+                    "frame": frame,
                 }
                 result = subprocess.run(
                     [sys.executable, "-c", _WORKER], cwd=worktree,
@@ -336,12 +355,18 @@ def load_cells(root: Path, *, code_repository: Path = _REPOSITORY) -> list[dict[
     return cells
 
 
-def load_joined(root: Path) -> tuple[list[dict[str, Any]], dict, dict, dict]:
+def load_joined(
+    root: Path, *, frame: str = "common", code_repository: Path = _REPOSITORY,
+) -> tuple[list[dict[str, Any]], dict, dict, dict]:
     """Merge identities for selection, never pool rates or discard strata."""
     cells, metadata, judgments = [], {}, {}
-    audit = {"policy_evaluable_samples": 0, "common_ineligible_evaluable_rows_excluded": 0}
+    excluded = ("common_ineligible_evaluable_rows_excluded" if frame == "common"
+                else "common_eligible_rows_excluded_from_source_task_frame")
+    audit = {"policy_evaluable_samples": 0, excluded: 0}
     seen_runs = set()
-    for partition in read_partitions(root, joined=True):
+    for partition in read_partitions(
+        root, joined=True, frame=frame, code_repository=code_repository,
+    ):
         _predictors, part_metadata, part_judgments, part_audit = partition["joined"]
         if metadata.keys() & part_metadata.keys() or judgments.keys() & part_judgments.keys():
             raise ValueError("retained view contains duplicate joined identities")
