@@ -11,6 +11,15 @@ these templates. A render can be copied to the rig after the project revision
 it names has been deployed. Run evidence, receipts, verification logs, bundles,
 and human-audit material remain outside Git.
 
+Read-only analysis may use a separate clean rig checkout while measured targets
+remain pinned to another revision. Bind `PROJECT_ROOT`, `EXPECTED_COMMIT` and
+the project-revision receipt to that exact analysis checkout, reuse the existing
+venv, and give its rendered controllers a separate installation root. The
+analysis launchers use the bound checkout; do not repin or restart active target
+processes merely to deploy a reader fix. Historical input descriptors and their
+producer revisions remain unchanged. The console's deployed revision and the
+analysis revision must be reported separately.
+
 The controllers consume, but never install into, the main URA venv. Before a
 rendered chain uses a third-party bridge, `distro/install.sh runtimes` must have
 attempted all 16 lock-derived frameworks as separate sequential `--only` named
@@ -45,6 +54,19 @@ no-call projection and zero-download acquisition receipt, and retains exhausted
 unusable answers as model-stability missing responses. Phase 7 must keep this
 Runner 2.25 output-policy stratum distinct from the historical Runner 2.24
 rows.
+
+`rr_profiled_phase6.py` executes the four previously unmeasured GraySwan RR
+populations from their retained specifications: 3,854 text, 1,632 image, 100
+R-Judge and 2,020 GPTGeoChat rows. It reuses the installed runtime, sealed model
+and readiness-approved execution profile, and delegates acquisition, canary,
+projection and measured execution to the existing local executor. It refuses
+to silently repeat an existing RR result root. The parent and measured children
+are registered in Jobs. `rr_profiled_analysis.py` validates the four complete
+populations and publishes a separate Level-1/Level-2 Stats supplement through
+the generic analysis registration. This supplement does not rewrite the frozen
+144-condition history or automatically establish a paired base/RR estimate.
+Both reports and exact input/condition reconciliation are required for whole-
+campaign completion; historical analysis alone does not release paid execution.
 
 `vllm_input_recovery_phase6.py` handles the deterministic GPTGeoChat context
 rejection found in the retained seven-unit Runner 2.25 continuation. It binds
