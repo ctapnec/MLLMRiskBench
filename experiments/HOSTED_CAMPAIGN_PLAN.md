@@ -4,6 +4,12 @@ Status: prospective follow-on, revised 5 September 2026. This document authorize
 paid call. Start only after the all-local campaign seals its Phase 7 inventory.
 Run every controller on the rig in a named tmux session.
 
+The frozen 144-condition historical report alone is insufficient: the four-lane,
+7,606-input current-profile GraySwan RR supplement, its separate validated
+analysis, and the final input/condition reconciliation must also be terminal.
+Readiness admission or a live canary does not close an unexecuted local lane.
+The additional RR evidence does not increase any hosted or Haiku call allowance.
+
 This is a separate campaign, not a local-campaign phase and not product
 semantics. It compares bounded hosted-model conditions on content-bound subsets
 of inputs already used by the local campaign, then applies one selected Haiku
