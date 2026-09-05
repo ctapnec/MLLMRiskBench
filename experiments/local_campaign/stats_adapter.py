@@ -299,7 +299,7 @@ _LOCAL_TERMINAL_INVENTORY_STATES = {
     "current_ollama": {"measured_complete", "failed", "unavailable"},
     "current_ollama_stability": {"measured_complete"},
     "current_ollama_population_alignment": {"measured_complete"},
-    "failed_output_recovery": {"measured_complete"},
+    "failed_output_recovery": {"measured_complete", "partial"},
     "vllm_stability": {"measured_complete"},
     "vllm_context_recovery": {"measured_complete"},
     "local_hardware_fit_recovery": {"measured_complete", "failed"},

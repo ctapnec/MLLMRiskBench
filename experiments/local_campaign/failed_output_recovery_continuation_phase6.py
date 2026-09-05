@@ -181,7 +181,11 @@ def _revision_map(
 ) -> tuple[dict[str, list[str]], dict[str, str]]:
     strata: dict[str, list[str]] = {}
     by_lane: dict[str, str] = {}
+    if set(validated) - set(EXPECTED_UNIT_ORDER):
+        raise ValueError("failed-output metric revision inventory changed")
     for lane in EXPECTED_UNIT_ORDER:
+        if lane not in validated:
+            continue
         revision = str(validated[lane]["revision"])
         strata.setdefault(revision, []).append(lane)
         by_lane[lane] = revision
@@ -270,6 +274,174 @@ def _create_deepseek_generation_condition(
     }
 
 
+def _validate_partial_phase7_completion(
+    resolved: Path, *, runner_root: Path, completion: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Read the retained /2 interruption without promoting its partial grid."""
+
+    control_root = _canonical_control_root(resolved, label="partial recovery")
+    prior_path = _validate_descriptor(
+        completion.get("prior_completion"), label="prior failed-output completion"
+    )
+    prior, _prior_launch, prior_snapshot, prior_root = _validate_prior_completion(
+        prior_path
+    )
+    if (
+        set(completion) != set(prior) | {
+            "prior_completion", "retained_unit_order", "continuation_unit_order"
+        }
+        or completion.get("schema") != "ura-failed-output-recovery-phase6/2"
+        or completion.get("status") != "complete_with_failures"
+        or completion.get("controller_exit_code") != 1
+        or completion.get("expected_commit")
+        != "50175d37e1ab28cc10722eb08d765debac3d0eaa"
+        or completion.get("retained_unit_order") != list(RETAINED_UNIT_ORDER)
+        or completion.get("continuation_unit_order") != list(CONTINUATION_UNIT_ORDER)
+        or any(completion.get(key) != prior[key] for key in (
+            "runner_code_version", "target_answer_retries", "unit_order",
+            "unit_results", "target_execution", "successful_rows_repeated",
+            "input_incompatible_rows_retried", "cross_revision_pooling_permitted",
+            "paid_provider_calls",
+        ))
+        or set(completion.get("unit_failures", {})) != {DEEPSEEK_PHYSICAL_UNIT}
+    ):
+        raise ValueError("partial failed-output completion contract changed")
+    unit_root = control_root / "units" / DEEPSEEK_PHYSICAL_UNIT
+    expected_failure = {
+        "unit_id": DEEPSEEK_PHYSICAL_UNIT, "original_unit_id": DEEPSEEK_UNIT,
+        "status": "failed", "error_type": "RuntimeError",
+        "error": f"Runner exited 143; see {unit_root / 'measured.run.log'}",
+    }
+    if completion["unit_failures"][DEEPSEEK_PHYSICAL_UNIT] != expected_failure:
+        raise ValueError("partial DeepSeek failure identity changed")
+    launch_path = _validate_descriptor(completion["launch"], label="partial launch")
+    snapshot_path = _validate_descriptor(
+        completion["input_snapshot"], label="partial snapshot"
+    )
+    launch = _load_json(launch_path, label="partial launch")
+    snapshot = _load_json(snapshot_path, label="partial snapshot")
+    if (
+        launch_path != control_root / "launch.json"
+        or snapshot_path != control_root / "input-snapshot.json"
+        or launch.get("schema")
+        != "ura-failed-output-recovery-continuation-phase6-launch/1"
+        or launch.get("expected_commit") != completion["expected_commit"]
+        or launch.get("runner_code_version") != "ura-runner/2.27"
+        or launch.get("target_answer_retries") != 1
+        or launch.get("unit_order") != list(CONTINUATION_UNIT_ORDER)
+        or launch.get("prior_completion") != completion["prior_completion"]
+        or launch.get("input_snapshot") != completion["input_snapshot"]
+        or launch.get("recovery_records") != EXPECTED_RECOVERY_COUNTS[4]
+        or launch.get("successful_rows_repeated") != 0
+        or launch.get("paid_provider_calls") != 0
+        or snapshot.get("schema") != SNAPSHOT_SCHEMA
+        or snapshot.get("recovery_records") != EXPECTED_RECOVERY_COUNTS[4]
+        or snapshot.get("successful_rows_repeated") != 0
+        or snapshot.get("input_incompatible_rows_retried") != 0
+        or snapshot.get("units") != {
+            DEEPSEEK_PHYSICAL_UNIT: prior_snapshot["units"][DEEPSEEK_PHYSICAL_UNIT]
+        }
+    ):
+        raise ValueError("partial failed-output launch or selection changed")
+    revision_path = _validate_descriptor(
+        launch.get("project_revision"), label="partial project revision"
+    )
+    revision = _load_json(revision_path, label="partial project revision")
+    repository = revision.get("repository", {})
+    if (
+        revision.get("schema") != "ura-project-revision/1"
+        or revision.get("status") != "complete"
+        or repository.get("clean") is not True
+        or repository.get("expected_commit") != completion["expected_commit"]
+        or repository.get("observed_commit") != completion["expected_commit"]
+    ):
+        raise ValueError("partial failed-output project identity changed")
+    prior_descriptor = _descriptor(prior_path, label="prior completion")
+    validated = {
+        lane: _validate_metric_result(
+            prior["unit_results"][lane], physical_unit=lane,
+            original_unit=original, selected_records=count,
+            runner_root=runner_root, control_root=prior_root,
+            completion=prior_descriptor,
+        )
+        for lane, original, count in zip(
+            EXPECTED_UNIT_ORDER, ORIGINAL_UNIT_ORDER, EXPECTED_RECOVERY_COUNTS,
+            strict=True,
+        ) if lane in RETAINED_UNIT_ORDER
+    }
+    successful = sum(item["successful"] for item in validated.values())
+    missing = sum(item["missing"] for item in validated.values())
+    sources = {item["source"] for item in validated.values()}
+    if (
+        len(sources) != 1
+        or {"target_attempts": successful + missing,
+            "successful_target_generations": successful, "missing_responses": missing}
+        != completion["target_execution"]
+    ):
+        raise ValueError("partial failed-output retained accounting changed")
+    state_path = unit_root / "state.json"
+    state = _load_json(state_path, label="partial DeepSeek state")
+    state_argv = state.get("runner_argv")
+    source = next(iter(sources))
+    revision_sha = launch["project_revision"]["sha256"]
+    if (
+        not isinstance(state_argv, list)
+        or any(not isinstance(item, str) for item in state_argv)
+        or _option(state_argv, "--project-revision-sha256") != revision_sha
+        or _option(state_argv, "--source-conformance-sha256") != source
+        or _option(state_argv, "--target-answer-retries") != "1"
+    ):
+        raise ValueError("partial DeepSeek state stratum changed")
+    attempted, partial_success, partial_missing = _partial_durable_counts(
+        work_root=runner_root.parents[2], control_root=control_root
+    )
+    result_root = Path(state["result_root"])
+    partial_evidence = {
+        "state": _descriptor(state_path, label="partial DeepSeek state"),
+        "launch": dict(completion["launch"]),
+        "input_snapshot": dict(completion["input_snapshot"]),
+        "project_revision": dict(launch["project_revision"]),
+        "runner_files": [_descriptor(path, label="partial Runner file")
+                         for path in sorted(result_root.rglob("*")) if path.is_file()],
+        "failure": dict(expected_failure),
+    }
+    strata, revisions = _revision_map(validated)
+    metric_roots = {lane: item["root"] for lane, item in validated.items()}
+    metric_evidence = {lane: item["evidence"] for lane, item in validated.items()}
+    return {
+        "completion": _descriptor(resolved, label="partial recovery completion"),
+        "runner_code_version": "ura-runner/2.27",
+        "output_policy_stratum": "runner_227_failed_output_recovery",
+        "unit_order": list(EXPECTED_UNIT_ORDER),
+        "original_unit_order": list(ORIGINAL_UNIT_ORDER),
+        "terminal_states": {lane: "partial" if lane == DEEPSEEK_PHYSICAL_UNIT
+                            else "measured_complete" for lane in EXPECTED_UNIT_ORDER},
+        "metric_lane_order": list(RETAINED_UNIT_ORDER),
+        "metric_roots": metric_roots, "metric_evidence": metric_evidence,
+        "lifecycle_roots": {**metric_roots, DEEPSEEK_PHYSICAL_UNIT: str(result_root)},
+        "lifecycle_evidence": {**metric_evidence, DEEPSEEK_PHYSICAL_UNIT: partial_evidence},
+        "lifecycle_project_revision_receipt_sha256": {
+            **revisions, DEEPSEEK_PHYSICAL_UNIT: revision_sha
+        },
+        "metric_grids": [item["grid"] for item in validated.values()],
+        "metric_eligibility_plans": [item["eligibility_plan"] for item in validated.values()],
+        "metric_completion_markers": [marker for item in validated.values()
+                                      for marker in item["completion_markers"]],
+        "revision_strata": strata,
+        "metric_project_revision_receipt_sha256": revisions,
+        "project_revision_receipt_sha256": revision_sha,
+        "source_conformance_sha256": source,
+        "source_target_execution": dict(completion["target_execution"]),
+        "target_execution": {
+            "target_attempts": successful + missing + attempted,
+            "successful_target_generations": successful + partial_success,
+            "missing_responses": missing + partial_missing,
+        },
+        "successful_rows_repeated": 0, "input_incompatible_rows_retried": 0,
+        "cross_revision_pooling_permitted": False,
+    }
+
+
 def validate_phase7_completion(
     completion_path: Path,
     *,
@@ -280,6 +452,10 @@ def validate_phase7_completion(
     resolved = completion_path.resolve(strict=True)
     runner_root = runner_root.resolve(strict=True)
     completion = _load_json(resolved, label="continued failed-output completion")
+    if completion.get("schema") == "ura-failed-output-recovery-phase6/2":
+        return _validate_partial_phase7_completion(
+            resolved, runner_root=runner_root, completion=completion
+        )
     expected_fields = {
         "schema",
         "status",

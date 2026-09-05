@@ -7844,7 +7844,7 @@ def phase7_sampling_lane_contract(
     failed_output_recovery_lanes = amendment_lanes(
         failed_output_recovery,
         expected_lanes=FAILED_OUTPUT_RECOVERY_UNIT_ORDER,
-        states={"measured_complete"},
+        states={"measured_complete", "partial"},
         label="failed-output recovery cohort",
     )
     vllm_stability_lanes = amendment_lanes(
@@ -9720,19 +9720,18 @@ def validate_phase7_completion(
         else None
     )
     if (
-        failed_output_recovery_states
-        != {
-            lane: "measured_complete"
-            for lane in failed_output_recovery_lane_order
-        }
+        not isinstance(failed_output_recovery_states, dict)
+        or set(failed_output_recovery_states) != set(failed_output_recovery_lane_order)
+        or set(failed_output_recovery_states.values()) - {"measured_complete", "partial"}
         or failed_output_recovery_metric_lanes
-        != failed_output_recovery_lane_order
+        != [lane for lane in failed_output_recovery_lane_order
+            if failed_output_recovery_states[lane] == "measured_complete"]
         or not isinstance(failed_output_recovery_strata, dict)
         or failed_output_recovery_stratum_lanes is None
         or len(failed_output_recovery_stratum_lanes)
         != len(set(failed_output_recovery_stratum_lanes))
         or set(failed_output_recovery_stratum_lanes)
-        != set(failed_output_recovery_lane_order)
+        != set(failed_output_recovery_metric_lanes)
         or value.get("failed_output_recovery_terminal_states")
         != failed_output_recovery_states
         or value.get("failed_output_recovery_metric_revision_strata")

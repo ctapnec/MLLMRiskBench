@@ -30,6 +30,116 @@ from experiments.local_campaign.failed_output_recovery_continuation_phase6 impor
 from ura.data_models import SCHEMA_VERSION
 
 
+@pytest.mark.parametrize("mutation", [None, "promote", "counter", "selection", "digest"])
+def test_partial_continuation_retains_five_metrics_and_checkpoint_failures(
+    tmp_path, monkeypatch, mutation,
+) -> None:
+    from experiments.local_campaign import failed_output_recovery_continuation_phase6 as mod
+
+    work = tmp_path / "work"
+    control = work / "runs/engineering/partial"
+    prior_root = work / "runs/engineering/prior"
+    runner = work / "runs/thesis/runner"
+    for path in (control, prior_root, runner):
+        path.mkdir(parents=True)
+
+    def write(path, value):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(value), encoding="utf-8")
+        return mod._descriptor(path, label="fixture")
+
+    commit = "50175d37e1ab28cc10722eb08d765debac3d0eaa"
+    source = "a" * 64
+    snapshot = {"schema": mod.SNAPSHOT_SCHEMA, "recovery_records": 1674,
+                "successful_rows_repeated": 0, "input_incompatible_rows_retried": 0,
+                "units": {DEEPSEEK_PHYSICAL_UNIT: {"summary": {"recovery_records": 1674}}}}
+    prior_snapshot = {**snapshot, "schema": mod.PRIOR_SNAPSHOT_SCHEMA,
+                      "recovery_records": EXPECTED_RECOVERY_ROWS,
+                      "units": {lane: snapshot["units"][DEEPSEEK_PHYSICAL_UNIT]
+                                for lane in EXPECTED_UNIT_ORDER}}
+    prior_snapshot_desc = write(prior_root / "input-snapshot.json", prior_snapshot)
+    prior_launch = {"schema": mod.PRIOR_LAUNCH_SCHEMA,
+                    "runner_code_version": "ura-runner/2.27", "target_answer_retries": 1,
+                    "unit_order": list(EXPECTED_UNIT_ORDER),
+                    "recovery_records": EXPECTED_RECOVERY_ROWS}
+    prior = {"schema": mod.PRIOR_SCHEMA, "status": "complete_with_failures",
+             "controller_exit_code": 1, "completed_at_utc": "2026-09-02T03:00:00Z",
+             "expected_commit": "b" * 40, "runner_code_version": "ura-runner/2.27",
+             "target_answer_retries": 1, "unit_order": list(EXPECTED_UNIT_ORDER),
+             "unit_results": {lane: {"unit_id": lane} for lane in RETAINED_UNIT_ORDER},
+             "unit_failures": {DEEPSEEK_PHYSICAL_UNIT: {
+                 "unit_id": DEEPSEEK_PHYSICAL_UNIT, "original_unit_id": mod.DEEPSEEK_UNIT,
+                 "status": "failed"}}, "target_execution": dict(mod.PRIOR_TARGET_EXECUTION),
+             "successful_rows_repeated": 0, "input_incompatible_rows_retried": 0,
+             "cross_revision_pooling_permitted": False, "paid_provider_calls": 0,
+             "input_snapshot": prior_snapshot_desc,
+             "launch": write(prior_root / "launch.json", prior_launch)}
+    prior_desc = write(prior_root / "completion.json", prior)
+    revision = write(control / "revision.json", {
+        "schema": "ura-project-revision/1", "status": "complete",
+        "repository": {"clean": True, "expected_commit": commit, "observed_commit": commit}})
+    snapshot_desc = write(control / "input-snapshot.json", snapshot)
+    launch = {**prior_launch, "schema": "ura-failed-output-recovery-continuation-phase6-launch/1",
+              "expected_commit": commit, "unit_order": list(CONTINUATION_UNIT_ORDER),
+              "prior_completion": prior_desc, "input_snapshot": snapshot_desc,
+              "project_revision": revision, "recovery_records": 1674,
+              "successful_rows_repeated": 0, "paid_provider_calls": 0}
+    unit_root = control / "units" / DEEPSEEK_PHYSICAL_UNIT
+    result_root = runner / DEEPSEEK_PHYSICAL_UNIT / control.name
+    result_root.mkdir(parents=True)
+    write(unit_root / "state.json", {
+        "result_root": str(result_root), "runner_argv": [
+            "--project-revision-sha256", revision["sha256"],
+            "--source-conformance-sha256", source, "--target-answer-retries", "1"]})
+    completion = {**prior, "schema": "ura-failed-output-recovery-phase6/2",
+                  "expected_commit": commit, "prior_completion": prior_desc,
+                  "retained_unit_order": list(RETAINED_UNIT_ORDER),
+                  "continuation_unit_order": list(CONTINUATION_UNIT_ORDER),
+                  "launch": write(control / "launch.json", launch), "input_snapshot": snapshot_desc,
+                  "unit_failures": {DEEPSEEK_PHYSICAL_UNIT: {
+                      "unit_id": DEEPSEEK_PHYSICAL_UNIT, "original_unit_id": mod.DEEPSEEK_UNIT,
+                      "status": "failed", "error_type": "RuntimeError",
+                      "error": f"Runner exited 143; see {unit_root / 'measured.run.log'}"}}}
+    checked = []
+
+    def metric(result, **kwargs):
+        lane = kwargs["physical_unit"]
+        checked.append(lane)
+        missing = 56 if lane == EXPECTED_UNIT_ORDER[0] else 0
+        return {"successful": kwargs["selected_records"] - missing, "missing": missing,
+                "source": source, "revision": "b" * 64, "root": str(runner / lane / "prior"),
+                "evidence": {"state": result}, "grid": {}, "eligibility_plan": {},
+                "completion_markers": []}
+
+    monkeypatch.setattr(mod, "_validate_metric_result", metric)
+    monkeypatch.setattr(mod, "_partial_durable_counts", lambda **kwargs: (50, 0, 50))
+    if mutation == "promote":
+        completion["status"] = "complete"
+    elif mutation == "counter":
+        completion["target_execution"] = {**mod.PRIOR_TARGET_EXECUTION, "missing_responses": 0}
+    elif mutation == "selection":
+        snapshot["units"][DEEPSEEK_PHYSICAL_UNIT] = {"summary": {"recovery_records": 1}}
+        completion["input_snapshot"] = write(control / "input-snapshot.json", snapshot)
+    elif mutation == "digest":
+        completion["launch"] = {**completion["launch"], "sha256": "0" * 64}
+    completion_path = control / "completion.json"
+    write(completion_path, completion)
+    if mutation:
+        with pytest.raises(ValueError):
+            dispatch_phase7_completion(completion_path, runner_root=runner)
+        return
+    result = dispatch_phase7_completion(completion_path, runner_root=runner)
+    assert checked == list(RETAINED_UNIT_ORDER)
+    assert result["metric_lane_order"] == list(RETAINED_UNIT_ORDER)
+    assert result["terminal_states"][DEEPSEEK_PHYSICAL_UNIT] == "partial"
+    assert DEEPSEEK_PHYSICAL_UNIT not in result["metric_roots"]
+    assert result["lifecycle_roots"][DEEPSEEK_PHYSICAL_UNIT] == str(result_root)
+    assert result["target_execution"] == {
+        "target_attempts": 2189, "successful_target_generations": 2083, "missing_responses": 106}
+    assert result["source_target_execution"] == mod.PRIOR_TARGET_EXECUTION
+    assert result["revision_strata"] == {"b" * 64: list(RETAINED_UNIT_ORDER)}
+
+
 def test_phase7_recovery_inventory_is_the_exact_six_unit_proof() -> None:
     assert len(ORIGINAL_UNIT_ORDER) == len(EXPECTED_UNIT_ORDER) == 6
     assert EXPECTED_RECOVERY_COUNTS == (1223, 555, 323, 18, 1674, 20)

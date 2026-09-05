@@ -91,6 +91,22 @@ def _kinds(
     )
 
 
+def test_failed_output_metrics_exclude_the_retained_partial_lane(phase7):
+    from experiments.local_campaign.failed_output_recovery_continuation_phase6 import (
+        DEEPSEEK_PHYSICAL_UNIT, RETAINED_UNIT_ORDER,
+    )
+    controller = object.__new__(phase7.AnalysisController)
+    states = {lane: "partial" if lane == DEEPSEEK_PHYSICAL_UNIT else "measured_complete"
+              for lane in phase7.FAILED_OUTPUT_RECOVERY_UNIT_ORDER}
+    controller.inputs = {"failed_output_recovery": {
+        "metric_lane_order": list(RETAINED_UNIT_ORDER), "terminal_states": states}}
+    assert controller._failed_output_recovery_metric_lanes() == list(RETAINED_UNIT_ORDER)
+    controller.inputs["failed_output_recovery"]["metric_lane_order"] = list(states)
+    with pytest.raises(phase7.Phase7Error, match="metric lane order"):
+        controller._failed_output_recovery_metric_lanes()
+    assert "partial" in phase7.CAMPAIGN_TERMINAL_STATES["failed_output_recovery"]
+
+
 def test_lifecycle_status_requires_exact_request_artifact_kinds(
     phase7: ModuleType,
 ) -> None:

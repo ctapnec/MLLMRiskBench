@@ -411,7 +411,7 @@ CAMPAIGN_TERMINAL_STATES = {
     "current_ollama": {"measured_complete", "failed", "unavailable"},
     "current_ollama_stability": {"measured_complete"},
     "current_ollama_population_alignment": {"measured_complete"},
-    "failed_output_recovery": {"measured_complete"},
+    "failed_output_recovery": {"measured_complete", "partial"},
     "vllm_stability": {"measured_complete"},
     "vllm_context_recovery": {"measured_complete"},
     "local_hardware_fit_recovery": {"measured_complete", "failed"},
@@ -11113,9 +11113,11 @@ def build_phase6_campaign_terminal_inventory(
         )
     for lane in failed_output_recovery["unit_order"]:
         append(
-            "failed_output_recovery", lane, "measured_complete",
+            "failed_output_recovery", lane,
+            failed_output_recovery["terminal_states"][lane],
             failed_output_recovery.get(
-                "metric_project_revision_receipt_sha256", {}
+                "lifecycle_project_revision_receipt_sha256",
+                failed_output_recovery.get("metric_project_revision_receipt_sha256", {}),
             ).get(
                 lane,
                 failed_output_recovery["project_revision_receipt_sha256"],
@@ -11123,7 +11125,9 @@ def build_phase6_campaign_terminal_inventory(
             failed_output_recovery["source_conformance_sha256"],
             {
                 "completion": failed_output_recovery["completion"],
-                **failed_output_recovery["metric_evidence"][lane],
+                **failed_output_recovery.get(
+                    "lifecycle_evidence", failed_output_recovery["metric_evidence"]
+                )[lane],
             },
         )
     for lane in vllm_stability["unit_order"]:
@@ -13859,10 +13863,13 @@ class AnalysisController:
         failed_output_recovery = self.inputs["failed_output_recovery"]
         for lane in failed_output_recovery["unit_order"]:
             root = self._representable_lifecycle_root(
-                failed_output_recovery["metric_roots"][lane],
+                failed_output_recovery.get(
+                    "lifecycle_roots", failed_output_recovery["metric_roots"]
+                )[lane],
                 label=f"failed-output recovery lifecycle {lane}",
             )
-            add(f"failed-output-recovery-{lane}", root, "measured_complete")
+            add(f"failed-output-recovery-{lane}", root,
+                failed_output_recovery["terminal_states"][lane])
         vllm_stability = self.inputs["vllm_stability"]
         for lane in vllm_stability["unit_order"]:
             root = self._representable_lifecycle_root(
@@ -14057,8 +14064,11 @@ class AnalysisController:
         return list(lanes)
 
     def _failed_output_recovery_metric_lanes(self) -> list[str]:
-        lanes = self.inputs["failed_output_recovery"].get("metric_lane_order")
-        if lanes != list(FAILED_OUTPUT_RECOVERY_UNIT_ORDER):
+        current = self.inputs["failed_output_recovery"]
+        lanes = current.get("metric_lane_order")
+        expected = [lane for lane in FAILED_OUTPUT_RECOVERY_UNIT_ORDER
+                    if current["terminal_states"][lane] == "measured_complete"]
+        if lanes != expected:
             raise Phase7Error("failed-output recovery metric lane order changed")
         return list(lanes)
 
@@ -16713,7 +16723,7 @@ class AnalysisController:
             )
 
     def record_failed_output_recovery_outcomes(self) -> None:
-        """Retain the six Runner 2.27 recovery populations as one stratum."""
+        """Retain complete and partial populations without pooling revisions."""
 
         current = self.inputs["failed_output_recovery"]
         lifecycle_output = (
@@ -16724,6 +16734,8 @@ class AnalysisController:
             "status": "validated",
             "unit_order": current["unit_order"],
             "original_unit_order": current["original_unit_order"],
+            "terminal_states": current["terminal_states"],
+            "metric_lane_order": current["metric_lane_order"],
             "runner_code_version": current["runner_code_version"],
             "output_policy_stratum": current["output_policy_stratum"],
             "target_execution": current["target_execution"],
@@ -18574,7 +18586,9 @@ def contract_self_test() -> int:
                 "metric_lane_order": current_ollama_alignment_fixture_lanes
             },
             "failed_output_recovery": {
-                "metric_lane_order": failed_output_recovery_fixture_lanes
+                "metric_lane_order": failed_output_recovery_fixture_lanes,
+                "terminal_states": {lane: "measured_complete"
+                                    for lane in failed_output_recovery_fixture_lanes},
             },
             "vllm_stability": {"metric_lane_order": vllm_fixture_lanes},
             "vllm_context_recovery": {
