@@ -280,16 +280,16 @@ cap; these values are not Runner per-arm limits:
 
 | Hosted target condition | Global input/call cap |
 |---|---:|
-| Claude Fable 5 | 50 |
-| Claude Opus 5 | 100 |
-| Claude Sonnet 5 | 200 |
+| Claude Fable 5 | 30 |
+| Claude Opus 5 | 80 |
+| Claude Sonnet 5 | 150 |
 | Claude Haiku 4.5 | 200 |
-| GPT-5.6 Sol | 50 |
-| GPT-6 Astra | 50 |
-| GPT-5.6 Terra | 50 |
+| GPT-5.6 Sol | 30 |
+| GPT-6 Astra | 30 |
+| GPT-5.6 Terra | 30 |
 | GPT-5.6 Luna | 150 |
-| GPT-5.5 | 50 |
-| Kimi K3 | 150 |
+| GPT-5.5 | 30 |
+| Kimi K3 | 80 |
 | DeepSeek V4-Pro | 300 |
 
 These budget-fitted limits supersede the larger planning scenario without
@@ -305,12 +305,19 @@ no-call projections may only reduce a condition before acquisition and execution
 the provider-token canary shows that its registered monetary ceiling would be
 exceeded; an observed model outcome may never trigger a limit change.
 Every paid readiness or diagnostic canary consumes the applicable global cap;
-it never sits outside the 1,350-call budget. Admission separately binds the
-4,000-input/500-output expected-token cost and the reservation obtained from
-4,000 input tokens plus each route's configured maximum output.
+it never sits outside the 1,110-call budget. Admission separates the
+uncalibrated quarter-output-cap scenario from the maximum reservation.
+Haiku targets use 2,048 output tokens, Sonnet/Luna 4,096, Opus/Terra 6,144,
+and Fable/Astra/Sol/GPT-5.5/Kimi/DeepSeek 8,192. Input reservation is 4,000
+provider-counted tokens per target request. Technical pilots consume these
+caps, check final-answer presence, finish reason and reasoning usage, and are
+separate diagnostic strata. Their token/effort setting must pass before the
+remaining lane is frozen; a change reduces affordable calls rather than
+exceeding the provider ceiling. See HOSTED_CAMPAIGN_PLAN.md A2. Compatible
+model cohorts use nested prefixes and separate matched-core comparisons.
 
 After the local and hosted campaigns are sealed, a separate zero-target Haiku
-re-adjudication cohort selects at most 1,350 matched local/hosted row pairs.
+re-adjudication cohort selects at most 1,110 matched local/hosted row pairs.
 Both members have the same rendered-input, media-reference, source-cluster,
 seed, framework, modality and source-policy identity. Deterministic seed 0
 balanced round-robin sampling spans both target models and those input strata,
@@ -324,9 +331,12 @@ from constructing or calling any model under test. Its planning process stores
 only content digests and imports no target-under-test or Runner factory. The
 executor may construct only the exact Haiku judge, uses one logical judge call
 and at most four status-only HTTP attempts, and opens the global `paid_provider` circuit on the first
-judge output or transport failure. The paired plan has a USD 18 ceiling and a
-dedicated 512-token maximum output configuration. Its 2,700-call central
-forecast is USD 17.55 at 4,000 input and 500 output tokens per call.
+judge output or transport failure. The paired plan has a USD 33 ceiling and a
+dedicated 512-token maximum output configuration. Its 2,220-call scenario
+costs USD 21.02784 at 8,192 input and 256 output tokens per call; its maximum
+is USD 32.96256 at 12,288 input and 512 output. Count the complete grading
+request, including the retained answer and rubric, with the judge provider.
+Never silently truncate a long answer to make this reservation appear to fit.
 
 Every hosted target lane uses the sealed local `rules,guardrail` cascade, so
 each answered hosted row retains its local judgment before Haiku selection.

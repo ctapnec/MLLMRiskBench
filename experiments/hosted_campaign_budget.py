@@ -1,8 +1,8 @@
 """Create a no-call budget projection for the fixed hosted follow-on cohort.
 
 The projection reads the exact API target, effective-dated pricing, and budget
-registries. It distinguishes the 4,000-input/500-output planning average from
-the reservation obtained when every response consumes its configured maximum.
+registries. It distinguishes an explicitly uncalibrated quarter-cap output
+scenario from the reservation when every response consumes its maximum.
 It never constructs a target or judge and never reads credentials.
 """
 
@@ -26,10 +26,12 @@ from ura.targets.api import (
 )
 
 
-SCHEMA = "ura-hosted-campaign-budget-projection/2"
+SCHEMA = "ura-hosted-campaign-budget-projection/3"
 EXPECTED_INPUT_TOKENS = 4_000
 MAX_INPUT_TOKENS = 4_000
-EXPECTED_OUTPUT_TOKENS = 500
+JUDGE_EXPECTED_INPUT_TOKENS = 8_192
+JUDGE_MAX_INPUT_TOKENS = 12_288
+JUDGE_EXPECTED_OUTPUT_TOKENS = 256
 JUDGE_MAX_OUTPUT_TOKENS = 512
 JUDGE_MODEL = "claude-haiku-4-5-20251001"
 _HEX64 = re.compile(r"[0-9a-f]{64}")
@@ -41,16 +43,16 @@ ROUTES: tuple[dict[str, Any], ...] = (
         "spec": "openai:gpt-6-astra",
         "provider": "openai",
         "model": "gpt-6-astra",
-        "call_cap": 50,
-        "max_output_tokens": 4_096,
+        "call_cap": 30,
+        "max_output_tokens": 8_192,
     },
     {
         "label": "Claude Fable 5",
-        "spec": AnthropicFableTarget.BUDGET_SPEC,
+        "spec": AnthropicFableTarget.OUTPUT_8192_SPEC,
         "provider": "anthropic",
         "model": "claude-fable-5",
-        "call_cap": 50,
-        "max_output_tokens": AnthropicFableTarget.BUDGET_MAX_TOKENS,
+        "call_cap": 30,
+        "max_output_tokens": 8_192,
         "inherent_config": True,
     },
     {
@@ -58,15 +60,15 @@ ROUTES: tuple[dict[str, Any], ...] = (
         "spec": "anthropic:claude-opus-5",
         "provider": "anthropic",
         "model": "claude-opus-5",
-        "call_cap": 100,
-        "max_output_tokens": 4_096,
+        "call_cap": 80,
+        "max_output_tokens": 6_144,
     },
     {
         "label": "Claude Sonnet 5",
         "spec": "anthropic:claude-sonnet-5",
         "provider": "anthropic",
         "model": "claude-sonnet-5",
-        "call_cap": 200,
+        "call_cap": 150,
         "max_output_tokens": 4_096,
     },
     {
@@ -79,11 +81,11 @@ ROUTES: tuple[dict[str, Any], ...] = (
     },
     {
         "label": "GPT-5.6 Sol",
-        "spec": OpenAIResponsesTarget.BUDGET_SPEC,
+        "spec": OpenAIResponsesTarget.OUTPUT_8192_SPEC,
         "provider": "openai",
         "model": "gpt-5.6-sol",
-        "call_cap": 50,
-        "max_output_tokens": OpenAIResponsesTarget.BUDGET_MAX_OUTPUT_TOKENS,
+        "call_cap": 30,
+        "max_output_tokens": 8_192,
         "inherent_config": True,
     },
     {
@@ -91,8 +93,8 @@ ROUTES: tuple[dict[str, Any], ...] = (
         "spec": "openai:gpt-5.6-terra",
         "provider": "openai",
         "model": "gpt-5.6-terra",
-        "call_cap": 50,
-        "max_output_tokens": 4_096,
+        "call_cap": 30,
+        "max_output_tokens": 6_144,
     },
     {
         "label": "GPT-5.6 Luna",
@@ -107,16 +109,16 @@ ROUTES: tuple[dict[str, Any], ...] = (
         "spec": "openai:gpt-5.5",
         "provider": "openai",
         "model": "gpt-5.5",
-        "call_cap": 50,
-        "max_output_tokens": 4_096,
+        "call_cap": 30,
+        "max_output_tokens": 8_192,
     },
     {
         "label": "Kimi K3",
         "spec": "kimi:kimi-k3",
         "provider": "kimi",
         "model": "kimi-k3",
-        "call_cap": 150,
-        "max_output_tokens": 4_096,
+        "call_cap": 80,
+        "max_output_tokens": 8_192,
     },
     {
         "label": "DeepSeek V4-Pro",
@@ -124,7 +126,7 @@ ROUTES: tuple[dict[str, Any], ...] = (
         "provider": "deepseek",
         "model": "deepseek-v4-pro",
         "call_cap": 300,
-        "max_output_tokens": 4_096,
+        "max_output_tokens": 8_192,
     },
 )
 HOSTED_TARGET_CALL_CAP = sum(int(route["call_cap"]) for route in ROUTES)
@@ -283,6 +285,7 @@ def _priced_row(
         )
     calls = int(route["call_cap"])
     maximum_output = int(route["max_output_tokens"])
+    expected_output = maximum_output // 4
     return {
         "label": route["label"],
         "target_spec": route["spec"],
@@ -295,11 +298,11 @@ def _priced_row(
         "maximum_http_attempts": calls * (DEFAULT_HOSTED_HTTP_ERROR_RETRIES + 1),
         "expected_input_tokens_per_call": EXPECTED_INPUT_TOKENS,
         "maximum_input_tokens_per_call": MAX_INPUT_TOKENS,
-        "expected_output_tokens_per_call": EXPECTED_OUTPUT_TOKENS,
+        "expected_output_tokens_per_call": expected_output,
         "maximum_output_tokens_per_call": maximum_output,
         "expected_total_input_tokens": calls * EXPECTED_INPUT_TOKENS,
         "maximum_total_input_tokens": calls * MAX_INPUT_TOKENS,
-        "expected_total_output_tokens": calls * EXPECTED_OUTPUT_TOKENS,
+        "expected_total_output_tokens": calls * expected_output,
         "maximum_total_output_tokens": calls * maximum_output,
         "input_usd_per_million_tokens": str(input_rate),
         "reserved_input_usd_per_million_tokens": str(reserved_input_rate),
@@ -308,7 +311,7 @@ def _priced_row(
         "expected_cost_microusd": _cost_microusd(
             calls=calls,
             input_tokens=EXPECTED_INPUT_TOKENS,
-            output_tokens=EXPECTED_OUTPUT_TOKENS,
+            output_tokens=expected_output,
             input_rate=input_rate,
             output_rate=output_rate,
         ),
@@ -355,26 +358,26 @@ def build_projection(
         "transport_retries": DEFAULT_HOSTED_HTTP_ERROR_RETRIES,
         "maximum_http_attempts": JUDGE_CALL_CAP
         * (DEFAULT_HOSTED_HTTP_ERROR_RETRIES + 1),
-        "expected_input_tokens_per_call": EXPECTED_INPUT_TOKENS,
-        "maximum_input_tokens_per_call": MAX_INPUT_TOKENS,
-        "expected_output_tokens_per_call": EXPECTED_OUTPUT_TOKENS,
+        "expected_input_tokens_per_call": JUDGE_EXPECTED_INPUT_TOKENS,
+        "maximum_input_tokens_per_call": JUDGE_MAX_INPUT_TOKENS,
+        "expected_output_tokens_per_call": JUDGE_EXPECTED_OUTPUT_TOKENS,
         "maximum_output_tokens_per_call": JUDGE_MAX_OUTPUT_TOKENS,
-        "expected_total_input_tokens": JUDGE_CALL_CAP * EXPECTED_INPUT_TOKENS,
-        "maximum_total_input_tokens": JUDGE_CALL_CAP * MAX_INPUT_TOKENS,
-        "expected_total_output_tokens": JUDGE_CALL_CAP * EXPECTED_OUTPUT_TOKENS,
+        "expected_total_input_tokens": JUDGE_CALL_CAP * JUDGE_EXPECTED_INPUT_TOKENS,
+        "maximum_total_input_tokens": JUDGE_CALL_CAP * JUDGE_MAX_INPUT_TOKENS,
+        "expected_total_output_tokens": JUDGE_CALL_CAP * JUDGE_EXPECTED_OUTPUT_TOKENS,
         "maximum_total_output_tokens": JUDGE_CALL_CAP * JUDGE_MAX_OUTPUT_TOKENS,
         "input_usd_per_million_tokens": str(judge_input_rate),
         "output_usd_per_million_tokens": str(judge_output_rate),
         "expected_cost_microusd": _cost_microusd(
             calls=JUDGE_CALL_CAP,
-            input_tokens=EXPECTED_INPUT_TOKENS,
-            output_tokens=EXPECTED_OUTPUT_TOKENS,
+            input_tokens=JUDGE_EXPECTED_INPUT_TOKENS,
+            output_tokens=JUDGE_EXPECTED_OUTPUT_TOKENS,
             input_rate=judge_input_rate,
             output_rate=judge_output_rate,
         ),
         "maximum_cost_microusd": _cost_microusd(
             calls=JUDGE_CALL_CAP,
-            input_tokens=MAX_INPUT_TOKENS,
+            input_tokens=JUDGE_MAX_INPUT_TOKENS,
             output_tokens=JUDGE_MAX_OUTPUT_TOKENS,
             input_rate=judge_input_rate,
             output_rate=judge_output_rate,
@@ -434,6 +437,9 @@ def build_projection(
             "pricing_as_of": pricing_as_of,
             "budget_fraction_numerator": 4,
             "budget_fraction_denominator": 5,
+            "expected_cost_basis": "uncalibrated_quarter_cap_output_scenario",
+            "judge_input_includes_prompt_answer_rubric_and_media": True,
+            "exact_provider_input_token_counts_required_before_spend": True,
         },
         "sources": {key: dict(value) for key, value in sorted(descriptors.items())},
         "routes": rows,

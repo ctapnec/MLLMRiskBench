@@ -424,7 +424,7 @@ response artifacts remain authoritative.
   linked Job. The downloaded tag remains unavailable to Build until that
   identity-bound follow-up writes a passing profile.
 - Post-hoc Haiku re-adjudication does not use `run_matrix` and cannot regenerate
-  a target response. This campaign uses `retained_response_judge_pair` for at most 1,350 pairs
+  a target response. This campaign uses `retained_response_judge_pair` for at most 1,110 pairs
   from the exact local/hosted input-identity intersection, without reusing an
   output; `retained_response_judge_pair_execute` reconciles both validated
   Runner views and constructs only the named Haiku judge. It reserves zero
@@ -432,16 +432,19 @@ response artifacts remain authoritative.
   attempts per selected output, checkpoints
   every paid decision, binds and revalidates the effective-dated pricing bytes,
   and opens its global `paid_provider` circuit on the first judge or transport
-  failure. Its one USD 18 ceiling covers at most 2,700 calls: USD 17.55 at the
-  4,000-input/500-output planning average and USD 17.712 at the fixed 512-token
-  output maximum.
-- The hosted follow-on uses eleven global target caps totaling 1,350 calls, including
+  failure. Its one USD 33 ceiling covers at most 2,220 calls: USD 21.02784 in
+  the 8,192-input/256-output scenario and USD 32.96256 at the
+  12,288-input/512-output bound. Judge inputs include answer and rubric.
+- The hosted follow-on uses eleven global target caps totaling 1,110 calls, including
   readiness and diagnostic canaries. `hosted_campaign_budget` creates a
   zero-call projection from the exact API-config, effective-dated pricing and
-  budget bytes. It reports both the 4,000-input/500-output expectation and each
+  budget bytes. It reports both an uncalibrated quarter-output-cap scenario and each
   route's configured-maximum-output reservation, and blocks any provider above
-  80 percent of its configured balance. The current planning values are USD 21.6240 and
-  USD 80.4359 for targets, or USD 39.1740 and USD 98.147904 including Haiku.
+  80 percent of its configured balance. The current scenario/maximum values are
+  USD 27.939392 / USD 84.841568 for targets, or USD 48.967232 / USD 117.804128
+  including Haiku. Model-specific output ceilings range from 2,048 to 8,192
+  and require the technical pilot in HOSTED_CAMPAIGN_PLAN.md A2 before freezing
+  measured conditions. No claim of an empirically optimal token limit is made.
   Every hosted Runner lane uses the sealed local `rules,guardrail` cascade, so
   its retained response already has the local judgment later compared with
   Haiku on the exact paired row. The local cascade has no provider cost.

@@ -32,8 +32,8 @@ ALGORITHM = "seeded_balanced_round_robin_matched_retained_output_pairs_v1"
 # The operator's 80-percent allocation includes both members of every pair.
 # Historical /1 plans retain their own smaller content-bound quantity and spend.
 MAX_PAIR_LIMIT = 1_350
-MAX_COST_MICROUSD = 18_000_000
-DEFAULT_PAIR_LIMIT = MAX_PAIR_LIMIT
+MAX_COST_MICROUSD = 33_000_000
+DEFAULT_PAIR_LIMIT = 1_110
 DEFAULT_COST_MICROUSD = MAX_COST_MICROUSD
 _PAIR_DIMENSIONS = (
     "local_exact_model",

@@ -1435,19 +1435,24 @@ def test_astra_sends_completion_budget_and_omits_sampling_options() -> None:
     assert response.raw["resolved_model"] == "gpt-6-astra"
 
 
-def test_budget_fable_and_sol_send_lower_allowances_without_mutating_legacy() -> None:
-    fable = build_api_target(AnthropicFableTarget.BUDGET_SPEC)
+@pytest.mark.parametrize("limit", [4096, 8192])
+def test_budget_fable_and_sol_send_lower_allowances_without_mutating_legacy(limit) -> None:
+    fable_spec = (AnthropicFableTarget.BUDGET_SPEC if limit == 4096
+                  else AnthropicFableTarget.OUTPUT_8192_SPEC)
+    fable = build_api_target(fable_spec)
     captured = _install_fable_fixture(fable, _fable_result())
     fable.generate([DialogTurn(role="user", content="fixture")], seed=0)
-    assert captured["max_tokens"] == 4_096
-    assert fable.name.endswith("max_tokens=4096")
+    assert captured["max_tokens"] == limit
+    assert fable.name.endswith(f"max_tokens={limit}")
     assert AnthropicFableTarget().max_tokens == 25_000
 
-    sol = build_api_target(OpenAIResponsesTarget.BUDGET_SPEC)
-    captured = _install_responses_fixture(sol, _responses_result(max_output_tokens=4096))
+    sol_spec = (OpenAIResponsesTarget.BUDGET_SPEC if limit == 4096
+                else OpenAIResponsesTarget.OUTPUT_8192_SPEC)
+    sol = build_api_target(sol_spec)
+    captured = _install_responses_fixture(sol, _responses_result(max_output_tokens=limit))
     sol.generate([DialogTurn(role="user", content="fixture")], seed=0)
-    assert captured["max_output_tokens"] == 4_096
-    assert sol.name.endswith("max_output_tokens=4096")
+    assert captured["max_output_tokens"] == limit
+    assert sol.name.endswith(f"max_output_tokens={limit}")
     assert OpenAIResponsesTarget().max_output_tokens == 25_000
 
 

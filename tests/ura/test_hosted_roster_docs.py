@@ -82,7 +82,9 @@ def test_advertised_hosted_roster_builds_offline_and_exactly_matches_pricing(
             target = build_api_target(spec, config=normalized)
         else:
             assert spec in {_FABLE, _SOL, AnthropicFableTarget.BUDGET_SPEC,
-                            OpenAIResponsesTarget.BUDGET_SPEC}
+                            OpenAIResponsesTarget.BUDGET_SPEC,
+                            AnthropicFableTarget.OUTPUT_8192_SPEC,
+                            OpenAIResponsesTarget.OUTPUT_8192_SPEC}
             assert set(raw_config) == {"modalities"}
             target = build_api_target(spec)
         assert tuple(raw_config["modalities"]) == tuple(target.modality_support)

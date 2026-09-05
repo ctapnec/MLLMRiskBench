@@ -33,7 +33,7 @@ identity. The example records only the first two statuses. A measured cell
 requires the third as well, for a documentation-verified and a candidate row
 alike.
 
-The shipped example contains exactly these 23 keys. Astra and the two bounded
+The shipped example contains exactly these 25 keys. Astra and the four bounded
 Fable/Sol variants were added on 5 September 2026; the other dated entries above
 remain subject to their existing account checks.
 
@@ -41,7 +41,9 @@ remain subject to their existing account checks.
 |---|---|---|
 | `openai:gpt-6-astra` | text; text + image | documentation-verified 2026-09-05; account canary pending |
 | `anthropic-fable:claude-fable-5;effort=high;max_tokens=4096` | text; text + image | bounded Fable condition; modalities-only row |
+| `anthropic-fable:claude-fable-5;effort=high;max_tokens=8192` | text; text + image | larger bounded Fable condition; modalities-only row |
 | `openai-responses:gpt-5.6-sol;reasoning_mode=pro;reasoning_effort=medium;reasoning_context=all_turns;max_output_tokens=4096` | text; text + image | bounded Sol condition; modalities-only row |
+| `openai-responses:gpt-5.6-sol;reasoning_mode=pro;reasoning_effort=medium;reasoning_context=all_turns;max_output_tokens=8192` | text; text + image | larger bounded Sol condition; modalities-only row |
 | `anthropic-fable:claude-fable-5;effort=high;max_tokens=25000` | text; text + image | fixed focal condition; modalities-only row |
 | `openai-responses:gpt-5.6-sol;reasoning_mode=pro;reasoning_effort=medium;reasoning_context=all_turns` | text; text + image | fixed focal condition; modalities-only row |
 | `anthropic:claude-opus-5` | text; text + image | documentation-verified |
@@ -64,8 +66,12 @@ remain subject to their existing account checks.
 | `glm:glm-5.2` | text | candidate |
 
 The generic rows use `temperature: null`, which tells the adapters to omit the
-temperature field, and a 4096-token response bound, except Haiku's explicit
-2048-token, zero-temperature target condition. Opus and Sonnet also
+temperature field. Response bounds are model-specific: Astra, GPT-5.5, Kimi K3
+and DeepSeek V4-Pro use 8192; Opus and Terra use 6144; other generic rows use
+4096 except Haiku's explicit 2048-token, zero-temperature target condition.
+The new Fable/Sol variants use 8192 without changing the old 4096/25000 specs.
+These are starting allowances requiring a technical canary, not calibrated
+optimal settings. Opus and Sonnet also
 use the adapter's explicit adaptive-thinking contract at `effort: high`. Change
 a condition only deliberately and retain the changed config digest with the run.
 

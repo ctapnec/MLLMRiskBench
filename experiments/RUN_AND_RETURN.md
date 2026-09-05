@@ -882,7 +882,7 @@ decisions are separate numeric fields. Physical retries and repeated judge
 applications never count as new experimental inputs or outputs. The local
 summary reconciles 42,882 prospective target calls before optional defense
 work, 8,680 source-authoritative R-Judge/GPTGeoChat rows and at most 34,202
-common-judge-eligible rows. The later hosted campaign may select at most 1,350
+common-judge-eligible rows. The later hosted campaign may select at most 1,110
 matched local/hosted output pairs for Haiku; that sealed pair stratum is
 attached without mutating the zero-hosted-call local report. The same validated
 table drives the response funnel, missing-output coverage, judge coverage,
@@ -1662,10 +1662,11 @@ output or non-retryable or exhausted transport failure opens the global
 operator must classify and resolve the failure before a fresh bound plan and
 explicit circuit reset; there is no automatic paid resumption. Use seed 0 and
 a create-only, balanced selection from exact retained local inputs. These are
-global input/call caps, not Runner's per-arm `--limit`: Fable 50, Opus 100,
-Sonnet 200, Haiku 200, Astra 50, Sol 50, Terra 50, Luna 150, GPT-5.5 50,
-Kimi K3 150 and DeepSeek V4-Pro 300. All output allowances are 4,096 tokens
-except Haiku's 2,048. Fable and Sol select the explicit 4,096-token variants,
+global input/call caps, not Runner's per-arm `--limit`: Fable 30, Opus 80,
+Sonnet 150, Haiku 200, Astra 30, Sol 30, Terra 30, Luna 150, GPT-5.5 30,
+Kimi K3 80 and DeepSeek V4-Pro 300. Haiku's output ceiling is 2,048;
+Sonnet/Luna use 4,096, Opus/Terra 6,144, and the other six routes 8,192.
+Fable and Sol select the explicit 8,192-token variants,
 not their retained 25,000-token identities. Every selected entry permits one target call; retained
 framework labels are provenance and no paid adaptive trajectory is regenerated. DeepSeek
 may run only in the reviewed off-peak price window. Google and other candidate
@@ -1673,7 +1674,7 @@ routes are outside this funded amendment.
 
 Before any paid call, derive each exact no-call population independently and
 measure the provider-token canary. Every paid readiness or canary request
-consumes the applicable global target cap; it does not extend the 1,350-call
+consumes the applicable global target cap; it does not extend the 1,110-call
 total. Reserve four HTTP attempts per target or judge call while retaining one
 logical paid-call and token-cost reservation. First create the
 content-bound cost projection:
@@ -1688,34 +1689,39 @@ python -m experiments.hosted_campaign_budget \
   --pricing-as-of "$URA_PRICING_AS_OF" --out "$HOSTED_BUDGET_PROJECTION"
 ```
 
-It makes no provider call. It must report `budget_fit`, 1,350 target attempts,
-2,700 maximum Haiku calls, the 4,000-input/500-output expected calculation and
-the configured-max-output reservation. If a
+It makes no provider call. It must report `budget_fit`, 1,110 target attempts,
+2,220 maximum Haiku calls, the uncalibrated quarter-output-cap scenario and
+the configured-maximum reservation. Judging reserves 12,288 complete input
+tokens and 512 output tokens, not 4,000 input tokens. Apply the fixed technical
+pilot in HOSTED_CAMPAIGN_PLAN.md A2 before freezing a measured condition. A
+pilot ceiling hit or absent final answer requires investigation and a fresh
+condition with rebalanced affordable calls, never an automatic paid retry. If a
 provider would exceed Anthropic USD 72 (from USD 90 available), OpenAI USD 32,
 Moonshot USD 12 or DeepSeek USD 8, reduce and reseal only the affected prospective limit before
 any target output exists. Never increase or outcome-select a limit later.
 
 After local and hosted completion, create one content-bound zero-target Haiku
-selector for at most 1,350 matched local/hosted output pairs. Both members bind
+selector for at most 1,110 matched local/hosted output pairs. Both members bind
 the same rendered prompt, media-reference digest, datapoint, source cluster,
 seed, arm/framework, modality, risk, expected behavior and source policy. The
 selector uses deterministic balanced round-robin sampling across local target,
 hosted target and those input strata, without output reuse. It preserves
-original judgments. Since the hosted campaign cap is 1,350, the 1,350-pair
+original judgments. Since the hosted campaign cap is 1,110, the 1,110-pair
 ceiling must include every eligible answered hosted output exactly once and
 assign one unused local counterpart; it is not a downsample of hosted results.
 It excludes missing responses plus source-authoritative
 R-Judge/GPTGeoChat rows from judge calls. Haiku target rows may be judged by
 Haiku under the operator's explicit decision, but must be labelled same-model
-and non-independent. Under the central 4,000-input/500-output assumption, the
-maximum 2,700 calls use 10.8 million input and 1,350,000 output tokens and cost
-USD 17.55 standard or USD 8.775 Batch. The fixed 512-token judge maximum raises
-the standard planning bound only to USD 17.712 when every input is at
-most 4,000 tokens.
+and non-independent. The 2,220-call scenario is USD 21.02784 with 8,192 input
+and 256 output tokens per call; the maximum reservation is USD 32.96256 with
+12,288 input and 512 output tokens. Count the entire grading request with
+Haiku, including the retained answer and rubric. Do not silently truncate it
+or treat a target-provider token count as a Haiku count. Rebalance prospective
+hosted quantities before A3 if exact local grading input costs do not fit.
 
 Do not emulate this re-adjudication with `run_matrix`: that would risk target
 regeneration. Create the paired cohort with the dedicated immutable zero-target
-path and one standard-API USD 18 ceiling. Use a private Haiku judge config that
+path and one standard-API USD 33 ceiling. Use a private Haiku judge config that
 fixes `max_tokens=512`; do not reuse the 2,048-token Haiku target condition:
 
 ```bash
@@ -1729,7 +1735,7 @@ python -m experiments.retained_response_judge_pair \
   --pricing-config "$URA_PRICING_CONFIG" \
   --pricing-config-sha256 "$URA_PRICING_CONFIG_SHA256" \
   --pricing-as-of "$URA_PRICING_AS_OF" \
-  --pair-limit 1350 --sample-seed 0 --max-cost-microusd 18000000 \
+  --pair-limit 1110 --sample-seed 0 --max-cost-microusd 33000000 \
   --ack-hosted-judge-data-transfer --out "$HAIKU_PLAN"
 
 python -m experiments.retained_response_judge_pair_execute \
@@ -1747,8 +1753,8 @@ Llama Guard revision, and a judge-call ceiling covering its selected answered
 rows. The Runner checkpoints the paid response and its local cascade trail in
 the same retained cell. Consequently the Haiku selector above must bind the
 existing local trail on every selected hosted member by retained-row digest; it
-must not rerun either the target or the local judge. Across the 1,350-call hosted
-cap this permits at most 1,350 rule evaluations and 1,350 Llama Guard calls, with
+must not rerun either the target or the local judge. Across the 1,110-call hosted
+cap this permits at most 1,110 rule evaluations and 1,110 Llama Guard calls, with
 no additional provider cost. Analysis reports local decision coverage and
 abstentions before agreement because the guardrail safe/violation labels cannot
 decide every benign over-refusal row.
@@ -1758,7 +1764,8 @@ content hashes. It binds the exact effective-dated pricing file and refuses a
 rate other than the funded USD 1 input / USD 5 output per million-token
 condition. The executor revalidates the same pricing bytes, reconstructs only
 the selected Haiku judge,
-enforces no retry in both the harness and provider SDK, fsyncs a reservation
+enforces zero answer retries and the three-retry status-only transport policy,
+with SDK retries disabled, fsyncs a reservation
 before every paid call, and stops the cohort on its first output or transport
 failure. An unresolved reservation after process loss requires manual provider
 audit and is never repeated automatically. Analysis publishes separate
