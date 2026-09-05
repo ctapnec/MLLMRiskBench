@@ -290,6 +290,9 @@ def test_cuda_completion_expands_compact_middle_stratum_before_validation() -> N
 
     assert "_expand_compact_retained_result(" in validation
     assert "middle_results[unit_id]" in validation
+    assert "retained_selected -= EARLY_PARTIAL_ROWS" in validation
+    assert 'evidence["interrupted_durable_prefix"]' in validation
+    assert '"retained_predecessor_rows": EARLY_PARTIAL_ROWS' in validation
 
 
 def test_cuda_recovery_accepts_only_exact_pre_state_evidence(tmp_path: Path) -> None:

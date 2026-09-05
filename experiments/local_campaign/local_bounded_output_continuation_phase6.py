@@ -31,6 +31,12 @@ from experiments.local_campaign.failed_output_recovery_phase6 import (
     _selected_rows,
 )
 from experiments.local_campaign.local_truncation_recovery_continuation_phase6 import (
+    EXPECTED_PARTIAL_ROWS as EARLY_PARTIAL_ROWS,
+)
+from experiments.local_campaign.local_truncation_recovery_continuation_phase6 import (
+    PARTIAL_UNIT_INDEX as EARLY_PARTIAL_UNIT_INDEX,
+)
+from experiments.local_campaign.local_truncation_recovery_continuation_phase6 import (
     SNAPSHOT_SCHEMA as PRIOR_SNAPSHOT_SCHEMA,
 )
 from experiments.local_campaign.local_truncation_recovery_continuation_phase6 import (
@@ -150,6 +156,112 @@ def _expand_compact_retained_result(
     if set(expanded) != RESULT_FIELDS:
         raise AssertionError("expanded retained result field inventory changed")
     return expanded
+
+
+def _validate_early_partial(
+    snapshot: object,
+    *,
+    order: Sequence[str],
+    inventory: Mapping[str, Any],
+    runner_root: Path,
+    base_root: Path,
+) -> dict[str, Any]:
+    """Validate the 424-row prefix retained before the middle continuation."""
+
+    snapshot_fields = {
+        "continuation_inputs",
+        "created_at_utc",
+        "marker",
+        "order",
+        "partial",
+        "prior_control_root",
+        "prior_launch",
+        "retained_accounting",
+        "retained_results",
+        "schema",
+        "successful_rows_repeated",
+    }
+    if (
+        not isinstance(snapshot, dict)
+        or set(snapshot) != snapshot_fields
+        or snapshot.get("schema") != PRIOR_SNAPSHOT_SCHEMA
+        or snapshot.get("order") != list(order)
+        or snapshot.get("successful_rows_repeated") != 0
+        or Path(str(snapshot.get("prior_control_root", ""))).resolve(strict=True)
+        != base_root
+        or _validate_descriptor(snapshot.get("prior_launch"), label="early prior launch")
+        != base_root / "launch.json"
+        or _validate_descriptor(snapshot.get("marker"), label="early interruption marker")
+        != base_root / "interruption.json"
+    ):
+        raise ValueError("early retained snapshot changed")
+
+    partial = snapshot.get("partial")
+    partial_fields = {
+        "attempt_files",
+        "durable_datapoint_ids_sha256",
+        "durable_rows",
+        "metric_grid_complete",
+        "missing_responses",
+        "response_files",
+        "result_root",
+        "state",
+        "successful_target_generations",
+        "unit_id",
+    }
+    early_id = order[EARLY_PARTIAL_UNIT_INDEX - 1]
+    item = inventory["units"][EARLY_PARTIAL_UNIT_INDEX - 1]
+    expected_selected = int(item["summary"]["recovery_records"])
+    expected_root = runner_root / early_id / base_root.name
+    if not isinstance(partial, dict) or set(partial) != partial_fields:
+        raise ValueError("early retained partial contract changed")
+    successful = partial.get("successful_target_generations")
+    missing = partial.get("missing_responses")
+    result_root = Path(str(partial.get("result_root", "")))
+    if (
+        partial.get("unit_id") != early_id
+        or partial.get("durable_rows") != EARLY_PARTIAL_ROWS
+        or partial.get("metric_grid_complete") is not False
+        or not isinstance(partial.get("durable_datapoint_ids_sha256"), str)
+        or _HEX64.fullmatch(partial["durable_datapoint_ids_sha256"]) is None
+        or isinstance(successful, bool)
+        or not isinstance(successful, int)
+        or isinstance(missing, bool)
+        or not isinstance(missing, int)
+        or successful < 0
+        or missing < 0
+        or successful + missing != EARLY_PARTIAL_ROWS
+        or not result_root.is_absolute()
+        or result_root.is_symlink()
+        or result_root.resolve(strict=True) != expected_root
+    ):
+        raise ValueError("early retained partial accounting changed")
+
+    state_path = _validate_descriptor(partial.get("state"), label="early partial state")
+    state = _load_json(state_path, label="early partial state")
+    recovery_corpora = item["recovery_selection"]["corpora"]
+    corpus = next(iter(recovery_corpora)) if len(recovery_corpora) == 1 else None
+    if (
+        state_path != base_root / "units" / early_id / "state.json"
+        or state.get("schema") != BASE_STATE_SCHEMA
+        or state.get("unit_id") != early_id
+        or state.get("source_lane") != item["source_lane"]
+        or state.get("corpus") != corpus
+        or state.get("selected_records") != expected_selected
+        or state.get("target_answer_retries") != 1
+        or state.get("target_call_cap") != expected_selected * 2
+        or state.get("result_root") != str(expected_root)
+    ):
+        raise ValueError("early partial state changed")
+    for field in ("attempt_files", "response_files"):
+        descriptors = partial.get(field)
+        if not isinstance(descriptors, list) or not descriptors:
+            raise ValueError(f"early partial {field} changed")
+        for descriptor in descriptors:
+            path = _validate_descriptor(descriptor, label=f"early partial {field}")
+            if path.parent != expected_root:
+                raise ValueError(f"early partial {field} escaped its result root")
+    return dict(partial)
 
 
 def _validate_prior_terminal(prior_root: Path) -> dict[str, Any]:
@@ -1103,6 +1215,13 @@ def validate_completion(completion_path: Path, *, runner_root: Path) -> dict[str
     retained_snapshot = _load_json(retained_snapshot_path, label="retained hardware-fit snapshot")
     base_root = Path(str(retained_snapshot["prior_control_root"])).resolve(strict=True)
     base_results = retained_snapshot["retained_results"]
+    early_partial = _validate_early_partial(
+        retained_snapshot,
+        order=order,
+        inventory=inventory,
+        runner_root=runner_root.resolve(strict=True),
+        base_root=base_root,
+    )
     middle_results = snapshot.get("retained_results")
     final_results = completion["unit_results"]
     if (
@@ -1136,12 +1255,15 @@ def validate_completion(completion_path: Path, *, runner_root: Path) -> dict[str
             retained_corpus = (
                 next(iter(recovery_corpora)) if len(recovery_corpora) == 1 else None
             )
+            retained_selected = int(item["summary"]["recovery_records"])
+            if index == EARLY_PARTIAL_UNIT_INDEX - 1:
+                retained_selected -= EARLY_PARTIAL_ROWS
             result = _expand_compact_retained_result(
                 middle_results[unit_id],
                 unit_id=unit_id,
                 source_lane=str(item["source_lane"]),
                 corpus=retained_corpus,
-                selected_records=int(item["summary"]["recovery_records"]),
+                selected_records=retained_selected,
             )
             physical_root = prior_root
             state_schema = PRIOR_STATE_SCHEMA
@@ -1152,6 +1274,8 @@ def validate_completion(completion_path: Path, *, runner_root: Path) -> dict[str
             state_schema = STATE_SCHEMA
             evidence_completion = completion_descriptor
         selected = int(item["summary"]["recovery_records"])
+        if index == EARLY_PARTIAL_UNIT_INDEX - 1:
+            selected -= EARLY_PARTIAL_ROWS
         if index == PARTIAL_INDEX - 1:
             selected -= EXPECTED_USABLE
         recovery_corpora = item["recovery_selection"]["corpora"]
@@ -1171,6 +1295,8 @@ def validate_completion(completion_path: Path, *, runner_root: Path) -> dict[str
         terminal_states[unit_id] = "measured_complete"
         lifecycle_roots[unit_id] = str(validated["root"])
         evidence = dict(validated["evidence"])
+        if index == EARLY_PARTIAL_UNIT_INDEX - 1:
+            evidence["interrupted_durable_prefix"] = dict(early_partial)
         if index == PARTIAL_INDEX - 1:
             evidence["interrupted_usable_row"] = dict(snapshot["partial"])
         lifecycle_evidence[unit_id] = evidence
@@ -1184,18 +1310,36 @@ def validate_completion(completion_path: Path, *, runner_root: Path) -> dict[str
         selected_total += selected
         successful += int(validated["successful"])
         missing += int(validated["missing"])
-    selected_total += EXPECTED_USABLE
-    successful += EXPECTED_USABLE
+    selected_total += EARLY_PARTIAL_ROWS + EXPECTED_USABLE
+    successful += int(early_partial["successful_target_generations"]) + EXPECTED_USABLE
+    missing += int(early_partial["missing_responses"])
+    expected_early_accounting = {
+        "target_attempts": sum(
+            int(base_results[unit]["target_attempts"]) for unit in order[:2]
+        )
+        + EARLY_PARTIAL_ROWS,
+        "successful_target_generations": sum(
+            int(base_results[unit]["successful_target_generations"])
+            for unit in order[:2]
+        )
+        + int(early_partial["successful_target_generations"]),
+        "missing_responses": sum(
+            int(base_results[unit]["missing_responses"]) for unit in order[:2]
+        )
+        + int(early_partial["missing_responses"]),
+    }
     if (
         selected_total != EXPECTED_TOTAL_ROWS
         or successful + missing != EXPECTED_TOTAL_ROWS
         or len(sources) != 1
+        or retained_snapshot.get("retained_accounting") != expected_early_accounting
     ):
         raise ValueError("bounded-output final population accounting changed")
     revision_strata: dict[str, list[str]] = {}
     for lane, revision in metric_revisions.items():
         revision_strata.setdefault(revision, []).append(lane)
     partial_id = order[PARTIAL_INDEX - 1]
+    early_partial_id = order[EARLY_PARTIAL_UNIT_INDEX - 1]
     return {
         "completion": completion_descriptor,
         "inventory": dict(completion["inventory"]),
@@ -1223,6 +1367,21 @@ def validate_completion(completion_path: Path, *, runner_root: Path) -> dict[str
         },
         "planned_unique_rows": EXPECTED_TOTAL_ROWS,
         "population_segments": {
+            early_partial_id: {
+                "profiled_rows": int(
+                    inventory["units"][EARLY_PARTIAL_UNIT_INDEX - 1]["summary"]
+                    ["recovery_records"]
+                )
+                - EARLY_PARTIAL_ROWS,
+                "retained_predecessor_rows": EARLY_PARTIAL_ROWS,
+                "retained_predecessor_successful_rows": int(
+                    early_partial["successful_target_generations"]
+                ),
+                "retained_predecessor_missing_rows": int(
+                    early_partial["missing_responses"]
+                ),
+                "security_metric_pooling_permitted": False,
+            },
             partial_id: {
                 "profiled_rows": EXPECTED_PARTIAL_SELECTED - EXPECTED_USABLE,
                 "retained_usable_rows": EXPECTED_USABLE,
