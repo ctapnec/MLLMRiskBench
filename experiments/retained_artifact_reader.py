@@ -8,6 +8,7 @@ remain those of the source revision that produced each grid.
 
 from __future__ import annotations
 
+import hashlib
 import inspect
 import json
 import os
@@ -30,7 +31,7 @@ _MAX_VALIDATOR_IPC_BYTES = 512 * 1024 * 1024
 _MAX_VALIDATOR_IPC_NODES = 32_000_000
 
 _WORKER = r'''
-import hashlib, json, sys
+import hashlib, inspect, json, sys
 from pathlib import Path
 from experiments import figure_results
 from experiments.figure_results import _load_cells
@@ -80,7 +81,45 @@ if request["joined"]:
         # Validate the WHOLE original grid, including orphan/source/grid checks,
         # before taking an in-memory view of any configuration's actual cells.
         original_inventory = human_audit._validated_artifacts
-        all_roles, validated_cells = original_inventory(root)
+        original_completed_cell = human_audit._completed_cell
+        try:
+            zero_result_runs = [cell["run_id"] for cell in cells
+                                if cell.get("aggregate_results") == []]
+            if zero_result_runs:
+                original_source = inspect.getsource(original_completed_cell)
+                legacy_guard = "if not attempts or not responses or not judgments or not aggregate_results:"
+                if original_source.count(legacy_guard) == 1:
+                    # The ORIGINAL figure/grid validator has already admitted
+                    # these exact typed nondecisions. Correct only its older
+                    # auxiliary transfer reader's nonempty-Result assumption.
+                    bridge = request.get("audit_join_bridge")
+                    if not isinstance(bridge, dict):
+                        raise ValueError("audit-join compatibility lacks bridge provenance")
+                    corrected_guard = (
+                        "if not attempts or not responses or not judgments or "
+                        "(not aggregate_results and not "
+                        "_source_zero_result_population(parsed_judgments)):"
+                    )
+                    namespace = dict(original_completed_cell.__globals__)
+                    namespace["_source_zero_result_population"] = (
+                        figure_results._zero_result_guardrail_abstention_population
+                    )
+                    exec(original_source.replace(legacy_guard, corrected_guard), namespace)
+                    human_audit._completed_cell = namespace[original_completed_cell.__name__]
+                    result["audit_join_compatibility"] = {
+                        "kind": "original_typed_zero_result_population_in_auxiliary_audit_join",
+                        "original_source_commit": request["commit"],
+                        "original_figure_grid_validation": "passed_before_compatibility",
+                        "original_transfer_function_sha256": hashlib.sha256(
+                            original_source.encode("utf-8")).hexdigest(),
+                        "original_source_predicate": "figure_results._zero_result_guardrail_abstention_population",
+                        "zero_result_run_ids": sorted(zero_result_runs),
+                        "bridge": bridge,
+                        "unchanged_original_transfer_validator_claimed": False,
+                    }
+            all_roles, validated_cells = original_inventory(root)
+        finally:
+            human_audit._completed_cell = original_completed_cell
         original_by_run = {cell["run_id"]: cell for cell in cells}
         validated_by_run = {cell["run_id"]: cell for cell in validated_cells}
         if (len(original_by_run) != len(cells)
@@ -395,6 +434,11 @@ def read_partitions(
                 }
                 if separate_judge_configurations:
                     request["separate_judge_configurations"] = True
+                    request["audit_join_bridge"] = {
+                        "commit": _git(_REPOSITORY, "rev-parse", "HEAD"),
+                        "module": "experiments/retained_artifact_reader.py",
+                        "sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+                    }
                 result = subprocess.run(
                     [sys.executable, "-c", _WORKER], cwd=worktree,
                     env=environment, input=json.dumps(request), text=True,

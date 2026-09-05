@@ -10,6 +10,7 @@ import pytest
 
 from experiments import human_audit as subject
 from experiments import retained_artifact_reader as reader
+from experiments import transfer_matrix
 
 
 @pytest.fixture
@@ -151,6 +152,25 @@ def test_historical_audit_merges_only_same_contract_counters(tmp_path, artifact_
         subject._merge_historical_audits([audit, different])
 
 
+def test_historical_auxiliary_join_correction_preserves_explicit_provenance(
+    tmp_path, monkeypatch, artifact_fixture,
+):
+    artifact_fixture._write_human_artifacts(tmp_path)
+    original = subject._joined_artifacts(tmp_path)
+    partition = _partition(original)
+    compatibility = {
+        "original_source_commit": "a" * 40,
+        "bridge": {"commit": "b" * 40, "sha256": "c" * 64},
+        "unchanged_original_transfer_validator_claimed": False,
+    }
+    partition["audit_join_compatibility"] = compatibility
+    monkeypatch.setattr(reader, "read_partitions", lambda *a, **k: [partition])
+    selected = subject._audit_artifacts(tmp_path, historical_code_repository=tmp_path)
+    assert selected[3]["audit_join_compatibility"] == [compatibility]
+    assert "audit_join_compatibility" not in original[3]
+    assert selected[:3] == original[:3]
+
+
 @pytest.mark.parametrize("mutation", ["duplicate-run", "duplicate-row", "wrong-frame", "orphan-prediction"])
 def test_historical_join_rejects_invalid_partition_accounting(
     tmp_path, monkeypatch, artifact_fixture, mutation,
@@ -192,3 +212,42 @@ def test_default_human_audit_join_unchanged(tmp_path, monkeypatch, frame):
     monkeypatch.setattr(reader, "read_partitions", lambda *a, **k: pytest.fail("historical opt-in absent"))
     assert subject._audit_artifacts(tmp_path, frame=frame) is expected
     assert calls == [((tmp_path,), {} if frame == "common" else {"frame": frame})]
+
+
+@pytest.mark.parametrize("decision", ["nonresponse", "decided", "untyped-na"])
+def test_transfer_zero_results_require_exact_typed_nondecisions(
+    tmp_path, monkeypatch, artifact_fixture, decision,
+):
+    artifact_fixture._write_human_artifacts(tmp_path)
+    judgments_path = tmp_path / "cell.jsonl"
+    judgment = json.loads(judgments_path.read_text())
+    if decision != "decided":
+        judgment.update({"label": "not_applicable", "score": 0.0})
+        judgment["raw"].update({
+            "policy_evaluation_status": "model_nonresponse", "stage_queried": False,
+            "confidence": 1.0, "parsed": None, "metric_authority": None,
+            "required_metric": None,
+        })
+        if decision == "untyped-na":
+            judgment["raw"]["stage_queried"] = True
+    judgments_path.write_text(json.dumps(judgment) + "\n")
+    (tmp_path / "cell.results.jsonl").write_text("")
+    marker_path = tmp_path / "cell.complete.json"
+    marker = json.loads(marker_path.read_text())
+    marker["n_results"] = 0
+    marker_path.write_text(json.dumps(marker))
+    artifact_fixture._refresh_descriptors(tmp_path, "cell")
+    # Isolate this aggregate-result gate, as the existing figure-loader test
+    # does. Full response/trail joins remain covered by original-validator
+    # regressions and the read-only retained nonresponse-grid proof.
+    trail_checks = []
+    monkeypatch.setattr(transfer_matrix, "validate_persisted_judgment_trails",
+                        lambda *a, **k: trail_checks.append(True))
+    if decision == "nonresponse":
+        cell = transfer_matrix._completed_cell(judgments_path)
+        assert cell["run_id"] == "run-1"
+        assert trail_checks == [True]
+    else:
+        with pytest.raises(ValueError, match="exact all-abstention population"):
+            transfer_matrix._completed_cell(judgments_path)
+        assert not trail_checks

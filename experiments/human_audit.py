@@ -1803,9 +1803,12 @@ def _audit_artifacts(
         separate_judge_configurations=frame == "common",
     )
     groups: dict[str, list] = defaultdict(list)
+    compatibility = []
     seen_runs: set[str] = set()
     seen_keys: set[str] = set()
     for partition in partitions:
+        if "audit_join_compatibility" in partition:
+            compatibility.append(partition["audit_join_compatibility"])
         for cell in partition["cells"]:
             if cell["run_id"] in seen_runs:
                 raise ValueError("historical human audit contains a duplicate completed run")
@@ -1849,7 +1852,10 @@ def _audit_artifacts(
         metadata.update(part_metadata)
         judgments.update(part_judgments)
         audits.append(audit)
-    return predictors, metadata, judgments, _merge_historical_audits(audits)
+    audit = _merge_historical_audits(audits)
+    if compatibility:
+        audit["audit_join_compatibility"] = compatibility
+    return predictors, metadata, judgments, audit
 
 
 def prepare_sample(

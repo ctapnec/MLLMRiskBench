@@ -278,7 +278,7 @@ def test_haiku_reader_and_reconciliation_use_historical_join(tmp_path, monkeypat
     assert judge.load_retained_metadata(tmp_path) == expected[1]
 
 
-@pytest.mark.parametrize("failure", [None, "full-grid", "omit-row", "orphan-prediction", "wrong-config"])
+@pytest.mark.parametrize("failure", [None, "full-grid", "omit-row", "orphan-prediction", "wrong-config", "zero-results"])
 def test_grouped_worker_validates_full_grid_before_exact_disjoint_source_joins(
     tmp_path, monkeypatch, capsys, failure,
 ):
@@ -304,12 +304,35 @@ def test_grouped_worker_validates_full_grid_before_exact_disjoint_source_joins(
             }}],
         })
     calls = []
+    bridge = {"commit": "d" * 40, "module": "experiments/retained_artifact_reader.py",
+              "sha256": "e" * 64}
+    if failure == "zero-results":
+        cells[1]["aggregate_results"] = []
+        legacy_source = '''def _completed_cell(path):
+    attempts = responses = judgments = [1]
+    aggregate_results = []
+    parsed_judgments = ["source typed nondecision"]
+    if not attempts or not responses or not judgments or not aggregate_results:
+        raise ValueError("empty core/result artifact")
+    return path
+'''
+        namespace = {}
+        exec(legacy_source, namespace)
+        legacy_cell = namespace["_completed_cell"]
+        getsource = subject.inspect.getsource
+        monkeypatch.setattr(subject.inspect, "getsource", lambda value:
+                            legacy_source if value is legacy_cell else getsource(value))
+        monkeypatch.setattr(human_audit, "_completed_cell", legacy_cell)
+        monkeypatch.setattr(figure_results, "_zero_result_guardrail_abstention_population",
+                            lambda rows: rows == ["source typed nondecision"])
 
     def original_inventory(root):
         assert root == tmp_path
         calls.append("full original grid validation")
         if failure == "full-grid":
             raise ValueError("original full-grid validator refused")
+        if failure == "zero-results":
+            assert human_audit._completed_cell(root) == root
         return {"judgments": [cell["artifacts"]["judgments"] for cell in cells]}, cells
 
     def original_join(root, *, frame):
@@ -349,10 +372,11 @@ def test_grouped_worker_validates_full_grid_before_exact_disjoint_source_joins(
     request = {
         "results": str(tmp_path), "commit": COMMIT, "tree": TREE, "joined": True,
         "frame": "common", "separate_judge_configurations": True,
+        "audit_join_bridge": bridge,
         "media_export_source": 'def _portable_media_references(turns): return "current exporter"',
     }
     monkeypatch.setattr(subject.sys, "stdin", io.StringIO(json.dumps(request)))
-    if failure:
+    if failure not in (None, "zero-results"):
         with pytest.raises(ValueError, match="full-grid validator|omit or add|join differs"):
             exec(subject._WORKER, {})
     else:
@@ -365,6 +389,14 @@ def test_grouped_worker_validates_full_grid_before_exact_disjoint_source_joins(
         assert groups["2" * 64][0]["cascade_authoritative"] == {}
         assert set(groups["2" * 64][1]) == {"run-1|model|attempt"}
         assert calls == ["source cells", "full original grid validation", "run-0", "run-1"]
+        if failure == "zero-results":
+            compatibility = result["audit_join_compatibility"]
+            assert compatibility["bridge"] == bridge
+            assert compatibility["original_source_commit"] == COMMIT
+            assert compatibility["original_figure_grid_validation"] == "passed_before_compatibility"
+            assert compatibility["zero_result_run_ids"] == ["run-1"]
+            assert compatibility["unchanged_original_transfer_validator_claimed"] is False
+            assert human_audit._completed_cell is legacy_cell
     assert human_audit._validated_artifacts is original_inventory
 
 

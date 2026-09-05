@@ -524,8 +524,16 @@ def _completed_cell(path: Path) -> dict[str, Any]:
                 f"completion count {field}={marker.get(field)!r} does not match "
                 f"{observed} rows for {stem!r}"
             )
-    if not attempts or not responses or not judgments or not aggregate_results:
+    if not attempts or not responses or not judgments:
         raise ValueError(f"completed scored cell {stem!r} has an empty core/result artifact")
+    if not aggregate_results:
+        from experiments.figure_results import _zero_result_guardrail_abstention_population
+
+        if not _zero_result_guardrail_abstention_population(parsed_judgments):
+            raise ValueError(
+                f"completed scored cell {stem!r} has no results without an exact "
+                "all-abstention population"
+            )
     manifest_counts = {
         "n_attempts": len(attempts),
         "n_responses": len(responses),
