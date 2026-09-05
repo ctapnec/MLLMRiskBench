@@ -1769,7 +1769,7 @@ class DashboardMixin:
             )
         expected = {
             "level1": {"ura-level1-evidence/3", "ura-level1-evidence/2"},
-            "level2": {"ura-level2-report/1"},
+            "level2": {"ura-level2-report/1", "ura-level2-report/2"},
         }.get(kind)
         if kind not in {
             "level1",
@@ -2415,6 +2415,50 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
             + "</div>"
         )
 
+    def _render_generation_conditions(self, doc: Mapping[str, Any]) -> str:
+        report = doc.get("generation_conditions")
+        if not isinstance(report, Mapping):
+            return "<p class='note'>Token windows and truncation: not recorded in this older report.</p>"
+        sections = ["<section data-section='generation-conditions'><h3>Token windows and completion</h3>"
+                    "<p class='note'>Context capacity, output allowance and reported usage are separate. "
+                    "Truncated usable text remains analysable; missing output is a separate count. "
+                    "Stop reasons are provider-reported, never inferred from token totals. "
+                    "Each row below retains its own run, model, arm and token condition.</p>"]
+
+        def shown(value: Any) -> str:
+            return "not recorded" if value is None else "runtime maximum" if value == -1 else html.escape(str(value))
+
+        def usage(value: Mapping[str, Any], rows: int) -> str:
+            n = value["reported_rows"]
+            if not n:
+                return f"not recorded (0/{rows} rows)"
+            return (f"{value['sum']:,} total; {value['minimum']:,}-{value['maximum']:,} per row; "
+                    f"reported {n}/{rows}")
+
+        for row in report["conditions"]:
+            label = " / ".join(str(row[k]) for k in ("model_spec", "corpus_arm", "attacker", "modality"))
+            label += f" / context {shown(row['context_tokens'])}, output {shown(row['output_allowance'])}"
+            sections.append(
+                "<details class='card'><summary>" + html.escape(label) + f" - {row['rows']} responses</summary>"
+                + "<div class='scroll'><table><thead><tr><th>Run</th><th>Context tokens</th>"
+                "<th>Output allowance</th><th>Reported input tokens</th><th>Reported output tokens</th>"
+                "<th>Missing output</th><th>Input context errors</th></tr></thead><tbody><tr>"
+                + f"<td>{html.escape(row['run_id'])}</td>"
+                + f"<td>{shown(row['context_tokens'])} ({html.escape(row['context_source'])}; "
+                + f"policy {shown(row['context_policy'])})</td>"
+                + f"<td>{shown(row['output_allowance'])} ({html.escape(row['output_source'])})</td>"
+                + f"<td>{usage(row['input_tokens'], row['rows'])}</td>"
+                + f"<td>{usage(row['output_tokens'], row['rows'])}</td>"
+                + f"<td>{row['missing_output']}/{row['rows']}</td>"
+                + f"<td>{row['input_context_error']}/{row['rows']}</td></tr></tbody></table></div>"
+                + "<h4 data-chart='generation-completion'>Provider completion reasons</h4>"
+                + self._count_bar_chart([
+                    ("Normal stop", row["normal_stop"]), ("Truncated", row["truncated"]),
+                    ("Other stop", row["other_stop"]), ("Not recorded", row["unknown_stop"]),
+                ], label="Generation completion counts") + "</details>"
+            )
+        return "".join(sections) + "</section>"
+
     def _render_level2(
         self,
         rel: str,
@@ -2445,6 +2489,7 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
                 "report with no common estimate rows (native-only or empty)."
                 "</p>"
                 + artifact_note
+                + self._render_generation_conditions(doc)
                 + "</div>"
             )
         contains_approximate = any(
@@ -2674,6 +2719,7 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
             "runs are not presented as a ranking, and no universal safety "
             "score exists. Diagnostic evidence cannot reach this report by "
             "construction.</p>"
+            + self._render_generation_conditions(doc)
             + "".join(sections)
             + artifact_note
             + "</div>"

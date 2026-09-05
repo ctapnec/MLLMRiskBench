@@ -30,6 +30,12 @@ so the hosted member of every later Haiku pair already has its local judgment.
   fallback, or local request deadline.
 - Missing responses remain selected-population and stability evidence but
   receive no Haiku call.
+- A provider-declared output-token limit with usable visible text is retained
+  as a truncated answer, with its original stop reason and token usage. It is
+  analysed and can enter matched judging, without an answer retry or token-cap
+  increase. An empty final answer, failed transport, contradictory response
+  state or missing required provenance still stops further paid work. Thinking
+  text alone is not substituted for a final answer.
 - The first retained failed target output opens the global `paid_provider`
   circuit before another paid call can start. A transport or network failure
   opens the same circuit. The retained row is diagnostic evidence, not

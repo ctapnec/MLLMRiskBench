@@ -35,6 +35,7 @@ from experiments.level1_evidence import (  # noqa: E402
     _decision_state,
 )
 from experiments.native_import import load_native_run  # noqa: E402
+from experiments.generation_conditions import build_generation_conditions  # noqa: E402
 from experiments.suite_summary import (  # noqa: E402
     _metric_family,
     summarize_native_runs,
@@ -48,7 +49,7 @@ from ura.approximate_metrics import (  # noqa: E402
 from ura.data_models import Judgment  # noqa: E402
 
 
-LEVEL2_SCHEMA = "ura-level2-report/1"
+LEVEL2_SCHEMA = "ura-level2-report/2"
 
 #: The safe default aggregation identity emitted by ``Runner.aggregate``.  A
 #: coarser or renamed grouping cannot be exported because its buckets would not
@@ -522,6 +523,7 @@ def build_level2_report(
             "schema_version": cell["manifest"]["schema_version"],
             "project_revision": run.get("project_revision"),
             "request_envelope": run.get("request_envelope"),
+            "n_responses": len(cell["responses"]),
         })
     estimates.sort(key=lambda row: (
         row["semantic_family"], row["source"], row["metric"],
@@ -564,6 +566,7 @@ def build_level2_report(
             "estimates": estimates,
         },
         "native": summarize_native_runs(native_runs),
+        "generation_conditions": build_generation_conditions(cells),
     }
     body["report_id"] = f"level2-{canonical_json_sha256(body)[:24]}"
     return body
@@ -618,6 +621,27 @@ def _markdown_text(report: dict[str, Any]) -> str:
         "",
     ]
     by_family: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    conditions = report.get("generation_conditions", {}).get("conditions", [])
+    if conditions:
+        lines.extend([
+            "## Generation conditions", "",
+            "Context and output allowance are separate from reported usage. Unknown metadata is not inferred. "
+            "Truncated usable text remains analysable; each condition stays separate.", "",
+            "| run | model | arm | modality | context | output allowance | input tokens (reported rows) | "
+            "output tokens (reported rows) | normal / truncated / other / unknown | missing |",
+            "|" + "---|" * 10,
+        ])
+        for row in conditions:
+            values = [row[k] for k in ("run_id", "model_spec", "corpus_arm", "modality")]
+            values += [row["context_tokens"] if row["context_tokens"] is not None else "not recorded",
+                       row["output_allowance"] if row["output_allowance"] is not None else "not recorded"]
+            values += [f"{row[k]['sum']} ({row[k]['reported_rows']}/{row['rows']})"
+                       if row[k]["reported_rows"] else "not recorded"
+                       for k in ("input_tokens", "output_tokens")]
+            values += [" / ".join(str(row[k]) for k in ("normal_stop", "truncated", "other_stop", "unknown_stop")),
+                       f"{row['missing_output']}/{row['rows']}"]
+            lines.append("| " + " | ".join(_md_cell(str(value)) for value in values) + " |")
+        lines.append("")
     for row in report["common"]["estimates"]:
         by_family[row["semantic_family"]].append(row)
     if any(

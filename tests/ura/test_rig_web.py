@@ -7110,7 +7110,7 @@ def test_stats_renders_real_level2_report(
     report = json.loads(
         (level2_dir / "level2.json").read_text(encoding="utf-8")
     )
-    assert report["schema_version"] == "ura-level2-report/1"
+    assert report["schema_version"] == "ura-level2-report/2"
     metrics = {row["metric"] for row in report["common"]["estimates"]}
     run_job = Job(
         job_id="job-level2-grid",

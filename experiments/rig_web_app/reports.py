@@ -32,6 +32,7 @@ _REPORT_SCHEMAS = {
     "ura-level1-evidence/3": "level1",
     "ura-level1-evidence/2": "level1",
     "ura-level2-report/1": "level2",
+    "ura-level2-report/2": "level2",
     "ura-suite-evidence/1": "suite",
     "ura-lane-canary/1": "canary",
 }
@@ -444,7 +445,7 @@ def _validate_report_document(kind: str, document: Mapping[str, Any]) -> None:
 
     if kind != "level2":
         return
-    if document.get("schema_version") != "ura-level2-report/1":
+    if document.get("schema_version") not in {"ura-level2-report/1", "ura-level2-report/2"}:
         raise ValueError("wrong Level-2 schema")
     if document.get("status") != "deterministic_compatible_stratum_export":
         raise ValueError("Level-2 status is not validated")
@@ -458,6 +459,23 @@ def _validate_report_document(kind: str, document: Mapping[str, Any]) -> None:
     ):
         raise ValueError("Level-2 no-pooling policy is missing")
     _validate_content_id(document, "report_id", "level2-")
+    if document.get("schema_version") == "ura-level2-report/2":
+        from experiments.generation_conditions import validate_generation_conditions
+
+        cells = document.get("inputs", {}).get("cells")
+        if not isinstance(cells, list) or any(not isinstance(cell, dict) for cell in cells):
+            raise ValueError("Level-2 generation source cells are missing")
+        run_ids = {cell.get("run_id") for cell in cells}
+        if len(run_ids) != len(cells) or any(not isinstance(run_id, str) for run_id in run_ids):
+            raise ValueError("Level-2 generation source cells are ambiguous")
+        conditions = document.get("generation_conditions")
+        validate_generation_conditions(conditions, run_ids)
+        for cell in cells:
+            expected = cell.get("n_responses")
+            if type(expected) is not int or expected < 0 or expected != sum(
+                row["rows"] for row in conditions["conditions"] if row["run_id"] == cell["run_id"]
+            ):
+                raise ValueError("Level-2 generation rows differ from source cell counts")
     common = document.get("common")
     if not isinstance(common, Mapping) or not isinstance(common.get("estimates"), list):
         raise ValueError("Level-2 common estimates are missing")

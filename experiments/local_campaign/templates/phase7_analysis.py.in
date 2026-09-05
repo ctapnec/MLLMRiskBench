@@ -15203,6 +15203,8 @@ class AnalysisController:
             "experiments.level2_report",
             "--results",
             str(self.analysis_runner_view()),
+            "--historical-code-repository",
+            "@@PROJECT_ROOT@@",
             *self.native_args(),
             "--out-json",
             str(out_json),
@@ -15214,7 +15216,7 @@ class AnalysisController:
         self.run("level2-report", argv, log_name="level2-report.log")
         value = strict_object(out_json)
         if (
-            value.get("schema_version") != "ura-level2-report/1"
+            value.get("schema_version") not in {"ura-level2-report/1", "ura-level2-report/2"}
             or value.get("status") != "deterministic_compatible_stratum_export"
             or value.get("pooling_policy", {}).get("cross_stratum_pooling_permitted")
             is not False
@@ -15376,7 +15378,7 @@ class AnalysisController:
             )
             value = strict_object(out_json)
             if (
-                value.get("schema_version") != "ura-level2-report/1"
+                value.get("schema_version") not in {"ura-level2-report/1", "ura-level2-report/2"}
                 or value.get("status") != "deterministic_compatible_stratum_export"
                 or value.get("pooling_policy", {}).get(
                     "cross_stratum_pooling_permitted"
@@ -16679,11 +16681,13 @@ class AnalysisController:
     def record_execution_accounting(self) -> None:
         """Write exact call/output/judge counts from the final successful view."""
 
+        from experiments.retained_artifact_reader import load_cells
+
         runner_view = self.human_audit_runner_input_view()
         self._validate_human_runner_view()
         output = self.analysis / "campaign-execution-accounting.json"
         value = build_execution_accounting(
-            _load_cells(runner_view),
+            load_cells(runner_view, code_repository=Path("@@PROJECT_ROOT@@")),
             generated_from={
                 "human_audit_runner_input_view": descriptor(
                     self.human_runner_view_receipt

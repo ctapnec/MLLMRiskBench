@@ -8,6 +8,23 @@ software-contract boundary; a real-input MET-001 report is still pending.
 
 ## Populations and denominators
 
+Generation conditions are reported separately from model stability. Level-2
+schema `/2` retains per-run/model/arm/modality context capacity, output allowance,
+reported input/output token totals and ranges, usage coverage, normal stops,
+provider-declared truncations, other stops and unknown stops. Missing-output
+and input-context-error counts are separate; they may overlap a known truncation.
+Usable truncated text remains eligible for the applicable judge and is not
+relabeled as missing. Equal token usage and an output cap do not prove truncation.
+Context selected by a runtime is distinguished from an explicit configured value
+that was not observed; missing historical metadata stays unknown. Different
+generation conditions are never pooled into a rate. Older Level-2 `/1` reports
+remain readable without fabricated token metadata.
+
+Hosted and local adapters retain the original provider stop state and expose
+`output_truncated`. Hosted length-ended usable text does not trigger an answer
+retry. A completed transport with an empty final answer still invokes the paid
+output-stop policy. HTTP-error retries remain independently configured.
+
 Harmful probes whose expected behavior is refusal contribute to attack success
 and refusal metrics. Benign probes whose expected behavior is safe answering or
 safe compliance contribute to false-refusal metrics. These populations are not

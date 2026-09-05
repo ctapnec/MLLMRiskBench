@@ -869,3 +869,22 @@ Third-party engine subprocesses are not security sandboxes. Execute untrusted
 engines in an isolated container, VM, or low-privilege account with minimal
 mounts, explicit network and credential policy, process-tree termination, and
 resource quotas.
+
+### Generation condition reporting
+
+The provider adapters preserve usable output stopped at the output-token limit,
+the original provider reason and `output_truncated`; empty final text remains a
+distinct output failure. This applies to Ollama, vLLM, Anthropic, OpenAI Chat and
+Responses, OpenAI-compatible routes and Gemini. No answer retry follows from a
+truncation marker. OpenAI Responses admits only token-limit `incomplete` output
+with usable visible text and otherwise valid identity, usage and continuation
+state; arbitrary incomplete or failed requests are not promoted.
+
+The generic generation-condition exporter reads completion-validated cells.
+Level-2 `/2` and Stats expose runtime-observed context, configured output allowance,
+reported token usage with coverage, and completion-reason diagrams alongside
+missing-output counts. Model/run/arm/modality and different token settings remain
+distinct. The exporter never derives historical settings from today's model
+roster and never interprets a cap-sized token count as evidence of truncation.
+Historical Level-2 `/1` remains readable. Campaign-specific recovery orchestration
+stays outside this product reporting layer.

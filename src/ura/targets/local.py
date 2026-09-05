@@ -1089,6 +1089,7 @@ class VLLMTarget(BaseTarget):
                 "requested_max_model_len": self.max_model_len,
                 "max_model_len": self._resolved_max_model_len,
                 "finish_reason": finish_reason,
+                "output_truncated": finish_reason == "length",
                 "stop_reason": stop_reason,
                 "empty_completion_observed": empty_completion_observed,
                 "requested_seed": seed,
@@ -1982,6 +1983,7 @@ class OllamaTarget(BaseTarget):
                 ),
                 "done": True,
                 "done_reason": done_reason,
+                "output_truncated": done_reason == "length",
                 "empty_completion_observed": empty_completion_observed,
                 "requested_seed": seed,
                 "target_sampling_control": (

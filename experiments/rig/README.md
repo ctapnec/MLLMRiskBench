@@ -42,6 +42,7 @@ remain subject to their existing account checks.
 | `openai:gpt-6-astra` | text; text + image | documentation-verified 2026-09-05; account canary pending |
 | `anthropic-fable:claude-fable-5;effort=high;max_tokens=4096` | text; text + image | bounded Fable condition; modalities-only row |
 | `anthropic-fable:claude-fable-5;effort=high;max_tokens=8192` | text; text + image | larger bounded Fable condition; modalities-only row |
+| `anthropic-fable:claude-fable-5-1;effort=high;max_tokens=8192` | text; text + image | current Fable 5.1 campaign condition; modalities-only row |
 | `openai-responses:gpt-5.6-sol;reasoning_mode=pro;reasoning_effort=medium;reasoning_context=all_turns;max_output_tokens=4096` | text; text + image | bounded Sol condition; modalities-only row |
 | `openai-responses:gpt-5.6-sol;reasoning_mode=pro;reasoning_effort=medium;reasoning_context=all_turns;max_output_tokens=8192` | text; text + image | larger bounded Sol condition; modalities-only row |
 | `anthropic-fable:claude-fable-5;effort=high;max_tokens=25000` | text; text + image | fixed focal condition; modalities-only row |

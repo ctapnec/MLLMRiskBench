@@ -1026,8 +1026,8 @@ def test_fable_discards_partial_refusal_output_but_rejects_untyped_refusal() -> 
     ("mutate", "message"),
     [
         (
-            lambda result: setattr(result, "stop_reason", "max_tokens"),
-            "unexpected stop reason 'max_tokens'",
+            lambda result: setattr(result, "stop_reason", "pause_turn"),
+            "unexpected stop reason 'pause_turn'",
         ),
         (
             lambda result: setattr(result, "content", [
@@ -1356,7 +1356,7 @@ def test_sol_pro_fails_closed_on_incomplete_empty_or_mismatched_results() -> Non
     _install_responses_fixture(
         target,
         _responses_result(
-            text="partial", status="incomplete", reason="max_output_tokens"
+            text="partial", status="incomplete", reason="unknown_failure"
         ),
     )
     with pytest.raises(OpenAIResponsesOutputError, match="status 'incomplete'"):
@@ -1429,8 +1429,9 @@ def test_generic_anthropic_terminal_states_fail_closed() -> None:
     _install_anthropic_fixture(
         target, _anthropic_result(text="partial", stop_reason="max_tokens")
     )
-    with pytest.raises(AnthropicOutputError, match="max_tokens"):
-        target.generate([DialogTurn(role="user", content="request")])
+    partial = target.generate([DialogTurn(role="user", content="request")])
+    assert partial.output_turns[0].content == "partial"
+    assert partial.raw["output_truncated"] is True
 
     _install_anthropic_fixture(
         target, _anthropic_result(text="", stop_reason="refusal")
@@ -1566,8 +1567,9 @@ def test_generic_openai_chat_terminal_states_fail_closed() -> None:
     _install_chat_fixture(
         target, _chat_result(content="partial", finish_reason="length")
     )
-    with pytest.raises(OpenAIChatOutputError, match="length"):
-        target.generate([DialogTurn(role="user", content="request")])
+    partial = target.generate([DialogTurn(role="user", content="request")])
+    assert partial.output_turns[0].content == "partial"
+    assert partial.raw["output_truncated"] is True
 
     _install_chat_fixture(
         target, _chat_result(content=None, finish_reason="content_filter")
@@ -1640,6 +1642,94 @@ def _gemini_result(
     )
 
 
+@pytest.mark.parametrize("route", [
+    "anthropic", "fable", "fable51", "chat", "compatible", "responses", "gemini",
+])
+@pytest.mark.parametrize("text", ["A usable but unfinished answer", ""])
+def test_hosted_token_limit_keeps_visible_output_without_answer_retry(route, text) -> None:
+    if route == "anthropic":
+        target = AnthropicTarget("claude-generic")
+        result = _anthropic_result(text=text, stop_reason="max_tokens")
+        install = _install_anthropic_fixture
+        error = AnthropicOutputError
+    elif route in {"fable", "fable51"}:
+        model = "claude-fable-5-1" if route == "fable51" else "claude-fable-5"
+        target = AnthropicFableTarget(model)
+        result = _fable_result(text=text, stop_reason="max_tokens")
+        result.model = model
+        install = _install_fable_fixture
+        error = AnthropicFableOutputError
+    elif route in {"chat", "compatible"}:
+        target = (OpenAITarget("gpt-generic") if route == "chat" else
+                  OpenAICompatibleTarget("gpt-generic", "https://fixture.invalid/v1",
+                                         "FIXTURE_KEY", provider="kimi"))
+        result = _chat_result(content=text, finish_reason="length")
+        install = _install_chat_fixture
+        error = OpenAIChatOutputError
+    elif route == "responses":
+        target = OpenAIResponsesTarget()
+        result = _responses_result(text=text, status="incomplete", reason="max_output_tokens")
+        # The real wire can mark its partial message incomplete as well.
+        result.output[-1].status = "incomplete"
+        install = _install_responses_fixture
+        error = OpenAIResponsesOutputError
+    else:
+        target = GeminiTarget("gemini-generic")
+        result = _gemini_result(text=text, finish_reason="MAX_TOKENS")
+        install = _install_gemini_fixture
+        error = GeminiOutputError
+    install(target, result)
+    endpoint = (target._client.responses if route == "responses" else
+                target._client.models if route == "gemini" else
+                target._client.chat.completions if route in {"chat", "compatible"}
+                else target._client.messages)
+    method = "generate_content" if route == "gemini" else "create"
+    original = getattr(endpoint, method)
+    calls = []
+
+    def counted(**kwargs):
+        calls.append(kwargs)
+        return original(**kwargs)
+
+    setattr(endpoint, method, counted)
+    dialog = [DialogTurn(role="user", content="fixture")]
+    if text:
+        response = target.generate(dialog, seed=0)
+        assert response.output_turns[0].content == text
+        assert response.raw["output_truncated"] is True
+        assert response.raw["transport_attempt_count"] == 1
+        assert response.tokens["output"] > 0
+        if route == "responses":
+            assert response.raw["status"] == "incomplete"
+            assert response.raw["incomplete_reason"] == "max_output_tokens"
+            state = response.output_turns[0].provider_state
+            assert state.items[-1]["status"] == "incomplete"
+    else:
+        with pytest.raises(error, match="text"):
+            target.generate(dialog, seed=0)
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("status,reason,error,item_status", [
+    ("failed", "max_output_tokens", None, "completed"),
+    ("incomplete", "content_filter", None, "incomplete"),
+    ("incomplete", "max_output_tokens", {"code": "server_error"}, "incomplete"),
+    ("completed", "max_output_tokens", None, "completed"),
+    ("completed", None, None, "incomplete"),
+    ("incomplete", "max_output_tokens", None, "in_progress"),
+])
+def test_responses_token_limit_does_not_accept_failed_or_contradictory_states(
+    status, reason, error, item_status,
+) -> None:
+    result = _responses_result(text="partial", status=status, reason=reason)
+    result.error = error
+    result.output[-1].status = item_status
+    target = OpenAIResponsesTarget()
+    _install_responses_fixture(target, result)
+    with pytest.raises(OpenAIResponsesOutputError):
+        target.generate([DialogTurn(role="user", content="fixture")])
+
+
 def test_generic_gemini_terminal_states_fail_closed() -> None:
     target = GeminiTarget("gemini-generic")
     _install_gemini_fixture(target, _gemini_result())
@@ -1653,8 +1743,9 @@ def test_generic_gemini_terminal_states_fail_closed() -> None:
     _install_gemini_fixture(
         target, _gemini_result(text="partial", finish_reason="MAX_TOKENS")
     )
-    with pytest.raises(GeminiOutputError, match="MAX_TOKENS"):
-        target.generate([DialogTurn(role="user", content="request")])
+    partial = target.generate([DialogTurn(role="user", content="request")])
+    assert partial.output_turns[0].content == "partial"
+    assert partial.raw["output_truncated"] is True
 
     _install_gemini_fixture(
         target, _gemini_result(text="", prompt_block_reason="SAFETY")

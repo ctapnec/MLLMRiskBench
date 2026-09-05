@@ -22,6 +22,7 @@ import binascii
 import hashlib
 import hmac
 import json
+import re
 import math
 import mimetypes
 import os
@@ -1096,7 +1097,7 @@ class AnthropicTarget(BaseTarget):
             # be discarded rather than turning the refusal into a failed cell.
             output_turns: list[DialogTurn] = []
         else:
-            if stop_reason != "end_turn":
+            if stop_reason not in {"end_turn", "max_tokens"}:
                 raise AnthropicOutputError(
                     f"Anthropic response ended with incomplete or unexpected "
                     f"stop_reason {stop_reason!r}"
@@ -1150,6 +1151,7 @@ class AnthropicTarget(BaseTarget):
                 "requested_model": self.model,
                 "resolved_model": resolved_model,
                 "stop_reason": stop_reason,
+                "output_truncated": stop_reason == "max_tokens",
                 "stop_sequence": _provider_field(resp, "stop_sequence"),
                 "requested_seed": seed,
                 "target_sampling_control": "uncontrolled",
@@ -1524,7 +1526,7 @@ class AnthropicFableTarget(AnthropicTarget):
             refusal_reason = explanation
             output_turns: list[DialogTurn] = []
         else:
-            if stop_reason != "end_turn":
+            if stop_reason not in {"end_turn", "max_tokens"}:
                 raise AnthropicFableOutputError(
                     f"Anthropic Fable {response_id} ended with incomplete or "
                     f"unexpected stop reason {stop_reason!r}"
@@ -1575,6 +1577,7 @@ class AnthropicFableTarget(AnthropicTarget):
                 "requested_model": self.model,
                 "resolved_model": resolved_model,
                 "stop_reason": stop_reason,
+                "output_truncated": stop_reason == "max_tokens",
                 "stop_sequence": stop_sequence,
                 "requested_seed": seed,
                 "target_sampling_control": "uncontrolled_anthropic_no_seed",
@@ -1813,7 +1816,7 @@ class OpenAITarget(BaseTarget):
                 else "openai_message_refusal"
             )
         else:
-            if finish_reason != "stop":
+            if finish_reason not in {"stop", "length"}:
                 raise OpenAIChatOutputError(
                     f"OpenAI Chat response ended with incomplete or unexpected "
                     f"finish_reason {finish_reason!r}"
@@ -1871,6 +1874,7 @@ class OpenAITarget(BaseTarget):
                 **({"requested_reasoning_effort": self.reasoning_effort}
                    if self.reasoning_effort is not None else {}),
                 "finish_reason": finish_reason,
+                "output_truncated": finish_reason == "length",
                 "requested_seed": seed,
                 "target_sampling_control": (
                     "provider_seed_requested_best_effort"
@@ -2114,6 +2118,8 @@ class OpenAIResponsesTarget(OpenAITarget):
     @staticmethod
     def _extract_completed_output(
         resp: Any,
+        *,
+        token_limited: bool = False,
     ) -> tuple[str, bool, int, int, int]:
         output = _provider_field(resp, "output")
         if not isinstance(output, (list, tuple)):
@@ -2133,7 +2139,9 @@ class OpenAIResponsesTarget(OpenAITarget):
                         "OpenAI Responses reasoning item omitted its id"
                     )
                 item_status = _provider_field(item, "status")
-                if item_status not in (None, "completed"):
+                if item_status not in (None, "completed") and not (
+                    token_limited and item_status == "incomplete"
+                ):
                     raise OpenAIResponsesOutputError(
                         "OpenAI Responses contains non-completed reasoning output"
                     )
@@ -2154,7 +2162,9 @@ class OpenAIResponsesTarget(OpenAITarget):
                 raise OpenAIResponsesOutputError(
                     "OpenAI Responses output message is not an assistant message"
                 )
-            if _provider_field(item, "status") != "completed":
+            if _provider_field(item, "status") != "completed" and not (
+                token_limited and _provider_field(item, "status") == "incomplete"
+            ):
                 raise OpenAIResponsesOutputError(
                     "OpenAI Responses contains a non-completed output message"
                 )
@@ -2377,8 +2387,10 @@ class OpenAIResponsesTarget(OpenAITarget):
                 "OpenAI Responses result has a non-response object type"
             )
         status = _provider_field(resp, "status")
-        if status != "completed":
-            incomplete = _provider_field(resp, "incomplete_details")
+        incomplete = _provider_field(resp, "incomplete_details")
+        incomplete_reason = _provider_field(incomplete, "reason")
+        token_limited = status == "incomplete" and incomplete_reason == "max_output_tokens"
+        if status != "completed" and not token_limited:
             error = _provider_field(resp, "error")
             reason = (
                 _provider_field(incomplete, "reason")
@@ -2393,7 +2405,7 @@ class OpenAIResponsesTarget(OpenAITarget):
             raise OpenAIResponsesOutputError(
                 f"OpenAI Responses {response_id} completed with an error object"
             )
-        if _provider_field(resp, "incomplete_details") is not None:
+        if incomplete is not None and not token_limited:
             raise OpenAIResponsesOutputError(
                 f"OpenAI Responses {response_id} completed with incomplete details"
             )
@@ -2428,7 +2440,7 @@ class OpenAIResponsesTarget(OpenAITarget):
             output_item_count,
             reasoning_item_count,
             message_item_count,
-        ) = self._extract_completed_output(resp)
+        ) = self._extract_completed_output(resp, token_limited=token_limited)
         continuation_state = (
             None if provider_refusal else self._continuation_state(resp)
         )
@@ -2469,6 +2481,8 @@ class OpenAIResponsesTarget(OpenAITarget):
                 "requested_model": self.model,
                 "resolved_model": resolved_model,
                 "status": status,
+                "incomplete_reason": incomplete_reason,
+                "output_truncated": token_limited,
                 "service_tier": _provider_field(resp, "service_tier"),
                 "requested_seed": seed,
                 "target_sampling_control": "uncontrolled_responses_api_no_seed",
@@ -2838,7 +2852,7 @@ class GeminiTarget(BaseTarget):
                 refusal_reason = finish_message
                 output_turns = []
             else:
-                if finish_reason != "STOP":
+                if finish_reason not in {"STOP", "MAX_TOKENS"}:
                     raise GeminiOutputError(
                         f"Gemini candidate ended with incomplete or unexpected "
                         f"finish_reason {finish_reason!r}"
@@ -2889,6 +2903,7 @@ class GeminiTarget(BaseTarget):
                 "resolved_model": resolved_model,
                 "response_id": response_id,
                 "finish_reason": finish_reason,
+                "output_truncated": finish_reason == "MAX_TOKENS",
                 "finish_message": finish_message,
                 "prompt_block_reason": prompt_block_reason,
                 "safety_ratings": safety_ratings,

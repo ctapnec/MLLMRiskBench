@@ -422,7 +422,7 @@ def test_exports_deterministic_compatible_tables(
     assert level2_report.main(["--results", str(root), *_out_args(out)]) == 0
 
     report = json.loads((out / "l2.json").read_text(encoding="utf-8"))
-    assert report["schema_version"] == "ura-level2-report/1"
+    assert report["schema_version"] == "ura-level2-report/2"
     assert report["empirical_validity_established"] is False
     assert report["pooling_policy"]["universal_safety_score_defined"] is False
     rows = report["common"]["estimates"]
