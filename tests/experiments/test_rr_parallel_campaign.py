@@ -238,3 +238,63 @@ def test_worker_uses_one_gpu_long_bound_and_existing_unit_executor(tmp_path, mon
 def os_environ_gpu():
     import os
     return os.environ["CUDA_VISIBLE_DEVICES"]
+
+
+def test_parent_launches_two_gpu_isolated_workers_and_requires_full_union(interrupted, tmp_path, monkeypatch):
+    f = interrupted
+    snapshot = mod.inspect_prefix(f.observation, runner_root=f.runner)
+    snapshot_path = tmp_path / "interrupted-prefix.json"
+    snapshot_desc = write(snapshot_path, snapshot)
+    project = tmp_path / "project"
+    project.mkdir()
+    source_units = []
+    for lane, count in mod.prior.LAYOUT:
+        spec = mod._load_json(Path(f.launch["units"][lane]["source_specification"]["path"]), label="fixture")
+        source_units.append(mod.Unit(lane, lane, None, spec, count))
+    planned, _ = mod.partition_units(source_units, snapshot["selected_ids"], snapshot["lanes"])
+    planned_by_id = {unit.unit_id: unit for unit in planned}
+    outputs = {}
+    calls = []
+    original_durable = mod.prior._durable_outcomes
+    def durable(path):
+        return ({}, outputs[path], [], []) if path in outputs else original_durable(path)
+    monkeypatch.setattr(mod.prior, "_durable_outcomes", durable)
+    monkeypatch.setattr(mod, "_project_python", lambda p, py: py)
+    monkeypatch.setattr(mod.prior, "configure_units", lambda *args: (source_units, f.launch["units"]))
+    def spawn(argv, **kwargs):
+        assert argv[1:4] == ["-m", mod.MODULE, "worker"]
+        gpu = argv[argv.index("--gpu") + 1]
+        assert kwargs["env"]["CUDA_VISIBLE_DEVICES"] == gpu
+        assert kwargs["env"]["HF_HUB_OFFLINE"] == "1"
+        launch = json.loads(Path(argv[argv.index("--launch") + 1]).read_text())
+        worker_root = Path(launch["workers"][gpu])
+        write(worker_root / "completion.json", {"schema": mod.SCHEMA})
+        for unit_id in launch["queues"][gpu]:
+            unit = planned_by_id[unit_id]
+            ids = set(snapshot["selected_ids"][unit.source_lane][unit.corpus]) - set(f.outcomes)
+            result_root = tmp_path / "runs/thesis/runner" / unit_id / worker_root.name
+            write(result_root / "cell.responses.jsonl", {})
+            outputs[result_root] = {item: "usable_first_response" for item in ids}
+        calls.append((gpu, argv))
+        return SimpleNamespace(wait=lambda: 0)
+    monkeypatch.setattr(mod.subprocess, "Popen", spawn)
+    revision = f.launch["project_revision"]
+    args = SimpleNamespace(project_root=project, work_root=tmp_path,
+                           control_root=tmp_path / "runs/engineering/parallel", interruption=snapshot_path,
+                           interruption_sha256=snapshot_desc["sha256"], project_revision=Path(revision["path"]),
+                           project_revision_sha256=revision["sha256"], expected_commit="a" * 40,
+                           source_spec_root=f.root, profile_registry=f.root / "config.json",
+                           execution_scope_id="rr", tmux_socket="default", tmux_session="rr")
+    assert mod.run(args) == 0
+    assert [gpu for gpu, _ in calls] == ["0", "1"]
+    completion = json.loads((args.control_root / "completion.json").read_text())
+    assert completion["coverage"]["retained_inputs"] == 7606
+    assert completion["coverage"]["repeated_responses"] == 0
+    assert completion["coverage"]["prefix_judging_required"] == 2
+    assert completion["remaining_response_count"] == 7604
+    assert completion["status"] == "responses_complete_pending_prefix_validation"
+    assert completion["prior_prefix_judging_complete"] is False
+    args.control_root = args.control_root.with_name("another-parallel")
+    with pytest.raises(ValueError, match="already has measured responses"):
+        mod.run(args)
+    assert len(calls) == 2
