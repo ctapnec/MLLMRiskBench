@@ -34,7 +34,7 @@ EXECUTION_SCHEMA = "ura-retained-response-judge-execution/2"
 JUDGMENT_SCHEMA = "ura-retained-response-judge-artifact/2"
 CIRCUIT_SCHEMA = "ura-retained-response-judge-circuit/2"
 COMPLETION_SCHEMA = "ura-retained-response-judge-completion/2"
-SHARED_BOUND_METHOD = "canonical_request_utf8_bytes_plus_256_upper_bound_v1"
+SHARED_ESTIMATE_METHOD = "canonical_request_utf8_bytes_plus_256_conservative_estimate_v1"
 _LEDGER_FIELDS = frozenset(
     {
         "schema",
@@ -301,10 +301,11 @@ def build_shared_request_receipts(
     items: Sequence[tuple[dict[str, Any], str, str]], *, judge_model: str,
     normalized_api: Mapping[str, object], call_ids: Mapping[str, str],
 ) -> dict[str, dict]:
-    """No-client full-rubric previews with conservative bounds, not token counts.
+    """No-client full-rubric previews with conservative token estimates.
 
-    This first shared path uses only local UTF8 byte upper bounds. A lower
-    provider-count receipt needs its own validated count method, not a relabel.
+    UTF8 bytes plus framing are neither a provider count nor a proved billing
+    bound. The exact request hash and separately funded microUSD reservation
+    remain distinct; above-reservation actual usage is retained and stops spend.
     """
     target = _build_haiku_judge(judge_model, normalized_api)
     judge = LLMJudge(target)
@@ -317,7 +318,7 @@ def build_shared_request_receipts(
         payload = _canonical(request)
         key = row["retained_row_sha256"]
         result[key] = {"call_id": call_ids[key], "request_sha256": hashlib.sha256(payload).hexdigest(),
-                       "input_tokens_upper_bound": len(payload) + 256,
+                       "input_tokens_estimate": len(payload) + 256,
                        "max_output_tokens": int(normalized_api["max_tokens"])}
     return result
 
@@ -332,7 +333,7 @@ def _shared_binding(budget, requests, items, condition, normalized_api, plan_sha
     expected = build_shared_request_receipts(items, judge_model=condition["model"], normalized_api=normalized_api,
                                            call_ids={key: value.get("call_id") for key, value in requests.items()})
     if requests != expected:
-        raise ValueError("shared full-rubric request or conservative UTF8 bound changed")
+        raise ValueError("shared full-rubric request or conservative UTF8 estimate changed")
     call_ids = [value["call_id"] for value in expected.values()]
     if any(not isinstance(value, str) or not value for value in call_ids) or len(set(call_ids)) != len(call_ids):
         raise ValueError("shared retained judge call IDs are not distinct funded slots")
@@ -341,14 +342,14 @@ def _shared_binding(budget, requests, items, condition, normalized_api, plan_sha
     bounds = {}
     for key, receipt in expected.items():
         slot = budget.call(receipt["call_id"])
-        bound = (receipt["input_tokens_upper_bound"] * condition["input_microusd_per_token"]
+        bound = (receipt["input_tokens_estimate"] * condition["input_microusd_per_token"]
                  + receipt["max_output_tokens"] * condition["output_microusd_per_token"])
         if slot["provider"] != "anthropic" or slot["pool"] != "judge" or slot["bound_microusd"] < bound:
             raise ValueError("full Haiku request is not covered by its dedicated funded judge slot")
-        bounds[key] = bound
+        bounds[key] = slot["bound_microusd"]
     return {"schema": "ura-retained-response-shared-budget/1", "plan_sha256": plan_sha256,
             "budget_root": str(budget.root), "budget_plan_sha256": budget.expected_plan_sha256,
-            "input_token_bound_method": SHARED_BOUND_METHOD, "requests": expected}, bounds
+            "input_token_estimate_method": SHARED_ESTIMATE_METHOD, "requests": expected}, bounds
 
 
 def _open_shared_circuit(budget, row, exc):
