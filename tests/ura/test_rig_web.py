@@ -7331,16 +7331,52 @@ def test_level2_approximate_contract_is_strict_and_visibly_warned(
         result["report_id"] = "level2-" + hashlib.sha256(material).hexdigest()[:24]
         return result
 
+    coverage_proxy = {
+        **proxy,
+        "metric_name": "over_refusal_rate",
+        "n_supporting_decisions": 15,
+        "n_result_units": 15,
+    }
+    coverage_row = {
+        **row,
+        "metric": "approximate_over_refusal_rate",
+        "expected_behavior": "safe_answer",
+        "approximate_provenance": coverage_proxy,
+        "value": 7 / 15,
+        "n_records": 15,
+        "judgments_completed": 50,
+        "judgments_evaluable": 50,
+        "judgments_decided": 15,
+        "judgments_abstained": 35,
+    }
+    retained_coverage = document(coverage_row)
+    _validate_report_document("level2", retained_coverage)
+    for mutation in (
+        {"judgments_completed": 49},
+        {"judgments_evaluable": 49},
+        {"judgments_decided": 14},
+        {"judgments_abstained": 34},
+        {"judgments_abstained": -1},
+        {"judgments_abstained": True},
+        {"n_records": 14},
+        {"approximate_model_query_count": 1},
+    ):
+        with pytest.raises(ValueError):
+            _validate_report_document("level2", document({**coverage_row, **mutation}))
+
     valid = document(dict(row))
     _validate_report_document("level2", valid)
     app = _app(tmp_path)
     try:
         rendered = app._render_level2("approximate.json", valid)
+        coverage_rendered = app._render_level2("approximate-abstentions.json", retained_coverage)
     finally:
         app.close()
     assert "synthetic + approximate" in rendered
     assert "contains supplementary proxies" in rendered
     assert "heuristic (not probability)" in rendered
+    assert "15/50" in coverage_rendered
+    assert "<svg" in coverage_rendered
 
     for mutation in (
         {"warning_tag": None},

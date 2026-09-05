@@ -522,10 +522,7 @@ def _validate_report_document(kind: str, document: Mapping[str, Any]) -> None:
                 raise ValueError("Level-2 approximate endpoint status is incoherent")
             expected_counts = {
                 "n_records": approximate.n_result_units,
-                "judgments_completed": approximate.n_supporting_decisions,
-                "judgments_evaluable": approximate.n_supporting_decisions,
                 "judgments_decided": approximate.n_supporting_decisions,
-                "judgments_abstained": 0,
                 "judgments_non_evaluable": 0,
                 "approximate_model_query_count": (
                     approximate.n_model_queried_decisions
@@ -534,6 +531,9 @@ def _validate_report_document(kind: str, document: Mapping[str, Any]) -> None:
                     approximate.n_source_reference_context_used
                 ),
             }
+            # Supporting decisions do not include valid proxy abstentions.
+            # The common conservation checks below retain those in completed
+            # and evaluable coverage: decided + abstained, not decided alone.
             if any(
                 isinstance(row.get(name), bool)
                 or not isinstance(row.get(name), int)
