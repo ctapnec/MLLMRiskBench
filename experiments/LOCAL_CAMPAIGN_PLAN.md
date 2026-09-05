@@ -19,9 +19,11 @@ dated readiness snapshot below remains a historical record of what was found on
 20 August.
 
 Execution status, 5 September 2026. Gates 0 through 5 are met. The measured
-Phase 6 inventory is terminal except for two exact, disjoint conditions: the
-active 230-row Qwen3-VL larger-context recovery and the pending six-unit,
-2,350-row Ollama R-Judge/GPTGeoChat population-alignment continuation. The
+Phase 6 inventory is terminal except for the active six-unit, 2,350-row Ollama
+R-Judge/GPTGeoChat population-alignment continuation under `7ba0d1b`. The
+230-row Qwen3-VL larger-context recovery validates all 230 usable outputs with
+zero missing responses; a postwrite receipt records recovery from its worker
+shutdown abort without a new model call. The
 25-unit hardware-fit correction is complete and validates 4,463 unique rows,
 4,366 successful generations, 97 retained missing responses and zero repeated
 successful rows. Phase 7 analysis and Phase 8 human-audit gating have not yet
