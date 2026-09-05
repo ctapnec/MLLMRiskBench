@@ -2706,6 +2706,7 @@ def test_distro_repin_script_is_fail_closed_and_sources_canonical_ura_env_last()
     for selector in (
         'tests/ura/test_vllm_grid_cell_recycling.py',
         'tests/ura/test_vllm_response_phase_recycling.py',
+        'tests/ura/test_model_acquisition.py',
         'tests/experiments/test_vllm_stability_driver.py',
         'tests/experiments/test_rr_parallel_campaign.py',
         'tests/ura/test_framework_runtime_installer.py::test_distro_repin_script_is_fail_closed_and_sources_canonical_ura_env_last',

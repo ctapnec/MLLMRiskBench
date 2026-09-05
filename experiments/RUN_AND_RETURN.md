@@ -2211,7 +2211,7 @@ to that worker's CUDA-visible card. Two-GPU models require exclusive access.
 Deploy this lifecycle change with `distro/repin.sh <commit>
 --vllm-parallel-handoff` after the owned target controllers have stopped and
 their durable prefixes have been retained. This fixed handoff runs only the
-changed process-lifecycle, driver, parallel-controller and deployment-contract
+changed process-lifecycle, sealed-acquisition, driver, parallel-controller and deployment-contract
 checks. It does not repeat runtime installations, readiness surveys or the full
 suite. Receipt validation and console restart are unchanged. The re-pin's
 process cleanup must never be run while an unrelated measured worker is live.
