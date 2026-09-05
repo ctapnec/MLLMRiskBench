@@ -19,7 +19,14 @@ dated readiness snapshot below remains a historical record of what was found on
 20 August.
 
 Execution status, 5 September 2026. Gates 0 through 5 are met. The measured
-Phase 6 inventory is terminal. The six-unit, 2,350-row Ollama
+primary-model recovery inventory is terminal; the four current-policy GraySwan
+RR lanes remain unfinished. Its existing readiness profile passes 10/10 text
+and 3/5 images with a 4,096-token allowance and 32,768-token effective context,
+but no measured RR grid or output exists. The planned same-base comparison
+therefore still requires its targeted Gate 5 amendment and 7,606 selected
+inputs (3,854 static text, 1,632 static image, 100 R-Judge and 2,020 GPTGeoChat).
+Reuse the sealed checkpoint and admitted profile; do not repeat installation,
+readiness or completed base-model rows. The six-unit, 2,350-row Ollama
 R-Judge/GPTGeoChat population-alignment continuation under `7ba0d1b` completed
 with 2,350 usable outputs and zero missing responses. The
 230-row Qwen3-VL larger-context recovery validates all 230 usable outputs with
