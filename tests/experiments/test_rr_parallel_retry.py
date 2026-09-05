@@ -159,3 +159,36 @@ def test_retry_refuses_wrong_gpu_or_existing_response_in_another_retry(failed, m
     with pytest.raises(ValueError):
         mod.retry(f.args)
     assert not f.args.control_root.exists()
+
+
+@pytest.mark.parametrize("change", [None, "missing", "foreign", "repeated", "unknown_unit"])
+def test_replacement_coverage_reads_only_bound_new_segment_and_exact_missing_ids(tmp_path, monkeypatch, change):
+    snapshot = {"selected_ids": {"lane": {"arm": ["a", "b", "c"]}}, "retained_response_count": 1,
+                "lanes": {"lane": {"outcomes": {"a": "failed_output"}, "post_factum_judging_required_ids": []}}}
+    unit = mod.Unit("u", "lane", "arm", {}, 2)
+    launch = {"interruption": write(tmp_path / "snapshot.json", snapshot), "work_root": str(tmp_path),
+              "queues": {"0": ["u"], "1": []}, "workers": {"0": str(tmp_path / "original"), "1": str(tmp_path / "other")},
+              "units": [asdict(unit)]}
+    replacement = tmp_path / "runs/thesis/runner/u/retry"
+    write(replacement / "cell.responses.jsonl", {})
+    outcomes = {"b": "failed_output", "c": "usable_first_response"}
+    if change == "missing":
+        outcomes.pop("c")
+    elif change in {"foreign", "repeated"}:
+        outcomes["outside" if change == "foreign" else "a"] = "usable_first_response"
+    def read(path):
+        assert path == replacement
+        return {}, outcomes, [], []
+    monkeypatch.setattr(mod.prior, "_durable_outcomes", read)
+    original = mod.coverage(launch)
+    assert not original["complete"] and original["retained_inputs"] == 1
+    roots = {"unknown" if change == "unknown_unit" else "u": replacement}
+    if change in {"foreign", "repeated", "unknown_unit"}:
+        with pytest.raises(ValueError):
+            mod.coverage(launch, replacement_roots=roots)
+    else:
+        combined = mod.coverage(launch, replacement_roots=roots)
+        assert combined["complete"] is (change is None)
+        assert combined["retained_inputs"] == (2 if change == "missing" else 3)
+        assert combined["segments"][0]["result_root"] == str(replacement)
+        assert mod.coverage(launch) == original
