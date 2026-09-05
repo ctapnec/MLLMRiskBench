@@ -223,6 +223,20 @@ do not add a guessed internal-worker multiplier or an unsupported Pro-specific
 rejection.
 [OpenAI output-usage contract](https://developers.openai.com/api/docs/guides/token-counting#understand-output-token-counts).
 
+The focused-rig-tested `hosted_request_tokens.count_request` helper hashes the
+unchanged final generation request and the separate counting payload. Native
+Responses counts are labelled `provider_exact`; native Messages and Kimi counts,
+and the complete Chat-to-Responses counting projection, are labelled
+`provider_estimate`. That projection changes only the counting representation,
+not the generation endpoint, model, conversation or images. Offline text uses
+an explicit local estimate; media are never counted as base64 text bytes.
+Network counting requires an explicit opt-in after the local-campaign gate.
+Counting failures do not trigger answer generation or a silent estimate fallback.
+Retained count receipts validate without recounting. Haiku's shared-request
+preparation accepts those complete grading-request receipts; it does not require
+a provider estimate to exceed a UTF-8 byte allowance. Model, rubric, body hash,
+output allowance, funding and the separate count method remain bound.
+
 ## A0 - Bind the retained local population
 
 Implementation boundary (5 September): budget projection, unique-output paired

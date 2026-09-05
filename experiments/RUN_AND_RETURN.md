@@ -2084,6 +2084,16 @@ neither is an estimate returned by a provider automatically exact. The durable
 ledger enforces funded reservations and stops new spending on reported overage,
 but cannot turn an input estimate into a guaranteed bill ceiling. The hosted
 campaign plan records the current per-surface counting limitations.
+For the hosted follow-on, `experiments.hosted_request_tokens.count_request`
+accepts the exact target and final `build_request` body. It is offline by
+default; explicit network counting is separate from generation and is permitted
+only after campaign admission. `validate_receipt` rechecks the model, full-body
+and counting-payload hashes without another request. Native Responses is exact
+for that surface; the native Messages/Kimi counters and a Chat-to-Responses
+count projection remain labelled estimates. The generation body is unchanged.
+`build_shared_request_receipts(..., token_counts=...)` can bind those receipts
+to all selected Haiku grading requests. Omitting `token_counts` preserves the
+earlier explicitly estimated byte-based preparation and its retained bytes.
 
 In the Build tab, one large role-aware model-picker modal serves both target and
 LLM-judge selection. Choose hosted or local, then use the hosted provider filter
