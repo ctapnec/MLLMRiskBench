@@ -153,6 +153,52 @@ def test_lifecycle_attestations_resolve_the_grid_owned_artifact(
         controller.lifecycle_attestation_args_for_roots({"lane": str(root)})
 
 
+def test_level1_stratum_uses_only_its_validated_copy(phase7, tmp_path, monkeypatch):
+    source = tmp_path / "runner"
+    lane = source / "lane" / "attempt"
+    lane.mkdir(parents=True)
+    plan = lane / "plan.eligibility.json"
+    plan.write_text('{}\n')
+    envelope = lane / "request-envelope-test.request-envelope.json"
+    envelope.write_text('{}\n')
+    attestation = lane / "live-attestation.json"
+    attestation.write_text('{"attestation_id":"live-test"}\n')
+    bound = phase7.descriptor(attestation)
+    (lane / "grid-test.grid.json").write_text(json.dumps({"request": {
+        "live_attestation": {"artifacts": [{
+            "file": attestation.name, "sha256": bound["sha256"],
+            "bytes": bound["bytes"], "attestation_id": "live-test",
+        }]},
+    }}))
+    controller = object.__new__(phase7.AnalysisController)
+    controller.inputs = {"runner": {"root": str(source)}}
+    controller.control = tmp_path / "control"
+    controller.control.mkdir()
+    controller.analysis = tmp_path / "analysis"
+    monkeypatch.setattr(controller, "lifecycle_runner_view", lambda: None)
+    monkeypatch.setattr(controller, "_lifecycle_strata", lambda: {
+        ("a" * 64, "b" * 64): ({"lane": str(lane)}, {"lane": "measured_complete"}),
+    })
+    monkeypatch.setattr(phase7.AnalysisController, "python", property(lambda self: Path(sys.executable)))
+
+    class CommandChecked(Exception):
+        pass
+
+    def check_command(name, argv, **kwargs):
+        view = Path(argv[argv.index("--results") + 1])
+        for option, original in (("--eligibility", plan), ("--live-attestation", attestation)):
+            supplied = Path(argv[argv.index(option) + 1])
+            assert supplied.is_relative_to(view)
+            assert supplied.read_bytes() == original.read_bytes()
+            assert not supplied.samefile(original)
+        assert len(list(view.rglob(envelope.name))) == 1
+        raise CommandChecked
+
+    monkeypatch.setattr(controller, "run", check_command)
+    with pytest.raises(CommandChecked):
+        controller.run_level1()
+
+
 def test_analysis_config_copies_preserve_retained_bytes_not_checkout_location(
     phase7, tmp_path,
 ):

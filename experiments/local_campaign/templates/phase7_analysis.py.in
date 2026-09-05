@@ -15219,13 +15219,17 @@ class AnalysisController:
             out_dir = self.analysis / "lifecycle-strata" / stratum_id
             out_json = out_dir / "level1-evidence.json"
             out_csv = out_dir / "level1-evidence.csv"
-            attestations = self.lifecycle_attestation_args_for_roots(roots)
+            # All Level 1 inputs must come from the same validated copy. Passing
+            # original plans alongside copied results discovers each envelope
+            # twice, once beside its plan and once in the results view.
+            view_roots = {stratum_id: str(view)}
+            attestations = self.lifecycle_attestation_args_for_roots(view_roots)
             self.run(
                 f"level1-stratum-{stratum_id}",
                 [
                     str(self.python), "-m", "experiments.level1_evidence",
                     "--results", str(view),
-                    *self.lifecycle_eligibility_args_for_roots(roots),
+                    *self.lifecycle_eligibility_args_for_roots(view_roots),
                     *attestations,
                     "--out-json", str(out_json), "--out-csv", str(out_csv),
                 ],
