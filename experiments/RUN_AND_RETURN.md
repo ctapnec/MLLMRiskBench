@@ -1738,6 +1738,12 @@ regeneration. Create the paired cohort with the dedicated immutable zero-target
 path and one standard-API USD 33 ceiling. Use a private Haiku judge config that
 fixes `max_tokens=512`; do not reuse the 2,048-token Haiku target condition:
 
+The commands below implement current-compatible views. The final local campaign
+contains multiple retained Runner revisions; its historical-reader integration
+is still open in RA-313. Do not feed that union to the current-only loader or
+change retained version fields. Preserve validated revision/source strata and
+finish the historical read-through before paid execution on that population.
+
 ```bash
 python -m experiments.retained_response_judge_pair \
   --local-runner-view "$FINAL_LOCAL_RUNNER_VIEW" \

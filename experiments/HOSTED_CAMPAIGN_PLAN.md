@@ -157,6 +157,14 @@ abstentions must accompany every local-versus-Haiku agreement result.
 
 ## A0 - Bind the retained local population
 
+Implementation boundary (5 September): budget projection and unique-output
+paired judging have focused rig verification. The historical reader and exact
+retained-input replay handoff still require integration. The current-only
+Haiku loader cannot consume the multi-revision local inventory as one
+undifferentiated view (RA-313). Validate each retained revision/source stratum
+through its matching contract; do not rewrite version fields or regenerate
+target responses to make a reader accept them.
+
 Validate the sealed local Phase 7 inventory, its project/source receipts,
 selection and rendering evidence, prepared attacks, and current provider
 registry/prices/budgets. Every prospective hosted row must prove membership in
