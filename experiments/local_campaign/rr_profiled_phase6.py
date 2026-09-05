@@ -11,7 +11,11 @@ import argparse
 from pathlib import Path
 from typing import Any, Sequence
 
+from experiments.local_campaign.console_events import (
+    finish_child_controller, publish_target_execution, start_child_controller,
+)
 from experiments.local_campaign.current_ollama_gate5 import _descriptor
+from experiments.local_campaign.failed_output_recovery_phase6 import _durable_outcomes
 from experiments.local_campaign.local_bounded_output_continuation_phase6 import (
     profiled_bounded_local_config,
 )
@@ -32,6 +36,23 @@ LAYOUT = (
     ("rjudge-llava-rr", 100),
     ("gptgeochat-llava-rr", 2020),
 )
+
+
+def execution_counts(results, *, work_root: Path, control_root: Path):
+    attempted = successful = 0
+    for lane, _count in LAYOUT:
+        if lane in results:
+            attempted += results[lane]["target_attempts"]
+            successful += results[lane]["successful_target_generations"]
+        else:
+            root = work_root / "runs/thesis/runner" / lane / control_root.name
+            if root.exists():
+                attempts, outcomes, _attempt_files, _response_files = _durable_outcomes(root)
+                attempted += len(attempts)
+                successful += sum(status in {"usable_first_response", "recovered_after_retry"}
+                                  for status in outcomes.values())
+    return {"target_attempts": attempted, "successful_target_generations": successful,
+            "missing_responses": attempted - successful}
 
 
 def configure_units(source_root: Path, control_root: Path, profile_registry: Path):
@@ -82,7 +103,8 @@ def run(args: argparse.Namespace) -> int:
     python = _project_python(project, args.python or project / ".venv/bin/python")
     work = args.work_root.resolve(strict=True)
     root = args.control_root
-    if root.exists() or root.is_symlink() or root.parent.resolve(strict=True) != work / "runs/engineering":
+    if (not root.is_absolute() or root.exists() or root.is_symlink()
+            or root.parent != (work / "runs/engineering").resolve(strict=True)):
         raise ValueError("RR campaign requires a fresh canonical engineering root")
     revision = _descriptor(args.project_revision.resolve(strict=True), label="project revision")
     revision_value = _load_json(Path(revision["path"]), label="project revision")
@@ -112,6 +134,12 @@ def run(args: argparse.Namespace) -> int:
     }
     _create_json(root / "launch.json", launch)
     admission = _descriptor(root / "launch.json", label="RR launch")
+    start_child_controller(
+        work_root=work, control_root=root, campaign_id=root.name,
+        release_commit=args.expected_commit, evidence_class="measured_profiled_rr",
+        hard_stop_hours=96, tmux_socket=args.tmux_socket, tmux_session=args.tmux_session,
+        target_execution=True,
+    )
     results: dict[str, Any] = {}
     failures: dict[str, Any] = {}
     for unit in units:
@@ -131,12 +159,19 @@ def run(args: argparse.Namespace) -> int:
             "result": results.get(unit.unit_id), "failure": failures.get(unit.unit_id),
             "completed_at_utc": _utc_now(),
         })
+    counts = execution_counts(results, work_root=work, control_root=root)
     _create_json(root / "completion.json", {
         **launch, "launch": admission, "completed_at_utc": _utc_now(),
         "status": "complete_with_failures" if failures else "complete",
         "controller_exit_code": int(bool(failures)), "unit_results": results,
-        "unit_failures": failures,
+        "unit_failures": failures, "target_execution": counts,
     })
+    publish_target_execution(
+        work_root=work, control_root=root,
+        target_attempts=counts["target_attempts"],
+        successful_target_generations=counts["successful_target_generations"],
+    )
+    finish_child_controller(work_root=work, control_root=root, exit_code=int(bool(failures)))
     return int(bool(failures))
 
 

@@ -7,6 +7,22 @@ import pytest
 from experiments.local_campaign import rr_profiled_phase6 as mod
 
 
+def test_rr_accounting_retains_partial_checkpoint_outputs(tmp_path, monkeypatch):
+    control = tmp_path / "runs/engineering/campaign"
+    lane = mod.LAYOUT[0][0]
+    root = tmp_path / "runs/thesis/runner" / lane / control.name
+    root.mkdir(parents=True)
+    def durable(path):
+        assert path == root
+        return {"a": "row-a", "b": "row-b"}, {
+            "row-a": "usable_first_response", "row-b": "failed_output"}, [], []
+    monkeypatch.setattr(mod, "_durable_outcomes", durable)
+    assert mod.execution_counts({mod.LAYOUT[1][0]: {
+        "target_attempts": 10, "successful_target_generations": 9}},
+        work_root=tmp_path, control_root=control) == {
+            "target_attempts": 12, "successful_target_generations": 10, "missing_responses": 2}
+
+
 @pytest.mark.parametrize("mutation", [None, "model", "seed", "limit", "revision"])
 def test_rr_uses_all_four_retained_selections_and_the_admitted_profile(tmp_path, monkeypatch, mutation):
     source = tmp_path / "specs"
