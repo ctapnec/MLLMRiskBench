@@ -350,6 +350,16 @@ elsewhere in a mixed grid from fragmenting a hosted cell or transfer cohort.
 Figure, transfer, Level-1, and Level-2 ingestion revalidate the complete grid
 documents and require each role projection to be their exact subset.
 
+Historical reporting can explicitly select a trusted Git repository to run
+the exact producing revision's validators. Current exporters compute their
+reports only after source identity and retained artifact validation succeed.
+The multi-artifact validator IPC is bounded separately from a single persisted
+JSON artifact (512 MiB UTF-8 and 32 million nodes); strict parsing and all
+original per-artifact limits remain unchanged. Level-1 attestation references
+follow each attacker's physical target-call modalities, not a source-only
+modality shortcut. Neither historical reading nor reporting finalizes an
+interrupted grid or promotes an unreferenced completion marker.
+
 PyRIT 0.14.0, DeepTeam 1.0.7, h4rm3l 0.2.4, and Spikee 0.9.1 use a separate
 engine-runtime boundary. Each framework lives in its own explicit venv; no
 adapter imports it in the Runner process and there is no PATH or in-process

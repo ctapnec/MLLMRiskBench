@@ -4769,6 +4769,15 @@ retained plan, request and grid lifecycle; current reporting computes the
 accounting. The same option is available in suite summary and Level 2 for
 completed-cell inventories. This does not admit untrusted revisions, relabel
 partial grids as complete, or permit cross-condition metric pooling.
+The retained reader transports multiple source-validated artifacts together.
+Only that trusted aggregate IPC has a 512 MiB UTF-8 and 32-million-node
+decoder bound; individual artifact admission limits remain unchanged.
+An interrupted grid or unreferenced completion is not repaired by raising
+this bound. Such artifacts remain outside final-grid reports unless their
+original contract validates; plan-owned lifecycle registries may separately
+retain explicitly classified terminal failures and their durable counters.
+For prepared attackers, supply attestations for every actual target-call
+modality combination, which may differ from the corpus entry's modality.
 `run_matrix` already wrote each `ura-request-envelope/6` before config/source
 materialization. Level-1 discovers those files and any bound
 `ura-request-error/1` automatically from the measured result tree and plan

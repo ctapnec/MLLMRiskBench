@@ -1454,6 +1454,19 @@ Rig Web.
 Neither an external registration nor an inventory by itself grants evidence
 authority.
 
+Some terminal failed controllers retain artifacts that are not representable
+as final Level-1 grids. Keep those roots, file identities and durable response
+counts in the lifecycle registry, with an explicit registry-only disposition;
+do not rewrite a running grid or adopt orphan completion markers to make it
+reportable. The current historical union retains all 108 roots. Four exact
+failed roots are registry-only: one interrupted DeepSeek grid and three old
+circuit-open retry grids whose retained completions are no longer referenced
+by their final error cells. Their parent state, source revision, artifact
+provenance and absence of active locks are independently checked. The other
+104 roots enter revision-separated Level-1 reporting. This classification
+does not change the 144-condition cohort or its coverage and missingness
+accounting, and is not a general exception for malformed evidence.
+
 The published Stats campaign detail also includes one execution-accounting
 table over the validated 144-condition inventory. Each row identifies target
 locality and provider, exact model, framework or attacker, corpus family,
