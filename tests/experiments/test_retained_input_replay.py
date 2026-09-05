@@ -45,7 +45,8 @@ def _fixture(tmp_path, *, adaptive=False, image=False, points=None, corpus="reta
                 second.write_bytes(asset.read_bytes() + b"\n")
                 source_media.append(MediaRef(modality="image", mime="image/png", path=str(second),
                                              sha256=hashlib.sha256(second.read_bytes()).hexdigest()))
-            point = point.model_copy(update={"media": source_media, "modalities": ["text", "image"]})
+            point = point.model_copy(update={"media": source_media, "modalities": ["text", "image"],
+                                            "meta": {**point.meta, "judge_reference_text": "An image of a dot."}})
             points = [point, *points[1:]]
     attempts, judgments = {}, []
     for index in range(2 if adaptive else 1):
@@ -272,6 +273,7 @@ def test_runner_cli_runs_only_bound_mock_replay_without_any_provider_factory(tmp
     digest = hashlib.sha256(config_path.read_bytes()).hexdigest()
     out = tmp_path / "mock-run"
     result = run_matrix.main(["--dry-run", "--corpora", "synth", "--limit", "0", "--judges", "rules",
+                              "--attackers", "replay",
                               "--target-answer-retries", "0", "--exclude-tool-conditioned", "--attacker-config",
                               str(config_path), "--attacker-config-sha256", digest, "--out", str(out)])
     assert result == 0
