@@ -213,10 +213,14 @@ def _reconcile_selection(
     )
     if rebuilt != plan:
         raise ValueError("retained-response plan no longer matches the validated Runner view")
-    _per_judge, metadata, _judgments, _audit = _joined_artifacts(
-        Path(runner_view).resolve(strict=True),
-        frame="common",
-    )
+    from experiments.retained_artifact_reader import grid_partitions
+    from experiments.retained_response_judge import load_retained_metadata
+
+    root = Path(runner_view).resolve(strict=True)
+    if grid_partitions(root):
+        metadata = load_retained_metadata(root)
+    else:
+        _per_judge, metadata, _judgments, _audit = _joined_artifacts(root, frame="common")
     reconciled: list[tuple[dict[str, Any], str, str]] = []
     for row in plan["selected"]:
         meta = metadata.get(row["sample_key"])

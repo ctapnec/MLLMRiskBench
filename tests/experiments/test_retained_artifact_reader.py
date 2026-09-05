@@ -1,0 +1,194 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from experiments import retained_artifact_reader as subject
+
+
+COMMIT = "a" * 40
+TREE = "b" * 40
+
+
+def _grid(root: Path, *, commit: str = COMMIT) -> Path:
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "run.grid.json").write_text("{}", encoding="utf-8")
+    manifest = {"config": {"run": {"project_revision": {
+        "expected_commit": commit, "observed_commit": commit, "head_tree": TREE,
+    }}}}
+    (root / "cell.manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    return root
+
+
+def _cell(root: Path, *, run_id: str = "run") -> dict:
+    return {
+        "run_id": run_id,
+        "manifest_path": str(root / "cell.manifest.json"),
+        "complete_path": str(root / "cell.complete.json"),
+        "artifacts": {"responses": str(root / "cell.responses.jsonl")},
+    }
+
+
+def test_partitions_preserve_exact_revision_and_separate_grid_roots(tmp_path):
+    first = _grid(tmp_path / "first")
+    second = _grid(tmp_path / "second", commit="c" * 40)
+    assert subject.grid_partitions(tmp_path) == [
+        (first, COMMIT, TREE), (second, "c" * 40, TREE),
+    ]
+
+
+@pytest.mark.parametrize("name", ["x.grid.lock", "x.cell.lock", "x.error.json"])
+def test_partitions_refuse_running_or_failed_trees(tmp_path, name):
+    _grid(tmp_path)
+    (tmp_path / name).write_text("{}", encoding="utf-8")
+    with pytest.raises(ValueError, match="running or failed"):
+        subject.grid_partitions(tmp_path)
+
+
+@pytest.mark.parametrize("name", [
+    "x.manifest.json", "x.attempts.jsonl", "x.responses.jsonl", "x.complete.json",
+])
+def test_partitions_refuse_orphans(tmp_path, name):
+    _grid(tmp_path / "completed")
+    (tmp_path / name).write_text("{}", encoding="utf-8")
+    with pytest.raises(ValueError, match="orphan"):
+        subject.grid_partitions(tmp_path)
+
+
+def test_partitions_refuse_nested_grids_and_changed_revision(tmp_path):
+    _grid(tmp_path)
+    _grid(tmp_path / "nested")
+    with pytest.raises(ValueError, match="overlap"):
+        subject.grid_partitions(tmp_path)
+    manifest_path = tmp_path / "nested" / "cell.manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["config"]["run"]["project_revision"]["observed_commit"] = "c" * 40
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(ValueError, match="exact verified"):
+        subject.grid_partitions(tmp_path / "nested")
+
+
+@pytest.mark.parametrize("untrusted", ["ancestor", "tree"])
+def test_source_admission_precedes_checkout_or_worker(tmp_path, monkeypatch, untrusted):
+    _grid(tmp_path)
+    calls = []
+
+    def git(repository, *args):
+        calls.append(args)
+        if args[0] == "merge-base" and untrusted == "ancestor":
+            raise ValueError("not an ancestor")
+        if args == ("rev-parse", f"{COMMIT}^{{tree}}"):
+            return "c" * 40 if untrusted == "tree" else TREE
+        return COMMIT
+
+    monkeypatch.setattr(subject, "_git", git)
+    with pytest.raises(ValueError, match="ancestor|trusted Git history"):
+        subject.read_partitions(tmp_path, joined=False, code_repository=tmp_path)
+    assert all(args[0] != "worktree" for args in calls)
+
+
+@pytest.mark.parametrize("worker_fails", [False, True])
+def test_reader_uses_exact_source_and_removes_only_its_private_checkout(
+    tmp_path, monkeypatch, worker_fails,
+):
+    _grid(tmp_path)
+    git_calls = []
+    worker_requests = []
+
+    def git(repository, *args):
+        git_calls.append((repository, args))
+        return TREE if args == ("rev-parse", f"{COMMIT}^{{tree}}") else COMMIT
+
+    def run(argv, **kwargs):
+        assert argv == [subject.sys.executable, "-c", subject._WORKER]
+        assert kwargs["cwd"].name == "source"
+        assert kwargs["env"]["PYTHONPATH"] == str(kwargs["cwd"] / "src")
+        assert "FAKE_API_KEY" not in kwargs["env"]
+        request = json.loads(kwargs["input"])
+        worker_requests.append(request)
+        assert request["commit"] == COMMIT
+        assert request["tree"] == TREE
+        assert request["results"] == str(tmp_path)
+        assert "def _portable_media_references" in request["media_export_source"]
+        return SimpleNamespace(
+            returncode=int(worker_fails), stderr="original validator refused",
+            stdout=json.dumps({"validator_commit": COMMIT, "cells": [_cell(tmp_path)]}),
+        )
+
+    monkeypatch.setattr(subject, "_git", git)
+    monkeypatch.setattr(subject.subprocess, "run", run)
+    monkeypatch.setenv("FAKE_API_KEY", "test-placeholder")
+    if worker_fails:
+        with pytest.raises(ValueError, match="original validator refused"):
+            subject.read_partitions(tmp_path, joined=False, code_repository=tmp_path)
+    else:
+        result = subject.read_partitions(tmp_path, joined=False, code_repository=tmp_path)
+        assert result[0]["cells"][0]["manifest_path"] == tmp_path / "cell.manifest.json"
+        assert isinstance(result[0]["cells"][0]["artifacts"]["responses"], Path)
+    assert len(worker_requests) == 1
+    added = next(args[-2] for _, args in git_calls if args[:2] == ("worktree", "add"))
+    removed = next(args[-1] for _, args in git_calls if args[:2] == ("worktree", "remove"))
+    assert added == removed
+    assert Path(removed) != tmp_path
+    assert Path(removed).name == "source"
+    assert not Path(removed).parent.exists()
+    assert (tmp_path / "cell.manifest.json").exists()
+
+
+def test_joined_reader_retains_strata_and_rejects_duplicate_identity(tmp_path, monkeypatch):
+    partitions = [
+        {"cells": [{"run_id": "one"}], "joined": [None, {"a": {}}, {"a": {}}, {
+            "policy_evaluable_samples": 1, "common_ineligible_evaluable_rows_excluded": 2,
+        }]},
+        {"cells": [{"run_id": "two"}], "joined": [None, {"b": {}}, {"b": {}}, {
+            "policy_evaluable_samples": 1, "common_ineligible_evaluable_rows_excluded": 0,
+        }]},
+    ]
+    monkeypatch.setattr(subject, "read_partitions", lambda *a, **k: partitions)
+    cells, metadata, judgments, audit = subject.load_joined(tmp_path)
+    assert [cell["run_id"] for cell in cells] == ["one", "two"]
+    assert set(metadata) == set(judgments) == {"a", "b"}
+    assert audit == {"policy_evaluable_samples": 2, "common_ineligible_evaluable_rows_excluded": 2}
+    partitions[1]["joined"][1] = {"a": {}}
+    partitions[1]["joined"][2] = {"a": {}}
+    with pytest.raises(ValueError, match="duplicate joined"):
+        subject.load_joined(tmp_path)
+
+
+def test_haiku_reader_and_reconciliation_use_historical_join(tmp_path, monkeypatch):
+    from experiments import retained_response_judge as judge
+
+    _grid(tmp_path)
+    expected = ([{"run_id": "one"}], {"sample": {"prepared_response": "answer"}}, {}, {})
+    monkeypatch.setattr(subject, "load_joined", lambda root: expected)
+    monkeypatch.setattr(judge, "_joined_artifacts", lambda *a, **k: pytest.fail("current-only join"))
+    assert judge._read_view(tmp_path) == expected
+    assert judge.load_retained_metadata(tmp_path) == expected[1]
+
+
+def test_level2_cli_explicit_historical_reader(tmp_path, monkeypatch):
+    from experiments import level2_report
+
+    calls = []
+    cells = [{"run_id": "historical"}]
+    monkeypatch.setattr(subject, "load_cells", lambda root, **kwargs: calls.append((root, kwargs)) or cells)
+    monkeypatch.setattr(level2_report, "_load_cells", lambda *a, **k: pytest.fail("current-only reader"))
+
+    def report(received, native):
+        assert received == cells
+        assert native == []
+        return {"report_id": "test", "common": {"estimates": [], "n_estimate_rows": 0},
+                "native": {"n_native_runs": 0}}
+
+    monkeypatch.setattr(level2_report, "build_level2_report", report)
+    monkeypatch.setattr(level2_report, "_csv_text", lambda value: "csv\n")
+    monkeypatch.setattr(level2_report, "_markdown_text", lambda value: "md\n")
+    assert level2_report.main([
+        "--results", str(tmp_path), "--historical-code-repository", str(tmp_path),
+        "--out-json", str(tmp_path / "report.json"), "--out-csv", str(tmp_path / "report.csv"),
+        "--out-md", str(tmp_path / "report.md"),
+    ]) == 0
+    assert calls == [(tmp_path, {"code_repository": tmp_path})]

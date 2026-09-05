@@ -15370,6 +15370,7 @@ class AnalysisController:
                     str(self.python), "-m", "experiments.level2_report",
                     "--results", str(view), "--out-json", str(out_json),
                     "--out-csv", str(out_csv), "--out-md", str(out_md),
+                    "--historical-code-repository", "@@PROJECT_ROOT@@",
                 ],
                 log_name=f"{name}.log",
             )

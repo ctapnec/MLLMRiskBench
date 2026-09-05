@@ -717,6 +717,10 @@ def main(argv: list[str] | None = None) -> int:
         help="canonical NativeEngineRun JSON envelope; repeatable",
     )
     parser.add_argument("--out-json", type=Path, required=True)
+    parser.add_argument(
+        "--historical-code-repository", type=Path,
+        help="validate retained revision strata through their exact trusted Git source",
+    )
     parser.add_argument("--out-csv", type=Path, required=True)
     parser.add_argument("--out-md", type=Path, required=True)
     args = parser.parse_args(argv)
@@ -726,7 +730,14 @@ def main(argv: list[str] | None = None) -> int:
     try:
         cells: list[dict[str, Any]] = []
         for root in args.results:
-            cells.extend(_load_cells(root.resolve(strict=True)))
+            if args.historical_code_repository is None:
+                cells.extend(_load_cells(root.resolve(strict=True)))
+            else:
+                from experiments.retained_artifact_reader import load_cells
+
+                cells.extend(load_cells(
+                    root.resolve(strict=True), code_repository=args.historical_code_repository,
+                ))
         native_runs = []
         for path in args.native:
             run, digest = load_native_run(path)

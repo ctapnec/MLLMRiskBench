@@ -255,8 +255,7 @@ def load_candidates(
     root = Path(runner_view).resolve(strict=True)
     if not root.is_dir():
         raise ValueError("Runner view must be a resolved directory")
-    _per_judge, metadata, judgments, audit = _joined_artifacts(root, frame="common")
-    cells = _load_cells(root)
+    cells, metadata, judgments, audit = _read_view(root)
     contexts: dict[str, dict[str, str]] = {}
     for cell in cells:
         run_id = _text(cell.get("run_id"), label="validated run ID")
@@ -360,6 +359,20 @@ def load_candidates(
             audit["common_ineligible_evaluable_rows_excluded"]
         ),
     }
+
+
+def _read_view(root: Path) -> tuple[list[dict], dict, dict, dict]:
+    from experiments.retained_artifact_reader import grid_partitions, load_joined
+
+    if grid_partitions(root):
+        return load_joined(root)
+    _per_judge, metadata, judgments, audit = _joined_artifacts(root, frame="common")
+    return _load_cells(root), metadata, judgments, audit
+
+
+def load_retained_metadata(root: Path) -> dict:
+    """Revalidate content through the same revision-aware path as selection."""
+    return _read_view(Path(root).resolve(strict=True))[1]
 
 
 def _select(candidates: Sequence[Mapping[str, Any]], limit: int, seed: int) -> list[dict]:
