@@ -90,6 +90,8 @@ def execute(
     pricing_config: Path,
     out: Path,
     judge_factory: Any = _build_haiku_judge,
+    shared_budget: Any = None,
+    shared_requests: Mapping[str, dict] | None = None,
 ) -> Path:
     def build_judge(spec: str, config: Mapping[str, object]) -> Any:
         if config.get("max_tokens") != 512:
@@ -110,6 +112,10 @@ def execute(
             source_descriptor,
         )
 
+    shared_kwargs = (
+        {"shared_budget": shared_budget, "shared_requests": shared_requests}
+        if shared_budget is not None or shared_requests is not None else {}
+    )
     return execute_retained(
         plan_path=plan_path,
         runner_view=local_runner_view,
@@ -120,6 +126,7 @@ def execute(
         judge_factory=build_judge,
         plan_validator=validate_pair_plan,
         selection_reconciler=reconcile,
+        **shared_kwargs,
     )
 
 
