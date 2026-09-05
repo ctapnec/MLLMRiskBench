@@ -2920,6 +2920,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--out-json", type=Path, required=True)
     parser.add_argument("--out-csv", type=Path, required=True)
+    parser.add_argument(
+        "--historical-code-repository", type=Path,
+        help=("validate one exact retained revision with its source Level-1 reader; "
+              "current code still computes all accounting"),
+    )
     args = parser.parse_args(argv)
     if args.out_json.resolve() == args.out_csv.resolve():
         parser.error("Level-1 JSON and CSV outputs must be different paths")
@@ -2937,7 +2942,15 @@ def main(argv: list[str] | None = None) -> int:
         plan_index = {artifact[0]["plan_id"]: artifact for artifact in artifacts}
         if len(plan_index) != len(artifacts):
             raise ValueError("duplicate eligibility plan input")
-        grids, request_errors = _load_results(args.results, plan_index)
+        if args.historical_code_repository is None:
+            grids, request_errors = _load_results(args.results, plan_index)
+        else:
+            from experiments.retained_artifact_reader import load_level1_results
+
+            grids, request_errors = load_level1_results(
+                args.results, plan_index, envelope_artifacts,
+                code_repository=args.historical_code_repository,
+            )
         live_artifacts = [
             _load_live_attestation_artifact(path, digest)
             for path, digest in zip(

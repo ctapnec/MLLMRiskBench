@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import io
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -192,3 +194,169 @@ def test_level2_cli_explicit_historical_reader(tmp_path, monkeypatch):
         "--out-md", str(tmp_path / "report.md"),
     ]) == 0
     assert calls == [(tmp_path, {"code_repository": tmp_path})]
+
+
+def _level1_inputs(tmp_path):
+    revision = {
+        "expected_commit": COMMIT, "observed_commit": COMMIT, "head_tree": TREE,
+        "harness_source_sha256": "c" * 64,
+        "driver_source_sha256": hashlib.sha256(b"driver").hexdigest(),
+    }
+    plan = {"plan_id": "plan", "bindings": {"project_revision": revision}}
+    artifact = (plan, "d" * 64, str(tmp_path / "plan.json"), 100, 1)
+    envelopes = [{"envelope": {"bindings": {"project_revision": dict(revision)}}}]
+    return {"plan": artifact}, envelopes
+
+
+@pytest.mark.parametrize("bad_identity", ["mixed", "ancestor", "tree"])
+def test_level1_source_admission_precedes_worker(tmp_path, monkeypatch, bad_identity):
+    plans, envelopes = _level1_inputs(tmp_path)
+    calls = []
+    if bad_identity == "mixed":
+        envelopes[0]["envelope"]["bindings"]["project_revision"]["expected_commit"] = "e" * 40
+        envelopes[0]["envelope"]["bindings"]["project_revision"]["observed_commit"] = "e" * 40
+
+    def git(repository, *args):
+        calls.append(args)
+        if args[0] == "merge-base" and bad_identity == "ancestor":
+            raise ValueError("not an ancestor")
+        if args == ("rev-parse", f"{COMMIT}^{{tree}}"):
+            return "f" * 40 if bad_identity == "tree" else TREE
+        return COMMIT
+
+    monkeypatch.setattr(subject, "_git", git)
+    with pytest.raises(ValueError, match="one exact|ancestor|trusted Git history"):
+        subject.load_level1_results([tmp_path], plans, envelopes, code_repository=tmp_path)
+    assert all(args[0] != "worktree" for args in calls)
+
+
+@pytest.mark.parametrize("worker_fails", [False, True])
+def test_level1_reader_preserves_partial_lifecycle_and_cleans_own_checkout(
+    tmp_path, monkeypatch, worker_fails,
+):
+    plans, envelopes = _level1_inputs(tmp_path)
+    calls = []
+
+    def git(repository, *args):
+        calls.append(args)
+        return TREE if args == ("rev-parse", f"{COMMIT}^{{tree}}") else COMMIT
+
+    def run(argv, **kwargs):
+        assert argv == [subject.sys.executable, "-c", subject._LEVEL1_WORKER]
+        assert kwargs["cwd"].name == "source"
+        assert "FAKE_API_KEY" not in kwargs["env"]
+        request = json.loads(kwargs["input"])
+        assert request["commit"] == COMMIT
+        assert request["tree"] == TREE
+        assert request["results"] == [str(tmp_path)]
+        assert request["plans"] == json.loads(json.dumps(list(plans.values())))
+        assert request["envelopes"] == envelopes
+        cells = [
+            [["model", "good", "replay"], {"status": "complete", "validated_cell": _cell(tmp_path)}],
+            [["model", "failed", "replay"], {"status": "error", "execution_started": True}],
+        ]
+        return SimpleNamespace(
+            returncode=int(worker_fails), stderr="original lifecycle validator refused",
+            stdout=json.dumps({"validator_commit": COMMIT,
+                               "grids": {"plan": {"grid_status": "partial", "cells": cells}},
+                               "request_errors": [{"scope": "request-only"}]}),
+        )
+
+    monkeypatch.setattr(subject, "_git", git)
+    monkeypatch.setattr(subject.subprocess, "run", run)
+    monkeypatch.setenv("FAKE_API_KEY", "test-placeholder")
+    if worker_fails:
+        with pytest.raises(ValueError, match="original lifecycle validator refused"):
+            subject.load_level1_results([tmp_path], plans, envelopes, code_repository=tmp_path)
+    else:
+        grids, errors = subject.load_level1_results(
+            [tmp_path], plans, envelopes, code_repository=tmp_path,
+        )
+        assert grids["plan"]["grid_status"] == "partial"
+        assert grids["plan"]["cells"][("model", "failed", "replay")]["status"] == "error"
+        cell = grids["plan"]["cells"][("model", "good", "replay")]["validated_cell"]
+        assert cell["manifest_path"] == tmp_path / "cell.manifest.json"
+        assert errors == [{"scope": "request-only"}]
+    added = next(args[-2] for args in calls if args[:2] == ("worktree", "add"))
+    removed = next(args[-1] for args in calls if args[:2] == ("worktree", "remove"))
+    assert added == removed
+    assert not Path(removed).parent.exists()
+
+
+@pytest.mark.parametrize("changed", [None, "plan", "envelope", "grid", "manifest"])
+def test_level1_worker_validates_exact_source_even_for_request_only_failures(
+    tmp_path, monkeypatch, capsys, changed,
+):
+    from experiments import level1_evidence
+    from ura import runner
+
+    plans, envelopes = _level1_inputs(tmp_path)
+    revision = plans["plan"][0]["bindings"]["project_revision"]
+    validated_cell = _cell(tmp_path)
+    validated_cell["manifest"] = {"config": {"run": {"project_revision": dict(revision)}}}
+    grids = {"plan": {"request": {"project_revision": dict(revision)}, "cells": {
+        ("model", "good", "replay"): {"validated_cell": validated_cell},
+        ("model", "failed", "replay"): {"status": "error"},
+    }}}
+    revision_objects = {
+        "plan": revision,
+        "envelope": envelopes[0]["envelope"]["bindings"]["project_revision"],
+        "grid": grids["plan"]["request"]["project_revision"],
+        "manifest": validated_cell["manifest"]["config"]["run"]["project_revision"],
+    }
+    if changed:
+        revision_objects[changed]["harness_source_sha256"] = "e" * 64
+    request = {"results": [str(tmp_path)], "plans": list(plans.values()),
+               "envelopes": envelopes, "commit": COMMIT, "tree": TREE}
+    monkeypatch.setattr(subject.sys, "stdin", io.StringIO(json.dumps(request)))
+    monkeypatch.setattr(level1_evidence, "_plan_artifact", lambda path: plans["plan"])
+    monkeypatch.setattr(level1_evidence, "_discover_request_envelopes", lambda *args: envelopes)
+    monkeypatch.setattr(level1_evidence, "_load_results", lambda *args: (grids, ["request-error"]))
+    lifecycle_calls = []
+    monkeypatch.setattr(level1_evidence, "_bind_request_lifecycle",
+                        lambda *args: lifecycle_calls.append(args))
+    monkeypatch.setattr(runner, "_harness_source_identity", lambda: {"sha256": "c" * 64})
+    original_read = Path.read_bytes
+    monkeypatch.setattr(Path, "read_bytes", lambda path: b"driver"
+                        if str(path) == "experiments/run_matrix.py" else original_read(path))
+    if changed:
+        with pytest.raises(ValueError, match="exact validator checkout"):
+            exec(subject._LEVEL1_WORKER, {})
+    else:
+        exec(subject._LEVEL1_WORKER, {})
+        output = json.loads(capsys.readouterr().out)
+        assert output["request_errors"] == ["request-error"]
+        assert len(output["grids"]["plan"]["cells"]) == 2
+        assert len(lifecycle_calls) == 1
+
+
+def test_level1_cli_explicit_historical_reader_keeps_current_accounting(tmp_path, monkeypatch):
+    from experiments import level1_evidence
+
+    plans, envelopes = _level1_inputs(tmp_path)
+    validated = {"plan": {"cells": {("model", "corpus", "replay"): {"status": "error"}}}}
+    calls = []
+    monkeypatch.setattr(level1_evidence, "_plan_artifact", lambda path: plans["plan"])
+    monkeypatch.setattr(level1_evidence, "_discover_request_envelopes", lambda *args: envelopes)
+    monkeypatch.setattr(level1_evidence, "_load_results", lambda *args: pytest.fail("current-only reader"))
+    monkeypatch.setattr(subject, "load_level1_results", lambda *args, **kwargs:
+                        calls.append((args, kwargs)) or (validated, []))
+    monkeypatch.setattr(level1_evidence, "_bind_live_attestations", lambda *args: {})
+
+    def current_accounting(artifacts, grids, errors, live, received_envelopes):
+        assert artifacts == [plans["plan"]]
+        assert grids is validated
+        assert received_envelopes is envelopes
+        return {"evidence_id": "current-accounting", "planning_strata": [], "counts": {
+            "prospective_request_units": {"requested": 1}, "planning_strata": {"requested": 1},
+            "execution_units": {"requested": 1}}, "availability": {
+                "live_attestation": {"status": "test"}, "analysis_inclusion": {"status": "test"}}}
+
+    monkeypatch.setattr(level1_evidence, "build_level1_evidence", current_accounting)
+    assert level1_evidence.main([
+        "--eligibility", str(tmp_path / "plan.json"), "--results", str(tmp_path),
+        "--historical-code-repository", str(tmp_path),
+        "--out-json", str(tmp_path / "report.json"), "--out-csv", str(tmp_path / "report.csv"),
+    ]) == 0
+    assert len(calls) == 1
+    assert calls[0][1] == {"code_repository": tmp_path}
