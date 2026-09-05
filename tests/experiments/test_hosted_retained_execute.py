@@ -82,6 +82,16 @@ def test_target_money_settles_after_checkpoint_and_resume_never_reissues(tmp_pat
     assert current_retained_execution_admission() is None
 
 
+def test_peak_funded_route_does_not_release_an_assumed_off_peak_discount(tmp_path):
+    points, attacker, target, calls, admission = _setup(tmp_path)
+    admission.prices.update(reservation_input="4", reservation_output="12",
+                            settlement_input="4", settlement_output="12")
+    _runner(attacker, target, admission).run(points, on_response=lambda row: None)
+    state = admission.budget.snapshot()["pools"]["openai:target"]
+    assert len(calls) == 2
+    assert state["settled_cost_microusd"] == 176
+
+
 def test_paid_empty_response_is_durable_then_opens_global_circuit_before_next_input(tmp_path):
     points, attacker, target, calls, admission = _setup(tmp_path, outputs=["", "must never run"])
     checkpoint = tmp_path / "responses.jsonl"

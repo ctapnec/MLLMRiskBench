@@ -634,22 +634,22 @@ def test_hosted_follow_on_is_a_no_retry_local_input_subset() -> None:
         "There is no automatic paid resumption",
         "Build sets and locks",
         "at most 80 percent",
-        "1,110 selected local",
-        "1,110 selected hosted",
+        "1,010 selected local",
+        "1,010 selected hosted",
         "same_model_judge=true",
         "matched-input intersection",
         "full-corpus estimates",
         "target calls 0",
-        "USD 32.96256",
-        "1,110 target attempts",
-        "USD 27.939392",
-        "USD 117.804128",
+        "USD 29.99296",
+        "1,010 target attempts",
+        "USD 27.269888",
+        "USD 116.720544",
         "12,288 complete input tokens",
         "reasoning_effort=low",
         "experiments.hosted_campaign_budget",
         "experiments.retained_response_judge_pair_execute",
         "--judges rules,guardrail",
-        "1,110 Llama Guard calls",
+        "1,010 Llama Guard calls",
         "local-versus-Haiku agreement",
         "every eligible answered hosted output exactly once",
     )
@@ -674,7 +674,7 @@ def test_hosted_follow_on_is_a_no_retry_local_input_subset() -> None:
             ("GPT-5.6 Luna", 150),
             ("GPT-5.5", 30),
             ("Kimi K3", 80),
-            ("DeepSeek V4-Pro", 300),
+            ("DeepSeek V4-Pro", 200),
         ):
             assert f"| {target} | {limit} |" in value
 
@@ -700,7 +700,7 @@ def test_hosted_follow_on_is_a_no_retry_local_input_subset() -> None:
     with pytest.raises(AssertionError):
         assert "global `paid_provider` circuit" in changed_plan
     cost_flat = " ".join(cost.split())
-    for forecast in ("1,110 target-call cap", "USD 27.939392", "USD 117.804128"):
+    for forecast in ("1,010 target-call cap", "USD 27.269888", "USD 116.720544"):
         changed_cost = cost_flat.replace(forecast, "MUTATED_FORECAST")
         assert changed_cost != cost_flat
         with pytest.raises(AssertionError):

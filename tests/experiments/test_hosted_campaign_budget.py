@@ -85,26 +85,26 @@ def test_projection_binds_expected_and_maximum_token_costs() -> None:
 
     assert value["status"] == "budget_fit"
     assert value["totals"] == {
-        "target_paid_call_cap": 1_110,
-        "judge_paid_call_cap": 2_220,
-        "target_expected_input_tokens": 4_440_000,
-        "target_maximum_input_tokens": 4_440_000,
-        "target_expected_output_tokens": 1_602_560,
-        "target_maximum_output_tokens": 6_410_240,
-        "judge_expected_input_tokens": 18_186_240,
-        "judge_maximum_input_tokens": 27_279_360,
-        "judge_expected_output_tokens": 568_320,
-        "judge_maximum_output_tokens": 1_136_640,
-        "combined_expected_input_tokens": 22_626_240,
-        "combined_maximum_input_tokens": 31_719_360,
-        "combined_expected_output_tokens": 2_170_880,
-        "combined_maximum_output_tokens": 7_546_880,
-        "target_expected_cost_microusd": 27_939_392,
-        "target_maximum_cost_microusd": 84_841_568,
-        "judge_expected_cost_microusd": 21_027_840,
-        "judge_maximum_cost_microusd": 32_962_560,
-        "combined_expected_cost_microusd": 48_967_232,
-        "combined_maximum_cost_microusd": 117_804_128,
+        "target_paid_call_cap": 1_010,
+        "judge_paid_call_cap": 2_020,
+        "target_expected_input_tokens": 4_040_000,
+        "target_maximum_input_tokens": 4_040_000,
+        "target_expected_output_tokens": 1_397_760,
+        "target_maximum_output_tokens": 5_591_040,
+        "judge_expected_input_tokens": 16_547_840,
+        "judge_maximum_input_tokens": 24_821_760,
+        "judge_expected_output_tokens": 517_120,
+        "judge_maximum_output_tokens": 1_034_240,
+        "combined_expected_input_tokens": 20_587_840,
+        "combined_maximum_input_tokens": 28_861_760,
+        "combined_expected_output_tokens": 1_914_880,
+        "combined_maximum_output_tokens": 6_625_280,
+        "target_expected_cost_microusd": 27_269_888,
+        "target_maximum_cost_microusd": 86_727_584,
+        "judge_expected_cost_microusd": 19_133_440,
+        "judge_maximum_cost_microusd": 29_992_960,
+        "combined_expected_cost_microusd": 46_403_328,
+        "combined_maximum_cost_microusd": 116_720_544,
     }
     sonnet = next(row for row in value["routes"] if row["label"] == "Claude Sonnet 5")
     assert sonnet["expected_cost_microusd"] == 2_736_000
@@ -115,7 +115,7 @@ def test_projection_binds_expected_and_maximum_token_costs() -> None:
     assert value["judge"]["maximum_output_tokens_per_call"] == 512
     assert value["judge"]["transport_retries"] == 3
     assert value["judge"]["maximum_http_attempts"] == 8_880
-    assert value["judge"]["selected_pair_cap"] == 1_110
+    assert value["judge"]["selected_pair_cap"] == 1_010
     assert value["judge"]["maximum_input_tokens_per_call"] == 12_288
     assert value["authority"]["judge_input_includes_prompt_answer_and_rubric"] is True
     assert value["authority"]["physical_media_sent_to_judge"] is False
@@ -138,7 +138,7 @@ def test_api_config_maximum_is_not_a_prose_only_assumption() -> None:
 def test_new_pair_defaults_match_budget_and_admit_historical_smaller_limits() -> None:
     from experiments import retained_response_judge_pair as pairs
 
-    assert pairs.DEFAULT_PAIR_LIMIT == subject.JUDGE_PAIR_CAP == 1_110
+    assert pairs.DEFAULT_PAIR_LIMIT == subject.JUDGE_PAIR_CAP == 1_010
     assert pairs.DEFAULT_COST_MICROUSD == 33_000_000
     assert pairs.MAX_PAIR_LIMIT >= 1_350
     assert pairs.MAX_COST_MICROUSD >= 7_750_000
@@ -163,7 +163,7 @@ def test_real_roster_uses_model_specific_allowances_and_no_uniform_average() -> 
         subject.JUDGE_MODEL: (200, 2048), "gpt-5.6-sol": (30, 8192),
         "gpt-5.6-terra": (30, 6144), "gpt-5.6-luna": (150, 4096),
         "gpt-5.5": (30, 8192), "kimi-k3": (80, 8192),
-        "deepseek-v4-pro": (300, 8192),
+        "deepseek-v4-pro": (200, 8192),
     }
     assert {r["model"]: (r["paid_call_cap"], r["maximum_output_tokens_per_call"])
             for r in value["routes"]} == expected
@@ -178,9 +178,23 @@ def test_long_judge_inputs_are_reserved_inside_anthropic_ceiling() -> None:
     value = _projection()
     anthropic = next(r for r in value["providers"] if r["provider"] == "anthropic")
     assert anthropic["target_maximum_cost_microusd"] == 37_568_000
-    assert anthropic["judge_maximum_cost_microusd"] == 32_962_560
-    assert anthropic["combined_maximum_cost_microusd"] == 70_530_560
-    assert anthropic["remaining_margin_microusd"] == 1_469_440
+    assert anthropic["judge_maximum_cost_microusd"] == 29_992_960
+    assert anthropic["combined_maximum_cost_microusd"] == 67_560_960
+    assert anthropic["remaining_margin_microusd"] == 4_439_040
+
+
+def test_deepseek_is_peak_funded_without_a_clock_window() -> None:
+    row = next(row for row in _projection()["routes"] if row["provider"] == "deepseek")
+    assert row["paid_call_cap"] == 200
+    assert row["input_usd_per_million_tokens"] == "0.66"
+    assert row["output_usd_per_million_tokens"] == "1.98"
+    assert row["reserved_input_usd_per_million_tokens"] == "1.32"
+    assert row["reserved_output_usd_per_million_tokens"] == "3.96"
+    assert row["reservation_price_condition"] == "published_peak"
+    assert row["maximum_cost_microusd"] == 7_544_064
+    provider = next(row for row in _projection()["providers"] if row["provider"] == "deepseek")
+    assert provider["fits_campaign_cap"] is True
+    assert provider["remaining_margin_microusd"] == 455_936
 
 
 def test_missing_or_non_usd_price_blocks_projection() -> None:

@@ -66,7 +66,9 @@ class _Admission:
                 or slot["bound_microusd"] < _cost(
                     _integer(receipt["input_tokens"], "request input estimate", zero=True),
                     _integer(receipt["max_output_tokens"], "request output allowance"),
-                    {**prices, "input": prices.get("reservation_input", prices["input"])})):
+                    {**prices,
+                     "input": prices.get("reservation_input", prices["input"]),
+                     "output": prices.get("reservation_output", prices["output"])})):
                 raise ValueError("request allowance is not funded by its exact target slot")
             if receipt["max_output_tokens"] != program["max_output_tokens"]:
                 raise ValueError("funded request changed the configured output allowance")
@@ -162,7 +164,13 @@ class _Admission:
                                for key in ("input", "output")):
             # Without a complete cache billing breakdown, do not invent an
             # exact discounted bill: the already-funded exposure stays held.
-            if self.prices.get("cache_read") is None and self.prices.get("cache_write") is None:
+            if "settlement_input" in self.prices and "settlement_output" in self.prices:
+                cost = _cost(tokens["input"], tokens["output"], {
+                    **self.prices,
+                    "input": self.prices["settlement_input"],
+                    "output": self.prices["settlement_output"],
+                })
+            elif self.prices.get("cache_read") is None and self.prices.get("cache_write") is None:
                 cost = _cost(tokens["input"], tokens["output"], self.prices)
             elif "cached_input" in tokens and "cache_write_input" in tokens:
                 cached, written = tokens["cached_input"], tokens["cache_write_input"]
@@ -176,8 +184,11 @@ class _Admission:
         self.budget.settle(call_id, count, cost)
         if (cost is None and all(type(tokens.get(key)) is int and tokens[key] >= 0
                                  for key in ("input", "output"))
-            and _cost(tokens["input"], tokens["output"],
-                      {**self.prices, "input": self.prices.get("reservation_input", self.prices["input"])})
+            and _cost(tokens["input"], tokens["output"], {
+                **self.prices,
+                "input": self.prices.get("reservation_input", self.prices["input"]),
+                "output": self.prices.get("reservation_output", self.prices["output"]),
+            })
             > receipt["bound_microusd"]):
             self._circuit("reported_usage_requires_above_reservation_billing_review", call_id)
             raise RuntimeError("durable target usage may exceed its funded exposure; billing review is required")
@@ -327,7 +338,17 @@ def _validated_jobs(program: dict, budget: AttemptBudget) -> list[_Admission]:
         raise ValueError("retained program has no fixed pilot/measured partition")
     prices, _why = projection.rate_for(values["pricing"], route["provider"], route["model"],
                                        on_date=program["pricing_as_of"])
-    prices = {**prices["per_million_tokens"], "reservation_input": route["reserved_input_usd_per_million_tokens"]}
+    prices = {
+        **prices["per_million_tokens"],
+        "reservation_input": route["reserved_input_usd_per_million_tokens"],
+        "reservation_output": route["reserved_output_usd_per_million_tokens"],
+    }
+    if route["reservation_price_condition"] == "published_peak":
+        # Retain the funded peak-rate estimate after each call. Provider billing
+        # reconciliation may later establish a lower off-peak charge, but an
+        # assumed discount cannot release money for another selected call.
+        prices.update(settlement_input=prices["reservation_input"],
+                      settlement_output=prices["reservation_output"])
     requests = program["requests"]
     planned_ids, observed_ids, outputs, names = None, [], set(), set()
     checked_plan = None

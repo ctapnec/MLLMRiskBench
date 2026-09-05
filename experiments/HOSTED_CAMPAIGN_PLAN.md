@@ -72,7 +72,7 @@ subset digest. Set inclusion must validate before any provider call.
 | GPT-5.6 Luna | 150 | registry/canary intersection | 4,096 |
 | GPT-5.5 | 30 | registry/canary intersection | 8,192 |
 | Kimi K3 | 80 | text; image only after an exact image canary | 8,192 |
-| DeepSeek V4-Pro | 300 | text only, reviewed off-peak window | 8,192 |
+| DeepSeek V4-Pro | 200 | text only; every call peak-funded | 8,192 |
 
 OpenAI's published identifier for the requested Astra model is `gpt-6-astra`,
 not GPT-5.6 Astra. The operator raised provider ceilings to 80 percent and
@@ -100,19 +100,19 @@ Limits were fixed before hosted outputs. Exact no-call projections or token
 canaries may reduce a limit before execution to satisfy the monetary gate.
 Observed answers or judgments may never change a selection.
 
-The table budgets at most 1,110 hosted target calls, including every paid
+The table budgets at most 1,010 hosted target calls, including every paid
 readiness and diagnostic canary. A canary consumes its target's global cap and
 does not add another paid request. The uncalibrated planning scenario uses
 4,000 input tokens and one quarter of each route's output ceiling, including
-reasoning tokens. It costs USD 27.939392, not an empirical prediction. With
+reasoning tokens. It costs USD 27.269888, not an empirical prediction. With
 the same input bound and every route consuming its configured maximum output,
-the target reservation is USD 84.841568. The exact per-model arithmetic is in
+the target reservation is USD 86.727584. The exact per-model arithmetic is in
 `HOSTED_CAMPAIGN_COST_ASSESSMENT.md` and must be regenerated from the retained
 pricing bytes before execution.
-The target projection records 4,440,000 input and 1,602,560 scenario output
-tokens, with 6,410,240 output tokens at the configured maxima. Including at
-most 2,220 Haiku calls gives 22,626,240 scenario input and 2,170,880 scenario
-output tokens; the maximum reservation is 31,719,360 input and 7,546,880 output.
+The target projection records 4,040,000 input and 1,397,760 scenario output
+tokens, with 5,591,040 output tokens at the configured maxima. Including at
+most 2,020 Haiku calls gives 20,587,840 scenario input and 1,914,880 scenario
+output tokens; the maximum reservation is 28,861,760 input and 6,625,280 output.
 
 These are budget-feasible starting ceilings, not proven optimal token settings.
 Haiku has a non-thinking 2,048-token target allowance; Sonnet/Luna start at
@@ -134,18 +134,18 @@ targets and Haiku judging, may use at most 80 percent of each configured budget.
 
 | Provider | Configured | Follow-on maximum | Planning partition |
 |---|---:|---:|---|
-| Anthropic | USD 90 | USD 72 | targets USD 37.568; Haiku cap USD 33; margin USD 1.432 |
+| Anthropic | USD 90 | USD 72 | targets USD 37.568; Haiku USD 29.99296; margin USD 4.43904 |
 | OpenAI | USD 40 | USD 32 | targets USD 30.82512; margin USD 1.17488 |
 | Moonshot | USD 15 | USD 12 | targets USD 10.7904; margin USD 1.2096 |
-| DeepSeek | USD 10 | USD 8 | off-peak targets USD 5.658048; margin USD 2.341952 |
+| DeepSeek | USD 10 | USD 8 | peak-funded targets USD 7.544064; margin USD 0.455936 |
 
 The Anthropic balance is the operator's 5 September update after unrelated
 project spending. OpenAI maximum reservations include a conservative 25 percent
 input-price allowance for cache writes, or a higher published cache-write rate
 when present. This is a reserve, not an assumed charge on every request. The
-combined target and Haiku maximum is USD 117.804128 across providers; OpenAI
-uses USD 30.82512 of its USD 32 cap and Anthropic USD 70.53056 of USD 72.
-The additional USD 0.03744 between calculated Haiku reservation and its USD 33
+combined target and Haiku maximum is USD 116.720544 across providers; OpenAI
+uses USD 30.82512 of its USD 32 cap and Anthropic USD 67.56096 of USD 72.
+The difference between the calculated Haiku reservation and its USD 33 pool
 cap is retained headroom, not permission for extra judgments or content retries.
 
 The monetary ceiling applies to physical HTTP attempts, not only successful
@@ -159,8 +159,8 @@ funds stop before the next HTTP attempt, even when the configured three retries
 have not been exhausted. No outcome-based replacement input or hidden extra
 budget is permitted. These rules apply to target calls and Haiku alike.
 
-Haiku receives one matched cohort of at most 1,110 local/hosted output pairs.
-That is at most 1,110 selected local outputs and 1,110 selected hosted outputs
+Haiku receives one matched cohort of at most 1,010 local/hosted output pairs.
+That is at most 1,010 selected local outputs and 1,010 selected hosted outputs
 from their matched-input intersection. The pair limit equals the entire hosted
 target cap, so it selects every eligible answered hosted output exactly once;
 it is not a second sample of the hosted results. Each receives one deterministic
@@ -171,9 +171,9 @@ The local and hosted member of every pair has the same rendered-input identity,
 source cluster, seed, arm/framework, modality and source-policy stratum. Shared
 local judgments do not become independent observations or extra paid calls.
 The conservative judging scenario still reserves two calls per pair at 8,192
-input and 256 output tokens per call: at most 2,220 calls cost USD 21.02784.
+input and 256 output tokens per call: at most 2,020 calls cost USD 19.13344.
 The dedicated judge route fixes `max_tokens=512`; reserving 12,288 input
-tokens per complete judgment gives USD 32.96256, inside the USD 33 cap.
+tokens per complete judgment gives USD 29.99296, inside the USD 33 cap.
 Judge input includes the prompt, retained answer and rubric, not just the
 original target prompt. This retained-response judge path sends text context,
 not the original physical images; image input identity remains paired evidence,
@@ -186,8 +186,8 @@ exact reservation does not fit. Do not drop long answers after observing the
 security result. Batch discounts are not needed for this funded plan and
 never authorize an outcome-dependent expansion.
 
-Across the full hosted population, local scoring performs at most 1,110 rule
-evaluations and 1,110 sealed Llama Guard calls, with no hosted-provider cost.
+Across the full hosted population, local scoring performs at most 1,010 rule
+evaluations and 1,010 sealed Llama Guard calls, with no hosted-provider cost.
 The guardrail's safe/violation label space cannot decide benign over-refusal
 where the rules stage is also undecided, so local decision coverage and
 abstentions must accompany every local-versus-Haiku agreement result.
@@ -269,7 +269,7 @@ Run `python -m experiments.hosted_campaign_budget` with the exact API config,
 pricing and budget files plus their SHA-256 values. Its create-only no-call
 artifact must reproduce the selected call counts, the explicitly uncalibrated
 quarter-output-cap scenario, every route's configured maximum reservation,
-the 2,220-call Haiku scenario and 12,288-input/512-output maximum, and the 80 percent provider
+the 2,020-call Haiku scenario and 12,288-input/512-output maximum, and the 80 percent provider
 reconciliation. A `blocked_budget` status does not admit a paid call.
 
 Gate A0: all subset proofs validate and current provider terms and prices have
@@ -334,14 +334,12 @@ binds the actual unique retained outputs to these slots and reuses a shared
 local judgment once. Missing or source-only rows leave unused judge slots;
 they do not authorize extra inputs selected after observing results.
 
-DeepSeek's forecast is conditional on off-peak pricing. Its published peak
-periods are 01:00-04:00 and 06:00-10:00 UTC; peak prices double the planned
-rates. The same 300-call maximum would then cost USD 11.316096, exceeding its
-USD 8 partition. A date-bound price file alone does not enforce that schedule.
-Before DeepSeek dispatch, bind the actual tariff window and boundary exposure,
-or fund a smaller pre-output subset at peak rates. The current executor does
-not yet enforce this clock condition, so this route remains pending that
-focused correction. It does not stop the local campaign.
+DeepSeek's 200-call cohort is funded at its published peak rates: USD 1.32 per
+million uncached input tokens and USD 3.96 per million output tokens. The
+planning scenario retains the lower off-peak rate as an explicitly conditional
+forecast, but the USD 7.544064 maximum and durable settlement use the peak rate.
+Execution therefore does not depend on a dispatch clock or crossing a tariff
+boundary. This prospective reduction was made before any hosted output.
 [DeepSeek pricing](https://api-docs.deepseek.com/quick_start/pricing/?push_animated=1&show_loading=0&theme=light&webview_progress_bar=1).
 
 ## A2 - Paid readiness and canaries
@@ -396,7 +394,7 @@ provider ledgers reconcile within all monetary ceilings.
 
 ## A4 - Zero-target matched Haiku re-adjudication
 
-Create one content-bound selector for at most 1,110 local/hosted pairs. A pair
+Create one content-bound selector for at most 1,010 local/hosted pairs. A pair
 is eligible only when both retained outputs bind the same rendered prompt,
 media-reference digest, datapoint, source cluster, seed, arm/framework,
 modality, risk, expected behavior and source-policy identity. Use deterministic
@@ -404,7 +402,7 @@ seed-0 balanced round-robin selection across local target, hosted target and
 those input strata. Judge each distinct output once and link an existing local
 judgment to multiple hosted comparisons when necessary. Preserve original
 judgments and report distinct judged outputs separately from comparison pairs.
-When the eligible hosted population remains at or below 1,110, selection must
+When the eligible hosted population remains at or below 1,010, selection must
 include every eligible hosted output rather than downsample it.
 Missing responses and source-authoritative R-Judge/GPTGeoChat rows remain in
 coverage accounting but receive no judge call and cannot form a judged pair.
@@ -419,7 +417,7 @@ one USD 33 ceiling. Its judgment strata record the hosted-transfer
 acknowledgement, one logical judge call per output, and at most four HTTP
 attempts under the status-only retry rule.
 
-Gate A4: target calls 0, original mutations 0, Haiku calls at most 2,220,
+Gate A4: target calls 0, original mutations 0, Haiku calls at most 2,020,
 Haiku spend at most USD 33, and complete selected/missing/excluded accounting.
 Every selected hosted member must bind the unchanged local cascade trail from
 its A3 result by retained-row digest.

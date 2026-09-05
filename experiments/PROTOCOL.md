@@ -290,7 +290,7 @@ cap; these values are not Runner per-arm limits:
 | GPT-5.6 Luna | 150 |
 | GPT-5.5 | 30 |
 | Kimi K3 | 80 |
-| DeepSeek V4-Pro | 300 |
+| DeepSeek V4-Pro | 200 |
 
 These budget-fitted limits supersede the larger planning scenario without
 changing the seed, sampler or compatible arm inventory. They are prospective
@@ -305,7 +305,7 @@ no-call projections may only reduce a condition before acquisition and execution
 the provider-token canary shows that its registered monetary ceiling would be
 exceeded; an observed model outcome may never trigger a limit change.
 Every paid readiness or diagnostic canary consumes the applicable global cap;
-it never sits outside the 1,110-call budget. Admission separates the
+it never sits outside the 1,010-call budget. Admission separates the
 uncalibrated quarter-output-cap scenario from the maximum reservation.
 Haiku targets use 2,048 output tokens, Sonnet/Luna 4,096, Opus/Terra 6,144,
 and Fable/Astra/Sol/GPT-5.5/Kimi/DeepSeek 8,192. Input reservation is 4,000
@@ -317,7 +317,7 @@ exceeding the provider ceiling. See HOSTED_CAMPAIGN_PLAN.md A2. Compatible
 model cohorts use nested prefixes and separate matched-core comparisons.
 
 After the local and hosted campaigns are sealed, a separate zero-target Haiku
-re-adjudication cohort selects at most 1,110 matched local/hosted row pairs.
+re-adjudication cohort selects at most 1,010 matched local/hosted row pairs.
 Both members have the same rendered-input, media-reference, source-cluster,
 seed, framework, modality and source-policy identity. Deterministic seed 0
 balanced round-robin sampling spans both target models and those input strata,
@@ -332,9 +332,9 @@ only content digests and imports no target-under-test or Runner factory. The
 executor may construct only the exact Haiku judge, uses one logical judge call
 and at most four status-only HTTP attempts, and opens the global `paid_provider` circuit on the first
 judge output or transport failure. The paired plan has a USD 33 ceiling and a
-dedicated 512-token maximum output configuration. Its 2,220-call scenario
-costs USD 21.02784 at 8,192 input and 256 output tokens per call; its maximum
-is USD 32.96256 at 12,288 input and 512 output. Count the complete grading
+dedicated 512-token maximum output configuration. Its 2,020-call scenario
+costs USD 19.13344 at 8,192 input and 256 output tokens per call; its maximum
+is USD 29.99296 at 12,288 input and 512 output. Count the complete grading
 request, including the retained answer and rubric, with the judge provider.
 Never silently truncate a long answer to make this reservation appear to fit.
 

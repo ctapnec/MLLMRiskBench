@@ -36,7 +36,7 @@ SHARED_ALGORITHM = "seeded_balanced_matched_pairs_unique_judgments_v2"
 # Historical /1 plans retain their own smaller content-bound quantity and spend.
 MAX_PAIR_LIMIT = 1_350
 MAX_COST_MICROUSD = 33_000_000
-DEFAULT_PAIR_LIMIT = 1_110
+DEFAULT_PAIR_LIMIT = 1_010
 DEFAULT_COST_MICROUSD = MAX_COST_MICROUSD
 _PAIR_DIMENSIONS = (
     "local_exact_model",

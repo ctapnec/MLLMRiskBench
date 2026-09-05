@@ -172,8 +172,8 @@ rates. [OpenAI Astra model documentation](https://developers.openai.com/api/docs
 | OpenAI | GPT-5.6 Luna | 150 | 0.20 | 1.20 | 4,096 | 0.3043 | 0.8873 |
 | OpenAI | GPT-5.5 | 30 | 5.00 | 30.00 | 8,192 | 2.4432 | 8.1228 |
 | Moonshot | Kimi K3 | 80 | 3.00 | 15.00 | 8,192 | 3.4176 | 10.7904 |
-| DeepSeek | DeepSeek V4-Pro off-peak | 300 | 0.66 | 1.98 | 8,192 | 2.0085 | 5.6580 |
-| **Total targets** | | **1,110** | | | | **27.9394** | **84.8416** |
+| DeepSeek | DeepSeek V4-Pro, peak-funded | 200 | 0.66 | 1.98 | 8,192 | 1.3390 | 7.5441 |
+| **Total targets** | | **1,010** | | | | **27.2699** | **86.7276** |
 
 This allocation replaces Fable 5 with exact `claude-fable-5-1`, released
 1 September 2026; the earlier per-arm assessment above remains historical.
@@ -182,14 +182,14 @@ target reservation and the combined campaign totals are unchanged. Its lower
 USD 0.25 cache-read price is not assumed as a saving in this reservation.
 [Anthropic Fable 5.1 pricing](https://platform.claude.com/docs/en/models/fable-5-1/overview).
 
-The target scenario costs USD 27.939392: 4,440,000 input and 1,602,560 output
-tokens. Its maximum is USD 84.841568 with the same input bound and 6,410,240
-output tokens. The matched Haiku plan adds at most 1,110 pairs or 2,220 judge
-calls. Its 8,192-input/256-output scenario costs USD 21.02784, and its
-12,288-input/512-output reservation costs USD 32.96256. Thus the combined
-scenario is USD 48.967232 and the maximum is USD 117.804128. Across targets
-and judging, this is 22,626,240 scenario input and 2,170,880 scenario output
-tokens; maximum totals are 31,719,360 input and 7,546,880 output tokens.
+The target scenario costs USD 27.269888: 4,040,000 input and 1,397,760 output
+tokens. Its maximum is USD 86.727584 with the same input bound and 5,591,040
+output tokens. The matched Haiku plan adds at most 1,010 pairs or 2,020 judge
+calls. Its 8,192-input/256-output scenario costs USD 19.13344, and its
+12,288-input/512-output reservation costs USD 29.99296. Thus the combined
+scenario is USD 46.403328 and the maximum is USD 116.720544. Across targets
+and judging, this is 20,587,840 scenario input and 1,914,880 scenario output
+tokens; maximum totals are 28,861,760 input and 6,625,280 output tokens.
 Every judging input includes prompt, answer and rubric. The retained-response
 judge sends text context, not the original physical image; it is not an
 independent visual reinspection. The
@@ -199,15 +199,16 @@ estimation uncertainty retained, must replace these planning assumptions
 before paid execution; no truncation of the answer is permitted to force a fit.
 
 Provider reconciliation remains inside the 80 percent rule: Anthropic target
-maximum USD 37.568 plus judge maximum USD 32.96256 is USD 70.53056 of USD 72;
+maximum USD 37.568 plus judge maximum USD 29.99296 is USD 67.56096 of USD 72;
 OpenAI is USD 30.82512 of USD 32; Moonshot is USD 10.7904 of USD 12; and
-DeepSeek is USD 5.658048 of USD 8. The rounded USD 33 judge allocation leaves
-USD 1.432 inside Anthropic's ceiling. These reservations are not permission to spend.
+DeepSeek is peak-funded at USD 7.544064 of USD 8. The USD 33 judge allocation
+leaves USD 4.43904 inside Anthropic's ceiling. These reservations are not
+permission to spend.
 Exact no-call selection, provider token counting and one-call canaries must
 fit before authorization. If they do not, only the affected prospective count
 is reduced and resealed before any output is observed.
 
-The 1,110 target-call cap includes every paid readiness and diagnostic canary.
+The 1,010 target-call cap includes every paid readiness and diagnostic canary.
 Those calls consume their target's global cap rather than adding an unbudgeted
 request. The create-only `hosted_campaign_budget` projection reads and binds the
 exact API config, effective-dated pricing and budget registries, reproduces the
@@ -249,7 +250,7 @@ acknowledgement. The dedicated `retained_response_judge_pair` selector and
 they remain pending deployment and must not be replaced by a naive Runner rerun
 that could regenerate targets.
 
-The budget-fitted cohort selects at most 1,110 eligible local/hosted pairs, so
+The budget-fitted cohort selects at most 1,010 eligible local/hosted pairs, so
 the local and hosted judged populations contain the same input entries. Exact
 identity binds the rendered prompt, media-reference digest, datapoint, source
 cluster, seed, arm/framework, modality, risk, expected behavior and source
@@ -257,14 +258,14 @@ policy. Seed-0 balanced round-robin sampling spans both target models and those
 input strata. A local judgment may support multiple same-input comparisons;
 each unique local or hosted output incurs at most one Haiku call. Missing responses remain in
 coverage statistics but require no judge call and cannot form a judged pair.
-The pair limit equals the hosted campaign's 1,110-target ceiling and therefore
+The pair limit equals the hosted campaign's 1,010-target ceiling and therefore
 includes every eligible answered hosted output exactly once rather than drawing
 a smaller outcome-selected sample.
 Source-authoritative R-Judge and GPTGeoChat decisions are excluded. Haiku's own
 target outputs are included by explicit operator decision and labelled
 same-model, non-independent evidence.
-The conservative 2,220-judgment scenario costs USD 21.02784; its maximum reservation is
-USD 32.96256 inside a USD 33 allocation. Full grading requests, including local
+The conservative 2,020-judgment scenario costs USD 19.13344; its maximum reservation is
+USD 29.99296 inside a USD 33 allocation. Full grading requests, including local
 answers, must be counted with the judge provider before fixing affordable
 hosted quantities. Long answers are not silently truncated or discarded based
 on their security outcome. Pilot answers remain a separate diagnostic stratum.
@@ -279,7 +280,7 @@ The later comparison is a matched selected-cohort analysis, not a full-corpus
 estimate. It publishes separate hosted/local member tables from the identical
 pair inventory plus unpaired coverage counts.
 Every hosted target lane already applies the sealed local `rules,guardrail`
-cascade, adding at most 1,110 rule evaluations and 1,110 Llama Guard calls but no
+cascade, adding at most 1,010 rule evaluations and 1,010 Llama Guard calls but no
 hosted-provider cost. The Haiku selector reuses those unchanged local trails on
 the exact hosted pair members. Local versus Haiku agreement is reported only on
 comparable decided labels, with the local decision denominator and abstentions

@@ -26,7 +26,7 @@ from ura.targets.api import (
 )
 
 
-SCHEMA = "ura-hosted-campaign-budget-projection/3"
+SCHEMA = "ura-hosted-campaign-budget-projection/4"
 EXPECTED_INPUT_TOKENS = 4_000
 MAX_INPUT_TOKENS = 4_000
 JUDGE_EXPECTED_INPUT_TOKENS = 8_192
@@ -126,8 +126,13 @@ ROUTES: tuple[dict[str, Any], ...] = (
         "spec": "deepseek:deepseek-v4-pro",
         "provider": "deepseek",
         "model": "deepseek-v4-pro",
-        "call_cap": 300,
+        "call_cap": 200,
         "max_output_tokens": 8_192,
+        # The registry price is the published off-peak rate. Reserve every
+        # selected call at the published 2x peak tariff instead of depending
+        # on a dispatch-time clock window.
+        "reservation_rate_multiplier": 2,
+        "reservation_price_condition": "published_peak",
     },
 )
 HOSTED_TARGET_CALL_CAP = sum(int(route["call_cap"]) for route in ROUTES)
@@ -278,7 +283,12 @@ def _priced_row(
     # Reserve a cold cache write for OpenAI even when the average estimate
     # assumes ordinary uncached input. Published new-model writes cost 1.25x;
     # using that bound for older OpenAI routes leaves additional headroom.
-    reserved_input_rate = input_rate
+    multiplier = _decimal(route.get("reservation_rate_multiplier", 1),
+                          label="reservation rate multiplier")
+    if multiplier < 1:
+        raise ValueError(f"reservation rate multiplier is invalid for {route['label']}")
+    reserved_input_rate = input_rate * multiplier
+    reserved_output_rate = output_rate * multiplier
     if route["provider"] == "openai":
         reserved_input_rate *= Decimal("1.25")
     if route["provider"] == "openai" and per_million.get("cache_write") is not None:
@@ -311,6 +321,8 @@ def _priced_row(
         "maximum_total_output_tokens": calls * maximum_output,
         "input_usd_per_million_tokens": str(input_rate),
         "reserved_input_usd_per_million_tokens": str(reserved_input_rate),
+        "reserved_output_usd_per_million_tokens": str(reserved_output_rate),
+        "reservation_price_condition": route.get("reservation_price_condition", "listed_rate"),
         "output_usd_per_million_tokens": str(output_rate),
         "pricing_effective_date": rate["effective_date"],
         "expected_cost_microusd": _cost_microusd(
@@ -325,7 +337,7 @@ def _priced_row(
             input_tokens=MAX_INPUT_TOKENS,
             output_tokens=maximum_output,
             input_rate=reserved_input_rate,
-            output_rate=output_rate,
+            output_rate=reserved_output_rate,
         ),
     }
 
