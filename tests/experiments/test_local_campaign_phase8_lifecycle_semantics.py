@@ -942,6 +942,95 @@ def test_phase8_capacity_requires_the_exact_source_task_sample(
         )
 
 
+@pytest.mark.parametrize("defect", [None, "identity", "eligibility", "cluster", "historical_rr"])
+def test_phase8_capacity_executes_exact_source_frames_and_retains_checks(
+    phase8: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, defect: str | None,
+) -> None:
+    from experiments import human_audit, retained_artifact_reader
+
+    monkeypatch.chdir(tmp_path)
+    root = tmp_path / "retained-view"
+    calls = []
+
+    def joined(results, *, frame, code_repository):
+        assert results == root
+        assert code_repository == tmp_path
+        calls.append(frame)
+        keys = ["a", "b", "c"] if frame == "common" else ["d"]
+        metadata = {key: {
+            "source": "corpus", "source_cluster_id": "first" if key in {"a", "b"} else key,
+            "common_metrics_eligible": frame == "common", "model_spec": "local:model",
+        } for key in keys}
+        judgments = {key: {"run_id": "current", "raw": {"model": "local:model"}} for key in keys}
+        if frame == "common":
+            if defect == "identity":
+                del judgments["a"]
+            elif defect == "eligibility":
+                metadata["a"]["common_metrics_eligible"] = False
+            elif defect == "cluster":
+                metadata["a"]["source_cluster_id"] = ""
+            elif defect == "historical_rr":
+                judgments["a"]["run_id"] = phase8.HISTORICAL_RR_RUNTIME_TERMINAL_LANES[0]
+        # Deliberately not a per-judge mapping: the caller must ignore cells.
+        return [{"run_id": "validated"}], metadata, judgments, {}
+
+    monkeypatch.setattr(retained_artifact_reader, "load_joined", joined)
+    monkeypatch.setattr(human_audit, "_joined_artifacts", lambda *args, **kwargs:
+                        pytest.fail("current-only human-audit join invoked"))
+    if defect is None:
+        assert phase8.observed_audit_frame_cluster_counts(root) == (2, 1)
+        assert calls == ["common", "source_task"]
+    else:
+        messages = {"identity": "frame identity", "eligibility": "frame eligibility",
+                    "cluster": "cluster identity", "historical_rr": "obsolete RR runtime-terminal"}
+        with pytest.raises(phase8.Phase8Error, match=messages[defect]):
+            phase8.observed_audit_frame_cluster_counts(root)
+        assert calls == ["common"]
+
+
+@pytest.mark.parametrize("historical_rr", [False, True])
+def test_phase8_qualification_executes_exact_source_common_frame(
+    phase8: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, historical_rr: bool,
+) -> None:
+    from experiments import human_audit, retained_artifact_reader
+
+    monkeypatch.chdir(tmp_path)
+    root = tmp_path / "retained-view"
+    calls = []
+    base = {
+        "source": "corpus", "common_metrics_eligible": True, "model_spec": "local:model",
+        "defense": "none", "attacker": "replay", "risk_category": "risk",
+        "effective_modality": "image", "expected_behavior": "refuse",
+        "source_policy_id": "policy", "source_policy_version": "1",
+        "source_policy_instruction": "instruction", "prepared_prompt": "prompt",
+        "prepared_response": "response", "prepared_media_references": '[{"sha256":"media"}]',
+    }
+    metadata = {key: {**base, "source_cluster_id": cluster}
+                for key, cluster in [("b", "one"), ("a", "one"), ("c", "excluded")]}
+    judgments = {key: {"run_id": "current", "raw": {"model": "local:model"}} for key in metadata}
+    if historical_rr:
+        metadata["a"]["model_spec"] = phase8.HISTORICAL_RR_RUNTIME_TERMINAL_LANES[0]
+
+    def joined(results, *, frame, code_repository):
+        calls.append((results, frame, code_repository))
+        return [{"run_id": "validated"}], metadata, judgments, {}
+
+    monkeypatch.setattr(retained_artifact_reader, "load_joined", joined)
+    monkeypatch.setattr(human_audit, "_joined_artifacts", lambda *args, **kwargs:
+                        pytest.fail("current-only human-audit join invoked"))
+    if historical_rr:
+        with pytest.raises(phase8.Phase8Error, match="obsolete RR runtime-terminal"):
+            phase8._qualification_candidates(runner_root=root, excluded_clusters={"corpus|excluded"})
+    else:
+        rows = phase8._qualification_candidates(runner_root=root, excluded_clusters={"corpus|excluded"})
+        assert len(rows) == 1
+        assert rows[0]["sample_key"] == "a"
+        assert rows[0]["cluster_key"] == "corpus|one"
+        assert rows[0]["media_references"] == base["prepared_media_references"]
+        assert rows[0]["label"] == rows[0]["rater_id"] == ""
+    assert calls == [(root, "common", tmp_path)]
+
+
 def test_phase8_revalidates_capacity_against_phase7_success_view(
     phase8: ModuleType,
 ) -> None:

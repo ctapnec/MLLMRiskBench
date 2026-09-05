@@ -10589,16 +10589,16 @@ def observed_audit_frame_cluster_counts(runner_root: Path) -> tuple[int, int]:
     """Count the exact validated common and source-task frame populations."""
 
     try:
-        from experiments.human_audit import _joined_artifacts
+        from experiments.retained_artifact_reader import load_joined
     except Exception as exc:
         raise Phase8Error(
-            "cannot import the pinned human-audit frame validator"
+            "cannot import the exact-source human-audit frame reader"
         ) from exc
 
     def frame_clusters(frame: str) -> set[str]:
         try:
-            _per_judge, metadata, judgments, _audit = _joined_artifacts(
-                runner_root, frame=frame
+            _cells, metadata, judgments, _audit = load_joined(
+                runner_root, frame=frame, code_repository=Path.cwd()
             )
         except Exception as exc:
             raise Phase8Error(
@@ -11629,12 +11629,14 @@ def _qualification_candidates(
     excluded_clusters: set[str],
 ) -> list[dict[str, Any]]:
     try:
-        from experiments.human_audit import _joined_artifacts
+        from experiments.retained_artifact_reader import load_joined
     except Exception as exc:
         raise Phase8Error(
-            "cannot import the pinned human-audit frame validator"
+            "cannot import the exact-source human-audit frame reader"
         ) from exc
-    _per_judge, joined_meta, judgments, _audit = _joined_artifacts(runner_root)
+    _cells, joined_meta, judgments, _audit = load_joined(
+        runner_root, frame="common", code_repository=Path.cwd()
+    )
     rows: list[dict[str, Any]] = []
     for key, judgment in sorted(judgments.items()):
         meta = joined_meta[key]
