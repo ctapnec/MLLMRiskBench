@@ -342,8 +342,13 @@ def _matched_funding(tmp_path, monkeypatch):
     prepared["api_config"].write_bytes(judging._canonical(api))
     api_sha = hashlib.sha256(prepared["api_config"].read_bytes()).hexdigest()
     programs, slots, admissions, hosted_cells = [], [], {}, []
+
+    class NamedMock(_RecordingMock):
+        def generate(self, dialog, *, seed=None):
+            return super().generate(dialog, seed=seed).model_copy(update={"target": self.name})
+
     for spec in ("openai:gpt-5.5", "openai:gpt-5.6-terra", "anthropic:claude-haiku-4-5"):
-        mock = _RecordingMock()
+        mock = NamedMock()
         mock.name = spec
         runner = _runner(config, target=mock)
         runner.run(points, run_config={"attacker": "replay", "corpus": "retained-corpus",
