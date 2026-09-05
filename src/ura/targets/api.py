@@ -1032,10 +1032,10 @@ class AnthropicTarget(BaseTarget):
             raise ValueError("AnthropicTarget requires at least one non-system message")
         return system, messages
 
-    def generate(
+    def build_request(
         self, dialog: list[DialogTurn], *, seed: int | None = None
-    ) -> Response:
-        client = self._get_client()
+    ) -> dict[str, Any]:
+        """Build the exact generation request without a client or network call."""
         system, messages = self._to_messages(dialog)
         kwargs: dict[str, Any] = {
             "model": self.model,
@@ -1049,7 +1049,13 @@ class AnthropicTarget(BaseTarget):
             kwargs["output_config"] = {"effort": self.effort or "high"}
         if system:
             kwargs["system"] = system
+        return kwargs
 
+    def generate(
+        self, dialog: list[DialogTurn], *, seed: int | None = None
+    ) -> Response:
+        kwargs = self.build_request(dialog, seed=seed)
+        client = self._get_client()
         start = time.perf_counter()
         resp, transport_attempts = _call_with_retry(
             client.messages.create,
@@ -1458,10 +1464,10 @@ class AnthropicFableTarget(AnthropicTarget):
                 )
         return "".join(text_blocks), thinking_blocks
 
-    def generate(
+    def build_request(
         self, dialog: list[DialogTurn], *, seed: int | None = None
-    ) -> Response:
-        client = self._get_client()
+    ) -> dict[str, Any]:
+        """Preview the fixed Fable request without constructing its SDK client."""
         system, messages = self._to_messages(dialog)
         if not messages:
             raise ValueError("AnthropicTarget requires at least one non-system message")
@@ -1474,7 +1480,13 @@ class AnthropicFableTarget(AnthropicTarget):
         }
         if system:
             kwargs["system"] = system
+        return kwargs
 
+    def generate(
+        self, dialog: list[DialogTurn], *, seed: int | None = None
+    ) -> Response:
+        kwargs = self.build_request(dialog, seed=seed)
+        client = self._get_client()
         start = time.perf_counter()
         resp, transport_attempts = _call_with_retry(
             client.messages.create,
@@ -1769,10 +1781,10 @@ class OpenAITarget(BaseTarget):
             messages.append({"role": role, "content": content})
         return messages
 
-    def generate(
+    def build_request(
         self, dialog: list[DialogTurn], *, seed: int | None = None
-    ) -> Response:
-        client = self._get_client()
+    ) -> dict[str, Any]:
+        """Preview complete Chat/compatible input, including media and history."""
         messages = self._to_messages(dialog)
 
         # GPT-5/6 and o-series reasoning models require max_completion_tokens.
@@ -1789,6 +1801,13 @@ class OpenAITarget(BaseTarget):
             request["temperature"] = self.temperature
         if seed is not None and self.supports_seed:
             request["seed"] = int(seed)
+        return request
+
+    def generate(
+        self, dialog: list[DialogTurn], *, seed: int | None = None
+    ) -> Response:
+        request = self.build_request(dialog, seed=seed)
+        client = self._get_client()
         start = time.perf_counter()
         resp, transport_attempts = _call_with_retry(
             client.chat.completions.create,
@@ -2381,10 +2400,10 @@ class OpenAIResponsesTarget(OpenAITarget):
             ),
         }
 
-    def generate(
+    def build_request(
         self, dialog: list[DialogTurn], *, seed: int | None = None
-    ) -> Response:
-        client = self._get_client()
+    ) -> dict[str, Any]:
+        """Preview the fixed Responses body without a generation or SDK client."""
         rendered_input = self._to_responses_input(dialog)
         requested_reasoning = {
             "mode": self.reasoning_mode,
@@ -2399,6 +2418,14 @@ class OpenAIResponsesTarget(OpenAITarget):
             "store": self.store,
             "truncation": self.truncation,
         }
+        return request
+
+    def generate(
+        self, dialog: list[DialogTurn], *, seed: int | None = None
+    ) -> Response:
+        request = self.build_request(dialog, seed=seed)
+        requested_reasoning = request["reasoning"]
+        client = self._get_client()
         start = time.perf_counter()
         resp, transport_attempts = _call_with_retry(
             client.responses.create,
