@@ -2010,7 +2010,12 @@ above and must not be copied into returned logs, reports, or the run note.
 The controller revalidates cache hits but reports zero downloaded bytes and no
 `model_download` activity for them. Rig Web shows that badge only while an
 authenticated worker confirms missing-byte transfer, and clears it on finish,
-failure, or cancellation. Normal/preflight construction holds a shared resource
+failure, or cancellation. Verification of an existing published snapshot uses
+a shared resource lease, so independent acquisitions and runtime readers may
+verify the same sealed bytes concurrently. Import/publication retains an
+exclusive lease. Contention waits within the existing acquisition deadline;
+it does not reset that deadline, redownload a valid resource, or bypass its
+complete seal check. Normal/preflight construction holds a shared resource
 lease across complete pre-load hash, constructor/load, and complete post-load
 hash; any drift destroys the object before a model call. Result roots retain
 safe, path/token-free canonical plan and receipt copies plus their strict
