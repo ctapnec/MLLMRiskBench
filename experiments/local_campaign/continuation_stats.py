@@ -7,6 +7,8 @@ It copies exact validated producer reports, retaining their original bindings.
 from __future__ import annotations
 
 import hashlib
+import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -208,9 +210,10 @@ def publish_historical_continuation(
     results = results_root.resolve(strict=True)
     selected = retained_continuation_reports(results, result_descriptor)
     publication = publication_root.resolve()
-    if publication == results or not publication.is_relative_to(results):
-        raise ValueError("publication root escapes the results store")
-    publication.mkdir(mode=0o700, parents=False, exist_ok=False)
+    if publication.parent != results / "engineering" or publication.name != job_id:
+        raise ValueError("publication root must be its named engineering job")
+    started = datetime.now(timezone.utc).isoformat()
+    publication.mkdir(mode=0o700, parents=True, exist_ok=False)
     reports, copies = [], []
     for index, (kind, label, raw) in enumerate(selected):
         _source, payload = _descriptor_file(raw, allowed_root=results, maximum=_MAXIMUM)
@@ -233,7 +236,7 @@ def publish_historical_continuation(
     retained_continuation_reports(results, result_descriptor)
     for row in copies:
         _descriptor_file(row["copy"], allowed_root=publication, maximum=_MAXIMUM)
-    return publish_external_analysis_registration(
+    registration = publish_external_analysis_registration(
         results, job_id=job_id, analysis_root=publication,
         work_label="Historical local campaign analysis (144 retained units)",
         completion_status="complete_with_explicit_limitations",
@@ -243,3 +246,34 @@ def publish_historical_continuation(
             "authority": "Operational diagrams only; no whole-campaign completion or human validity is claimed.",
         }, reports=reports,
     )
+    # This is a real new publication task, not a replacement controller or an
+    # assertion that the original failed campaign completed. Publish lifecycle
+    # records only after the report registration has actually succeeded.
+    ended = datetime.now(timezone.utc).isoformat()
+    _write_create_only(publication / "ENGINEERING_ONLY.json", {
+        "schema": "ura-engineering-campaign/1", "campaign_id": job_id,
+        "started_at": started, "evidence_class": "retained_analysis_publication",
+        "thesis_empirical_evidence": False, "hosted_calls_allowed": False,
+        "planned_tasks": ["publish-retained-analysis"], "model_tasks": [],
+        "continuation_result": dict(result_descriptor),
+    })
+    events = [
+        {"at": started, "event": "campaign_start", "task": "bootstrap"},
+        {"at": started, "event": "task_start", "task": "publish-retained-analysis"},
+        {"at": ended, "event": "task_end", "task": "publish-retained-analysis", "status": "passed"},
+        {"at": ended, "event": "campaign_end", "task": "bootstrap", "status": "complete",
+         "detail": "Exact historical report publication only; original failures and limitations remain retained."},
+    ]
+    with (publication / "task-log.jsonl").open("x", encoding="utf-8") as handle:
+        for event in events:
+            handle.write(json.dumps(event, sort_keys=True, allow_nan=False) + "\n")
+    _write_create_only(publication / "artifact-links.json", {
+        "schema": "ura-engineering-campaign-artifact-links/1", "campaign_id": job_id,
+        "links": [{"label": label, "path": path.relative_to(results).as_posix(),
+                   "kind": "file", "required": True} for label, path in (
+            ("Retained producer bindings", publication / "retained-producers.json"),
+            ("Validated continuation", Path(result_descriptor["path"])),
+            ("Report registration", registration),
+        )],
+    })
+    return registration

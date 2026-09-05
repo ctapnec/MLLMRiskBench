@@ -9,6 +9,8 @@ from experiments.local_campaign import continuation_stats as module
 from experiments.local_campaign.execution_accounting import build_execution_accounting
 from experiments.local_campaign.stats_adapter import _campaign_report_strata
 from experiments.rig_web_app.external_analysis import load_external_analysis_registration
+from experiments.rig_web_app.campaigns import load_engineering_campaign
+from experiments.rig_web import RigWebApp
 from test_local_campaign_stats_adapter import (
     _descriptor, _level1, _level2, _terminal_inventory, _write,
 )
@@ -103,7 +105,7 @@ def _continuation(root: Path) -> tuple[Path, dict[str, object]]:
 def test_historical_continuation_copies_exact_reports_and_keeps_scope(tmp_path: Path) -> None:
     result, _binding = _continuation(tmp_path)
     selected = module.retained_continuation_reports(tmp_path, _descriptor(result))
-    publication = tmp_path / "published"
+    publication = tmp_path / "engineering" / "historical-fixture"
     registration = module.publish_historical_continuation(
         tmp_path, result_descriptor=_descriptor(result), publication_root=publication,
         job_id="historical-fixture",
@@ -157,9 +159,37 @@ def test_historical_publication_rechecks_exact_copy_bytes(tmp_path: Path, monkey
     with pytest.raises(ValueError, match="descriptor bytes differ"):
         module.publish_historical_continuation(
             tmp_path, result_descriptor=_descriptor(result),
-            publication_root=tmp_path / "published", job_id="must-not-publish",
+            publication_root=tmp_path / "engineering" / "must-not-publish", job_id="must-not-publish",
         )
     assert not (tmp_path / "external-analysis-jobs").exists()
+
+
+def test_historical_publication_is_discoverable_with_actual_stats_diagrams(tmp_path: Path) -> None:
+    result, _binding = _continuation(tmp_path)
+    job_id = "historical-publication-route"
+    publication = tmp_path / "engineering" / job_id
+    module.publish_historical_continuation(
+        tmp_path, result_descriptor=_descriptor(result), publication_root=publication,
+        job_id=job_id,
+    )
+    campaign = load_engineering_campaign(tmp_path, job_id)
+    assert campaign is not None and campaign.state == "complete"
+    assert campaign.completed_tasks == 1 and campaign.model_tasks == ()
+    assert not campaign.artifact_link_error
+    app = RigWebApp(results_root=tmp_path, state_dir=tmp_path / "state", repo_root=tmp_path,
+                    gpu_hardware={"devices": []}, system_hardware={})
+    try:
+        status, _headers, detail = app.handle("GET", f"/stats/job/{job_id}?fragment=1")
+        assert status == 200
+        text = detail.decode("utf-8")
+        assert "Campaign execution accounting" in text
+        assert "Local campaign input, call and output funnel" in text
+        assert "refusal_rate" in text and "class='barchart'" in text
+        assert "Registered external analysis" in text
+        assert "no whole-campaign completion" in text
+        assert "invalid</span>" not in text
+    finally:
+        app.close()
 
 
 @pytest.mark.parametrize("mutation", (None, "wrong-prefix", "wrong-input", "unbound-output", "rerun-status"))
