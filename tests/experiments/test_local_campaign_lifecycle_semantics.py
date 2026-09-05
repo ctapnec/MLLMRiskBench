@@ -583,6 +583,39 @@ def test_measured_grid_binds_runner_resolved_ollama_digest(
         phase7._measured_model_selector(selector, spec)
 
 
+def test_failed_ollama_recovery_is_retained_without_success_overlay(
+    phase7: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "completion.json"
+    path.write_text(json.dumps({"status": "complete_with_failures"}), encoding="utf-8")
+    base = {"terminal_states": {"gemma": "failed"}, "metric_lane_order": [],
+            "target_execution": {"target_attempts": 1310}}
+    seen = []
+    def failed(**kwargs):
+        seen.append(("failed", kwargs))
+        return {"base": base}
+    def successful(**kwargs):
+        seen.append(("successful", kwargs))
+        return {"success_overlay": True}
+    monkeypatch.setattr(phase7, "_validate_failed_current_ollama_recovery", failed)
+    monkeypatch.setattr(phase7, "_validate_successful_current_ollama_recovery", successful)
+    kwargs = dict(gate5_path=tmp_path / "gate5.json", base_completion=tmp_path / "base.json",
+                  recovery_completion=path, runner_root=tmp_path / "runner")
+    result = phase7.validate_current_ollama_recovery_completion(**kwargs)
+    assert result == {**base, "recovery_completion": phase7.descriptor(path)}
+    assert "recovery_completion" not in base
+    assert seen == [("failed", kwargs)]
+    def invalid(**kwargs):
+        raise ValueError("changed failed recovery identity")
+    monkeypatch.setattr(phase7, "_validate_failed_current_ollama_recovery", invalid)
+    with pytest.raises(ValueError, match="changed failed recovery identity"):
+        phase7.validate_current_ollama_recovery_completion(**kwargs)
+    assert seen == [("failed", kwargs)]
+    path.write_text(json.dumps({"status": "complete"}), encoding="utf-8")
+    assert phase7.validate_current_ollama_recovery_completion(**kwargs) == {"success_overlay": True}
+    assert seen[-1] == ("successful", kwargs)
+
+
 def test_failed_seven_lane_binds_original_base_selection_without_readmission(phase7: ModuleType) -> None:
     commit = "73c5331c59d1192f3338170cfee374af5e03a07f"
     source = {"manifest_sha256": "a" * 64, "final_request_envelope": {"sha256": "b" * 64}}
