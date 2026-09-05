@@ -251,6 +251,11 @@ def _metric_proxy_rows(
     rows: list[Judgment] = []
     for value in cell["judgments"]:
         judgment = Judgment.model_validate(value, strict=True)
+        # Match Runner.aggregate's proxy support exactly. Valid abstentions
+        # remain in coverage and trail validation, but carry no decision from
+        # which aggregate decision provenance can be recomputed.
+        if judgment.raw.get("approximate_security_decision") is None:
+            continue
         if all(
             str(
                 judgment.raw[key]
