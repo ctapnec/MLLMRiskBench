@@ -192,6 +192,30 @@ The guardrail's safe/violation label space cannot decide benign over-refusal
 where the rules stage is also undecided, so local decision coverage and
 abstentions must accompany every local-versus-Haiku agreement result.
 
+### Request identity and token-count uncertainty
+
+An exact request-body digest does not make its token forecast exact. Record
+the counting method separately from the funded monetary reservation. OpenAI's
+Responses counter includes processed input and structural tokens; this does
+not establish equivalence to Chat Completions serialization. Do not convert a
+Chat request to Responses and label its count exact.
+[OpenAI counting contract](https://developers.openai.com/api/docs/guides/token-counting).
+
+Anthropic's full-message counter is free but explicitly estimates input usage.
+Count with the selected model and complete grading rubric/history, not another
+model's tokenizer. Kimi likewise documents an estimate. Neither inspected
+counter specifies a guaranteed numerical error bound.
+[Anthropic counting contract](https://platform.claude.com/docs/en/build-with-claude/token-counting),
+[Kimi counting contract](https://platform.kimi.ai/docs/api/estimate).
+
+A UTF-8 byte allowance is a local estimate, not a proven upper bound for the
+provider's complete serialized request. Keep estimate headroom explicit and
+reconcile actual usage before releasing a reservation. The ledger prevents
+unfunded admitted exposure; it cannot guarantee that an estimated future bill
+never exceeds the reserved amount. Any observed overage is retained and stops
+new spending. The table's maximum-token arithmetic remains conditional on its
+stated input assumptions, not a verified end-to-end billing ceiling.
+
 ## A0 - Bind the retained local population
 
 Implementation boundary (5 September): budget projection, unique-output paired

@@ -134,6 +134,12 @@ provider-counted input tokens per selected entry. Exact tokenization must
 confirm that bound or the prospective allocation must be reduced and resealed.
 The model-specific ceilings and pilot procedure are in HOSTED_CAMPAIGN_PLAN.md
 A2; a 4,096-token ceiling is no longer imposed on nearly every model.
+The maximum-token column is conditional arithmetic, not a provider-guaranteed
+bill. A full request digest is exact identity; local byte allowances and the
+Anthropic/Kimi counting endpoints supply estimates. Their method and headroom
+must remain distinct from actual billed usage and the ledger's reservation.
+See the plan's request-identity and token-count uncertainty section before
+using these values for paid admission.
 Kimi K3 uses explicit low reasoning effort instead of its default max effort;
 its larger output ceiling remains available for complete final answers. This
 is a budget-conditioned comparison, not an equal-compute model ranking.

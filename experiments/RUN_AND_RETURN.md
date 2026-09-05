@@ -2078,6 +2078,12 @@ preview preserves complete history, physical-media bytes and the selected
 token/effort controls; it is not itself a provider token count or paid
 authorization. Bind token-count evidence to this full body, not only the last
 user turn, and recheck the body at the physical-attempt reservation hook.
+Keep exact request identity, estimated input tokens and reported billed tokens
+separate. A UTF-8 byte allowance is not a proved provider-serialization bound;
+neither is an estimate returned by a provider automatically exact. The durable
+ledger enforces funded reservations and stops new spending on reported overage,
+but cannot turn an input estimate into a guaranteed bill ceiling. The hosted
+campaign plan records the current per-surface counting limitations.
 
 In the Build tab, one large role-aware model-picker modal serves both target and
 LLM-judge selection. Choose hosted or local, then use the hosted provider filter
