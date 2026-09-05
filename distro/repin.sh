@@ -9,7 +9,7 @@
 #   local:  git bundle create web002.bundle main
 #           scp web002.bundle rig:~/web002.bundle
 #           scp distro/repin.sh rig:~/repin.sh        # from the deployed commit
-#   rig:    bash ~/repin.sh <40-hex-commit> [--focused-campaign-handoff|--profile-recovery-handoff|--analysis-handoff]
+#   rig:    bash ~/repin.sh <40-hex-commit> [--focused-campaign-handoff|--profile-recovery-handoff|--analysis-handoff|--vllm-parallel-handoff]
 #
 # Run ON the rig with $1 = the expected 40-hex commit (the bundle head must
 # match it exactly). Steps, all fail-closed (a failure leaves the rig on the
@@ -37,8 +37,8 @@ set -euo pipefail
 
 REF_EXPECTED="${1:-}"
 MODE="${2:-full}"
-[[ "$REF_EXPECTED" =~ ^[0-9a-f]{40}$ ]] || { echo "usage: $0 <40-hex-commit> [--focused-campaign-handoff|--profile-recovery-handoff|--analysis-handoff]" >&2; exit 2; }
-[[ "$MODE" = "full" || "$MODE" = "--focused-campaign-handoff" || "$MODE" = "--profile-recovery-handoff" || "$MODE" = "--analysis-handoff" ]] \
+[[ "$REF_EXPECTED" =~ ^[0-9a-f]{40}$ ]] || { echo "usage: $0 <40-hex-commit> [--focused-campaign-handoff|--profile-recovery-handoff|--analysis-handoff|--vllm-parallel-handoff]" >&2; exit 2; }
+[[ "$MODE" = "full" || "$MODE" = "--focused-campaign-handoff" || "$MODE" = "--profile-recovery-handoff" || "$MODE" = "--analysis-handoff" || "$MODE" = "--vllm-parallel-handoff" ]] \
   || { echo "unsupported re-pin verification mode: $MODE" >&2; exit 2; }
 REPO="${REPO:-$HOME/MLLMRiskBench}"
 BUNDLE="${BUNDLE:-$HOME/web002.bundle}"
@@ -166,6 +166,17 @@ elif [ "$MODE" = "--analysis-handoff" ]; then
     tests/ura/test_framework_runtime_installer.py::test_distro_repin_script_is_fail_closed_and_sources_canonical_ura_env_last
   )
   echo "verification mode: retained analysis handoff (${#DEPLOY_TESTS[@]} selectors)"
+elif [ "$MODE" = "--vllm-parallel-handoff" ]; then
+  # Final integration checks for the changed worker lifecycle and scheduling.
+  # Runtime installs, full readiness surveys and completed campaigns are not run.
+  DEPLOY_TESTS=(
+    tests/ura/test_vllm_grid_cell_recycling.py
+    tests/ura/test_vllm_response_phase_recycling.py
+    tests/experiments/test_vllm_stability_driver.py
+    tests/experiments/test_rr_parallel_campaign.py
+    tests/ura/test_framework_runtime_installer.py::test_distro_repin_script_is_fail_closed_and_sources_canonical_ura_env_last
+  )
+  echo "verification mode: vLLM parallel handoff (${#DEPLOY_TESTS[@]} selectors)"
 else
   echo "verification mode: full suite"
 fi

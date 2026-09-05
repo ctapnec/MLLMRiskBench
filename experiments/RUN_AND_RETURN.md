@@ -2205,6 +2205,16 @@ path. The same Runner behavior applies to commands composed by Rig Web.
 After verified target teardown, the judge performs a fresh hardware-fit
 selection and may use one or both GPUs under its own local configuration. Do
 not reserve an arbitrary fraction of the second GPU during target measurement.
+For parallel single-GPU workers, each target and its later judge remain confined
+to that worker's CUDA-visible card. Two-GPU models require exclusive access.
+
+Deploy this lifecycle change with `distro/repin.sh <commit>
+--vllm-parallel-handoff` after the owned target controllers have stopped and
+their durable prefixes have been retained. This fixed handoff runs only the
+changed process-lifecycle, driver, parallel-controller and deployment-contract
+checks. It does not repeat runtime installations, readiness surveys or the full
+suite. Receipt validation and console restart are unchanged. The re-pin's
+process cleanup must never be run while an unrelated measured worker is live.
 
 Before final Phase 7 analysis, derive the exact current-roster truncation set
 with `python -m experiments.local_campaign.local_truncation_recovery_phase6`,

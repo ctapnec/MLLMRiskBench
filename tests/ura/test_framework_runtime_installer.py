@@ -2693,7 +2693,8 @@ def test_distro_repin_script_is_fail_closed_and_sources_canonical_ura_env_last()
     assert (
         '[[ "$MODE" = "full" || "$MODE" = "--focused-campaign-handoff" '
         '|| "$MODE" = "--profile-recovery-handoff" '
-        '|| "$MODE" = "--analysis-handoff" ]]' in text
+        '|| "$MODE" = "--analysis-handoff" '
+        '|| "$MODE" = "--vllm-parallel-handoff" ]]' in text
     )
     assert "unsupported re-pin verification mode" in text
     analysis_gate = text.split('elif [ "$MODE" = "--analysis-handoff" ]; then', 1)[1].split('\nelse\n', 1)[0]
@@ -2701,6 +2702,17 @@ def test_distro_repin_script_is_fail_closed_and_sources_canonical_ura_env_last()
     assert 'tests/experiments/test_hosted_campaign_budget.py' in analysis_gate
     assert 'tests/experiments/test_local_model_readiness.py' not in analysis_gate
     assert 'test_framework_runtime_installer.py::test_distro_repin_script' in analysis_gate
+    parallel_gate = text.split('elif [ "$MODE" = "--vllm-parallel-handoff" ]; then', 1)[1].split('\nelse\n', 1)[0]
+    for selector in (
+        'tests/ura/test_vllm_grid_cell_recycling.py',
+        'tests/ura/test_vllm_response_phase_recycling.py',
+        'tests/experiments/test_vllm_stability_driver.py',
+        'tests/experiments/test_rr_parallel_campaign.py',
+        'tests/ura/test_framework_runtime_installer.py::test_distro_repin_script_is_fail_closed_and_sources_canonical_ura_env_last',
+    ):
+        assert selector in parallel_gate
+    assert 'test_local_model_readiness.py' not in parallel_gate
+    assert 'distro/install.sh' not in parallel_gate
     # hygiene (anchored module invocations) precedes the clean-env gate
     run_matrix_kill = text.index("pkill -f -- '-m experiments\\.run_matrix( |$)'")
     rig_web_kill = text.index("pkill -f -- '-m experiments\\.rig_web( |$)'")
