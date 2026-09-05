@@ -134,8 +134,10 @@ retained output may be reused in another pair. The judging scenario is 8,192
 input and 256 output tokens per call: at most 2,220 calls cost USD 21.02784.
 The dedicated judge route fixes `max_tokens=512`; reserving 12,288 input
 tokens per complete judgment gives USD 32.96256, inside the USD 33 cap.
-Judge input includes the prompt, retained answer, rubric and any rendered
-media, not just the original target prompt. Different providers tokenize
+Judge input includes the prompt, retained answer and rubric, not just the
+original target prompt. This retained-response judge path sends text context,
+not the original physical images; image input identity remains paired evidence,
+not a claim of independent visual reinspection. Different providers tokenize
 differently: no target token count proves a Haiku input bound. Before spending,
 count the complete local grading requests with Haiku's tokenizer/count API and
 reserve hosted grading headroom. Oversized inputs are not silently truncated;

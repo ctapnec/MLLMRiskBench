@@ -117,6 +117,8 @@ def test_projection_binds_expected_and_maximum_token_costs() -> None:
     assert value["judge"]["maximum_http_attempts"] == 8_880
     assert value["judge"]["selected_pair_cap"] == 1_110
     assert value["judge"]["maximum_input_tokens_per_call"] == 12_288
+    assert value["authority"]["judge_input_includes_prompt_answer_and_rubric"] is True
+    assert value["authority"]["physical_media_sent_to_judge"] is False
     assert all(row["fits_campaign_cap"] for row in value["providers"])
     astra = next(row for row in value["routes"] if row["model"] == "gpt-6-astra")
     assert astra["maximum_cost_microusd"] == 13_788_000

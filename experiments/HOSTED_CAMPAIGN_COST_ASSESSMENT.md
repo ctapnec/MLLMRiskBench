@@ -168,7 +168,9 @@ calls. Its 8,192-input/256-output scenario costs USD 21.02784, and its
 scenario is USD 48.967232 and the maximum is USD 117.804128. Across targets
 and judging, this is 22,626,240 scenario input and 2,170,880 scenario output
 tokens; maximum totals are 31,719,360 input and 7,546,880 output tokens.
-Every judging input includes prompt, answer, rubric and any media. The
+Every judging input includes prompt, answer and rubric. The retained-response
+judge sends text context, not the original physical image; it is not an
+independent visual reinspection. The
 former 4,000-token grading assumption did not reserve enough room for long
 retained answers. Exact Haiku token counts must replace these planning bounds
 before paid execution; no truncation of the answer is permitted to force a fit.
