@@ -120,9 +120,8 @@ def test_postwrite_recovery_is_level1_validated_and_makes_no_model_call() -> Non
     assert '"successful_rows_repeated": 0' in source
 
 
-def test_postwrite_recovery_cli_binds_the_failed_completion() -> None:
-    parsed = recovery.build_postwrite_parser().parse_args(
-        [
+def test_postwrite_recovery_cli_binds_the_failed_completion(monkeypatch) -> None:
+    argv = [
             "--recovery-commit",
             "b" * 40,
             "--project-root",
@@ -142,7 +141,15 @@ def test_postwrite_recovery_cli_binds_the_failed_completion() -> None:
             "--tmux-session",
             "postwrite-session",
         ]
-    )
+    parsed = recovery.build_postwrite_parser().parse_args(argv)
+
+    def recover(args):
+        assert args == parsed
+        return 0
+
+    monkeypatch.setattr(recovery, "run_postwrite_recovery", recover)
+    monkeypatch.setattr(recovery.sys, "argv", ["controller", "postwrite-recover", *argv])
+    assert recovery.main() == 0
 
     assert parsed.failed_completion.name == "completion.json"
     assert recovery.POSTWRITE_SCHEMA.endswith("/3")

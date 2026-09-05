@@ -15,6 +15,7 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import sys
 from typing import Any, Mapping, Sequence
 
 from experiments import run_matrix
@@ -1028,7 +1029,7 @@ def build_postwrite_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    raw_argv = list(os.sys.argv[1:] if argv is None else argv)
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
     if raw_argv[:1] == ["postwrite-recover"]:
         args = build_postwrite_parser().parse_args(raw_argv[1:])
         if HEX64.fullmatch(args.failed_completion_sha256) is None:
