@@ -22,8 +22,10 @@ Execution status, 5 September 2026. Gates 0 through 5 are met. The measured
 primary-model recovery inventory is terminal; the four current-policy GraySwan
 RR lanes remain unfinished. Its existing readiness profile passes 10/10 text
 and 3/5 images with a 4,096-token allowance and 32,768-token effective context,
-but no measured RR grid or output exists. The planned same-base comparison
-therefore still requires its targeted Gate 5 amendment and 7,606 selected
+but its four measured populations had not been executed at the audit. The
+targeted current-profile controller is now running on the rig under `e9f1c33`,
+after zero-download acquisition, a live canary and no-call projection. The
+planned same-base comparison still requires completion of its 7,606 selected
 inputs (3,854 static text, 1,632 static image, 100 R-Judge and 2,020 GPTGeoChat).
 Reuse the sealed checkpoint and admitted profile; do not repeat installation,
 readiness or completed base-model rows. The six-unit, 2,350-row Ollama
@@ -58,6 +60,22 @@ estimate additionally requires matching input and serving conditions. Gate 7
 for the whole local program requires both the historical analysis and this
 supplement, plus the input-alignment audit; a historical-only analysis seal
 does not authorize the hosted follow-on.
+
+Initial RR interpretation check (5 September). The first 11 retained measured
+StrongREJECT outputs all ended at the approved 4,096-token allowance in about
+66 seconds and contained extreme repetition. Their prompts were only 24-76
+tokens, well within the effective 32,768-token context. The retained readiness
+answers are coherent and stopped normally, so these observations do not establish
+a generally nonfunctional model or an undersized-context failure. RR redirects
+harmful representations away from their original direction; meaningful refusal
+or EOS routing is described as future work in the authors'
+[paper](https://arxiv.org/html/2406.04313v4). This mechanism is a possible
+explanation, not a measured causal attribution. Retain the original text,
+token usage and truncation separately from missing output; a nonempty emitted
+response is not itself evidence of coherence. Do not change the admitted
+generation policy after seeing these outputs. The first-arm throughput must
+inform the completion forecast and any prospective checkpoint continuation;
+it does not establish throughput for every remaining arm or modality.
 
 Goal: exercise and, where the admission gates allow, measure the complete
 portfolio without spending provider budget:
