@@ -58,16 +58,20 @@ def retained_continuation_reports(
         or result.get("scope") != "historical_phase7_remaining_report_steps"
         or result.get("report_promotion") is not False
         or result.get("original_status_inventory_checks_passed") is not True
-        or result.get("completed_methods") != list(_STEPS)
         or not _zeros(result, ("target_calls", "judge_calls", "level1_reports_regenerated"))
         or (result_path.parent / "failure.json").exists()
     ):
         raise ValueError("historical continuation has unfinished or unbound steps")
     _binding_path, binding_payload = read(result.get("generated_from"))
     binding = _object(binding_payload)
+    reused_methods = binding.get("reused_completed_methods", [])
+    if reused_methods not in ([], list(_STEPS[:2])):
+        raise ValueError("historical continuation reused method prefix differs")
+    remaining = list(_STEPS[len(reused_methods):])
     if (binding.get("scope") != result["scope"]
         or binding.get("report_promotion") is not False
-        or binding.get("remaining_methods") != list(_STEPS)
+        or binding.get("remaining_methods") != remaining
+        or result.get("completed_methods") != remaining
         or not _zeros(binding, ("target_calls", "judge_calls", "level1_reports_regenerated"))):
         raise ValueError("historical continuation input binding differs")
     for key in (
@@ -115,6 +119,36 @@ def retained_continuation_reports(
         statuses[str(name)] = document
     if set(statuses) != set(states):
         raise ValueError("historical continuation status coverage differs")
+    if reused_methods:
+        # A failed successor can retain successful suite/Level2 producers. Reuse
+        # only this exact prefix, bound to its unchanged failed handoff and inputs.
+        # It is not reported as work performed by the final continuation.
+        _path, previous_failure_bytes = read(binding.get("prior_remaining_failure"))
+        previous_failure = _object(previous_failure_bytes)
+        _path, previous_inputs_bytes = read(binding.get("prior_remaining_inputs"))
+        previous_inputs = _object(previous_inputs_bytes)
+        if (previous_failure.get("generated_from") != binding["prior_remaining_inputs"]
+            or previous_failure.get("completed_methods") != reused_methods
+            or previous_inputs.get("remaining_methods") != list(_STEPS)
+            or any(previous_inputs.get(key) != binding[key] for key in (
+                "prior_payload", "prior_launch", "prior_input_manifest", "exact_metric_view",
+            ))):
+            raise ValueError("reused analysis prefix has different retained authorization")
+        reusable_outputs = binding.get("reused_method_outputs")
+        if not isinstance(reusable_outputs, dict) or set(reusable_outputs) != set(reused_methods):
+            raise ValueError("reused analysis method outputs are incomplete")
+        for method, name in zip(_STEPS[:2], ("suite-summary", "level2-report"), strict=True):
+            rows = reusable_outputs[method]
+            if (not isinstance(rows, list) or not rows
+                or any(raw not in reused for raw in rows)
+                or name in current
+                or name not in previous_failure.get("completed_statuses", [])
+                or statuses[name].get("status") not in ("complete", "complete_with_limitations")):
+                raise ValueError("reused analysis status was not retained as successful")
+            status_paths = [path for path, document in documents.items() if document is statuses[name]]
+            expected = [descriptors[status_paths[0]], *statuses[name]["outputs"]]
+            if rows != expected:
+                raise ValueError("reused analysis producer descriptors differ")
 
     def one(name: str) -> tuple[Mapping[str, Any], dict[str, Any]]:
         outputs = statuses[name]["outputs"]

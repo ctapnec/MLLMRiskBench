@@ -1845,6 +1845,36 @@ def test_kappa_availability_uses_exact_completed_recovery_without_pooling(
         controller._completed_kappa_input_available()
 
 
+@pytest.mark.parametrize("method,module_name", (
+    ("run_judge_sensitivity", "experiments.judge_sensitivity"),
+    ("run_kappa", "experiments.kappa"),
+    ("run_transfer", "experiments.transfer_matrix"),
+))
+def test_phase7_auxiliary_analysis_routes_to_exact_historical_source(
+    phase7: ModuleType, tmp_path: Path, method: str, module_name: str,
+) -> None:
+    runner = _analysis_prerequisite_runner(
+        phase7, measured=("local-qwen3-vl-text-primary-100",)
+    )
+    controller, _processes, _statuses = _analysis_controller(phase7, tmp_path, runner)
+    controller.analysis_runner_view = lambda: tmp_path
+
+    class ProducerReached(Exception):
+        pass
+
+    def producer(name: str, argv: list[str], **kwargs: object) -> None:
+        assert module_name in argv
+        assert argv[argv.index("--historical-code-repository") + 1] == str(
+            phase7.EXPECTED_PROJECT_ROOT
+        )
+        assert argv[argv.index("--results") + 1] == str(tmp_path)
+        raise ProducerReached
+
+    controller.run = producer
+    with pytest.raises(ProducerReached):
+        getattr(controller, method)()
+
+
 def test_phase7_non_estimable_artifacts_reject_mutations_and_bad_evidence(
     phase7: ModuleType,
 ) -> None:

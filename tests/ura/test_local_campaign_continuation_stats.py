@@ -160,3 +160,48 @@ def test_historical_publication_rechecks_exact_copy_bytes(tmp_path: Path, monkey
             publication_root=tmp_path / "published", job_id="must-not-publish",
         )
     assert not (tmp_path / "external-analysis-jobs").exists()
+
+
+@pytest.mark.parametrize("mutation", (None, "wrong-prefix", "wrong-input", "unbound-output", "rerun-status"))
+def test_continuation_reuses_only_bound_successful_suite_and_level2(
+    tmp_path: Path, mutation: str | None,
+) -> None:
+    result, binding = _continuation(tmp_path)
+    value = json.loads(result.read_text())
+    previous_input = _write(tmp_path / "previous-input.json", binding)
+    prefix = list(module._STEPS[:2])
+    previous_failure = _write(tmp_path / "previous-failure.json", {
+        "generated_from": _descriptor(previous_input), "completed_methods": prefix,
+        "completed_statuses": ["suite-summary", "level2-report"],
+    })
+    binding.update({
+        "remaining_methods": list(module._STEPS[2:]),
+        "reused_completed_methods": prefix,
+        "prior_remaining_failure": _descriptor(previous_failure),
+        "prior_remaining_inputs": _descriptor(previous_input),
+        "reused_method_outputs": {},
+    })
+    for method, name in zip(prefix, ("suite-summary", "level2-report"), strict=True):
+        rows = value["new_outputs"].pop(name)
+        binding["reused_method_outputs"][method] = rows
+        binding["reused_outputs"].extend(rows)
+    value["completed_methods"] = list(module._STEPS[2:])
+    if mutation == "wrong-prefix":
+        binding["reused_completed_methods"].pop()
+    elif mutation == "wrong-input":
+        previous = json.loads(previous_input.read_text())
+        previous["prior_input_manifest"] = previous["prior_payload"]
+        _write(previous_input, previous)
+        binding["prior_remaining_inputs"] = _descriptor(previous_input)
+    elif mutation == "unbound-output":
+        binding["reused_outputs"].pop()
+    elif mutation == "rerun-status":
+        value["new_outputs"]["suite-summary"] = binding["reused_method_outputs"][prefix[0]]
+    path = _write(result.parent / "inputs.json", binding)
+    value["generated_from"] = _descriptor(path)
+    _write(result, value)
+    if mutation is None:
+        assert module.retained_continuation_reports(tmp_path, _descriptor(result))
+    else:
+        with pytest.raises(ValueError):
+            module.retained_continuation_reports(tmp_path, _descriptor(result))
