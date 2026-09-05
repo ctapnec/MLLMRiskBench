@@ -219,8 +219,10 @@ def test_publication_keeps_prefix_metrics_separate_and_has_no_paid_authority(tmp
     source = tmp_path / "runs/engineering/parallel/completion.json"
     source_descriptor = write(source, {})
     cells, prefix = [cell(tmp_path, ["new"], run_id="new")], [cell(tmp_path, ["old"], run_id="old")]
-    handoff = {"source_completion": source_descriptor, "prefix": {"post_factum_judging_required_ids": {"lane": []}}}
+    handoff = {"source_completion": source_descriptor, "execution_commit": "a" * 40, "status": "complete",
+               "prefix": {"post_factum_judging_required_ids": {"lane": []}}}
     monkeypatch.setattr(mod, "validate", lambda *a, **kw: (handoff, {}, cells, prefix))
+    monkeypatch.setattr(mod.retained, "_git", lambda *a: "b" * 40)
     monkeypatch.setattr(mod, "export_level1_strata", lambda *a, **kw: {})
     populations = []
     def report(rows, native):
@@ -231,9 +233,20 @@ def test_publication_keeps_prefix_metrics_separate_and_has_no_paid_authority(tmp
     published = []
     monkeypatch.setattr(mod, "publish_external_analysis_registration", lambda *a, **kw: published.append(kw))
     assert mod.main(["--completion", str(source), "--work-root", str(tmp_path),
-                     "--project-root", str(tmp_path), "--out", str(output)]) == 0
+                     "--project-root", str(tmp_path), "--out", str(output),
+                     "--tmux-socket", "rr-analysis", "--tmux-session", "rr-analysis"]) == 0
     assert populations == [["new"], ["old"]]
     inputs = json.loads((output / "retained-inputs.json").read_text())
     assert inputs["input_count"] == 2 and inputs["paid_calls_authorized"] is False
     assert len(published) == 1 and len(published[0]["reports"]) == 2
+    assert published[0]["job_id"] == "parallel-analysis"
     assert "not promoted" in published[0]["explicit_limitations"]["prefix_scope"]
+    job = tmp_path / "runs/engineering/parallel-analysis"
+    marker = json.loads((job / "ENGINEERING_ONLY.json").read_text())
+    assert marker["release_commit"] == "b" * 40
+    assert marker["model_tasks"] == [] and marker["hosted_calls_allowed"] is False
+    assert not (job / "model-execution.jsonl").exists()
+    terminal = json.loads((job / "completion.json").read_text())
+    assert terminal["target_calls"] == terminal["judge_calls"] == 0
+    events = [json.loads(line) for line in (job / "task-log.jsonl").read_text().splitlines()]
+    assert events[-1]["event"] == "campaign_end" and events[-1]["status"] == "passed"

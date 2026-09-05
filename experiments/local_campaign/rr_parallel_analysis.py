@@ -19,6 +19,7 @@ from experiments import retained_artifact_reader as retained
 from experiments.hosted_retained_inputs import candidates_from_cells
 from experiments.level2_report import build_level2_report
 from experiments.local_campaign import rr_parallel_campaign as campaign
+from experiments.local_campaign.console_events import finish_child_controller, start_child_controller
 from experiments.local_campaign.rr_profiled_analysis import export_level1_strata
 from experiments.local_campaign.vllm_input_recovery_phase6 import _validate_metric_result
 from experiments.local_campaign.vllm_stability_phase6 import (
@@ -277,6 +278,7 @@ def validate(completion_path: Path, *, work: Path, project: Path) -> tuple[dict,
         raise ValueError("RR supplement has duplicate cells or mixed source conformance")
     handoff = {"schema": SCHEMA, "status": "complete" if prefix["judging_complete"] else "complete_with_pending_prefix_judging",
                "source_completion": _descriptor(path), "interruption": launch["interruption"],
+               "execution_commit": launch["expected_commit"],
                "coverage": measured_coverage, "prefix": prefix,
                "completed_grid_roots": [item["root"] for item in validated.values()],
                "source_validated_prefix_markers": [_descriptor(cell["complete_path"]) for cell in prefix_cells],
@@ -285,17 +287,8 @@ def validate(completion_path: Path, *, work: Path, project: Path) -> tuple[dict,
     return handoff, validated, cells, prefix_cells
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("completion", "work-root", "project-root", "out"):
-        parser.add_argument(f"--{name}", type=Path, required=True)
-    args = parser.parse_args(argv)
-    work, project = args.work_root.resolve(strict=True), args.project_root.resolve(strict=True)
-    handoff, units, cells, prefix_cells = validate(args.completion, work=work, project=project)
-    output = args.out
-    if not output.is_absolute() or output.exists() or not output.is_relative_to(work / "runs"):
-        raise ValueError("RR parallel analysis needs a fresh output directory")
-    output.mkdir(parents=True, mode=0o700)
+def _publish(output: Path, *, handoff: dict, units: dict, cells: list[dict],
+             prefix_cells: list[dict], project: Path, work: Path, job_id: str) -> None:
     level1 = export_level1_strata(units, output=output, project=project, continuation=True)
     reports = [ExternalAnalysisReportSpec(Path(item["path"]), "level1", f"RR parallel input coverage - {revision[:12]}")
                for revision, item in level1.items()]
@@ -319,12 +312,46 @@ def main(argv: Sequence[str] | None = None) -> int:
                                               "retained_inputs": _descriptor(input_path)})
     pending = sum(map(len, handoff["prefix"]["post_factum_judging_required_ids"].values()))
     publish_external_analysis_registration(
-        work / "runs", job_id=args.completion.parent.name, analysis_root=output,
+        work / "runs", job_id=job_id, analysis_root=output,
         work_label="GraySwan RR - two-GPU supplement", completion_status="complete_with_explicit_limitations",
         explicit_limitations={"prefix_scope": "Old closed cells are independently source-validated; their interrupted parent grid is not promoted.",
                               "prefix_judging": f"{pending} retained prefix responses still need post-factum judging; no old judgment is rerun automatically.",
                               "comparison_scope": "Historical 144 conditions and execution revisions remain separate; a paired contrast requires exact matching."},
         reports=reports)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    for name in ("completion", "work-root", "project-root", "out"):
+        parser.add_argument(f"--{name}", type=Path, required=True)
+    for name in ("tmux-socket", "tmux-session"):
+        parser.add_argument(f"--{name}", required=True)
+    args = parser.parse_args(argv)
+    work, project = args.work_root.resolve(strict=True), args.project_root.resolve(strict=True)
+    handoff, units, cells, prefix_cells = validate(args.completion, work=work, project=project)
+    handoff["analysis_commit"] = retained._git(project, "rev-parse", "HEAD")
+    output = args.out
+    if not output.is_absolute() or output.exists() or not output.is_relative_to(work / "runs"):
+        raise ValueError("RR parallel analysis needs a fresh output directory")
+    control = work / "runs/engineering" / (args.completion.parent.name + "-analysis")
+    control.mkdir(mode=0o700)
+    output.mkdir(parents=True, mode=0o700)
+    # The measured parent has two registered workers, but no fake parent job.
+    # Register this actual analysis process so Stats can discover its reports.
+    start_child_controller(work_root=work, control_root=control, campaign_id=control.name,
+                           release_commit=handoff["analysis_commit"], evidence_class="rr_analysis_read_only",
+                           hard_stop_hours=6, tmux_socket=args.tmux_socket, tmux_session=args.tmux_session,
+                           target_execution=False)
+    code = 1
+    try:
+        _publish(output, handoff=handoff, units=units, cells=cells, prefix_cells=prefix_cells,
+                 project=project, work=work, job_id=control.name)
+        _create_json(control / "completion.json", {"schema": SCHEMA, "status": handoff["status"],
+                     "analysis_completion": _descriptor(output / "completion.json"),
+                     "target_calls": 0, "judge_calls": 0})
+        code = 0
+    finally:
+        finish_child_controller(work_root=work, control_root=control, exit_code=code)
     return 0
 
 
