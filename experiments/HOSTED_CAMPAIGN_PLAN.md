@@ -148,6 +148,17 @@ uses USD 30.82512 of its USD 32 cap and Anthropic USD 70.53056 of USD 72.
 The additional USD 0.03744 between calculated Haiku reservation and its USD 33
 cap is retained headroom, not permission for extra judgments or content retries.
 
+The monetary ceiling applies to physical HTTP attempts, not only successful
+logical calls. Before each initial attempt or retry, reserve its complete
+request-input bound and maximum output cost against the same provider ceiling.
+Keep the remaining selected first attempts and the Haiku partition funded.
+Retry exposure must fit available contingency or savings already established
+by settled usage; do not assume an HTTP error was unbilled. An attempt with
+unknown usage keeps its conservative reservation until reconciled. Insufficient
+funds stop before the next HTTP attempt, even when the configured three retries
+have not been exhausted. No outcome-based replacement input or hidden extra
+budget is permitted. These rules apply to target calls and Haiku alike.
+
 Haiku receives one matched cohort of at most 1,110 local/hosted output pairs.
 That is at most 1,110 selected local outputs and 1,110 selected hosted outputs
 from their matched-input intersection. The pair limit equals the entire hosted
@@ -192,6 +203,14 @@ Ministral image lane validates without a target or judge call (RA-313).
 Deployment, validation of the final Phase 7 union and the exact retained-input
 replay handoff remain prerequisites. Do not rewrite version fields or
 regenerate target responses to make an analysis reader accept them.
+
+The shared adapter now exposes a scoped pre-attempt admission hook for the
+owning controller's durable reservation. Its focused rig tests prove admission
+before every physical retry and no retry of reservation failures. This hook
+alone does not enforce dollar ceilings: the complete target/Haiku monetary
+ledger and its paid execution integration must pass no-call and interrupted
+checkpoint tests before A2. Existing logical-call or HTTP-count limits are not
+substitutes for that monetary admission.
 
 Validate the sealed local Phase 7 inventory, its project/source receipts,
 selection and rendering evidence, prepared attacks, and current provider

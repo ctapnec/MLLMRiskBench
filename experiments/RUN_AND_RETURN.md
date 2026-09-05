@@ -2061,6 +2061,16 @@ and exact disjoint selected-input union before claiming completion. A retry
 that has already emitted measured responses cannot be restarted as fresh
 preparation by this path.
 
+Hosted controllers may use `ura.targets.api.provider_attempt_admission` to
+reserve each physical SDK request, including HTTP retries. The scoped callback
+receives the provider, final request mapping and one-based attempt number; it
+must not mutate that request. A reservation exception prevents the SDK call
+and is not itself retried. The controller still owns exact pricing, durable
+dollar reservations, unknown-usage accounting and settlement; entering this
+scope alone does not implement a monetary budget. Without an explicit scope,
+existing adapter behavior is unchanged. Each executing thread enters its own
+scope.
+
 In the Build tab, one large role-aware model-picker modal serves both target and
 LLM-judge selection. Choose hosted or local, then use the hosted provider filter
 (`All` by default) or the local filtering surface. Target mode binds one or more
