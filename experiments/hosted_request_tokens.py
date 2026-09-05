@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
+from typing import Any
 
 from ura.targets.api import (
     AnthropicTarget, OpenAICompatibleTarget, OpenAIResponsesTarget, OpenAITarget,
@@ -147,7 +148,7 @@ def count_request(target, request: Mapping, *, allow_network: bool = False) -> d
             response = client.messages.count_tokens(**counted)
             tokens = _field(response, "input_tokens")
         elif method_id == "kimi_estimate_token_count_v1":
-            response = client.post("/tokenizers/estimate-token-count", cast_to=dict, body=counted)
+            response = client.post("/tokenizers/estimate-token-count", cast_to=dict[str, Any], body=counted)
             if _field(response, "error") is not None:
                 raise ValueError("Kimi token counter returned an error")
             tokens = _field(_field(response, "data"), "total_tokens")

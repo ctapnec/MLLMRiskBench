@@ -4,6 +4,7 @@ import json
 import runpy
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -28,7 +29,7 @@ def _client(target, monkeypatch, result=None, error=None):
         return result if result is not None else SimpleNamespace(object="response.input_tokens", input_tokens=731)
 
     def post(path, *, cast_to, body):
-        assert path == "/tokenizers/estimate-token-count" and cast_to is dict
+        assert path == "/tokenizers/estimate-token-count" and cast_to == dict[str, Any]
         observed.append(copy.deepcopy(body))
         return result if result is not None else {"data": {"total_tokens": 731}}
 
