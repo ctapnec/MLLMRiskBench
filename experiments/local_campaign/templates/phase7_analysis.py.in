@@ -1872,6 +1872,20 @@ def _regular_tree_files(root: Path, *, label: str) -> dict[str, Path]:
     return result
 
 
+def _runner_root_files(root: Path, *, label: str) -> dict[str, Path]:
+    """Keep one Runner root separate from nested, independently retained runs."""
+    files = _regular_tree_files(root, label=label)
+    nested = {
+        path.parent for path in files.values()
+        if path.parent != root
+        and path.name.endswith((".grid.json", ".request-envelope.json"))
+    }
+    return {
+        relative: path for relative, path in files.items()
+        if not any(parent in path.parents for parent in nested)
+    }
+
+
 def _validate_independent_copy_inventory(
     inventory: object,
     *,
@@ -2115,7 +2129,7 @@ def validate_lifecycle_runner_input_view_receipt(
             root.relative_to(source_root)
         except ValueError as exc:
             raise Phase7Error("Lifecycle Runner root escaped the Runner store") from exc
-        for _relative, path in _regular_tree_files(
+        for _relative, path in _runner_root_files(
             root, label=f"Lifecycle Runner root {name}"
         ).items():
             relative = path.relative_to(source_root).as_posix()
@@ -11494,8 +11508,8 @@ def validate_runner_inventory(
         if root != expected_lane_root(lane).resolve():
             raise Phase7Error(f"{lane}: failed lifecycle runner root is not canonical")
         lifecycle_roots[lane] = str(root)
-        files: list[Path] = []
-        for path in sorted(root.rglob("*")):
+        files = list(_runner_root_files(root, label=f"{lane} failed lifecycle").values())
+        for path in files:
             if path.is_symlink():
                 raise Phase7Error(f"{lane}: failed Runner lifecycle contains a symlink")
             if path.is_dir():
@@ -11506,9 +11520,8 @@ def validate_runner_inventory(
                 )
             if path.name.endswith((".grid.lock", ".cell.lock")):
                 raise Phase7Error(f"{lane}: failed Runner lifecycle is still running")
-            files.append(path)
         failed_runner_artifacts[lane] = [descriptor(path) for path in files]
-        failed_grid_paths = sorted(root.rglob("*.grid.json"))
+        failed_grid_paths = sorted(root.glob("*.grid.json"))
         if len(failed_grid_paths) > 1:
             raise Phase7Error(f"{lane}: failed lifecycle contains multiple grids")
         grid_statuses: list[str] = []
@@ -11557,7 +11570,7 @@ def validate_runner_inventory(
         lifecycle_states[lane] = (
             "partial" if "partial" in grid_statuses else "failed"
         )
-        for plan_path in sorted(root.rglob("*.eligibility.json")):
+        for plan_path in sorted(root.glob("*.eligibility.json")):
             plan_desc = descriptor(plan_path)
             lifecycle_plan_by_path.setdefault(str(plan_path.resolve()), plan_desc)
 
@@ -11638,8 +11651,12 @@ def validate_runner_inventory(
             "runner_eligibility_artifacts": "*.eligibility.json",
             "runner_error_artifacts": "*.error.json",
         }
+        owned_files = (
+            list(_runner_root_files(root, label=f"{lane} lifecycle artifacts").values())
+            if root is not None else []
+        )
         grouped_paths = {
-            field: sorted(root.rglob(pattern)) if root is not None else []
+            field: sorted(path for path in owned_files if path.match(pattern))
             for field, pattern in patterns.items()
         }
         critical_paths = {
@@ -13800,16 +13817,16 @@ class AnalysisController:
         revisions: set[str] = set()
         sources: set[str] = set()
         candidates: list[Mapping[str, Any]] = []
-        for path in sorted(root.rglob("*.grid.json")):
+        for path in sorted(root.glob("*.grid.json")):
             request = strict_object(path).get("request")
             if isinstance(request, dict):
                 candidates.append(request)
-        for path in sorted(root.rglob("*.request-envelope.json")):
+        for path in sorted(root.glob("*.request-envelope.json")):
             envelope = strict_object(path)
             for candidate in (envelope.get("request"), envelope.get("bindings")):
                 if isinstance(candidate, dict):
                     candidates.append(candidate)
-        for path in sorted(root.rglob("*.eligibility.json")):
+        for path in sorted(root.glob("*.eligibility.json")):
             bindings = strict_object(path).get("bindings")
             if isinstance(bindings, dict):
                 candidates.append(bindings)
@@ -14718,7 +14735,7 @@ class AnalysisController:
         sources: dict[str, Path] = {}
         for name, raw_root in roots.items():
             lane_root = checked_dir(raw_root, label=f"authorized lifecycle root {name}")
-            for _relative, source in _regular_tree_files(
+            for _relative, source in _runner_root_files(
                 lane_root, label=f"authorized lifecycle root {name}"
             ).items():
                 relative = source.relative_to(source_root).as_posix()
@@ -15028,7 +15045,7 @@ class AnalysisController:
             sources: dict[str, Path] = {}
             for name, raw_root in roots.items():
                 root = checked_dir(raw_root, label=f"Level 1 stratum root {name}")
-                for _relative, path in _regular_tree_files(
+                for _relative, path in _runner_root_files(
                     root, label=f"Level 1 stratum root {name}"
                 ).items():
                     relative = path.relative_to(source_root).as_posix()

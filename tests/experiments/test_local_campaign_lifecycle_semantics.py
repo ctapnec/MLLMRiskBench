@@ -1252,6 +1252,36 @@ def test_phase7_transfer_index_accepts_single_and_faceted_outputs(
         phase7.validated_transfer_index_facets(collision)
 
 
+def test_lifecycle_root_does_not_absorb_nested_recovery(
+    phase7: ModuleType, tmp_path: Path
+) -> None:
+    original = tmp_path / "original"
+    recovery = original / "recovery"
+    recovery.mkdir(parents=True)
+    support = original / "model-acquisition"
+    support.mkdir()
+    (support / "plan.json").write_text("{}", encoding="utf-8")
+    for root, revision in ((original, "a" * 64), (recovery, "b" * 64)):
+        (root / "cell.grid.json").write_text(json.dumps({"request": {
+            "project_revision": {"sha256": revision},
+            "source_conformance_artifact": {"sha256": "c" * 64},
+        }}), encoding="utf-8")
+        (root / "cell.responses.checkpoint.jsonl").write_text("{}\n", encoding="utf-8")
+    assert set(phase7._runner_root_files(original, label="original")) == {
+        "cell.grid.json", "cell.responses.checkpoint.jsonl", "model-acquisition/plan.json",
+    }
+    assert set(phase7._runner_root_files(recovery, label="recovery")) == {
+        "cell.grid.json", "cell.responses.checkpoint.jsonl",
+    }
+    controller = object.__new__(phase7.AnalysisController)
+    assert controller._lifecycle_root_stratum(str(original), label="original") == (
+        "a" * 64, "c" * 64,
+    )
+    assert controller._lifecycle_root_stratum(str(recovery), label="recovery") == (
+        "b" * 64, "c" * 64,
+    )
+
+
 def _runner_view_controller(
     phase7: ModuleType,
     tmp_path: Path,
