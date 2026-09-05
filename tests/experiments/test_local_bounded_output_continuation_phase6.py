@@ -9,6 +9,7 @@ import pytest
 from experiments.local_campaign import local_bounded_output_cuda_recovery_phase6
 from experiments.local_campaign.local_bounded_output_continuation_phase6 import (
     SCHEMA,
+    _expand_compact_retained_result,
     _validate_invalid_result_root,
     bounded_local_config,
     profiled_bounded_local_config,
@@ -219,6 +220,76 @@ def test_cuda_recovery_selects_only_the_unfinished_tail_and_reuses_canaries() ->
     assert "durable_ids != eligible_ids[:EXPECTED_PARTIAL_ROWS]" in partition
     assert 'validated_canary_root=(prior_canary if prior_canary.is_dir() else None)' in execution
     assert '"successful_rows_repeated": 0' in execution
+
+
+def test_compact_retained_result_expands_the_real_schema_2_shape() -> None:
+    compact = {
+        "attempted": 611,
+        "level1": {"path": "/sealed/level1.json", "sha256": "a" * 64, "bytes": 1},
+        "missing": 0,
+        "result_root": "/sealed/result",
+        "selected_records": 611,
+        "state": {"path": "/sealed/state.json", "sha256": "b" * 64, "bytes": 1},
+        "successful": 611,
+    }
+
+    expanded = _expand_compact_retained_result(
+        compact,
+        unit_id="local-hardware-fit-003",
+        source_lane="local-ollama-ministral-text-primary-100",
+        corpus=None,
+        selected_records=611,
+    )
+
+    assert expanded["status"] == "complete"
+    assert expanded["target_answer_retries"] == 1
+    assert expanded["target_call_cap"] == 1_222
+    assert expanded["target_attempts"] == 611
+    assert expanded["successful_target_generations"] == 611
+    assert expanded["missing_responses"] == 0
+    assert expanded["state"] is compact["state"]
+    assert expanded["level1"] is compact["level1"]
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        {"extra": True},
+        {"attempted": 610},
+        {"successful": 610},
+        {"missing": True},
+        {"selected_records": 610},
+    ),
+)
+def test_compact_retained_result_rejects_contract_and_accounting_mutations(
+    mutation: dict[str, object],
+) -> None:
+    compact: dict[str, object] = {
+        "attempted": 611,
+        "level1": {"path": "/sealed/level1.json", "sha256": "a" * 64, "bytes": 1},
+        "missing": 0,
+        "result_root": "/sealed/result",
+        "selected_records": 611,
+        "state": {"path": "/sealed/state.json", "sha256": "b" * 64, "bytes": 1},
+        "successful": 611,
+    }
+    compact.update(mutation)
+
+    with pytest.raises(ValueError, match="compact retained result"):
+        _expand_compact_retained_result(
+            compact,
+            unit_id="local-hardware-fit-003",
+            source_lane="local-ollama-ministral-text-primary-100",
+            corpus=None,
+            selected_records=611,
+        )
+
+
+def test_cuda_completion_expands_compact_middle_stratum_before_validation() -> None:
+    validation = inspect.getsource(validate_cuda_completion)
+
+    assert "_expand_compact_retained_result(" in validation
+    assert "middle_results[unit_id]" in validation
 
 
 def test_cuda_recovery_accepts_only_exact_pre_state_evidence(tmp_path: Path) -> None:

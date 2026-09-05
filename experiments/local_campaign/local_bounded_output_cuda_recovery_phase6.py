@@ -35,6 +35,7 @@ from experiments.local_campaign.local_bounded_output_continuation_phase6 import 
     PARTIAL_INDEX as BOUNDED_PARTIAL_INDEX,
     SNAPSHOT_SCHEMA as BOUNDED_SNAPSHOT_SCHEMA,
     STATE_SCHEMA as PRIOR_STATE_SCHEMA,
+    _expand_compact_retained_result,
 )
 from experiments.local_campaign.local_truncation_recovery_continuation_phase6 import (
     SNAPSHOT_SCHEMA as RETAINED_SNAPSHOT_SCHEMA,
@@ -637,7 +638,17 @@ def validate_completion(completion_path: Path, *, runner_root: Path) -> dict[str
                 retained_snapshot_path, label="base retained snapshot"
             )
         elif index < 20:
-            result = middle_results[unit_id]
+            retained_corpora = item["recovery_selection"]["corpora"]
+            retained_corpus = (
+                next(iter(retained_corpora)) if len(retained_corpora) == 1 else None
+            )
+            result = _expand_compact_retained_result(
+                middle_results[unit_id],
+                unit_id=unit_id,
+                source_lane=str(item["source_lane"]),
+                corpus=retained_corpus,
+                selected_records=int(item["summary"]["recovery_records"]),
+            )
             physical_root = middle_root
             state_schema = MIDDLE_STATE_SCHEMA
             evidence_completion = _descriptor(

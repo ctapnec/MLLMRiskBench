@@ -52,6 +52,7 @@ from experiments.local_campaign.local_truncation_recovery_phase6 import (
 )
 from experiments.local_campaign.vllm_context_recovery_phase6 import _response_rows
 from experiments.local_campaign.vllm_input_recovery_phase6 import (
+    RESULT_FIELDS,
     _validate_metric_result,
 )
 from experiments.local_campaign.vllm_stability_phase6 import (
@@ -92,6 +93,63 @@ EXPECTED_RECOVERY_ROWS = 170
 EXPECTED_TOTAL_ROWS = 4_463
 _HEX40 = re.compile(r"[0-9a-f]{40}\Z")
 _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
+COMPACT_RETAINED_RESULT_FIELDS = {
+    "attempted",
+    "level1",
+    "missing",
+    "result_root",
+    "selected_records",
+    "state",
+    "successful",
+}
+
+
+def _expand_compact_retained_result(
+    result: object,
+    *,
+    unit_id: str,
+    source_lane: str,
+    corpus: str | None,
+    selected_records: int,
+) -> dict[str, Any]:
+    """Restore the exact rich view of a schema-/2 retained result row."""
+
+    if not isinstance(result, dict) or set(result) != COMPACT_RETAINED_RESULT_FIELDS:
+        raise ValueError(f"{unit_id} compact retained result contract changed")
+    selected = result.get("selected_records")
+    attempted = result.get("attempted")
+    successful = result.get("successful")
+    missing = result.get("missing")
+    if (
+        any(
+            isinstance(value, bool) or not isinstance(value, int)
+            for value in (selected, attempted, successful, missing)
+        )
+        or selected != selected_records
+        or attempted != selected_records
+        or successful < 0
+        or missing < 0
+        or successful + missing != attempted
+    ):
+        raise ValueError(f"{unit_id} compact retained result accounting changed")
+    expanded = {
+        "status": "complete",
+        "unit_id": unit_id,
+        "source_lane": source_lane,
+        "corpus": corpus,
+        "selected_records": selected,
+        "target_answer_retries": 1,
+        "target_call_cap": selected_records * 2,
+        "target_attempts": attempted,
+        "successful_target_generations": successful,
+        "missing_responses": missing,
+        "result_root": result["result_root"],
+        "state": result["state"],
+        "level1": result["level1"],
+    }
+    if set(expanded) != RESULT_FIELDS:
+        raise AssertionError("expanded retained result field inventory changed")
+    return expanded
 
 
 def _validate_prior_terminal(prior_root: Path) -> dict[str, Any]:
@@ -1074,7 +1132,17 @@ def validate_completion(completion_path: Path, *, runner_root: Path) -> dict[str
                 retained_snapshot_path, label="retained hardware-fit snapshot"
             )
         elif index < 20:
-            result = middle_results[unit_id]
+            recovery_corpora = item["recovery_selection"]["corpora"]
+            retained_corpus = (
+                next(iter(recovery_corpora)) if len(recovery_corpora) == 1 else None
+            )
+            result = _expand_compact_retained_result(
+                middle_results[unit_id],
+                unit_id=unit_id,
+                source_lane=str(item["source_lane"]),
+                corpus=retained_corpus,
+                selected_records=int(item["summary"]["recovery_records"]),
+            )
             physical_root = prior_root
             state_schema = PRIOR_STATE_SCHEMA
             evidence_completion = _descriptor(snapshot_path, label="bounded-output interruption")
