@@ -1456,6 +1456,40 @@ def test_budget_fable_and_sol_send_lower_allowances_without_mutating_legacy(limi
     assert OpenAIResponsesTarget().max_output_tokens == 25_000
 
 
+def test_kimi_explicit_reasoning_effort_reaches_request_and_evidence() -> None:
+    target = build_api_target("kimi:kimi-k3", config={
+        "modalities": ["text", "image"], "max_tokens": 8192,
+        "temperature": None, "reasoning_effort": "low",
+    })
+    result = _chat_result()
+    result.model = "kimi-k3"
+    captured = {}
+
+    def create(**kwargs):
+        captured.update(kwargs)
+        return result
+
+    target._client = SimpleNamespace(chat=SimpleNamespace(
+        completions=SimpleNamespace(create=create),
+    ))
+    response = target.generate([DialogTurn(role="user", content="fixture")])
+    assert captured["reasoning_effort"] == "low"
+    assert captured["max_tokens"] == 8192
+    assert response.raw["requested_reasoning_effort"] == "low"
+
+
+@pytest.mark.parametrize("spec,effort", [
+    ("kimi:kimi-k3", "medium"), ("kimi:kimi-k3", None),
+    ("kimi:kimi-k2", "low"), ("anthropic:claude-haiku-4-5-20251001", "low"),
+])
+def test_kimi_reasoning_control_is_not_sent_to_unsupported_routes(spec, effort) -> None:
+    with pytest.raises(ValueError, match="reasoning_effort"):
+        build_api_target(spec, config={
+            "modalities": ["text"], "max_tokens": 8192,
+            "temperature": None, "reasoning_effort": effort,
+        })
+
+
 def test_generic_openai_chat_terminal_states_fail_closed() -> None:
     target = OpenAITarget("gpt-generic")
     _install_chat_fixture(target, _chat_result())

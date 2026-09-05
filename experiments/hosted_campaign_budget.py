@@ -119,6 +119,7 @@ ROUTES: tuple[dict[str, Any], ...] = (
         "model": "kimi-k3",
         "call_cap": 80,
         "max_output_tokens": 8_192,
+        "reasoning_effort": "low",
     },
     {
         "label": "DeepSeek V4-Pro",
@@ -257,6 +258,8 @@ def _route_config(route: Mapping[str, Any], api_config: Mapping[str, Any]) -> No
         config.get("max_tokens") != route["max_output_tokens"]
     ):
         raise ValueError(f"API target max_tokens changed for {route['spec']!r}")
+    if "reasoning_effort" in route and config.get("reasoning_effort") != route["reasoning_effort"]:
+        raise ValueError(f"API target reasoning_effort changed for {route['spec']!r}")
 
 
 def _priced_row(
@@ -291,6 +294,8 @@ def _priced_row(
         "target_spec": route["spec"],
         "provider": route["provider"],
         "model": route["model"],
+        **({"reasoning_effort": route["reasoning_effort"]}
+           if "reasoning_effort" in route else {}),
         "paid_call_cap": calls,
         "paid_call_cap_includes_readiness_and_canaries": True,
         "answer_retries": 0,

@@ -1671,6 +1671,9 @@ not their retained 25,000-token identities. Every selected entry permits one tar
 framework labels are provenance and no paid adaptive trajectory is regenerated. DeepSeek
 may run only in the reviewed off-peak price window. Google and other candidate
 routes are outside this funded amendment.
+Kimi K3 fixes `reasoning_effort=low` in the exact registry and request instead
+of inheriting its provider-default max effort. The no-call projection rejects
+that route if the explicit setting is absent or changed.
 
 Before any paid call, derive each exact no-call population independently and
 measure the provider-token canary. Every paid readiness or canary request

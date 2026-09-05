@@ -92,6 +92,9 @@ These are budget-feasible starting ceilings, not proven optimal token settings.
 Haiku has a non-thinking 2,048-token target allowance; Sonnet/Luna start at
 4,096; Opus/Terra get 6,144; the six 8,192-token conditions reserve more room
 for reasoning. Fable remains high-effort adaptive and Sol remains Pro/medium.
+Kimi K3 explicitly uses `reasoning_effort=low`, not its provider-default `max`;
+it still reasons. This budget-conditioned setting is reported separately from
+any default/max-effort result. [Kimi reasoning controls](https://platform.kimi.ai/docs/guide/use-reasoning-effort).
 Other selected reasoning controls remain those in the exact registry. No
 reasoning mode is silently disabled to increase the apparent response rate.
 The allowance is a ceiling, never a request to fill it. Token and effort

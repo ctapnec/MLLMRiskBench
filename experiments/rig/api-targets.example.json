@@ -99,7 +99,8 @@
   "kimi:kimi-k3": {
     "modalities": ["text", "image"],
     "max_tokens": 8192,
-    "temperature": null
+    "temperature": null,
+    "reasoning_effort": "low"
   },
   "kimi:kimi-k2": {
     "modalities": ["text"],

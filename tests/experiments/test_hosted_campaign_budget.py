@@ -15,6 +15,8 @@ def _api_config() -> dict:
         result[route["spec"]] = {"modalities": ["text"]}
         if not route.get("inherent_config"):
             result[route["spec"]]["max_tokens"] = route["max_output_tokens"]
+        if "reasoning_effort" in route:
+            result[route["spec"]]["reasoning_effort"] = route["reasoning_effort"]
     return result
 
 
@@ -187,6 +189,13 @@ def test_missing_or_non_usd_price_blocks_projection() -> None:
 
     with pytest.raises(ValueError, match="must be in USD"):
         _projection(pricing=pricing)
+
+
+def test_kimi_implicit_max_reasoning_is_not_the_budgeted_condition() -> None:
+    config = _api_config()
+    del config["kimi:kimi-k3"]["reasoning_effort"]
+    with pytest.raises(ValueError, match="reasoning_effort changed"):
+        _projection(api_config=config)
 
 
 def test_eighty_percent_budget_failure_is_explicit() -> None:

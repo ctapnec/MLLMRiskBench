@@ -74,6 +74,10 @@ These are starting allowances requiring a technical canary, not calibrated
 optimal settings. Opus and Sonnet also
 use the adapter's explicit adaptive-thinking contract at `effort: high`. Change
 a condition only deliberately and retain the changed config digest with the run.
+Kimi K3 has `reasoning_effort: low`; the adapter sends and records that field
+instead of inheriting K3's default max effort. This optional field is currently
+supported only on the documented Kimi K3 route with low/high/max values.
+Omitted fields preserve historical configs; no unsupported provider receives it.
 
 The fixed Fable and Sol conditions are present as modalities-only rows: their
 sampling and reasoning controls are fixed in the spec string and implemented by

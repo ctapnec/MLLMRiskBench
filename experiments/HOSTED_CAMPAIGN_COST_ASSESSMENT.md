@@ -133,6 +133,10 @@ provider-counted input tokens per selected entry. Exact tokenization must
 confirm that bound or the prospective allocation must be reduced and resealed.
 The model-specific ceilings and pilot procedure are in HOSTED_CAMPAIGN_PLAN.md
 A2; a 4,096-token ceiling is no longer imposed on nearly every model.
+Kimi K3 uses explicit low reasoning effort instead of its default max effort;
+its larger output ceiling remains available for complete final answers. This
+is a budget-conditioned comparison, not an equal-compute model ranking.
+[Kimi reasoning controls](https://platform.kimi.ai/docs/guide/use-reasoning-effort).
 
 OpenAI maximum reservations additionally reserve 1.25 times the ordinary input
 rate, or a higher published cache-write rate. Astra lists USD 10 input, USD 50

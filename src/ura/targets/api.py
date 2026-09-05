@@ -1620,7 +1620,14 @@ class OpenAITarget(BaseTarget):
         media_roots: Optional[Iterable[str | Path]] = None,
         supports_seed: bool = True,
         modality_support: Optional[Iterable[str]] = None,
+        reasoning_effort: str | None = None,
     ) -> None:
+        if reasoning_effort is not None and (
+            canonical_provider_name(provider) != "kimi" or model != "kimi-k3"
+            or reasoning_effort not in {"low", "high", "max"}
+        ):
+            raise ValueError("reasoning_effort currently supports Kimi K3 low/high/max only")
+        self.reasoning_effort = reasoning_effort
         self.model = model
         self.provider = provider
         if canonical_provider_name(provider) == "openai":
@@ -1726,6 +1733,8 @@ class OpenAITarget(BaseTarget):
             "messages": messages,
             token_key: self.max_tokens,
         }
+        if self.reasoning_effort is not None:
+            request["reasoning_effort"] = self.reasoning_effort
         if self.temperature is not None:
             request["temperature"] = self.temperature
         if seed is not None and self.supports_seed:
@@ -1843,6 +1852,8 @@ class OpenAITarget(BaseTarget):
                 "requested_model": self.model,
                 "resolved_model": resolved_model,
                 "system_fingerprint": _provider_field(resp, "system_fingerprint"),
+                **({"requested_reasoning_effort": self.reasoning_effort}
+                   if self.reasoning_effort is not None else {}),
                 "finish_reason": finish_reason,
                 "requested_seed": seed,
                 "target_sampling_control": (
@@ -2500,6 +2511,7 @@ class OpenAICompatibleTarget(OpenAITarget):
         media_roots: Optional[Iterable[str | Path]] = None,
         supports_seed: bool = False,
         modality_support: Optional[Iterable[str]] = None,
+        reasoning_effort: str | None = None,
     ) -> None:
         super().__init__(
             model,
@@ -2511,6 +2523,7 @@ class OpenAICompatibleTarget(OpenAITarget):
             max_retries=max_retries,
             media_roots=media_roots,
             supports_seed=supports_seed,
+            reasoning_effort=reasoning_effort,
             modality_support=(
                 modality_support or _adapter_modalities(provider, model)
             ),
@@ -3090,7 +3103,7 @@ def normalize_api_target_config(
         raise ValueError(f"API target {spec!r} uses inherent config or is unregistered")
     allowed = {
         "modalities", "base_url", "max_tokens", "temperature",
-        "thinking", "effort",
+        "thinking", "effort", "reasoning_effort",
     }
     if set(config) - allowed:
         raise ValueError(f"API config {spec!r} contains unsupported execution fields")
@@ -3127,6 +3140,13 @@ def normalize_api_target_config(
         )
     modalities = _validated_provider_modalities(provider, raw_modalities)
     selected_model = spec.split(":", 1)[-1] if ":" in spec else spec
+    reasoning_effort = config.get("reasoning_effort")
+    if "reasoning_effort" in config and (
+        canonical_provider != "kimi" or selected_model != "kimi-k3"
+        or not isinstance(reasoning_effort, str)
+        or reasoning_effort not in {"low", "high", "max"}
+    ):
+        raise ValueError(f"API config {spec!r} reasoning_effort supports Kimi K3 low/high/max only")
     documented_modalities = _MODEL_ADAPTER_MODALITIES.get(
         (canonical_provider, selected_model)
     )
@@ -3194,6 +3214,8 @@ def normalize_api_target_config(
     if thinking is not None:
         normalized["thinking"] = thinking
         normalized["effort"] = effort
+    if reasoning_effort is not None:
+        normalized["reasoning_effort"] = reasoning_effort
     configured_url = config.get("base_url")
     if provider in _COMPAT:
         default_url, _key = _COMPAT[provider]
@@ -3275,6 +3297,8 @@ def build_api_target(
             "temperature": normalized["temperature"],
             "modality_support": normalized["modalities"],
         }
+        if normalized.get("reasoning_effort") is not None:
+            constructor_kwargs["reasoning_effort"] = normalized["reasoning_effort"]
 
     if ":" in spec:
         provider, model = spec.split(":", 1)
