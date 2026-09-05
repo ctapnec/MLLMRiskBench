@@ -15127,8 +15127,14 @@ class AnalysisController:
                 if not isinstance(artifacts, list):
                     raise Phase7Error("Level 1 live-attestation inventory changed")
                 for item in artifacts:
-                    path = descriptor_file(item, label="Level 1 live attestation")
-                    descriptors[(str(path), str(item["sha256"]))] = item
+                    retained = (
+                        _retained_descriptor(
+                            grid_path.parent, item, label="Level 1 live attestation",
+                        )
+                        if isinstance(item, dict) and "file" in item else item
+                    )
+                    path = descriptor_file(retained, label="Level 1 live attestation")
+                    descriptors[(str(path), str(retained["sha256"]))] = retained
         values: list[str] = []
         for (path, digest), _item in sorted(descriptors.items()):
             values.extend(["--live-attestation", path, "--live-attestation-sha256", digest])

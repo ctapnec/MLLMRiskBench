@@ -129,6 +129,30 @@ def test_native_terminal_uses_its_historical_plan_revision(phase7, tmp_path):
         phase7.validate_native_terminal_revision({**native, "project_revision": wrong_revision})
 
 
+@pytest.mark.parametrize("relative", [True, False])
+def test_lifecycle_attestations_resolve_the_grid_owned_artifact(
+    phase7, tmp_path, relative,
+):
+    root = tmp_path / "lane"
+    nested = root / "exact-attempt"
+    nested.mkdir(parents=True)
+    artifact = nested / "live-attestation.json"
+    artifact.write_text('{"attestation_id":"live-attestation-test"}\n')
+    bound = phase7.descriptor(artifact)
+    item = ({"file": artifact.name, "sha256": bound["sha256"],
+             "bytes": bound["bytes"], "attestation_id": "live-attestation-test"}
+            if relative else bound)
+    grid = nested / "grid-test.grid.json"
+    grid.write_text(json.dumps({"request": {"live_attestation": {"artifacts": [item]}}}))
+    controller = object.__new__(phase7.AnalysisController)
+    assert controller.lifecycle_attestation_args_for_roots({"lane": str(root)}) == [
+        "--live-attestation", str(artifact), "--live-attestation-sha256", bound["sha256"],
+    ]
+    artifact.write_text('{"changed":true}\n')
+    with pytest.raises(phase7.Phase7Error):
+        controller.lifecycle_attestation_args_for_roots({"lane": str(root)})
+
+
 def test_analysis_config_copies_preserve_retained_bytes_not_checkout_location(
     phase7, tmp_path,
 ):
