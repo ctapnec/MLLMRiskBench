@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import copy
 import importlib.util
 import json
@@ -1029,6 +1030,121 @@ def test_phase8_qualification_executes_exact_source_common_frame(
         assert rows[0]["media_references"] == base["prepared_media_references"]
         assert rows[0]["label"] == rows[0]["rater_id"] == ""
     assert calls == [(root, "common", tmp_path)]
+
+
+@pytest.mark.parametrize("selected", [None, "a" * 64, "b" * 64])
+def test_phase8_all_prepare_command_sites_bind_one_exact_configuration(
+    phase8: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, selected,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    tree = ast.parse(Path(phase8.__file__).read_text())
+    functions = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
+
+    def assignment(function, name):
+        return next(node.value for node in ast.walk(functions[function])
+                    if (isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name)
+                        and node.target.id == name) or (isinstance(node, ast.Assign)
+                        and any(isinstance(target, ast.Name) and target.id == name
+                                for target in node.targets)))
+
+    def field(node, name):
+        return next(value for key, value in zip(node.keys, node.values)
+                    if isinstance(key, ast.Constant) and key.value == name)
+
+    def evaluate(node, **values):
+        return eval(compile(ast.Expression(node), phase8.__file__, "eval"),
+                    {**phase8.__dict__, **values})
+
+    root = tmp_path / "retained"
+    sampling = {"common_unique_clusters": 25, "source_task_unique_clusters": 10}
+    planned = evaluate(field(field(assignment("build_input_manifest", "value"),
+                                   "execution_contract"), "exact_commands"),
+                       audit_runner_root=root,
+                       args=SimpleNamespace(common_clusters=25, source_task_clusters=10,
+                                            judge_configuration_sha256=selected))
+    inputs = {"execution_contract": {"exact_commands": planned}}
+    assert phase8._bound_audit_selection(inputs) == selected
+    validated = evaluate(assignment("validate_input_manifest", "expected_commands"),
+                         value=inputs, scope={"audit_runner_root": str(root)}, sampling=sampling)
+    assert validated == planned
+    actual = [evaluate(assignment("execute_preparation", name),
+                       runner_root=root, sampling=sampling, inputs=inputs,
+                       common_path=Path("<authorized-staging>/human-audit-sample.csv"),
+                       source_path=Path("<authorized-staging>/source-task-audit-sample.csv"))
+              for name in ("common_argv", "source_argv")]
+    assert actual == planned
+    for index, argv in enumerate(actual):
+        assert "--labels" not in argv and "--source-task-labels" not in argv
+        if selected is None:
+            assert "--historical-code-repository" not in argv
+            assert "--judge-configuration-sha256" not in argv
+        else:
+            assert argv[argv.index("--historical-code-repository") + 1] == str(tmp_path)
+            if index == 0:
+                assert argv[argv.index("--judge-configuration-sha256") + 1] == selected
+            else:
+                assert "--judge-configuration-sha256" not in argv
+    guidance = phase8.codebook_text(common_rows=25, source_rows=10,
+                                   qualification_sha="c" * 64,
+                                   judge_configuration_sha256=selected)
+    if selected is not None:
+        assert selected in guidance and "separate preparations and analysis reports" in guidance
+        assert "human_audit --source-task-labels" in guidance
+
+
+@pytest.mark.parametrize("selected", ["a" * 64, "b" * 64])
+def test_phase8_selected_capacity_and_qualification_use_same_original_join(
+    phase8: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, selected: str,
+) -> None:
+    from experiments import human_audit, retained_artifact_reader
+
+    monkeypatch.chdir(tmp_path)
+    root = tmp_path / "retained"
+    calls = []
+    base = {
+        "source": "corpus", "source_cluster_id": "cluster", "model_spec": "local:model",
+        "defense": "none", "attacker": "replay", "risk_category": "risk",
+        "effective_modality": "text", "expected_behavior": "refuse",
+        "source_policy_id": "policy", "source_policy_version": "1",
+        "source_policy_instruction": "instruction", "prepared_prompt": "prompt",
+        "prepared_response": "response", "prepared_media_references": "[]",
+    }
+
+    def joined(results, *, frame="common", historical_code_repository, **kwargs):
+        assert results == root and historical_code_repository == tmp_path
+        assert kwargs == ({"judge_configuration_sha256": selected} if frame == "common" else {})
+        calls.append(frame)
+        return {}, {selected: {**base, "common_metrics_eligible": frame == "common"}}, {
+            selected: {"run_id": "current", "raw": {"model": "local:model"}},
+        }, {}
+
+    monkeypatch.setattr(human_audit, "_audit_artifacts", joined)
+    monkeypatch.setattr(human_audit, "_joined_artifacts", lambda *a, **k:
+                        pytest.fail("current-only join invoked"))
+    monkeypatch.setattr(retained_artifact_reader, "load_joined", lambda *a, **k:
+                        pytest.fail("unselected historical join invoked"))
+    assert phase8.observed_audit_frame_cluster_counts(
+        root, judge_configuration_sha256=selected,
+    ) == (1, 1)
+    candidates = phase8._qualification_candidates(
+        runner_root=root, excluded_clusters=set(), judge_configuration_sha256=selected,
+    )
+    assert candidates[0]["sample_key"] == selected
+    assert candidates[0]["label"] == candidates[0]["rater_id"] == ""
+    monkeypatch.setattr(phase8, "_select_qualification_candidates", lambda rows: (rows, set()))
+    replay, _ = phase8._select_qualification_rows(
+        runner_root=root, excluded_clusters=set(), judge_configuration_sha256=selected,
+    )
+    assert replay == candidates
+    assert calls == ["common", "source_task", "common", "common"]
+
+
+@pytest.mark.parametrize("selection", ["wrong", "A" * 64, "a" * 63, True])
+def test_phase8_rejects_malformed_configuration_binding(phase8: ModuleType, selection) -> None:
+    with pytest.raises(phase8.Phase8Error, match="exact SHA-256"):
+        phase8._bound_audit_selection({"execution_contract": {"exact_commands": [
+            ["--judge-configuration-sha256", selection], [],
+        ]}})
 
 
 def test_phase8_revalidates_capacity_against_phase7_success_view(

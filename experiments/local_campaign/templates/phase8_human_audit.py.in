@@ -10585,7 +10585,45 @@ def plan_phase8_capacity(
     }
 
 
-def observed_audit_frame_cluster_counts(runner_root: Path) -> tuple[int, int]:
+def _audit_selection_options(
+    judge_configuration_sha256: str | None, *, frame: str,
+) -> list[str]:
+    if judge_configuration_sha256 is None:
+        return []
+    if not isinstance(judge_configuration_sha256, str) or HEX64.fullmatch(
+        judge_configuration_sha256
+    ) is None:
+        raise Phase8Error("common judge configuration must be an exact SHA-256")
+    options = ["--historical-code-repository", str(Path.cwd())]
+    if frame == "common":
+        options += ["--judge-configuration-sha256", judge_configuration_sha256]
+    return options
+
+
+def _bound_audit_selection(inputs: Mapping[str, Any]) -> str | None:
+    contract = inputs.get("execution_contract")
+    commands = contract.get("exact_commands", []) if isinstance(contract, dict) else []
+    common = commands[0] if isinstance(commands, list) and commands else []
+    if not isinstance(common, list):
+        return None
+    flag = "--judge-configuration-sha256"
+    if flag not in common:
+        return None
+    if common.count(flag) != 1 or common.index(flag) + 1 >= len(common):
+        raise Phase8Error("common judge configuration command binding differs")
+    selected = common[common.index(flag) + 1]
+    _audit_selection_options(selected, frame="common")
+    return selected
+
+
+def _audit_selection_kwargs(selected: str | None) -> dict[str, str]:
+    # Do not change legacy callable/command contracts when the opt-in is absent.
+    return {"judge_configuration_sha256": selected} if selected is not None else {}
+
+
+def observed_audit_frame_cluster_counts(
+    runner_root: Path, *, judge_configuration_sha256: str | None = None,
+) -> tuple[int, int]:
     """Count the exact validated common and source-task frame populations."""
 
     try:
@@ -10597,9 +10635,18 @@ def observed_audit_frame_cluster_counts(runner_root: Path) -> tuple[int, int]:
 
     def frame_clusters(frame: str) -> set[str]:
         try:
-            _cells, metadata, judgments, _audit = load_joined(
-                runner_root, frame=frame, code_repository=Path.cwd()
-            )
+            if judge_configuration_sha256 is None:
+                _cells, metadata, judgments, _audit = load_joined(
+                    runner_root, frame=frame, code_repository=Path.cwd()
+                )
+            else:
+                from experiments.human_audit import _audit_artifacts
+
+                _predictors, metadata, judgments, _audit = _audit_artifacts(
+                    runner_root, frame=frame, historical_code_repository=Path.cwd(),
+                    **(_audit_selection_kwargs(judge_configuration_sha256)
+                       if frame == "common" else {}),
+                )
         except Exception as exc:
             raise Phase8Error(
                 f"cannot derive the validated {frame} human-audit capacity"
@@ -10801,7 +10848,8 @@ def build_input_manifest(args: argparse.Namespace) -> dict[str, Any]:
     )
     audit_runner_root = phase7_support["runner_view"]
     common_available, source_task_available = observed_audit_frame_cluster_counts(
-        audit_runner_root
+        audit_runner_root,
+        **_audit_selection_kwargs(getattr(args, "judge_configuration_sha256", None)),
     )
     revalidate_bound_audit_runner_view(
         receipt=phase7_support["runner_view_value"],
@@ -10926,7 +10974,9 @@ def build_input_manifest(args: argparse.Namespace) -> dict[str, Any]:
                     "--output",
                     "<authorized-staging>/human-audit-sample.csv",
                     "--acknowledge-sensitive-content",
-                ],
+                ] + _audit_selection_options(
+                    getattr(args, "judge_configuration_sha256", None), frame="common"
+                ),
                 [
                     sys.executable,
                     "-m",
@@ -10938,7 +10988,9 @@ def build_input_manifest(args: argparse.Namespace) -> dict[str, Any]:
                     "--output",
                     "<authorized-staging>/source-task-audit-sample.csv",
                     "--acknowledge-sensitive-content",
-                ],
+                ] + _audit_selection_options(
+                    getattr(args, "judge_configuration_sha256", None), frame="source_task"
+                ),
             ],
             "labels_mode_reachable": False,
             "source_task_labels_mode_reachable": False,
@@ -11365,7 +11417,7 @@ def validate_input_manifest(
             "--output",
             "<authorized-staging>/human-audit-sample.csv",
             "--acknowledge-sensitive-content",
-        ],
+        ] + _audit_selection_options(_bound_audit_selection(value), frame="common"),
         [
             sys.executable,
             "-m",
@@ -11377,7 +11429,7 @@ def validate_input_manifest(
             "--output",
             "<authorized-staging>/source-task-audit-sample.csv",
             "--acknowledge-sensitive-content",
-        ],
+        ] + _audit_selection_options(_bound_audit_selection(value), frame="source_task"),
     ]
     if (
         not isinstance(contract, dict)
@@ -11627,6 +11679,7 @@ def _qualification_candidates(
     *,
     runner_root: Path,
     excluded_clusters: set[str],
+    judge_configuration_sha256: str | None = None,
 ) -> list[dict[str, Any]]:
     try:
         from experiments.retained_artifact_reader import load_joined
@@ -11634,9 +11687,17 @@ def _qualification_candidates(
         raise Phase8Error(
             "cannot import the exact-source human-audit frame reader"
         ) from exc
-    _cells, joined_meta, judgments, _audit = load_joined(
-        runner_root, frame="common", code_repository=Path.cwd()
-    )
+    if judge_configuration_sha256 is None:
+        _cells, joined_meta, judgments, _audit = load_joined(
+            runner_root, frame="common", code_repository=Path.cwd()
+        )
+    else:
+        from experiments.human_audit import _audit_artifacts
+
+        _predictors, joined_meta, judgments, _audit = _audit_artifacts(
+            runner_root, historical_code_repository=Path.cwd(),
+            judge_configuration_sha256=judge_configuration_sha256,
+        )
     rows: list[dict[str, Any]] = []
     for key, judgment in sorted(judgments.items()):
         meta = joined_meta[key]
@@ -11764,9 +11825,11 @@ def _select_qualification_rows(
     *,
     runner_root: Path,
     excluded_clusters: set[str],
+    judge_configuration_sha256: str | None = None,
 ) -> tuple[list[dict[str, Any]], set[tuple[str, str, str]]]:
     candidates = _qualification_candidates(
-        runner_root=runner_root, excluded_clusters=excluded_clusters
+        runner_root=runner_root, excluded_clusters=excluded_clusters,
+        **_audit_selection_kwargs(judge_configuration_sha256),
     )
     return _select_qualification_candidates(candidates)
 
@@ -11777,9 +11840,11 @@ def build_qualification_set(
     *,
     runner_root: Path,
     excluded_clusters: set[str],
+    judge_configuration_sha256: str | None = None,
 ) -> dict[str, Any]:
     selected, represented = _select_qualification_rows(
-        runner_root=runner_root, excluded_clusters=excluded_clusters
+        runner_root=runner_root, excluded_clusters=excluded_clusters,
+        **_audit_selection_kwargs(judge_configuration_sha256),
     )
     write_csv(output, list(QUALIFICATION_FIELDS), selected)
     gold_fields = [
@@ -11978,7 +12043,7 @@ def semantic_revalidate(inputs: Mapping[str, Any]) -> dict[str, Any]:
     ):
         raise Phase8Error("authorized Phase 8 capacity plan is absent")
     common_available, source_task_available = observed_audit_frame_cluster_counts(
-        audit_runner_root
+        audit_runner_root, **_audit_selection_kwargs(_bound_audit_selection(inputs)),
     )
     revalidate_bound_audit_runner_view(
         receipt=support["runner_view_value"],
@@ -12140,6 +12205,7 @@ def codebook_text(
     common_rows: int,
     source_rows: int,
     qualification_sha: str,
+    judge_configuration_sha256: str | None = None,
 ) -> str:
     return f"""# Phase 8 human-audit codebook
 
@@ -12185,7 +12251,19 @@ adjudicated value on every duplicate row. Unanimous values need no adjudication.
 Resolve and verify every media reference before rating. If any referenced asset
 cannot be retrieved, content-hashed, MIME-checked, and viewed, return the row for
 remediation rather than inventing a label.
-"""
+""" + (
+        "\nThis preparation binds exactly one common judge configuration: "
+        f"`{judge_configuration_sha256}`. Keep other configurations in separate "
+        "preparations and analysis reports; never pool their cascades.\n\n"
+        "After actual human ratings and adjudication, retain the original "
+        "prepared-form and results arguments. Add these exact options to "
+        "`human_audit --labels`:\n\n"
+        + " ".join(_audit_selection_options(judge_configuration_sha256, frame="common"))
+        + "\n\nFor `human_audit --source-task-labels`, add only:\n\n"
+        + " ".join(_audit_selection_options(judge_configuration_sha256, frame="source_task"))
+        + "\n\nThe common configuration selector never applies to source-task labels.\n"
+        if judge_configuration_sha256 is not None else ""
+    )
 
 
 def common_instructions_text(exported_rows: int) -> str:
@@ -12534,6 +12612,7 @@ def _validate_qualification_outputs(
     *,
     excluded_clusters: set[str],
     runner_root: Path,
+    judge_configuration_sha256: str | None = None,
 ) -> None:
     item_fields, items = read_csv(items_path, label="Phase 8 qualification items")
     item_ids = [row.get("qualification_item_id", "") for row in items]
@@ -12563,6 +12642,7 @@ def _validate_qualification_outputs(
     expected_items, _represented = _select_qualification_rows(
         runner_root=runner_root,
         excluded_clusters=excluded_clusters,
+        **_audit_selection_kwargs(judge_configuration_sha256),
     )
     expected_csv_items = [
         {
@@ -12911,6 +12991,7 @@ def validate_prepared_inventory(
         by_name["qualification-gold.template.csv"],
         excluded_clusters=common["clusters"],
         runner_root=qualification_runner_root,
+        **_audit_selection_kwargs(_bound_audit_selection(authorized_input)),
     )
     if _bound_qualification_runner_view(authorized_input) != qualification_runner_root:
         raise Phase8Error("Phase 8 qualification Runner view changed during replay")
@@ -12919,6 +13000,7 @@ def validate_prepared_inventory(
         common_rows=common["row_count"],
         source_rows=source["row_count"],
         qualification_sha=qualification_sha,
+        **_audit_selection_kwargs(_bound_audit_selection(authorized_input)),
     ).encode("ascii")
     expected_qualification_record = qualification_record_template(
         qualification_sha
@@ -13261,7 +13343,7 @@ def execute_preparation(control_root: Path, attempt_root: Path) -> int:
         "--output",
         str(common_path),
         "--acknowledge-sensitive-content",
-    ]
+    ] + _audit_selection_options(_bound_audit_selection(inputs), frame="common")
     source_argv = [
         sys.executable,
         "-m",
@@ -13273,7 +13355,7 @@ def execute_preparation(control_root: Path, attempt_root: Path) -> int:
         "--output",
         str(source_path),
         "--acknowledge-sensitive-content",
-    ]
+    ] + _audit_selection_options(_bound_audit_selection(inputs), frame="source_task")
     revalidate_execution_view()
     run_preparation_command(
         common_argv,
@@ -13319,6 +13401,7 @@ def execute_preparation(control_root: Path, attempt_root: Path) -> int:
         qualification_gold_path,
         runner_root=runner_root,
         excluded_clusters=common["clusters"],
+        **_audit_selection_kwargs(_bound_audit_selection(inputs)),
     )
     if qualification.get("selection_policy") != sampling[
         "qualification_selection"
@@ -13442,6 +13525,7 @@ def execute_preparation(control_root: Path, attempt_root: Path) -> int:
             common_rows=common["row_count"],
             source_rows=source["row_count"],
             qualification_sha=qualification_sha,
+            **_audit_selection_kwargs(_bound_audit_selection(inputs)),
         ).encode("ascii"),
     )
     qualification_record = staging / "human-rater-qualification.template.md"
@@ -19555,6 +19639,7 @@ def parser() -> argparse.ArgumentParser:
     ap.add_argument("--authorize-ethics-sha256", default="")
     ap.add_argument("--common-clusters", type=int)
     ap.add_argument("--source-task-clusters", type=int)
+    ap.add_argument("--judge-configuration-sha256")
     ap.add_argument("--attempt-root", help=argparse.SUPPRESS)
     return ap
 
@@ -19564,6 +19649,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser().parse_args(argv)
     if args.self_test:
         return self_test()
+    if args.judge_configuration_sha256 is not None and not args.prepare_input_manifest:
+        raise Phase8Error("judge configuration is bound only during input preparation")
     if args.execute_control_root:
         if not args.attempt_root:
             raise Phase8Error("internal execution requires --attempt-root")
@@ -19602,6 +19689,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.common_clusters,
         args.source_task_clusters,
         args.attempt_root,
+        args.judge_configuration_sha256,
     )
     if any(item not in {None, ""} for item in forbidden):
         raise Phase8Error("launch accepts only the exact input manifest and its digest")
