@@ -8177,6 +8177,22 @@ def validate_measured_request_envelope_artifact(
     return envelope_descriptor
 
 
+def _measured_model_selector(selector: str, spec: Mapping[str, Any]) -> str:
+    """Resolve the sealed vLLM revision just as Runner did, never from outputs."""
+    target = spec.get("target")
+    revision = target.get("revision") if isinstance(target, Mapping) else None
+    if not selector.startswith("vllm:") or revision is None:
+        return selector
+    if not isinstance(revision, str) or re.fullmatch(r"[0-9a-f]{40}", revision) is None:
+        raise Phase7Error("sealed vLLM target revision is invalid")
+    base = selector.split("@", 1)[0]
+    if (selector not in {base, f"{base}@{revision}"}
+        or (target.get("repo_id") is not None
+            and base != f"vllm:{target['repo_id']}")):
+        raise Phase7Error("sealed vLLM target selector and revision differ")
+    return f"{base}@{revision}"
+
+
 def validate_measured_grid_request(
     request: object,
     *,
@@ -8191,6 +8207,7 @@ def validate_measured_grid_request(
 
     if not isinstance(request, dict):
         raise Phase7Error(f"{lane}: Runner grid lacks a request object")
+    model_selector = _measured_model_selector(model_selector, spec)
     contract = _expected_contract(lane, spec)
     expected_limit = (
         100
@@ -11243,7 +11260,7 @@ def validate_runner_inventory(
         selector = target.get("spec") if isinstance(target, dict) else None
         if not isinstance(selector, str) or not selector:
             raise Phase7Error(f"{lane}: lane spec lacks an exact target selector")
-        model_by_lane[lane] = selector
+        model_by_lane[lane] = _measured_model_selector(selector, spec)
     seen_run_ids: set[str] = set()
     expected_project_binding = project_and_source["project_revision"][
         "experiment_binding"

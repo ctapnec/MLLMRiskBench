@@ -499,6 +499,33 @@ def test_measured_envelope_and_grid_requests_are_semantically_bound(
     assert measured["request"]["execution_purpose"] == "measured_run"
 
 
+def test_measured_grid_binds_runner_resolved_vllm_revision(
+    phase7: ModuleType, tmp_path: Path
+) -> None:
+    project, spec, _, _, envelope = _request_fixture(phase7, tmp_path)
+    revision = "a" * 40
+    spec["target"] = {"spec": "vllm:model-a", "repo_id": "model-a", "revision": revision}
+    request = _grid_request_fixture(
+        phase7, project=project, envelope_descriptor=envelope,
+        source_sha="1" * 64, source_config_sha="2" * 64,
+    )
+    request["models"] = [f"vllm:model-a@{revision}"]
+    kwargs = dict(
+        lane="rjudge-qwen3-vl", spec=spec, model_selector="vllm:model-a",
+        expected_project_binding=project, expected_source_sha="1" * 64,
+        expected_source_config_sha="2" * 64,
+    )
+    assert phase7.validate_measured_grid_request(request, **kwargs) == envelope
+    assert phase7._measured_model_selector(request["models"][0], spec) == request["models"][0]
+    for wrong in ("vllm:model-a", "vllm:model-a@" + "b" * 40,
+                  "vllm:model-b@" + revision):
+        request["models"] = [wrong]
+        with pytest.raises(phase7.Phase7Error, match="sealed measured lane"):
+            phase7.validate_measured_grid_request(request, **kwargs)
+    with pytest.raises(phase7.Phase7Error, match="selector and revision differ"):
+        phase7._measured_model_selector("vllm:model-a@" + "b" * 40, spec)
+
+
 def test_approximate_grid_request_binds_the_exact_selected_guardrail(
     phase7: ModuleType, tmp_path: Path
 ) -> None:
