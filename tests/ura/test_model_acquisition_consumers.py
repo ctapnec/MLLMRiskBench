@@ -168,7 +168,9 @@ def test_vllm_construction_forces_in_process_mode_restores_env_and_keeps_tp2(
                     kwargs["tensor_parallel_size"],
                 )
             )
-            self.llm_engine = SimpleNamespace(engine_core=InprocClient())
+            self.llm_engine = SimpleNamespace(
+                engine_core=InprocClient(), model_config=SimpleNamespace(max_model_len=32768),
+            )
 
     monkeypatch.setitem(sys.modules, "vllm", SimpleNamespace(LLM=LLM))
     monkeypatch.setenv("VLLM_ENABLE_V1_MULTIPROCESSING", "1")
