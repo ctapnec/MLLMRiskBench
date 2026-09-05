@@ -28,6 +28,9 @@ import mimetypes
 import os
 import ssl
 import time
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Optional
 from urllib.parse import unquote_to_bytes, urlsplit
@@ -89,6 +92,31 @@ _SDK_REQUEST_LOG_ENV = {
 }
 DEFAULT_HOSTED_HTTP_ERROR_RETRIES = 3
 _RETRYABLE_HTTP_STATUS_CODES = frozenset({408, 409, 425, 429})
+
+_AttemptAdmission = Callable[[str, Mapping[str, Any], int], None]
+_PROVIDER_ATTEMPT_ADMISSION: ContextVar[Optional[_AttemptAdmission]] = ContextVar(
+    "ura_provider_attempt_admission", default=None
+)
+
+
+@contextmanager
+def provider_attempt_admission(reserve: _AttemptAdmission) -> Iterator[None]:
+    """Scope a controller's durable reservation to each physical HTTP attempt.
+
+    The callback receives provider, final request and one-based attempt number.
+    It must not mutate the request. It runs before SDK invocation, including
+    each retry; its exceptions stop execution without becoming retryable SDK
+    errors. The owning controller supplies pricing, durable accounting and
+    settlement. This hook alone is not a dollar budget or paid admission.
+    Each executing thread must enter its own scope.
+    """
+    if not callable(reserve):
+        raise TypeError("provider attempt admission must be callable")
+    token = _PROVIDER_ATTEMPT_ADMISSION.set(reserve)
+    try:
+        yield
+    finally:
+        _PROVIDER_ATTEMPT_ADMISSION.reset(token)
 
 
 def _reject_sdk_request_logging(module: str) -> None:
@@ -351,6 +379,9 @@ def _call_with_retry(
     """Run one provider call with bounded, secret-free attempt provenance."""
     audit: list[dict[str, Any]] = []
     for attempt_number in range(1, max_retries + 2):
+        admission = _PROVIDER_ATTEMPT_ADMISSION.get()
+        if admission is not None:
+            admission(provider, request, attempt_number)
         started = time.perf_counter()
         try:
             result = call(**request)
@@ -3427,6 +3458,7 @@ def build_api_target(
 
 __all__ = [
     "DEFAULT_HOSTED_HTTP_ERROR_RETRIES",
+    "provider_attempt_admission",
     "MockTarget",
     "AnthropicTarget",
     "AnthropicFableTarget",
