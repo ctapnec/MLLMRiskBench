@@ -549,7 +549,15 @@ def _validated_jobs(program: dict, budget: AttemptBudget) -> list[_Admission]:
                                for cohort in ("local", "hosted")}
             if receipt.get("judge_call_ids") != expected_judges:
                 raise ValueError("future matched judgments need exact input-derived funded slots, not invented output hashes")
-            judge_bound = (projection.JUDGE_MAX_INPUT_TOKENS + projection.JUDGE_MAX_OUTPUT_TOKENS * 5)
+            judge = expected_projection["judge"]
+            judge_bound = _cost(
+                judge["maximum_input_tokens_per_call"],
+                judge["maximum_output_tokens_per_call"],
+                {
+                    "input": judge["input_usd_per_million_tokens"],
+                    "output": judge["output_usd_per_million_tokens"],
+                },
+            )
             for call_id in expected_judges.values():
                 slot = budget.call(call_id)
                 if slot["provider"] != "anthropic" or slot["pool"] != "judge" or slot["bound_microusd"] < judge_bound:

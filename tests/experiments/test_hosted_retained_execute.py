@@ -258,7 +258,13 @@ def test_fully_bound_program_still_cannot_skip_final_campaign_admission(tmp_path
         subject._validated_jobs({}, None)
 
 
-def _program(tmp_path, monkeypatch, *, target_spec="openai:gpt-5.5"):
+def _program(
+    tmp_path,
+    monkeypatch,
+    *,
+    target_spec="openai:gpt-5.5",
+    judge_rates=(1, 5),
+):
     from test_hosted_campaign_budget import _api_config, _pricing, _budgets
     from experiments import hosted_campaign_budget as money, hosted_retained_inputs as materializer
     from experiments.hosted_request_tokens import count_request
@@ -272,11 +278,15 @@ def _program(tmp_path, monkeypatch, *, target_spec="openai:gpt-5.5"):
         path.write_text(json.dumps(value))
         return {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "bytes": path.stat().st_size}
 
-    sources = {"api_config": save("api.json", api), "pricing": save("prices.json", _pricing()),
+    pricing = _pricing()
+    pricing["providers"]["anthropic"]["models"][money.JUDGE_MODEL]["rates"][0][
+        "per_million_tokens"
+    ].update(input=judge_rates[0], output=judge_rates[1])
+    sources = {"api_config": save("api.json", api), "pricing": save("prices.json", pricing),
                "budgets": save("budgets.json", _budgets()), "media_index": save("media.json", {})}
     def portable(raw):
         return {"file": Path(raw["path"]).name, "sha256": raw["sha256"], "bytes": raw["bytes"]}
-    budget_projection = money.build_projection(api_config=api, pricing=_pricing(), budgets=_budgets(),
+    budget_projection = money.build_projection(api_config=api, pricing=pricing, budgets=_budgets(),
         descriptors={"api_config": portable(sources["api_config"]), "pricing_config": portable(sources["pricing"]),
                      "budgets": portable(sources["budgets"])}, pricing_as_of="2026-09-03")
     sources["budget_projection"] = save("projection.json", budget_projection)
@@ -301,7 +311,11 @@ def _program(tmp_path, monkeypatch, *, target_spec="openai:gpt-5.5"):
         requests[key]["judge_call_ids"] = {cohort: "judge-" + cohort + "-" + subject._sha({"target": target_spec, "input_id": key})
                                            for cohort in ("local", "hosted")}
         slots.append({"call_id": call_id, "provider": billing_provider, "pool": "target", "bound_microusd": 500000})
-        slots += [{"call_id": value, "provider": "anthropic", "pool": "judge", "bound_microusd": 14848}
+        judge_bound = int(
+            money.JUDGE_MAX_INPUT_TOKENS * judge_rates[0]
+            + money.JUDGE_MAX_OUTPUT_TOKENS * judge_rates[1]
+        )
+        slots += [{"call_id": value, "provider": "anthropic", "pool": "judge", "bound_microusd": judge_bound}
                   for value in requests[key]["judge_call_ids"].values()]
         config = save(f"attacker{index}.json", {"replay": {"replay_artifact": replay["path"],
             "replay_artifact_sha256": replay["sha256"], "retained_input_ids": [key]}})
@@ -343,6 +357,18 @@ def test_program_applies_peak_funded_deepseek_rates_to_settlement(tmp_path, monk
     assert jobs[0].prices["reservation_output"] == "3.96"
     assert jobs[0].prices["settlement_input"] == "1.32"
     assert jobs[0].prices["settlement_output"] == "3.96"
+
+
+def test_program_derives_judge_slot_floor_from_bound_projection_rates(tmp_path, monkeypatch):
+    program, budget = _program(tmp_path, monkeypatch, judge_rates=(0.5, 2))
+    jobs = subject._validated_jobs(program, budget)
+    assert len(jobs) == 2
+    judge_slots = [
+        budget.call(call_id)
+        for request in program["requests"].values()
+        for call_id in request["judge_call_ids"].values()
+    ]
+    assert {slot["bound_microusd"] for slot in judge_slots} == {7168}
 
 
 def test_registered_execution_publishes_one_hosted_tmux_job(tmp_path, monkeypatch):
