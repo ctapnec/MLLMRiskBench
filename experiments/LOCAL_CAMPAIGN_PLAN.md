@@ -61,6 +61,34 @@ for the whole local program requires both the historical analysis and this
 supplement, plus the input-alignment audit; a historical-only analysis seal
 does not authorize the hosted follow-on.
 
+RR bounded continuation. Each measured unit has an 86,400-second subprocess
+bound and a durable 86,400-second Runner call-start deadline. Restarting the
+same command does not reset that deadline. The parent's 96-hour Jobs field is
+display metadata, not an additional process watchdog. If a unit reaches its
+bound before completing, retain its terminal record and every response
+checkpoint. After the parent is terminal, run the existing RR controller with
+`--continue-from <completion.json> --continue-from-sha256 <exact SHA-256>`,
+the normal project/work root, project-revision receipt, commit, scope and tmux
+arguments, and a fresh `--control-root`. The continuation reads the original
+source specifications and admitted serving profile from that bound chain;
+do not supply replacement profile settings or repeat readiness/installations.
+It reuses an existing canary, refreshes the expiring transport attestation,
+and derives new exact acquisition/projection bindings for the unfinished set.
+
+The continuation excludes every durable response, including missing, failed
+and length-ended outputs. It never treats poor quality as permission to repeat
+an assigned query. Completed lanes are not scheduled again. Within a partly
+covered lane, it first finishes partially covered arms using the existing
+positive-count completed-ID selector; any untouched arms follow in the next
+bounded continuation. Repeat only while the validated chain has unattempted
+IDs. Do not branch from an older completion after a successor has retained
+responses. Exact full coverage remains 7,606 input identities, not the sum of
+nominal launch sizes. Continuation analysis keeps a separate coverage record
+and one Level-1 report per execution revision. Interrupted prefixes remain
+unpromoted; include their retained responses in post-factum local judging
+before claiming all-row judged evidence. The historical 144-condition cohort
+and its original failures remain unchanged.
+
 Initial RR interpretation check (5 September). The first 11 retained measured
 StrongREJECT outputs all ended at the approved 4,096-token allowance in about
 66 seconds and contained extreme repetition. Their prompts were only 24-76
