@@ -97,11 +97,15 @@ HUMAN_AUDIT_VIEW_SCHEMA = "ura-phase7-human-audit-sampling-view/9"
 PHASE6_CAMPAIGN_INVENTORY_SCHEMA = "ura-phase6-campaign-terminal-inventory/7"
 SEVEN_AMENDMENT_SCHEMA = "ura-gate5-seven-output-policy-amendment/1"
 SEVEN_COMPLETION_SCHEMA = "ura-seven-output-policy-amendment-completion/1"
+# Historical read contract only. The prospective executor excludes retired RWKV.
 SEVEN_AMENDMENT_LANES = (
     "local-llava-rr-text-primary-100",
     "local-llava-rr-image-primary-100",
     "rjudge-llava-rr",
     "gptgeochat-llava-rr",
+    "ollama-rwkv-g1d-0p4b-text-exploratory-50",
+    "ollama-rwkv-g1f-2p9b-text-exploratory-50",
+    "ollama-rwkv-g1g-1p5b-text-exploratory-50",
 )
 SEVEN_TERMINAL_STATES = {"measured_complete", "gate5_failed", "measured_failed"}
 SEVEN_TEXT_CORPORA = (
@@ -381,7 +385,7 @@ CAMPAIGN_COHORTS = (
 )
 CAMPAIGN_COHORT_COUNTS = {
     "canonical": 46,
-    "output_policy_amendment": 4,
+    "output_policy_amendment": 7,
     "followon_prepared": 3,
     "current_ollama": (
         len(CURRENT_OLLAMA_RUNNABLE_LANES)
@@ -8983,7 +8987,7 @@ def validate_seven_output_policy_inventory(
     gate5_promotion: Path,
     project_and_source: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """Validate the four-row GraySwan RR amendment as a separate revision stratum."""
+    """Validate the retained seven-row amendment, not the prospective roster."""
 
     amendment_file, amendment_payload = _stable_regular_bytes(
         amendment_path,
@@ -8996,7 +9000,7 @@ def validate_seven_output_policy_inventory(
     amendment_fields = {
         "schema", "status", "completed_at_utc", "project_commit",
         "runner_code_version", "base_manifest", "policy_amendment", "profile",
-        "rows", "all_affected_lanes_evaluated_before_measured_execution",
+        "rows", "all_seven_evaluated_before_measured_execution",
         "generation_caps_changed", "paid_provider_calls",
     }
     rows = amendment.get("rows")
@@ -9007,7 +9011,7 @@ def validate_seven_output_policy_inventory(
         not in {"complete", "complete_with_retained_terminals"}
         or amendment.get("runner_code_version") != "ura-runner/2.24"
         or amendment.get("base_manifest") != descriptor(gate5_manifest)
-        or amendment.get("all_affected_lanes_evaluated_before_measured_execution")
+        or amendment.get("all_seven_evaluated_before_measured_execution")
         is not True
         or amendment.get("generation_caps_changed") is not False
         or amendment.get("paid_provider_calls") != 0
@@ -9052,23 +9056,19 @@ def validate_seven_output_policy_inventory(
         "operator explicitly directed that nonempty text reaching the generation "
         "cap remains analyzable model output"
     )
+    # These are the historical policy's declared fields, not a recomputation
+    # of canonical Gate 5 (validated separately with seven runtime terminals).
     expected_historical_profile = {
         "rows": 46,
         "runnable": 18,
         "typed_terminal": 28,
-        "unavailable": 7,
-        "conditional_na": 1,
-        "target_runtime_terminal": 7,
-        "structural_na": 13,
+        "target_runtime_terminal": 3,
     }
     expected_all_pass_profile = {
         "rows": 46,
-        "runnable": 22,
-        "typed_terminal": 24,
-        "unavailable": 7,
-        "conditional_na": 1,
-        "target_runtime_terminal": 3,
-        "structural_na": 13,
+        "runnable": 25,
+        "typed_terminal": 21,
+        "target_runtime_terminal": 0,
         "conditional_na_lanes": ["defense-local"],
     }
     policy_rows = policy.get("affected_lanes")
@@ -16191,7 +16191,7 @@ class AnalysisController:
         self.status(
             "seven-output-policy-lifecycle",
             "complete" if not seven["excluded_from_metrics"] else "complete_with_limitations",
-            detail="separate four-row GraySwan RR output-policy lifecycle retained",
+            detail="separate historical seven-row output-policy lifecycle retained",
             outputs=(lifecycle_output,),
             limitations=(
                 {"excluded_from_metrics": seven["excluded_from_metrics"]}
@@ -17681,7 +17681,7 @@ def execute(args: argparse.Namespace) -> int:
 
 def contract_self_test() -> int:
     rejected: list[str] = []
-    if CAMPAIGN_TOTAL_ROWS != 141:
+    if CAMPAIGN_TOTAL_ROWS != 144:
         raise Phase7Error("Phase 7 campaign terminal row count changed")
 
     def must_fail(label: str, action: Any) -> None:
@@ -19882,7 +19882,7 @@ def contract_self_test() -> int:
                         "phase7-metric-boundary-derivation",
                         "phase7-all-abstained-proxy-boundary",
                         "phase7-proxy-condition-realization-counts",
-                        "phase6-campaign-terminal-inventory-141-row-union",
+                        "phase6-campaign-terminal-inventory-144-row-union",
                         "phase6-campaign-terminal-early-failure-independence",
                         "source-conformance-45-row-portfolio",
                     }

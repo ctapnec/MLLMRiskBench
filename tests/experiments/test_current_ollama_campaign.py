@@ -223,13 +223,16 @@ def test_prospective_controllers_use_only_the_current_ollama_roster() -> None:
     assert "mollysama" not in prospective_specs.lower()
 
 
-def test_current_rr_amendment_excludes_retired_rwkv_rows_from_analysis() -> None:
+def test_historical_rr_analysis_retains_rwkv_without_scheduling_it() -> None:
     templates = Path(__file__).parents[2] / "experiments" / "local_campaign" / "templates"
     expected = [
         "local-llava-rr-text-primary-100",
         "local-llava-rr-image-primary-100",
         "rjudge-llava-rr",
         "gptgeochat-llava-rr",
+        "ollama-rwkv-g1d-0p4b-text-exploratory-50",
+        "ollama-rwkv-g1f-2p9b-text-exploratory-50",
+        "ollama-rwkv-g1g-1p5b-text-exploratory-50",
     ]
     for name in ("phase7_analysis.py.in", "phase8_human_audit.py.in"):
         source = (templates / name).read_text(encoding="utf-8")
@@ -237,9 +240,11 @@ def test_current_rr_amendment_excludes_retired_rwkv_rows_from_analysis() -> None
             "\n)\nSEVEN_TERMINAL_STATES", 1
         )[0]
         assert re.findall(r'"([a-z0-9-]+)"', amendment) == expected
-        assert "rwkv" not in amendment.lower()
     phase7 = (templates / "phase7_analysis.py.in").read_text(encoding="utf-8")
-    assert '"output_policy_amendment": 4' in phase7
+    assert '"output_policy_amendment": 7' in phase7
+    executor = (templates / "phase6_seven_output_policy.py.in").read_text(encoding="utf-8")
+    prospective = executor.split("SPEC_SOURCES = (", 1)[1].split("\n)\nLANE_ORDER", 1)[0]
+    assert "rwkv" not in prospective.lower()
 
 
 def test_current_ollama_phase5_emits_a_consumable_gate5_amendment() -> None:

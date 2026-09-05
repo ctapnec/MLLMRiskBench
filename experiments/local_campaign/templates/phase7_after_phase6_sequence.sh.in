@@ -1223,7 +1223,7 @@ if (
     or type(result.get("runner_lanes")) is not int
     or type(result.get("metric_runner_lanes")) is not int
     or not isinstance(result.get("native_outcomes"), dict)
-    or result.get("campaign_terminal_rows") != 141
+    or result.get("campaign_terminal_rows") != 144
     or result.get("campaign_terminal_status")
     not in {"complete", "complete_with_failures"}
     or result.get("authorization_required_before_launch") is not True
@@ -1591,7 +1591,7 @@ if (
     or campaign_inventory.get("cross_revision_pooling_permitted") is not False
     or campaign_inventory.get("cross_source_pooling_permitted") is not False
     or campaign_inventory.get("cohort_counts")
-    != {"canonical": 46, "output_policy_amendment": 4,
+    != {"canonical": 46, "output_policy_amendment": 7,
         "followon_prepared": 3, "current_ollama": 14,
         "current_ollama_stability": 14,
         "current_ollama_population_alignment": 12,
@@ -1599,7 +1599,7 @@ if (
         "vllm_stability": 7, "vllm_context_recovery": 1,
         "local_hardware_fit_recovery": 25, "native": 9}
     or not isinstance(campaign_inventory.get("rows"), list)
-    or len(campaign_inventory["rows"]) != 141
+    or len(campaign_inventory["rows"]) != 144
 ):
     raise SystemExit("campaign terminal inventory changed")
 for index, artifact in enumerate(artifacts):

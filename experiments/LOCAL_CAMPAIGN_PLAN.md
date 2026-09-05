@@ -1310,13 +1310,17 @@ separate metric strata, retains the 375-row failed-unit prefix as lifecycle
 evidence, and forbids pooling across either boundary or with completed Runner
 2.24 Qwen text and Crescendo evidence.
 The exact Phase 6 campaign terminal inventory before population alignment
-contains 97 logical rows: 46 canonical, four output-policy amendment, three
+contains 100 logical rows: 46 canonical, seven historical output-policy amendment, three
 follow-on, 14 historical current-Ollama, 14 current-Ollama stability, seven
 vLLM stability and nine native. The population-alignment amendment adds 12
-current-Ollama population-alignment logical extension rows, giving 109. The six
+current-Ollama population-alignment logical extension rows, giving 112. The six
 failed-output recovery units use Runner 2.27 and give a final terminal inventory
-of 115. The union then adds one vLLM context-recovery condition and 25 local
-hardware-fit recovery units, giving the final Phase 7 union 141 logical rows.
+of 118. The union then adds one vLLM context-recovery condition and 25 local
+hardware-fit recovery units, giving the final Phase 7 union 144 logical rows.
+The historical amendment includes three retired RWKV terminal conditions.
+Retaining their original records does not restore those models to any future
+roster or schedule. The earlier 141-row analysis contract incorrectly omitted
+them when the prospective roster changed.
 Those 25 units cover exactly 4,463 unfinished, failed-output, or
 provider-declared length-ended rows. They use automatic GPU-fit context and
 maximum available local output, remain a separate condition, and never repeat
@@ -1384,7 +1388,7 @@ Neither an external registration nor an inventory by itself grants evidence
 authority.
 
 The published Stats campaign detail also includes one execution-accounting
-table over the validated 141-condition inventory. Each row identifies target
+table over the validated 144-condition inventory. Each row identifies target
 locality and provider, exact model, framework or attacker, corpus family,
 logical source arm, modality, seed, revision and output-policy stratum. Its
 separate count columns are selected input rows, initial target calls, answer

@@ -583,6 +583,55 @@ def test_measured_grid_binds_runner_resolved_ollama_digest(
         phase7._measured_model_selector(selector, spec)
 
 
+def test_historical_seven_amendment_accepts_only_its_original_header(
+    phase7: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest = tmp_path / "covered-manifest.json"
+    manifest.write_text("{}", encoding="utf-8")
+    amendment = {
+        "schema": "ura-gate5-seven-output-policy-amendment/1",
+        "status": "complete_with_retained_terminals",
+        "completed_at_utc": "2026-08-27T14:00:00Z",
+        "project_commit": "73c5331c59d1192f3338170cfee374af5e03a07f",
+        "runner_code_version": "ura-runner/2.24",
+        "base_manifest": phase7.descriptor(manifest),
+        "policy_amendment": {}, "profile": {},
+        "rows": [{"lane_id": lane} for lane in (
+            "local-llava-rr-text-primary-100", "local-llava-rr-image-primary-100",
+            "rjudge-llava-rr", "gptgeochat-llava-rr",
+            "ollama-rwkv-g1d-0p4b-text-exploratory-50",
+            "ollama-rwkv-g1f-2p9b-text-exploratory-50",
+            "ollama-rwkv-g1g-1p5b-text-exploratory-50",
+        )],
+        "all_seven_evaluated_before_measured_execution": True,
+        "generation_caps_changed": False, "paid_provider_calls": 0,
+    }
+    path = tmp_path / "amendment.json"
+    class PolicyBoundaryReached(Exception):
+        pass
+
+    def policy_boundary(*args, **kwargs):
+        assert kwargs["label"] == "seven-row output policy"
+        raise PolicyBoundaryReached
+
+    monkeypatch.setattr(phase7, "descriptor_file", policy_boundary)
+    kwargs = dict(amendment_path=path, completion_path=tmp_path / "completion.json",
+                  gate5_manifest=manifest, gate5_runnote=tmp_path / "RUNNOTE.md",
+                  gate5_promotion=tmp_path / "promotion.json", project_and_source={})
+    path.write_text(json.dumps(amendment), encoding="utf-8")
+    with pytest.raises(PolicyBoundaryReached):
+        phase7.validate_seven_output_policy_inventory(**kwargs)
+    assert len(phase7.SEVEN_EXACT_CONTRACTS) == 7
+    assert phase7.CAMPAIGN_TOTAL_ROWS == 144
+    for field, value in (
+        ("rows", amendment["rows"][:4]),
+        ("all_seven_evaluated_before_measured_execution", False),
+    ):
+        path.write_text(json.dumps({**amendment, field: value}), encoding="utf-8")
+        with pytest.raises(phase7.Phase7Error, match="amendment identity changed"):
+            phase7.validate_seven_output_policy_inventory(**kwargs)
+
+
 def test_approximate_grid_request_binds_the_exact_selected_guardrail(
     phase7: ModuleType, tmp_path: Path
 ) -> None:

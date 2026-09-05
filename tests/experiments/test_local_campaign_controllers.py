@@ -1424,7 +1424,7 @@ def test_rendered_phase7_lifecycle_partition_mutations_fail(tmp_path: Path) -> N
     assert "phase7-adaptivity-non-estimable-contrasts" in value["contracts"]
     assert "phase7-transfer-faceted-index" in value["contracts"]
     assert "phase7-runner-view-content-binding" in value["contracts"]
-    assert "phase6-campaign-terminal-inventory-141-row-union" in value["contracts"]
+    assert "phase6-campaign-terminal-inventory-144-row-union" in value["contracts"]
     rendered = (output / "phase7_analysis.py").read_text(encoding="utf-8")
     rr_prerequisite = (
         "                    ADAPTIVITY_RIGHT_LANE,\n"
@@ -1465,8 +1465,8 @@ def test_phase7_requires_current_ollama_terminal_and_metric_cohort() -> None:
         'def _current_ollama_metric_lanes(self)',
         'self.record_current_ollama_outcomes()',
         '"current_ollama_target_execution"',
-        '"phase6-campaign-terminal-inventory-141-row-union"',
-        "if CAMPAIGN_TOTAL_ROWS != 141:",
+        '"phase6-campaign-terminal-inventory-144-row-union"',
+        "if CAMPAIGN_TOTAL_ROWS != 144:",
     )
     for token in required_analysis:
         assert token in analysis
@@ -1478,7 +1478,7 @@ def test_phase7_requires_current_ollama_terminal_and_metric_cohort() -> None:
         assert token in wrapper and token in watcher
     assert "validate_current_ollama_recovery_completion(" in analysis
     assert "current Ollama Phase 6 failures require their exact recovery completion" in analysis
-    assert 'result.get("campaign_terminal_rows") != 141' in watcher
+    assert 'result.get("campaign_terminal_rows") != 144' in watcher
     assert '"current_ollama": 14' in watcher
 
     mutant = analysis.replace('"current_ollama": current_ollama,', "", 1)
@@ -1505,7 +1505,7 @@ def test_phase7_requires_vllm_failure_and_input_recovery_as_separate_strata() ->
         "def _vllm_stability_metric_lanes(self)",
         "self.record_vllm_stability_outcomes()",
         '"vllm_stability": len(VLLM_STABILITY_UNIT_LAYOUT)',
-        '"phase6-campaign-terminal-inventory-141-row-union"',
+        '"phase6-campaign-terminal-inventory-144-row-union"',
     )
     for token in required_analysis:
         assert token in analysis
@@ -1535,7 +1535,7 @@ def test_phase7_requires_vllm_context_recovery_as_a_separate_stratum() -> None:
         "def _vllm_context_recovery_metric_lanes(self)",
         "self.record_vllm_context_recovery_outcomes()",
         '"vllm_context_recovery": 1',
-        '"phase6-campaign-terminal-inventory-141-row-union"',
+        '"phase6-campaign-terminal-inventory-144-row-union"',
     )
     for token in required:
         assert token in analysis
@@ -1568,7 +1568,7 @@ def test_phase7_requires_local_hardware_fit_as_a_separate_stratum() -> None:
         "def _local_hardware_fit_metric_lanes(self)",
         "self.record_local_hardware_fit_outcomes()",
         '"local_hardware_fit_recovery": 25',
-        '"phase6-campaign-terminal-inventory-141-row-union"',
+        '"phase6-campaign-terminal-inventory-144-row-union"',
     )
     for token in required:
         assert token in analysis
@@ -1609,7 +1609,7 @@ def test_phase7_requires_current_ollama_stability_as_a_separate_stratum() -> Non
         "def _current_ollama_stability_metric_lanes(self)",
         "self.record_current_ollama_stability_outcomes()",
         '"current_ollama_stability": len(CURRENT_OLLAMA_STABILITY_LAYOUT)',
-        '"phase6-campaign-terminal-inventory-141-row-union"',
+        '"phase6-campaign-terminal-inventory-144-row-union"',
     )
     for token in required:
         assert token in analysis
@@ -1648,14 +1648,14 @@ def test_phase7_requires_matched_ollama_population_alignment() -> None:
         "def _current_ollama_alignment_metric_lanes(self)",
         "self.record_current_ollama_alignment_outcomes()",
         '"current_ollama_population_alignment": len(CURRENT_OLLAMA_ALIGNMENT_LANES)',
-        '"phase6-campaign-terminal-inventory-141-row-union"',
+        '"phase6-campaign-terminal-inventory-144-row-union"',
     )
     for token in required:
         assert token in analysis
     flag = "--phase6-current-ollama-population-alignment-completion"
     assert flag in wrapper and flag in watcher
     assert '"current_ollama_population_alignment": 12' in watcher
-    assert 'result.get("campaign_terminal_rows") != 141' in watcher
+    assert 'result.get("campaign_terminal_rows") != 144' in watcher
 
     mutant = analysis.replace(
         '"current_ollama_population_alignment": (',
@@ -1683,7 +1683,7 @@ def test_phase7_requires_failed_output_recovery_as_six_separate_strata() -> None
         "def _failed_output_recovery_metric_lanes(self)",
         "self.record_failed_output_recovery_outcomes()",
         '"failed_output_recovery": len(FAILED_OUTPUT_RECOVERY_UNIT_ORDER)',
-        '"phase6-campaign-terminal-inventory-141-row-union"',
+        '"phase6-campaign-terminal-inventory-144-row-union"',
     )
     for token in required:
         assert token in analysis
@@ -1702,7 +1702,7 @@ def test_phase7_requires_failed_output_recovery_as_six_separate_strata() -> None
             assert token in mutant
 
 
-def test_phase7_docs_bind_exact_141_row_hardware_fit_partition() -> None:
+def test_phase7_docs_bind_exact_144_row_hardware_fit_partition() -> None:
     root = Path(__file__).parents[2]
     plan = (root / "experiments" / "LOCAL_CAMPAIGN_PLAN.md").read_text(
         encoding="utf-8"
@@ -1716,7 +1716,7 @@ def test_phase7_docs_bind_exact_141_row_hardware_fit_partition() -> None:
 
     for document in (plan, runbook, local_readme):
         normalized = " ".join(document.split())
-        assert "141" in normalized
+        assert "144" in normalized
         assert "14 current-Ollama stability" in normalized
         assert "12 current-Ollama population" in normalized
         assert "seven vLLM stability" in normalized
@@ -3796,6 +3796,9 @@ def test_canonical_c926_contract_stays_separate_from_seven_amendment() -> None:
         "local-llava-rr-image-primary-100",
         "rjudge-llava-rr",
         "gptgeochat-llava-rr",
+        "ollama-rwkv-g1d-0p4b-text-exploratory-50",
+        "ollama-rwkv-g1f-2p9b-text-exploratory-50",
+        "ollama-rwkv-g1g-1p5b-text-exploratory-50",
     ]
 
 

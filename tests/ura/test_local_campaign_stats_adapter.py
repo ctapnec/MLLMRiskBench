@@ -660,7 +660,7 @@ def _sealed_chain(
         "runner_lanes": 2,
         "metric_runner_lanes": 2,
         "native_outcomes": {"native-lane": "run"},
-        "campaign_terminal_rows": 141,
+        "campaign_terminal_rows": 144,
         "campaign_terminal_status": "complete",
         "authorization_required_before_launch": True,
     }
@@ -1191,7 +1191,7 @@ def test_stats_links_sealed_phase7_reports_to_watcher_campaign(
     assert "Registered external analysis" in detail_text
     assert "does not grant thesis-evidence authority" in detail_text
     assert "Campaign terminal rows" in detail_text
-    assert "141 terminal campaign rows; 0 failure rows" in detail_text
+    assert "144 terminal campaign rows; 0 failure rows" in detail_text
     assert "Rows by cohort" in detail_text
     assert "Rows by terminal state" in detail_text
     assert "Failure accounting" in detail_text

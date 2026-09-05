@@ -614,11 +614,11 @@ one for NanoGCG, eight for IDEATOR v2, and 50 for T3MP3ST. The generated
 `phase5_followon_prepared.sh` converts only a fully validated three-lane input
 into the separate Gate 5 amendment, and `phase6_followon_prepared.sh` derives
 the typed `measured_complete`, `partial`, or `failed` lifecycle from the exact
-Runner roots. The 141-row Phase 7 campaign union requires the amendment,
+Runner roots. The 144-row Phase 7 campaign union requires the amendment,
 stability recovery, population-alignment completion, six failed-output
 recovery units, one vLLM context-recovery unit, and 25 local hardware-fit
 recovery units as exact inputs. Its
-exact cohort counts are 46 canonical, four output-policy amendment, three
+exact cohort counts are 46 canonical, seven historical output-policy amendment, three
 follow-on, 14 historical current-Ollama, 14 current-Ollama stability, 12
 current-Ollama population alignment, six failed-output recovery, seven vLLM
 stability, one vLLM context-recovery, 25 local hardware-fit recovery, and nine

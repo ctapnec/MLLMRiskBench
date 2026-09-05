@@ -731,8 +731,8 @@ python -m experiments.local_campaign.local_hardware_fit_failed_unit_recovery_pha
   --tmux-session "$HARDWARE_REPAIR_SESSION"
 ```
 
-Its plan-owned terminal inventory has 141 logical rows after population
-alignment and failed-output recovery: 46 canonical, four output-policy
+Its plan-owned terminal inventory has 144 logical rows after population
+alignment and failed-output recovery: 46 canonical, seven historical output-policy
 amendment, three follow-on, 14
 historical current-Ollama, 14 current-Ollama stability, 12 current-Ollama
 population-alignment, six failed-output recovery, seven vLLM stability, one
@@ -872,7 +872,7 @@ exists. The measured-job registration field and CLI flag are
 named `admission_sha256` and `--admission-sha256`; this local campaign supplies
 the approved Gate 5 manifest digest as that value.
 
-The local campaign registration presents a 141-condition execution-accounting
+The local campaign registration presents a 144-condition execution-accounting
 table in its Stats detail. Rows retain exact target locality/provider, model,
 framework or attacker, corpus family, logical arm, modality, seed, project
 revision and output-policy condition. Selected inputs, initial target calls,

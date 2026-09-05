@@ -269,7 +269,7 @@ _LOCAL_TERMINAL_INVENTORY_COHORTS = (
 )
 _LOCAL_TERMINAL_INVENTORY_COHORT_COUNTS = {
     "canonical": 46,
-    "output_policy_amendment": 4,
+    "output_policy_amendment": 7,
     "followon_prepared": 3,
     "current_ollama": 14,
     "current_ollama_stability": 14,
@@ -328,8 +328,8 @@ def _validate_local_campaign_terminal_inventory(
         != list(_LOCAL_TERMINAL_INVENTORY_COHORTS)
         or document.get("cohort_counts")
         != _LOCAL_TERMINAL_INVENTORY_COHORT_COUNTS
-        or len(rows) != 141
-        or len(document["row_order"]) != 141
+        or len(rows) != 144
+        or len(document["row_order"]) != 144
         or document.get("cross_revision_pooling_permitted") is not False
         or document.get("cross_source_pooling_permitted") is not False
     ):
@@ -870,7 +870,7 @@ def load_local_campaign_stats_bundle(
             or type(prepare.get("metric_runner_lanes")) is not int
             or not 0 <= prepare["metric_runner_lanes"] <= prepare["runner_lanes"]
             or not isinstance(prepare.get("native_outcomes"), Mapping)
-            or prepare.get("campaign_terminal_rows") != 141
+            or prepare.get("campaign_terminal_rows") != 144
             or prepare.get("campaign_terminal_status")
             not in {"complete", "complete_with_failures"}
             or prepare.get("authorization_required_before_launch") is not True
