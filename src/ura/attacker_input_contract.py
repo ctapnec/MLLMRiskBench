@@ -969,12 +969,19 @@ def validate_attempts_against_attacker_input_plan(
                 else None
             )
         else:
-            if not planned.policy_evaluable:
+            retained_origin = attempt.params.get("retained_origin")
+            if retained_origin is not None:
+                from .adapters.replay import validate_retained_origin
+                if (contract.attacker != "replay"
+                    or validate_retained_origin(retained_origin, attempt.rendered_input)
+                    is not planned.policy_evaluable):
+                    raise AttackerInputContractError("retained replay policy scope differs")
+            if not planned.policy_evaluable and retained_origin is None:
                 raise AttackerInputContractError(
                     "stateless attacker contract contains a non-evaluable target turn"
                 )
             expected_horizon = 1
-            expected_challenge_index = 0
+            expected_challenge_index = 0 if planned.policy_evaluable else None
         if (
             not _exact_value(challenge_horizon, expected_horizon)
             or not _exact_value(challenge_index, expected_challenge_index)
@@ -1699,6 +1706,48 @@ def generated_image_input_contract(
     )
 
 
+def retained_replay_contract(
+    attacker: str, datapoint: DataPoint, budget: BudgetLike, *, entries: Sequence[dict],
+) -> AttackerInputContract:
+    """Bind fixed retained conversations, including prepared media and setup turns."""
+    from .adapters.replay import retained_dialog, validate_retained_origin
+
+    source, source_media = source_input_inventory(attacker, datapoint)
+    if not entries or len(entries) > _logical_limit(budget):
+        raise AttackerInputContractError("retained input count exceeds the replay budget")
+    source_by_key = {(item.modality, item.mime, item.sha256): item for item in source_media}
+    refs = ([ref for turn in datapoint.dialog_history for ref in turn.media]
+            if datapoint.dialog_history else list(datapoint.media))
+    occurrences = _media_identity_occurrences(refs, origin="source", require_declared_sha256=True)
+    generated, turns = {}, []
+    for index, entry in enumerate(entries):
+        dialog = retained_dialog(entry["rendered_input"])
+        evaluable = validate_retained_origin(entry["origin"], dialog)
+        media_ids = []
+        for turn in dialog:
+            for media in turn.media:
+                item = source_by_key.get((media.modality, media.mime, media.sha256))
+                if item is None:
+                    item = media_input_identity(media, origin="attacker_generated", require_declared_sha256=True)
+                    generated[item.media_id] = item
+                media_ids.append(item.media_id)
+        text = _last_user_text(dialog)
+        encoded = text.encode("utf-8") if text is not None else None
+        turns.append(PlannedTargetInput(
+            logical_turn=index, combination=_dialog_input_combination(dialog),
+            policy_evaluable=evaluable, media_ids=tuple(media_ids),
+            source_media_policy="all" if any(item in {ref.media_id for ref in source_media}
+                                             for item in media_ids) else "none",
+            bound_text_sha256=hashlib.sha256(encoded).hexdigest() if encoded else None,
+            bound_text_bytes=len(encoded) if encoded else None,
+        ))
+    return AttackerInputContract(
+        attacker=attacker, datapoint_id=datapoint.id, source_combination=source,
+        source_media=source_media, source_media_occurrences=tuple(item.media_id for item in occurrences),
+        generated_media=tuple(generated.values()), turns=tuple(turns), turn_count_semantics="exact",
+    )
+
+
 __all__ = [
     "AttackerInputContract",
     "AttackerInputContractError",
@@ -1709,6 +1758,7 @@ __all__ = [
     "crescendo_input_contract",
     "generated_image_input_contract",
     "identity_replay_contract",
+    "retained_replay_contract",
     "media_input_identity",
     "reject_unexecutable_tool_source",
     "source_input_inventory",

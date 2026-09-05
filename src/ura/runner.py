@@ -344,6 +344,12 @@ class Runner:
     ) -> None:
         self.attacker = attacker
         self.target = target
+        if getattr(attacker, "retained_replay_id", None) is not None:
+            from .targets.api import MockTarget
+            from .judges.rules import RuleJudge
+            if (not isinstance(target, MockTarget)
+                or any(not isinstance(stage, RuleJudge) for stage in judge_cascade.stages)):
+                raise ValueError("retained input materialization is mock/rules-only; paid admission is not implemented")
         self.judge_cascade = judge_cascade
         self.budget = budget
         self.call_budget = call_budget
@@ -1541,6 +1547,13 @@ class Runner:
             policy_challenge_index = 0
             policy_challenge_horizon = 1
             turn_expected_behavior = dp.expected_behavior
+            if getattr(self.attacker, "retained_replay_id", None) is not None:
+                from .adapters.replay import validate_retained_origin
+                policy_evaluable = validate_retained_origin(
+                    attempt.params.get("retained_origin"), rendered_input,
+                )
+                policy_challenge_index = 0 if policy_evaluable else None
+                turn_expected_behavior = dp.expected_behavior if policy_evaluable else "comply_safely"
         planned_target_input = self._validate_attempt_input_contract(
             input_contract,
             rendered_input,

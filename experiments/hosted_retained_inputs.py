@@ -301,6 +301,76 @@ def resolve_inputs(plan: dict, *, candidates: list[dict], **bindings: Any) -> li
              "local_sources": copy.deepcopy(row["local_sources"])} for row in plan["selected"]]
 
 
+def materialize_replay(
+    plan: dict, *, cells: Sequence[Mapping[str, Any]], source_corpora: Mapping[str, Sequence[Any]],
+    corpus: str, **bindings: Any,
+) -> dict:
+    """Prepare one source arm for mock replay, not admit a hosted execution.
+
+    Full original converted populations are keyed by retained run ID. Their
+    hashes bind source references and metadata; no gold fields are inferred from
+    an answer or from a source evaluator's judgment.
+    """
+    from ura.adapters.replay import (
+        RETAINED_REPLAY_SCHEMA, retained_dialog, retained_dialog_sha256, validate_retained_origin,
+    )
+    from ura.converters._common import canonical_converted_corpus_sha256
+    from ura.data_models import DataPoint
+
+    candidates = candidates_from_cells(cells)
+    resolved = {row["input_identity_sha256"]: row for row in
+                resolve_inputs(plan, candidates=candidates, **bindings)}
+    by_run = {cell["run_id"]: cell for cell in cells}
+    checked_corpora = {}
+    entries = []
+    for selected in plan["selected"]:
+        if selected["corpus"] != corpus:
+            continue
+        source = selected["local_sources"][0]  # Stable input-only membership order.
+        run_id = source["run_id"]
+        cell = by_run[run_id]
+        if run_id not in checked_corpora:
+            if run_id not in source_corpora:
+                raise ValueError("retained replay needs the exact original converted corpus")
+            points = [point if isinstance(point, DataPoint) else DataPoint.model_validate(point)
+                      for point in source_corpora[run_id]]
+            if (canonical_converted_corpus_sha256(points)
+                != cell["manifest"]["dataset_hashes"]["corpus"]
+                or len({point.id for point in points}) != len(points)):
+                raise ValueError("retained replay original converted corpus identity differs")
+            checked_corpora[run_id] = {point.id: point for point in points}
+        original = cell["attempts"][source["attempt_id"]]
+        point = checked_corpora[run_id][original["datapoint_id"]]
+        source_identity = point.model_dump(mode="json")
+        if (source_identity["source"] != selected["source"]
+            or source_identity["risk_category"] != selected["risk"]
+            or source_identity["expected_behavior"] != selected["expected_behavior"]
+            or source_identity["source_policy"] != selected["source_policy"]):
+            raise ValueError("retained replay source input metadata differs")
+        resolved_row = resolved[selected["input_identity_sha256"]]
+        delivered = copy.deepcopy(resolved_row["rendered_input"])
+        for binding in resolved_row["media_bindings"]:
+            if binding["storage"] == "local":
+                delivered[binding["turn_index"]]["media"][binding["media_index"]]["path"] = binding["path"]
+        dialog = retained_dialog(delivered)
+        origin = {
+            "selection": copy.deepcopy(selected), "original_attempt": copy.deepcopy(original),
+            "source_membership": copy.deepcopy(source),
+            "source_datapoint_sha256": canonical_converted_corpus_sha256([point]),
+            "delivered_input_sha256": retained_dialog_sha256(dialog),
+            "plan_id": plan["plan_id"], "plan_sha256": _sha(plan),
+        }
+        validate_retained_origin(origin, dialog)
+        entries.append({"origin": origin,
+                        "rendered_input": [turn.model_dump(mode="json") for turn in dialog]})
+    if not entries:
+        raise ValueError("retained replay arm has no selected inputs")
+    value = {"schema": RETAINED_REPLAY_SCHEMA, "status": "no_call_materialized",
+             "corpus": corpus, "plan": copy.deepcopy(plan), "entries": entries}
+    value["replay_id"] = "retained-replay-" + _sha(value)[:24]
+    return value
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runner-view", type=Path, required=True)
@@ -311,6 +381,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--media-index-sha256")
     parser.add_argument("--target", required=True)
     parser.add_argument("--global-input-cap", type=int)
+    parser.add_argument("--materialize-corpus", help="write mock-only replay inputs for one selected arm")
+    parser.add_argument("--source-corpora", type=Path,
+                        help="exact original converted DataPoint lists keyed by retained run ID")
+    parser.add_argument("--source-corpora-sha256")
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)
     budget, budget_desc = load_bound_json(args.budget, args.budget_sha256)
@@ -320,11 +394,26 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("media index path and digest must be supplied together")
     media_index = (load_bound_json(args.media_index, args.media_index_sha256)[0]
                    if args.media_index else {})
-    candidates = candidates_from_cells(load_cells(args.runner_view))
+    if (bool(args.source_corpora) != bool(args.source_corpora_sha256)
+        or bool(args.materialize_corpus) != bool(args.source_corpora)):
+        parser.error("materialization requires a corpus and bound original source corpora together")
+    cells = load_cells(args.runner_view)
+    candidates = candidates_from_cells(cells)
     plan = build_plan(candidates=candidates, budget=budget, budget_descriptor=budget_desc,
                       api_config=api, api_descriptor=api_desc, target=args.target,
                       local_inventory_descriptor=inventory_desc, media_index=media_index,
                       call_cap=args.global_input_cap)
+    if args.materialize_corpus:
+        value = materialize_replay(
+            plan, cells=cells, corpus=args.materialize_corpus,
+            source_corpora=load_bound_json(args.source_corpora, args.source_corpora_sha256)[0],
+            budget=budget, budget_descriptor=budget_desc, api_config=api, api_descriptor=api_desc,
+            local_inventory_descriptor=inventory_desc, media_index=media_index,
+        )
+        _write_new(args.out, value)
+        print(json.dumps({"replay_id": value["replay_id"], "status": value["status"],
+                          "selected_inputs": len(value["entries"]), "provider_calls": 0}))
+        return 0
     _write_new(args.out, plan)
     print(json.dumps({"plan_id": plan["plan_id"], "status": plan["status"],
                       "selected_inputs": len(plan["selected"]), "provider_calls": 0}))

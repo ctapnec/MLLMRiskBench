@@ -808,6 +808,8 @@ def _portable_attacker_configs(
             if name == "t3mp3st"
             else ("replay_artifact", "replay_artifact_sha256", 64 * 1024 * 1024)
             if name == "harmbench"
+            else ("replay_artifact", "replay_artifact_sha256", 64 * 1024 * 1024)
+            if name == "replay" and "replay_artifact" in item
             else None
         )
         declared_path_fields = {
@@ -4047,6 +4049,30 @@ def apply_recovery_completed_prefix(
     return remaining, audit
 
 
+def apply_retained_replay_selection(
+    name: str, corpus: list[DataPoint], audit: dict[str, object], attacker: object | None,
+) -> tuple[list[DataPoint], dict[str, object]]:
+    """Apply the existing bound attacker configuration, not another per-arm limit."""
+    if attacker is None:
+        return corpus, audit
+    selected = attacker.select_corpus(name, corpus)
+    positions = audit.get("selected_indices")
+    if not isinstance(positions, list) or len(positions) != len(corpus):
+        raise ValueError("retained replay source sampling index inventory differs")
+    wanted = {point.id for point in selected}
+    indices = [index for index, point in zip(positions, corpus) if point.id in wanted]
+    clusters = list(dict.fromkeys(_cluster_key(index, point)
+                                 for index, point in zip(indices, selected)))
+    return selected, {
+        **audit, "retained_replay_id": attacker.retained_replay_id,
+        "selected_records": len(selected), "selected_indices": indices,
+        "selected_ids": [point.id for point in selected],
+        "selected_converted_corpus_sha256": canonical_converted_corpus_sha256(selected),
+        "selected_cluster_ids": clusters, "selected_clusters": len(clusters),
+        "selection_method": "content_bound_retained_input_replay_v1",
+    }
+
+
 def _resolve_model_selection(
     names: list[str], api_registry_path: Path, local_registry_path: Path,
 ) -> tuple[list[str], list[str]]:
@@ -5192,6 +5218,7 @@ def _main(argv=None) -> int:
     engine_runtime_close_descriptor: dict[str, object] | None = None
     live_attestation_manifests: list[dict[str, object]] = []
     live_attestation_artifacts: list[dict[str, object]] = []
+    retained_replay = None
     try:
         attacker_configs, attacker_config_artifact = _load_attacker_config(
             args.attacker_config,
@@ -5199,6 +5226,15 @@ def _main(argv=None) -> int:
             args.attacker_config_sha256,
         )
         portable_attacker_configs = _portable_attacker_configs(attacker_configs)
+        if "replay_artifact" in attacker_configs.get("replay", {}):
+            if (not args.dry_run or attacker_names != ["replay"] or len(corpora) != 1
+                or args.limit != 0 or seeds != [0] or args.target_answer_retries != 0
+                or judge_names != ["rules"] or recovery_completed_prefix is not None):
+                raise ValueError(
+                    "retained input materialization requires mock-only --dry-run, one replay arm, "
+                    "--limit 0, seed 0, --judges rules, --target-answer-retries 0 and no recovery selector"
+                )
+            retained_replay = get_attacker("replay", **attacker_configs["replay"])
         engine_runtime_selection, engine_runtime_config_artifact = (
             _load_engine_runtime_config(
                 args.engine_runtime_config,
@@ -5784,6 +5820,9 @@ def _main(argv=None) -> int:
                 corpus,
                 sampling_audit,
                 recovery_completed_prefix,
+            )
+            corpus, sampling_audit = apply_retained_replay_selection(
+                corpus_name, corpus, sampling_audit, retained_replay,
             )
             if not corpus:
                 raise ValueError(
