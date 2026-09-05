@@ -300,6 +300,7 @@ def _cost_bounds(
 def build_shared_request_receipts(
     items: Sequence[tuple[dict[str, Any], str, str]], *, judge_model: str,
     normalized_api: Mapping[str, object], call_ids: Mapping[str, str],
+    token_counts: Mapping[str, dict] | None = None,
 ) -> dict[str, dict]:
     """No-client full-rubric previews with conservative token estimates.
 
@@ -311,6 +312,8 @@ def build_shared_request_receipts(
     judge = LLMJudge(target)
     if set(call_ids) != {row["retained_row_sha256"] for row, _, _ in items}:
         raise ValueError("shared judge call IDs differ from the exact retained selection")
+    if token_counts is not None and (not isinstance(token_counts, Mapping) or set(token_counts) != set(call_ids)):
+        raise ValueError("shared token counts differ from the complete retained selection")
     result = {}
     for row, prompt, text in items:
         datapoint, response = _judge_inputs(row, prompt, text)
@@ -320,6 +323,10 @@ def build_shared_request_receipts(
         result[key] = {"call_id": call_ids[key], "request_sha256": hashlib.sha256(payload).hexdigest(),
                        "input_tokens_estimate": len(payload) + 256,
                        "max_output_tokens": int(normalized_api["max_tokens"])}
+        if token_counts is not None:
+            from experiments.hosted_request_tokens import validate_receipt
+            count = validate_receipt(target, request, token_counts[key])
+            result[key].update(input_tokens_estimate=count["input_tokens"], token_count_receipt=count)
     return result
 
 
@@ -330,10 +337,13 @@ def _shared_binding(budget, requests, items, condition, normalized_api, plan_sha
         raise ValueError("shared judge execution requires its budget and full request receipts")
     if any(not isinstance(value, dict) for value in requests.values()):
         raise ValueError("shared judge request receipt is not an object")
+    counts = {key: value["token_count_receipt"] for key, value in requests.items()
+              if "token_count_receipt" in value}
     expected = build_shared_request_receipts(items, judge_model=condition["model"], normalized_api=normalized_api,
-                                           call_ids={key: value.get("call_id") for key, value in requests.items()})
+                                           call_ids={key: value.get("call_id") for key, value in requests.items()},
+                                           token_counts=counts if counts else None)
     if requests != expected:
-        raise ValueError("shared full-rubric request or conservative UTF8 estimate changed")
+        raise ValueError("shared full-rubric request or token estimate changed")
     call_ids = [value["call_id"] for value in expected.values()]
     if any(not isinstance(value, str) or not value for value in call_ids) or len(set(call_ids)) != len(call_ids):
         raise ValueError("shared retained judge call IDs are not distinct funded slots")
@@ -349,7 +359,8 @@ def _shared_binding(budget, requests, items, condition, normalized_api, plan_sha
         bounds[key] = slot["bound_microusd"]
     return {"schema": "ura-retained-response-shared-budget/1", "plan_sha256": plan_sha256,
             "budget_root": str(budget.root), "budget_plan_sha256": budget.expected_plan_sha256,
-            "input_token_estimate_method": SHARED_ESTIMATE_METHOD, "requests": expected}, bounds
+            "input_token_estimate_method": ("per_request_token_count_receipt_v1" if counts else SHARED_ESTIMATE_METHOD),
+            "requests": expected}, bounds
 
 
 def _open_shared_circuit(budget, row, exc):
