@@ -14795,6 +14795,10 @@ class AnalysisController:
     def human_audit_runner_input_view(self) -> Path:
         """Copy every successful local campaign lane for Phase 8 sampling."""
 
+        # Execution accounting can request this view immediately after Level 1,
+        # before any metric postprocessor has initialized the core-view receipt
+        # that the sampling receipt binds. Validate that dependency first.
+        self.analysis_runner_view()
         if self.human_runner_view_ready:
             self._validate_human_runner_view()
             return checked_dir(

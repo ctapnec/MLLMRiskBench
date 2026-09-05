@@ -91,6 +91,55 @@ def _kinds(
     )
 
 
+@pytest.mark.parametrize("already_ready", [False, True])
+def test_human_sampling_view_initializes_core_receipt_first(
+    phase7, tmp_path, monkeypatch, already_ready,
+):
+    controller = object.__new__(phase7.AnalysisController)
+    controller.runner_view_receipt = tmp_path / "core-view.json"
+    controller.human_runner_view_path = tmp_path / "human-view"
+    controller.human_runner_view_ready = already_ready
+    if already_ready:
+        controller.human_runner_view_path.mkdir()
+    calls = []
+
+    def core_view():
+        calls.append("core")
+        controller.runner_view_receipt.write_text('{"status":"complete"}\n')
+        return tmp_path
+
+    def verify_dependency():
+        assert controller.runner_view_receipt.is_file()
+        calls.append("sampling")
+        raise LookupError("sampling dependency verified")
+
+    monkeypatch.setattr(controller, "analysis_runner_view", core_view)
+    monkeypatch.setattr(controller, "_validate_human_runner_view", verify_dependency)
+    monkeypatch.setattr(controller, "_human_audit_view_sources", verify_dependency)
+    with pytest.raises(LookupError, match="sampling dependency verified"):
+        controller.human_audit_runner_input_view()
+    assert calls == ["core", "sampling"]
+
+
+def test_human_sampling_view_core_failure_precedes_any_copy(
+    phase7, tmp_path, monkeypatch,
+):
+    controller = object.__new__(phase7.AnalysisController)
+    controller.human_runner_view_ready = False
+    controller.human_runner_view_path = tmp_path / "human-view"
+    calls = []
+
+    def rejected_core():
+        raise phase7.Phase7Error("core receipt no longer matches")
+
+    monkeypatch.setattr(controller, "analysis_runner_view", rejected_core)
+    monkeypatch.setattr(controller, "_human_audit_view_sources", lambda: calls.append("copy"))
+    with pytest.raises(phase7.Phase7Error, match="core receipt no longer matches"):
+        controller.human_audit_runner_input_view()
+    assert not controller.human_runner_view_path.exists()
+    assert calls == []
+
+
 def test_failed_output_metrics_exclude_the_retained_partial_lane(phase7):
     from experiments.local_campaign.failed_output_recovery_continuation_phase6 import (
         DEEPSEEK_PHYSICAL_UNIT, RETAINED_UNIT_ORDER,
