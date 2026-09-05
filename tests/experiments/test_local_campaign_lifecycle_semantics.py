@@ -107,6 +107,101 @@ def test_failed_output_metrics_exclude_the_retained_partial_lane(phase7):
     assert "partial" in phase7.CAMPAIGN_TERMINAL_STATES["failed_output_recovery"]
 
 
+def _controller_with_interrupted_lifecycle(phase7, tmp_path):
+    source = tmp_path / "runner"
+    interrupted = source / "interrupted" / "attempt"
+    final = source / "final" / "attempt"
+    for root, status in ((interrupted, "running"), (final, "partial")):
+        root.mkdir(parents=True)
+        (root / "grid-test.grid.json").write_text(json.dumps({
+            "status": status, "requested_cells": 13, "cells": [],
+        }))
+    # The actual interrupted producer retained a complete cell and checkpoint,
+    # but never finalized the grid's empty cell inventory.
+    (interrupted / "strongreject.complete.json").write_text('{"retained":true}\n')
+    (interrupted / "airbench.responses.checkpoint.jsonl").write_text(
+        ''.join(json.dumps({"row": index, "missing": True}) + '\n' for index in range(50))
+    )
+    empty = {"lane_order": [], "lifecycle": {}, "metric_roots": {}}
+    controller = object.__new__(phase7.AnalysisController)
+    controller.inputs = {
+        "runner": {"root": str(source), "lifecycle_lane_order": [],
+                   "lifecycle_lane_roots": {}, "lifecycle_states": {},
+                   "lifecycle_authorizations": {}},
+        "canonical_recoveries": {"attempts": []},
+        "seven_output_policy_amendment": copy.deepcopy(empty),
+        "followon": copy.deepcopy(empty), "current_ollama": copy.deepcopy(empty),
+        "current_ollama_stability": {"unit_order": []},
+        "current_ollama_population_alignment": {"unit_order": []},
+        "failed_output_recovery": {
+            "unit_order": ["interrupted", "final"], "metric_roots": {},
+            "lifecycle_roots": {"interrupted": str(interrupted), "final": str(final)},
+            "terminal_states": {"interrupted": "partial", "final": "partial"},
+            "target_execution": {"target_attempts": 2189,
+                                 "successful_target_generations": 2083, "missing_responses": 106},
+        },
+        "vllm_stability": {"unit_order": []}, "vllm_context_recovery": {"unit_order": []},
+        "local_hardware_fit_recovery": {"unit_order": []},
+    }
+    return controller, interrupted, final
+
+
+def test_terminal_interrupted_grid_is_registry_only_but_all_bytes_remain_bound(
+    phase7, tmp_path, monkeypatch,
+):
+    controller, interrupted, final = _controller_with_interrupted_lifecycle(phase7, tmp_path)
+    original = {path: path.read_bytes() for path in interrupted.iterdir()}
+    counters = copy.deepcopy(controller.inputs["failed_output_recovery"]["target_execution"])
+    roots, states, registry = controller._lifecycle_union()
+    assert roots == {"failed-output-recovery-interrupted": str(interrupted),
+                     "failed-output-recovery-final": str(final)}
+    assert states == {name: "partial" for name in roots}
+    assert registry == ["failed-output-recovery-interrupted"]
+    monkeypatch.setattr(controller, "_lifecycle_root_stratum", lambda *args, **kwargs: ("a", "b"))
+    assert controller._lifecycle_strata() == {("a", "b"): (
+        {"failed-output-recovery-final": str(final)}, {"failed-output-recovery-final": "partial"},
+    )}
+    controller.control = tmp_path / "control"
+    controller.control.mkdir()
+    controller.lifecycle_runner_view_path = controller.control / "lifecycle-view"
+    controller.lifecycle_runner_view_receipt = controller.control / "lifecycle-view.json"
+    controller.lifecycle_runner_view_ready = False
+    view = controller.lifecycle_runner_view()
+    receipt = json.loads(controller.lifecycle_runner_view_receipt.read_text())
+    assert receipt["registry_only_records"] == registry
+    assert receipt["lifecycle_roots"] == roots
+    for path, payload in original.items():
+        copied = view / path.relative_to(controller.runner_root)
+        assert copied.read_bytes() == path.read_bytes() == payload
+        assert not copied.samefile(path)
+        assert any(item["relative_path"] == copied.relative_to(view).as_posix()
+                   for item in receipt["file_inventory"])
+    assert controller.inputs["failed_output_recovery"]["target_execution"] == counters
+
+
+@pytest.mark.parametrize("state", ["measured_complete", "running", "gate5_failed"])
+def test_unfinalized_grid_cannot_hide_behind_unrelated_terminal_claim(phase7, tmp_path, state):
+    controller, _root, _final = _controller_with_interrupted_lifecycle(phase7, tmp_path)
+    controller.inputs["failed_output_recovery"]["terminal_states"]["interrupted"] = state
+    with pytest.raises(phase7.Phase7Error, match="failed terminal controller"):
+        controller._lifecycle_union()
+
+
+@pytest.mark.parametrize("name", ["run.grid.lock", "run.cell.lock"])
+def test_interrupted_grid_with_live_lock_is_not_registry_only(phase7, tmp_path, name):
+    controller, root, _final = _controller_with_interrupted_lifecycle(phase7, tmp_path)
+    (root / name).write_text("retained lock")
+    with pytest.raises(phase7.Phase7Error, match="still locked"):
+        controller._lifecycle_union()
+
+
+@pytest.mark.parametrize("status", ["complete", "partial"])
+def test_final_grid_stays_representable_even_when_controller_failed(phase7, tmp_path, status):
+    controller, root, _final = _controller_with_interrupted_lifecycle(phase7, tmp_path)
+    (root / "grid-test.grid.json").write_text(json.dumps({"status": status}))
+    assert controller._lifecycle_union()[2] == []
+
+
 def test_native_terminal_uses_its_historical_plan_revision(phase7, tmp_path):
     def write(name, value):
         path = tmp_path / name

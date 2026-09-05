@@ -13813,6 +13813,8 @@ class AnalysisController:
             retained_paths.add(resolved)
             roots[name] = str(resolved)
             states[name] = state
+            if self._lifecycle_root_registry_only(resolved, state=state, label=name):
+                registry_only.append(name)
 
         runner = self.inputs["runner"]
         for lane in runner["lifecycle_lane_order"]:
@@ -13930,6 +13932,31 @@ class AnalysisController:
             )
         return roots, states, registry_only
 
+    def _lifecycle_root_registry_only(
+        self, root: Path, *, state: str, label: str
+    ) -> bool:
+        """A terminal controller cannot make an interrupted grid final.
+
+        Keep every byte in the lifecycle copy and the already validated campaign
+        inventory, but do not send an unfinished grid to the final-grid Level-1
+        reader. This does not alter durable outcome counts or metric eligibility.
+        """
+        grids = sorted(root.glob("*.grid.json"))
+        if len(grids) > 1:
+            raise Phase7Error(f"{label}: lifecycle root has more than one grid")
+        if not grids:
+            return False
+        status = strict_object(grids[0]).get("status")
+        if status not in {"complete", "partial", "running"}:
+            raise Phase7Error(f"{label}: lifecycle grid status is unknown")
+        if status != "running":
+            return False
+        if state not in {"failed", "partial", "measured_failed"}:
+            raise Phase7Error(f"{label}: unfinalized grid lacks a failed terminal controller")
+        if any(root.glob("*.grid.lock")) or any(root.glob("*.cell.lock")):
+            raise Phase7Error(f"{label}: unfinalized grid is still locked")
+        return True
+
     def _lifecycle_root_stratum(self, raw_root: str, *, label: str) -> tuple[str, str]:
         root = checked_dir(raw_root, label=label)
         revisions: set[str] = set()
@@ -13966,9 +13993,11 @@ class AnalysisController:
     def _lifecycle_strata(
         self,
     ) -> dict[tuple[str, str], tuple[dict[str, str], dict[str, str]]]:
-        roots, states, _registry_only = self._lifecycle_union()
+        roots, states, registry_only = self._lifecycle_union()
         grouped: dict[tuple[str, str], tuple[dict[str, str], dict[str, str]]] = {}
         for name, root in roots.items():
+            if name in registry_only:
+                continue
             stratum = self._lifecycle_root_stratum(root, label=f"lifecycle root {name}")
             stratum_roots, stratum_states = grouped.setdefault(stratum, ({}, {}))
             stratum_roots[name] = root
@@ -15284,7 +15313,9 @@ class AnalysisController:
             "complete",
             detail=(
                 "Level 1 consumed every representable Runner/request lifecycle "
-                "within exact revision/source strata; pre-Runner records remained registry-only"
+                "within exact revision/source strata; pre-Runner records and "
+                "terminal interrupted grids remained registry-only, with retained "
+                "artifacts and durable outcome accounting unchanged"
             ),
             outputs=outputs,
         )
