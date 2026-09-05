@@ -2,8 +2,9 @@
 
 The selector consumes two already validated Phase 7 Runner views. It admits
 only pairs whose rendered input identity is byte-equivalent after canonical
-normalization, then selects without reusing either retained output. No target
-or judge is constructed here.
+normalization. New CLI plans share a local judgment across comparisons when
+needed, but judge each distinct retained output once. Historical /1 plans
+preserve their disjoint-pair selection. No target or judge is constructed here.
 """
 
 from __future__ import annotations
@@ -29,6 +30,8 @@ from ura.targets.api import DEFAULT_HOSTED_HTTP_ERROR_RETRIES
 
 SCHEMA = "ura-retained-response-judge-pair-plan/1"
 ALGORITHM = "seeded_balanced_round_robin_matched_retained_output_pairs_v1"
+SHARED_SCHEMA = "ura-retained-response-judge-pair-plan/2"
+SHARED_ALGORITHM = "seeded_balanced_matched_pairs_unique_judgments_v2"
 # The operator's 80-percent allocation includes both members of every pair.
 # Historical /1 plans retain their own smaller content-bound quantity and spend.
 MAX_PAIR_LIMIT = 1_350
@@ -202,7 +205,8 @@ def _pair_edges(
 
 
 def _select_pairs(
-    edges: Sequence[Mapping[str, Any]], *, limit: int, seed: int
+    edges: Sequence[Mapping[str, Any]], *, limit: int, seed: int,
+    share_local_judgments: bool = False,
 ) -> list[dict[str, Any]]:
     if (
         isinstance(limit, bool)
@@ -236,7 +240,9 @@ def _select_pairs(
                 edge = queues[key].popleft()
                 local_digest = edge["local"]["retained_row_sha256"]
                 hosted_digest = edge["hosted"]["retained_row_sha256"]
-                if local_digest in used_local or hosted_digest in used_hosted:
+                if (
+                    not share_local_judgments and local_digest in used_local
+                ) or hosted_digest in used_hosted:
                     continue
                 selected.append(edge)
                 used_local.add(local_digest)
@@ -265,6 +271,7 @@ def build_pair_plan(
     limit: int = DEFAULT_PAIR_LIMIT,
     seed: int = 0,
     max_cost_microusd: int = DEFAULT_COST_MICROUSD,
+    share_local_judgments: bool = False,
 ) -> dict[str, Any]:
     judge_model = _text(judge_model, label="judge model")
     if not judge_model.startswith("anthropic:claude-haiku-"):
@@ -277,14 +284,17 @@ def build_pair_plan(
         or not 1 <= max_cost_microusd <= MAX_COST_MICROUSD
     ):
         raise ValueError(
-            "matched Haiku cost ceiling must be positive and at most USD 18"
+            f"matched Haiku cost ceiling must be positive and at most USD {MAX_COST_MICROUSD // 1_000_000}"
         )
     edges, match_audit = _pair_edges(
         local_candidates, hosted_candidates, seed=seed
     )
-    pairs = _select_pairs(edges, limit=limit, seed=seed)
+    pairs = _select_pairs(
+        edges, limit=limit, seed=seed, share_local_judgments=share_local_judgments
+    )
     selected: list[dict[str, Any]] = []
     pair_rows: list[dict[str, str]] = []
+    selected_digests: set[str] = set()
     for pair in pairs:
         pair_rows.append(
             {
@@ -292,8 +302,16 @@ def build_pair_plan(
                 for field in ("pair_id", "input_identity_sha256", "pair_stratum_id")
             }
         )
+        if share_local_judgments:
+            pair_rows[-1].update({
+                f"{cohort}_retained_row_sha256": pair[cohort]["retained_row_sha256"]
+                for cohort in ("local", "hosted")
+            })
         for cohort in ("local", "hosted"):
             row = dict(pair[cohort])
+            if share_local_judgments and row["retained_row_sha256"] in selected_digests:
+                continue
+            selected_digests.add(row["retained_row_sha256"])
             row.update(
                 {
                     "cohort": cohort,
@@ -302,12 +320,15 @@ def build_pair_plan(
                     "same_model_judge": row["exact_model"] == judge_model,
                 }
             )
+            if share_local_judgments:
+                row.pop("pair_id")
+                row.pop("pair_stratum_id")
             selected.append(row)
     same_model_rows = sum(row["same_model_judge"] is True for row in selected)
     selected_strata = Counter(pair["pair_stratum_id"] for pair in pairs)
     eligible_strata = Counter(edge["pair_stratum_id"] for edge in edges)
     value: dict[str, Any] = {
-        "schema": SCHEMA,
+        "schema": SHARED_SCHEMA if share_local_judgments else SCHEMA,
         "status": "planned_no_calls",
         "authority": "matched_selected_followon_not_full_corpus",
         "source": dict(source_descriptor),
@@ -328,14 +349,14 @@ def build_pair_plan(
             "same_model_judge_rows": same_model_rows,
         },
         "selection": {
-            "algorithm": ALGORITHM,
+            "algorithm": SHARED_ALGORITHM if share_local_judgments else ALGORITHM,
             "sample_seed": seed,
             "requested_pair_limit": limit,
             "selected_pairs": len(pairs),
             "selected_outputs": len(selected),
             "pair_dimensions": list(_PAIR_DIMENSIONS),
             "input_identity_dimensions": list(_MATCH_IDENTITY_FIELDS),
-            "retained_output_reuse_permitted": False,
+            "retained_output_reuse_permitted": share_local_judgments,
             "outcome_dependent_extension_permitted": False,
         },
         "population": {
@@ -350,6 +371,9 @@ def build_pair_plan(
         "pairs": pair_rows,
         "selected": selected,
     }
+    if share_local_judgments:
+        value["selection"]["shared_local_judgments_permitted"] = True
+        value["selection"]["duplicate_judge_calls_permitted"] = False
     value["plan_id"] = "retained-judge-pair-plan-" + _sha(value)[:24]
     return validate_pair_plan(value)
 
@@ -373,8 +397,9 @@ def validate_pair_plan(value: object) -> dict[str, Any]:
     selection = value.get("selection")
     pairs = value.get("pairs")
     selected = value.get("selected")
+    shared = value.get("schema") == SHARED_SCHEMA
     if (
-        value.get("schema") != SCHEMA
+        value.get("schema") not in {SCHEMA, SHARED_SCHEMA}
         or value.get("status") != "planned_no_calls"
         or value.get("authority") != "matched_selected_followon_not_full_corpus"
         or not isinstance(condition, dict)
@@ -383,7 +408,8 @@ def validate_pair_plan(value: object) -> dict[str, Any]:
         or not isinstance(pairs, list)
         or not isinstance(selected, list)
         or not pairs
-        or len(selected) != 2 * len(pairs)
+        or (not shared and len(selected) != 2 * len(pairs))
+        or (shared and not len(pairs) < len(selected) <= 2 * len(pairs))
     ):
         raise ValueError("matched retained-response plan contract changed")
     if (
@@ -412,7 +438,7 @@ def validate_pair_plan(value: object) -> dict[str, Any]:
     if (
         condition.get("same_model_judge_rows") != same_model
         or condition.get("independent_judge_rows") != len(selected) - same_model
-        or selection.get("algorithm") != ALGORITHM
+        or selection.get("algorithm") != (SHARED_ALGORITHM if shared else ALGORITHM)
         or selection.get("sample_seed") != 0
         or selection.get("selected_pairs") != len(pairs)
         or selection.get("selected_outputs") != len(selected)
@@ -421,15 +447,22 @@ def validate_pair_plan(value: object) -> dict[str, Any]:
         or not 1 <= len(pairs) <= requested_pair_limit <= MAX_PAIR_LIMIT
         or selection.get("pair_dimensions") != list(_PAIR_DIMENSIONS)
         or selection.get("input_identity_dimensions") != list(_MATCH_IDENTITY_FIELDS)
-        or selection.get("retained_output_reuse_permitted") is not False
+        or selection.get("retained_output_reuse_permitted") is not shared
         or selection.get("outcome_dependent_extension_permitted") is not False
+        or (shared and (
+            selection.get("shared_local_judgments_permitted") is not True
+            or selection.get("duplicate_judge_calls_permitted") is not False
+        ))
     ):
         raise ValueError("matched retained-response selection contract changed")
     pair_by_id: dict[str, dict[str, str]] = {}
+    pair_fields = {"pair_id", "input_identity_sha256", "pair_stratum_id"}
+    if shared:
+        pair_fields |= {"local_retained_row_sha256", "hosted_retained_row_sha256"}
     for pair in pairs:
         if (
             not isinstance(pair, dict)
-            or set(pair) != {"pair_id", "input_identity_sha256", "pair_stratum_id"}
+            or set(pair) != pair_fields
             or not str(pair.get("pair_id", "")).startswith("retained-judge-pair-")
             or _HEX64.fullmatch(str(pair.get("input_identity_sha256", ""))) is None
             or _HEX64.fullmatch(str(pair.get("pair_stratum_id", ""))) is None
@@ -439,15 +472,22 @@ def validate_pair_plan(value: object) -> dict[str, Any]:
         pair_by_id[pair["pair_id"]] = pair
     seen_rows: set[str] = set()
     cohorts: Counter[tuple[str, str]] = Counter()
+    shared_rows: dict[str, dict[str, Any]] = {}
+    row_fields = (
+        _BASE_ROW_FIELDS | {"cohort", "same_model_judge"}
+        if shared else _SELECTED_ROW_FIELDS
+    )
     for row in selected:
-        if not isinstance(row, dict) or set(row) != _SELECTED_ROW_FIELDS:
+        if not isinstance(row, dict) or set(row) != row_fields:
             raise ValueError("matched retained-response selected-row fields changed")
-        pair = pair_by_id.get(row["pair_id"])
+        pair = None if shared else pair_by_id.get(row["pair_id"])
         if (
-            pair is None
+            (not shared and (
+                pair is None
+                or row["input_identity_sha256"] != pair["input_identity_sha256"]
+                or row["pair_stratum_id"] != pair["pair_stratum_id"]
+            ))
             or row["cohort"] not in {"local", "hosted"}
-            or row["input_identity_sha256"] != pair["input_identity_sha256"]
-            or row["pair_stratum_id"] != pair["pair_stratum_id"]
             or row["same_model_judge"]
             is not (row["exact_model"] == condition["model"])
             or row["retained_row_sha256"] in seen_rows
@@ -469,8 +509,45 @@ def validate_pair_plan(value: object) -> dict[str, Any]:
         ):
             raise ValueError("matched retained-response input identity changed")
         seen_rows.add(row["retained_row_sha256"])
-        cohorts[(row["pair_id"], row["cohort"])] += 1
-    if any(
+        if shared:
+            shared_rows[row["retained_row_sha256"]] = row
+        else:
+            cohorts[(row["pair_id"], row["cohort"])] += 1
+    if shared:
+        linked: set[str] = set()
+        hosted_links: set[str] = set()
+        for pair in pairs:
+            members = {}
+            for cohort in ("local", "hosted"):
+                digest = pair[f"{cohort}_retained_row_sha256"]
+                row = shared_rows.get(digest)
+                if (
+                    row is None or row["cohort"] != cohort
+                    or row["input_identity_sha256"] != pair["input_identity_sha256"]
+                    or (cohort == "hosted" and digest in hosted_links)
+                ):
+                    raise ValueError("shared matched judgment link changed")
+                members[cohort] = row
+                linked.add(digest)
+                if cohort == "hosted":
+                    hosted_links.add(digest)
+            stratum = {
+                "local_exact_model": members["local"]["exact_model"],
+                "hosted_exact_model": members["hosted"]["exact_model"],
+                **{field: members["local"][field] for field in _PAIR_DIMENSIONS
+                   if field not in {"local_exact_model", "hosted_exact_model"}},
+            }
+            identity = {
+                "input_identity_sha256": pair["input_identity_sha256"],
+                "local_retained_row_sha256": pair["local_retained_row_sha256"],
+                "hosted_retained_row_sha256": pair["hosted_retained_row_sha256"],
+            }
+            if (pair["pair_stratum_id"] != _sha(stratum)
+                or pair["pair_id"] != "retained-judge-pair-" + _sha(identity)[:24]):
+                raise ValueError("shared matched judgment pair identity changed")
+        if linked != seen_rows:
+            raise ValueError("shared matched plan has an unreferenced judgment")
+    elif any(
         cohorts[(pair_id, cohort)] != 1
         for pair_id in pair_by_id
         for cohort in ("local", "hosted")
@@ -548,6 +625,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         limit=args.pair_limit,
         seed=args.sample_seed,
         max_cost_microusd=args.max_cost_microusd,
+        share_local_judgments=True,
     )
     print(_write_new(args.out, value))
     return 0

@@ -127,10 +127,13 @@ That is at most 1,110 selected local outputs and 1,110 selected hosted outputs
 from their matched-input intersection. The pair limit equals the entire hosted
 target cap, so it selects every eligible answered hosted output exactly once;
 it is not a second sample of the hosted results. Each receives one deterministic
-unused local counterpart.
+local counterpart. A local output may support several comparisons, but is sent
+to Haiku only once; every hosted output is also judged once. New `/2` plans
+record comparison links separately from their unique paid-judgment list.
 The local and hosted member of every pair has the same rendered-input identity,
-source cluster, seed, arm/framework, modality and source-policy stratum. Neither
-retained output may be reused in another pair. The judging scenario is 8,192
+source cluster, seed, arm/framework, modality and source-policy stratum. Shared
+local judgments do not become independent observations or extra paid calls.
+The conservative judging scenario still reserves two calls per pair at 8,192
 input and 256 output tokens per call: at most 2,220 calls cost USD 21.02784.
 The dedicated judge route fixes `max_tokens=512`; reserving 12,288 input
 tokens per complete judgment gives USD 32.96256, inside the USD 33 cap.
@@ -243,7 +246,9 @@ is eligible only when both retained outputs bind the same rendered prompt,
 media-reference digest, datapoint, source cluster, seed, arm/framework,
 modality, risk, expected behavior and source-policy identity. Use deterministic
 seed-0 balanced round-robin selection across local target, hosted target and
-those input strata, without reusing an output. Preserve original judgments.
+those input strata. Judge each distinct output once and link an existing local
+judgment to multiple hosted comparisons when necessary. Preserve original
+judgments and report distinct judged outputs separately from comparison pairs.
 When the eligible hosted population remains at or below 1,110, selection must
 include every eligible hosted output rather than downsample it.
 Missing responses and source-authoritative R-Judge/GPTGeoChat rows remain in

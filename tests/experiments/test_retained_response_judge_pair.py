@@ -70,7 +70,9 @@ def _population(count: int) -> dict[str, int]:
     }
 
 
-def _build(local: list[dict], hosted: list[dict], *, limit: int = 2) -> dict:
+def _build(
+    local: list[dict], hosted: list[dict], *, limit: int = 2, shared: bool = False
+) -> dict:
     return subject.build_pair_plan(
         local,
         hosted,
@@ -81,6 +83,7 @@ def _build(local: list[dict], hosted: list[dict], *, limit: int = 2) -> dict:
         api_config_sha256=HEX_B,
         pricing_condition=PRICING,
         limit=limit,
+        share_local_judgments=shared,
     )
 
 
@@ -152,6 +155,49 @@ def test_pair_selector_never_reuses_an_output() -> None:
     assert plan["selection"]["selected_pairs"] == 2
     assert len({row["retained_row_sha256"] for row in plan["selected"]}) == 4
     assert plan["population"]["eligible_pair_edges"] == 6
+
+
+def test_shared_local_judgment_preserves_every_hosted_answer_without_rebilling() -> None:
+    local = [_candidate(0, cohort="local", input_index=0)]
+    hosted = [_candidate(i, cohort="hosted", input_index=0) for i in range(11)]
+
+    plan = _build(local, hosted, limit=11, shared=True)
+
+    assert plan["schema"] == subject.SHARED_SCHEMA
+    assert plan["selection"]["selected_pairs"] == 11
+    assert plan["selection"]["selected_outputs"] == 12
+    assert plan["judge_condition"]["max_judge_calls"] == 12
+    assert plan["judge_condition"]["max_http_attempts"] == 48
+    assert len({row["retained_row_sha256"] for row in plan["selected"]}) == 12
+    assert len({pair["local_retained_row_sha256"] for pair in plan["pairs"]}) == 1
+    assert len({pair["hosted_retained_row_sha256"] for pair in plan["pairs"]}) == 11
+    assert plan == _build(local, list(reversed(hosted)), limit=11, shared=True)
+
+
+@pytest.mark.parametrize("mutation", ["unknown_local", "wrong_cohort", "duplicate_paid_row"])
+def test_shared_plan_rejects_invalid_links_or_duplicate_paid_rows(mutation: str) -> None:
+    local = [_candidate(0, cohort="local", input_index=0)]
+    hosted = [_candidate(i, cohort="hosted", input_index=0) for i in range(3)]
+    plan = _build(local, hosted, limit=3, shared=True)
+    if mutation == "unknown_local":
+        plan["pairs"][0]["local_retained_row_sha256"] = "f" * 64
+    elif mutation == "wrong_cohort":
+        plan["pairs"][0]["local_retained_row_sha256"] = plan["pairs"][0]["hosted_retained_row_sha256"]
+    else:
+        plan["selected"][-1] = copy.deepcopy(plan["selected"][0])
+    _resign(plan)
+    with pytest.raises(ValueError, match="matched"):
+        subject.validate_pair_plan(plan)
+
+
+def test_legacy_disjoint_plan_still_has_its_original_selection_contract() -> None:
+    local = [_candidate(0, cohort="local", input_index=0)]
+    hosted = [_candidate(i, cohort="hosted", input_index=0) for i in range(3)]
+    plan = _build(local, hosted, limit=3)
+    assert plan["schema"] == subject.SCHEMA
+    assert plan["selection"]["selected_pairs"] == 1
+    assert plan["selection"]["selected_outputs"] == 2
+    assert "shared_local_judgments_permitted" not in plan["selection"]
 
 
 def test_prompt_or_policy_difference_is_not_a_match() -> None:

@@ -1708,10 +1708,14 @@ selector for at most 1,110 matched local/hosted output pairs. Both members bind
 the same rendered prompt, media-reference digest, datapoint, source cluster,
 seed, arm/framework, modality, risk, expected behavior and source policy. The
 selector uses deterministic balanced round-robin sampling across local target,
-hosted target and those input strata, without output reuse. It preserves
+hosted target and those input strata, without repeated paid judgments. It preserves
 original judgments. Since the hosted campaign cap is 1,110, the 1,110-pair
 ceiling must include every eligible answered hosted output exactly once and
-assign one unused local counterpart; it is not a downsample of hosted results.
+assign one local counterpart; it is not a downsample of hosted results. New
+`/2` plans share local judgments across same-input comparisons when needed and
+keep a separate unique-output execution list. The executor pays once per
+distinct output, including after checkpoint resume. Shared comparison links
+are not independent local observations; historical `/1` plans remain unchanged.
 It excludes missing responses plus source-authoritative
 R-Judge/GPTGeoChat rows from judge calls. Haiku target rows may be judged by
 Haiku under the operator's explicit decision, but must be labelled same-model

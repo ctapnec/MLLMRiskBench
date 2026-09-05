@@ -15,6 +15,7 @@ from experiments.retained_response_judge_execute import (
     execute as execute_retained,
 )
 from experiments.retained_response_judge_pair import (
+    SHARED_SCHEMA,
     build_pair_plan,
     validate_pair_plan,
 )
@@ -55,6 +56,7 @@ def _reconcile_pair_selection(
         limit=plan["selection"]["requested_pair_limit"],
         seed=plan["selection"]["sample_seed"],
         max_cost_microusd=condition["max_cost_microusd"],
+        share_local_judgments=plan["schema"] == SHARED_SCHEMA,
     )
     if rebuilt != plan:
         raise ValueError("matched Haiku plan no longer matches its Runner views")

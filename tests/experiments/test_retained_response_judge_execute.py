@@ -255,6 +255,82 @@ def test_executes_exact_selection_once_and_completes_without_target_calls(
     assert fake.calls == 2
 
 
+def test_matched_shared_local_judgment_executes_once_and_resumes_without_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from experiments import retained_response_judge_pair as pair_planner
+    from experiments import retained_response_judge_pair_execute as paired
+
+    prepared = _prepared(tmp_path, monkeypatch)
+    api = prepared["api_config"]
+    config = json.loads(api.read_text())
+    config[JUDGE]["max_tokens"] = 512
+    api.write_text(json.dumps(config) + "\n", encoding="utf-8")
+    local_view = prepared["runner_view"]
+    hosted_view = tmp_path / "hosted-view"
+    hosted_view.mkdir()
+    populations = {}
+    metadata = {}
+    for cohort, count, view in (("local", 1, local_view), ("hosted", 3, hosted_view)):
+        rows = []
+        meta = {}
+        for index in range(count):
+            row = _candidate(0)
+            row.update({
+                "sample_key": f"{cohort}-{index}",
+                "run_id": f"{cohort}-run-{index}",
+                "attempt_id": f"{cohort}-attempt-{index}",
+                "exact_model": f"{cohort}:model-{index}",
+                "source_policy_id": "policy",
+                "source_policy_version": "1",
+                "media_references_sha256": _sha([]),
+                "response_sha256": hashlib.sha256(f"response {index}".encode()).hexdigest(),
+            })
+            row["input_identity_sha256"] = _sha({
+                field: row[field] for field in planner._MATCH_IDENTITY_FIELDS
+            })
+            row["retained_row_sha256"] = _sha(row)
+            rows.append(row)
+            meta[row["sample_key"]] = {
+                "prepared_prompt": "prompt 0", "prepared_response": f"response {index}"
+            }
+        populations[view] = rows
+        metadata[view] = meta
+    old_plan = prepared["plan"]
+    condition = old_plan["judge_condition"]
+    pricing = {field: condition[field] for field in (
+        "pricing_config_sha256", "pricing_as_of", "pricing_effective_date",
+        "pricing_currency", "input_microusd_per_token", "output_microusd_per_token"
+    )}
+    plan = pair_planner.build_pair_plan(
+        populations[local_view], populations[hosted_view],
+        local_population_audit=_audit(1), hosted_population_audit=_audit(3),
+        source_descriptor=old_plan["source"], judge_model=JUDGE,
+        api_config_sha256=hashlib.sha256(api.read_bytes()).hexdigest(),
+        pricing_condition=pricing, limit=3, share_local_judgments=True,
+    )
+    prepared["plan_path"].write_bytes(planner._canonical(plan))
+    monkeypatch.setattr(paired, "load_candidates", lambda view, **_kwargs: (
+        populations[view], _audit(len(populations[view]))
+    ))
+    monkeypatch.setattr(paired, "_joined_artifacts", lambda view, **_kwargs: (
+        {}, metadata[view], {}, {}
+    ))
+    fake = FakeHaiku()
+    args = {key: prepared[key] for key in (
+        "plan_path", "source_receipt", "api_config", "pricing_config", "out"
+    )}
+    args.update(local_runner_view=local_view, hosted_runner_view=hosted_view)
+    completed = paired.execute(**args, judge_factory=lambda _spec, _config: fake)
+    value = json.loads(completed.read_text())
+    assert fake.calls == value["judge_calls"] == 4
+    assert value["target_calls"] == 0
+    assert value["actual_cost_microusd"] == 640
+    assert len(list((prepared["out"] / "judgments").glob("*.json"))) == 4
+    assert paired.execute(**args, judge_factory=lambda _spec, _config: fake) == completed
+    assert fake.calls == 4
+
+
 def test_first_judge_failure_opens_global_circuit_and_prevents_second_call(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

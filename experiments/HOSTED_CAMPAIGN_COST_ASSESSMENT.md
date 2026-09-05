@@ -224,7 +224,8 @@ the local and hosted judged populations contain the same input entries. Exact
 identity binds the rendered prompt, media-reference digest, datapoint, source
 cluster, seed, arm/framework, modality, risk, expected behavior and source
 policy. Seed-0 balanced round-robin sampling spans both target models and those
-input strata, and no retained output is reused. Missing responses remain in
+input strata. A local judgment may support multiple same-input comparisons;
+each unique local or hosted output incurs at most one Haiku call. Missing responses remain in
 coverage statistics but require no judge call and cannot form a judged pair.
 The pair limit equals the hosted campaign's 1,110-target ceiling and therefore
 includes every eligible answered hosted output exactly once rather than drawing
@@ -232,13 +233,17 @@ a smaller outcome-selected sample.
 Source-authoritative R-Judge and GPTGeoChat decisions are excluded. Haiku's own
 target outputs are included by explicit operator decision and labelled
 same-model, non-independent evidence.
-The 2,220-judgment scenario costs USD 21.02784; its maximum reservation is
+The conservative 2,220-judgment scenario costs USD 21.02784; its maximum reservation is
 USD 32.96256 inside a USD 33 allocation. Full grading requests, including local
 answers, must be counted with the judge provider before fixing affordable
 hosted quantities. Long answers are not silently truncated or discarded based
 on their security outcome. Pilot answers remain a separate diagnostic stratum.
 The all-model matched core is reported separately from larger model-specific
 extensions; a 30-call premium lane cannot support precise per-arm conclusions.
+
+Shared local judgments reduce actual unique-call counts, not the prospective
+reserve. Their repeated comparison links are correlated evidence, not new
+independent local samples. Historical `/1` disjoint-pair plans are unchanged.
 
 The later comparison is a matched selected-cohort analysis, not a full-corpus
 estimate. It publishes separate hosted/local member tables from the identical
