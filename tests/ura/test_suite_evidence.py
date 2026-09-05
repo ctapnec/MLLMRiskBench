@@ -42,14 +42,14 @@ def test_suite_cli_uses_the_explicit_source_validator(
     def current(root):
         assert not historical
         calls.append((root, None))
-        return []
+        return [_runner_cell()]
 
     def retained(root, *, code_repository):
         assert historical
         calls.append((root, code_repository))
         if refused:
             raise ValueError("retained source validation failed")
-        return []
+        return [_runner_cell()]
 
     monkeypatch.setattr(suite_summary, "_load_cells", current)
     monkeypatch.setattr(retained_artifact_reader, "load_cells", retained)
