@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -691,6 +692,16 @@ def _base_argv(
     return argv
 
 
+def _validate_execution_bounds(deadline_seconds: int, live_attestation_max_age_hours: float) -> None:
+    if isinstance(deadline_seconds, bool) or not isinstance(deadline_seconds, int) or deadline_seconds <= 0:
+        raise ValueError("measured wall time must be a positive integer number of seconds")
+    if (isinstance(live_attestation_max_age_hours, bool)
+            or not isinstance(live_attestation_max_age_hours, (int, float))
+            or not 0 < live_attestation_max_age_hours <= 24 * 365
+            or not math.isfinite(live_attestation_max_age_hours)):
+        raise ValueError("live-attestation max age must be finite and in (0, 8760] hours")
+
+
 def _runtime_args(
     base: Sequence[str],
     *,
@@ -700,7 +711,10 @@ def _runtime_args(
     target_cap: int,
     preflight: bool = False,
     canary: bool = False,
+    deadline_seconds: int = 86400,
+    live_attestation_max_age_hours: float = 24,
 ) -> list[str]:
+    _validate_execution_bounds(deadline_seconds, live_attestation_max_age_hours)
     argv = list(base)
     if canary:
         corpus = _option(argv, "--corpora").split(",", 1)[0]
@@ -716,7 +730,7 @@ def _runtime_args(
             "--live-attestation-sha256",
             str(attestation["sha256"]),
             "--live-attestation-max-age-hours",
-            "24",
+            str(live_attestation_max_age_hours),
         ))
     argv.extend((
         "--max-total-target-calls",
@@ -726,7 +740,7 @@ def _runtime_args(
         "--max-total-http-attempts",
         "0",
         "--deadline-seconds",
-        "86400",
+        str(deadline_seconds),
         "--out",
         str(out),
     ))
@@ -812,7 +826,7 @@ def _probe_args(
         "--guardrail-revision",
         "7327bd9f6efbbe6101dc6cc4736302b3cbb6e425",
         "--guardrail-device",
-        "cuda:1",
+        _option(base, "--guardrail-device") if "--guardrail-device" in base else "cuda:1",
         "--corpora",
         corpus,
     ]
@@ -968,7 +982,16 @@ def _run_unit(
     validated_canary_root: Path | None = None,
     hub_acquisition_required: bool = True,
     diagnostic_canary_target_cap: int | None = None,
+    measured_wall_time_seconds: int = 86400,
+    live_attestation_max_age_hours: float = 24,
+    scoring_device: str | None = None,
 ) -> dict[str, Any]:
+    _validate_execution_bounds(measured_wall_time_seconds, live_attestation_max_age_hours)
+    if scoring_device is not None and (
+        not isinstance(scoring_device, str)
+        or re.fullmatch(r"cpu|cuda(?::[0-9]+)?|mps", scoring_device) is None
+    ):
+        raise ValueError("scoring device must be an explicit cpu, cuda[:index], or mps device")
     if diagnostic_canary_target_cap is not None and (
         isinstance(diagnostic_canary_target_cap, bool)
         or not isinstance(diagnostic_canary_target_cap, int)
@@ -982,6 +1005,8 @@ def _run_unit(
         project_revision=project_revision,
         project_revision_sha256=project_revision_sha256,
     )
+    if scoring_device is not None:
+        base = _replace_option(base, "--guardrail-device", scoring_device)
     if unit.recovery is not None:
         if recovery_path is None or recovery_sha256 is None:
             raise ValueError("completed-prefix recovery artifact is missing")
@@ -1073,6 +1098,8 @@ def _run_unit(
         attestation=attestation,
         target_cap=target_cap,
         preflight=True,
+        deadline_seconds=measured_wall_time_seconds,
+        live_attestation_max_age_hours=live_attestation_max_age_hours,
     )
     preflight_acquisition_root = unit_root / "preflight-acquisition"
     preflight_acquisition_root.mkdir(mode=0o700)
@@ -1115,6 +1142,8 @@ def _run_unit(
         scope=scope,
         attestation=attestation,
         target_cap=target_cap,
+        deadline_seconds=measured_wall_time_seconds,
+        live_attestation_max_age_hours=live_attestation_max_age_hours,
     )
     measured_acquisition_root = unit_root / "measured-acquisition"
     measured_acquisition_root.mkdir(mode=0o700)
@@ -1171,7 +1200,7 @@ def _run_unit(
                 *state["runner_argv"],
             ),
             log=unit_root / "measured.run.log",
-            timeout=86400,
+            timeout=measured_wall_time_seconds,
             allow_failure=True,
         )
     except BaseException as exc:
