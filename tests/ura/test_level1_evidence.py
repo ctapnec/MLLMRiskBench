@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -34,7 +35,7 @@ from ura.approximate_metrics import (
 )
 from ura.adapters.base import AttackBudget
 from ura.adapters.replay import ReplayAttacker
-from ura.attacker_input_contract import attacker_input_payload_sha256
+from ura.attacker_input_contract import MediaInputIdentity, PlannedTargetInput, attacker_input_payload_sha256
 from ura.converters.synth import synth_corpus
 from ura.data_models import DataPoint, DialogTurn, Judgment, Response, RiskCategory
 from ura.eligibility import (
@@ -220,12 +221,17 @@ def _write_plan(
     dry_run: bool = True,
     live_attestation: dict | None = None,
     corpus_size: int = 2,
+    attacker_contracts: dict | None = None,
 ) -> dict:
     _condition, bindings = _conditions(
         defense=defense,
         dry_run=dry_run,
         live_attestation=live_attestation,
     )
+    if attacker_contracts is not None:
+        turns = max(len(contract.turns) for contract in attacker_contracts.values())
+        _condition["values"].update(max_queries=turns, max_turns=turns)
+        _condition["condition_id"] = "condition-" + canonical_json_sha256(_condition["values"])[:24]
     envelope = build_request_envelope(
         request={
             "execution_purpose": (
@@ -239,8 +245,8 @@ def _write_plan(
             "seeds": [0],
             "sample_seed": 0,
             "limit": 2,
-            "max_queries": 1,
-            "max_turns": 1,
+            "max_queries": _condition["values"]["max_queries"],
+            "max_turns": _condition["values"]["max_turns"],
             "defense": defense,
             "defense_guard": "rules",
             "group_keys": bindings["experiment_conditions"]["values"]["group_keys"],
@@ -271,7 +277,7 @@ def _write_plan(
         targets={"text-target": _Target("resolved-text", modalities)},
         corpora=corpora,
         attackers=["replay"],
-        attacker_input_contracts=_replay_contracts(corpora),
+        attacker_input_contracts=attacker_contracts if attacker_contracts is not None else _replay_contracts(corpora),
         bindings=bindings,
         dry_run=dry_run,
         whole_request_preflight_complete=whole_request_preflight_complete,
@@ -316,7 +322,7 @@ def _runtime_free_legacy_plan(plan: dict) -> dict:
 
 
 def _write_live_attestation(
-    path: Path, *, route_kind: str = "hosted_api"
+    path: Path, *, route_kind: str = "hosted_api", modalities: tuple[str, ...] = ("text",),
 ) -> tuple[dict, dict]:
     route_digest = route_config_sha256(
         route_kind=route_kind,
@@ -337,7 +343,7 @@ def _write_live_attestation(
         "resolved_target": "resolved-text",
         "route_kind": route_kind,
         "route_config_sha256": route_digest,
-        "exact_input_modalities": ["text"],
+        "exact_input_modalities": list(modalities),
         "realized_target_identity": realized_identity,
         "observed_at_utc": "2026-08-12T10:00:00Z",
         "probe": {
@@ -900,6 +906,56 @@ def test_measured_level1_binds_exact_typed_attestation_at_grid_start(
     assert report["counts"]["execution_units"]["attested"] == 1
     assert report["availability"]["live_attestation"]["status"] == "validated"
     assert report["scope"]["empirical_validity_established"] is False
+
+
+@pytest.mark.parametrize("mode", ["image", "multiple", "missing_target_receipt"])
+def test_level1_attestation_uses_attack_target_modalities_not_source(mode, tmp_path):
+    contracts = _replay_contracts({"synth-arm": synth_corpus(1)})
+    media = MediaInputIdentity("attacker_generated", "image", "image/png", "a" * 64, 16)
+    turns = [PlannedTargetInput(0, ("text", "image"), True, (media.media_id,))]
+    if mode == "multiple":
+        turns.append(PlannedTargetInput(1, ("text",), True))
+    contracts = {key: replace(contract, generated_media=(media,), turns=tuple(turns))
+                 for key, contract in contracts.items()}
+    artifact, projection = _write_live_attestation(tmp_path / "image-live.json", modalities=("text", "image"))
+    artifacts = [artifact]
+    if mode == "multiple":
+        text_artifact, text_projection = _write_live_attestation(tmp_path / "text-live.json")
+        artifacts.append(text_artifact)
+        projection["artifacts"].extend(text_projection["artifacts"])
+        projection["artifacts"].sort(key=lambda item: item["attestation_id"])
+    path = tmp_path / "image-target-plan.json"
+    plan = _write_plan(path, dry_run=False, live_attestation=projection, corpus_size=1,
+                       whole_request_preflight_complete=True, modalities=("text", "image"),
+                       attacker_contracts=contracts)
+    assert plan["items"][0]["exact_modality_combination"] == ["text"]
+    assert ["text", "image"] in plan["items"][0]["target_call_modality_combinations"]
+    plan_artifact = _plan_artifact(path)
+    grid = {
+        "grid_id": "grid-transformed", "grid_status": "complete",
+        "started_at": "2026-08-12T12:00:00+00:00",
+        "grid_artifact": {"locator": "transformed.grid.json", "sha256": "f" * 64, "bytes": 100},
+        "request": {"dry_run": False, "attestation_probe": False, "live_attestation": projection,
+                    "harness_source": {"sha256": "1" * 64}, "driver_source": {"sha256": "2" * 64},
+                    "project_revision": _project_revision(dry_run=False),
+                    "target_execution_conditions": {"text-target": "3" * 64}},
+        "cells": {}, "n_errors": 0,
+    }
+    grids = {plan["plan_id"]: grid}
+    availability = _bind_live_attestations(grids, {plan["plan_id"]: plan_artifact}, artifacts)
+    if mode == "missing_target_receipt":
+        key = (projection["execution_scope_id"], "text-target", ("text", "image"))
+        retained = grid["live_attestations"].pop(key)
+        grid["live_attestations"][(key[0], key[1], ("text",))] = retained
+        with pytest.raises(ValueError, match="exact live attestation"):
+            build_level1_evidence([plan_artifact], grids, [], availability)
+        return
+    report = build_level1_evidence([plan_artifact], grids, [], availability)
+    row, unit = report["planning_strata"][0], report["execution_units"][0]
+    assert row["attestation_status"] == "attested"
+    assert row["attestation_reference"] in unit["attestation_references"]
+    expected_records = {record["record_id"] for item in artifacts for record in item["manifest"]["records"]}
+    assert {item["record_id"] for item in unit["attestation_references"]} == expected_records
 
 
 def test_level1_attestation_rejects_stale_or_descriptor_substitution(

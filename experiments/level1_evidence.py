@@ -2304,7 +2304,7 @@ def build_level1_evidence(
                 if grid_cell is not None and grid_cell["status"] in _COMPLETE
                 else {}
             )
-            item_attestations: dict[str, tuple[str, dict[str, Any] | None]] = {}
+            item_attestations: dict[str, tuple[str, list[dict[str, Any]] | None]] = {}
             projection = (
                 _live_attestation_projection(
                     grid["request"].get("live_attestation")
@@ -2345,18 +2345,18 @@ def build_level1_evidence(
                         raise ValueError(
                             "measured planning stratum lacks an attestation binding"
                         )
-                    key = (
-                        projection["execution_scope_id"],
-                        item["requested_target_spec"],
-                        tuple(item["exact_modality_combination"]),
+                    keys = required_attestation_keys(
+                        execution_scope_id=projection["execution_scope_id"],
+                        requested_target_specs=[item["requested_target_spec"]],
+                        eligibility_items=[item],
                     )
-                    reference = grid.get("live_attestations", {}).get(key)
-                    if not isinstance(reference, dict):
+                    references = [grid.get("live_attestations", {}).get(key) for key in sorted(keys)]
+                    if not references or any(not isinstance(reference, dict) for reference in references):
                         raise ValueError(
                             "measured planning stratum lacks its exact live attestation"
                         )
                     item_attestations[item["cell_id"]] = (
-                        "attested", reference
+                        "attested", references
                     )
             unit_structural = all(
                 item["status"] == "N/A" and item["disposition"] in _STRUCTURAL_NA
@@ -2396,8 +2396,9 @@ def build_level1_evidence(
                         sort_keys=True,
                         separators=(",", ":"),
                     )
-                    for status, reference in compatible_attestations
-                    if status == "attested" and reference is not None
+                    for status, references in compatible_attestations
+                    if status == "attested" and references is not None
+                    for reference in references
                 }.values()
             )
             if unit_structural:
@@ -2492,9 +2493,13 @@ def build_level1_evidence(
                 else:  # pragma: no cover - exact coverage validation rejects this
                     final = "missing_completed_stratum_evidence"
                 item_counts = support.get(item["cell_id"], {})
-                attestation_status, attestation_reference = item_attestations[
+                attestation_status, attestation_references = item_attestations[
                     item["cell_id"]
                 ]
+                # Preserve the singular row projection. The execution unit's
+                # existing plural field retains every exact target-call receipt,
+                # including attackers that change or mix input modalities.
+                attestation_reference = attestation_references[0] if attestation_references else None
                 rows.append({
                     "lifecycle_stratum_id": lifecycle_stratum_id(
                         plan["request_id"], item["cell_id"]
