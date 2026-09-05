@@ -50,7 +50,7 @@ subset digest. Set inclusion must validate before any provider call.
 
 | Hosted target condition | Global input/call cap | Modalities | Max output tokens |
 |---|---:|---|---:|
-| Claude Fable 5 | 30 | registry/canary intersection | 8,192 |
+| Claude Fable 5.1 | 30 | registry/canary intersection | 8,192 |
 | Claude Opus 5 | 80 | registry/canary intersection | 6,144 |
 | Claude Sonnet 5 | 150 | registry/canary intersection | 4,096 |
 | Claude Haiku 4.5 | 200 | registry/canary intersection | 2,048 |
@@ -69,6 +69,20 @@ explicit 8,192-token condition identities, preserving the earlier 4,096- and
 25,000-token variants unchanged; Astra's exact config also fixes 8,192. Account access
 must be confirmed before its included canary. Unavailable access is reported,
 not silently substituted or charged to another route.
+
+Fable 5.1 replaces Fable 5 in this prospective campaign; it is not an additional
+lane. Its exact condition is
+`anthropic-fable:claude-fable-5-1;effort=high;max_tokens=8192`.
+Anthropic released it on 1 September 2026. Standard input/output prices remain
+USD 10/50 per million tokens, so this replacement changes neither the call
+allocation nor the Haiku reserve. Cache reads are USD 0.25 per million tokens;
+the reservation assumes no cache discount. Historical Fable 5 conditions remain
+available under their original identities and are never relabelled as 5.1.
+The adapter retains adaptive thinking, high effort, no sampling-temperature
+argument, no forced tool choice and no cross-model fallback. Account retention
+requirements must pass the included technical pilot before the measured lane.
+[Anthropic model specification](https://platform.claude.com/docs/en/models/fable-5-1/overview),
+[migration requirements](https://platform.claude.com/docs/en/models/fable-5-1/migration-guide).
 
 Limits were fixed before hosted outputs. Exact no-call projections or token
 canaries may reduce a limit before execution to satisfy the monetary gate.

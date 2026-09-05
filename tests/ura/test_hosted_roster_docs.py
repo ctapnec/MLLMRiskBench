@@ -84,6 +84,7 @@ def test_advertised_hosted_roster_builds_offline_and_exactly_matches_pricing(
             assert spec in {_FABLE, _SOL, AnthropicFableTarget.BUDGET_SPEC,
                             OpenAIResponsesTarget.BUDGET_SPEC,
                             AnthropicFableTarget.OUTPUT_8192_SPEC,
+                            AnthropicFableTarget.FABLE_51_SPEC,
                             OpenAIResponsesTarget.OUTPUT_8192_SPEC}
             assert set(raw_config) == {"modalities"}
             target = build_api_target(spec)
@@ -663,7 +664,7 @@ def test_hosted_follow_on_is_a_no_retry_local_input_subset() -> None:
         assert "use the same selected retry count" not in value
         assert "`retained_response_judge` selector" not in value
         for target, limit in (
-            ("Claude Fable 5", 30),
+            ("Claude Fable 5.1", 30),
             ("Claude Opus 5", 80),
             ("Claude Sonnet 5", 150),
             ("Claude Haiku 4.5", 200),

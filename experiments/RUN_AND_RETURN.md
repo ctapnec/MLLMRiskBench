@@ -1662,11 +1662,12 @@ output or non-retryable or exhausted transport failure opens the global
 operator must classify and resolve the failure before a fresh bound plan and
 explicit circuit reset; there is no automatic paid resumption. Use seed 0 and
 a create-only, balanced selection from exact retained local inputs. These are
-global input/call caps, not Runner's per-arm `--limit`: Fable 30, Opus 80,
+global input/call caps, not Runner's per-arm `--limit`: Fable 5.1 30, Opus 80,
 Sonnet 150, Haiku 200, Astra 30, Sol 30, Terra 30, Luna 150, GPT-5.5 30,
 Kimi K3 80 and DeepSeek V4-Pro 300. Haiku's output ceiling is 2,048;
 Sonnet/Luna use 4,096, Opus/Terra 6,144, and the other six routes 8,192.
-Fable and Sol select the explicit 8,192-token variants,
+Fable 5.1 (`anthropic-fable:claude-fable-5-1;effort=high;max_tokens=8192`)
+and Sol select the explicit 8,192-token variants,
 not their retained 25,000-token identities. Every selected entry permits one target call; retained
 framework labels are provenance and no paid adaptive trajectory is regenerated. DeepSeek
 may run only in the reviewed off-peak price window. Google and other candidate

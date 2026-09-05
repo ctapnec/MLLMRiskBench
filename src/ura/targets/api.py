@@ -148,8 +148,10 @@ def canonical_api_target_identity(spec: str) -> tuple[str, str]:
     requested = spec.strip()
     if not requested:
         raise ValueError("API target identity requires a non-blank spec")
-    if requested in {_ANTHROPIC_FABLE_MODEL, *_ANTHROPIC_FABLE_OUTPUT_SPECS}:
-        return "anthropic", _ANTHROPIC_FABLE_MODEL
+    if requested in _ANTHROPIC_FABLE_MODELS:
+        return "anthropic", requested
+    if requested in _ANTHROPIC_FABLE_OUTPUT_SPECS:
+        return "anthropic", requested.split(":", 1)[1].split(";", 1)[0]
     if requested in _OPENAI_SOL_OUTPUT_SPECS:
         return "openai", _OPENAI_SOL_PRO_MODEL
     if ":" in requested:
@@ -177,6 +179,7 @@ _MODEL_ADAPTER_MODALITIES: dict[tuple[str, str], tuple[str, ...]] = {
     ("anthropic", "claude-opus-5"): ("text", "image"),
     ("anthropic", "claude-sonnet-5"): ("text", "image"),
     ("anthropic", "claude-fable-5"): ("text", "image"),
+    ("anthropic", "claude-fable-5-1"): ("text", "image"),
     ("anthropic", "claude-haiku-4-5-20251001"): ("text", "image"),
     ("openai", "gpt-5.6-sol"): ("text", "image"),
     ("openai", "gpt-6-astra"): ("text", "image"),
@@ -1181,6 +1184,8 @@ class AnthropicTarget(BaseTarget):
 
 
 _ANTHROPIC_FABLE_MODEL = "claude-fable-5"
+_ANTHROPIC_FABLE_51_MODEL = "claude-fable-5-1"
+_ANTHROPIC_FABLE_MODELS = frozenset({_ANTHROPIC_FABLE_MODEL, _ANTHROPIC_FABLE_51_MODEL})
 _ANTHROPIC_FABLE_SPEC = (
     "anthropic-fable:claude-fable-5;effort=high;max_tokens=25000"
 )
@@ -1190,21 +1195,26 @@ _ANTHROPIC_FABLE_BUDGET_SPEC = (
 _ANTHROPIC_FABLE_8192_SPEC = (
     "anthropic-fable:claude-fable-5;effort=high;max_tokens=8192"
 )
+_ANTHROPIC_FABLE_51_SPEC = (
+    "anthropic-fable:claude-fable-5-1;effort=high;max_tokens=8192"
+)
 _ANTHROPIC_FABLE_OUTPUT_SPECS = {
     _ANTHROPIC_FABLE_SPEC: 25_000,
     _ANTHROPIC_FABLE_BUDGET_SPEC: 4_096,
     _ANTHROPIC_FABLE_8192_SPEC: 8_192,
+    _ANTHROPIC_FABLE_51_SPEC: 8_192,
 }
 
 
 class AnthropicFableTarget(AnthropicTarget):
-    """Fixed Claude Fable 5 high-effort adaptive-thinking condition."""
+    """Exact Claude Fable 5/5.1 high-effort adaptive-thinking conditions."""
 
     name = _ANTHROPIC_FABLE_SPEC
     MAX_TOKENS = 25_000
     BUDGET_SPEC = _ANTHROPIC_FABLE_BUDGET_SPEC
     BUDGET_MAX_TOKENS = 4_096
     OUTPUT_8192_SPEC = _ANTHROPIC_FABLE_8192_SPEC
+    FABLE_51_SPEC = _ANTHROPIC_FABLE_51_SPEC
     EFFORT = "high"
     THINKING_TYPE = "adaptive"
     accepts_provider_thinking = True
@@ -1218,19 +1228,25 @@ class AnthropicFableTarget(AnthropicTarget):
         max_retries: int = DEFAULT_HOSTED_HTTP_ERROR_RETRIES,
         media_roots: Optional[Iterable[str | Path]] = None,
     ) -> None:
-        if model != _ANTHROPIC_FABLE_MODEL:
+        if model not in _ANTHROPIC_FABLE_MODELS:
             raise ValueError(
-                "the fixed Fable condition requires model 'claude-fable-5'"
+                "the fixed Fable condition requires an exact supported Fable model"
             )
+        selected_spec = requested_spec or (
+            _ANTHROPIC_FABLE_SPEC if model == _ANTHROPIC_FABLE_MODEL
+            else _ANTHROPIC_FABLE_51_SPEC
+        )
         if requested_spec is not None and requested_spec not in _ANTHROPIC_FABLE_OUTPUT_SPECS:
             raise ValueError(
                 "the Fable target must use the canonical spec "
                 f"{_ANTHROPIC_FABLE_SPEC!r}"
             )
+        if selected_spec.split(":", 1)[1].split(";", 1)[0] != model:
+            raise ValueError("the Fable model and exact condition disagree")
         super().__init__(
             model,
-            max_tokens=_ANTHROPIC_FABLE_OUTPUT_SPECS[requested_spec or self.name],
-            requested_spec=requested_spec or _ANTHROPIC_FABLE_SPEC,
+            max_tokens=_ANTHROPIC_FABLE_OUTPUT_SPECS[selected_spec],
+            requested_spec=selected_spec,
             timeout=timeout,
             max_retries=max_retries,
             media_roots=media_roots,
@@ -1454,7 +1470,7 @@ class AnthropicFableTarget(AnthropicTarget):
             or not resolved_model.strip()
             or not (
                 resolved_model == self.model
-                or resolved_model.startswith(f"{self.model}-")
+                or re.fullmatch(re.escape(self.model) + r"-\d{8}", resolved_model)
             )
         ):
             raise AnthropicFableIntegrityError(
@@ -2944,6 +2960,12 @@ REGISTRY.register(
     provider="anthropic",
     hosted=True,
 )
+REGISTRY.register(
+    _ANTHROPIC_FABLE_51_MODEL,
+    lambda: AnthropicFableTarget(_ANTHROPIC_FABLE_51_MODEL),
+    provider="anthropic",
+    hosted=True,
+)
 for _mid in _OPENAI_DEFAULTS:
     REGISTRY.register(
         _mid, (lambda m=_mid: OpenAITarget(
@@ -3072,7 +3094,7 @@ def api_target_endpoint_identity(
 def api_target_requires_config(spec: str) -> bool:
     """Whether a measured target needs an explicit exact-spec API condition."""
 
-    if spec in {_ANTHROPIC_FABLE_MODEL, *_ANTHROPIC_FABLE_OUTPUT_SPECS,
+    if spec in {*_ANTHROPIC_FABLE_MODELS, *_ANTHROPIC_FABLE_OUTPUT_SPECS,
                 *_OPENAI_SOL_OUTPUT_SPECS}:
         return False
     if ":" in spec:
@@ -3310,7 +3332,7 @@ def build_api_target(
                     f"{_ANTHROPIC_FABLE_SPEC!r}"
                 )
             return AnthropicFableTarget(
-                _ANTHROPIC_FABLE_MODEL, requested_spec=spec
+                model.split(";", 1)[0], requested_spec=spec
             )
         if provider == "openai-responses":
             if spec not in _OPENAI_SOL_OUTPUT_SPECS:
@@ -3322,9 +3344,9 @@ def build_api_target(
                 _OPENAI_SOL_PRO_MODEL, requested_spec=spec
             )
         if provider in {"anthropic", "claude"}:
-            if model == _ANTHROPIC_FABLE_MODEL:
+            if model in _ANTHROPIC_FABLE_MODELS:
                 raise ValueError(
-                    "Claude Fable 5 rejects the ordinary Anthropic target's "
+                    "Claude Fable rejects the ordinary Anthropic target's "
                     "temperature parameter; use the canonical spec "
                     f"{_ANTHROPIC_FABLE_SPEC!r}"
                 )

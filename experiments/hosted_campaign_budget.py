@@ -47,10 +47,10 @@ ROUTES: tuple[dict[str, Any], ...] = (
         "max_output_tokens": 8_192,
     },
     {
-        "label": "Claude Fable 5",
-        "spec": AnthropicFableTarget.OUTPUT_8192_SPEC,
+        "label": "Claude Fable 5.1",
+        "spec": AnthropicFableTarget.FABLE_51_SPEC,
         "provider": "anthropic",
-        "model": "claude-fable-5",
+        "model": "claude-fable-5-1",
         "call_cap": 30,
         "max_output_tokens": 8_192,
         "inherent_config": True,

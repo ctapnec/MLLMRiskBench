@@ -13,6 +13,9 @@
   "anthropic-fable:claude-fable-5;effort=high;max_tokens=8192": {
     "modalities": ["text", "image"]
   },
+  "anthropic-fable:claude-fable-5-1;effort=high;max_tokens=8192": {
+    "modalities": ["text", "image"]
+  },
   "anthropic:claude-opus-5": {
     "modalities": ["text", "image"],
     "max_tokens": 6144,

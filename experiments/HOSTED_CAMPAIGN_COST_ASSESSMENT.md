@@ -147,7 +147,7 @@ rates. [OpenAI Astra model documentation](https://developers.openai.com/api/docs
 
 | Provider | Target | Global calls | USD/M input | USD/M output | Max output tokens | Scenario USD | Max-token USD |
 |---|---|---:|---:|---:|---:|---:|---:|
-| Anthropic | Claude Fable 5 | 30 | 10.00 | 50.00 | 8,192 | 4.2720 | 13.4880 |
+| Anthropic | Claude Fable 5.1 | 30 | 10.00 | 50.00 | 8,192 | 4.2720 | 13.4880 |
 | Anthropic | Claude Opus 5 | 80 | 5.00 | 25.00 | 6,144 | 4.6720 | 13.8880 |
 | Anthropic | Claude Sonnet 5 | 150 | 2.00 | 10.00 | 4,096 | 2.7360 | 7.3440 |
 | Anthropic | Claude Haiku 4.5 | 200 | 1.00 | 5.00 | 2,048 | 1.3120 | 2.8480 |
@@ -159,6 +159,13 @@ rates. [OpenAI Astra model documentation](https://developers.openai.com/api/docs
 | Moonshot | Kimi K3 | 80 | 3.00 | 15.00 | 8,192 | 3.4176 | 10.7904 |
 | DeepSeek | DeepSeek V4-Pro off-peak | 300 | 0.66 | 1.98 | 8,192 | 2.0085 | 5.6580 |
 | **Total targets** | | **1,110** | | | | **27.9394** | **84.8416** |
+
+This allocation replaces Fable 5 with exact `claude-fable-5-1`, released
+1 September 2026; the earlier per-arm assessment above remains historical.
+Fable 5.1 keeps USD 10/50 per million input/output tokens, so its USD 13.488
+target reservation and the combined campaign totals are unchanged. Its lower
+USD 0.25 cache-read price is not assumed as a saving in this reservation.
+[Anthropic Fable 5.1 pricing](https://platform.claude.com/docs/en/models/fable-5-1/overview).
 
 The target scenario costs USD 27.939392: 4,440,000 input and 1,602,560 output
 tokens. Its maximum is USD 84.841568 with the same input bound and 6,410,240

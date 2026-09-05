@@ -23,7 +23,7 @@ def _api_config() -> dict:
 def _pricing() -> dict:
     rates = {
         ("openai", "gpt-6-astra"): (10, 50),
-        ("anthropic", "claude-fable-5"): (10, 50),
+        ("anthropic", "claude-fable-5-1"): (10, 50),
         ("anthropic", "claude-opus-5"): (5, 25),
         ("anthropic", "claude-sonnet-5"): (2, 10),
         ("anthropic", subject.JUDGE_MODEL): (1, 5),
@@ -158,7 +158,7 @@ def test_real_roster_uses_model_specific_allowances_and_no_uniform_average() -> 
     path = Path(__file__).resolve().parents[2] / "experiments/rig/api-targets.example.json"
     value = _projection(api_config=json.loads(path.read_text(encoding="utf-8")))
     expected = {
-        "gpt-6-astra": (30, 8192), "claude-fable-5": (30, 8192),
+        "gpt-6-astra": (30, 8192), "claude-fable-5-1": (30, 8192),
         "claude-opus-5": (80, 6144), "claude-sonnet-5": (150, 4096),
         subject.JUDGE_MODEL: (200, 2048), "gpt-5.6-sol": (30, 8192),
         "gpt-5.6-terra": (30, 6144), "gpt-5.6-luna": (150, 4096),

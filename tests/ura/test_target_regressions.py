@@ -820,6 +820,67 @@ def test_fable_has_one_canonical_adaptive_high_effort_condition() -> None:
         build_api_target("anthropic-fable:claude-fable-5")
 
 
+def test_fable_51_has_distinct_identity_and_exact_request_without_legacy_mutation() -> None:
+    spec = "anthropic-fable:claude-fable-5-1;effort=high;max_tokens=8192"
+    target = build_api_target(spec)
+    result = _fable_result()
+    result.model = "claude-fable-5-1"
+    captured = _install_fable_fixture(target, result)
+
+    response = target.generate([DialogTurn(role="user", content="fixture")], seed=0)
+
+    assert target.name == spec == AnthropicFableTarget.FABLE_51_SPEC
+    assert target.model == "claude-fable-5-1"
+    assert build_api_target("claude-fable-5-1").name == spec
+    assert api_module.canonical_api_target_identity(spec) == (
+        "anthropic", "claude-fable-5-1"
+    )
+    assert api_module.canonical_api_target_identity("claude-fable-5-1") == (
+        "anthropic", "claude-fable-5-1"
+    )
+    assert not api_module.api_target_requires_config(spec)
+    assert captured["model"] == "claude-fable-5-1"
+    assert captured["max_tokens"] == 8192
+    assert captured["thinking"] == {"type": "adaptive"}
+    assert captured["output_config"] == {"effort": "high"}
+    assert not {"temperature", "seed", "fallbacks", "tools", "tool_choice"} & captured.keys()
+    assert response.target == spec
+    assert response.raw["resolved_model"] == "claude-fable-5-1"
+    assert response.output_turns[0].provider_thinking
+    assert build_api_target(_FABLE_SPEC).model == "claude-fable-5"
+    assert build_api_target(_FABLE_SPEC).max_tokens == 25_000
+    assert build_api_target(AnthropicFableTarget.BUDGET_SPEC).max_tokens == 4096
+    assert build_api_target(AnthropicFableTarget.OUTPUT_8192_SPEC).model == "claude-fable-5"
+    with pytest.raises(ValueError, match="use the canonical spec"):
+        build_api_target("anthropic:claude-fable-5-1")
+    with pytest.raises(ValueError, match="model and exact condition disagree"):
+        AnthropicFableTarget(requested_spec=spec)
+
+
+@pytest.mark.parametrize("requested,served", [
+    ("claude-fable-5", "claude-fable-5-1"),
+    ("claude-fable-5-1", "claude-fable-5"),
+    ("claude-fable-5-1", "claude-fable-5-1-other"),
+])
+def test_fable_never_accepts_another_version_as_a_dated_snapshot(requested, served) -> None:
+    target = AnthropicFableTarget(requested)
+    result = _fable_result()
+    result.model = served
+    _install_fable_fixture(target, result)
+    with pytest.raises(api_module.AnthropicFableIntegrityError, match="model"):
+        target.generate([DialogTurn(role="user", content="fixture")], seed=0)
+
+
+@pytest.mark.parametrize("model", ["claude-fable-5", "claude-fable-5-1"])
+def test_fable_retains_exact_dated_snapshot_support(model) -> None:
+    target = AnthropicFableTarget(model)
+    result = _fable_result()
+    result.model = model + "-20260901"
+    _install_fable_fixture(target, result)
+    response = target.generate([DialogTurn(role="user", content="fixture")], seed=0)
+    assert response.raw["resolved_model"] == result.model
+
+
 def test_fable_omits_temperature_and_records_request_and_usage_provenance() -> None:
     target = AnthropicFableTarget()
     captured = _install_fable_fixture(target, _fable_result())
