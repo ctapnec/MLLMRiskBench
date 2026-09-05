@@ -176,7 +176,7 @@ def _terminal_inventory() -> dict[str, object]:
         ("canonical", 46, "measured_complete", "1" * 64, "a" * 64),
         (
             "output_policy_amendment",
-            4,
+            7,
             "measured_complete",
             "2" * 64,
             "b" * 64,
