@@ -26,6 +26,7 @@ from ura.targets.api import (
     AnthropicTarget,
     DEFAULT_HOSTED_HTTP_ERROR_RETRIES,
     normalize_api_target_config,
+    provider_attempt_admission,
 )
 
 
@@ -33,6 +34,7 @@ EXECUTION_SCHEMA = "ura-retained-response-judge-execution/2"
 JUDGMENT_SCHEMA = "ura-retained-response-judge-artifact/2"
 CIRCUIT_SCHEMA = "ura-retained-response-judge-circuit/2"
 COMPLETION_SCHEMA = "ura-retained-response-judge-completion/2"
+SHARED_BOUND_METHOD = "canonical_request_utf8_bytes_plus_256_upper_bound_v1"
 _LEDGER_FIELDS = frozenset(
     {
         "schema",
@@ -295,6 +297,76 @@ def _cost_bounds(
     return result
 
 
+def build_shared_request_receipts(
+    items: Sequence[tuple[dict[str, Any], str, str]], *, judge_model: str,
+    normalized_api: Mapping[str, object], call_ids: Mapping[str, str],
+) -> dict[str, dict]:
+    """No-client full-rubric previews with conservative bounds, not token counts.
+
+    This first shared path uses only local UTF8 byte upper bounds. A lower
+    provider-count receipt needs its own validated count method, not a relabel.
+    """
+    target = _build_haiku_judge(judge_model, normalized_api)
+    judge = LLMJudge(target)
+    if set(call_ids) != {row["retained_row_sha256"] for row, _, _ in items}:
+        raise ValueError("shared judge call IDs differ from the exact retained selection")
+    result = {}
+    for row, prompt, text in items:
+        datapoint, response = _judge_inputs(row, prompt, text)
+        request = target.build_request(judge.build_judge_dialog(datapoint, response), seed=judge._judge_seed(response))
+        payload = _canonical(request)
+        key = row["retained_row_sha256"]
+        result[key] = {"call_id": call_ids[key], "request_sha256": hashlib.sha256(payload).hexdigest(),
+                       "input_tokens_upper_bound": len(payload) + 256,
+                       "max_output_tokens": int(normalized_api["max_tokens"])}
+    return result
+
+
+def _shared_binding(budget, requests, items, condition, normalized_api, plan_sha256):
+    # Lazy import: the money primitive reuses this module's persistence helpers.
+    from experiments.hosted_attempt_budget import AttemptBudget
+    if not isinstance(budget, AttemptBudget) or not isinstance(requests, Mapping):
+        raise ValueError("shared judge execution requires its budget and full request receipts")
+    if any(not isinstance(value, dict) for value in requests.values()):
+        raise ValueError("shared judge request receipt is not an object")
+    expected = build_shared_request_receipts(items, judge_model=condition["model"], normalized_api=normalized_api,
+                                           call_ids={key: value.get("call_id") for key, value in requests.items()})
+    if requests != expected:
+        raise ValueError("shared full-rubric request or conservative UTF8 bound changed")
+    call_ids = [value["call_id"] for value in expected.values()]
+    if any(not isinstance(value, str) or not value for value in call_ids) or len(set(call_ids)) != len(call_ids):
+        raise ValueError("shared retained judge call IDs are not distinct funded slots")
+    if budget.liability(call_ids) > condition["max_cost_microusd"]:
+        raise ValueError("shared judge first commitments or retained exposure exceed this plan's ceiling")
+    bounds = {}
+    for key, receipt in expected.items():
+        slot = budget.call(receipt["call_id"])
+        bound = (receipt["input_tokens_upper_bound"] * condition["input_microusd_per_token"]
+                 + receipt["max_output_tokens"] * condition["output_microusd_per_token"])
+        if slot["provider"] != "anthropic" or slot["pool"] != "judge" or slot["bound_microusd"] < bound:
+            raise ValueError("full Haiku request is not covered by its dedicated funded judge slot")
+        bounds[key] = bound
+    return {"schema": "ura-retained-response-shared-budget/1", "plan_sha256": plan_sha256,
+            "budget_root": str(budget.root), "budget_plan_sha256": budget.expected_plan_sha256,
+            "input_token_bound_method": SHARED_BOUND_METHOD, "requests": expected}, bounds
+
+
+def _open_shared_circuit(budget, row, exc):
+    with _exclusive_lock(budget.root):
+        path = budget.root / "paid-circuit.json"
+        if not path.exists() and not path.is_symlink():
+            _write_atomic(path, {"schema": "ura-hosted-paid-circuit/1", "status": "open",
+                             "budget_plan_sha256": budget.expected_plan_sha256,
+                             "retained_row_sha256": row["retained_row_sha256"], "error_type": type(exc).__name__})
+
+
+def _settle_shared_artifact(budget, requests, row, artifact):
+    receipt = requests[row["retained_row_sha256"]]
+    # Only the last physical attempt produced this checkpoint. Every earlier
+    # HTTP-error attempt stays unknown at its full independently held bound.
+    budget.settle(receipt["call_id"], _artifact_http_attempts(artifact), artifact["cost_microusd"])
+
+
 def _validate_ledger(value: object, plan: Mapping[str, Any], plan_sha256: str) -> dict:
     if not isinstance(value, dict) or set(value) != _LEDGER_FIELDS:
         raise ValueError("retained-response execution ledger fields changed")
@@ -493,6 +565,8 @@ def execute(
         [Path, dict[str, Any], Mapping[str, object]],
         list[tuple[dict[str, Any], str, str]],
     ] = _reconcile_selection,
+    shared_budget: Any = None,
+    shared_requests: Mapping[str, dict] | None = None,
 ) -> Path:
     raw_plan, plan_descriptor = _read_regular(
         plan_path,
@@ -521,10 +595,19 @@ def execute(
         expected_sha256=condition["api_config_sha256"],
     )
     items = selection_reconciler(runner_view, plan, source_descriptor)
+    shared_binding = None
+    shared_bounds = None
+    if shared_budget is not None or shared_requests is not None:
+        shared_binding, shared_bounds = _shared_binding(
+            shared_budget, shared_requests, items, condition, normalized_api, plan_descriptor["sha256"]
+        )
+        shared_requests = shared_binding["requests"]
 
     root = Path(out)
     if root.is_symlink():
         raise ValueError("retained-response execution root must not be a symlink")
+    if shared_binding is not None and root.resolve() == shared_budget.root:
+        raise ValueError("shared budget and judgment execution require separate directories")
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     root = root.resolve(strict=True)
     judgments_dir = root / "judgments"
@@ -536,6 +619,21 @@ def execute(
     completion_path = root / "completion.json"
 
     with _exclusive_lock(root):
+        shared_path = root / "shared-budget.json"
+        if shared_binding is None:
+            if shared_path.exists() or shared_path.is_symlink():
+                raise ValueError("shared funded execution cannot resume without its original budget binding")
+        else:
+            if (shared_budget.root / "paid-circuit.json").exists() or (shared_budget.root / "paid-circuit.json").is_symlink():
+                raise RuntimeError("shared paid-provider circuit is open; investigate before new work")
+            if shared_path.exists() or shared_path.is_symlink():
+                retained, _descriptor = _read_regular(shared_path, label="shared judge budget binding", max_bytes=32 * 1024 * 1024)
+                if retained != shared_binding:
+                    raise ValueError("shared judge request or budget continuation binding changed")
+            else:
+                if ledger_path.exists() or ledger_path.is_symlink():
+                    raise ValueError("an existing unshared execution cannot acquire a new money binding")
+                _write_new(shared_path, shared_binding)
         if circuit_path.exists() or circuit_path.is_symlink():
             raise RuntimeError("paid_provider circuit is open; investigate before new work")
         judge_target = judge_factory(condition["model"], normalized_api)
@@ -553,6 +651,15 @@ def execute(
             items,
             max_output_tokens=int(normalized_api["max_tokens"]),
         )
+        if shared_binding is not None:
+            bounds = shared_bounds
+            # The actual target must use the same no-client preview as the
+            # canonical Haiku route, including the full rubric and system text.
+            for row, prompt, text in items:
+                point, response = _judge_inputs(row, prompt, text)
+                request = judge_target.build_request(judge.build_judge_dialog(point, response), seed=judge._judge_seed(response))
+                if hashlib.sha256(_canonical(request)).hexdigest() != shared_requests[row["retained_row_sha256"]]["request_sha256"]:
+                    raise ValueError("actual judge target request differs before client construction")
         conservative_total = sum(bounds.values())
         if bounds[items[0][0]["retained_row_sha256"]] > condition["max_cost_microusd"]:
             raise ValueError("the first Haiku call could exceed the sealed USD ceiling")
@@ -621,6 +728,8 @@ def execute(
                 index=index,
                 row=row,
             )
+            if shared_binding is not None:
+                _settle_shared_artifact(shared_budget, shared_requests, row, artifact)
             input_tokens, output_tokens, cost = _artifact_usage(artifact)
             ledger["completed_judgments"] += 1
             ledger["http_attempts_observed"] += _artifact_http_attempts(artifact)
@@ -640,7 +749,9 @@ def execute(
                     label="retained-response judgment artifact",
                     max_bytes=1024 * 1024,
                 )
-                _validate_artifact(artifact_raw, plan=plan, index=index, row=row)
+                artifact = _validate_artifact(artifact_raw, plan=plan, index=index, row=row)
+                if shared_binding is not None:
+                    _settle_shared_artifact(shared_budget, shared_requests, row, artifact)
             elif artifact_path.exists() or artifact_path.is_symlink():
                 raise ValueError("judgment artifact is ahead of the durable ledger")
 
@@ -699,8 +810,27 @@ def execute(
             _write_atomic(ledger_path, ledger)
 
             datapoint, response = _judge_inputs(row, prompt, response_text)
+            physical = {"last_reserved": 0}
+
+            def reserve_physical(provider, request, number):
+                receipt = shared_requests[row["retained_row_sha256"]]
+                if (provider != "anthropic" or hashlib.sha256(_canonical(request)).hexdigest() != receipt["request_sha256"]
+                        or number != physical["last_reserved"] + 1):
+                    raise ValueError("physical Haiku request differs from its frozen funded receipt")
+                if number > 1:
+                    # The existing HTTP-only retry loop invoked this callback;
+                    # this is not permission to reissue a crash-ambiguous call.
+                    shared_budget.settle(receipt["call_id"], number - 1, None)
+                increment = shared_budget.call(receipt["call_id"])["bound_microusd"] if number > 1 else 0
+                if (shared_budget.liability([value["call_id"] for value in shared_requests.values()]) + increment
+                        > condition["max_cost_microusd"]):
+                    raise ValueError("physical retry exceeds this retained judge plan's own ceiling")
+                shared_budget.reserve(receipt["call_id"], number, provider=provider)
+                physical["last_reserved"] = number
+
             try:
-                judgment = judge.judge(datapoint, response)
+                with provider_attempt_admission(reserve_physical) if shared_binding is not None else contextlib.nullcontext():
+                    judgment = judge.judge(datapoint, response)
                 call = judgment.raw.get("judge_call")
                 tokens = call.get("tokens") if isinstance(call, dict) else None
                 if (
@@ -714,7 +844,7 @@ def execute(
                 ):
                     raise ValueError("Haiku judgment lacks exact input/output token usage")
                 cost = tokens["input"] + tokens["output"] * 5
-                if cost > bound:
+                if cost > bound and shared_binding is None:
                     raise ValueError("actual Haiku usage exceeded its conservative bound")
                 artifact = {
                     "schema": JUDGMENT_SCHEMA,
@@ -729,8 +859,20 @@ def execute(
                     "cost_microusd": cost,
                 }
                 _validate_artifact(artifact, plan=plan, index=index, row=row)
+                if shared_binding is not None and _artifact_http_attempts(artifact) != physical["last_reserved"]:
+                    raise ValueError("judgment checkpoint disagrees with its physical paid reservations")
                 _write_new(_judgment_path(root, index, row), artifact)
+                if shared_binding is not None:
+                    directory_fd = os.open(judgments_dir, os.O_RDONLY)
+                    try:
+                        os.fsync(directory_fd)
+                    finally:
+                        os.close(directory_fd)
             except Exception as exc:
+                if shared_binding is not None:
+                    _open_shared_circuit(shared_budget, row, exc)
+                    if physical["last_reserved"]:
+                        shared_budget.settle(shared_requests[row["retained_row_sha256"]]["call_id"], physical["last_reserved"], None)
                 call_audit = getattr(exc, "call_audit", None)
                 observed_attempts = (
                     call_audit.get("transport_attempt_count")
@@ -768,6 +910,10 @@ def execute(
                     "paid_provider circuit opened on the first judge failure"
                 ) from exc
 
+            if shared_binding is not None:
+                # This follows the create-only judgment checkpoint. A disk
+                # interruption here is reconciled from that checkpoint on resume.
+                _settle_shared_artifact(shared_budget, shared_requests, row, artifact)
             input_tokens, output_tokens, cost = _artifact_usage(artifact)
             ledger["completed_judgments"] += 1
             ledger["http_attempts_observed"] += _artifact_http_attempts(artifact)

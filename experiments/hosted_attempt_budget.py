@@ -188,11 +188,27 @@ class AttemptBudget:
                 raise BudgetError("call ID is outside the immutable funded plan")
             return copy.deepcopy(calls[call_id])
 
+    def liability(self, call_ids: Sequence[str]) -> int:
+        """Read a caller's sub-plan exposure, including its unfired first calls."""
+        if not isinstance(call_ids, Sequence) or isinstance(call_ids, (str, bytes)):
+            raise BudgetError("liability needs a sequence of funded call IDs")
+        selected = [_name(value, "call ID") for value in call_ids]
+        if not selected or len(set(selected)) != len(selected):
+            raise BudgetError("liability call IDs must be nonempty and unique")
+        with _exclusive_lock(self.root):
+            plan, ledger, calls = self._load()
+            if any(value not in calls for value in selected):
+                raise BudgetError("liability call ID is outside the funded plan")
+            partial = dict(plan, planned_calls=[calls[value] for value in selected])
+            return sum(pool["liability_microusd"] for pool in self._totals(partial, ledger)["pools"].values())
+
     def reserve(self, call_id: str, attempt_number: int, *, provider: str) -> dict:
         """Fsync money before one SDK attempt. Repeated callbacks always refuse."""
         call_id, provider = _name(call_id, "call ID"), _name(provider, "provider")
         number = _integer(attempt_number, "physical attempt number")
         with _exclusive_lock(self.root):
+            if (self.root / "paid-circuit.json").exists() or (self.root / "paid-circuit.json").is_symlink():
+                raise BudgetError("shared paid-provider circuit is open")
             plan, ledger, calls = self._load()
             if call_id not in calls or calls[call_id]["provider"] != provider:
                 raise BudgetError("attempt provider or call ID differs from its funded slot")
