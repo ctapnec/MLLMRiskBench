@@ -45,6 +45,7 @@ def load_trail_facets(
              if historical_code_repository is not None else _validated_artifacts(results)[1])
     grouped: dict[str, list[dict]] = {}
     excluded_other_defense: dict[str, int] = {}
+    outside_common_scope = []
     for cell in cells:
         run_config = (cell["manifest"].get("config") or {}).get("run")
         if not isinstance(run_config, dict):
@@ -65,6 +66,19 @@ def load_trail_facets(
             excluded_other_defense[cell_corpus] = (
                 excluded_other_defense.get(cell_corpus, 0) + 1
             )
+            continue
+        if historical_code_repository is not None and not any(
+            row["raw"].get("common_metrics_eligible") is True
+            and row["raw"].get("policy_evaluable_turn") is True for row in cell["judgments"]
+        ):
+            outside_common_scope.append({
+                "run_id": cell["run_id"], "corpus": cell_corpus,
+                "reason": "outside_common_judge_scope",
+                "retained_attempts": len(cell["attempts"]), "retained_judgments": len(cell["judgments"]),
+                "retained_model_nonresponses": sum(row["raw"].get("policy_evaluation_status") == "model_nonresponse"
+                                                   for row in cell["judgments"]),
+                "retained_source_validation": cell["retained_source_validation"],
+            })
             continue
         facet = ((cell_corpus, cell["cohort_signature"])
                  if historical_code_repository is not None else cell_corpus)
@@ -163,6 +177,9 @@ def load_trail_facets(
                 "unexplained_exclusions": 0,
                 **({"retained_source_validations": [cell["retained_source_validation"] for cell in cohort]}
                    if historical_code_repository is not None else {}),
+                **({"outside_common_scope_cells": outside_common_scope,
+                    "outside_common_scope_accounting_scope": "whole_selected_view_not_additive_across_facets"}
+                   if outside_common_scope else {}),
             },
         )
     if not facets:

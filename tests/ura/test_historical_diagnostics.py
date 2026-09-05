@@ -138,3 +138,27 @@ def test_historical_transfer_still_checks_exact_attempt_judgment_lineage(tmp_pat
     monkeypatch.setattr(transfer_matrix, "load_analysis_cells", lambda *a, **kw: cells)
     with pytest.raises(ValueError, match="Attempt/Judgment transfer_key mismatch"):
         transfer_matrix.load_facets(tmp_path, historical_code_repository=tmp_path)
+
+
+@pytest.mark.parametrize("module", [judge_sensitivity, kappa])
+def test_source_only_nonresponses_remain_accounted_outside_common_diagnostics(tmp_path, cells, monkeypatch, module):
+    outside = cells[1]
+    for row in outside["judgments"]:
+        row["raw"].update(common_metrics_eligible=False, policy_evaluation_status="model_nonresponse")
+    outside["artifacts"]["trails"] = tmp_path / "must-not-parse-source-only-trails"
+    monkeypatch.setattr(module, "load_analysis_cells", lambda *a, **kw: cells)
+    if module is judge_sensitivity:
+        result = module.analyse(tmp_path, historical_code_repository=tmp_path)
+        audit = result["selection_accounting"]
+        assert (audit["validated_completed_cells"], audit["selected_cells"], audit["excluded_cells"]) == (2, 1, 1)
+        excluded = audit["excluded_cell_details"]
+    else:
+        result = module.load_trail_facets(tmp_path, historical_code_repository=tmp_path)
+        assert len(result) == 1
+        audit = next(iter(result.values()))[2]
+        assert audit["completed_cells"] == 1
+        excluded = audit["outside_common_scope_cells"]
+    assert len(excluded) == 1 and excluded[0]["run_id"] == outside["run_id"]
+    assert excluded[0]["retained_judgments"] == excluded[0]["retained_model_nonresponses"] == 1
+    assert excluded[0]["reason"] == "outside_common_judge_scope"
+    assert audit["unexplained_exclusions"] == 0

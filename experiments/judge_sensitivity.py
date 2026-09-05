@@ -899,6 +899,20 @@ def analyse(
         matches = run["attacker"] == attacker and (
             corpus is None or run["corpus"] == corpus
         ) and run["defense"] == defense
+        outside_common = (historical_code_repository is not None and matches and not any(
+            row["raw"].get("common_metrics_eligible") is True
+            and row["raw"].get("policy_evaluable_turn") is True for row in cell["judgments"]))
+        if outside_common:
+            excluded.append({
+                "stem": cell["stem"], "run_id": cell["run_id"], "corpus": run["corpus"],
+                "attacker": run["attacker"], "defense": run["defense"],
+                "reason": "outside_common_judge_scope",
+                "retained_attempts": len(cell["attempts"]), "retained_judgments": len(cell["judgments"]),
+                "retained_model_nonresponses": sum(row["raw"].get("policy_evaluation_status") == "model_nonresponse"
+                                                   for row in cell["judgments"]),
+                "retained_source_validation": cell["retained_source_validation"],
+            })
+            continue
         if matches:
             selected.append(cell)
         else:
