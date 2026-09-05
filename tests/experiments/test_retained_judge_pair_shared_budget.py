@@ -46,6 +46,7 @@ def test_shared_local_counterpart_has_one_funded_judgment_across_three_pairs(tmp
     for cohort, rows in (("local", local), ("hosted", hosted)):
         for index, row in enumerate(rows):
             text = f"{cohort} retained answer {index}"
+            row["risk"] = "jailbreak"
             row["prompt_sha256"] = hashlib.sha256(b"one common prompt").hexdigest()
             row["response_sha256"] = hashlib.sha256(text.encode()).hexdigest()
             row["input_identity_sha256"] = planner._sha({key: row[key] for key in planner._MATCH_IDENTITY_FIELDS})
