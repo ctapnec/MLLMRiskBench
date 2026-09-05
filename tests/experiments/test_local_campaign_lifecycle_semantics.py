@@ -129,6 +129,21 @@ def test_native_terminal_uses_its_historical_plan_revision(phase7, tmp_path):
         phase7.validate_native_terminal_revision({**native, "project_revision": wrong_revision})
 
 
+def test_analysis_project_identity_is_exact_not_a_directory_basename(
+    phase7, tmp_path, monkeypatch,
+):
+    bound = tmp_path / "analysis-checkout"
+    wrong = tmp_path / "MLLMRiskBench"
+    bound.mkdir()
+    wrong.mkdir()
+    monkeypatch.setattr(phase7, "EXPECTED_PROJECT_ROOT", bound)
+    monkeypatch.chdir(bound)
+    assert phase7.analysis_project_root() == bound
+    monkeypatch.chdir(wrong)
+    with pytest.raises(phase7.Phase7Error, match="exact bound project root"):
+        phase7.analysis_project_root()
+
+
 def test_retained_markerless_controller_failure_remains_a_lifecycle_artifact(
     phase7, tmp_path,
 ):

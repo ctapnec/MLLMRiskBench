@@ -463,6 +463,7 @@ FOLLOWON_FLAG_OPTIONS = {"--approximate-common-metrics"}
 RUNNER_VIEW_PERMITTED_OUTPUTS: list[str] = []
 HEX64 = re.compile(r"[0-9a-f]{64}")
 EXPECTED_COMMIT = "@@EXPECTED_COMMIT@@"
+EXPECTED_PROJECT_ROOT = Path("@@PROJECT_ROOT@@")
 EXPECTED_FRAMEWORK_LOCK = (
     "@@FRAMEWORK_LOCK_SHA256@@"
 )
@@ -12228,10 +12229,15 @@ def validate_current_ollama_recovery_completion(
     return _validate_successful_current_ollama_recovery(**kwargs)
 
 
-def build_input_manifest(args: argparse.Namespace) -> dict[str, Any]:
+def analysis_project_root() -> Path:
     project = Path.cwd().resolve(strict=True)
-    if project.name != "MLLMRiskBench":
-        raise Phase7Error("Phase 7 preparation must run from the deployed project root")
+    if project != EXPECTED_PROJECT_ROOT.resolve(strict=True):
+        raise Phase7Error("Phase 7 must run from its exact bound project root")
+    return project
+
+
+def build_input_manifest(args: argparse.Namespace) -> dict[str, Any]:
+    project = analysis_project_root()
     work = checked_dir(required_env("URA_WORK"), label="URA_WORK")
     runner_root = checked_dir(
         work / "runs" / "thesis" / "runner", label="measured runner root"
@@ -12749,7 +12755,7 @@ class AnalysisController:
             raise Phase7Error(
                 "Phase 7 input is not pinned to the exact lifecycle commit and lock"
             )
-        project = Path.cwd().resolve(strict=True)
+        project = analysis_project_root()
         if git_output(project, "rev-parse", "HEAD") != code["expected_commit"]:
             raise Phase7Error(
                 "deployed commit changed after Phase 7 input authorization"
