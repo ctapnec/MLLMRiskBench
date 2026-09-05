@@ -583,6 +583,32 @@ def test_measured_grid_binds_runner_resolved_ollama_digest(
         phase7._measured_model_selector(selector, spec)
 
 
+def test_historical_optional_core_context_accepts_verified_terminal_descriptors(
+    phase7: ModuleType, tmp_path: Path
+) -> None:
+    commit = "73c5331c59d1192f3338170cfee374af5e03a07f"
+    attempt = tmp_path / "attempts" / "20260827T140000Z-73c5331"
+    attempt.mkdir(parents=True)
+    context = {"dependency_policy": "optional_terminal_context", "required_for_launch": False,
+               "attempt_path": str(attempt), "exit_marker": None, "completion": None}
+    phase7._validate_seven_prior_core_context(context, commit)
+    (attempt / ".exit").write_text("1\n", encoding="utf-8")
+    (attempt / "completion.json").write_text(
+        json.dumps({"schema": "ura-phase6-failed-lane-recovery-completion/1",
+                    "status": "complete_with_failures", "controller_exit_code": 1,
+                    "expected_commit": commit, "attempt": attempt.name,
+                    "inventory_complete": True}), encoding="utf-8",
+    )
+    context["exit_marker"] = phase7.descriptor(attempt / ".exit")
+    context["completion"] = phase7.descriptor(attempt / "completion.json")
+    phase7._validate_seven_prior_core_context(context, commit)
+    with pytest.raises(phase7.Phase7Error):
+        phase7._validate_seven_prior_core_context({**context, "exit_marker": None}, commit)
+    (attempt / "completion.json").write_text("changed", encoding="utf-8")
+    with pytest.raises(phase7.Phase7Error):
+        phase7._validate_seven_prior_core_context(context, commit)
+
+
 def test_seven_runnote_name_matches_the_exact_historical_producer(phase7: ModuleType) -> None:
     basename = "RUNNOTE.runner-2.24-seven-output-policy-amendment"
     assert phase7._seven_policy_runnote_name(

@@ -8984,6 +8984,31 @@ def _seven_policy_runnote_name(commit: str, tag: str) -> str:
     return f"RUNNOTE.runner-2.24-seven-output-policy-amendment{suffix}.md"
 
 
+def _validate_seven_prior_core_context(value: object, expected_commit: str) -> None:
+    attempt = Path(str(value.get("attempt_path", ""))) if isinstance(value, dict) else Path()
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"dependency_policy", "required_for_launch", "attempt_path",
+                          "exit_marker", "completion"}
+        or value.get("dependency_policy") != "optional_terminal_context"
+        or value.get("required_for_launch") is not False
+        or not attempt.is_absolute()
+        or attempt.parent.name != "attempts"
+        or not attempt.name.endswith(f"-{expected_commit[:7]}")
+    ):
+        raise Phase7Error("seven-row optional core-recovery context changed")
+    if value["exit_marker"] is None and value["completion"] is None:
+        return
+    if expected_commit != RECOVERY_RUNNER_224_HISTORICAL_COMMIT:
+        raise Phase7Error("seven-row optional core-recovery context changed")
+    # The original producer retained both terminal descriptors when available.
+    # They are context, not a success requirement or authority for new calls.
+    for field, filename in (("exit_marker", ".exit"), ("completion", "completion.json")):
+        path = descriptor_file(value[field], label=f"seven-row prior core {field}")
+        if path != attempt / filename:
+            raise Phase7Error("seven-row optional core-recovery locator changed")
+
+
 def validate_seven_output_policy_inventory(
     *,
     amendment_path: Path,
@@ -9154,26 +9179,7 @@ def validate_seven_output_policy_inventory(
     ):
         raise Phase7Error("seven-row historical Gate 5 identity changed")
 
-    prior_core = policy.get("prior_core_recovery")
-    prior_core_path = (
-        Path(str(prior_core.get("attempt_path", "")))
-        if isinstance(prior_core, dict) else Path()
-    )
-    if (
-        not isinstance(prior_core, dict)
-        or set(prior_core) != {
-            "dependency_policy", "required_for_launch", "attempt_path",
-            "exit_marker", "completion",
-        }
-        or prior_core.get("dependency_policy") != "optional_terminal_context"
-        or prior_core.get("required_for_launch") is not False
-        or prior_core.get("exit_marker") is not None
-        or prior_core.get("completion") is not None
-        or not prior_core_path.is_absolute()
-        or prior_core_path.parent.name != "attempts"
-        or not prior_core_path.name.endswith(f"-{expected_commit[:7]}")
-    ):
-        raise Phase7Error("seven-row optional core-recovery context changed")
+    _validate_seven_prior_core_context(policy.get("prior_core_recovery"), expected_commit)
 
     prior_ollama_path = descriptor_file(
         policy.get("prior_ollama_recovery"),
