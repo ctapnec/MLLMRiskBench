@@ -310,10 +310,11 @@ def test_matched_shared_local_judgment_executes_once_and_resumes_without_calls(
         pricing_condition=pricing, limit=3, share_local_judgments=True,
     )
     prepared["plan_path"].write_bytes(planner._canonical(plan))
-    monkeypatch.setattr(paired, "load_candidates", lambda view, **_kwargs: (
-        populations[view], _audit(len(populations[view]))
+    monkeypatch.setattr(paired, "load_pair_candidate_views", lambda local, hosted: (
+        (populations[local], _audit(len(populations[local]))),
+        (populations[hosted], _audit(len(populations[hosted]))),
+        {"local": metadata[local], "hosted": metadata[hosted]},
     ))
-    monkeypatch.setattr(paired, "load_retained_metadata", lambda view: metadata[view])
     fake = FakeHaiku()
     args = {key: prepared[key] for key in (
         "plan_path", "source_receipt", "api_config", "pricing_config", "out"

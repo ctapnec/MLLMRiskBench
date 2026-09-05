@@ -213,8 +213,7 @@ def test_ordinary_view_separates_configurations_before_missing_output_selection(
         key: joined[3] for key, joined in partition["joined_by_configuration"].items()}
     assert source["audit_join_compatibility"] == partition["audit_join_compatibility"]
     assert partition["joined_by_configuration"][HEX_B][0] == {}  # No invented prediction.
-    loader = paired.load_candidates if matched else subject.load_candidates
-    rows, population = loader(tmp_path, include_match_identity=matched)
+    rows, population = subject.load_candidates(tmp_path, include_match_identity=matched)
     assert len(rows) == 1 and rows[0]["sample_key"] == "sample-0"
     assert population == {"validated_joined_rows": 2, "eligible_usable_outputs": 1,
                           "excluded_missing_outputs": 1, "excluded_source_authoritative_rows": 1}

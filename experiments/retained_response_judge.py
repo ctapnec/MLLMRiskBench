@@ -261,9 +261,12 @@ def load_candidates(
 def _candidates_from_view(
     cells: Sequence[Mapping[str, Any]], metadata: Mapping[str, dict],
     judgments: Mapping[str, dict], audit: Mapping[str, Any], *, include_match_identity: bool = False,
+    original_cells: Sequence[Mapping[str, Any]] = (),
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Construct the unchanged candidate contract after its source view validates."""
     contexts: dict[str, dict[str, str]] = {}
+    by_run = {cell["run_id"]: cell for cell in cells}
+    checked_original_artifacts: set[tuple[str, str]] = set()
     for cell in cells:
         run_id = _text(cell.get("run_id"), label="validated run ID")
         manifest = cell["manifest"]
@@ -337,6 +340,7 @@ def _candidates_from_view(
                     ).hexdigest(),
                 }
             )
+            _project_retained_match(row, by_run[run_id], original_cells, checked_original_artifacts)
             row["input_identity_sha256"] = _sha(
                 {field: row[field] for field in _MATCH_IDENTITY_FIELDS}
             )
@@ -366,6 +370,76 @@ def _candidates_from_view(
             audit["common_ineligible_evaluable_rows_excluded"]
         ),
     }
+
+
+def _project_retained_match(
+    row: dict[str, Any], cell: Mapping[str, Any], original_cells: Sequence[Mapping[str, Any]],
+    checked_artifacts: set[tuple[str, str]],
+) -> None:
+    """Match transport replay to its actual retained source, not a claimed label.
+
+    Execution remains ``replay`` in the validated manifest and Attempt. Only
+    paired input dimensions use the original framework and portable locators.
+    Historical candidates without retained origins are unchanged.
+    """
+    attempt = cell.get("attempts", {}).get(row["attempt_id"])
+    if not isinstance(attempt, Mapping) or "retained_origin" not in attempt.get("params", {}):
+        return
+    from experiments.hosted_retained_inputs import _descriptor
+    from experiments.human_audit import _csv_safe, _dialog_text, _portable_media_references
+    from ura.adapters.replay import retained_dialog, validate_retained_origin
+
+    origin = attempt["params"]["retained_origin"]
+    if (cell.get("source_identity_validated") is not True or row["framework"] != "replay"
+        or attempt.get("attacker") != "replay"
+        or validate_retained_origin(origin, retained_dialog(attempt["rendered_input"])) is not True):
+        raise ValueError("retained input matching requires validated evaluable transport replay")
+    source = origin["source_membership"]
+    originals = [value for value in original_cells if value["run_id"] == source["run_id"]]
+    if len(originals) != 1:
+        raise ValueError("retained input matching requires its exact validated local source cell")
+    original_cell = originals[0]
+    original = original_cell.get("attempts", {}).get(source["attempt_id"])
+    run = original_cell["manifest"]["config"]["run"]
+    if (original_cell.get("source_identity_validated") is not True
+        or not str(original_cell.get("model", "")).startswith(("ollama:", "vllm:"))
+        or original != origin["original_attempt"]
+        or run["project_revision"] != source["project_revision"]
+        or _sha(source["artifacts"]) != source["artifacts_sha256"]
+        or set(original_cell["artifacts"]) != set(source["artifacts"])):
+        raise ValueError("retained input origin differs from its actual validated source membership")
+    artifact_key = (source["run_id"], source["artifacts_sha256"])
+    if artifact_key not in checked_artifacts:
+        for role, path in original_cell["artifacts"].items():
+            observed = _descriptor(Path(path))
+            if any(observed[key] != source["artifacts"][role][key] for key in ("sha256", "bytes")):
+                raise ValueError("retained input source artifact bytes differ")
+        checked_artifacts.add(artifact_key)
+    selected = origin["selection"]
+    for field in ("corpus", "source", "datapoint_id", "source_cluster_id", "requested_seed",
+                  "modality", "risk", "expected_behavior"):
+        if row[field] != selected[field]:
+            raise ValueError("retained input comparison metadata differs from its source selection")
+    if run["corpus"] != row["corpus"] or run["attacker"] != original["attacker"]:
+        raise ValueError("retained input source framework or arm differs")
+    original_prompt = str(_csv_safe(_dialog_text(original["rendered_input"])))
+    if hashlib.sha256(original_prompt.encode()).hexdigest() != row["prompt_sha256"]:
+        raise ValueError("retained input comparison changed the original rendered conversation")
+    row["framework"] = original["attacker"]
+    row["media_references_sha256"] = hashlib.sha256(
+        _portable_media_references(original["rendered_input"]).encode()
+    ).hexdigest()
+
+
+def load_pair_candidate_views(local_root: Path, hosted_root: Path) -> tuple:
+    """Validate each view once, retaining metadata for the paired executor."""
+    local = _read_view(Path(local_root).resolve(strict=True))
+    hosted = _read_view(Path(hosted_root).resolve(strict=True))
+    return (
+        _candidates_from_view(*local, include_match_identity=True),
+        _candidates_from_view(*hosted, include_match_identity=True, original_cells=local[0]),
+        {"local": local[1], "hosted": hosted[1]},
+    )
 
 
 def _read_view(root: Path) -> tuple[list[dict], dict, dict, dict]:

@@ -8,7 +8,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from experiments.retained_response_judge import load_candidates, load_retained_metadata
+from experiments.retained_response_judge import load_pair_candidate_views
 from experiments.retained_response_judge_execute import (
     _build_haiku_judge,
     execute as execute_retained,
@@ -26,11 +26,8 @@ def _reconcile_pair_selection(
     plan: dict[str, Any],
     source_descriptor: Mapping[str, object],
 ) -> list[tuple[dict[str, Any], str, str]]:
-    local_candidates, local_audit = load_candidates(
-        local_runner_view, include_match_identity=True
-    )
-    hosted_candidates, hosted_audit = load_candidates(
-        hosted_runner_view, include_match_identity=True
+    (local_candidates, local_audit), (hosted_candidates, hosted_audit), metadata_by_cohort = (
+        load_pair_candidate_views(local_runner_view, hosted_runner_view)
     )
     condition = plan["judge_condition"]
     rebuilt = build_pair_plan(
@@ -59,13 +56,6 @@ def _reconcile_pair_selection(
     )
     if rebuilt != plan:
         raise ValueError("matched Haiku plan no longer matches its Runner views")
-    metadata_by_cohort: dict[str, Mapping[str, dict[str, Any]]] = {}
-    for cohort, runner_view in (
-        ("local", local_runner_view),
-        ("hosted", hosted_runner_view),
-    ):
-        root = Path(runner_view).resolve(strict=True)
-        metadata_by_cohort[cohort] = load_retained_metadata(root)
     items: list[tuple[dict[str, Any], str, str]] = []
     for row in plan["selected"]:
         meta = metadata_by_cohort[row["cohort"]].get(row["sample_key"])

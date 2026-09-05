@@ -22,7 +22,7 @@ from experiments.retained_response_judge import (
     _sha,
     _text,
     _write_new,
-    load_candidates,
+    load_pair_candidate_views,
     load_pricing_condition,
 )
 from ura.targets.api import DEFAULT_HOSTED_HTTP_ERROR_RETRIES
@@ -600,11 +600,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not args.ack_hosted_judge_data_transfer:
         parser.error("--ack-hosted-judge-data-transfer is required")
-    local, local_audit = load_candidates(
-        args.local_runner_view, include_match_identity=True
-    )
-    hosted, hosted_audit = load_candidates(
-        args.hosted_runner_view, include_match_identity=True
+    (local, local_audit), (hosted, hosted_audit), _metadata = load_pair_candidate_views(
+        args.local_runner_view, args.hosted_runner_view,
     )
     value = build_pair_plan(
         local,

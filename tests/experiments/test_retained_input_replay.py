@@ -75,7 +75,9 @@ def _fixture(tmp_path, *, adaptive=False, image=False, points=None, corpus="reta
     artifact.write_text("\n".join(json.dumps(a) for a in attempts.values()) + "\n")
     cell = {"source_identity_validated": True, "run_id": "local-run", "model": "ollama:local",
             "manifest": {"dataset_hashes": {"corpus": canonical_converted_corpus_sha256(points)},
-                         "config": {"run": {"corpus": corpus, "project_revision": {"sha256": "a" * 64}}}},
+                         "config": {"components": {"target": {"model": "ollama:local"}},
+                                    "run": {"corpus": corpus, "project_revision": {"sha256": "a" * 64},
+                                            "attacker": next(iter(attempts.values()))["attacker"]}}},
             "artifacts": {"attempts": artifact}, "attempts": attempts, "judgments": judgments,
             "responses": {key: {"output_turns": []} for key in attempts}}
     budget = {"schema": materializer.BUDGET_SCHEMA, "status": "budget_fit",
@@ -282,3 +284,105 @@ def test_runner_cli_runs_only_bound_mock_replay_without_any_provider_factory(tmp
     assert len(attempts) == len(value["entries"]) == 1
     assert attempts[0]["params"]["retained_origin"]["selection"]["datapoint_id"] == selected.id
     assert all(json.loads(path.read_text())["models"] == ["mock"] for path in out.glob("*.manifest.json"))
+
+
+def _matching_view(cell):
+    from experiments.human_audit import _csv_safe, _dialog_text, _portable_media_references
+    metadata, judgments = {}, {}
+    for attempt in cell["attempts"].values():
+        if attempt["params"]["policy_evaluable_turn"] is not True:
+            continue
+        key = cell["run_id"] + ":" + attempt["id"]
+        origin = attempt["params"].get("retained_origin")
+        selected = origin["selection"] if origin else None
+        metadata[key] = {
+            "run_id": cell["run_id"], "prepared_response": "Synthetic fixture answer.",
+            "prepared_prompt": str(_csv_safe(_dialog_text(attempt["rendered_input"]))),
+            "prepared_media_references": _portable_media_references(attempt["rendered_input"]),
+            "common_metrics_eligible": True, "policy_evaluable_turn": True,
+            "effective_modality": "image" if any(t.get("media") for t in attempt["rendered_input"]) else "text",
+            "datapoint_id": attempt["datapoint_id"],
+            "source_cluster_id": selected["source_cluster_id"] if selected else attempt["params"]["source_cluster_id"],
+            "requested_seed": attempt["seed"], "source": selected["source"] if selected else attempt["params"]["planning_source"],
+            "risk_category": "jailbreak", "expected_behavior": "refuse",
+            "source_policy_id": "fixture-policy", "source_policy_version": "1",
+        }
+        judgments[key] = {"attempt_id": attempt["id"]}
+    return [cell], metadata, judgments, {"policy_evaluable_samples": len(metadata),
+                                       "common_ineligible_evaluable_rows_excluded": 0}
+
+
+def _replayed_cell(config, points):
+    runner = _runner(config)
+    runner.run(points, run_config={"attacker": "replay", "corpus": "retained-corpus",
+                                   "project_revision": {"sha256": "c" * 64}})
+    # Use Runner's actual portable serialized Attempts, as historical readers do.
+    from ura.runner import _portable_attempt_dump
+    return {"source_identity_validated": True, "run_id": runner.last_manifest.run_id,
+            "model": runner.target.name, "manifest": runner.last_manifest.model_dump(mode="json"),
+            "attempts": {a.id: _portable_attempt_dump(a) for a in runner.attempts}}
+
+
+@pytest.mark.parametrize("image", [False, True])
+def test_pair_matching_projects_verified_original_framework_not_execution_framework(tmp_path, monkeypatch, image):
+    from experiments import retained_response_judge as judge
+    from experiments.retained_response_judge_pair import _pair_edges
+    points, original, _plan, _bindings, _value, config = _fixture(tmp_path, adaptive=True, image=image)
+    monkeypatch.setenv("URA_MEDIA_ROOTS", str(tmp_path))
+    hosted = _replayed_cell(config, points)
+    local_rows, _ = judge._candidates_from_view(*_matching_view(original), include_match_identity=True)
+    ordinary, _ = judge._candidates_from_view(*_matching_view(hosted))
+    projected, _ = judge._candidates_from_view(*_matching_view(hosted), include_match_identity=True,
+                                             original_cells=[original])
+    assert len(ordinary) == len(projected) == len(local_rows) == 1
+    assert ordinary[0]["framework"] == hosted["manifest"]["config"]["run"]["attacker"] == "replay"
+    assert projected[0]["framework"] == "crescendo"
+    assert projected[0]["input_identity_sha256"] == local_rows[0]["input_identity_sha256"]
+    edges, audit = _pair_edges(local_rows, projected, seed=0)
+    assert len(edges) == audit["matched_distinct_input_identities"] == 1
+
+
+@pytest.mark.parametrize("mutation", ["missing_source", "false_framework", "changed_source_bytes"])
+def test_paired_origin_requires_actual_original_membership_not_only_self_hashes(tmp_path, mutation):
+    from experiments import retained_response_judge as judge
+    from ura.adapters.replay import validate_retained_origin, retained_dialog
+    points, original, _plan, _bindings, _value, config = _fixture(tmp_path, adaptive=True)
+    hosted = _replayed_cell(config, points)
+    source_cells = [original]
+    if mutation == "missing_source":
+        source_cells = []
+    elif mutation == "changed_source_bytes":
+        original["artifacts"]["attempts"].write_text("changed source bytes\n")
+    else:
+        for attempt in hosted["attempts"].values():
+            origin = attempt["params"]["retained_origin"]
+            origin["original_attempt"]["attacker"] = "invented-native-framework"
+            origin["source_membership"]["attempt_sha256"] = materializer._sha(origin["original_attempt"])
+            selected = origin["selection"]
+            selected["framework"] = "invented-native-framework"
+            selected["local_sources"] = [copy.deepcopy(origin["source_membership"])]
+            selected["input_identity_sha256"] = materializer._sha({k: v for k, v in selected.items()
+                if k not in {"input_identity_sha256", "local_sources", "media_bindings"}})
+            # All embedded identities agree; only comparison to the real source can reject it.
+            validate_retained_origin(origin, retained_dialog(attempt["rendered_input"]))
+    with pytest.raises(ValueError, match="exact validated local source|actual validated source membership|artifact bytes"):
+        judge._candidates_from_view(*_matching_view(hosted), include_match_identity=True,
+                                    original_cells=source_cells)
+
+
+def test_paired_views_validate_each_source_once_and_retain_same_execution_metadata(tmp_path, monkeypatch):
+    from experiments import retained_response_judge as judge
+    points, original, _plan, _bindings, _value, config = _fixture(tmp_path, adaptive=True)
+    hosted = _replayed_cell(config, points)
+    local_root, hosted_root = tmp_path / "local", tmp_path / "hosted"
+    local_root.mkdir(); hosted_root.mkdir()
+    views = {local_root: _matching_view(original), hosted_root: _matching_view(hosted)}
+    reads = []
+    def read(path):
+        reads.append(path)
+        return views[path]
+    monkeypatch.setattr(judge, "_read_view", read)
+    local, projected, metadata = judge.load_pair_candidate_views(local_root, hosted_root)
+    assert reads == [local_root, hosted_root]
+    assert local[0][0]["input_identity_sha256"] == projected[0][0]["input_identity_sha256"]
+    assert metadata == {"local": views[local_root][1], "hosted": views[hosted_root][1]}
