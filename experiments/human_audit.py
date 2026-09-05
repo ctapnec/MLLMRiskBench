@@ -743,7 +743,13 @@ def _portable_media_references(turns: list[dict] | None) -> str:
                     f"rendered input media {turn_index}:{media_index} must have "
                     "exactly one locator"
                 )
-            if path:
+            if path == f"sha256:{digest}":
+                # Runner._portable_dialog_dump retains verified content identity,
+                # not the operator's original filesystem path. Preserve that
+                # identity without inventing a media-root mapping or fetching it.
+                locator = f"@content-sha256/{digest}"
+                storage = "content_addressed"
+            elif path:
                 if not isinstance(path, str) or not path.startswith("@media-root/"):
                     raise ValueError(
                         f"local audit media {turn_index}:{media_index} must use a "
@@ -1858,7 +1864,10 @@ def prepare_sample(results: Path, output: Path, n: int) -> int:
         "labelling. Never label a physical-modality row if any asset is unavailable or "
         "fails verification. An `@inline-sha256/<digest>` entry identifies inline bytes in "
         "the matching completed Attempt artifact; decode them in a trusted viewer and verify "
-        "the same digest and MIME. If referenced bytes cannot be retrieved and viewed, leave "
+        "the same digest and MIME. An `@content-sha256/<digest>` entry identifies a "
+        "local asset by verified content, not a retained filesystem path; locate it using "
+        "the corresponding corpus acquisition/conversion records and verify that digest "
+        "and MIME before viewing. If referenced bytes cannot be retrieved and viewed, leave "
         "the row unrated and return it for remediation; analysis rejects incomplete ratings. "
         "The CSV intentionally contains neither raw inline bytes nor copies of corpus assets.\n\n"
         "Policy context: apply the preserved `source_policy_id`, "

@@ -3344,6 +3344,45 @@ def test_human_audit_rejects_absolute_media_locator(tmp_path: Path) -> None:
         prepare_sample(tmp_path, tmp_path / "audit.csv", 1)
 
 
+def test_human_audit_accepts_actual_runner_content_addressed_media() -> None:
+    from experiments.human_audit import _portable_media_references
+    from ura.data_models import DialogTurn, MediaRef
+    from ura.runner import _portable_dialog_dump
+
+    digest = "a" * 64
+    persisted = _portable_dialog_dump([
+        DialogTurn(role="user", content="Image question", media=[
+            MediaRef(modality="image", mime="image/png", path="/private/probe.png", sha256=digest)
+        ])
+    ])
+    assert persisted[0]["media"][0]["path"] == f"sha256:{digest}"
+    references = json.loads(_portable_media_references(persisted))
+    assert references == [{
+        "locator": f"@content-sha256/{digest}", "media_index": 0,
+        "mime": "image/png", "modality": "image", "sha256": digest,
+        "storage": "content_addressed", "turn_index": 0,
+    }]
+    assert "/private/" not in json.dumps(references)
+    persisted[0]["media"][0]["path"] = "sha256:" + "b" * 64
+    with pytest.raises(ValueError, match="portable @media-root alias"):
+        _portable_media_references(persisted)
+
+
+def test_human_audit_exports_content_addressed_image_context(tmp_path: Path) -> None:
+    digest = hashlib.sha256(b"image bytes represented by fixture").hexdigest()
+    _configure_human_image_artifact(tmp_path, locator=f"sha256:{digest}")
+    sample = tmp_path / "content-image-audit.csv"
+    assert prepare_sample(tmp_path, sample, 1) == 0
+    with sample.open(newline="", encoding="utf-8-sig") as handle:
+        row = next(csv.DictReader(handle))
+    reference = json.loads(row["media_references"])[0]
+    assert reference["locator"] == f"@content-sha256/{digest}"
+    assert reference["sha256"] == digest
+    instructions = sample.with_suffix(".INSTRUCTIONS.md").read_text(encoding="utf-8")
+    assert "@content-sha256/<digest>" in instructions
+    assert "corpus acquisition/conversion records" in instructions
+
+
 @pytest.mark.parametrize(
     ("field", "replacement", "message"),
     [

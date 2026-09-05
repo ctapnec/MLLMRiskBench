@@ -1726,6 +1726,13 @@ Haiku, including the retained answer and rubric. Do not silently truncate it
 or treat a target-provider token count as a Haiku count. Rebalance prospective
 hosted quantities before A3 if exact local grading input costs do not fit.
 
+Runner's retained `sha256:<digest>` media locator is exported as
+`@content-sha256/<digest>`, with an exact match to the MediaRef SHA-256. It does
+not invent a filesystem path or resend the image to Haiku. Human raters must
+locate the original asset through its corpus records, verify the digest and
+view it before labelling; unresolved assets remain unrated. Older media-root
+and inline locators retain their existing export forms.
+
 Do not emulate this re-adjudication with `run_matrix`: that would risk target
 regeneration. Create the paired cohort with the dedicated immutable zero-target
 path and one standard-API USD 33 ceiling. Use a private Haiku judge config that
