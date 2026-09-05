@@ -340,6 +340,7 @@ class Runner:
         target_answer_retries: int = 1,
         stop_on_failed_output: bool = False,
         execution_stage: Literal["full", "responses", "judgments"] = "full",
+        before_first_target_call: Optional[Callable[[], None]] = None,
     ) -> None:
         self.attacker = attacker
         self.target = target
@@ -369,6 +370,12 @@ class Runner:
         if execution_stage not in {"full", "responses", "judgments"}:
             raise ValueError("execution_stage must be full, responses, or judgments")
         self.execution_stage = execution_stage
+        if before_first_target_call is not None and not callable(before_first_target_call):
+            raise ValueError("before_first_target_call must be callable")
+        # Lifecycle only, not a generation setting: checkpoint restoration must
+        # not load a target whose already-durable responses only need judging.
+        self._before_first_target_call = before_first_target_call
+        self._target_call_started = False
 
         target_evidence_class = getattr(target, "evidence_class", "measured")
         if target_evidence_class not in {"measured", "synthetic"}:
@@ -1199,6 +1206,10 @@ class Runner:
 
     def _respond(self, attempt: Attempt, *, run_id: str) -> Response:
         """Query the target and guarantee the response is linked to the attempt."""
+        if not self._target_call_started:
+            if self._before_first_target_call is not None:
+                self._before_first_target_call()
+            self._target_call_started = True
         http_exposure = _target_http_exposure(self.target)
         failures: list[dict[str, Any]] = []
         failed_identity: Optional[dict[str, str]] = None

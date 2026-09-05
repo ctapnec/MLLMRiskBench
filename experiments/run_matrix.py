@@ -7180,6 +7180,12 @@ def _main(argv=None) -> int:
                             f"attacker {attacker_name!r} is a native-artifact "
                             "integration and cannot be replayed through Runner"
                         )
+
+                    def ensure_target_phase() -> None:
+                        nonlocal target_phase_open
+                        target_phase_open = True
+                        preflight_target_phase(target)
+
                     runner = Runner(
                         attacker,
                         target,
@@ -7204,6 +7210,9 @@ def _main(argv=None) -> int:
                         stop_on_failed_output=spec in api_specs,
                         execution_stage=(
                             "responses" if deferred_local_judging else "full"
+                        ),
+                        before_first_target_call=(
+                            ensure_target_phase if deferred_local_judging else None
                         ),
                     )
                     cell_config = {
@@ -7426,8 +7435,17 @@ def _main(argv=None) -> int:
                         paths["response_checkpoint"], expected_run_id=planned.run_id
                     )
                     if deferred_local_judging:
-                        target_phase_open = True
-                        preflight_target_phase(target)
+                        if paths["manifest"].exists() or paths["manifest"].is_symlink():
+                            planned = _restore_response_phase_start(paths["manifest"], planned)
+                        elif args.attestation_probe and resumed_responses:
+                            raise ValueError("probe response checkpoint lacks its original start manifest")
+                        elif _recyclable_vllm_child(
+                            model_specs=model_specs, attacker_names=attacker_names,
+                            deferred_local_judging=deferred_local_judging,
+                        ):
+                            # Persist before the first target call as well, so
+                            # an interrupted partial probe retains its start.
+                            _write_json(paths["manifest"], planned.model_dump(mode="json"))
                     execution_started = True
                     judgments, manifest = runner.run(
                         corpus,
@@ -7445,10 +7463,32 @@ def _main(argv=None) -> int:
                         ),
                     )
                     if deferred_local_judging:
+                        generated_in_process = target_phase_open
                         close_components_now(
                             target_phase_components(target), role="target phase"
                         )
                         target_phase_open = False
+                        if generated_in_process and _recyclable_vllm_child(
+                            model_specs=model_specs, attacker_names=attacker_names,
+                            deferred_local_judging=deferred_local_judging,
+                        ):
+                            # Runner returned only after every selected response
+                            # was generated/restored and its checkpoint fsynced.
+                            # Official vLLM close may retain CUDA allocations:
+                            # the OS must reclaim this child before judge load.
+                            # The unchanged next child restores every response,
+                            # so ensure_target_phase is never invoked there.
+                            _write_json(paths["manifest"], planned.model_dump(mode="json"))
+                            close_engine_runtimes()
+                            recheck_bound_project_revision()
+                            _write_json(grid_path, {
+                                "status": "running", "grid_id": grid_id,
+                                "started_at": run_started, "request": grid_request,
+                                "call_budget_snapshot": call_budget.snapshot(),
+                                "requested_cells": requested_cells, "cells": cell_statuses,
+                            })
+                            _release_artifact_lock(grid_lock, grid_lock_token)
+                            return _VLLM_GRID_RESPONSE_PHASE_EXIT
                         scoring_phase_open = True
                         preflight_scoring_phase()
                         resumed = Runner.load_checkpoint(
@@ -7919,6 +7959,44 @@ def _main(argv=None) -> int:
 
 _VLLM_GRID_CHILD_ENV = "URA_INTERNAL_VLLM_GRID_CHILD"
 _VLLM_GRID_RECYCLE_EXIT = 75
+_VLLM_GRID_RESPONSE_PHASE_EXIT = 76
+
+
+def _restore_response_phase_start(path: Path, planned: RunManifest) -> RunManifest:
+    """Retain target-observation time, not the later judge child's start.
+
+    A partial manifest can contain realized counts, but none of its labels or
+    outcomes is adopted here. The existing checkpoints remain authoritative.
+    """
+    if path.is_symlink() or not path.is_file() or path.stat().st_size > 8 * 1024 * 1024:
+        raise ValueError("response-phase manifest must be a bounded regular file")
+    retained = RunManifest.model_validate(
+        _json_loads_strict(path.read_text(encoding="utf-8")), strict=True
+    )
+    fields = ("run_id", "code_version", "schema_version", "seeds", "models", "adapters",
+              "judges", "dataset_hashes", "env")
+    if any(getattr(retained, key) != getattr(planned, key) for key in fields) or any(
+        retained.config.get(key) != value for key, value in planned.config.items()
+        if key not in {"n_attempts", "source_metric_inventory"}
+    ):
+        raise ValueError("response-phase manifest differs from the exact planned cell")
+    stamp = retained.started_at
+    if (not stamp or stamp != stamp.strip() or not stamp.endswith(("Z", "+00:00"))
+            or datetime.fromisoformat(stamp) > datetime.fromisoformat(planned.started_at)):
+        raise ValueError("response-phase manifest target start is invalid or newer than resume")
+    return planned.model_copy(update={"started_at": stamp})
+
+
+def _recyclable_vllm_child(
+    *, model_specs: list[str], attacker_names: list[str],
+    deferred_local_judging: bool,
+) -> bool:
+    return bool(
+        _PROCESS_ENVIRON.get(_VLLM_GRID_CHILD_ENV) == "1"
+        and deferred_local_judging
+        and len(model_specs) == 1 and model_specs[0].startswith("vllm:")
+        and not ({name.lower() for name in attacker_names} & RUNTIME_REQUIRED_ATTACKERS)
+    )
 
 
 def _should_yield_vllm_grid_child(
@@ -7932,10 +8010,10 @@ def _should_yield_vllm_grid_child(
     Existing markers alone never authorize a process restart or a target call.
     """
     return bool(
-        _PROCESS_ENVIRON.get(_VLLM_GRID_CHILD_ENV) == "1"
-        and deferred_local_judging
-        and len(model_specs) == 1 and model_specs[0].startswith("vllm:")
-        and not ({name.lower() for name in attacker_names} & RUNTIME_REQUIRED_ATTACKERS)
+        _recyclable_vllm_child(
+            model_specs=model_specs, attacker_names=attacker_names,
+            deferred_local_judging=deferred_local_judging,
+        )
         and new_complete == 1 and accounted_cells < requested_cells
     )
 
@@ -7962,8 +8040,6 @@ def _vllm_grid_process_recycling(
         args.dry_run
         or args.preflight_only
         or args.model_acquisition_plan_only
-        or args.attestation_probe
-        or args.diagnostic_canary
     ):
         return None
     local_specs = [
@@ -7982,6 +8058,10 @@ def _vllm_grid_process_recycling(
     if (
         len(local_specs) != 1
         or not local_specs[0].startswith("vllm:")
+        or (
+            (args.attestation_probe or args.diagnostic_canary)
+            and ({name.lower() for name in attackers} & RUNTIME_REQUIRED_ATTACKERS)
+        )
         or not _uses_post_factum_local_judging(
             local_specs=local_specs,
             execution_purpose="measured_run",
@@ -8006,19 +8086,54 @@ def _completion_marker_count(root: Path) -> int:
     )
 
 
+def _response_checkpoint_count(root: Path) -> int:
+    """Count strict durable sidecar rows, never file size or a log sentinel.
+
+    This authorizes only another bounded child. That child still validates the
+    exact planned attempts, target identity and budget lineage before judging.
+    """
+    if not root.is_dir():
+        return 0
+    count = 0
+    for path in root.glob("*.responses.checkpoint.jsonl"):
+        for record in Runner.load_response_checkpoint(path).values():
+            attempt = Attempt.model_validate(record["attempt"])
+            response = Response.model_validate(record["response"])
+            if (
+                response.attempt_id != attempt.id
+                or response.run_id != attempt.run_id
+                or response.target != attempt.target
+                or record["run_id"] != attempt.run_id
+                or not isinstance(record.get("budget_after_target"), dict)
+            ):
+                raise ValueError("response-phase checkpoint linkage/accounting changed")
+            count += 1
+    return count
+
+
 def _run_recyclable_vllm_grid(argv: list[str], *, out: Path, cell_bound: int) -> int:
     """Resume a multi-cell vLLM grid across bounded fresh child processes."""
 
     environment = dict(_PROCESS_ENVIRON)
     environment[_VLLM_GRID_CHILD_ENV] = "1"
     command = [sys.executable, str(Path(__file__).resolve()), *argv]
-    for _cycle in range(cell_bound + 1):
+    for _cycle in range(2 * cell_bound + 1):
         completed_before = _completion_marker_count(out)
+        responses_before = _response_checkpoint_count(out)
         child = subprocess.run(command, env=environment, check=False)
         return_code = int(child.returncode)
         if return_code == 0:
             return 0
         completed_after = _completion_marker_count(out)
+        if return_code == _VLLM_GRID_RESPONSE_PHASE_EXIT:
+            if _response_checkpoint_count(out) <= responses_before:
+                return return_code
+            print(
+                "vLLM grid retained its response phase; resuming local judging "
+                "in a fresh process",
+                file=sys.stderr,
+            )
+            continue
         if completed_after <= completed_before:
             return 128 + abs(return_code) if return_code < 0 else return_code
         print(

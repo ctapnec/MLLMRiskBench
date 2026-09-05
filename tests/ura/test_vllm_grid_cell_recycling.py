@@ -107,7 +107,7 @@ def test_child_recycling_keeps_existing_finite_progress_bound(tmp_path, monkeypa
     monkeypatch.setattr(run_matrix.subprocess, "run", child)
     argv = ["--local", "vllm:Org/Model", "--out", str(tmp_path)]
     assert run_matrix._run_recyclable_vllm_grid(argv, out=tmp_path, cell_bound=2) == 1
-    assert len(calls) == 3
+    assert len(calls) == 5  # response owner plus scoring owner for each cell
     assert all(command[2:] == argv for command in calls)
 
 
