@@ -255,7 +255,14 @@ def load_candidates(
     root = Path(runner_view).resolve(strict=True)
     if not root.is_dir():
         raise ValueError("Runner view must be a resolved directory")
-    cells, metadata, judgments, audit = _read_view(root)
+    return _candidates_from_view(*_read_view(root), include_match_identity=include_match_identity)
+
+
+def _candidates_from_view(
+    cells: Sequence[Mapping[str, Any]], metadata: Mapping[str, dict],
+    judgments: Mapping[str, dict], audit: Mapping[str, Any], *, include_match_identity: bool = False,
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """Construct the unchanged candidate contract after its source view validates."""
     contexts: dict[str, dict[str, str]] = {}
     for cell in cells:
         run_id = _text(cell.get("run_id"), label="validated run ID")
@@ -363,7 +370,12 @@ def load_candidates(
 
 def _read_view(root: Path) -> tuple[list[dict], dict, dict, dict]:
     from experiments.retained_artifact_reader import grid_partitions, load_joined
+    from experiments.local_campaign.rr_parallel_analysis import SCHEMA, load_judge_view
+    from experiments.local_campaign.vllm_stability_phase6 import _load_json
 
+    completion = root / "completion.json"
+    if completion.is_file() and _load_json(completion, label="retained analysis completion").get("schema") == SCHEMA:
+        return load_judge_view(root)
     if grid_partitions(root):
         return load_joined(root)
     _per_judge, metadata, judgments, audit = _joined_artifacts(root, frame="common")

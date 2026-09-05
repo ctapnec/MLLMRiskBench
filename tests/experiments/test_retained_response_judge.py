@@ -83,6 +83,61 @@ def _build(candidates: list[dict], *, limit: int = 4) -> dict:
     )
 
 
+@pytest.mark.parametrize("matched", [False, True])
+def test_rr_handoff_shares_source_view_for_candidates_and_execution_metadata(tmp_path, monkeypatch, matched):
+    from experiments.local_campaign import rr_parallel_analysis
+    from experiments import retained_artifact_reader
+
+    (tmp_path / "completion.json").write_text(json.dumps({"schema": rr_parallel_analysis.SCHEMA}))
+    cells = [{"run_id": "old", "model": "vllm:GraySwanAI/LLaVA-RR",
+              "manifest": {"config": {"run": {
+                  "attacker": "replay", "corpus": "strongreject", "project_revision": {"sha256": HEX_A}},
+                  "components": {"target": {"max_tokens": 4096}}}}}]
+    metadata = {"sample": {"run_id": "old", "prepared_response": "Retained answer.",
+        "prepared_prompt": "Original prompt", "common_metrics_eligible": True,
+        "policy_evaluable_turn": True, "effective_modality": "text", "datapoint_id": "input1",
+        "source_cluster_id": "cluster1", "requested_seed": 0, "source": "strongreject",
+        "risk_category": "violence", "expected_behavior": "refuse", "source_policy_id": "policy1",
+        "source_policy_version": "1", "prepared_media_references": "[]"}}
+    labels = {"sample": {"attempt_id": "attempt1"}}
+    audit = {"policy_evaluable_samples": 1, "common_ineligible_evaluable_rows_excluded": 0}
+    calls = []
+    def validated(root):
+        assert root == tmp_path
+        calls.append("source_validated")
+        return cells, metadata, labels, audit
+    monkeypatch.setattr(rr_parallel_analysis, "load_judge_view", validated)
+    def forbidden(*a, **kw):
+        raise AssertionError("completed RR handoff must not fall back to an interrupted raw grid")
+    monkeypatch.setattr(retained_artifact_reader, "grid_partitions", forbidden)
+    monkeypatch.setattr(subject, "_joined_artifacts", forbidden)
+    rows, population = subject.load_candidates(tmp_path, include_match_identity=matched)
+    assert subject.load_retained_metadata(tmp_path) is metadata
+    assert calls == ["source_validated", "source_validated"]
+    assert population == {"validated_joined_rows": 1, "eligible_usable_outputs": 1,
+                          "excluded_missing_outputs": 0, "excluded_source_authoritative_rows": 0}
+    row = rows[0]
+    assert row["framework"] == "replay" and row["corpus"] == "strongreject"
+    assert row["source_cluster_id"] == "cluster1" and row["requested_seed"] == 0
+    assert row["response_sha256"] == hashlib.sha256(b"Retained answer.").hexdigest()
+    assert ("input_identity_sha256" in row) is matched
+    if matched:
+        assert row["input_identity_sha256"] == subject._sha({
+            field: row[field] for field in subject._MATCH_IDENTITY_FIELDS})
+
+
+def test_rr_handoff_rejection_is_not_reinterpreted_as_a_current_grid(tmp_path, monkeypatch):
+    from experiments.local_campaign import rr_parallel_analysis
+    (tmp_path / "completion.json").write_text(json.dumps({"schema": rr_parallel_analysis.SCHEMA}))
+    def reject(root):
+        raise ValueError("RR judging requires a fully complete parallel analysis handoff")
+    monkeypatch.setattr(rr_parallel_analysis, "load_judge_view", reject)
+    with pytest.raises(ValueError, match="fully complete"):
+        subject.load_candidates(tmp_path)
+    with pytest.raises(ValueError, match="fully complete"):
+        subject.load_retained_metadata(tmp_path)
+
+
 def _resign(plan: dict) -> dict:
     material = copy.deepcopy(plan)
     material.pop("plan_id")

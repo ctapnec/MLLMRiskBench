@@ -65,8 +65,9 @@ def test_prefix_rejects_changed_bytes_or_unvalidated_or_duplicate_judgments(tmp_
 
 
 @pytest.mark.parametrize("change", [None, "source", "membership", "grid"])
-def test_prefix_worker_reuses_complete_source_cell_checks_without_promoting_grid(tmp_path, monkeypatch, change):
-    from experiments import figure_results, level1_evidence
+@pytest.mark.parametrize("joined", [False, True])
+def test_prefix_worker_reuses_complete_source_cell_checks_without_promoting_grid(tmp_path, monkeypatch, change, joined):
+    from experiments import figure_results, human_audit, level1_evidence
     from ura import runner
 
     commit, tree = "a" * 40, "b" * 40
@@ -96,13 +97,28 @@ def test_prefix_worker_reuses_complete_source_cell_checks_without_promoting_grid
         assert refs[0].request is original and refs[0].grid_id == "grid-test"
         assert "status" not in refs[0].status  # No fabricated terminal status.
         checked.append("full_cell")
-        return {"complete_path": str(marker)}
+        return {"complete_path": marker, "artifacts": {
+            role: tmp_path / f"cell.{role}" for role in
+            ("attempts", "responses", "judgments", "trails", "results", "manifest")}}
     monkeypatch.setattr(figure_results, "_validate_cell", validate)
+    inventory = human_audit._validated_artifacts
+    def join(root, frame):
+        assert checked == ["plan", "acquisition", "full_cell"]
+        assert root == tmp_path and frame == "common"
+        roles, selected = human_audit._validated_artifacts(root)
+        assert selected[0]["complete_path"] == marker
+        assert set(roles) == {"attempts", "responses", "judgments", "trails", "results", "manifest"}
+        assert all(paths == [tmp_path / f"cell.{role}"] for role, paths in roles.items())
+        with pytest.raises(ValueError, match="bound root"):
+            human_audit._validated_artifacts(root / "foreign")
+        checked.append("lossless_join")
+        return {}, {}, {}, {}
+    monkeypatch.setattr(human_audit, "_joined_artifacts", join)
     if change == "source":
         revision["harness_source_sha256"] = "d" * 64
     elif change == "membership":
         manifest["config"]["run"]["corpus"] = "foreign"
-    request = {"commit": commit, "tree": tree, "groups": [{"grid": str(tmp_path / "grid-test.grid.json"),
+    request = {"commit": commit, "tree": tree, "joined": joined, "media_export_source": "", "groups": [{"grid": str(tmp_path / "grid-test.grid.json"),
                 "eligibility": str(tmp_path / "eligibility.json"), "markers": [str(marker)]}]}
     monkeypatch.setattr(mod.sys, "stdin", io.StringIO(json.dumps(request)))
     stdout = io.StringIO()
@@ -113,8 +129,9 @@ def test_prefix_worker_reuses_complete_source_cell_checks_without_promoting_grid
         assert "full_cell" not in checked
     else:
         exec(mod._PREFIX_WORKER, {})
-        assert checked == ["plan", "acquisition", "full_cell"]
+        assert checked == ["plan", "acquisition", "full_cell", *(["lossless_join"] if joined else [])]
         assert json.loads(stdout.getvalue())["validator_commit"] == commit
+    assert human_audit._validated_artifacts is inventory
     assert grid["status"] == "running" and grid["cells"] == []
 
 
@@ -250,3 +267,96 @@ def test_publication_keeps_prefix_metrics_separate_and_has_no_paid_authority(tmp
     assert terminal["target_calls"] == terminal["judge_calls"] == 0
     events = [json.loads(line) for line in (job / "task-log.jsonl").read_text().splitlines()]
     assert events[-1]["event"] == "campaign_end" and events[-1]["status"] == "passed"
+
+
+@pytest.fixture
+def judge_handoff(tmp_path, monkeypatch):
+    root = tmp_path / "analysis"
+    source = write(tmp_path / "parallel/completion.json", {"work_root": str(tmp_path)})
+    snapshot = write(tmp_path / "snapshot.json", {"retained_response_count": 200})
+    old = cell(tmp_path / "old", ["old"], run_id="old")
+    new = cell(tmp_path / "new", ["new"], run_id="new")
+    units = {"unit": {"root": str(tmp_path / "new"), "revision": "a" * 64}}
+    fresh = {"schema": mod.SCHEMA, "status": "complete", "source_completion": source,
+             "interruption": snapshot, "coverage": {"expected_inputs": 7606, "complete": True},
+             "prefix": {"judging_complete": True}, "old_grid_promoted": False}
+    saved = {**fresh, "level1_by_execution_revision": {
+                 "a" * 64: write(root / "level1.json", {})},
+             "level2_by_evidence_scope": {
+                 scope: write(root / f"{scope}.json", {}) for scope in
+                 ("completed-segments", "closed-prefix-cells")},
+             "retained_inputs": write(root / "inputs.json", {})}
+    write(root / "completion.json", saved)
+    checked = []
+    def validate(path, *, work, project):
+        assert path == Path(source["path"]) and work == project == tmp_path
+        checked.append("full_validation")
+        return fresh, units, [new], [old]
+    monkeypatch.setattr(mod, "validate", validate)
+    audit = {"policy_evaluable_samples": 1, "common_ineligible_evaluable_rows_excluded": 0}
+    def load(root, **kwargs):
+        assert checked == ["full_validation"] and root == tmp_path / "new"
+        return [new], {"new": {"run_id": "new"}}, {"new": {}}, audit
+    monkeypatch.setattr(mod.retained, "load_joined", load)
+    monkeypatch.setattr(mod, "_source_prefix_cells", lambda _snapshot, **kwargs: (
+        [old], [[{}, {"old": {"run_id": "old"}}, {"old": {}}, audit]]))
+    return SimpleNamespace(root=root, work=tmp_path, saved=saved, fresh=fresh,
+                           checked=checked, old=old, new=new)
+
+
+def test_judge_handoff_revalidates_complete_population_and_merges_only_identities(judge_handoff):
+    f = judge_handoff
+    cells, meta, judgments, audit = mod.load_judge_view(f.root, project=f.work)
+    assert f.checked == ["full_validation"]
+    assert {row["run_id"] for row in cells} == {"new", "old"}
+    assert meta.keys() == judgments.keys() == {"new", "old"}
+    assert audit == {"policy_evaluable_samples": 2, "common_ineligible_evaluable_rows_excluded": 0}
+    assert f.saved["old_grid_promoted"] is False
+
+
+@pytest.mark.parametrize("change", ["pending", "coverage", "fresh_pending", "source", "report",
+                                    "scope", "revision", "prefix", "duplicate", "full_reject"])
+def test_judge_handoff_rejects_changed_or_incomplete_source_before_selection(judge_handoff, monkeypatch, change):
+    f = judge_handoff
+    if change == "pending":
+        f.saved["status"] = "complete_with_pending_prefix_judging"
+    elif change == "coverage":
+        f.saved["coverage"] = {"expected_inputs": 7605, "complete": True}
+    elif change == "fresh_pending":
+        f.fresh["status"] = "complete_with_pending_prefix_judging"
+    elif change == "source":
+        Path(f.saved["source_completion"]["path"]).write_text("{}")
+    elif change == "report":
+        Path(f.saved["retained_inputs"]["path"]).write_text('{"changed":true}')
+    elif change == "scope":
+        f.saved["level2_by_evidence_scope"].pop("closed-prefix-cells")
+    elif change == "revision":
+        f.saved["level1_by_execution_revision"] = {}
+    elif change == "prefix":
+        monkeypatch.setattr(mod, "_source_prefix_cells", lambda *a, **kw: ([], []))
+    elif change == "duplicate":
+        monkeypatch.setattr(mod, "_source_prefix_cells", lambda *a, **kw: ([f.old], [[
+            {}, {"new": {"run_id": "old"}}, {"new": {}},
+            {"policy_evaluable_samples": 1, "common_ineligible_evaluable_rows_excluded": 0}]]))
+    else:
+        def reject(*a, **kw):
+            raise ValueError("original full source validation failed")
+        monkeypatch.setattr(mod, "validate", reject)
+    write(f.root / "completion.json", f.saved)
+    with pytest.raises(ValueError):
+        mod.load_judge_view(f.root, project=f.work)
+
+
+@pytest.mark.parametrize("change", ["duplicate_run", "incomplete", "negative", "boolean"])
+def test_judge_view_merge_rejects_ambiguous_accounting(tmp_path, change):
+    rows = [cell(tmp_path, ["x"])]
+    meta, labels = {"x": {}}, {"x": {}}
+    counts = {"policy_evaluable_samples": 1, "common_ineligible_evaluable_rows_excluded": 0}
+    if change == "duplicate_run":
+        rows *= 2
+    elif change == "incomplete":
+        labels = {}
+    else:
+        counts["policy_evaluable_samples"] = -1 if change == "negative" else True
+    with pytest.raises(ValueError):
+        mod._merge_judge_views([(rows, meta, labels, counts)])

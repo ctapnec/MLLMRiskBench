@@ -8,8 +8,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from experiments.human_audit import _joined_artifacts
-from experiments.retained_response_judge import load_candidates
+from experiments.retained_response_judge import load_candidates, load_retained_metadata
 from experiments.retained_response_judge_execute import (
     _build_haiku_judge,
     execute as execute_retained,
@@ -65,15 +64,8 @@ def _reconcile_pair_selection(
         ("local", local_runner_view),
         ("hosted", hosted_runner_view),
     ):
-        from experiments.retained_artifact_reader import grid_partitions
-        from experiments.retained_response_judge import load_retained_metadata
-
         root = Path(runner_view).resolve(strict=True)
-        if grid_partitions(root):
-            metadata = load_retained_metadata(root)
-        else:
-            _per_judge, metadata, _judgments, _audit = _joined_artifacts(root, frame="common")
-        metadata_by_cohort[cohort] = metadata
+        metadata_by_cohort[cohort] = load_retained_metadata(root)
     items: list[tuple[dict[str, Any], str, str]] = []
     for row in plan["selected"]:
         meta = metadata_by_cohort[row["cohort"]].get(row["sample_key"])

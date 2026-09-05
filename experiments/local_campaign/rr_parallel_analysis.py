@@ -7,6 +7,7 @@ No target or judge is constructed by this analysis handoff.
 from __future__ import annotations
 
 import argparse
+import inspect
 import json
 import os
 from pathlib import Path
@@ -83,12 +84,38 @@ for group in request["groups"]:
             raise ValueError("RR prefix cell is outside its original request")
         ref = _GridReference(grid["grid_id"], grid_path, original, membership, plan, grid.get("engine_runtime_close"))
         cells.append(_validate_cell(marker, [ref]))
+result = {"validator_commit": request["commit"], "cells": cells}
+if request.get("joined"):
+    from experiments import human_audit
+    exec(request["media_export_source"], human_audit.__dict__)
+    result["joined"] = []
+    original_inventory = human_audit._validated_artifacts
+    try:
+        for group in request["groups"]:
+            root = Path(group["grid"]).parent
+            selected = [cell for cell in cells if cell["complete_path"].parent == root]
+            roles = {role: [cell["artifacts"][role] for cell in selected]
+                     for role in ("attempts", "responses", "judgments", "trails", "results", "manifest")}
+            all_paths = [path for paths in roles.values() for path in paths]
+            if len(all_paths) != len(set(all_paths)):
+                raise ValueError("RR prefix join repeats a source-validated artifact")
+            # These exact closed cells have already passed the ORIGINAL full
+            # cell, source, request and eligibility checks above. Only the
+            # lossless join receives their role inventory; no parent grid is
+            # substituted, completed, or admitted by this scoped data view.
+            def scoped_inventory(asked):
+                if asked != root:
+                    raise ValueError("RR prefix join changed its bound root")
+                return roles, selected
+            human_audit._validated_artifacts = scoped_inventory
+            result["joined"].append(human_audit._joined_artifacts(root, frame="common"))
+    finally:
+        human_audit._validated_artifacts = original_inventory
 def json_default(item):
     if isinstance(item, Path):
         return str(item)
     raise TypeError(type(item).__name__)
-print(json.dumps({"validator_commit": request["commit"], "cells": cells},
-                 default=json_default, allow_nan=False))
+print(json.dumps(result, default=json_default, allow_nan=False))
 '''
 
 
@@ -101,7 +128,7 @@ def _same_launch(completion: dict, launch: dict) -> None:
         raise ValueError("RR completion changed its bound launch")
 
 
-def _source_prefix_cells(snapshot: dict, *, project: Path) -> list[dict]:
+def _source_prefix_cells(snapshot: dict, *, project: Path, joined: bool = False):
     """Read only descriptor-bound closed cells, with the original source checks."""
     launch_path = _validate_descriptor(snapshot["launch"], label="RR prefix launch")
     original = _load_json(launch_path, label="RR prefix launch")
@@ -129,7 +156,7 @@ def _source_prefix_cells(snapshot: dict, *, project: Path) -> list[dict]:
         groups.append({"source_lane": lane, "grid": str(grids[0]),
                        "eligibility": str(plans[0]), "markers": [str(path) for path in markers]})
     if not groups:
-        return []
+        return ([], []) if joined else []
     with tempfile.TemporaryDirectory(prefix="ura-rr-prefix-reader-") as scratch:
         worktree = Path(scratch).resolve() / "source"
         installed = False
@@ -141,8 +168,12 @@ def _source_prefix_cells(snapshot: dict, *, project: Path) -> list[dict]:
             for key in list(env):
                 if key.endswith(("_API_KEY", "_TOKEN")):
                     env.pop(key)
+            from experiments.human_audit import _portable_media_references
+
+            request = {"groups": groups, "commit": commit, "tree": tree, "joined": joined,
+                       "media_export_source": inspect.getsource(_portable_media_references) if joined else ""}
             result = subprocess.run([sys.executable, "-c", _PREFIX_WORKER], cwd=worktree, env=env,
-                                    input=json.dumps({"groups": groups, "commit": commit, "tree": tree}),
+                                    input=json.dumps(request),
                                     capture_output=True, text=True, encoding="utf-8", timeout=600, check=False)
             if result.returncode:
                 raise ValueError("RR prefix exact-source validator failed: " + result.stderr[-4000:])
@@ -158,7 +189,7 @@ def _source_prefix_cells(snapshot: dict, *, project: Path) -> list[dict]:
                 cell["integrity_mode"] = PREFIX_SCOPE
                 cell["grid_audit"] = {"mode": PREFIX_SCOPE, "parent_grid_promoted": False,
                                       "completion_marker": str(cell["complete_path"])}
-            return cells
+            return (cells, value["joined"]) if joined else cells
         finally:
             if installed:
                 retained._git(project, "worktree", "remove", "--force", str(worktree))
@@ -285,6 +316,69 @@ def validate(completion_path: Path, *, work: Path, project: Path) -> tuple[dict,
                "historical_144_conditions_replaced": False, "old_grid_promoted": False,
                "cross_condition_pooling_permitted": False, "target_calls": 0, "judge_calls": 0}
     return handoff, validated, cells, prefix_cells
+
+
+def _merge_judge_views(parts: list[tuple]) -> tuple[list[dict], dict, dict, dict]:
+    """Merge identities only; the ordinary Haiku matcher retains every stratum."""
+    cells, metadata, judgments, seen = [], {}, {}, set()
+    audit = {"policy_evaluable_samples": 0, "common_ineligible_evaluable_rows_excluded": 0}
+    for current, meta, labels, counts in parts:
+        run_ids = [cell["run_id"] for cell in current]
+        if (len(set(run_ids)) != len(run_ids) or seen.intersection(run_ids)
+                or meta.keys() != labels.keys() or metadata.keys() & meta.keys()):
+            raise ValueError("RR judge view contains duplicate or incomplete source joins")
+        seen.update(run_ids)
+        cells.extend(current)
+        metadata.update(meta)
+        judgments.update(labels)
+        for key in audit:
+            value = counts[key]
+            if type(value) is not int or value < 0:
+                raise ValueError("RR judge view has invalid source-frame accounting")
+            audit[key] += value
+    return cells, metadata, judgments, audit
+
+
+def load_judge_view(root: Path, *, project: Path = retained._REPOSITORY):
+    """Revalidate an already complete analysis before any paid-plan selection.
+
+    This is not a new judge plan or execution schema. Its return value is the
+    same source-validated join consumed by the existing candidate builder.
+    """
+    root = root.resolve(strict=True)
+    saved = _load_json(root / "completion.json", label="RR completed analysis")
+    if saved.get("schema") != SCHEMA or saved.get("status") != "complete":
+        raise ValueError("RR judging requires a fully complete parallel analysis handoff")
+    source_path = _validate_descriptor(saved["source_completion"], label="RR analysis source completion")
+    source = _load_json(source_path, label="RR analysis source completion")
+    work = Path(source["work_root"]).resolve(strict=True)
+    fresh, units, cells, prefix_cells = validate(source_path, work=work, project=project)
+    if (fresh["status"] != "complete" or not fresh["prefix"]["judging_complete"]
+            or any(saved.get(key) != value for key, value in fresh.items())):
+        raise ValueError("RR judging handoff changed its complete coverage/source bindings")
+    expected_level2 = {"completed-segments", *(["closed-prefix-cells"] if prefix_cells else [])}
+    if (set(saved["level1_by_execution_revision"]) != {item["revision"] for item in units.values()}
+            or set(saved["level2_by_evidence_scope"]) != expected_level2):
+        raise ValueError("RR judging handoff changed its revision or evidence-scope reports")
+    reports = [saved["retained_inputs"], *saved["level1_by_execution_revision"].values(),
+               *saved["level2_by_evidence_scope"].values()]
+    for descriptor in reports:
+        if not _validate_descriptor(descriptor, label="RR analysis report").is_relative_to(root):
+            raise ValueError("RR judging report escaped its completed analysis root")
+    parts = [retained.load_joined(Path(item["root"]), code_repository=project) for item in units.values()]
+    snapshot_path = _validate_descriptor(saved["interruption"], label="RR stopped prefix")
+    snapshot = _load_json(snapshot_path, label="RR stopped prefix")
+    old_cells, joins = _source_prefix_cells(snapshot, project=project, joined=True)
+    if {cell["run_id"] for cell in old_cells} != {cell["run_id"] for cell in prefix_cells}:
+        raise ValueError("RR judge join changed its source-validated prefix cells")
+    for _predictors, meta, judgments, audit in joins:
+        runs = {row["run_id"] for row in meta.values()}
+        scoped = [cell for cell in old_cells if cell["run_id"] in runs]
+        parts.append((scoped, meta, judgments, audit))
+    result = _merge_judge_views(parts)
+    if {cell["run_id"] for cell in result[0]} != {cell["run_id"] for cell in [*cells, *prefix_cells]}:
+        raise ValueError("RR judge view omitted or added a retained cell")
+    return result
 
 
 def _publish(output: Path, *, handoff: dict, units: dict, cells: list[dict],

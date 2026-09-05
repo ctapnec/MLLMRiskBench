@@ -184,8 +184,8 @@ def _prepared(
     monkeypatch.setattr(subject, "load_candidates", lambda _path: (candidates, _audit(count)))
     monkeypatch.setattr(
         subject,
-        "_joined_artifacts",
-        lambda _path, frame: ({}, metadata, {}, {}),
+        "load_retained_metadata",
+        lambda _path: metadata,
     )
     return {
         "plan": plan,
@@ -313,9 +313,7 @@ def test_matched_shared_local_judgment_executes_once_and_resumes_without_calls(
     monkeypatch.setattr(paired, "load_candidates", lambda view, **_kwargs: (
         populations[view], _audit(len(populations[view]))
     ))
-    monkeypatch.setattr(paired, "_joined_artifacts", lambda view, **_kwargs: (
-        {}, metadata[view], {}, {}
-    ))
+    monkeypatch.setattr(paired, "load_retained_metadata", lambda view: metadata[view])
     fake = FakeHaiku()
     args = {key: prepared[key] for key in (
         "plan_path", "source_receipt", "api_config", "pricing_config", "out"

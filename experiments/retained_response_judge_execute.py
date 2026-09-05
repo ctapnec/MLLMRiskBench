@@ -11,13 +11,13 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from experiments.human_audit import _joined_artifacts
 from experiments.retained_response_judge import (
     _canonical,
     _regular_descriptor,
     build_plan,
     load_candidates,
     load_pricing_condition,
+    load_retained_metadata,
     validate_plan,
 )
 from ura.data_models import DataPoint, DialogTurn, Judgment, Response
@@ -213,14 +213,8 @@ def _reconcile_selection(
     )
     if rebuilt != plan:
         raise ValueError("retained-response plan no longer matches the validated Runner view")
-    from experiments.retained_artifact_reader import grid_partitions
-    from experiments.retained_response_judge import load_retained_metadata
-
     root = Path(runner_view).resolve(strict=True)
-    if grid_partitions(root):
-        metadata = load_retained_metadata(root)
-    else:
-        _per_judge, metadata, _judgments, _audit = _joined_artifacts(root, frame="common")
+    metadata = load_retained_metadata(root)
     reconciled: list[tuple[dict[str, Any], str, str]] = []
     for row in plan["selected"]:
         meta = metadata.get(row["sample_key"])
