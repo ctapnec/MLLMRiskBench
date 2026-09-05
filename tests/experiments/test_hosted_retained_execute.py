@@ -442,3 +442,10 @@ def test_matched_slot_binding_rejects_unfunded_or_changed_actual_input(tmp_path,
         monkeypatch.setattr(judging, "build_shared_request_receipts", oversized)
     with pytest.raises(ValueError, match="funded"):
         subject.build_matched_judge_requests(**kwargs)
+
+
+def test_matched_slot_binding_revalidates_actual_source_artifacts_before_mapping(tmp_path, monkeypatch):
+    _prepared, _plan, _admissions, kwargs = _matched_funding(tmp_path, monkeypatch)
+    (tmp_path / "original" / "source.attempts.jsonl").write_text("changed original artifact\n")
+    with pytest.raises(ValueError, match="source artifact bytes differ"):
+        subject.build_matched_judge_requests(**kwargs)
