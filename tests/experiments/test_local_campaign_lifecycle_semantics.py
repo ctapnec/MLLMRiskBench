@@ -583,6 +583,16 @@ def test_measured_grid_binds_runner_resolved_ollama_digest(
         phase7._measured_model_selector(selector, spec)
 
 
+def test_seven_runnote_name_matches_the_exact_historical_producer(phase7: ModuleType) -> None:
+    basename = "RUNNOTE.runner-2.24-seven-output-policy-amendment"
+    assert phase7._seven_policy_runnote_name(
+        "73c5331c59d1192f3338170cfee374af5e03a07f", "20260827T180000Z"
+    ) == basename + ".md"
+    assert phase7._seven_policy_runnote_name(
+        "b" * 40, "20260905T120000Z"
+    ) == basename + "-20260905T120000Z.md"
+
+
 def test_historical_seven_amendment_accepts_only_its_original_header(
     phase7: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

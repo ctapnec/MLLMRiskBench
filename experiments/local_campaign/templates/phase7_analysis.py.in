@@ -8978,6 +8978,12 @@ def validate_followon_inventory(
     }
 
 
+def _seven_policy_runnote_name(commit: str, tag: str) -> str:
+    # The retained 73c5331 policy predates timestamped amendment note names.
+    suffix = "" if commit == RECOVERY_RUNNER_224_HISTORICAL_COMMIT else f"-{tag}"
+    return f"RUNNOTE.runner-2.24-seven-output-policy-amendment{suffix}.md"
+
+
 def validate_seven_output_policy_inventory(
     *,
     amendment_path: Path,
@@ -9101,11 +9107,9 @@ def validate_seven_output_policy_inventory(
     runnote_path = descriptor_file(policy.get("runnote"), label="seven-row RUNNOTE")
     if (
         runnote_path.parent != policy_control.parent.parent / "thesis"
-        or re.fullmatch(
-            r"RUNNOTE\.runner-2\.24-seven-output-policy-amendment-"
-            r"[0-9]{8}T[0-9]{6}Z\.md",
-            runnote_path.name,
-        ) is None
+        or runnote_path.name != _seven_policy_runnote_name(
+            expected_commit, policy_control.name.rsplit("-", 1)[-1]
+        )
     ):
         raise Phase7Error("seven-row RUNNOTE provenance changed")
     focused_tests_path = descriptor_file(
@@ -9385,7 +9389,7 @@ def validate_seven_output_policy_inventory(
         or control.name
         != f"seven-output-policy-amendment-{short_commit}-{policy_tag}"
         or runnote_path.name
-        != f"RUNNOTE.runner-2.24-seven-output-policy-amendment-{policy_tag}.md"
+        != _seven_policy_runnote_name(expected_commit, policy_tag)
         or completion.get("schema") != SEVEN_COMPLETION_SCHEMA
         or completion.get("status") not in {"complete", "complete_with_failures"}
         or completion.get("expected_commit") != expected_commit
