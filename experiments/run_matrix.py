@@ -6979,13 +6979,14 @@ def _main(argv=None) -> int:
         return 1
     atexit.register(_release_artifact_lock, grid_lock, grid_lock_token)
     cell_statuses: list[dict[str, object]] = []
+    requested_cells = len(model_specs) * len(corpora) * len(attacker_names)
     _write_json(grid_path, {
         "status": "running",
         "grid_id": grid_id,
         "started_at": run_started,
         "request": grid_request,
         "call_budget_snapshot": call_budget.snapshot(),
-        "requested_cells": len(model_specs) * len(corpora) * len(attacker_names),
+        "requested_cells": requested_cells,
         "cells": cell_statuses,
     })
 
@@ -7610,6 +7611,29 @@ def _main(argv=None) -> int:
                         )
                         n_cells += 1
                     cell_statuses.append(status_entry)
+                    if _should_yield_vllm_grid_child(
+                        model_specs=model_specs,
+                        attacker_names=attacker_names,
+                        deferred_local_judging=deferred_local_judging,
+                        new_complete=n_cells,
+                        accounted_cells=len(cell_statuses),
+                        requested_cells=requested_cells,
+                    ):
+                        # This cell's marker and budget are already validated
+                        # and durable. Exit before reinitializing a vLLM engine
+                        # in a process whose official close can retain VRAM.
+                        # The parent resumes the unchanged full request; only
+                        # its final child may publish a complete grid.
+                        close_engine_runtimes()
+                        recheck_bound_project_revision()
+                        _write_json(grid_path, {
+                            "status": "running", "grid_id": grid_id,
+                            "started_at": run_started, "request": grid_request,
+                            "call_budget_snapshot": call_budget.snapshot(),
+                            "requested_cells": requested_cells, "cells": cell_statuses,
+                        })
+                        _release_artifact_lock(grid_lock, grid_lock_token)
+                        return _VLLM_GRID_RECYCLE_EXIT
                 except Exception as exc:  # noqa: BLE001 - isolate matrix cells
                     n_errors += 1
                     if isinstance(exc, BudgetExhausted):
@@ -7713,7 +7737,6 @@ def _main(argv=None) -> int:
                         ):
                             _release_artifact_lock(cell_lock, cell_lock_token)
 
-    requested_cells = len(model_specs) * len(corpora) * len(attacker_names)
     if len(cell_statuses) != requested_cells:
         n_errors += 1
         cell_statuses.append({
@@ -7895,6 +7918,26 @@ def _main(argv=None) -> int:
 
 
 _VLLM_GRID_CHILD_ENV = "URA_INTERNAL_VLLM_GRID_CHILD"
+_VLLM_GRID_RECYCLE_EXIT = 75
+
+
+def _should_yield_vllm_grid_child(
+    *, model_specs: list[str], attacker_names: list[str],
+    deferred_local_judging: bool, new_complete: int,
+    accounted_cells: int, requested_cells: int,
+) -> bool:
+    """Recycle only a newly sealed cell in the existing local child boundary.
+
+    Runtime-backed attackers keep their existing whole-grid closing-seal path.
+    Existing markers alone never authorize a process restart or a target call.
+    """
+    return bool(
+        _PROCESS_ENVIRON.get(_VLLM_GRID_CHILD_ENV) == "1"
+        and deferred_local_judging
+        and len(model_specs) == 1 and model_specs[0].startswith("vllm:")
+        and not ({name.lower() for name in attacker_names} & RUNTIME_REQUIRED_ATTACKERS)
+        and new_complete == 1 and accounted_cells < requested_cells
+    )
 
 
 def _vllm_grid_process_recycling(
