@@ -28,6 +28,8 @@ import platform
 import re
 import stat
 import time
+from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar
 from dataclasses import replace
 from itertools import islice
 from pathlib import Path
@@ -323,6 +325,27 @@ class GlobalCallBudget:
             setattr(self, field, value)
 
 
+_RETAINED_EXECUTION_ADMISSION: ContextVar[Any] = ContextVar("retained_execution_admission", default=None)
+
+
+@contextmanager
+def retained_execution_admission(admission: Any):
+    """Scope a validated retained-input controller; ordinary Runner calls are unchanged.
+
+    The controller owns source/campaign admission and monetary reservations. This
+    lifecycle seam does not authorize a provider or invent a completion schema.
+    """
+    token = _RETAINED_EXECUTION_ADMISSION.set(admission)
+    try:
+        yield
+    finally:
+        _RETAINED_EXECUTION_ADMISSION.reset(token)
+
+
+def current_retained_execution_admission() -> Any:
+    return _RETAINED_EXECUTION_ADMISSION.get()
+
+
 class Runner:
     """Execute an (attacker, target, judge-cascade) triple over a corpus."""
 
@@ -344,11 +367,13 @@ class Runner:
     ) -> None:
         self.attacker = attacker
         self.target = target
+        self._retained_admission = None
         if getattr(attacker, "retained_replay_id", None) is not None:
+            self._retained_admission = current_retained_execution_admission()
             from .targets.api import MockTarget
             from .judges.rules import RuleJudge
-            if (not isinstance(target, MockTarget)
-                or any(not isinstance(stage, RuleJudge) for stage in judge_cascade.stages)):
+            if (self._retained_admission is None and (not isinstance(target, MockTarget)
+                or any(not isinstance(stage, RuleJudge) for stage in judge_cascade.stages))):
                 raise ValueError("retained input materialization is mock/rules-only; paid admission is not implemented")
         self.judge_cascade = judge_cascade
         self.budget = budget
@@ -404,6 +429,8 @@ class Runner:
             raise ValueError("retained input materialization requires seed 0 and answer retries 0")
         if len(set(self.seeds)) != len(self.seeds):
             raise ValueError("Runner seeds must be unique")
+        if self._retained_admission is not None:
+            self._retained_admission.validate_runner(self)
 
         # Provenance captured during the most recent run (deterministic order).
         self.attempts: list[Attempt] = []
@@ -689,6 +716,8 @@ class Runner:
             response, final, trail, meta = self._restore_record(
                 datapoint, attempt, record, run_id
             )
+            if self._retained_admission is not None:
+                self._retained_admission.response_checkpointed(self, attempt, response)
         else:
             evaluation_datapoint = self._evaluation_datapoint(datapoint, attempt)
             approximate_proxy = bool(
@@ -708,7 +737,12 @@ class Runner:
                         "post-factum judging requires a durable response for every "
                         f"planned attempt; missing {attempt.id!r}"
                     )
-                response = self._respond(attempt, run_id=run_id)
+                if self._retained_admission is not None and on_response is None:
+                    raise ValueError("paid retained inputs require a durable response checkpoint")
+                call_scope = (self._retained_admission.attempt(self, attempt)
+                              if self._retained_admission is not None else nullcontext())
+                with call_scope:
+                    response = self._respond(attempt, run_id=run_id)
                 if self.call_budget is not None:
                     self.call_budget.reconcile_http_attempts(
                         reserved=_target_http_exposure(self.target),
@@ -720,6 +754,11 @@ class Runner:
                     # The already-paid response is durable before an unexpected
                     # provider retry excess stops the cell.
                     self.call_budget.raise_if_overrun()
+            if self._retained_admission is not None:
+                # Both fresh and restored responses settle only after their
+                # durable checkpoint; empty output stops before the next call,
+                # including the response-only stage before local judging.
+                self._retained_admission.response_checkpointed(self, attempt, response)
             if self.execution_stage == "responses":
                 self.attempts.append(attempt)
                 self.responses.append(response)

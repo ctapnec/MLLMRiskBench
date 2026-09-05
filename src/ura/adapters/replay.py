@@ -107,11 +107,13 @@ class ReplayAttacker(BaseAttacker):
     name: str = "replay"
 
     def __init__(self, *, replay_artifact: str | None = None,
-                 replay_artifact_sha256: str | None = None) -> None:
+                 replay_artifact_sha256: str | None = None,
+                 retained_input_ids: list[str] | None = None) -> None:
         self._retained = None
+        self._selected_entries = None
         if replay_artifact is None:
-            if replay_artifact_sha256 is not None:
-                raise ValueError("retained replay digest requires an artifact")
+            if replay_artifact_sha256 is not None or retained_input_ids is not None:
+                raise ValueError("retained replay digest/selection requires an artifact")
             return
         _path, raw, _text = read_utf8_artifact(Path(replay_artifact), max_bytes=64 * 1024 * 1024)
         if hashlib.sha256(raw).hexdigest() != replay_artifact_sha256:
@@ -150,13 +152,25 @@ class ReplayAttacker(BaseAttacker):
                 raise ValueError("retained replay has duplicate inputs or mixed corpora")
             seen.add(identity)
         self._retained = value
+        self._selected_entries = value["entries"]
+        if retained_input_ids is not None:
+            if (not isinstance(retained_input_ids, list) or not retained_input_ids
+                or any(not isinstance(key, str) for key in retained_input_ids)
+                or len(set(retained_input_ids)) != len(retained_input_ids)):
+                raise ValueError("retained replay partition needs unique selected input IDs")
+            selected = [entry for entry in value["entries"]
+                        if entry["origin"]["selection"]["input_identity_sha256"] in retained_input_ids]
+            if [entry["origin"]["selection"]["input_identity_sha256"] for entry in selected] != retained_input_ids:
+                raise ValueError("retained replay partition differs from original selected input order")
+            self._selected_entries = selected
+            self.retained_input_ids = list(retained_input_ids)
         self.replay_artifact_sha256 = replay_artifact_sha256
         self.retained_replay_id = value["replay_id"]
 
     def retained_entries(self, datapoint: DataPoint, budget: AttackBudget) -> list[dict]:
         if self._retained is None:
             return []
-        entries = [entry for entry in self._retained["entries"]
+        entries = [entry for entry in self._selected_entries
                    if entry["origin"]["selection"]["datapoint_id"] == datapoint.id]
         if not entries or len(entries) > min(budget.max_queries, budget.max_turns):
             raise ValueError("retained replay selection must fit exactly inside the attack budget")
@@ -172,7 +186,7 @@ class ReplayAttacker(BaseAttacker):
         if self._retained is not None:
             ids = [dp.id for dp in corpus]
             expected = {entry["origin"]["selection"]["datapoint_id"]
-                        for entry in self._retained["entries"]}
+                        for entry in self._selected_entries}
             if len(ids) != len(set(ids)) or set(ids) != expected:
                 raise ValueError("retained replay corpus does not match the exact selected inputs")
 
@@ -180,12 +194,12 @@ class ReplayAttacker(BaseAttacker):
         if self._retained is None or self._retained["corpus"] != name:
             raise ValueError("retained replay source arm differs")
         expected = {entry["origin"]["selection"]["datapoint_id"]
-                    for entry in self._retained["entries"]}
+                    for entry in self._selected_entries}
         selected = [point for point in corpus if point.id in expected]
         self.validate_measured_run(selected)
         for point in selected:
-            self.retained_entries(point, AttackBudget(max_queries=len(self._retained["entries"]),
-                                                       max_turns=len(self._retained["entries"]), seed=0))
+            self.retained_entries(point, AttackBudget(max_queries=len(self._selected_entries),
+                                                       max_turns=len(self._selected_entries), seed=0))
         return selected
 
     def plan_target_inputs(

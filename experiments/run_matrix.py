@@ -4073,6 +4073,29 @@ def apply_retained_replay_selection(
     }
 
 
+def load_retained_replay_corpus(
+    name: str, limit: int, sample_seed: int, *, attacker: object,
+    sampling_policy: str | None, source_instance: dict[str, object],
+) -> tuple[list[DataPoint], dict[str, object]]:
+    """Select exact funded inputs after full source validation, not a new prefix.
+
+    This is only the admitted retained-replay path. A bounded diagnostic still
+    contains whole original source clusters; ordinary canary sampling is intact.
+    """
+    full, audit = load_corpus_with_audit(
+        name, 0, sample_seed, sampling_policy=sampling_policy, source_instance=source_instance,
+    )
+    selected, result = apply_retained_replay_selection(name, full, audit, attacker)
+    selected_clusters = set(result["selected_cluster_ids"])
+    whole_ids = {point.id for index, point in zip(audit["selected_indices"], full)
+                 if _cluster_key(index, point) in selected_clusters}
+    if whole_ids != {point.id for point in selected}:
+        raise ValueError("retained replay partition must preserve whole original source clusters")
+    if limit and len(selected_clusters) > limit:
+        raise ValueError("retained replay partition exceeds the declared source-cluster limit")
+    return selected, {**result, "limit": limit, "pre_retained_loading_limit": 0}
+
+
 def _resolve_model_selection(
     names: list[str], api_registry_path: Path, local_registry_path: Path,
 ) -> tuple[list[str], list[str]]:
@@ -4605,8 +4628,10 @@ def _uses_post_factum_local_judging(
 ) -> bool:
     """Keep every response-independent local scoring model off the target phase."""
 
+    from ura.runner import current_retained_execution_admission
+
     return bool(
-        local_specs
+        (local_specs or current_retained_execution_admission() is not None)
         and execution_purpose
         in {"attestation_probe", "diagnostic_canary", "measured_run"}
         and "crescendo" not in {name.lower() for name in attacker_names}
@@ -4624,6 +4649,10 @@ def _main(argv=None) -> int:
         for token in raw_argv
     )
     args = ap.parse_args(raw_argv)
+    from ura.runner import current_retained_execution_admission
+    retained_admission = current_retained_execution_admission()
+    if retained_admission is not None:
+        retained_admission.validate_cli(raw_argv, args)
     sampling_policy_binding = (
         {"sampling_policy": effective_sampling_policy(args.sampling_policy)}
         if args.sampling_policy is not None
@@ -5227,7 +5256,7 @@ def _main(argv=None) -> int:
         )
         portable_attacker_configs = _portable_attacker_configs(attacker_configs)
         if "replay_artifact" in attacker_configs.get("replay", {}):
-            if (not args.dry_run or attacker_names != ["replay"] or len(corpora) != 1
+            if retained_admission is None and (not args.dry_run or attacker_names != ["replay"] or len(corpora) != 1
                 or args.limit != 0 or seeds != [0] or args.target_answer_retries != 0
                 or judge_names != ["rules"] or recovery_completed_prefix is not None):
                 raise ValueError(
@@ -5807,14 +5836,20 @@ def _main(argv=None) -> int:
     sampling_audits: dict[str, dict[str, object]] = {}
     for corpus_name in corpora:
         try:
-            corpus, sampling_audit = load_corpus_with_audit(
-                corpus_name,
-                args.limit,
-                args.sample_seed,
-                sampling_policy=args.sampling_policy,
-                source_instance=source_instances[corpus_name],
-                exclude_tool_conditioned=args.exclude_tool_conditioned,
-            )
+            if retained_admission is not None:
+                corpus, sampling_audit = load_retained_replay_corpus(
+                    corpus_name, args.limit, args.sample_seed, attacker=retained_replay,
+                    sampling_policy=args.sampling_policy, source_instance=source_instances[corpus_name],
+                )
+            else:
+                corpus, sampling_audit = load_corpus_with_audit(
+                    corpus_name,
+                    args.limit,
+                    args.sample_seed,
+                    sampling_policy=args.sampling_policy,
+                    source_instance=source_instances[corpus_name],
+                    exclude_tool_conditioned=args.exclude_tool_conditioned,
+                )
             corpus, sampling_audit = apply_recovery_completed_prefix(
                 corpus_name,
                 corpus,
