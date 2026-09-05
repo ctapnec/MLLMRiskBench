@@ -1938,6 +1938,7 @@ def _runner_view_controller(
     # This copy-integrity fixture supplies its one already-selected input lane.
     # Full campaign population selection is exercised independently.
     controller._all_metric_lanes = lambda: ["lane-a"]
+    controller._metric_result_roots = lambda: [lane_root]
     controller.runner_view = tmp_path / "view"
     controller.runner_view_receipt = tmp_path / "view-receipt.json"
     controller.runner_view_ready = False
@@ -2011,6 +2012,74 @@ def test_phase7_zero_output_view_rejects_selector_visible_extra(
             view_root=controller.runner_view,
             included_measured_lanes=["lane-a"],
         )
+
+
+def test_phase7_metrics_use_exact_recovery_root_but_lifecycle_retains_failure(
+    phase7: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source"
+    failed = source / "lane-a" / "phase6-predecessor"
+    recovery = source / "lane-a" / "phase6-recovery"
+    for root, status in ((failed, "failed"), (recovery, "complete")):
+        root.mkdir(parents=True)
+        (root / "cell.grid.json").write_text(json.dumps({"status": status}))
+    error = failed / "cell.error.json"
+    error.write_text('{"error":"retained predecessor failure"}')
+    (failed / "cell.responses.checkpoint.jsonl").write_text('{}\n')
+    completion = recovery / "cell.completed.json"
+    completion.write_text('{"status":"complete"}')
+    plan = recovery / "cell.eligibility.json"
+    plan.write_text('{}')
+    controller = object.__new__(phase7.AnalysisController)
+    controller.inputs = {"runner": {
+        "root": str(source), "lifecycle_states": {"lane-a": "failed"},
+    }}
+    controller._all_metric_lanes = lambda: ["lane-a"]
+    controller._all_metric_completion_markers = lambda: [phase7.descriptor(completion)]
+    controller._all_metric_eligibility_plans = lambda: [phase7.descriptor(plan)]
+    controller.runner_view = tmp_path / "metric-view"
+    controller.runner_view_receipt = tmp_path / "metric-view.json"
+    controller.runner_view_ready = False
+    assert controller._metric_result_roots() == [recovery]
+    view = controller.analysis_runner_view()
+    assert not (view / "lane-a" / failed.name).exists()
+    assert (view / "lane-a" / recovery.name / completion.name).is_file()
+    assert not list(view.rglob("*.error.json"))
+    assert error.is_file()
+
+    # The lifecycle producer still includes both independently retained roots.
+    roots = {"predecessor": str(failed), "recovery": str(recovery)}
+    states = {"predecessor": "failed", "recovery": "complete"}
+    controller._lifecycle_union = lambda: (roots, states, [])
+    controller._lifecycle_included_lanes = lambda: ["lane-a"]
+    controller._lifecycle_registry_only_lanes = lambda: []
+    controller.lifecycle_runner_view_path = tmp_path / "lifecycle-view"
+    controller.lifecycle_runner_view_receipt = tmp_path / "lifecycle-view.json"
+    controller.lifecycle_runner_view_ready = False
+    lifecycle = controller.lifecycle_runner_view()
+    assert (lifecycle / "lane-a" / failed.name / error.name).read_bytes() == error.read_bytes()
+    assert (lifecycle / "lane-a" / recovery.name / completion.name).is_file()
+
+    # Neither a different selected plan nor an injected failed artifact is
+    # admitted to the success-only view; the old whole-lane contract stays strict.
+    wrong_plan = failed / "cell.eligibility.json"
+    wrong_plan.write_text('{}')
+    with monkeypatch.context() as patch:
+        patch.setattr(controller, "_all_metric_eligibility_plans", lambda: [
+            phase7.descriptor(wrong_plan)
+        ])
+        with pytest.raises(phase7.Phase7Error, match="result roots differ"):
+            controller._metric_result_roots()
+    receipt = phase7.strict_object(controller.runner_view_receipt)
+    with pytest.raises(phase7.Phase7Error, match="sealed source file inventory"):
+        phase7.validate_runner_input_view_receipt(
+            receipt, source_root=source, view_root=view,
+            included_measured_lanes=["lane-a"],
+        )
+    extra = view / "lane-a" / recovery.name / error.name
+    extra.write_bytes(error.read_bytes())
+    with pytest.raises(phase7.Phase7Error, match="unbound extra"):
+        controller.analysis_runner_view()
 
 
 def test_phase7_lifecycle_view_write_cannot_modify_phase6_source(

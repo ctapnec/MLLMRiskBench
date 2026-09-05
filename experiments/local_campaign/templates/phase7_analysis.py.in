@@ -1901,6 +1901,7 @@ def _validate_independent_copy_inventory(
     regular_files_copied: object,
     recorded_logical_bytes: object,
     label: str,
+    included_result_roots: Sequence[Path] | None = None,
 ) -> None:
     lanes = list(included_lanes)
     if (
@@ -1992,12 +1993,29 @@ def _validate_independent_copy_inventory(
         raise Phase7Error(f"{label} file inventory order changed")
 
     expected_source_files: dict[str, Path] = {}
-    for lane in lanes:
-        lane_root = checked_dir(source_root / lane, label=f"{label} source lane {lane}")
-        for lane_relative, path in _regular_tree_files(
-            lane_root, label=f"{label} source lane {lane}"
-        ).items():
-            expected_source_files[f"{lane}/{lane_relative}"] = path
+    if included_result_roots is None:
+        # Retained whole-lane receipts keep their original validation contract.
+        for lane in lanes:
+            lane_root = checked_dir(source_root / lane, label=f"{label} source lane {lane}")
+            for lane_relative, path in _regular_tree_files(
+                lane_root, label=f"{label} source lane {lane}"
+            ).items():
+                expected_source_files[f"{lane}/{lane_relative}"] = path
+    else:
+        observed_lanes: set[str] = set()
+        for root in included_result_roots:
+            root = checked_dir(root, label=f"{label} authorized result root")
+            try:
+                parts = root.relative_to(source_root).parts
+            except ValueError as exc:
+                raise Phase7Error(f"{label} result root escaped the source") from exc
+            if not parts or parts[0] not in lanes:
+                raise Phase7Error(f"{label} result root is outside selected lanes")
+            observed_lanes.add(parts[0])
+            for path in _runner_root_files(root, label=label).values():
+                expected_source_files[path.relative_to(source_root).as_posix()] = path
+        if observed_lanes != set(lanes):
+            raise Phase7Error(f"{label} result-root lane coverage changed")
     if set(expected_source_files) != set(inventory_by_relative):
         raise Phase7Error(f"{label} sealed source file inventory changed")
 
@@ -2021,6 +2039,7 @@ def validate_runner_input_view_receipt(
     source_root: Path,
     view_root: Path,
     included_measured_lanes: Sequence[str],
+    included_result_roots: Sequence[Path] | None = None,
 ) -> dict[str, Any]:
     """Revalidate every immutable independent copy and reject all extras."""
 
@@ -2063,6 +2082,7 @@ def validate_runner_input_view_receipt(
         regular_files_copied=value.get("regular_files_copied"),
         recorded_logical_bytes=value.get("logical_bytes"),
         label="Runner input-view",
+        included_result_roots=included_result_roots,
     )
     return dict(value)
 
@@ -13733,6 +13753,7 @@ class AnalysisController:
             source_root=self.runner_root,
             view_root=self.runner_view,
             included_measured_lanes=self._all_metric_lanes(),
+            included_result_roots=self._metric_result_roots(),
         )
 
     def _lifecycle_registry_only_lanes(self) -> list[str]:
@@ -14086,24 +14107,15 @@ class AnalysisController:
         self.runner_view.mkdir(mode=0o700)
         source_root = self.runner_root
         file_inventory: list[dict[str, Any]] = []
-        for lane in self._all_metric_lanes():
-            lane_root = checked_dir(
-                source_root / lane, label=f"authorized measured runner lane {lane}"
-            )
-            for source in [lane_root, *sorted(lane_root.rglob("*"))]:
+        # A lane can contain failed predecessors and successful recoveries.
+        # Metrics use only the exact roots already bound by their completed
+        # markers and eligibility plans; lifecycle accounting retains failures.
+        for root in self._metric_result_roots():
+            for source in _runner_root_files(
+                root, label="authorized measured Runner root"
+            ).values():
                 relative = source.relative_to(source_root)
                 target = self.runner_view / relative
-                if source.is_symlink():
-                    raise Phase7Error(
-                        f"Phase 6 runner tree contains a symlink: {relative}"
-                    )
-                if source.is_dir():
-                    target.mkdir(parents=True, mode=0o700, exist_ok=False)
-                    continue
-                if not source.is_file():
-                    raise Phase7Error(
-                        f"Phase 6 runner tree contains a non-regular input: {relative}"
-                    )
                 target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
                 file_inventory.append(
                     copy_view_file(
@@ -14250,6 +14262,32 @@ class AnalysisController:
                 "metric_completion_markers"
             ],
         ]
+
+    def _metric_result_roots(self) -> list[Path]:
+        """Resolve the unchanged metric population from authorized artifacts."""
+        roots = {
+            descriptor_file(item, label="authorized metric completion").parent
+            for item in self._all_metric_completion_markers()
+        }
+        plan_roots = {
+            descriptor_file(item, label="authorized metric eligibility").parent
+            for item in self._all_metric_eligibility_plans()
+        }
+        if not roots or roots != plan_roots:
+            raise Phase7Error("metric completion/eligibility result roots differ")
+        lanes = set(self._all_metric_lanes())
+        observed_lanes: set[str] = set()
+        for root in roots:
+            try:
+                parts = root.relative_to(self.runner_root).parts
+            except ValueError as exc:
+                raise Phase7Error("metric result root escaped the Runner store") from exc
+            if not parts or parts[0] not in lanes:
+                raise Phase7Error("metric result root is outside selected lanes")
+            observed_lanes.add(parts[0])
+        if observed_lanes != lanes:
+            raise Phase7Error("metric result-root lane coverage changed")
+        return sorted(roots)
 
     def _current_ollama_sampling_root(self, lane: str) -> Path:
         return checked_dir(
@@ -18737,6 +18775,10 @@ def contract_self_test() -> int:
         view_controller.runner_view = temp / "view"
         view_controller.runner_view_receipt = temp / "view-receipt.json"
         view_controller.runner_view_ready = False
+        # This self-test covers copy integrity, not campaign root admission.
+        view_controller._metric_result_roots = lambda: [
+            source_root / lane for lane in view_controller._all_metric_lanes()
+        ]
         view_root = view_controller.analysis_runner_view()
         view_receipt = strict_object(view_controller.runner_view_receipt)
         validate_runner_input_view_receipt(
