@@ -1293,6 +1293,7 @@ def _analysis_prerequisite_runner(
         }
     return {
         "terminal_states": states,
+        "lifecycle_lane_order": list(states),
         "lifecycle_states": lifecycle,
         "lifecycle_authorizations": authorizations,
         "conditional_na_lanes": [],
@@ -1305,6 +1306,7 @@ def _analysis_controller(
     runner: dict[str, object],
 ) -> tuple[object, list[tuple[object, ...]], list[tuple[object, ...]]]:
     controller = object.__new__(phase7.AnalysisController)
+    controller._completed_kappa_input_available = lambda: False
     runner.setdefault(
         "model_selectors", {"llava_base": "vllm:fixture/llava-base"}
     )
@@ -1772,6 +1774,75 @@ def test_phase7_conditional_analysis_availability_is_lane_specific(
             for analysis in analyses
         )
         assert observed == expected
+
+
+def test_conditional_analysis_keeps_gate5_static_terminals_out_of_runner_prerequisites(
+    phase7: ModuleType,
+) -> None:
+    runner = _analysis_prerequisite_runner(
+        phase7, measured=("local-qwen3-vl-text-primary-100",)
+    )
+    excluded = phase7.OLLAMA_STATIC_TERMINAL_LANE_SET
+    assert len(excluded) == 3
+    for field in ("terminal_states", "lifecycle_states", "lifecycle_authorizations"):
+        for lane in excluded:
+            del runner[field][lane]
+    runner["lifecycle_lane_order"] = list(runner["terminal_states"])
+    for analysis in ("judge-sensitivity", "kappa", "transfer-matrix"):
+        plan = phase7.conditional_analysis_plan(runner, analysis)
+        assert plan["runnable"] is True
+        assert not set(plan["candidate_lanes"]) & excluded
+    # Removing a real scheduled/canonical lane is still rejected, even if a
+    # caller also changes its schedule. This is not a general missing-row filter.
+    lane = "local-qwen3-vl-text-primary-100"
+    del runner["terminal_states"][lane]
+    with pytest.raises(phase7.Phase7Error, match="scheduled Runner inventory"):
+        phase7.conditional_analysis_plan(runner, "judge-sensitivity")
+    runner["lifecycle_lane_order"].remove(lane)
+    with pytest.raises(phase7.Phase7Error, match="prerequisite lane inventory"):
+        phase7.conditional_analysis_plan(runner, "judge-sensitivity")
+
+
+def test_kappa_availability_uses_exact_completed_recovery_without_pooling(
+    phase7: ModuleType, tmp_path: Path,
+) -> None:
+    runner = _analysis_prerequisite_runner(phase7)
+    controller, _processes, _statuses = _analysis_controller(phase7, tmp_path, runner)
+    del controller._completed_kappa_input_available
+    manifest = tmp_path / "recovery.manifest.json"
+    manifest.write_text(json.dumps({"config": {"run": {
+        "attacker": "replay", "defense": "none",
+    }}}))
+    judgments = tmp_path / "recovery.jsonl"
+    judgments.write_text(json.dumps({"raw": {
+        "policy_evaluable_turn": True, "common_metrics_eligible": True,
+    }}) + "\n")
+    marker = tmp_path / "recovery.complete.json"
+    marker.write_text(json.dumps({"artifacts": {
+        role: {"file": path.name, "sha256": phase7.sha256_file(path),
+               "bytes": path.stat().st_size}
+        for role, path in (("manifest", manifest), ("judgments", judgments))
+    }}))
+    controller._all_metric_completion_markers = lambda: [phase7.descriptor(marker)]
+    assert phase7.conditional_analysis_plan(runner, "kappa")["runnable"] is False
+    assert controller._completed_kappa_input_available() is True
+    controller.analysis_runner_view = lambda: tmp_path
+
+    class ProducerReached(Exception):
+        pass
+
+    def producer(name: str, argv: list[str], **kwargs: object) -> None:
+        assert name == "kappa" and "experiments.kappa" in argv
+        raise ProducerReached
+
+    controller.run = producer
+    with pytest.raises(ProducerReached):
+        controller.run_kappa()
+    # Presence enables the real producer, not a coefficient or pooled estimate.
+    assert not (controller.analysis / "diagnostics" / "judge-kappa.json").exists()
+    judgments.write_text(judgments.read_text() + " ")
+    with pytest.raises(phase7.Phase7Error):
+        controller._completed_kappa_input_available()
 
 
 def test_phase7_non_estimable_artifacts_reject_mutations_and_bad_evidence(

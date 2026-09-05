@@ -2481,7 +2481,20 @@ def conditional_analysis_plan(
     definition = CONDITIONAL_ANALYSES.get(analysis)
     if not isinstance(definition, dict):
         raise Phase7Error(f"unknown conditional analysis: {analysis}")
-    candidates = tuple(definition["candidate_lanes"])
+    scheduled = runner.get("lifecycle_lane_order")
+    states = runner.get("terminal_states")
+    if (not isinstance(scheduled, list)
+        or any(not isinstance(lane, str) for lane in scheduled)
+        or len(set(scheduled)) != len(scheduled)
+        or not isinstance(states, dict) or set(scheduled) != set(states)):
+        raise Phase7Error("conditional analysis scheduled Runner inventory changed")
+    # Gate5 can retain these exact lanes as static terminals without scheduling
+    # Runner requests. They remain in terminal accounting, not prerequisites for
+    # analyses over completed Runner cells. Other missing lanes still fail below.
+    candidates = tuple(
+        lane for lane in definition["candidate_lanes"]
+        if lane not in OLLAMA_STATIC_TERMINAL_LANE_SET or lane in scheduled
+    )
     snapshot, conditional_na = runner_prerequisite_snapshot(runner, candidates)
     measured = [
         lane
@@ -15723,6 +15736,7 @@ class AnalysisController:
         return value
 
     def run_judge_sensitivity(self) -> dict[str, Any]:
+        self.current_name = "judge-sensitivity"
         output = self.analysis / "diagnostics" / "judge-sensitivity.json"
         if not conditional_analysis_plan(
             self.inputs["runner"], "judge-sensitivity"
@@ -15784,11 +15798,42 @@ class AnalysisController:
         )
         return value
 
+    def _completed_kappa_input_available(self) -> bool:
+        """Detect common-eligible recovery rows without claiming comparability."""
+        for raw in self._all_metric_completion_markers():
+            marker_path = descriptor_file(raw, label="kappa authorized completion")
+            marker = strict_object(marker_path)
+
+            def artifact(role: str) -> bytes:
+                item = marker["artifacts"][role]
+                parts = _canonical_relative_parts(item["file"], label="kappa artifact")
+                if len(parts) != 1:
+                    raise Phase7Error("kappa completion artifact escaped its cell")
+                _path, payload = descriptor_bytes({
+                    "path": str(marker_path.parent / parts[0]),
+                    "sha256": item["sha256"], "bytes": item["bytes"],
+                }, label=f"kappa completion-bound {role}")
+                return payload
+
+            manifest = _strict_object_bytes(artifact("manifest"), label="kappa manifest")
+            run = manifest["config"]["run"]
+            if run["attacker"] != "replay" or run["defense"] != "none":
+                continue
+            for line in artifact("judgments").splitlines():
+                if not line.strip():
+                    continue
+                judgment = _strict_object_bytes(line, label="kappa judgment")
+                provenance = judgment.get("raw", {})
+                if (provenance.get("policy_evaluable_turn") is True
+                    and provenance.get("common_metrics_eligible") is True):
+                    return True
+        return False
+
     def run_kappa(self) -> dict[str, Any]:
+        self.current_name = "kappa"
         output = self.analysis / "diagnostics" / "judge-kappa.json"
-        if not conditional_analysis_plan(self.inputs["runner"], "kappa")[
-            "runnable"
-        ]:
+        if (not conditional_analysis_plan(self.inputs["runner"], "kappa")["runnable"]
+            and not self._completed_kappa_input_available()):
             return self._emit_non_estimable_analysis("kappa", output)
         view = self.analysis_runner_view()
         output.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -15868,6 +15913,7 @@ class AnalysisController:
         return value
 
     def run_transfer(self) -> dict[str, Any]:
+        self.current_name = "transfer-matrix"
         output_dir = self.analysis / "transfer"
         if not conditional_analysis_plan(
             self.inputs["runner"], "transfer-matrix"
@@ -18492,6 +18538,7 @@ def contract_self_test() -> int:
             }
         return {
             "terminal_states": states,
+            "lifecycle_lane_order": list(states),
             "lifecycle_states": lifecycle,
             "lifecycle_authorizations": authorizations,
             "conditional_na_lanes": [],
