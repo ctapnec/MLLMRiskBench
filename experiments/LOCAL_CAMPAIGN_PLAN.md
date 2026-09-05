@@ -89,6 +89,36 @@ unpromoted; include their retained responses in post-factum local judging
 before claiming all-row judged evidence. The historical 144-condition cohort
 and its original failures remain unchanged.
 
+Parallel RR scheduling decision, 5 September. The operator selected two
+independent one-GPU workers while retaining the admitted 4,096-token output
+allowance. The suggested 1,536/2,048-token alternatives are not adopted. Keep
+all 7,606 selected identities, the original seeds and the existing model bytes;
+exclude every durable predecessor response from new target calls. The current
+TP1 RR profile fits one 24 GiB card. Record each worker's physical GPU assignment
+and isolate its CUDA visibility; a model requiring both cards instead owns both
+exclusively and must not overlap another target or scoring model.
+
+The prospective parallel launch uses the existing response checkpoints to
+separate target generation and scoring into fresh processes. An in-process
+close is insufficient when vLLM retains its allocations. Each worker's judge
+uses its own visible GPU only after the target process has exited. This is
+post-response scoring, not target/judge co-residency. Validate that handoff with
+a short admitted probe on the actual assigned device before measured execution.
+Do not repeat runtime installations or the already-passed full readiness survey.
+
+Declare a 259,200-second measured deadline and subprocess bound, with a
+96-hour attestation-age policy to include preparation margin, in each fresh
+request before acquisition and projection. These are explicit prospective
+scheduling/freshness conditions, not changes to the retained 86,400-second or
+24-hour requests. The exact model, source, transport and receipt checks remain.
+Bind any interrupted predecessor's actual stopped-process observation and
+durable files; never manufacture a normal completion or promote its unfinished
+grid. Its unjudged responses still require post-factum scoring. At the observed
+roughly 66 seconds per response, two balanced workers imply about 68 hours of
+generation for the then-remaining population; loading, image processing,
+judging and retries are additional. Replace that extrapolation with measured
+parallel throughput, and report scheduling conditions separately in Stats.
+
 Initial RR interpretation check (5 September). The first 11 retained measured
 StrongREJECT outputs all ended at the approved 4,096-token allowance in about
 66 seconds and contained extreme repetition. Their prompts were only 24-76

@@ -441,6 +441,17 @@ fraction of another device for later scoring, so target utilization and memory
 observations describe the target condition rather than target-judge
 co-residency.
 
+Eligible response-independent vLLM work without runtime-backed attackers uses
+process exit, not just an in-process close, between target generation and local
+scoring. An optional once-only Runner lifecycle callback loads the target only
+when a response is genuinely missing. A fresh judge child restores exact
+checkpoints without loading that target. The parent permits only bounded,
+durable progress and keeps the same request and budget across children. A
+retained planned manifest preserves the original target start time for probe
+freshness. The later completion-marker handoff releases judge allocations
+before the next cell. No response is regenerated merely to change process
+ownership, and no framework closing seal is bypassed.
+
 Runner 2.32 leaves unified schema 1.5 and retained Runner artifacts unchanged.
 Its current pre-execution gate writes `ura-local-model-readiness/4` and the
 machine-local `ura-local-model-execution-profiles/3` registry. Readiness schemas

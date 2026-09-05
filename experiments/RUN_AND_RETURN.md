@@ -2186,14 +2186,21 @@ and contaminate target resource observations. Crescendo must remain inline
 because each verdict controls the next turn. A defense guard also remains in the
 target phase because it changes the treatment rather than merely scoring it.
 
-When one measured local vLLM request contains multiple response-independent
-cells, Runner owns a bounded outer process recycler. The unchanged command is
-started again in a fresh child only when the preceding child created at least
-one new verified completion marker. Existing completed cells are call-free,
-the request envelope and budgets remain unchanged, and a no-progress child
-stops immediately. This prevents vLLM 0.27.1 allocations retained after its
-official in-process shutdown from blocking the next cell. The same rule applies
-to commands composed by Rig Web.
+For response-independent local vLLM cells without runtime-backed attackers,
+Runner owns a bounded outer process recycler, including admitted probes and
+canaries. A target child writes durable response checkpoints and exits before
+the judge loads. The next child validates those same responses, does not load
+the target again, and performs scoring. After a newly sealed cell it also exits
+before another model phase. This lets the operating system release allocations
+that vLLM 0.27.1 can retain after its official in-process close.
+
+Both children use the unchanged command, request envelope, output allowance,
+retry policy and durable budget. A response-phase handoff requires a strict
+increase in validated checkpoint records; a completed-cell handoff requires a
+new completion marker. No-progress children stop, and the process count is
+bounded. The original target-phase start time is preserved rather than replaced
+by the later judge start. Runtime-backed attackers retain their closing-seal
+path. The same Runner behavior applies to commands composed by Rig Web.
 
 After verified target teardown, the judge performs a fresh hardware-fit
 selection and may use one or both GPUs under its own local configuration. Do
