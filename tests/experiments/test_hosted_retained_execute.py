@@ -63,6 +63,35 @@ def _runner(attacker, target, admission):
                       [0], target_answer_retries=0, execution_stage="responses")
 
 
+def test_registered_count_uses_funded_starts_and_final_or_checkpointed_responses(tmp_path):
+    points, attacker, target, _calls, admission = _setup(tmp_path)
+    records = []
+    runner = _runner(attacker, target, admission)
+    runner.run(points, on_response=records.append)
+    final_root = tmp_path / "final"
+    checkpoint_root = tmp_path / "checkpoint"
+    final_root.mkdir()
+    checkpoint_root.mkdir()
+    (final_root / "one.responses.jsonl").write_text(
+        json.dumps(records[0]["response"]) + "\n"
+    )
+    missing = copy.deepcopy(records[1])
+    missing["response"]["output_turns"] = []
+    missing["response"]["raw"]["model_stability_status"] = "failed_output"
+    Runner.append_checkpoint(
+        checkpoint_root / "two.responses.checkpoint.jsonl", missing
+    )
+    program = {
+        "target": target.name,
+        "requests": admission.requests,
+        "jobs": [
+            {"argv": ["--out", str(final_root)]},
+            {"argv": ["--out", str(checkpoint_root)]},
+        ],
+    }
+    assert subject._retained_execution_counts(program, admission.budget) == (2, 1)
+
+
 def test_target_money_settles_after_checkpoint_and_resume_never_reissues(tmp_path):
     points, attacker, target, calls, admission = _setup(tmp_path)
     checkpoint = tmp_path / "responses.jsonl"
