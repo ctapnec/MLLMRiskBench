@@ -74,6 +74,30 @@ def _bindings(path: Path, commit: str = "1" * 40) -> Path:
     return path
 
 
+@pytest.mark.parametrize("name", ["phase7_analysis.sh", "phase7_after_phase6_sequence.sh"])
+def test_analysis_launchers_use_the_receipt_bound_checkout(tmp_path: Path, name: str):
+    if shutil.which("bash") is None:
+        pytest.skip("Bash is required for the rig launcher bootstrap")
+    binding_path = _bindings(tmp_path / "bindings.json")
+    binding = json.loads(binding_path.read_text())
+    project = tmp_path / "analysis-checkout"
+    project.mkdir()
+    binding["values"]["PROJECT_ROOT"] = str(project)
+    binding_path.write_text(json.dumps(binding))
+    output = tmp_path / "rendered"
+    render_controller_set(binding_path, output)
+    source = (output / name).read_text()
+    bootstrap = source.split("source ~/.ura_campaign_env\n", 1)[1].split("\n", 1)[0]
+    fake_home = tmp_path / "home"
+    (fake_home / "MLLMRiskBench").mkdir(parents=True)
+    result = subprocess.run(
+        ["bash", "-c", bootstrap + "\npwd -P"],
+        env={**os.environ, "HOME": str(fake_home)},
+        text=True, capture_output=True, check=True,
+    )
+    assert result.stdout.strip() == str(project)
+
+
 def _rendered_gate5_namespace(tmp_path: Path) -> dict[str, object]:
     import re
 

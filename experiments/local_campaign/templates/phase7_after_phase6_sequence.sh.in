@@ -3,7 +3,7 @@ set -Eeuo pipefail
 umask 077
 
 source ~/.ura_campaign_env
-cd ~/MLLMRiskBench
+cd '@@PROJECT_ROOT@@'
 
 pin_controller_generation() {
   local script_fd="/proc/$$/fd/255" script_path root generations marker archive_sha
