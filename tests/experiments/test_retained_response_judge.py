@@ -138,6 +138,136 @@ def test_rr_handoff_rejection_is_not_reinterpreted_as_a_current_grid(tmp_path, m
         subject.load_retained_metadata(tmp_path)
 
 
+def _mixed_configuration_partition() -> dict:
+    metadata, judgments, cells = {}, {}, []
+    for index, answer in enumerate(("Retained answer.", "")):
+        key, run_id = f"sample-{index}", f"run-{index}"
+        metadata[key] = {
+            "run_id": run_id, "prepared_response": answer,
+            "prepared_prompt": "Original prompt", "common_metrics_eligible": True,
+            "policy_evaluable_turn": True, "effective_modality": "text",
+            "datapoint_id": "input1", "source_cluster_id": "cluster1", "requested_seed": 0,
+            "source": "strongreject", "risk_category": "violence", "expected_behavior": "refuse",
+            "source_policy_id": "policy1", "source_policy_version": "1", "prepared_media_references": "[]",
+        }
+        judgments[key] = {"attempt_id": f"attempt-{index}"}
+        cells.append({
+            "run_id": run_id, "model": "ollama:gemma4:12b",
+            "manifest": {"config": {"run": {
+                "attacker": "replay", "corpus": "strongreject", "project_revision": {"sha256": HEX_A}},
+                "components": {"target": {"max_tokens": 4096}}}},
+            "judgments": [{"raw": {"common_metrics_eligible": True, "policy_evaluable_turn": True}}],
+        })
+    # No joined common group represents this source-only cell. Its non-evaluable
+    # row is not part of the source-authoritative evaluable denominator.
+    source_only = copy.deepcopy(cells[0])
+    source_only["run_id"] = "source-only"
+    source_only["judgments"] = [
+        {"raw": {"common_metrics_eligible": False, "policy_evaluable_turn": value}}
+        for value in (True, False)
+    ]
+    cells.append(source_only)
+    groups = {}
+    for index, fingerprint in enumerate((HEX_A, HEX_B)):
+        key = f"sample-{index}"
+        groups[fingerprint] = [
+            {"guardrail": {key: "violation"}} if index == 0 else {},
+            {key: metadata[key]}, {key: judgments[key]},
+            {"frame": "common", "policy_evaluable_samples": 1,
+             "judge_configuration_binding": {"sha256": fingerprint,
+                 "realized_guardrail_identity": "exact-guard" if index == 0 else None}},
+        ]
+    return {"cells": cells, "validator_commit": "c" * 40,
+            "joined_by_configuration": groups,
+            "audit_join_compatibility": {"unchanged_original_transfer_validator_claimed": False}}
+
+
+@pytest.mark.parametrize("matched", [False, True])
+def test_ordinary_view_separates_configurations_before_missing_output_selection(
+    tmp_path, monkeypatch, matched,
+):
+    from experiments import retained_artifact_reader as reader
+    from experiments import retained_response_judge_pair as paired
+
+    partition = _mixed_configuration_partition()
+    original = copy.deepcopy(partition)
+    monkeypatch.setattr(reader, "grid_partitions", lambda root: [(root, "c" * 40, "d" * 40)])
+    calls = []
+    def read(root, **kwargs):
+        assert root == tmp_path
+        assert kwargs == {"joined": True, "frame": "common", "separate_judge_configurations": True}
+        calls.append("source_validated")
+        return [partition]
+    def forbidden(*args, **kwargs):
+        raise AssertionError("ordinary retained judging must not pool original judge configurations")
+    monkeypatch.setattr(reader, "read_partitions", read)
+    monkeypatch.setattr(reader, "load_joined", forbidden)
+    monkeypatch.setattr(subject, "_joined_artifacts", forbidden)
+
+    cells, metadata, judgments, audit = subject._read_view(tmp_path)
+    assert len(cells) == 3 and metadata.keys() == judgments.keys() == {"sample-0", "sample-1"}
+    source = audit["source_configuration_audits"][0]
+    assert source["validator_commit"] == partition["validator_commit"]
+    assert source["run_ids"] == [cell["run_id"] for cell in cells]
+    assert source["configuration_audits"] == {
+        key: joined[3] for key, joined in partition["joined_by_configuration"].items()}
+    assert source["audit_join_compatibility"] == partition["audit_join_compatibility"]
+    assert partition["joined_by_configuration"][HEX_B][0] == {}  # No invented prediction.
+    loader = paired.load_candidates if matched else subject.load_candidates
+    rows, population = loader(tmp_path, include_match_identity=matched)
+    assert len(rows) == 1 and rows[0]["sample_key"] == "sample-0"
+    assert population == {"validated_joined_rows": 2, "eligible_usable_outputs": 1,
+                          "excluded_missing_outputs": 1, "excluded_source_authoritative_rows": 1}
+    assert subject.load_retained_metadata(tmp_path) == metadata  # Keeps missing output for coverage.
+    assert ("input_identity_sha256" in rows[0]) is matched
+    if matched:
+        hosted = copy.deepcopy(rows[0])
+        hosted.update(exact_model="anthropic:example", run_id="hosted-run", sample_key="hosted-sample",
+                      retained_row_sha256=HEX_B)
+        plan = paired.build_pair_plan(
+            rows, [hosted], local_population_audit=population,
+            hosted_population_audit={"validated_joined_rows": 1, "eligible_usable_outputs": 1,
+                                     "excluded_missing_outputs": 0, "excluded_source_authoritative_rows": 0},
+            source_descriptor={"file": "source.json", "sha256": HEX_A, "bytes": 123},
+            judge_model=JUDGE, api_config_sha256=HEX_B, pricing_condition=PRICING,
+            limit=1, share_local_judgments=True,
+        )
+        assert plan["population"]["local"] == population
+        assert plan["selection"]["selected_pairs"] == 1
+        assert plan["judge_condition"]["max_judge_calls"] == 2
+        assert plan["judge_condition"]["answer_retries"] == 0
+    assert calls == ["source_validated"] * 3
+    assert partition == original
+
+
+@pytest.mark.parametrize("mutation,message", [
+    ("duplicate_run", "duplicate completed run"),
+    ("duplicate_key", "lossy or duplicate join"),
+    ("missing_judgment", "lossy or duplicate join"),
+    ("wrong_count", "lossy or duplicate join"),
+    ("wrong_frame", "source frame or configuration"),
+    ("wrong_configuration", "source frame or configuration"),
+])
+def test_ordinary_candidate_join_rejects_identity_loss_or_configuration_changes(mutation, message):
+    partition = _mixed_configuration_partition()
+    joined = partition["joined_by_configuration"][HEX_B]
+    if mutation == "duplicate_run":
+        partition["cells"].append(copy.deepcopy(partition["cells"][0]))
+    elif mutation == "duplicate_key":
+        joined[1] = {"sample-0": joined[1]["sample-1"]}
+        joined[2] = {"sample-0": joined[2]["sample-1"]}
+    elif mutation == "missing_judgment":
+        joined[2].clear()
+    elif mutation == "wrong_count":
+        joined[3]["policy_evaluable_samples"] = 0
+    elif mutation == "wrong_frame":
+        joined[3]["frame"] = "source_task"
+    else:
+        joined[3]["judge_configuration_binding"]["sha256"] = HEX_A
+    with pytest.raises(ValueError, match=message):
+        subject._joined_candidate_partitions([partition])
+
+
 def _resign(plan: dict) -> dict:
     material = copy.deepcopy(plan)
     material.pop("plan_id")

@@ -369,7 +369,7 @@ def _candidates_from_view(
 
 
 def _read_view(root: Path) -> tuple[list[dict], dict, dict, dict]:
-    from experiments.retained_artifact_reader import grid_partitions, load_joined
+    from experiments.retained_artifact_reader import grid_partitions, read_partitions
     from experiments.local_campaign.rr_parallel_analysis import SCHEMA, load_judge_view
     from experiments.local_campaign.vllm_stability_phase6 import _load_json
 
@@ -377,9 +377,58 @@ def _read_view(root: Path) -> tuple[list[dict], dict, dict, dict]:
     if completion.is_file() and _load_json(completion, label="retained analysis completion").get("schema") == SCHEMA:
         return load_judge_view(root)
     if grid_partitions(root):
-        return load_joined(root)
+        return _joined_candidate_partitions(read_partitions(
+            root, joined=True, frame="common", separate_judge_configurations=True,
+        ))
     _per_judge, metadata, judgments, audit = _joined_artifacts(root, frame="common")
     return _load_cells(root), metadata, judgments, audit
+
+
+def _joined_candidate_partitions(partitions: Sequence[Mapping[str, Any]]) -> tuple[list[dict], dict, dict, dict]:
+    """Merge output identities, not the original cascades' predictions or rates."""
+    cells, metadata, judgments = [], {}, {}
+    seen_runs: set[str] = set()
+    source_audits = []
+    excluded_source = 0
+    for partition in partitions:
+        for cell in partition["cells"]:
+            if cell["run_id"] in seen_runs:
+                raise ValueError("retained judge view contains a duplicate completed run")
+            seen_runs.add(cell["run_id"])
+            cells.append(cell)
+            # Source-only cells have no common configuration group. Count them
+            # from the full validated inventory, not a selected group's audit.
+            excluded_source += sum(
+                row["raw"].get("common_metrics_eligible") is False
+                and row["raw"].get("policy_evaluable_turn") is True
+                for row in cell["judgments"]
+            )
+        group_audits = {}
+        for fingerprint, joined in partition["joined_by_configuration"].items():
+            _predictors, part_metadata, part_judgments, part_audit = joined
+            if (part_metadata.keys() != part_judgments.keys()
+                or metadata.keys() & part_metadata.keys()
+                or part_audit["policy_evaluable_samples"] != len(part_metadata)):
+                raise ValueError("retained judge view contains a lossy or duplicate join")
+            if (part_audit["frame"] != "common"
+                or part_audit["judge_configuration_binding"]["sha256"] != fingerprint):
+                raise ValueError("retained judge view source frame or configuration differs")
+            metadata.update(part_metadata)
+            judgments.update(part_judgments)
+            group_audits[fingerprint] = part_audit
+        source_audit = {
+            "validator_commit": partition["validator_commit"],
+            "run_ids": [cell["run_id"] for cell in partition["cells"]],
+            "configuration_audits": group_audits,
+        }
+        if "audit_join_compatibility" in partition:
+            source_audit["audit_join_compatibility"] = partition["audit_join_compatibility"]
+        source_audits.append(source_audit)
+    return cells, metadata, judgments, {
+        "policy_evaluable_samples": len(metadata),
+        "common_ineligible_evaluable_rows_excluded": excluded_source,
+        "source_configuration_audits": source_audits,
+    }
 
 
 def load_retained_metadata(root: Path) -> dict:
