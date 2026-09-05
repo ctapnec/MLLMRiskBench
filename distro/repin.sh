@@ -9,7 +9,7 @@
 #   local:  git bundle create web002.bundle main
 #           scp web002.bundle rig:~/web002.bundle
 #           scp distro/repin.sh rig:~/repin.sh        # from the deployed commit
-#   rig:    bash ~/repin.sh <40-hex-commit> [--focused-campaign-handoff|--profile-recovery-handoff]
+#   rig:    bash ~/repin.sh <40-hex-commit> [--focused-campaign-handoff|--profile-recovery-handoff|--analysis-handoff]
 #
 # Run ON the rig with $1 = the expected 40-hex commit (the bundle head must
 # match it exactly). Steps, all fail-closed (a failure leaves the rig on the
@@ -37,8 +37,8 @@ set -euo pipefail
 
 REF_EXPECTED="${1:-}"
 MODE="${2:-full}"
-[[ "$REF_EXPECTED" =~ ^[0-9a-f]{40}$ ]] || { echo "usage: $0 <40-hex-commit> [--focused-campaign-handoff|--profile-recovery-handoff]" >&2; exit 2; }
-[[ "$MODE" = "full" || "$MODE" = "--focused-campaign-handoff" || "$MODE" = "--profile-recovery-handoff" ]] \
+[[ "$REF_EXPECTED" =~ ^[0-9a-f]{40}$ ]] || { echo "usage: $0 <40-hex-commit> [--focused-campaign-handoff|--profile-recovery-handoff|--analysis-handoff]" >&2; exit 2; }
+[[ "$MODE" = "full" || "$MODE" = "--focused-campaign-handoff" || "$MODE" = "--profile-recovery-handoff" || "$MODE" = "--analysis-handoff" ]] \
   || { echo "unsupported re-pin verification mode: $MODE" >&2; exit 2; }
 REPO="${REPO:-$HOME/MLLMRiskBench}"
 BUNDLE="${BUNDLE:-$HOME/web002.bundle}"
@@ -147,6 +147,20 @@ elif [ "$MODE" = "--profile-recovery-handoff" ]; then
     tests/ura/test_framework_runtime_installer.py::test_distro_repin_script_is_fail_closed_and_sources_canonical_ura_env_last
   )
   echo "verification mode: profile recovery handoff (${#DEPLOY_TESTS[@]} selectors)"
+elif [ "$MODE" = "--analysis-handoff" ]; then
+  # Completed local inference and runtime-installation checks are not repeated.
+  # This fixed set covers the retained-reader and hosted-budget handoff only.
+  DEPLOY_TESTS=(
+    tests/experiments/test_retained_artifact_reader.py
+    tests/experiments/test_retained_response_judge.py
+    tests/experiments/test_retained_response_judge_execute.py
+    tests/experiments/test_retained_response_judge_pair.py
+    tests/experiments/test_hosted_campaign_budget.py
+    tests/experiments/test_local_campaign_controllers.py::test_phase7_validates_controller_gate5_copies_by_location_and_bytes
+    tests/ura/test_hosted_roster_docs.py
+    tests/ura/test_framework_runtime_installer.py::test_distro_repin_script_is_fail_closed_and_sources_canonical_ura_env_last
+  )
+  echo "verification mode: retained analysis handoff (${#DEPLOY_TESTS[@]} selectors)"
 else
   echo "verification mode: full suite"
 fi

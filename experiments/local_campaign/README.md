@@ -271,6 +271,13 @@ the beginning of the campaign because its exact recovery, GraySwan RR amendment,
 and follow-on completion artifacts do not exist yet. After those controllers
 terminate, launch the read-only watcher with their absolute artifact paths:
 
+The promoted `runs/thesis/RUNNOTE.md` is immutable. Later approvals belong in
+separate amendment files, not appended to that canonical record: completed
+controllers retain its exact byte count and hash. If an accidental append is
+found, preserve the entire amended file and the separate amendment before
+restoring the verified original from a retained controller copy. Never edit a
+receipt hash to accept changed authorization bytes.
+
 ```text
 bash ~/.ura-controller-active/launch_phase7_watcher.sh \
   --phase6-sequence-completion <absolute-phase6-completion.json> \

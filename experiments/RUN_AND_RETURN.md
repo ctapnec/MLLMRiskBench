@@ -1738,11 +1738,21 @@ regeneration. Create the paired cohort with the dedicated immutable zero-target
 path and one standard-API USD 33 ceiling. Use a private Haiku judge config that
 fixes `max_tokens=512`; do not reuse the 2,048-token Haiku target condition:
 
-The commands below implement current-compatible views. The final local campaign
-contains multiple retained Runner revisions; its historical-reader integration
-is still open in RA-313. Do not feed that union to the current-only loader or
-change retained version fields. Preserve validated revision/source strata and
-finish the historical read-through before paid execution on that population.
+The commands below validate retained grids through their exact source revisions
+in trusted Git history, retaining separate revision/source strata. The reader
+uses one private temporary checkout, checks its commit, tree and source hashes,
+then removes it; no model or judge is constructed for this validation. Level-2
+exports can select the same reader with `--historical-code-repository` naming
+the trusted project checkout. Do not change retained version fields. RA-313's
+real-lane check does not replace validation of the final Phase 7 inventory or
+the separate exact-input hosted replay handoff before paid execution.
+
+After local generation is terminal, `distro/repin.sh <commit> --analysis-handoff`
+runs the fixed retained-reader, Haiku selection/execution, hosted-budget and
+deployment-contract checks. It does not rerun local model profiling, framework
+installation tests or the full suite. Historical project-revision receipts
+must remain at their referenced content-addressed paths; retaining a copy in
+an archive is not sufficient if the original locator was removed.
 
 ```bash
 python -m experiments.retained_response_judge_pair \
