@@ -186,9 +186,9 @@ including probes/canaries is within its partition, and target/judge calls are 0.
 
 ## A2 - Paid readiness and canaries
 
-Run bounded text and declared-media readiness probes for each exact route, then
-one purpose-bound diagnostic canary per admitted target/modality. Record exact
-served identity, billed tokens, effective price and spend.
+Use the pilot below for both readiness and the purpose-bound diagnostic canary
+per declared modality; do not add another round of readiness requests. Record
+exact served identity, billed tokens, effective price and spend.
 
 Use a small fixed technical pilot, normally three selected text inputs and up
 to two selected images where supported, all charged inside the table's caps.

@@ -118,7 +118,7 @@ and shorter output allowances in exchange for more inputs. Anthropic available
 funds are USD 90, giving a USD 72 cap including all Haiku judging. OpenAI's
 ceiling is USD 32. The earlier per-arm forecast above remains historical.
 
-The funded plan uses the operator-requested quantities as global retained-input
+The funded plan uses budget-fitted quantities as global retained-input
 caps. It draws an exact balanced subset from the local Phase 7 inputs, and each
 selected entry permits one paid target call. This avoids the unintended
 per-arm multiplication in the superseded 8,734-call forecast. Adaptive local
@@ -262,6 +262,7 @@ unmatched or different-revision rate is silently pooled.
 - OpenAI Luna/model family: <https://developers.openai.com/api/docs/models>
 - OpenAI GPT-5.5: <https://developers.openai.com/api/docs/models/gpt-5.5>
 - Kimi: <https://platform.kimi.ai/docs/pricing/chat-k3>
+- Kimi published rate confirmation: <https://forum.moonshot.ai/t/kimi-k3-is-here-our-most-capable-model/480>
 - DeepSeek: <https://api-docs.deepseek.com/quick_start/pricing/>
 
 All rates are effective-dated planning inputs and must be fetched and reviewed
