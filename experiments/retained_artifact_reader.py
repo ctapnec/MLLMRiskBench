@@ -23,6 +23,11 @@ from ura.strict_json import strict_json_loads
 
 _COMMIT = re.compile(r"[0-9a-f]{40}")
 _REPOSITORY = Path(__file__).resolve().parents[1]
+# IPC contains many already source-validated artifacts, not one persisted JSON
+# artifact. Keep its aggregate transport finite without changing any source
+# validator's per-artifact node/depth limits or strict JSON ambiguity checks.
+_MAX_VALIDATOR_IPC_BYTES = 512 * 1024 * 1024
+_MAX_VALIDATOR_IPC_NODES = 32_000_000
 
 _WORKER = r'''
 import hashlib, json, sys
@@ -128,6 +133,14 @@ def _restore_cell_paths(cell: dict[str, Any]) -> None:
     cell["artifacts"] = {key: Path(path) for key, path in cell["artifacts"].items()}
 
 
+def _decode_validator_ipc(payload: str) -> Any:
+    """Decode only successful trusted-validator aggregate stdout, not artifacts."""
+    if (len(payload) > _MAX_VALIDATOR_IPC_BYTES
+            or len(payload.encode("utf-8")) > _MAX_VALIDATOR_IPC_BYTES):
+        raise ValueError("retained validator IPC exceeds its aggregate byte limit")
+    return strict_json_loads(payload, max_nodes=_MAX_VALIDATOR_IPC_NODES)
+
+
 def load_level1_results(
     roots: Sequence[Path],
     plans: Mapping[str, tuple[dict[str, Any], str, str, int, int]],
@@ -185,7 +198,7 @@ def load_level1_results(
                 raise ValueError(
                     f"retained Level-1 validator {commit[:12]} failed: " + result.stderr[-4000:]
                 )
-            value = strict_json_loads(result.stdout)
+            value = _decode_validator_ipc(result.stdout)
             if (not isinstance(value, dict) or value.get("validator_commit") != commit
                 or not isinstance(value.get("grids"), dict)
                 or not isinstance(value.get("request_errors"), list)):
@@ -296,7 +309,7 @@ def read_partitions(
                         f"retained validator {commit[:12]} failed for {grid_root}: "
                         + result.stderr[-4000:]
                     )
-                value = strict_json_loads(result.stdout)
+                value = _decode_validator_ipc(result.stdout)
                 if (not isinstance(value, dict) or value.get("validator_commit") != commit
                     or not isinstance(value.get("cells"), list) or not value["cells"]):
                     raise ValueError("retained validator returned an invalid cell inventory")

@@ -99,6 +99,10 @@ def test_reader_uses_exact_source_and_removes_only_its_private_checkout(
     _grid(tmp_path)
     git_calls = []
     worker_requests = []
+    ipc_calls = []
+    decode_ipc = subject._decode_validator_ipc
+    monkeypatch.setattr(subject, "_decode_validator_ipc",
+                        lambda payload: ipc_calls.append(len(payload)) or decode_ipc(payload))
 
     def git(repository, *args):
         git_calls.append((repository, args))
@@ -131,6 +135,7 @@ def test_reader_uses_exact_source_and_removes_only_its_private_checkout(
         assert result[0]["cells"][0]["manifest_path"] == tmp_path / "cell.manifest.json"
         assert isinstance(result[0]["cells"][0]["artifacts"]["responses"], Path)
     assert len(worker_requests) == 1
+    assert len(ipc_calls) == (0 if worker_fails else 1)
     added = next(args[-2] for _, args in git_calls if args[:2] == ("worktree", "add"))
     removed = next(args[-1] for _, args in git_calls if args[:2] == ("worktree", "remove"))
     assert added == removed
@@ -238,6 +243,10 @@ def test_level1_reader_preserves_partial_lifecycle_and_cleans_own_checkout(
 ):
     plans, envelopes = _level1_inputs(tmp_path)
     calls = []
+    ipc_calls = []
+    decode_ipc = subject._decode_validator_ipc
+    monkeypatch.setattr(subject, "_decode_validator_ipc",
+                        lambda payload: ipc_calls.append(len(payload)) or decode_ipc(payload))
 
     def git(repository, *args):
         calls.append(args)
@@ -286,6 +295,7 @@ def test_level1_reader_preserves_partial_lifecycle_and_cleans_own_checkout(
     removed = next(args[-1] for args in calls if args[:2] == ("worktree", "remove"))
     assert added == removed
     assert not Path(removed).parent.exists()
+    assert len(ipc_calls) == (0 if worker_fails else 1)
 
 
 @pytest.mark.parametrize("changed", [None, "plan", "envelope", "grid", "manifest"])
@@ -367,3 +377,45 @@ def test_level1_cli_explicit_historical_reader_keeps_current_accounting(tmp_path
     assert len(calls) == 1
     assert calls[0][1] == {"code_repository": tmp_path,
                          "eligibility_paths": [tmp_path / "plan.json"]}
+
+
+def test_validator_ipc_accepts_many_validated_records_without_changing_artifact_limit():
+    from ura.strict_json import DEFAULT_MAX_JSON_NODES, strict_json_loads
+
+    # Two individually small records cross the persisted *single-artifact*
+    # ceiling when combined in one validator IPC envelope.
+    count = DEFAULT_MAX_JSON_NODES // 2
+    payload = '{"cells":[[' + ','.join(["0"] * count) + '],[' + ','.join(["1"] * count) + ']]}'
+    with pytest.raises(ValueError, match="exceeds 2000000 value nodes"):
+        strict_json_loads(payload)
+    decoded = subject._decode_validator_ipc(payload)
+    assert [len(row) for row in decoded["cells"]] == [count, count]
+    assert DEFAULT_MAX_JSON_NODES == 2_000_000
+    assert subject._MAX_VALIDATOR_IPC_NODES == 32_000_000
+    assert subject._MAX_VALIDATOR_IPC_BYTES == 512 * 1024 * 1024
+
+
+def test_validator_ipc_node_budget_remains_finite(monkeypatch):
+    monkeypatch.setattr(subject, "_MAX_VALIDATOR_IPC_NODES", 8)
+    assert subject._decode_validator_ipc("[0,1,2,3,4,5,6]") == list(range(7))
+    with pytest.raises(ValueError, match="exceeds 8 value nodes"):
+        subject._decode_validator_ipc("[0,1,2,3,4,5,6,7]")
+
+
+def test_validator_ipc_counts_utf8_bytes_before_decoding(monkeypatch):
+    monkeypatch.setattr(subject, "_MAX_VALIDATOR_IPC_BYTES", 5)
+    assert subject._decode_validator_ipc('"a"') == "a"
+    monkeypatch.setattr(subject, "strict_json_loads", lambda *args, **kwargs: pytest.fail("decoded over-byte IPC"))
+    with pytest.raises(ValueError, match="aggregate byte limit"):
+        subject._decode_validator_ipc('"\U0001f642"')
+
+
+@pytest.mark.parametrize("payload, message", [
+    ('{"duplicate":0,"duplicate":1}', "duplicate JSON object key"),
+    ('{"nonfinite":NaN}', "non-standard JSON numeric constant"),
+    ('{"overflow":1e999}', "non-finite number"),
+    ("[" * 65 + "0" + "]" * 65, "nesting exceeds 64"),
+])
+def test_validator_ipc_retains_strict_json_checks(payload, message):
+    with pytest.raises(ValueError, match=message):
+        subject._decode_validator_ipc(payload)
