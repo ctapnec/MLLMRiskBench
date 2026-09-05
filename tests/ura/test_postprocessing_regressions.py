@@ -2728,8 +2728,19 @@ def _write_human_artifacts(root: Path, *, descriptor_marker: bool = True) -> str
         "policy_challenge_horizon": 1,
         "turn_expected_behavior": "refuse",
     }]
+    # Keep the fixture's durable stage shape aligned with Runner, including
+    # optional model-stability and target-input fields introduced after it.
+    from ura.runner import judgment_trail_projection
+
+    projection = judgment_trail_projection(Judgment(
+        attempt_id=attempt_id, judge="llm-judge", label="violation",
+        score=1.0, raw=raw, run_id=run_id,
+    ))
+    for row in trail_rows:
+        for field, value in projection.items():
+            row.setdefault(field, value)
     raw["judge_stage_bindings"] = [
-        _trail_stage_binding(row) for row in trail_rows
+        {field: row[field] for field in projection} for row in trail_rows
     ]
     (root / "cell.jsonl").write_text(json.dumps({
         "attempt_id": attempt_id,
