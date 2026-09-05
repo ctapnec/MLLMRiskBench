@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import errno
 import hashlib
 import hmac
 import json
@@ -290,11 +291,21 @@ def _safe_remove_partial(
 
 
 class _ResourceLock:
-    """Process-lifetime advisory lock; process death cannot leave it held."""
+    """Process-lifetime lock, optionally waiting within the acquisition deadline."""
 
-    def __init__(self, path: Path):
+    def __init__(
+        self, path: Path, *, deadline: float | None = None,
+        cancelled: Callable[[], bool] = lambda: False,
+        monotonic: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep, shared: bool = False,
+    ):
         self.path = path
         self.stream = None
+        self.deadline = deadline
+        self.cancelled = cancelled
+        self.monotonic = monotonic
+        self.sleep = sleep
+        self.shared = shared
 
     def __enter__(self) -> "_ResourceLock":
         descriptor: int | None = None
@@ -341,21 +352,43 @@ class _ResourceLock:
                 self.stream.write(b"L")
                 self.stream.flush()
             self.stream.seek(0)
-            if os.name == "nt":
-                import msvcrt
+            while True:
+                if self.deadline is not None:
+                    _check_cancelled(self.cancelled)
+                    _remaining(self.deadline, self.monotonic)
+                try:
+                    if os.name == "nt":
+                        import msvcrt
 
-                msvcrt.locking(self.stream.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
+                        mode = msvcrt.LK_NBRLCK if self.shared else msvcrt.LK_NBLCK
+                        msvcrt.locking(self.stream.fileno(), mode, 1)
+                    else:
+                        import fcntl
 
-                fcntl.flock(self.stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except (OSError, ImportError) as exc:
+                        mode = fcntl.LOCK_SH if self.shared else fcntl.LOCK_EX
+                        fcntl.flock(self.stream.fileno(), mode | fcntl.LOCK_NB)
+                    break
+                except OSError as exc:
+                    if self.deadline is None or exc.errno not in {errno.EACCES, errno.EAGAIN}:
+                        raise
+                    _check_cancelled(self.cancelled)
+                    self.sleep(min(0.25, _remaining(self.deadline, self.monotonic)))
+            # A waiting process must not proceed with a renamed/replaced lock.
+            if (self.path.resolve(strict=True) != self.path
+                    or _filesystem_identity(self.path.lstat()) != _filesystem_identity(opened)
+                    or os.fstat(self.stream.fileno()).st_nlink != 1):
+                raise ModelAcquisitionError("resource lock changed while waiting")
+        except BaseException as exc:
             if descriptor is not None:
                 os.close(descriptor)
             if self.stream is not None:
                 self.stream.close()
                 self.stream = None
-            raise ModelAcquisitionError("another acquisition owns this resource") from exc
+            if isinstance(exc, (TimeoutError, InterruptedError, ModelAcquisitionError)):
+                raise
+            if isinstance(exc, (OSError, ImportError)):
+                raise ModelAcquisitionError("another acquisition owns this resource") from exc
+            raise
         return self
 
     def __exit__(self, exc_type, exc, traceback) -> None:  # noqa: ANN001
@@ -652,13 +685,20 @@ def acquire(
         resource_id = resource["resource_id"]
         final_root = checked_store / resource_id
         lock_path = checked_store / f".{resource_id}.lock"
-        with _ResourceLock(lock_path):
+        # Published snapshots are read-only and undergo the same complete seal
+        # proof below. Share their read lease with other cache-hit verification
+        # and runtime construction; missing-resource imports remain exclusive.
+        published = os.path.lexists(final_root)
+        with _ResourceLock(lock_path, deadline=deadline, cancelled=cancelled,
+                           monotonic=monotonic, shared=published):
             try:
                 final_root.lstat()
             except FileNotFoundError:
                 final_exists = False
             else:
                 final_exists = True
+            if published and not final_exists:
+                raise ModelAcquisitionError("managed resource disappeared while waiting")
             if final_exists:
                 manifest, snapshot = _load_managed_manifest(
                     checked_store,

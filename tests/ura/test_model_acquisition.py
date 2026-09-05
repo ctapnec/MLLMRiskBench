@@ -6,6 +6,7 @@ import hmac
 import json
 import os
 import subprocess
+import sys
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -960,6 +961,132 @@ def test_resource_lock_rejects_concurrent_owner(tmp_path: Path) -> None:
         with pytest.raises(ModelAcquisitionError, match="another acquisition"):
             with _ResourceLock(lock_path):
                 raise AssertionError("second owner unexpectedly acquired the lock")
+
+
+def test_resource_lock_waits_for_owner_within_original_deadline(tmp_path: Path) -> None:
+    path = tmp_path / ".resource.lock"
+    owner = _ResourceLock(path).__enter__()
+    delays = []
+    def release(delay):
+        delays.append(delay)
+        owner.__exit__(None, None, None)
+    with _ResourceLock(path, deadline=10, monotonic=lambda: 0, sleep=release):
+        assert delays == [0.25]
+        with pytest.raises(ModelAcquisitionError, match="another acquisition"):
+            with _ResourceLock(path):
+                raise AssertionError("writer exclusion disappeared")
+
+
+@pytest.mark.parametrize("stop", ["deadline", "cancel", "replaced"])
+def test_resource_lock_wait_cleanup_on_timeout_cancel_or_replacement(tmp_path: Path, stop: str) -> None:
+    path = tmp_path / ".resource.lock"
+    owner = _ResourceLock(path).__enter__()
+    now, cancelled = [0.0], [False]
+    def pause(delay):
+        now[0] += delay
+        if stop == "cancel":
+            cancelled[0] = True
+        elif stop == "replaced":
+            owner.__exit__(None, None, None)
+            path.unlink()
+            path.write_bytes(b"L")
+    waiter = _ResourceLock(path, deadline=0.5, monotonic=lambda: now[0],
+                           cancelled=lambda: cancelled[0], sleep=pause)
+    error = {"deadline": TimeoutError, "cancel": InterruptedError, "replaced": ModelAcquisitionError}[stop]
+    try:
+        with pytest.raises(error):
+            with waiter:
+                raise AssertionError("waiting acquisition ignored its terminal condition")
+        assert waiter.stream is None
+    finally:
+        owner.__exit__(None, None, None)
+    with _ResourceLock(path):
+        pass  # No abandoned descriptor/lease prevents the next owner.
+
+
+def test_resource_shared_readers_coexist_but_exclude_writer(tmp_path: Path) -> None:
+    path = tmp_path / ".resource.lock"
+    with _ResourceLock(path, shared=True), _ResourceLock(path, shared=True):
+        with pytest.raises(ModelAcquisitionError, match="another acquisition"):
+            with _ResourceLock(path):
+                raise AssertionError("writer entered during shared verification")
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process-death lock release proof")
+def test_resource_wait_resumes_after_owner_process_death(tmp_path: Path) -> None:
+    path = tmp_path / ".resource.lock"
+    script = (
+        "import fcntl,sys; stream=open(sys.argv[1],'w+b'); "
+        "stream.write(b'L'); stream.flush(); fcntl.flock(stream,fcntl.LOCK_EX); "
+        "print('locked',flush=True); sys.stdin.read()"
+    )
+    owner = subprocess.Popen([sys.executable, "-c", script, str(path)],
+                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    try:
+        assert owner.stdout.readline().strip() == "locked"
+        pauses = []
+        def reap(delay):
+            pauses.append(delay)
+            owner.kill()
+            owner.wait(timeout=5)
+        with _ResourceLock(path, deadline=time.monotonic() + 5, sleep=reap):
+            assert pauses == [0.25]
+            assert owner.poll() is not None and path.is_file()
+    finally:
+        if owner.poll() is None:
+            owner.kill()
+            owner.wait(timeout=5)
+        owner.stdin.close()
+        owner.stdout.close()
+
+
+def test_managed_cache_verification_shares_lease_without_hub_or_byte_changes(tmp_path: Path) -> None:
+    plan = _fixture_plan()
+    store = (tmp_path / "store").resolve()
+    acquire(plan, store=store, receipts_dir=(tmp_path / "first").resolve(),
+            max_download_bytes=0, min_free_bytes=0, deadline_seconds=30,
+            backend=_FakeBackend(tmp_path, cached=True),
+            disk_usage=lambda _: SimpleNamespace(free=10**9))
+    before = {path.relative_to(store): path.read_bytes() for path in store.rglob("*") if path.is_file()}
+    class NoHub:
+        def __getattribute__(self, name):
+            raise AssertionError("sealed cache verification attempted network acquisition")
+    activity = []
+    lock = store / ("." + plan["resources"][0]["resource_id"] + ".lock")
+    with _ResourceLock(lock, shared=True):
+        result = acquire(plan, store=store, receipts_dir=(tmp_path / "second").resolve(),
+                         max_download_bytes=0, min_free_bytes=0, deadline_seconds=1,
+                         backend=NoHub(), activity=activity.append,
+                         disk_usage=lambda _: SimpleNamespace(free=10**9))
+    assert result.downloaded_bytes == 0 and activity == []
+    assert before == {path.relative_to(store): path.read_bytes() for path in store.rglob("*") if path.is_file()}
+
+
+def test_acquire_waits_for_import_owner_without_resetting_deadline(tmp_path: Path, monkeypatch) -> None:
+    import experiments.model_acquire as controller
+    plan = _fixture_plan()
+    store = (tmp_path / "store").resolve()
+    store.mkdir()
+    path = store / ("." + plan["resources"][0]["resource_id"] + ".lock")
+    owner = _ResourceLock(path).__enter__()
+    observed = []
+    class WaitingLock(_ResourceLock):
+        def __init__(self, path, **kwargs):
+            observed.append(kwargs)
+            def release(delay):
+                assert delay == 0.25
+                owner.__exit__(None, None, None)
+            super().__init__(path, **kwargs, sleep=release)
+    monkeypatch.setattr(controller, "_ResourceLock", WaitingLock)
+    try:
+        result = acquire(plan, store=store, receipts_dir=(tmp_path / "receipts").resolve(),
+                         max_download_bytes=0, min_free_bytes=0, deadline_seconds=30,
+                         monotonic=lambda: 5, backend=_FakeBackend(tmp_path, cached=True),
+                         disk_usage=lambda _: SimpleNamespace(free=10**9))
+    finally:
+        owner.__exit__(None, None, None)
+    assert result.downloaded_bytes == 0
+    assert observed[0]["deadline"] == 35 and observed[0]["shared"] is False
 
 
 def test_resource_lock_rejects_multiply_linked_external_file(tmp_path: Path) -> None:
