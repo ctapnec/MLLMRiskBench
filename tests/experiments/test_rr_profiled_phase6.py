@@ -1,10 +1,62 @@
 from __future__ import annotations
 
 import json
+from argparse import Namespace
 
 import pytest
 
 from experiments.local_campaign import rr_profiled_phase6 as mod
+
+
+def test_rr_parent_job_spans_preparation_execution_and_terminal(tmp_path, monkeypatch):
+    project = tmp_path / "project"
+    project.mkdir()
+    work = tmp_path / "work"
+    (work / "runs/engineering").mkdir(parents=True)
+    source = tmp_path / "specs"
+    source.mkdir()
+    registry = tmp_path / "profiles.json"
+    registry.write_text("{}", encoding="utf-8")
+    receipt = tmp_path / "revision.json"
+    receipt.write_text(json.dumps({"repository": {
+        "expected_commit": "a" * 40, "observed_commit": "a" * 40}}), encoding="utf-8")
+    digest = mod._descriptor(receipt, label="fixture")["sha256"]
+    units = [mod.Unit(lane, lane, None, {}, count) for lane, count in mod.LAYOUT]
+    events = []
+    monkeypatch.setattr(mod, "_project_python", lambda root, python: python)
+    monkeypatch.setattr(mod, "_framework_lock_id", lambda: "b" * 64)
+    monkeypatch.setattr(mod, "configure_units", lambda *args: (units, {}))
+
+    def start(**kwargs):
+        assert kwargs["target_execution"] is True
+        assert kwargs["tmux_session"] == "rr-test"
+        events.append("start")
+
+    def execute(unit, **kwargs):
+        assert events[0] == "start"
+        events.append(unit.unit_id)
+        return {"target_attempts": unit.selected_records,
+                "successful_target_generations": unit.selected_records}
+
+    def publish(**kwargs):
+        assert kwargs["target_attempts"] == kwargs["successful_target_generations"] == 7606
+        events.append("accounting")
+
+    def finish(**kwargs):
+        assert kwargs["exit_code"] == 0
+        events.append("end")
+
+    monkeypatch.setattr(mod, "start_child_controller", start)
+    monkeypatch.setattr(mod, "_run_unit", execute)
+    monkeypatch.setattr(mod, "publish_target_execution", publish)
+    monkeypatch.setattr(mod, "finish_child_controller", finish)
+    args = Namespace(project_root=project, python=None, work_root=work,
+                     control_root=work / "runs/engineering/rr-test", source_spec_root=source,
+                     profile_registry=registry, project_revision=receipt,
+                     project_revision_sha256=digest, expected_commit="a" * 40,
+                     execution_scope_id="test", tmux_socket="default", tmux_session="rr-test")
+    assert mod.run(args) == 0
+    assert events == ["start", *(lane for lane, _count in mod.LAYOUT), "accounting", "end"]
 
 
 def test_rr_accounting_retains_partial_checkpoint_outputs(tmp_path, monkeypatch):
