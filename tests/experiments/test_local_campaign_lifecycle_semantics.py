@@ -129,6 +129,42 @@ def test_native_terminal_uses_its_historical_plan_revision(phase7, tmp_path):
         phase7.validate_native_terminal_revision({**native, "project_revision": wrong_revision})
 
 
+def test_retained_markerless_controller_failure_remains_a_lifecycle_artifact(
+    phase7, tmp_path,
+):
+    failure = tmp_path / "rjudge-ollama-rwkv-g1d-0p4b.failure.json"
+    failure.write_text(json.dumps({"pre_runner_failure": None}), encoding="utf-8")
+    bound = phase7.descriptor(failure)
+    kwargs = {"lane": "rjudge-ollama-rwkv-g1d-0p4b", "root": None}
+    assert phase7.lifecycle_pre_runner_failure_artifacts(
+        bound, **kwargs, retained_parent_collision=True,
+    ) == [bound]
+    assert phase7.lifecycle_pre_runner_failure_artifacts(
+        bound, **kwargs, retained_parent_collision=False,
+    ) == []
+    failure.write_text("{}", encoding="utf-8")
+    with pytest.raises(phase7.Phase7Error):
+        phase7.lifecycle_pre_runner_failure_artifacts(
+            bound, **kwargs, retained_parent_collision=True,
+        )
+
+
+def test_nested_pre_runner_failure_requires_its_exact_root(phase7, tmp_path):
+    marker = tmp_path / "pre-runner-failure.json"
+    marker.write_text("{}", encoding="utf-8")
+    bound_marker = phase7.descriptor(marker)
+    failure = tmp_path / "lane.failure.json"
+    failure.write_text(json.dumps({"pre_runner_failure": bound_marker}), encoding="utf-8")
+    bound = phase7.descriptor(failure)
+    assert phase7.lifecycle_pre_runner_failure_artifacts(
+        bound, lane="lane", root=tmp_path, retained_parent_collision=False,
+    ) == [bound_marker]
+    with pytest.raises(phase7.Phase7Error, match="root changed"):
+        phase7.lifecycle_pre_runner_failure_artifacts(
+            bound, lane="lane", root=tmp_path / "wrong", retained_parent_collision=False,
+        )
+
+
 def test_lifecycle_status_requires_exact_request_artifact_kinds(
     phase7: ModuleType,
 ) -> None:

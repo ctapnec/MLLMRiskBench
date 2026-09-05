@@ -8065,6 +8065,32 @@ def lifecycle_artifact_kinds(
     return counts
 
 
+def lifecycle_pre_runner_failure_artifacts(
+    failure: Mapping[str, Any] | None,
+    *,
+    lane: str,
+    root: Path | None,
+    retained_parent_collision: bool,
+) -> list[dict[str, Any]]:
+    """Use the same validated controller evidence in prepare and execute."""
+    if failure is None:
+        return []
+    failure_path, failure_value = descriptor_object(
+        failure, label=f"{lane} controller failure"
+    )
+    if retained_parent_collision:
+        return [descriptor(failure_path)]
+    pre_runner_failure = failure_value.get("pre_runner_failure")
+    if pre_runner_failure is None:
+        return []
+    pre_runner_path = descriptor_file(
+        pre_runner_failure, label=f"{lane} controller pre-Runner failure"
+    )
+    if root is None or pre_runner_path.parent != root:
+        raise Phase7Error(f"{lane}: controller pre-Runner failure root changed")
+    return [descriptor(pre_runner_path)]
+
+
 def lifecycle_authorization_status(
     *,
     terminal_state: str,
@@ -11691,26 +11717,10 @@ def validate_runner_inventory(
         root_value = lifecycle_roots.get(lane)
         root = Path(root_value) if root_value is not None else None
         failure = controller_failure_by_lane.get(lane)
-        pre_runner_failure_artifacts: list[dict[str, Any]] = []
-        if failure is not None:
-            failure_path, failure_value = descriptor_object(
-                failure, label=f"{lane} controller failure"
-            )
-            if lane in retained_extended_collision_lanes:
-                pre_runner_failure_artifacts.append(descriptor(failure_path))
-            elif failure_value.get("pre_runner_failure") is not None:
-                pre_runner_failure = failure_value["pre_runner_failure"]
-                pre_runner_path = descriptor_file(
-                    pre_runner_failure,
-                    label=f"{lane} controller pre-Runner failure",
-                )
-                if root is None or pre_runner_path.parent != root:
-                    raise Phase7Error(
-                        f"{lane}: controller pre-Runner failure root changed"
-                    )
-                pre_runner_failure_artifacts.append(
-                    descriptor(pre_runner_path)
-                )
+        pre_runner_failure_artifacts = lifecycle_pre_runner_failure_artifacts(
+            failure, lane=lane, root=root,
+            retained_parent_collision=lane in retained_extended_collision_lanes,
+        )
         patterns = {
             "runner_grid_artifacts": "*.grid.json",
             "runner_request_envelopes": "*.request-envelope.json",
@@ -12957,20 +12967,22 @@ class AnalysisController:
                     "runner_error_artifacts",
                 )
             } if isinstance(authorization, dict) else {}
-            pre_runner_failures: list[dict[str, Any]] = []
             failure_descriptor = (
                 authorization.get("controller_failure")
                 if isinstance(authorization, dict)
                 else None
             )
-            if failure_descriptor is not None:
-                _, failure_value = descriptor_object(
-                    failure_descriptor,
-                    label=f"{lane} lifecycle controller failure",
-                )
-                pre_runner_failure = failure_value.get("pre_runner_failure")
-                if pre_runner_failure is not None:
-                    pre_runner_failures.append(pre_runner_failure)
+            lifecycle_root = runner["lifecycle_lane_roots"].get(lane)
+            pre_runner_failures = lifecycle_pre_runner_failure_artifacts(
+                failure_descriptor, lane=lane,
+                root=Path(lifecycle_root) if lifecycle_root is not None else None,
+                retained_parent_collision=(
+                    value.get("gate5", {}).get("code_identity", {}).get("expected_commit")
+                    == RETAINED_EXTENDED_LANE_PARENT_FAILURE_COMMIT
+                    and lane in scheduled_extended_lanes
+                    and runner_states[lane] == "failed"
+                ),
+            )
             if (
                 not isinstance(artifacts, list)
                 or any(not isinstance(group, list) for group in groups.values())
