@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from experiments import hosted_campaign_budget as projection
-from experiments import hosted_retained_execute as executor
+from experiments import hosted_retained_execute as executor, hosted_retained_inputs as inputs
 from experiments.hosted_attempt_budget import AttemptBudget, create_budget
 from experiments.hosted_request_tokens import count_request
 from experiments.retained_response_judge_execute import _canonical, _write_new
@@ -102,7 +102,7 @@ def _common_argv(raw: object) -> list[str]:
         not isinstance(raw, list)
         or any(not isinstance(value, str) or not value for value in raw)
     ):
-        raise ValueError("runner_common_argv must be a nonempty string list")
+        raise ValueError("runner_common_argv must be a string list")
     for value in raw:
         if value in _CONTROLLED or any(value.startswith(flag + "=") for flag in _CONTROLLED):
             raise ValueError(f"runner_common_argv cannot override {value.split('=', 1)[0]}")
@@ -195,9 +195,9 @@ def _job_argv(
         "--max-total-http-attempts",
         str(4 * count),
         "--max-queries",
-        "1",
+        str(count),
         "--max-turns",
-        "1",
+        str(count),
         "--attacker-config",
         attacker_config["path"],
         "--attacker-config-sha256",
@@ -324,6 +324,20 @@ def prepare_campaign(
     cells, historical_inventory = executor._validated_local_cells(skeleton)
     if not cells:
         raise ValueError("finished local campaign has no retained cells")
+    candidates = inputs.candidates_from_cells(cells)
+    bindings = {
+        "budget": budget_projection,
+        "budget_descriptor": _portable(sources["budget_projection"]),
+        "api_config": values["api_config"],
+        "api_descriptor": _portable(sources["api_config"]),
+        "media_index": values["media_index"],
+        "local_inventory_descriptor": _portable(historical_inventory),
+    }
+    # Validate every route's source membership before a token-count endpoint
+    # can receive any retained dialogue or media.
+    for route in routes:
+        plan = route["replays"][0]["value"]["plan"]
+        inputs.resolve_inputs(plan, candidates=candidates, **bindings)
 
     from experiments import run_matrix
 

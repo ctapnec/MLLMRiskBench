@@ -8,6 +8,9 @@ import pytest
 
 from experiments import hosted_campaign_prepare as subject
 from test_hosted_retained_execute import _program
+from test_retained_input_replay import _fixture
+from ura.adapters.base import AttackBudget
+from ura.adapters.replay import ReplayAttacker
 
 
 def _save(path: Path, value: object) -> dict:
@@ -125,4 +128,36 @@ def test_preparation_blocks_over_ceiling_exact_input_count_before_budget_or_prog
             out_root=out,
             allow_network_counts=True,
         )
+    assert not out.exists()
+
+
+def test_prepared_replay_budget_covers_multiple_retained_turns_per_datapoint(tmp_path):
+    from experiments import run_matrix
+
+    points, _cell, _plan, _bindings, value, config = _fixture(tmp_path, adaptive=True)
+    argv = subject._job_argv(
+        common=[], target="openai:gpt-5.5",
+        api_config={"path": "api.json", "sha256": "a" * 64},
+        corpus="retained-corpus",
+        attacker_config={"path": "attacker.json", "sha256": "b" * 64},
+        output=tmp_path / "out", count=len(value["entries"]), pilot=False,
+    )
+    args = run_matrix.build_parser().parse_args(argv)
+    attacker = ReplayAttacker(**config)
+    observed = list(attacker.generate(points[0], AttackBudget(
+        max_queries=args.max_queries, max_turns=args.max_turns, seed=0,
+    )))
+    assert len(observed) == args.max_total_target_calls == 2
+
+
+def test_invalid_local_membership_stops_before_network_count(tmp_path, monkeypatch):
+    request, _execution_root = _request(tmp_path, monkeypatch)
+    def invalid(*args, **kwargs):
+        raise ValueError("changed retained source membership")
+    monkeypatch.setattr(subject.inputs, "resolve_inputs", invalid)
+    monkeypatch.setattr(subject, "count_request", lambda *args, **kwargs: pytest.fail("network count reached"))
+    out = tmp_path / "prepared"
+    with pytest.raises(ValueError, match="changed retained source membership"):
+        subject.prepare_campaign(request=request, request_descriptor={}, out_root=out,
+                                 allow_network_counts=True)
     assert not out.exists()
