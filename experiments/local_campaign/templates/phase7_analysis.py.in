@@ -15318,6 +15318,11 @@ class AnalysisController:
                 "artifacts and durable outcome accounting unchanged"
             ),
             outputs=outputs,
+            limitations={
+                "registry_only_records": self._lifecycle_union()[2],
+                "nonfinal_grids_not_promoted": True,
+                "durable_outcome_accounting_retained_separately": True,
+            },
         )
         return results
 
