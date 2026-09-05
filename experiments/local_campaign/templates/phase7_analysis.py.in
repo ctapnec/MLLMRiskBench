@@ -13946,11 +13946,59 @@ class AnalysisController:
             raise Phase7Error(f"{label}: lifecycle root has more than one grid")
         if not grids:
             return False
-        status = strict_object(grids[0]).get("status")
+        grid = strict_object(grids[0])
+        status = grid.get("status")
         if status not in {"complete", "partial", "running"}:
             raise Phase7Error(f"{label}: lifecycle grid status is unknown")
-        if status != "running":
+        if status == "complete":
             return False
+        if status == "partial":
+            # This retained 2.24 retry wrote circuit-open errors before it
+            # inspected the previously completed cells. Their markers still
+            # bind this exact grid/source, but the final grid no longer names
+            # them. Do not manufacture replacement cell statuses or silently
+            # accept arbitrary orphan completion markers from other producers.
+            revision = grid.get("request", {}).get("project_revision", {})
+            cells = grid.get("cells")
+            markers = sorted(root.glob("*.complete.json"))
+            if (
+                revision.get("expected_commit")
+                != "31e852154293fa2833ebc641936fd52414f7bb73"
+                or revision.get("observed_commit") != revision.get("expected_commit")
+                or revision.get("sha256")
+                != "3aee3de121ae3e92e7982e5c3d95c64f03a19f2957bf5c13ec30962906c43e36"
+                or not markers
+                or not isinstance(cells, list) or not cells
+                or grid.get("requested_cells") != len(cells)
+                or grid.get("accounted_cells") != len(cells)
+                or not all(
+                    isinstance(cell, dict)
+                    and cell.get("status") == "error"
+                    and cell.get("phase") == "circuit_open"
+                    and cell.get("execution_started") is False
+                    and cell.get("completion_marker") is None
+                    for cell in cells
+                )
+            ):
+                return False
+            for path in markers:
+                marker = strict_object(path)
+                manifest_desc = _retained_descriptor(
+                    root, marker.get("artifacts", {}).get("manifest"),
+                    label=f"{label} retained prior completion manifest",
+                )
+                _path, manifest = descriptor_object(
+                    manifest_desc, label=f"{label} retained prior completion manifest"
+                )
+                run = manifest.get("config", {}).get("run", {})
+                if (
+                    marker.get("code_version") != "ura-runner/2.24"
+                    or marker.get("schema_version") != "1.5"
+                    or marker.get("run_id") != manifest.get("run_id")
+                    or run.get("grid_id") != grid.get("grid_id")
+                    or run.get("project_revision") != revision
+                ):
+                    raise Phase7Error(f"{label}: prior completion does not bind the circuit-open grid")
         if state not in {"failed", "partial", "measured_failed"}:
             raise Phase7Error(f"{label}: unfinalized grid lacks a failed terminal controller")
         if any(root.glob("*.grid.lock")) or any(root.glob("*.cell.lock")):

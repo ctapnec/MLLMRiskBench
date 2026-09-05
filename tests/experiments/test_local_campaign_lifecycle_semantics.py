@@ -202,6 +202,87 @@ def test_final_grid_stays_representable_even_when_controller_failed(phase7, tmp_
     assert controller._lifecycle_union()[2] == []
 
 
+def _retained_circuit_open_grid(phase7, tmp_path):
+    controller, root, final = _controller_with_interrupted_lifecycle(phase7, tmp_path)
+    # Replace only this fixture's earlier placeholder marker with the real
+    # retained producer's same-grid/source manifest descriptor shape.
+    revision = {
+        "expected_commit": "31e852154293fa2833ebc641936fd52414f7bb73",
+        "observed_commit": "31e852154293fa2833ebc641936fd52414f7bb73",
+        "sha256": "3aee3de121ae3e92e7982e5c3d95c64f03a19f2957bf5c13ec30962906c43e36",
+    }
+    grid = {
+        "grid_id": "grid-prior", "status": "partial", "requested_cells": 1,
+        "accounted_cells": 1, "request": {"project_revision": revision},
+        "cells": [{"status": "error", "phase": "circuit_open", "execution_started": False}],
+    }
+    manifest = {"run_id": "run-prior", "config": {"run": {
+        "grid_id": grid["grid_id"], "project_revision": dict(revision),
+    }}}
+    manifest_path = root / "strongreject.manifest.json"
+    manifest_path.write_text(json.dumps(manifest))
+    descriptor = phase7.descriptor(manifest_path)
+    marker = {"run_id": "run-prior", "code_version": "ura-runner/2.24", "schema_version": "1.5",
+              "artifacts": {"manifest": {"file": manifest_path.name, "sha256": descriptor["sha256"],
+                                         "bytes": descriptor["bytes"]}}}
+    (root / "strongreject.complete.json").write_text(json.dumps(marker))
+    (root / "grid-test.grid.json").write_text(json.dumps(grid))
+    controller.inputs["failed_output_recovery"]["terminal_states"]["interrupted"] = "failed"
+    return controller, root, final, grid, manifest
+
+
+def test_historical_circuit_open_retry_retains_prior_completed_bytes_without_promotion(
+    phase7, tmp_path, monkeypatch,
+):
+    controller, root, final, _grid, _manifest = _retained_circuit_open_grid(phase7, tmp_path)
+    before = {path: path.read_bytes() for path in root.iterdir()}
+    roots, states, registry = controller._lifecycle_union()
+    assert registry == ["failed-output-recovery-interrupted"]
+    assert roots[registry[0]] == str(root) and states[registry[0]] == "failed"
+    monkeypatch.setattr(controller, "_lifecycle_root_stratum", lambda *args, **kwargs: ("a", "b"))
+    assert controller._lifecycle_strata()[("a", "b")][0] == {"failed-output-recovery-final": str(final)}
+    assert {path: path.read_bytes() for path in root.iterdir()} == before
+
+
+@pytest.mark.parametrize("mutation", ["source", "receipt", "phase", "execution_started", "referenced", "accounted"])
+def test_arbitrary_orphan_marker_is_not_hidden_as_historical_circuit_failure(
+    phase7, tmp_path, mutation,
+):
+    controller, root, _final, grid, _manifest = _retained_circuit_open_grid(phase7, tmp_path)
+    if mutation == "source":
+        grid["request"]["project_revision"]["expected_commit"] = "a" * 40
+    elif mutation == "receipt":
+        grid["request"]["project_revision"]["sha256"] = "b" * 64
+    elif mutation == "phase":
+        grid["cells"][0]["phase"] = "target_output"
+    elif mutation == "execution_started":
+        grid["cells"][0]["execution_started"] = True
+    elif mutation == "referenced":
+        grid["cells"][0]["completion_marker"] = "strongreject.complete.json"
+    else:
+        grid["accounted_cells"] = 0
+    (root / "grid-test.grid.json").write_text(json.dumps(grid))
+    assert controller._lifecycle_union()[2] == []
+
+
+@pytest.mark.parametrize("mutation", ["grid_identity", "manifest_bytes", "complete_parent", "live_lock"])
+def test_historical_circuit_failure_still_requires_source_binding_and_terminal_parent(
+    phase7, tmp_path, mutation,
+):
+    controller, root, _final, grid, _manifest = _retained_circuit_open_grid(phase7, tmp_path)
+    if mutation == "grid_identity":
+        grid["grid_id"] = "grid-another"
+        (root / "grid-test.grid.json").write_text(json.dumps(grid))
+    elif mutation == "manifest_bytes":
+        (root / "strongreject.manifest.json").write_text('{}\n')
+    elif mutation == "complete_parent":
+        controller.inputs["failed_output_recovery"]["terminal_states"]["interrupted"] = "measured_complete"
+    else:
+        (root / "run.grid.lock").write_text("live")
+    with pytest.raises(phase7.Phase7Error):
+        controller._lifecycle_union()
+
+
 def test_native_terminal_uses_its_historical_plan_revision(phase7, tmp_path):
     def write(name, value):
         path = tmp_path / name
