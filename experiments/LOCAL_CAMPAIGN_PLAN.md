@@ -26,7 +26,8 @@ but its four measured populations had not been executed at the audit. The
 original current-profile controller under `e9f1c33` was stopped at a closed-cell
 boundary with 200 responses and all 200 judgments retained. The two-worker
 continuation under `5207b3d` started preparation at 18:42 UTC on 5 September,
-with 3,657 remaining inputs assigned to GPU0 and 3,749 to GPU1. The
+with 3,657 remaining inputs assigned to GPU0 and 3,749 to GPU1. Both GPUs were
+performing measured generation by 19:32 UTC. The
 planned same-base comparison still requires completion of its 7,606 selected
 inputs (3,854 static text, 1,632 static image, 100 R-Judge and 2,020 GPTGeoChat).
 Reuse the sealed checkpoint and admitted profile; do not repeat installation,
@@ -133,8 +134,24 @@ Two real concurrent cache verifications passed while runtime read leases stayed
 held, with zero downloads or model calls. The focused deployment passed 134
 tests with four platform skips. The fresh continuation is
 `phase6-rr-parallel-5207b3d-20260905T184300Z`; both worker Jobs resolve in the UI.
-Preparation is not yet measured throughput, and the 68-hour estimate still
-excludes its overhead. Existing framework environments and model files are reused.
+At 19:32 UTC both GPUs were generating, with 226 durable responses including
+the original 200 and zero repeats. The approximately 68-hour generation
+extrapolation still excludes preparation, judging and analysis. Existing
+framework environments and model files are reused.
+
+Failed preparation recovery. The RR GPTGeoChat canary rejected a leading
+system instruction in the sealed tokenizer's system-less legacy Mistral
+template, before any measured response. The verified renderer preserves that
+instruction in the first user turn and records the rendering condition; it does
+not alter the converted input or source receipt. A frozen `e7b3220` checkout
+owns the failed-only retry scheduled at 19:50 UTC. It waits for the original
+GPU0 worker to terminate and release its device, then repeats the corrected
+canary and executes the exact 2,020 previously unmeasured GPTGeoChat inputs.
+The active `5207b3d` workers are not repinned. The existing LLaVA-base
+GPTGeoChat population has 2,020 nonempty, normally stopped responses with
+validated source evaluations and is not repeated. Retry completion is an
+additional analysis input, never a rewrite of the original failed terminal;
+full RR coverage still requires the exact disjoint 7,606-input union.
 
 Initial RR interpretation check (5 September). The first 11 retained measured
 StrongREJECT outputs all ended at the approved 4,096-token allowance in about

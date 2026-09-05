@@ -2049,6 +2049,18 @@ of native system-role support. Other templates keep their native behavior.
 Do not remove corpus instructions or rewrite retained inputs to satisfy a
 provider template.
 
+A local campaign's failed preparation is distinct from a measured failed
+output. For the parallel RR controller, the explicit `retry` command admits
+only a terminal worker's identified legacy-template preparation failures with
+zero measured response history. Wait for that worker and its physical GPU to
+be free; bind the corrected checkout and its project receipt in the new run.
+Do not repin another active worker or replay completed baseline cells. Supply
+each resulting completion through the analysis `--retry-completion` option.
+Analysis retains the original failures and validates the replacement grids
+and exact disjoint selected-input union before claiming completion. A retry
+that has already emitted measured responses cannot be restarted as fresh
+preparation by this path.
+
 In the Build tab, one large role-aware model-picker modal serves both target and
 LLM-judge selection. Choose hosted or local, then use the hosted provider filter
 (`All` by default) or the local filtering surface. Target mode binds one or more
