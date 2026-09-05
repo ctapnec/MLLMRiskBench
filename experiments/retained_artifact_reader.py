@@ -32,12 +32,23 @@ _MAX_VALIDATOR_IPC_NODES = 32_000_000
 _WORKER = r'''
 import hashlib, json, sys
 from pathlib import Path
+from experiments import figure_results
 from experiments.figure_results import _load_cells
+from experiments.suite_summary import _load_eligibility_plan
 from experiments import human_audit
 from ura.runner import _harness_source_identity
 
 request = json.load(sys.stdin)
 root = Path(request["results"])
+# Older figure readers routed eligibility through their generic 4 MiB loader.
+# Reuse THIS exact source revision's existing typed 16 MiB eligibility loader;
+# no parser limit, artifact bytes or source semantic validator is changed.
+original_read_object = figure_results._read_object
+def read_typed_object(path):
+    if path.name.endswith(".eligibility.json"):
+        return _load_eligibility_plan(path)[0]
+    return original_read_object(path)
+figure_results._read_object = read_typed_object
 cells = _load_cells(root)
 harness = _harness_source_identity()["sha256"]
 driver = hashlib.sha256(Path("experiments/run_matrix.py").read_bytes()).hexdigest()

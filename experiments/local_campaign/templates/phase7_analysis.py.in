@@ -16939,6 +16939,7 @@ class AnalysisController:
     def record_execution_accounting(self) -> None:
         """Write exact call/output/judge counts from the final successful view."""
 
+        self.current_name = "execution-accounting"
         from experiments.retained_artifact_reader import load_cells
 
         runner_view = self.human_audit_runner_input_view()

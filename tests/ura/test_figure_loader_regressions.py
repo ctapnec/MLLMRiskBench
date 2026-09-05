@@ -2962,3 +2962,60 @@ def test_direct_figure_loader_rejects_superseded_human_audit_schema(
             human_audit_sha256=digest,
             n_resamples=10,
         )
+
+
+def _large_eligibility_grid(tmp_path: Path) -> tuple[Path, dict]:
+    cell = _cell(tmp_path, stem="large-plan", model_spec="provider:model", corpus="alpha")
+    grid_path = _grid(tmp_path, name="large-plan", cells=[cell])
+    grid = json.loads(grid_path.read_text())
+    descriptor = grid["request"]["eligibility_plan"]
+    plan = tmp_path / descriptor["file"]
+    # Whitespace preserves the exact self-verifying semantic plan while
+    # exercising the real format's larger byte allowance, without fake fields.
+    plan.write_bytes(plan.read_bytes() + b" " * figure_results._MAX_JSON_BYTES)
+    descriptor.update(bytes=plan.stat().st_size, sha256=hashlib.sha256(plan.read_bytes()).hexdigest())
+    grid_path.write_text(json.dumps(grid))
+    return plan, cell
+
+
+def test_figure_eligibility_uses_its_existing_typed_size_bound(tmp_path):
+    plan, cell = _large_eligibility_grid(tmp_path)
+    with pytest.raises(ValueError, match="JSON object exceeds"):
+        figure_results._read_object(plan)
+    assert figure_results._load_cells(tmp_path)[0]["run_id"] == cell["run_id"]
+    assert figure_results._MAX_JSON_BYTES == 4 * 1024 * 1024
+
+
+def test_retained_worker_routes_only_eligibility_to_original_typed_loader(tmp_path, monkeypatch):
+    import io
+    from experiments import retained_artifact_reader
+
+    plan, _cell_value = _large_eligibility_grid(tmp_path)
+    original = figure_results._read_object
+    monkeypatch.setattr(figure_results, "_read_object", original)
+    monkeypatch.setattr(retained_artifact_reader.sys, "stdin", io.StringIO(json.dumps({
+        "results": str(tmp_path),
+    })))
+    prefix = retained_artifact_reader._WORKER.split("cells = _load_cells(root)", 1)[0]
+    exec(prefix, {})
+    assert figure_results._read_object(plan)["plan_id"] == plan.name.removesuffix(".eligibility.json")
+    other = tmp_path / "oversized.manifest.json"
+    other.write_bytes(plan.read_bytes())
+    with pytest.raises(ValueError, match="JSON object exceeds"):
+        figure_results._read_object(other)
+    assert figure_results._MAX_JSON_BYTES == 4 * 1024 * 1024
+
+
+def test_typed_eligibility_limit_and_semantic_validation_are_not_relaxed(tmp_path):
+    from experiments.suite_summary import _MAX_ELIGIBILITY_BYTES, _load_eligibility_plan
+
+    plan, _cell_value = _large_eligibility_grid(tmp_path)
+    semantic = json.loads(plan.read_text())
+    semantic["plan_id"] = "eligibility-" + "0" * 24
+    plan.write_text(json.dumps(semantic))
+    with pytest.raises(ValueError):
+        _load_eligibility_plan(plan)
+    plan.write_bytes(b" " * (_MAX_ELIGIBILITY_BYTES + 1))
+    with pytest.raises(ValueError, match="<=16 MiB"):
+        _load_eligibility_plan(plan)
+    assert _MAX_ELIGIBILITY_BYTES == 16 * 1024 * 1024

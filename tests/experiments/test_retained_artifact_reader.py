@@ -240,6 +240,7 @@ def test_joined_worker_dispatches_frame_after_exact_source_validation(
 
     monkeypatch.setattr(figure_results, "_load_cells", lambda root:
                         calls.append("source cells") or cells)
+    monkeypatch.setattr(figure_results, "_read_object", figure_results._read_object)
     monkeypatch.setattr(human_audit, "_joined_artifacts", original_join)
     # Register the attribute with monkeypatch before worker exec replaces it.
     monkeypatch.setattr(human_audit, "_portable_media_references", lambda turns: "old exporter")

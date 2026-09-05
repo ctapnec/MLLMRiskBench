@@ -480,7 +480,12 @@ def _grid_allowlist(
             or eligibility_descriptor.get("records") != eligibility_records
         ):
             raise ValueError(f"grid eligibility descriptor mismatch: {grid_path}")
-        eligibility_plan = validate_eligibility_plan(_read_object(eligibility_path))
+        # Eligibility has its own existing bounded, self-verifying loader.
+        # A full selected population can legitimately exceed the generic
+        # grid/manifest JSON limit without exceeding that typed artifact limit.
+        from experiments.suite_summary import _load_eligibility_plan
+
+        eligibility_plan = validate_eligibility_plan(_load_eligibility_plan(eligibility_path)[0])
         if (
             eligibility_descriptor.get("plan_id") != eligibility_plan["plan_id"]
             or eligibility_descriptor.get("counts") != eligibility_plan["counts"]
