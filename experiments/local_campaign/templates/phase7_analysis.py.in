@@ -9009,6 +9009,17 @@ def _validate_seven_prior_core_context(value: object, expected_commit: str) -> N
             raise Phase7Error("seven-row optional core-recovery locator changed")
 
 
+def _seven_declared_replacement_profile(historical: Mapping[str, int], ready: int) -> dict[str, Any]:
+    """Reproduce declared policy metadata, not canonical Gate 5 admission counts."""
+    return {
+        "rows": historical["rows"],
+        "runnable": historical["runnable"] + ready,
+        "typed_terminal": historical["typed_terminal"] - ready,
+        "target_runtime_terminal": historical["target_runtime_terminal"] - ready,
+        "conditional_na_lanes": [DEFENSE_LOCAL_LANE],
+    }
+
+
 def validate_seven_output_policy_inventory(
     *,
     amendment_path: Path,
@@ -9347,13 +9358,9 @@ def validate_seven_output_policy_inventory(
         amendment_rows[row["lane_id"]] = row
         if row["disposition"] == "runnable":
             ready.append(row["lane_id"])
-    if amendment.get("profile") != {
-        "rows": 46,
-        "runnable": 18 + len(ready),
-        "typed_terminal": 28 - len(ready),
-        "target_runtime_terminal": 7 - len(ready),
-        "conditional_na_lanes": [DEFENSE_LOCAL_LANE],
-    }:
+    if amendment.get("profile") != _seven_declared_replacement_profile(
+        expected_historical_profile, len(ready)
+    ):
         raise Phase7Error("seven-row Gate 5 replacement profile changed")
 
     completion_file, completion_payload = _stable_regular_bytes(

@@ -583,6 +583,18 @@ def test_measured_grid_binds_runner_resolved_ollama_digest(
         phase7._measured_model_selector(selector, spec)
 
 
+def test_seven_declared_profile_does_not_replace_canonical_gate5_counts(phase7: ModuleType) -> None:
+    historical = {"rows": 46, "runnable": 18, "typed_terminal": 28,
+                  "target_runtime_terminal": 3}
+    assert phase7._seven_declared_replacement_profile(historical, 2) == {
+        "rows": 46, "runnable": 20, "typed_terminal": 26,
+        "target_runtime_terminal": 1, "conditional_na_lanes": ["defense-local"],
+    }
+    canonical = {**historical, "target_runtime_terminal": 7}
+    assert phase7._seven_declared_replacement_profile(canonical, 2)["target_runtime_terminal"] == 5
+    assert historical["target_runtime_terminal"] == 3
+
+
 def test_historical_optional_core_context_accepts_verified_terminal_descriptors(
     phase7: ModuleType, tmp_path: Path
 ) -> None:
