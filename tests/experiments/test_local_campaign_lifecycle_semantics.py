@@ -107,6 +107,28 @@ def test_failed_output_metrics_exclude_the_retained_partial_lane(phase7):
     assert "partial" in phase7.CAMPAIGN_TERMINAL_STATES["failed_output_recovery"]
 
 
+def test_native_terminal_uses_its_historical_plan_revision(phase7, tmp_path):
+    def write(name, value):
+        path = tmp_path / name
+        path.write_text(json.dumps(value), encoding="utf-8")
+        return phase7.descriptor(path)
+
+    revision = write("historical-project.json", {"repository": {
+        "expected_commit": "a" * 40, "observed_commit": "a" * 40, "clean": True}})
+    plan = write("plan.json", {"code_identity": {"project_revision": revision}})
+    completion = write("completion.json", {
+        "expected_commit": "a" * 40, "plan": plan, "launch": {"retained": True}})
+    native = {"completion": completion, "project_revision": revision,
+              "launch": {"retained": True}}
+    assert revision["sha256"] != phase7.EXPECTED_PROJECT_REVISION_SHA256
+    phase7.validate_native_terminal_revision(native)
+    wrong_revision = write("another-project.json", {"repository": {
+        "expected_commit": "a" * 40, "observed_commit": "a" * 40, "clean": True},
+        "different_source": True})
+    with pytest.raises(phase7.Phase7Error, match="exact project revision"):
+        phase7.validate_native_terminal_revision({**native, "project_revision": wrong_revision})
+
+
 def test_lifecycle_status_requires_exact_request_artifact_kinds(
     phase7: ModuleType,
 ) -> None:

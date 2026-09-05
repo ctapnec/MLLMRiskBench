@@ -10872,6 +10872,27 @@ def validate_phase6_campaign_terminal_inventory(value: object) -> dict[str, Any]
     return dict(value)
 
 
+def validate_native_terminal_revision(native: Mapping[str, Any]) -> None:
+    """Bind the native stratum to its executed plan, not the analysis release."""
+    _completion_path, completion = descriptor_object(
+        native["completion"], label="aggregate native completion"
+    )
+    _plan_path, plan = descriptor_object(completion.get("plan"), label="aggregate native plan")
+    _project_path, receipt = descriptor_object(
+        native.get("project_revision"), label="aggregate native project-revision receipt"
+    )
+    repository = receipt.get("repository")
+    if (
+        not isinstance(repository, dict)
+        or plan.get("code_identity", {}).get("project_revision") != native["project_revision"]
+        or completion.get("expected_commit") != repository.get("expected_commit")
+        or repository.get("observed_commit") != completion.get("expected_commit")
+        or repository.get("clean") is not True
+        or completion.get("launch") != native.get("launch")
+    ):
+        raise Phase7Error("native terminal inventory is not bound to its exact project revision")
+
+
 def build_phase6_campaign_terminal_inventory(
     *,
     gate5_rows: Sequence[Mapping[str, Any]],
@@ -11165,30 +11186,7 @@ def build_phase6_campaign_terminal_inventory(
                 **local_hardware_fit_recovery["lifecycle_evidence"][lane],
             },
         )
-    _native_completion_path, native_completion = descriptor_object(
-        native["completion"], label="aggregate native completion"
-    )
-    native_project_path, native_project_receipt = descriptor_object(
-        native.get("project_revision"),
-        label="aggregate native project-revision receipt",
-    )
-    native_repository = native_project_receipt.get("repository")
-    if (
-        not isinstance(native_repository, dict)
-        or native_project_path
-        != Path(EXPECTED_PROJECT_REVISION_MANIFEST).resolve(strict=True)
-        or native["project_revision"].get("sha256")
-        != EXPECTED_PROJECT_REVISION_SHA256
-        or native_completion.get("expected_commit")
-        != native_repository.get("expected_commit")
-        or native_repository.get("observed_commit")
-        != native_completion.get("expected_commit")
-        or native_repository.get("clean") is not True
-        or native_completion.get("launch") != native.get("launch")
-    ):
-        raise Phase7Error(
-            "native terminal inventory is not bound to its exact project revision"
-        )
+    validate_native_terminal_revision(native)
     for engine in NATIVE_ENGINES:
         append(
             "native", engine, native["terminal_states"][engine],
