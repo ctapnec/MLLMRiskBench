@@ -225,7 +225,7 @@ def _race_reserve(budget, barrier, results):
 
 
 def test_process_lock_prevents_duplicate_physical_admission(budget):
-    context = multiprocessing.get_context("fork")
+    context = multiprocessing.get_context("spawn")
     barrier, results = context.Barrier(2), context.Queue()
     workers = [context.Process(target=_race_reserve,
                args=(budget, barrier, results)) for _ in range(2)]
@@ -244,3 +244,49 @@ def test_primitive_never_constructs_a_provider_client_or_sends_a_call(budget, mo
     budget.reserve("A", 1, provider="anthropic")
     budget.settle("A", 1, None)
     assert reopen(budget).call("J")["pool"] == "judge"
+
+
+@pytest.mark.parametrize("call_id,provider,expected_calls", [("A", "anthropic", 1), ("O", "openai", 4)])
+def test_actual_sdk_hook_stops_before_unfunded_retry_without_any_network(budget, monkeypatch, call_id, provider, expected_calls):
+    from ura.targets import api
+    monkeypatch.setattr(api.time, "sleep", lambda _: None)
+    monkeypatch.setattr(api, "_require", lambda *a: pytest.fail("real provider SDK construction"))
+    sent = []
+    class HttpFailure(RuntimeError):
+        status_code = 500
+
+    def reserve(observed_provider, request, number):
+        assert observed_provider == provider and request == {"max_tokens": 512}
+        if number > 1:
+            # Only the controller's observed HTTP error permits this explicit
+            # unknown settlement. A restarted unresolved slot cannot do this.
+            budget.settle(call_id, number - 1, None)
+        budget.reserve(call_id, number, provider=observed_provider)
+
+    def mock_http(**request):
+        assert budget.snapshot()["pools"][f"{provider}:target"]["unresolved_attempts"] == 1
+        sent.append(request)
+        if len(sent) < 4:
+            raise HttpFailure()
+        return "response"
+
+    with api.provider_attempt_admission(reserve):
+        if expected_calls == 1:
+            with pytest.raises(mod.BudgetError, match="planned first attempts"):
+                api._call_with_retry(mock_http, {"max_tokens": 512}, provider=provider, max_retries=3)
+        else:
+            result, audit = api._call_with_retry(mock_http, {"max_tokens": 512}, provider=provider, max_retries=3)
+            assert result == "response" and len(audit) == 4
+            budget.settle(call_id, 4, 2)
+    assert len(sent) == expected_calls
+    pool = reopen(budget).snapshot()["pools"][f"{provider}:target"]
+    assert pool["liability_microusd"] == (40 if expected_calls == 1 else 32)
+
+
+@pytest.mark.parametrize("actual", [True, -1, 0.5])
+def test_invalid_actual_cost_does_not_release_reserved_exposure(budget, actual):
+    budget.reserve("A", 1, provider="anthropic")
+    before = (budget.root / "ledger.json").read_bytes()
+    with pytest.raises(mod.BudgetError):
+        budget.settle("A", 1, actual)
+    assert (budget.root / "ledger.json").read_bytes() == before
