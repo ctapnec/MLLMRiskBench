@@ -130,7 +130,7 @@ def test_snapshot_preserves_running_grid_without_promoting_or_repeating(interrup
 
 def test_snapshot_keeps_existing_judgment_ids_out_of_pending_judging(interrupted):
     f = interrupted
-    judgment = mod.Judgment(attempt_id="attempt-arm-0-0", judge="guardrail", label="compliant", score=0)
+    judgment = mod.Judgment(attempt_id="attempt-arm-0-0", judge="guardrail", label="safe", score=0)
     path = f.result_root / "retained.jsonl"
     path.write_text(judgment.model_dump_json() + "\n")
     descriptor = mod.prior._descriptor(path, label="fixture")
