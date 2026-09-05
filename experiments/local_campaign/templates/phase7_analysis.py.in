@@ -8203,8 +8203,19 @@ def validate_measured_request_envelope_artifact(
 
 
 def _measured_model_selector(selector: str, spec: Mapping[str, Any]) -> str:
-    """Resolve the sealed vLLM revision just as Runner did, never from outputs."""
+    """Resolve the sealed local model identity, never from observed outputs."""
     target = spec.get("target")
+    digest = target.get("digest") if isinstance(target, Mapping) else None
+    if selector.startswith("ollama:") and digest is not None:
+        if not isinstance(digest, str) or HEX64.fullmatch(digest) is None:
+            raise Phase7Error("sealed Ollama target digest is invalid")
+        base = selector.split("@", 1)[0]
+        resolved = f"{base}@sha256:{digest}"
+        if (selector not in {base, resolved}
+            or (target.get("spec") is not None
+                and target["spec"] not in {base, resolved})):
+            raise Phase7Error("sealed Ollama target selector and digest differ")
+        return resolved
     revision = target.get("revision") if isinstance(target, Mapping) else None
     if not selector.startswith("vllm:") or revision is None:
         return selector

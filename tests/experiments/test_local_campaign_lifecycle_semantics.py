@@ -549,6 +549,39 @@ def test_measured_grid_binds_runner_resolved_vllm_revision(
         phase7._measured_model_selector("vllm:model-a@" + "b" * 40, spec)
 
 
+def test_measured_grid_binds_runner_resolved_ollama_digest(
+    phase7: ModuleType, tmp_path: Path
+) -> None:
+    project, spec, _, _, envelope = _request_fixture(phase7, tmp_path)
+    selector = "ollama:mollysama/rwkv-7-g1d:0.4b"
+    digest = "78e699bd71f0cef7ed8fb38a469088310af0ab07d678661980c6b8c7f130a7f8"
+    spec["target"] = {"spec": selector, "repo_id": None, "revision": None,
+                      "digest": digest}
+    request = _grid_request_fixture(
+        phase7, project=project, envelope_descriptor=envelope,
+        source_sha="1" * 64, source_config_sha="2" * 64,
+    )
+    request["models"] = [f"{selector}@sha256:{digest}"]
+    kwargs = dict(
+        lane="rjudge-ollama-rwkv-g1d-0p4b", spec=spec, model_selector=selector,
+        expected_project_binding=project, expected_source_sha="1" * 64,
+        expected_source_config_sha="2" * 64,
+    )
+    assert phase7.validate_measured_grid_request(request, **kwargs) == envelope
+    assert phase7._measured_model_selector(request["models"][0], spec) == request["models"][0]
+    for wrong in (selector, selector + "@sha256:" + "b" * 64,
+                  "ollama:another-model@sha256:" + digest):
+        request["models"] = [wrong]
+        with pytest.raises(phase7.Phase7Error, match="sealed measured lane"):
+            phase7.validate_measured_grid_request(request, **kwargs)
+        if "@" in wrong:
+            with pytest.raises(phase7.Phase7Error, match="selector and digest differ"):
+                phase7._measured_model_selector(wrong, spec)
+    spec["target"]["digest"] = "invalid"
+    with pytest.raises(phase7.Phase7Error, match="digest is invalid"):
+        phase7._measured_model_selector(selector, spec)
+
+
 def test_approximate_grid_request_binds_the_exact_selected_guardrail(
     phase7: ModuleType, tmp_path: Path
 ) -> None:
