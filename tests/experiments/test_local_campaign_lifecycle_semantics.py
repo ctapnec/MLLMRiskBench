@@ -2014,12 +2014,14 @@ def test_phase7_zero_output_view_rejects_selector_visible_extra(
         )
 
 
+@pytest.mark.parametrize("recovery_lane", ("lane-a", "renamed-input-recovery"))
 def test_phase7_metrics_use_exact_recovery_root_but_lifecycle_retains_failure(
-    phase7: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    phase7: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    recovery_lane: str,
 ) -> None:
     source = tmp_path / "source"
     failed = source / "lane-a" / "phase6-predecessor"
-    recovery = source / "lane-a" / "phase6-recovery"
+    recovery = source / recovery_lane / "phase6-recovery"
     for root, status in ((failed, "failed"), (recovery, "complete")):
         root.mkdir(parents=True)
         (root / "cell.grid.json").write_text(json.dumps({"status": status}))
@@ -2043,7 +2045,7 @@ def test_phase7_metrics_use_exact_recovery_root_but_lifecycle_retains_failure(
     assert controller._metric_result_roots() == [recovery]
     view = controller.analysis_runner_view()
     assert not (view / "lane-a" / failed.name).exists()
-    assert (view / "lane-a" / recovery.name / completion.name).is_file()
+    assert (view / recovery_lane / recovery.name / completion.name).is_file()
     assert not list(view.rglob("*.error.json"))
     assert error.is_file()
 
@@ -2058,7 +2060,7 @@ def test_phase7_metrics_use_exact_recovery_root_but_lifecycle_retains_failure(
     controller.lifecycle_runner_view_ready = False
     lifecycle = controller.lifecycle_runner_view()
     assert (lifecycle / "lane-a" / failed.name / error.name).read_bytes() == error.read_bytes()
-    assert (lifecycle / "lane-a" / recovery.name / completion.name).is_file()
+    assert (lifecycle / recovery_lane / recovery.name / completion.name).is_file()
 
     # Neither a different selected plan nor an injected failed artifact is
     # admitted to the success-only view; the old whole-lane contract stays strict.
@@ -2071,12 +2073,12 @@ def test_phase7_metrics_use_exact_recovery_root_but_lifecycle_retains_failure(
         with pytest.raises(phase7.Phase7Error, match="result roots differ"):
             controller._metric_result_roots()
     receipt = phase7.strict_object(controller.runner_view_receipt)
-    with pytest.raises(phase7.Phase7Error, match="sealed source file inventory"):
+    with pytest.raises(phase7.Phase7Error, match="inventory"):
         phase7.validate_runner_input_view_receipt(
             receipt, source_root=source, view_root=view,
             included_measured_lanes=["lane-a"],
         )
-    extra = view / "lane-a" / recovery.name / error.name
+    extra = view / recovery_lane / recovery.name / error.name
     extra.write_bytes(error.read_bytes())
     with pytest.raises(phase7.Phase7Error, match="unbound extra"):
         controller.analysis_runner_view()

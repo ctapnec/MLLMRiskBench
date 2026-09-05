@@ -1939,7 +1939,8 @@ def _validate_independent_copy_inventory(
         parts = _canonical_relative_parts(
             relative, label=f"{label} file {index}"
         )
-        if parts[0] not in lanes or relative in inventory_by_relative:
+        if ((included_result_roots is None and parts[0] not in lanes)
+            or relative in inventory_by_relative):
             raise Phase7Error(f"{label} relative inventory changed: {relative}")
         source_path, source_payload = descriptor_bytes(
             raw.get("source"), label=f"{label} source {relative}"
@@ -2002,20 +2003,18 @@ def _validate_independent_copy_inventory(
             ).items():
                 expected_source_files[f"{lane}/{lane_relative}"] = path
     else:
-        observed_lanes: set[str] = set()
+        if len(set(included_result_roots)) != len(lanes):
+            raise Phase7Error(f"{label} authorized result-root coverage changed")
         for root in included_result_roots:
             root = checked_dir(root, label=f"{label} authorized result root")
             try:
                 parts = root.relative_to(source_root).parts
             except ValueError as exc:
                 raise Phase7Error(f"{label} result root escaped the source") from exc
-            if not parts or parts[0] not in lanes:
-                raise Phase7Error(f"{label} result root is outside selected lanes")
-            observed_lanes.add(parts[0])
+            if not parts:
+                raise Phase7Error(f"{label} result root is the source store")
             for path in _runner_root_files(root, label=label).values():
                 expected_source_files[path.relative_to(source_root).as_posix()] = path
-        if observed_lanes != set(lanes):
-            raise Phase7Error(f"{label} result-root lane coverage changed")
     if set(expected_source_files) != set(inventory_by_relative):
         raise Phase7Error(f"{label} sealed source file inventory changed")
 
@@ -14275,18 +14274,17 @@ class AnalysisController:
         }
         if not roots or roots != plan_roots:
             raise Phase7Error("metric completion/eligibility result roots differ")
-        lanes = set(self._all_metric_lanes())
-        observed_lanes: set[str] = set()
+        # Logical lane names can retain their original identity while an
+        # authorized recovery lives in a differently named physical directory.
+        if len(roots) != len(self._all_metric_lanes()):
+            raise Phase7Error("metric result-root lane coverage changed")
         for root in roots:
             try:
                 parts = root.relative_to(self.runner_root).parts
             except ValueError as exc:
                 raise Phase7Error("metric result root escaped the Runner store") from exc
-            if not parts or parts[0] not in lanes:
-                raise Phase7Error("metric result root is outside selected lanes")
-            observed_lanes.add(parts[0])
-        if observed_lanes != lanes:
-            raise Phase7Error("metric result-root lane coverage changed")
+            if not parts:
+                raise Phase7Error("metric result root is the Runner store")
         return sorted(roots)
 
     def _current_ollama_sampling_root(self, lane: str) -> Path:
