@@ -73,7 +73,7 @@ from ura.runner import _harness_source_identity
 
 request = json.load(sys.stdin)
 roots = [Path(path) for path in request["results"]]
-paths = [Path(artifact[2]) for artifact in request["plans"]]
+paths = [Path(path) for path in request["eligibility_paths"]]
 artifacts = [source._plan_artifact(path) for path in paths]
 envelopes = source._discover_request_envelopes(paths, artifacts, roots)
 if json.loads(json.dumps(artifacts)) != request["plans"]:
@@ -132,7 +132,7 @@ def load_level1_results(
     roots: Sequence[Path],
     plans: Mapping[str, tuple[dict[str, Any], str, str, int, int]],
     envelopes: list[dict[str, Any]],
-    *, code_repository: Path = _REPOSITORY,
+    *, eligibility_paths: Sequence[Path], code_repository: Path = _REPOSITORY,
 ) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]]]:
     """Validate one exact historical stratum, leaving accounting to current code.
 
@@ -172,6 +172,7 @@ def load_level1_results(
                     environment.pop(key)
             request = {
                 "results": [str(Path(root).resolve(strict=True)) for root in roots],
+                "eligibility_paths": [str(Path(path).resolve()) for path in eligibility_paths],
                 "plans": list(plans.values()), "envelopes": envelopes,
                 "commit": commit, "tree": tree,
             }

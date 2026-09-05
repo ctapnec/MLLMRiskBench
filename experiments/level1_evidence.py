@@ -2949,6 +2949,7 @@ def main(argv: list[str] | None = None) -> int:
 
             grids, request_errors = load_level1_results(
                 args.results, plan_index, envelope_artifacts,
+                eligibility_paths=args.eligibility,
                 code_repository=args.historical_code_repository,
             )
         live_artifacts = [

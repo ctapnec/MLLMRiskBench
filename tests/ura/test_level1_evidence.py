@@ -296,6 +296,8 @@ def _runtime_free_legacy_plan(plan: dict) -> dict:
     values.pop("target_answer_retries")
     values.pop("recovery_selection")
     values.pop("engine_runtimes")
+    values.pop("sampling_policy", None)
+    values.pop("judge_execution_schedule", None)
     values["selected_config_identities"].pop("engine_runtime_config")
     condition["condition_id"] = (
         "condition-" + canonical_json_sha256(values)[:24]
@@ -453,6 +455,8 @@ def test_level1_reads_exact_pre_runtime_replay_plan_grid_and_cell(
     }
     grid["request"].pop("target_answer_retries")
     grid["request"].pop("recovery_selection")
+    grid["request"].pop("sampling_policy", None)
+    grid["request"].pop("judge_execution_schedule", None)
     grid["request"].pop("engine_runtime_config_artifact")
     grid["request"].pop("engine_runtimes")
     grid.pop("engine_runtime_close")

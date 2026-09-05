@@ -203,7 +203,8 @@ def _level1_inputs(tmp_path):
         "driver_source_sha256": hashlib.sha256(b"driver").hexdigest(),
     }
     plan = {"plan_id": "plan", "bindings": {"project_revision": revision}}
-    artifact = (plan, "d" * 64, str(tmp_path / "plan.json"), 100, 1)
+    # Retained eligibility descriptors carry a basename, not an absolute path.
+    artifact = (plan, "d" * 64, "plan.json", 100, 1)
     envelopes = [{"envelope": {"bindings": {"project_revision": dict(revision)}}}]
     return {"plan": artifact}, envelopes
 
@@ -226,7 +227,8 @@ def test_level1_source_admission_precedes_worker(tmp_path, monkeypatch, bad_iden
 
     monkeypatch.setattr(subject, "_git", git)
     with pytest.raises(ValueError, match="one exact|ancestor|trusted Git history"):
-        subject.load_level1_results([tmp_path], plans, envelopes, code_repository=tmp_path)
+        subject.load_level1_results([tmp_path], plans, envelopes,
+                                   eligibility_paths=[tmp_path / "plan.json"], code_repository=tmp_path)
     assert all(args[0] != "worktree" for args in calls)
 
 
@@ -250,6 +252,7 @@ def test_level1_reader_preserves_partial_lifecycle_and_cleans_own_checkout(
         assert request["tree"] == TREE
         assert request["results"] == [str(tmp_path)]
         assert request["plans"] == json.loads(json.dumps(list(plans.values())))
+        assert request["eligibility_paths"] == [str(tmp_path / "plan.json")]
         assert request["envelopes"] == envelopes
         cells = [
             [["model", "good", "replay"], {"status": "complete", "validated_cell": _cell(tmp_path)}],
@@ -267,10 +270,12 @@ def test_level1_reader_preserves_partial_lifecycle_and_cleans_own_checkout(
     monkeypatch.setenv("FAKE_API_KEY", "test-placeholder")
     if worker_fails:
         with pytest.raises(ValueError, match="original lifecycle validator refused"):
-            subject.load_level1_results([tmp_path], plans, envelopes, code_repository=tmp_path)
+            subject.load_level1_results([tmp_path], plans, envelopes,
+                                       eligibility_paths=[tmp_path / "plan.json"], code_repository=tmp_path)
     else:
         grids, errors = subject.load_level1_results(
             [tmp_path], plans, envelopes, code_repository=tmp_path,
+            eligibility_paths=[tmp_path / "plan.json"],
         )
         assert grids["plan"]["grid_status"] == "partial"
         assert grids["plan"]["cells"][("model", "failed", "replay")]["status"] == "error"
@@ -307,6 +312,7 @@ def test_level1_worker_validates_exact_source_even_for_request_only_failures(
     if changed:
         revision_objects[changed]["harness_source_sha256"] = "e" * 64
     request = {"results": [str(tmp_path)], "plans": list(plans.values()),
+               "eligibility_paths": [str(tmp_path / "plan.json")],
                "envelopes": envelopes, "commit": COMMIT, "tree": TREE}
     monkeypatch.setattr(subject.sys, "stdin", io.StringIO(json.dumps(request)))
     monkeypatch.setattr(level1_evidence, "_plan_artifact", lambda path: plans["plan"])
@@ -359,4 +365,5 @@ def test_level1_cli_explicit_historical_reader_keeps_current_accounting(tmp_path
         "--out-json", str(tmp_path / "report.json"), "--out-csv", str(tmp_path / "report.csv"),
     ]) == 0
     assert len(calls) == 1
-    assert calls[0][1] == {"code_repository": tmp_path}
+    assert calls[0][1] == {"code_repository": tmp_path,
+                         "eligibility_paths": [tmp_path / "plan.json"]}
