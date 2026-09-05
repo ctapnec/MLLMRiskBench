@@ -909,6 +909,10 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument(
+        "--historical-code-repository", type=Path,
+        help="validate retained revision strata through their exact trusted Git source",
+    )
     args = parser.parse_args(argv)
     if not args.results and not args.native and not args.eligibility:
         parser.error("provide at least one --results, --native, or --eligibility input")
@@ -917,7 +921,14 @@ def main(argv: list[str] | None = None) -> int:
         cells: list[dict[str, Any]] = []
         for root in args.results:
             resolved = root.resolve(strict=True)
-            cells.extend(_load_cells(resolved))
+            if args.historical_code_repository is None:
+                cells.extend(_load_cells(resolved))
+            else:
+                from experiments.retained_artifact_reader import load_cells
+
+                cells.extend(load_cells(
+                    resolved, code_repository=args.historical_code_repository,
+                ))
         native_runs = []
         for path in args.native:
             run, digest = load_native_run(path)

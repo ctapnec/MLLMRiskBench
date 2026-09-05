@@ -27,6 +27,41 @@ from ura.approximate_metrics import (
 from ura.data_models import DataPoint, DialogTurn, Judgment, Response, RiskCategory
 
 
+@pytest.mark.parametrize("historical,refused", [(False, False), (True, False), (True, True)])
+def test_suite_cli_uses_the_explicit_source_validator(
+    tmp_path, monkeypatch, historical, refused,
+):
+    from experiments import retained_artifact_reader
+
+    results = tmp_path / "results"
+    results.mkdir()
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    calls = []
+
+    def current(root):
+        assert not historical
+        calls.append((root, None))
+        return []
+
+    def retained(root, *, code_repository):
+        assert historical
+        calls.append((root, code_repository))
+        if refused:
+            raise ValueError("retained source validation failed")
+        return []
+
+    monkeypatch.setattr(suite_summary, "_load_cells", current)
+    monkeypatch.setattr(retained_artifact_reader, "load_cells", retained)
+    out = tmp_path / "summary.json"
+    argv = ["--results", str(results), "--out", str(out)]
+    if historical:
+        argv += ["--historical-code-repository", str(repository)]
+    assert suite_summary.main(argv) == int(refused)
+    assert calls == [(results, repository if historical else None)]
+    assert out.exists() is not refused
+
+
 def _easyjailbreak_config(tmp_path: Path) -> tuple[Path, Path]:
     rows = [
         {

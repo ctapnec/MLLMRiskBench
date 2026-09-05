@@ -186,6 +186,9 @@ def test_level1_stratum_uses_only_its_validated_copy(phase7, tmp_path, monkeypat
 
     def check_command(name, argv, **kwargs):
         view = Path(argv[argv.index("--results") + 1])
+        assert argv[argv.index("--historical-code-repository") + 1] == str(
+            phase7.EXPECTED_PROJECT_ROOT
+        )
         for option, original in (("--eligibility", plan), ("--live-attestation", attestation)):
             supplied = Path(argv[argv.index(option) + 1])
             assert supplied.is_relative_to(view)

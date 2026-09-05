@@ -15229,6 +15229,7 @@ class AnalysisController:
                 [
                     str(self.python), "-m", "experiments.level1_evidence",
                     "--results", str(view),
+                    "--historical-code-repository", "@@PROJECT_ROOT@@",
                     *self.lifecycle_eligibility_args_for_roots(view_roots),
                     *attestations,
                     "--out-json", str(out_json), "--out-csv", str(out_csv),
@@ -15301,6 +15302,8 @@ class AnalysisController:
             "experiments.suite_summary",
             "--results",
             str(self.analysis_runner_view()),
+            "--historical-code-repository",
+            "@@PROJECT_ROOT@@",
             "--source-config",
             str(source_config),
             *self.native_args(),

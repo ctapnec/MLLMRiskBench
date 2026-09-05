@@ -4757,6 +4757,11 @@ directory rather than mixing conditions. Within a `run_matrix` invocation the
 driver replaces its preliminary plan with the final plan. The Level-1 validator
 rejects duplicate request identities, and every supplied grid must still bind
 the exact plan descriptor and experiment condition.
+When analyzing an independently copied input view, obtain eligibility plans and
+live attestations from that same validated view. Do not combine original plan
+paths with copied result paths: request discovery then sees both copies of the
+same envelope and correctly refuses duplicate accounting. Keep original evidence
+and copy receipts unchanged.
 `run_matrix` already wrote each `ura-request-envelope/6` before config/source
 materialization. Level-1 discovers those files and any bound
 `ura-request-error/1` automatically from the measured result tree and plan
