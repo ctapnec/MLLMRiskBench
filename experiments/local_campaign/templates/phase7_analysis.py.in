@@ -9024,6 +9024,20 @@ def _seven_declared_replacement_profile(historical: Mapping[str, int], ready: in
     }
 
 
+def _failed_seven_gate5_binding_matches(
+    spec_gate5: object, amendment_gate5: object, bounded_gate5: object, commit: str
+) -> bool:
+    if spec_gate5 is None and amendment_gate5 is None:
+        return True
+    # Before failed readmission, the original producer retained the separately
+    # sealed base selection. It is context, never admission for the new target.
+    return (
+        commit == RECOVERY_RUNNER_224_HISTORICAL_COMMIT
+        and isinstance(bounded_gate5, dict)
+        and spec_gate5 == amendment_gate5 == bounded_gate5
+    )
+
+
 def validate_seven_output_policy_inventory(
     *,
     amendment_path: Path,
@@ -9576,7 +9590,13 @@ def validate_seven_output_policy_inventory(
         spec_gate5 = spec.get("gate5")
         amendment_gate5 = amendment_row.get("gate5")
         if state == "gate5_failed":
-            gate5_changed = spec_gate5 is not None or amendment_gate5 is not None
+            bounded_source = strict_object(descriptor_file(
+                policy_rows[lane_index - 1]["bounded_selection_source"],
+                label=f"{lane} historical bounded selection",
+            ))
+            gate5_changed = not _failed_seven_gate5_binding_matches(
+                spec_gate5, amendment_gate5, bounded_source.get("gate5"), expected_commit
+            )
         elif isinstance(spec_gate5, dict) and isinstance(amendment_gate5, dict):
             spec_gate5_body = {
                 key: value

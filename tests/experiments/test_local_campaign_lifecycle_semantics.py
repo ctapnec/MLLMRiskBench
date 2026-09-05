@@ -583,6 +583,19 @@ def test_measured_grid_binds_runner_resolved_ollama_digest(
         phase7._measured_model_selector(selector, spec)
 
 
+def test_failed_seven_lane_binds_original_base_selection_without_readmission(phase7: ModuleType) -> None:
+    commit = "73c5331c59d1192f3338170cfee374af5e03a07f"
+    source = {"manifest_sha256": "a" * 64, "final_request_envelope": {"sha256": "b" * 64}}
+    matches = phase7._failed_seven_gate5_binding_matches
+    assert matches(copy.deepcopy(source), copy.deepcopy(source), source, commit)
+    assert matches(None, None, source, commit)
+    assert not matches(source, source, source, "c" * 40)
+    assert not matches(source, None, source, commit)
+    changed = {**source, "manifest_sha256": "d" * 64}
+    assert not matches(changed, changed, source, commit)
+    assert not matches(source, changed, source, commit)
+
+
 def test_historical_extended_failure_retains_pre_runner_gate5_stage(
     phase7: ModuleType, tmp_path: Path
 ) -> None:
