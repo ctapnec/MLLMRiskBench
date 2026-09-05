@@ -53,6 +53,14 @@ _ROLE_MAP = {
     "env": "user",  # environment observations surface as user-side context
 }
 
+# Exact retained LLaVA-Mistral base/RR tokenizer templates. Both use [INST]
+# without a system-role token; they differ only in assistant whitespace. This
+# is a renderer capability, not a guess based on a model's name or config ID.
+_LEGACY_MISTRAL_INST_TEMPLATES = frozenset({
+    "18f104df66d35dcc5eae04e8831dd58a9b9191f82d54147199fe6bc6c8e5bc4c",
+    "26a59556925c987317ce5291811ba3b7f32ec4c647c400c6cc7e3a9993007ba7",
+})
+
 _IMMUTABLE_REVISION = re.compile(r"[0-9a-f]{40,64}")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _MAX_OLLAMA_RESPONSE_BYTES = 4 * 1024 * 1024
@@ -463,6 +471,49 @@ def _dialog_to_messages(
             content.append({"type": "image_url", "image_url": {"url": image_url}})
         messages.append({"role": role, "content": content})
     return messages
+
+
+def _vllm_chat_template_messages(
+    messages: list[dict[str, Any]], llm: Any,
+) -> tuple[list[dict[str, Any]], dict[str, str]]:
+    """Encode a leading instruction in the two known system-less templates.
+
+    Retained DialogTurns remain unchanged. The system text becomes the prefix
+    of the first [INST] instruction, not a fabricated turn or claimed native
+    system-role channel. Other templates and invalid role sequences retain
+    their native handling. Content, whitespace and image order are preserved.
+    """
+    native = {"policy": "native"}
+    if (len(messages) < 2 or messages[0]["role"] != "system"
+            or messages[1]["role"] != "user"):
+        return messages, native
+    get_tokenizer = getattr(llm, "get_tokenizer", None)
+    if not callable(get_tokenizer):
+        return messages, native
+    template = getattr(get_tokenizer(), "chat_template", None)
+    if not isinstance(template, str):
+        return messages, native
+    digest = hashlib.sha256(template.encode("utf-8")).hexdigest()
+    if digest not in _LEGACY_MISTRAL_INST_TEMPLATES:
+        return messages, native
+    system = messages[0]["content"]
+    user = messages[1]["content"]
+    if not isinstance(system, str):
+        return messages, native
+    prefix = system + "\n\n"
+    if isinstance(user, str):
+        content: Any = prefix + user
+    elif isinstance(user, list):
+        content = list(user)
+        if content and content[0].get("type") == "text":
+            content[0] = {**content[0], "text": prefix + content[0]["text"]}
+        else:
+            content.insert(0, {"type": "text", "text": prefix})
+    else:
+        return messages, native
+    rendered = [{**messages[1], "content": content}, *messages[2:]]
+    return rendered, {"policy": "leading_system_in_mistral_inst_v1",
+                      "template_sha256": digest}
 
 
 def _dialog_to_ollama_messages(
@@ -1015,6 +1066,7 @@ class VLLMTarget(BaseTarget):
             multimodal="image" in self.modality_support,
             media_roots=self.media_roots,
         )
+        messages, template_rendering = _vllm_chat_template_messages(messages, llm)
         sampling_kwargs: dict[str, Any] = dict(
             temperature=self.temperature,
             max_tokens=self.max_tokens,
@@ -1083,6 +1135,7 @@ class VLLMTarget(BaseTarget):
                 "model_digest": self.model_digest,
                 "quantization": self.quantization or "none",
                 "engine_core_execution_mode": self.engine_core_execution_mode,
+                "chat_template_rendering": template_rendering,
                 "max_model_len_policy": (
                     "hardware_fit" if self.max_model_len == -1 else "explicit"
                 ),
