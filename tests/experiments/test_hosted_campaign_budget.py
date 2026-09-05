@@ -114,7 +114,7 @@ def test_projection_binds_expected_and_maximum_token_costs() -> None:
     assert all(row["paid_call_cap_includes_readiness_and_canaries"] for row in value["routes"])
     assert value["judge"]["maximum_output_tokens_per_call"] == 512
     assert value["judge"]["transport_retries"] == 3
-    assert value["judge"]["maximum_http_attempts"] == 8_880
+    assert value["judge"]["maximum_http_attempts"] == 8_080
     assert value["judge"]["selected_pair_cap"] == 1_010
     assert value["judge"]["maximum_input_tokens_per_call"] == 12_288
     assert value["authority"]["judge_input_includes_prompt_answer_and_rubric"] is True
