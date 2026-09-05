@@ -1,0 +1,212 @@
+from __future__ import annotations
+
+import copy
+import hashlib
+import json
+from pathlib import Path
+
+import pytest
+
+from experiments import hosted_retained_inputs as subject
+
+
+HEX_A = "a" * 64
+HEX_B = "b" * 64
+TARGET = "example:model"
+API = {TARGET: {"modalities": ["text", "image"], "max_tokens": 2048}}
+DESCRIPTOR = {"file": "api.json", "sha256": HEX_A, "bytes": 123}
+
+
+def _cell(tmp_path: Path, *, count: int = 8, model: str = "ollama:retained-model") -> dict:
+    # Exact _load_cells export shape; outcomes are never a selection input.
+    artifact = tmp_path / "retained.attempts.jsonl"
+    artifact.write_text("retained artifact bytes\n", encoding="utf-8")
+    attempts, judgments = {}, []
+    for index in range(count):
+        ident = f"attempt-{index}"
+        attempts[ident] = {
+            "id": ident, "run_id": "local-run", "target": model,
+            "datapoint_id": f"data-{index}", "attacker": "replay", "seed": 0,
+            "turn_index": 0,
+            "rendered_input": [{"role": "user", "content": f"Exact question {index}", "media": []}],
+            "params": {"source_cluster_id": f"cluster-{index}",
+                       "planning_source": "arm-" + str(index % 2),
+                       "planning_expected_behavior": "refuse", "planning_source_policy": None,
+                       "prepared_attack": {"artifact_sha256": HEX_A}},
+        }
+        judgments.append({"attempt_id": ident, "label": "violation", "score": 1.0,
+                          "raw": {"risk_category": "risk-" + str(index % 2),
+                                  "source": "arm-" + str(index % 2),
+                                  "expected_behavior": "refuse"}})
+    return {"source_identity_validated": True, "run_id": "local-run", "model": model,
+            "manifest": {"dataset_hashes": {"corpus": HEX_B}, "config": {"run": {
+                "corpus": "retained-corpus", "project_revision": {"sha256": HEX_A}}}},
+            "artifacts": {"attempts": artifact}, "attempts": attempts,
+            "judgments": judgments, "responses": {ident: {"output_turns": []} for ident in attempts}}
+
+
+def _budget() -> dict:
+    value = {"schema": subject.BUDGET_SCHEMA, "status": "budget_fit",
+             "sources": {"api_config": DESCRIPTOR}, "routes": [{
+                 "target_spec": TARGET, "paid_call_cap": 20,
+                 "answer_retries": 0, "transport_retries": 3,
+                 "maximum_output_tokens_per_call": 2048, "maximum_cost_microusd": 1000000,
+                 "maximum_http_attempts": 80,
+                 "paid_call_cap_includes_readiness_and_canaries": True}]}
+    value["projection_id"] = "hosted-budget-" + subject._sha(value)[:24]
+    return value
+
+
+def _bindings(**updates) -> dict:
+    result = {"budget": _budget(), "budget_descriptor": DESCRIPTOR,
+              "api_config": API, "api_descriptor": DESCRIPTOR,
+              "media_index": {}, "local_inventory_descriptor": DESCRIPTOR}
+    result.update(updates)
+    return result
+
+
+def _plan(candidates: list[dict], cap: int = 4, **updates) -> dict:
+    return subject.build_plan(candidates=candidates, target=TARGET, call_cap=cap,
+                              **_bindings(**updates))
+
+
+def test_missing_outputs_and_judgments_do_not_control_selection(tmp_path: Path) -> None:
+    cell = _cell(tmp_path)
+    first = subject.candidates_from_cells([cell])
+    # All rows initially have missing answers. Changing answer content, outcome,
+    # score, or finish reason must not change their input population or ordering.
+    cell["responses"] = {"never_read": "arbitrary answer and length-stop metadata"}
+    for judgment in cell["judgments"]:
+        judgment.update(label="safe", score=0.0, rationale="changed answer assessment")
+    second = subject.candidates_from_cells([cell])
+    assert len(first) == 8
+    assert first == second
+    assert _plan(first) == _plan(list(reversed(second)))
+    assert _plan(first)["authority"]["paid_execution_authorized"] is False
+
+
+def test_cap_is_global_nested_and_keeps_whole_clusters(tmp_path: Path) -> None:
+    cell = _cell(tmp_path)
+    for index, attempt in enumerate(cell["attempts"].values()):
+        attempt["params"]["source_cluster_id"] = f"cluster-{index // 4}"
+        attempt["params"]["planning_source"] = "one-arm"
+    candidates = subject.candidates_from_cells([cell])
+    first = _plan(candidates, 5)
+    assert len(first["selected"]) == 4
+    assert first["population"]["unused_call_capacity"] == 1
+    assert first["population"]["next_whole_cluster_size"] == 4
+    assert len({row["source_cluster_id"] for row in first["selected"]}) == 1
+    larger = _plan(candidates, 8)
+    assert first["selected"] == larger["selected"][:4]
+
+
+def test_exact_adaptive_dialogue_and_source_parameters_survive_resolution(tmp_path: Path) -> None:
+    cell = _cell(tmp_path, count=1)
+    attempt = cell["attempts"]["attempt-0"]
+    attempt["attacker"] = "crescendo"
+    attempt["turn_index"] = 3
+    attempt["rendered_input"] = [
+        {"role": "user", "content": "First input", "media": []},
+        {"role": "assistant", "content": "Retained LOCAL answer", "media": []},
+        {"role": "user", "content": "Exact follow-up", "media": [],
+         "tool_calls": [{"name": "fixture_tool", "arguments": {"x": 1}}]},
+    ]
+    candidates = subject.candidates_from_cells([cell])
+    plan = _plan(candidates, 1)
+    resolved = subject.resolve_inputs(plan, candidates=candidates, **_bindings())
+    assert resolved[0]["rendered_input"] == attempt["rendered_input"]
+    assert resolved[0]["local_sources"][0]["attempt_params_sha256"] == subject._sha(attempt["params"])
+    assert "Retained LOCAL answer" not in json.dumps(plan)
+    assert plan["selected"][0]["framework"] == "crescendo"
+    assert plan["selected"][0]["converted_corpus_sha256"] == HEX_B
+
+
+def test_selected_media_bytes_are_required_and_rechecked(tmp_path: Path) -> None:
+    cell = _cell(tmp_path, count=1)
+    asset = tmp_path / "asset.png"
+    asset.write_bytes(b"exact retained image bytes")
+    digest = hashlib.sha256(asset.read_bytes()).hexdigest()
+    cell["attempts"]["attempt-0"]["rendered_input"][0]["media"] = [
+        {"modality": "image", "mime": "image/png", "sha256": digest,
+         "path": "sha256:" + digest, "uri": None}]
+    candidates = subject.candidates_from_cells([cell])
+    with pytest.raises(ValueError, match="explicit local content index"):
+        _plan(candidates, 1)
+    plan = _plan(candidates, 1, media_index={digest: str(asset)})
+    assert plan["selected"][0]["media_bindings"][0]["sha256"] == digest
+    asset.write_bytes(b"different image bytes")
+    with pytest.raises(ValueError, match="bytes changed"):
+        subject.resolve_inputs(plan, candidates=candidates,
+                               **_bindings(media_index={digest: str(asset)}))
+
+
+def test_modality_incompatibility_is_na_not_a_caption(tmp_path: Path) -> None:
+    cell = _cell(tmp_path, count=1)
+    cell["attempts"]["attempt-0"]["rendered_input"][0]["media"] = [
+        {"modality": "image", "mime": "image/png", "sha256": HEX_A,
+         "path": "sha256:" + HEX_A}]
+    candidates = subject.candidates_from_cells([cell])
+    plan = _plan(candidates, 1, api_config={TARGET: {"modalities": ["text"]}})
+    assert plan["selected"] == []
+    assert plan["population"]["incompatible_modality_inputs"] == 1
+
+
+def test_multiple_local_sources_do_not_multiply_paid_inputs(tmp_path: Path) -> None:
+    first = _cell(tmp_path, count=2)
+    second = copy.deepcopy(first)
+    second["model"] = "vllm:another-model"
+    second["run_id"] = "different-local-run"
+    for attempt in second["attempts"].values():
+        attempt["target"] = second["model"]
+        attempt["run_id"] = second["run_id"]
+    candidates = subject.candidates_from_cells([first, second])
+    assert len(candidates) == 2
+    assert all(len(row["local_sources"]) == 2 for row in candidates)
+    assert len(_plan(candidates)["selected"]) == 2
+
+
+@pytest.mark.parametrize("cap", [0, -1, True, 21])
+def test_budget_cap_cannot_expand(tmp_path: Path, cap) -> None:
+    with pytest.raises(ValueError, match="global input cap"):
+        _plan(subject.candidates_from_cells([_cell(tmp_path)]), cap)
+
+
+def test_retries_and_changed_input_never_silently_pass(tmp_path: Path) -> None:
+    candidates = subject.candidates_from_cells([_cell(tmp_path)])
+    budget = _budget()
+    budget["routes"][0]["answer_retries"] = 1
+    material = {key: value for key, value in budget.items() if key != "projection_id"}
+    budget["projection_id"] = "hosted-budget-" + subject._sha(material)[:24]
+    with pytest.raises(ValueError, match="retries differ"):
+        _plan(candidates, budget=budget)
+    plan = _plan(candidates)
+    candidates[0]["rendered_input"][0]["content"] = "Changed input"
+    with pytest.raises(ValueError, match="input identity changed"):
+        subject.resolve_inputs(plan, candidates=candidates, **_bindings())
+
+
+def test_resigned_selection_changes_still_fail_source_rebuild(tmp_path: Path) -> None:
+    candidates = subject.candidates_from_cells([_cell(tmp_path)])
+    plan = _plan(candidates)
+    plan["selected"][0]["local_sources"][0]["attempt_id"] = "another-input"
+    material = {key: value for key, value in plan.items() if key != "plan_id"}
+    plan["plan_id"] = "hosted-inputs-" + subject._sha(material)[:24]
+    with pytest.raises(ValueError, match="membership changed"):
+        subject.resolve_inputs(plan, candidates=candidates, **_bindings())
+
+
+def test_write_is_create_only(tmp_path: Path) -> None:
+    path = tmp_path / "plan.json"
+    subject._write_new(path, {"retained": "original"})
+    with pytest.raises(ValueError, match="create-only"):
+        subject._write_new(path, {"replacement": "must not overwrite"})
+    assert json.loads(path.read_text())["retained"] == "original"
+
+
+def test_resolver_rechecks_retained_artifact_bytes(tmp_path: Path) -> None:
+    cell = _cell(tmp_path)
+    candidates = subject.candidates_from_cells([cell])
+    plan = _plan(candidates)
+    cell["artifacts"]["attempts"].write_text("changed source bytes", encoding="utf-8")
+    with pytest.raises(ValueError, match="bytes changed"):
+        subject.resolve_inputs(plan, candidates=candidates, **_bindings())

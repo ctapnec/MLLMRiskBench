@@ -4762,6 +4762,13 @@ live attestations from that same validated view. Do not combine original plan
 paths with copied result paths: request discovery then sees both copies of the
 same envelope and correctly refuses duplicate accounting. Keep original evidence
 and copy receipts unchanged.
+For a historical Level-1 stratum, explicitly supply
+`--historical-code-repository /absolute/path/to/trusted/checkout`. Keep each
+exact source revision in its own stratum. Its original source validates the
+retained plan, request and grid lifecycle; current reporting computes the
+accounting. The same option is available in suite summary and Level 2 for
+completed-cell inventories. This does not admit untrusted revisions, relabel
+partial grids as complete, or permit cross-condition metric pooling.
 `run_matrix` already wrote each `ura-request-envelope/6` before config/source
 materialization. Level-1 discovers those files and any bound
 `ura-request-error/1` automatically from the measured result tree and plan

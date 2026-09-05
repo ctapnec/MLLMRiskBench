@@ -222,6 +222,27 @@ identity. Prepared
 T3MP3ST, NanoGCG, IDEATOR and HarmBench rows retain their exact locally admitted
 artifacts. Native-only evidence is not converted into common Runner rows.
 
+`python -m experiments.hosted_retained_inputs` prepares this no-call handoff
+from revision-validated local Runner cells, the exact funded budget projection,
+API config and local inventory digest. Supply `--global-input-cap` only to
+reduce a funded route's count. The selector reads Attempt inputs and immutable
+input metadata, never answer text, security labels, scores or finish reasons.
+Missing-answer rows therefore remain eligible. Exact dialogue turns, source
+cluster/seed, converted-corpus digest and prepared-attack parameter identity
+are retained without reconstructing adaptive attacks. Identical inputs from
+several local models consume one paid input, with every local membership kept.
+For physical media, supply a SHA-256-bound `--media-index` JSON object mapping
+content digests to local files; selected bytes are rehashed, never fetched or
+captioned. The manifest stores source references, not copies of answers.
+
+Whole source clusters form a seed-0 balanced prefix under each global cap. If
+the next complete cluster would exceed the cap, unused capacity is reported;
+the cluster is neither split nor skipped to fill the remaining space. Thus
+equal modality populations share a nested prefix across different model caps.
+The handoff is explicitly `no_call_selection_only`: it does not validate the
+final campaign inventory, perform provider token counting, run the paid pilot,
+or authorize execution. Those existing A0-A3 prerequisites remain separate.
+
 Gate A1: every hosted row is a local-input subset, projected total spend
 including probes/canaries is within its partition, and target/judge calls are 0.
 
