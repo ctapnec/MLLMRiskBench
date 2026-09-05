@@ -111,9 +111,13 @@ def build_generation_conditions(cells: list[dict[str, Any]]) -> dict[str, Any]:
             group["rows"] += 1
             group[_stop(raw)] += 1
             missing = (raw.get("model_stability_status") == "failed_output"
+                       or raw.get("target_input_status") == "incompatible"
                        or judgments.get(attempt_id, {}).get("policy_evaluation_status") == "model_nonresponse")
             group["missing_output"] += int(missing)
-            group["input_context_error"] += int(raw.get("model_stability_category") == "context_limit_exceeded")
+            group["input_context_error"] += int(
+                raw.get("target_input_status") == "incompatible"
+                and raw.get("target_input_category") == "context_limit_exceeded"
+            )
             tokens = _map(response.get("tokens"))
             for name, aliases in (("input_tokens", ("input", "prompt")),
                                   ("output_tokens", ("output", "completion"))):

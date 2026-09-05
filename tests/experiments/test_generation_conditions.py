@@ -21,8 +21,9 @@ def _cell():
             "truncated": {"raw": {"backend": "ollama", "done_reason": "length", "generation": {
                 "num_ctx": 65536, "num_ctx_policy": "fit", "num_predict": 8192}},
                 "tokens": {"prompt": 50, "completion": 500}},
-            "missing": {"raw": {"model_stability_status": "failed_output",
-                "model_stability_category": "context_limit_exceeded"}, "tokens": None},
+            "missing": {"raw": {"target_input_status": "incompatible",
+                "target_input_category": "context_limit_exceeded",
+                "target_input_error_type": "TargetInputError"}, "tokens": None},
         },
         "judgments": [{"attempt_id": identity, "raw": {"effective_modality": "image"}}
                       for identity in ("normal", "truncated", "missing")],
@@ -80,6 +81,18 @@ def test_vllm_native_output_and_effective_context_are_not_missing():
     cell["responses"]["normal"]["tokens"]["input"] = 51
     with pytest.raises(ValueError, match="aliases disagree"):
         build_generation_conditions([cell])
+
+
+def test_missing_answer_is_not_an_input_context_error():
+    cell = _cell()
+    cell["responses"] = {"missing": {"raw": {
+        "model_stability_status": "failed_output",
+        "model_stability_category": "empty_final_output",
+    }, "tokens": None}}
+    row = build_generation_conditions([cell])["conditions"][0]
+    assert row["missing_output"] == 1
+    assert row["input_context_error"] == 0
+    assert row["truncated"] == 0
 
 
 @pytest.mark.parametrize("field,value", [
