@@ -310,6 +310,48 @@ def test_target_execution_publication_is_create_only(tmp_path: Path) -> None:
     assert (control / "model-execution.jsonl").read_bytes() == retained
 
 
+def test_hosted_child_declares_its_call_cap_and_rejects_an_over_cap_report(
+    tmp_path: Path,
+) -> None:
+    work, control = _roots(tmp_path)
+    start_child_controller(
+        work_root=work,
+        control_root=control,
+        campaign_id=control.name,
+        release_commit="a" * 40,
+        evidence_class="measured_hosted_api",
+        hard_stop_hours=24,
+        tmux_socket="ura-hosted-controller",
+        tmux_session="ura-hosted-controller",
+        target_execution=True,
+        hosted_calls_allowed=True,
+        target_call_cap=2,
+    )
+    marker = json.loads((control / "ENGINEERING_ONLY.json").read_text(encoding="utf-8"))
+    assert marker["hosted_calls_allowed"] is True
+    assert marker["target_call_cap"] == 2
+    with pytest.raises(ConsoleEventError, match="declared call cap"):
+        publish_target_execution(
+            work_root=work,
+            control_root=control,
+            target_attempts=3,
+            successful_target_generations=2,
+        )
+    publish_target_execution(
+        work_root=work,
+        control_root=control,
+        target_attempts=2,
+        successful_target_generations=1,
+    )
+    finish_child_controller(work_root=work, control_root=control, exit_code=1)
+    terminal = load_engineering_campaign(work / "runs", control.name)
+    assert terminal is not None
+    assert terminal.hosted_calls_allowed is True
+    assert terminal.target_call_cap == 2
+    assert terminal.model_attempted_calls == 2
+    assert terminal.model_successful_generations == 1
+
+
 def test_target_scope_rejects_an_execution_row_without_target_role(
     tmp_path: Path,
 ) -> None:

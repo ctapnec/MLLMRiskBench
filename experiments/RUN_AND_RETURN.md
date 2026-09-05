@@ -2103,7 +2103,13 @@ python -m experiments.hosted_retained_execute \
   --program /resolved/path/hosted-program.json \
   --program-sha256 '<program SHA-256>' \
   --budget-root /resolved/path/shared-hosted-budget \
-  --budget-plan-sha256 '<shared plan SHA-256>'
+  --budget-plan-sha256 '<shared plan SHA-256>' \
+  --project-root "$URA_REPO" \
+  --expected-commit '<clean deployed 40-hex commit>' \
+  --work-root "$URA_WORK" \
+  --control-root "$URA_WORK/runs/engineering/<fresh-hosted-job>" \
+  --tmux-socket '<the owning tmux socket>' \
+  --tmux-session '<the owning tmux session>'
 ```
 
 This is not a shortcut around the completed local campaign or normal Runner
@@ -2114,7 +2120,13 @@ its surface-specific counting policy. Future Haiku slots are funded using
 input identities; the later paired-output binding does not invent output
 hashes in advance. Run the caller in tmux and use the existing campaign/task
 event registration so the real jobs, logs and output artifacts appear in the
-console. Do not register an unstarted job as measured work.
+console. The CLI now performs that registration itself after final local-source,
+program, request-count and monetary admission. Run one program per named tmux
+session and pass that session's exact socket and name. Its marker declares
+`hosted_calls_allowed=true`, the selected target-call cap and target-only
+operational execution counts. A terminal or empty-response circuit still
+publishes the durable attempted/successful counts; it never reports the funded
+reservation as execution. Do not register an unstarted job as measured work.
 
 In the Build tab, one large role-aware model-picker modal serves both target and
 LLM-judge selection. Choose hosted or local, then use the hosted provider filter

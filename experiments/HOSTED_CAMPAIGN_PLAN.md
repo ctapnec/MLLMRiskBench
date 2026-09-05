@@ -315,9 +315,11 @@ bound program containing the existing Runner argv for each pilot and measured
 job. It revalidates the complete historical and RR evidence, reproduces the
 outcome-independent selection, and checks the exact registry, prices, request
 counts and funded slots before running those commands. Normal source,
-acquisition and transport admission still belongs to Runner. The tmux caller
-must register actual Jobs and task events through the existing campaign
-lifecycle; calling Runner alone does not publish an external job.
+acquisition and transport admission still belongs to Runner. Run each program
+in its own named tmux session. After all no-call admission succeeds, the CLI
+registers that exact controller as one hosted-capable Jobs row with its call cap;
+on success or failure it publishes durable target execution counts and a
+terminal event. Calling Runner alone does not publish an external job.
 
 The earlier input-selection `/1` bytes remain unchanged, including its
 descriptive `authority.requires_exact_provider_token_counts` field. That plan

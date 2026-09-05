@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import argparse
 import copy
+import re
 import stat
+import subprocess
 from contextlib import contextmanager
 from decimal import Decimal, ROUND_CEILING
 from pathlib import Path
@@ -24,6 +26,7 @@ from ura.targets.api import provider_attempt_admission
 
 SCHEMA = "ura-hosted-retained-execution-plan/1"
 TOKEN_COUNT_POLICY = "surface_specific_counts_with_declared_estimates_v1"
+_HEX40 = re.compile(r"[0-9a-f]{40}\Z")
 
 
 def _billing_provider(surface: str) -> str:
@@ -212,6 +215,138 @@ def execute(*, program_path: Path, program_sha256: str, budget_root: Path,
         if result != 0:
             raise RuntimeError("retained Runner job is unfinished; saved responses must be resumed, not repeated")
         outputs.append(Path(run_matrix.build_parser().parse_args(admission.job["argv"]).out))
+    return outputs
+
+
+def _validated_checkout(project_root: Path, expected_commit: str) -> Path:
+    """Bind the controller process to one clean deployed project revision."""
+    project = Path(project_root)
+    if (not _HEX40.fullmatch(expected_commit) or project.is_symlink()
+            or project.resolve(strict=True) != project):
+        raise ValueError("hosted controller requires a canonical project root and exact commit")
+    head = subprocess.run(
+        ["git", "-C", str(project), "rev-parse", "HEAD"], capture_output=True,
+        text=True, check=True,
+    ).stdout.strip()
+    changed = subprocess.run(
+        ["git", "-C", str(project), "status", "--porcelain", "--untracked-files=no"],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    if head != expected_commit or changed:
+        raise ValueError("hosted controller project checkout is not the clean expected commit")
+    return project
+
+
+def _fresh_control_root(work_root: Path, control_root: Path) -> Path:
+    work = Path(work_root)
+    control = Path(control_root)
+    if work.is_symlink() or work.resolve(strict=True) != work:
+        raise ValueError("hosted controller work root must be one canonical directory")
+    engineering = (work / "runs" / "engineering").resolve(strict=True)
+    if (control.is_symlink() or control.exists() or not control.is_absolute()
+            or control.parent.resolve(strict=True) != engineering):
+        raise ValueError("hosted controller requires a fresh direct engineering root")
+    control.mkdir(mode=0o700)
+    return control
+
+
+def _retained_execution_counts(program: Mapping[str, Any], budget: AttemptBudget) -> tuple[int, int]:
+    """Count logical target starts and durable usable responses for Jobs only."""
+    from experiments import run_matrix
+    from ura.data_models import Response
+    from ura.runner import Runner
+
+    requests = program["requests"]
+    attempted = sum(
+        budget.reserved_attempt_count(receipt["call_id"]) > 0
+        for receipt in requests.values()
+    )
+    responses = {}
+
+    def register(payload: object) -> None:
+        response = Response.model_validate(payload)
+        if response.target != program["target"]:
+            raise ValueError("hosted controller response target changed")
+        previous = responses.get(response.attempt_id)
+        dumped = response.model_dump(mode="json")
+        if previous is not None and previous != dumped:
+            raise ValueError("hosted controller found conflicting durable responses")
+        responses[response.attempt_id] = dumped
+
+    for job in program["jobs"]:
+        out = Path(run_matrix.build_parser().parse_args(job["argv"]).out)
+        finals = sorted(out.glob("*.responses.jsonl")) if out.is_dir() else []
+        final_names = {path.name for path in finals}
+        for path in finals:
+            if path.is_symlink() or path.stat().st_size > 64 * 1024 * 1024:
+                raise ValueError("hosted controller response file is unsafe or oversized")
+            for row in run_matrix._read_jsonl(path):  # noqa: SLF001
+                register(row)
+        for path in sorted(out.glob("*.responses.checkpoint.jsonl")) if out.is_dir() else []:
+            final_name = path.name.replace(".responses.checkpoint.jsonl", ".responses.jsonl")
+            if final_name in final_names:
+                continue
+            for record in Runner.load_response_checkpoint(path).values():
+                register(record["response"])
+    successful = sum(
+        row.get("raw", {}).get("model_stability_status") != "failed_output"
+        and row.get("raw", {}).get("target_input_status") != "incompatible"
+        and any((turn.get("content") or "").strip() for turn in row.get("output_turns", []))
+        for row in responses.values()
+    )
+    if len(responses) > attempted or successful > attempted:
+        raise ValueError("hosted controller retained-response accounting exceeds funded starts")
+    return attempted, successful
+
+
+def execute_registered(
+    *, program_path: Path, program_sha256: str, budget_root: Path,
+    budget_plan_sha256: str, project_root: Path, expected_commit: str,
+    work_root: Path, control_root: Path, tmux_socket: str, tmux_session: str,
+    hard_stop_hours: int = 168,
+) -> list[Path]:
+    """Run one funded target program as one visible tmux-owned campaign Job."""
+    from experiments.local_campaign.console_events import (
+        finish_child_controller, publish_target_execution, start_child_controller,
+    )
+
+    _validated_checkout(project_root, expected_commit)
+    program, _descriptor = load_bound_json(program_path, program_sha256)
+    budget = AttemptBudget(budget_root, budget_plan_sha256)
+    _validated_jobs(program, budget)  # Final local seal and all no-call bindings first.
+    call_cap = len(program["requests"])
+    control = _fresh_control_root(work_root, control_root)
+    start_child_controller(
+        work_root=work_root, control_root=control, campaign_id=control.name,
+        release_commit=expected_commit, evidence_class="measured_hosted_api",
+        hard_stop_hours=hard_stop_hours, tmux_socket=tmux_socket,
+        tmux_session=tmux_session, target_execution=True,
+        hosted_calls_allowed=True, target_call_cap=call_cap,
+    )
+    try:
+        outputs = execute(
+            program_path=program_path, program_sha256=program_sha256,
+            budget_root=budget_root, budget_plan_sha256=budget_plan_sha256,
+        )
+        attempted, successful = _retained_execution_counts(program, budget)
+        if attempted != call_cap or successful != call_cap:
+            raise RuntimeError("completed hosted program lacks its complete durable target population")
+    except BaseException:
+        try:
+            attempted, successful = _retained_execution_counts(program, budget)
+            publish_target_execution(
+                work_root=work_root, control_root=control,
+                target_attempts=attempted,
+                successful_target_generations=successful,
+            )
+        finally:
+            finish_child_controller(work_root=work_root, control_root=control, exit_code=1)
+        raise
+    publish_target_execution(
+        work_root=work_root, control_root=control, target_attempts=attempted,
+        successful_target_generations=successful,
+    )
+    finish_child_controller(work_root=work_root, control_root=control, exit_code=0)
     return outputs
 
 
@@ -508,9 +643,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--program-sha256", required=True)
     parser.add_argument("--budget-root", type=Path, required=True)
     parser.add_argument("--budget-plan-sha256", required=True)
+    parser.add_argument("--project-root", type=Path, required=True)
+    parser.add_argument("--expected-commit", required=True)
+    parser.add_argument("--work-root", type=Path, required=True)
+    parser.add_argument("--control-root", type=Path, required=True)
+    parser.add_argument("--tmux-socket", required=True)
+    parser.add_argument("--tmux-session", required=True)
+    parser.add_argument("--hard-stop-hours", type=int, default=168)
     args = parser.parse_args(argv)
-    for path in execute(program_path=args.program, program_sha256=args.program_sha256,
-                        budget_root=args.budget_root, budget_plan_sha256=args.budget_plan_sha256):
+    for path in execute_registered(
+        program_path=args.program, program_sha256=args.program_sha256,
+        budget_root=args.budget_root, budget_plan_sha256=args.budget_plan_sha256,
+        project_root=args.project_root, expected_commit=args.expected_commit,
+        work_root=args.work_root, control_root=args.control_root,
+        tmux_socket=args.tmux_socket, tmux_session=args.tmux_session,
+        hard_stop_hours=args.hard_stop_hours,
+    ):
         print(path)
     return 0
 

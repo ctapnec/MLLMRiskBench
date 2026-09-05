@@ -130,6 +130,12 @@ exhausted transport failure, opens the global `paid_provider` circuit before ano
 call starts. An operator must distinguish provider-completed empty output from
 interrupted transport and explicitly authorize a fresh bound plan and circuit
 reset after resolving the cause. Paid execution never resumes automatically.
+The retained hosted executor is itself the Jobs lifecycle owner: one bound
+target program runs in one named tmux session and appears as one hosted-capable
+operational job. It validates the final local source and monetary program before
+publishing a start marker, then reports only durable target starts and usable
+responses at terminal. A funded allowance is never presented as an executed
+call.
 The optional per-vLLM-model `max_model_len` is distinct from generation
 `max_tokens`: it sets the engine-context ceiling passed before KV-cache
 allocation. Omission delegates context length to the immutable checkpoint;

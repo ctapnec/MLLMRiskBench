@@ -316,6 +316,77 @@ def test_program_applies_peak_funded_deepseek_rates_to_settlement(tmp_path, monk
     assert jobs[0].prices["settlement_output"] == "3.96"
 
 
+def test_registered_execution_publishes_one_hosted_tmux_job(tmp_path, monkeypatch):
+    program, budget = _program(tmp_path, monkeypatch)
+    program_path = tmp_path / "hosted-program.json"
+    program_path.write_text(json.dumps(program))
+    program_sha = hashlib.sha256(program_path.read_bytes()).hexdigest()
+    work = tmp_path / "work"
+    (work / "runs" / "engineering").mkdir(parents=True)
+    control = work / "runs" / "engineering" / "hosted-gpt55"
+    project = tmp_path / "project"
+    project.mkdir()
+    outputs = [Path(job["argv"][job["argv"].index("--out") + 1]) for job in program["jobs"]]
+    monkeypatch.setattr(subject, "_validated_checkout", lambda root, commit: project)
+    monkeypatch.setattr(subject, "execute", lambda **kwargs: outputs)
+    monkeypatch.setattr(subject, "_retained_execution_counts", lambda value, money: (2, 2))
+
+    observed = subject.execute_registered(
+        program_path=program_path,
+        program_sha256=program_sha,
+        budget_root=budget.root,
+        budget_plan_sha256=budget.expected_plan_sha256,
+        project_root=project,
+        expected_commit="a" * 40,
+        work_root=work,
+        control_root=control,
+        tmux_socket="ura-hosted-gpt55",
+        tmux_session="hosted-gpt55",
+    )
+    assert observed == outputs
+    marker = json.loads((control / "ENGINEERING_ONLY.json").read_text())
+    assert marker["hosted_calls_allowed"] is True
+    assert marker["target_call_cap"] == 2
+    report = json.loads((control / "model-execution.jsonl").read_text())
+    assert report["attempted_calls"] == report["successful_generations"] == 2
+    events = [json.loads(line) for line in (control / "task-log.jsonl").read_text().splitlines()]
+    assert events[-2]["status"] == events[-1]["status"] == "passed"
+
+
+def test_registered_execution_rejects_incomplete_local_source_before_job_or_client(
+    tmp_path, monkeypatch,
+):
+    program, budget = _program(tmp_path, monkeypatch)
+    program_path = tmp_path / "hosted-program.json"
+    program_path.write_text(json.dumps(program))
+    work = tmp_path / "work"
+    (work / "runs" / "engineering").mkdir(parents=True)
+    control = work / "runs" / "engineering" / "hosted-blocked"
+    project = tmp_path / "project"
+    project.mkdir()
+    monkeypatch.setattr(subject, "_validated_checkout", lambda root, commit: project)
+    monkeypatch.setattr(
+        subject,
+        "_validated_jobs",
+        lambda value, money: (_ for _ in ()).throw(ValueError("RR incomplete")),
+    )
+    monkeypatch.setattr(subject, "execute", lambda **kwargs: pytest.fail("paid executor reached"))
+    with pytest.raises(ValueError, match="RR incomplete"):
+        subject.execute_registered(
+            program_path=program_path,
+            program_sha256=hashlib.sha256(program_path.read_bytes()).hexdigest(),
+            budget_root=budget.root,
+            budget_plan_sha256=budget.expected_plan_sha256,
+            project_root=project,
+            expected_commit="a" * 40,
+            work_root=work,
+            control_root=control,
+            tmux_socket="ura-hosted-blocked",
+            tmux_session="hosted-blocked",
+        )
+    assert not control.exists()
+
+
 @pytest.mark.parametrize("mutation", ["repeat_pilot", "skip_input", "changed_request", "changed_count", "answer_retry",
                                      "unfinished_local", "invented_judge", "wrong_predecessor", "measured_first"])
 def test_program_rejects_changed_selection_count_retry_or_unfinished_local(tmp_path, monkeypatch, mutation):

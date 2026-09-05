@@ -2,8 +2,9 @@
 
 The rig console discovers external engineering work only through its retained
 ``ura-engineering-campaign/1`` marker and task-event contract. These helpers let
-the versioned local-campaign controllers emit that contract without giving the
-console process ownership of their tmux sessions.
+versioned campaign controllers emit that contract without giving the console
+process ownership of their tmux sessions. Hosted execution must be declared
+explicitly; local controllers retain the false default.
 """
 
 from __future__ import annotations
@@ -210,6 +211,8 @@ def start_campaign(
     tmux_session: str,
     model_tasks: Sequence[str] | None = None,
     model_execution_scope: str | None = None,
+    hosted_calls_allowed: bool = False,
+    target_call_cap: int | None = None,
     at: str | None = None,
     initial_running_tasks: Sequence[str] = (),
 ) -> None:
@@ -220,6 +223,17 @@ def start_campaign(
         raise ConsoleEventError("release commit must be 40 lowercase hex characters")
     if not _EVIDENCE_CLASS.fullmatch(evidence_class):
         raise ConsoleEventError("invalid evidence class")
+    if not isinstance(hosted_calls_allowed, bool):
+        raise ConsoleEventError("hosted-calls declaration must be boolean")
+    if target_call_cap is not None and (
+        isinstance(target_call_cap, bool)
+        or not isinstance(target_call_cap, int)
+        or target_call_cap < 0
+        or target_call_cap > 1_000_000
+    ):
+        raise ConsoleEventError("target call cap must be between 0 and 1000000")
+    if hosted_calls_allowed and (target_call_cap is None or target_call_cap < 1):
+        raise ConsoleEventError("hosted execution requires a positive target call cap")
     if isinstance(hard_stop_hours, bool) or not 1 <= hard_stop_hours <= 24 * 365:
         raise ConsoleEventError("hard stop must be between 1 and 8760 hours")
     if (
@@ -265,7 +279,7 @@ def start_campaign(
         "release_commit": release_commit,
         "evidence_class": evidence_class,
         "thesis_empirical_evidence": False,
-        "hosted_calls_allowed": False,
+        "hosted_calls_allowed": hosted_calls_allowed,
         "hard_stop_hours": hard_stop_hours,
         "started_at": timestamp,
         "planned_tasks": list(tasks),
@@ -274,6 +288,8 @@ def start_campaign(
     }
     if declared_model_tasks is not None:
         marker["model_tasks"] = list(declared_model_tasks)
+    if target_call_cap is not None:
+        marker["target_call_cap"] = target_call_cap
     if model_execution_scope is not None:
         marker["model_execution_scope"] = model_execution_scope
     # Publish the marker last. The console ignores an event log without its
@@ -337,7 +353,7 @@ def _append_events(
         or marker.get("schema") != _CAMPAIGN_SCHEMA
         or marker.get("campaign_id") != root.name
         or marker.get("thesis_empirical_evidence") is not False
-        or marker.get("hosted_calls_allowed") is not False
+        or not isinstance(marker.get("hosted_calls_allowed"), bool)
     ):
         raise ConsoleEventError("campaign marker does not own this control root")
     planned_tasks = marker.get("planned_tasks")
@@ -414,6 +430,8 @@ def start_child_controller(
     tmux_socket: str,
     tmux_session: str,
     target_execution: bool = False,
+    hosted_calls_allowed: bool = False,
+    target_call_cap: int | None = None,
     at: str | None = None,
 ) -> None:
     """Register an independently launched child under the normal Jobs contract."""
@@ -432,6 +450,8 @@ def start_child_controller(
         tmux_session=tmux_session,
         model_tasks=(_CONTROLLER_TASK,) if target_execution else (),
         model_execution_scope=_TARGET_ONLY_MIXED_SCOPE if target_execution else None,
+        hosted_calls_allowed=hosted_calls_allowed,
+        target_call_cap=target_call_cap,
         at=at,
         initial_running_tasks=(_CONTROLLER_TASK,),
     )
@@ -459,7 +479,7 @@ def publish_target_execution(
         or marker.get("schema") != _CAMPAIGN_SCHEMA
         or marker.get("campaign_id") != root.name
         or marker.get("thesis_empirical_evidence") is not False
-        or marker.get("hosted_calls_allowed") is not False
+        or not isinstance(marker.get("hosted_calls_allowed"), bool)
     ):
         raise ConsoleEventError("campaign marker does not own this control root")
     if (
@@ -470,6 +490,13 @@ def publish_target_execution(
         raise ConsoleEventError(
             "target execution requires the exact singleton mixed-controller declaration"
         )
+    target_call_cap = marker.get("target_call_cap")
+    if marker.get("hosted_calls_allowed") is True and (
+        isinstance(target_call_cap, bool)
+        or not isinstance(target_call_cap, int)
+        or target_call_cap < target_attempts
+    ):
+        raise ConsoleEventError("hosted target execution exceeds its declared call cap")
     _write_create_only(
         root / "model-execution.jsonl",
         _canonical_line(
@@ -532,6 +559,8 @@ def _parser() -> argparse.ArgumentParser:
     child_start.add_argument("--tmux-socket", required=True)
     child_start.add_argument("--tmux-session", required=True)
     child_start.add_argument("--target-execution", action="store_true")
+    child_start.add_argument("--hosted-calls-allowed", action="store_true")
+    child_start.add_argument("--target-call-cap", type=int)
     child_start.add_argument("--at")
     child_finish = subparsers.add_parser("child-finish")
     child_finish.add_argument("--work-root", type=Path, required=True)
@@ -582,6 +611,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             tmux_socket=args.tmux_socket,
             tmux_session=args.tmux_session,
             target_execution=args.target_execution,
+            hosted_calls_allowed=args.hosted_calls_allowed,
+            target_call_cap=args.target_call_cap,
             at=args.at,
         )
     elif args.action == "child-finish":
