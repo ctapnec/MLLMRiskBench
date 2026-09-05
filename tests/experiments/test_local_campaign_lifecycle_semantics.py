@@ -499,6 +499,29 @@ def test_measured_envelope_and_grid_requests_are_semantically_bound(
     assert measured["request"]["execution_purpose"] == "measured_run"
 
 
+@pytest.mark.parametrize("rich", [False, True])
+def test_measured_envelope_accepts_exact_retained_descriptor_shapes(
+    phase7: ModuleType, tmp_path: Path, rich: bool
+) -> None:
+    project, spec, measured_path, _, expected = _request_fixture(phase7, tmp_path)
+    descriptor = spec["gate5"]["final_request_envelope"]
+    if rich:
+        gate5_path = Path(descriptor["path"])
+        value = json.loads(gate5_path.read_text(encoding="utf-8"))
+        descriptor.update(request_envelope_descriptor(gate5_path, value))
+    assert phase7.validate_measured_request_envelope_artifact(
+        measured_path, lane="rjudge-qwen3-vl", spec=spec,
+        expected_project_binding=project,
+    ) == expected
+    if rich:
+        descriptor["envelope_id"] = "request-envelope-" + "0" * 24
+        with pytest.raises(phase7.Phase7Error, match="validation failed"):
+            phase7.validate_measured_request_envelope_artifact(
+                measured_path, lane="rjudge-qwen3-vl", spec=spec,
+                expected_project_binding=project,
+            )
+
+
 def test_measured_grid_binds_runner_resolved_vllm_revision(
     phase7: ModuleType, tmp_path: Path
 ) -> None:

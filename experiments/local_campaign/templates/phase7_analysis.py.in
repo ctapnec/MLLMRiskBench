@@ -8153,12 +8153,23 @@ def validate_measured_request_envelope_artifact(
         gate5_descriptor = (
             gate5.get("final_request_envelope") if isinstance(gate5, dict) else None
         )
+        artifact_fields = {"path", "sha256", "bytes"}
+        request_fields = artifact_fields | {"file", "envelope_id"}
+        if not isinstance(gate5_descriptor, dict) or set(gate5_descriptor) not in (
+            artifact_fields, request_fields,
+        ):
+            raise Phase7Error(f"{lane}: Gate 5 request-envelope descriptor fields differ")
         gate5_path, gate5_payload = descriptor_bytes(
-            gate5_descriptor, label=f"{lane} Gate 5 request envelope"
+            {key: gate5_descriptor[key] for key in artifact_fields},
+            label=f"{lane} Gate 5 request envelope",
         )
         gate5_envelope, gate5_loaded_descriptor = _request_envelope_from_bytes(
             gate5_path, gate5_payload, label=f"{lane} Gate 5 request envelope"
         )
+        if set(gate5_descriptor) == request_fields and {
+            key: value for key, value in gate5_descriptor.items() if key != "path"
+        } != gate5_loaded_descriptor:
+            raise Phase7Error(f"{lane}: Gate 5 request-envelope content identity differs")
     except Exception as exc:  # noqa: BLE001 - exact retained-request boundary
         raise Phase7Error(
             f"{lane}: measured request-envelope validation failed: {type(exc).__name__}"
