@@ -1990,6 +1990,50 @@ def test_phase7_transfer_index_accepts_single_and_faceted_outputs(
         phase7.validated_transfer_index_facets(collision)
 
 
+def test_transfer_index_preserves_historical_cohort_and_unavailable_run_keys(
+    phase7: ModuleType,
+) -> None:
+    first, second = "a" * 64, "b" * 64
+    key = "fixture__" + first
+
+    def audit(signature: str, run: str | None = None) -> dict[str, object]:
+        value = {
+            "facet": {"attacker": "replay", "corpus": "fixture", "defense": "none"},
+            "cohort_signature": signature,
+            "retained_source_validations": [{"source_commit": "c" * 40}],
+        }
+        if run:
+            value.update({
+                "run_ids": {"vllm:fixture/model": run},
+                "comparison_unavailable_reason": "multiple_completed_runs_for_same_model_in_exact_cohort",
+            })
+        return value
+
+    index = {
+        "schema_version": "2.1-faceted", "attacker": "replay", "defense": "none",
+        "corpora": [key], "unexplained_exclusions": 0,
+        "facets": {key: {"load_audit": audit(first)}},
+        "artifacts": {key: {"json": f"transfer_matrix__replay__{key}.json"}},
+        "not_applicable_facets": {
+            f"fixture__{second}__{run}": {
+                "reason": "multiple_completed_runs_for_same_model_in_exact_cohort",
+                "load_audit": audit(second, run), "unexplained_exclusions": 0,
+            } for run in ("run-1", "run-2")
+        },
+    }
+    facets, unavailable = phase7.validated_transfer_index_facets(index)
+    assert set(facets) == {key} and len(unavailable) == 2
+    for mutate in (
+        lambda value: value["facets"][key]["load_audit"].__setitem__("cohort_signature", second),
+        lambda value: value["facets"][key]["load_audit"].pop("retained_source_validations"),
+        lambda value: value["not_applicable_facets"][f"fixture__{second}__run-1"]["load_audit"]["run_ids"].__setitem__("vllm:fixture/model", "run-3"),
+    ):
+        changed = copy.deepcopy(index)
+        mutate(changed)
+        with pytest.raises(phase7.Phase7Error, match="transfer .*selector|transfer N/A facet"):
+            phase7.validated_transfer_index_facets(changed)
+
+
 def test_lifecycle_root_does_not_absorb_nested_recovery(
     phase7: ModuleType, tmp_path: Path
 ) -> None:

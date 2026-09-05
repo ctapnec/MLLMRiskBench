@@ -3195,16 +3195,45 @@ def validated_transfer_index_facets(
         or set(facets) & set(not_applicable)
     ):
         raise Phase7Error("faceted transfer inventory changed")
+    historical_cohorts: dict[str, set[str]] = {}
+    for row in (*facets.values(), *not_applicable.values()):
+        audit = row.get("load_audit") if isinstance(row, dict) else None
+        if not isinstance(audit, dict) or "retained_source_validations" not in audit:
+            continue
+        selector = audit.get("facet")
+        signature = audit.get("cohort_signature")
+        if (not isinstance(selector, dict)
+            or set(selector) != {"attacker", "corpus", "defense"}
+            or selector.get("attacker") != "replay" or selector.get("defense") != "none"
+            or not isinstance(selector.get("corpus"), str) or not selector["corpus"]
+            or not isinstance(signature, str) or not re.fullmatch(r"[0-9a-f]{64}", signature)
+            or not isinstance(audit["retained_source_validations"], list)
+            or not audit["retained_source_validations"]):
+            raise Phase7Error("historical transfer cohort identity changed")
+        historical_cohorts.setdefault(selector["corpus"], set()).add(signature)
+
+    def selector_matches(key: str, audit: object) -> bool:
+        if not isinstance(audit, dict):
+            return False
+        selector = audit.get("facet")
+        if "retained_source_validations" not in audit:
+            return selector == {"attacker": "replay", "corpus": key, "defense": "none"}
+        corpus = selector["corpus"]
+        expected = (f"{corpus}__{audit['cohort_signature']}"
+                    if len(historical_cohorts[corpus]) > 1 else corpus)
+        if audit.get("comparison_unavailable_reason") == "multiple_completed_runs_for_same_model_in_exact_cohort":
+            runs = audit.get("run_ids")
+            if (key not in not_applicable or not isinstance(runs, dict) or len(runs) != 1
+                or not isinstance(next(iter(runs.values())), str) or not next(iter(runs.values()))):
+                return False
+            expected += "__" + next(iter(runs.values()))
+        return key == expected
+
     for corpus, facet in facets.items():
         audit = facet.get("load_audit") if isinstance(facet, dict) else None
-        selector = audit.get("facet") if isinstance(audit, dict) else None
         artifact = artifacts.get(corpus)
         stem = f"transfer_matrix__replay__{_transfer_safe_component(corpus)}"
-        if selector != {
-            "attacker": "replay",
-            "corpus": corpus,
-            "defense": "none",
-        } or (
+        if not selector_matches(corpus, audit) or (
             not isinstance(artifact, dict)
             or set(artifact) not in ({"json"}, {"json", "png"})
             or artifact.get("json") != f"{stem}.json"
@@ -3221,18 +3250,12 @@ def validated_transfer_index_facets(
         raise Phase7Error("transfer facet artifact names collide")
     for corpus, row in not_applicable.items():
         audit = row.get("load_audit") if isinstance(row, dict) else None
-        selector = audit.get("facet") if isinstance(audit, dict) else None
         if (
             not isinstance(row, dict)
             or not isinstance(row.get("reason"), str)
             or not row["reason"]
             or row.get("unexplained_exclusions") != 0
-            or selector
-            != {
-                "attacker": "replay",
-                "corpus": corpus,
-                "defense": "none",
-            }
+            or not selector_matches(corpus, audit)
         ):
             raise Phase7Error(f"transfer N/A facet changed: {corpus}")
     return dict(facets), dict(not_applicable)
