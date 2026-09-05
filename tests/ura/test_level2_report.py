@@ -143,6 +143,16 @@ def _measured_cohort(
     monkeypatch.setattr(
         run_matrix, "build_target", lambda *_a, **_kw: _StableLocalTarget(digest)
     )
+    # This exporter fixture already substitutes the GPU target and revision
+    # admission. Supply its explicit readiness result as well; production
+    # profile validation is covered by test_local_model_readiness.
+    monkeypatch.setattr(
+        "experiments.local_model_profiles.apply_profile",
+        lambda _spec, config: ({**config, "timeout": 120.0}, {
+            "generation_tokens": config["max_tokens"],
+            "request_timeout_seconds": 120.0,
+        }),
+    )
     common = [
         "--local", requested_spec,
         "--local-config", str(local_config_path),

@@ -149,9 +149,14 @@ elif [ "$MODE" = "--profile-recovery-handoff" ]; then
   echo "verification mode: profile recovery handoff (${#DEPLOY_TESTS[@]} selectors)"
 elif [ "$MODE" = "--analysis-handoff" ]; then
   # Completed local inference and runtime-installation checks are not repeated.
-  # This fixed set covers the retained-reader and hosted-budget handoff only.
+  # This fixed set covers the retained-reader, token reporting and hosted handoff.
   DEPLOY_TESTS=(
     tests/experiments/test_retained_artifact_reader.py
+    tests/experiments/test_generation_conditions.py
+    tests/ura/test_target_regressions.py
+    tests/ura/test_level2_report.py
+    tests/ura/test_rig_web_stats_campaigns.py
+    tests/experiments/test_local_campaign_controllers.py::test_phase7_compares_the_expanded_gate5_revision_binding
     tests/experiments/test_retained_response_judge.py
     tests/experiments/test_retained_response_judge_execute.py
     tests/experiments/test_retained_response_judge_pair.py

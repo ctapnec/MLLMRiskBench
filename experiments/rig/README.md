@@ -33,7 +33,7 @@ identity. The example records only the first two statuses. A measured cell
 requires the third as well, for a documentation-verified and a candidate row
 alike.
 
-The shipped example contains exactly these 25 keys. Astra and the four bounded
+The shipped example contains exactly these 26 keys. Astra, Fable 5.1 and the four bounded
 Fable/Sol variants were added on 5 September 2026; the other dated entries above
 remain subject to their existing account checks.
 

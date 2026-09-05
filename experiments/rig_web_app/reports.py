@@ -462,11 +462,14 @@ def _validate_report_document(kind: str, document: Mapping[str, Any]) -> None:
     if document.get("schema_version") == "ura-level2-report/2":
         from experiments.generation_conditions import validate_generation_conditions
 
-        cells = document.get("inputs", {}).get("cells")
+        inputs = document.get("inputs")
+        cells = inputs.get("cells") if isinstance(inputs, Mapping) else None
         if not isinstance(cells, list) or any(not isinstance(cell, dict) for cell in cells):
             raise ValueError("Level-2 generation source cells are missing")
-        run_ids = {cell.get("run_id") for cell in cells}
-        if len(run_ids) != len(cells) or any(not isinstance(run_id, str) for run_id in run_ids):
+        if any(not isinstance(cell.get("run_id"), str) for cell in cells):
+            raise ValueError("Level-2 generation source cells are ambiguous")
+        run_ids = {cell["run_id"] for cell in cells}
+        if len(run_ids) != len(cells):
             raise ValueError("Level-2 generation source cells are ambiguous")
         conditions = document.get("generation_conditions")
         validate_generation_conditions(conditions, run_ids)
