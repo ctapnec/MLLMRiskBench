@@ -235,7 +235,8 @@ def _program(tmp_path, monkeypatch):
 
     sources = {"api_config": save("api.json", api), "pricing": save("prices.json", _pricing()),
                "budgets": save("budgets.json", _budgets()), "media_index": save("media.json", {})}
-    portable = lambda raw: {"file": Path(raw["path"]).name, "sha256": raw["sha256"], "bytes": raw["bytes"]}
+    def portable(raw):
+        return {"file": Path(raw["path"]).name, "sha256": raw["sha256"], "bytes": raw["bytes"]}
     budget_projection = money.build_projection(api_config=api, pricing=_pricing(), budgets=_budgets(),
         descriptors={"api_config": portable(sources["api_config"]), "pricing_config": portable(sources["pricing"]),
                      "budgets": portable(sources["budgets"])}, pricing_as_of="2026-09-03")
@@ -297,7 +298,7 @@ def test_program_rebuilds_exact_selection_and_fixed_disjoint_pilot_before_any_cl
 
 
 @pytest.mark.parametrize("mutation", ["repeat_pilot", "skip_input", "changed_request", "changed_count", "answer_retry",
-                                     "unfinished_local", "invented_judge", "wrong_predecessor"])
+                                     "unfinished_local", "invented_judge", "wrong_predecessor", "measured_first"])
 def test_program_rejects_changed_selection_count_retry_or_unfinished_local(tmp_path, monkeypatch, mutation):
     program, budget = _program(tmp_path, monkeypatch)
     if mutation == "repeat_pilot":
@@ -315,6 +316,8 @@ def test_program_rejects_changed_selection_count_retry_or_unfinished_local(tmp_p
         next(iter(program["requests"].values()))["judge_call_ids"]["hosted"] = "invented-output-hash"
     elif mutation == "wrong_predecessor":
         program["predecessor_selection"]["sha256"] = "a" * 64
+    elif mutation == "measured_first":
+        program["jobs"].reverse()
     else:
         monkeypatch.setattr(subject, "_validated_local_cells", lambda program: (_ for _ in ()).throw(ValueError("RR incomplete")))
         monkeypatch.setattr(run_matrix, "build_target", lambda *args, **kwargs: pytest.fail("unfinished local source reached target factory"))

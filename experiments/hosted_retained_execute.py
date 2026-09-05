@@ -156,26 +156,27 @@ class _Admission:
         missing = (response.raw.get("model_stability_status") == "failed_output"
                    or response.raw.get("target_input_status") == "incompatible"
                    or not any((turn.content or "").strip() for turn in response.output_turns))
+        tokens = response.tokens if isinstance(response.tokens, Mapping) else {}
         cost = None
-        if not missing and all(type(response.tokens.get(key)) is int and response.tokens[key] >= 0
+        if not missing and all(type(tokens.get(key)) is int and tokens[key] >= 0
                                for key in ("input", "output")):
             # Without a complete cache billing breakdown, do not invent an
             # exact discounted bill: the already-funded exposure stays held.
             if self.prices.get("cache_read") is None and self.prices.get("cache_write") is None:
-                cost = _cost(response.tokens["input"], response.tokens["output"], self.prices)
-            elif "cached_input" in response.tokens and "cache_write_input" in response.tokens:
-                cached, written = response.tokens["cached_input"], response.tokens["cache_write_input"]
+                cost = _cost(tokens["input"], tokens["output"], self.prices)
+            elif "cached_input" in tokens and "cache_write_input" in tokens:
+                cached, written = tokens["cached_input"], tokens["cache_write_input"]
                 if (type(cached) is int and type(written) is int and min(cached, written) >= 0
-                    and cached + written <= response.tokens["input"]):
-                    total = (Decimal(response.tokens["input"] - cached - written) * Decimal(self.prices["input"])
+                    and cached + written <= tokens["input"]):
+                    total = (Decimal(tokens["input"] - cached - written) * Decimal(self.prices["input"])
                              + Decimal(cached) * Decimal(self.prices["cache_read"])
                              + Decimal(written) * Decimal(self.prices["cache_write"])
-                             + Decimal(response.tokens["output"]) * Decimal(self.prices["output"]))
+                             + Decimal(tokens["output"]) * Decimal(self.prices["output"]))
                     cost = int(total.to_integral_value(rounding=ROUND_CEILING))
         self.budget.settle(call_id, count, cost)
-        if (cost is None and all(type(response.tokens.get(key)) is int and response.tokens[key] >= 0
+        if (cost is None and all(type(tokens.get(key)) is int and tokens[key] >= 0
                                  for key in ("input", "output"))
-            and _cost(response.tokens["input"], response.tokens["output"],
+            and _cost(tokens["input"], tokens["output"],
                       {**self.prices, "input": self.prices.get("reservation_input", self.prices["input"])})
             > receipt["bound_microusd"]):
             self._circuit("reported_usage_requires_above_reservation_billing_review", call_id)
@@ -265,11 +266,16 @@ def _validated_jobs(program: dict, budget: AttemptBudget) -> list[_Admission]:
     checked_plan = None
     admitted = []
     pilot_ids = []
+    measured_started = False
     for job in jobs:
         if (job.get("purpose") not in {"attestation_probe", "diagnostic_canary", "measured_run"}
             or not isinstance(job.get("name"), str) or job["name"] in names):
             raise ValueError("retained program purpose or job identity differs")
         names.add(job["name"])
+        if job["purpose"] == "measured_run":
+            measured_started = True
+        elif measured_started:
+            raise ValueError("funded readiness/canary jobs must finish before any measured job")
         args = run_matrix.build_parser().parse_args(job["argv"])
         if not Path(args.out).is_absolute() or Path(args.out).resolve() != Path(args.out):
             raise ValueError("retained job output must be one canonical absolute Runner directory")
