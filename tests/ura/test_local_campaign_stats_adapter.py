@@ -1196,7 +1196,7 @@ def test_stats_links_sealed_phase7_reports_to_watcher_campaign(
     assert "Rows by terminal state" in detail_text
     assert "Failure accounting" in detail_text
     assert "canonical" in detail_text and ">46<" in detail_text
-    assert "output policy amendment" in detail_text and ">4<" in detail_text
+    assert "output policy amendment" in detail_text and ">7<" in detail_text
     assert "followon prepared" in detail_text and ">3<" in detail_text
     assert "current ollama" in detail_text and ">14<" in detail_text
     assert "current ollama stability" in detail_text and ">14<" in detail_text
