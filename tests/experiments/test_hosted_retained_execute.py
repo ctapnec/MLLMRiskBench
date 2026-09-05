@@ -229,12 +229,12 @@ def test_fully_bound_program_still_cannot_skip_final_campaign_admission(tmp_path
         subject._validated_jobs({}, None)
 
 
-def _program(tmp_path, monkeypatch):
+def _program(tmp_path, monkeypatch, *, target_spec="openai:gpt-5.5"):
     from test_hosted_campaign_budget import _api_config, _pricing, _budgets
     from experiments import hosted_campaign_budget as money, hosted_retained_inputs as materializer
     from experiments.hosted_request_tokens import count_request
     points, cell, _old_plan, _old_bindings, _value, _config = _fixture(tmp_path, adaptive=True)
-    target_spec = "openai:gpt-5.5"
+    billing_provider = "deepseek" if target_spec.startswith("deepseek:") else "openai"
     api = _api_config()
     api[target_spec]["temperature"] = None
 
@@ -271,7 +271,7 @@ def _program(tmp_path, monkeypatch):
                          "input_tokens": count["input_tokens"], "max_output_tokens": 8192, "bound_microusd": 500000}
         requests[key]["judge_call_ids"] = {cohort: "judge-" + cohort + "-" + subject._sha({"target": target_spec, "input_id": key})
                                            for cohort in ("local", "hosted")}
-        slots.append({"call_id": call_id, "provider": "openai", "pool": "target", "bound_microusd": 500000})
+        slots.append({"call_id": call_id, "provider": billing_provider, "pool": "target", "bound_microusd": 500000})
         slots += [{"call_id": value, "provider": "anthropic", "pool": "judge", "bound_microusd": 14848}
                   for value in requests[key]["judge_call_ids"].values()]
         config = save(f"attacker{index}.json", {"replay": {"replay_artifact": replay["path"],
@@ -290,7 +290,7 @@ def _program(tmp_path, monkeypatch):
     descriptor = create_budget(tmp_path / "program-money", provider_budgets_microusd={
         "anthropic": 90000000, "openai": 40000000, "kimi": 15000000, "deepseek": 10000000}, planned_calls=slots)
     program = {"schema": subject.SCHEMA, "budget_plan_sha256": descriptor["sha256"], "sources": sources,
-               "target": target_spec, "provider": "openai", "max_output_tokens": 8192,
+               "target": target_spec, "provider": billing_provider, "max_output_tokens": 8192,
                "pricing_as_of": "2026-09-03", "jobs": jobs, "requests": requests,
                "token_count_policy": subject.TOKEN_COUNT_POLICY,
                "replaced_descriptive_prerequisite": "authority.requires_exact_provider_token_counts",
@@ -305,6 +305,15 @@ def test_program_rebuilds_exact_selection_and_fixed_disjoint_pilot_before_any_cl
     assert len(jobs) == 2
     assert set(jobs[0].entries).isdisjoint(jobs[1].entries)
     assert budget.snapshot()["pools"]["openai:target"]["unstarted_first_commitments_microusd"] == 1000000
+
+
+def test_program_applies_peak_funded_deepseek_rates_to_settlement(tmp_path, monkeypatch):
+    program, budget = _program(tmp_path, monkeypatch, target_spec="deepseek:deepseek-v4-pro")
+    jobs = subject._validated_jobs(program, budget)
+    assert jobs[0].prices["reservation_input"] == "1.32"
+    assert jobs[0].prices["reservation_output"] == "3.96"
+    assert jobs[0].prices["settlement_input"] == "1.32"
+    assert jobs[0].prices["settlement_output"] == "3.96"
 
 
 @pytest.mark.parametrize("mutation", ["repeat_pilot", "skip_input", "changed_request", "changed_count", "answer_retry",
