@@ -24,6 +24,7 @@ from experiments.local_campaign.console_events import (
     start_child_controller,
 )
 from experiments.local_campaign.current_ollama_gate5 import _descriptor, _stable_file
+from experiments.local_campaign.current_ollama_phase6 import _level1_counts
 from experiments.local_campaign.failed_output_recovery_phase6 import (
     _active_jsonl,
     _durable_outcomes,
@@ -57,6 +58,8 @@ from ura.runner import CODE_VERSION, Runner
 
 
 SCHEMA = "ura-vllm-context-recovery-phase6/2"
+POSTWRITE_SCHEMA = "ura-vllm-context-recovery-phase6/3"
+POSTWRITE_RECEIPT_SCHEMA = "ura-vllm-context-postwrite-recovery/1"
 LAUNCH_SCHEMA = "ura-vllm-context-recovery-phase6-launch/2"
 STATE_SCHEMA = "ura-vllm-context-recovery-phase6-unit-state/2"
 UNIT_ID = "vllm-context-recovery-gptgeochat-qwen3-vl-hardware-fit"
@@ -72,6 +75,168 @@ HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 CONTEXT_REASON = re.compile(
     r"^vLLM prompt length ([0-9]+) exceeds admitted context limit ([0-9]+)$"
 )
+
+
+def _postwrite_source(
+    failed_completion_path: Path,
+    *,
+    runner_root: Path,
+) -> dict[str, Any]:
+    """Validate a Runner result followed only by vLLM's shutdown abort."""
+
+    failed_completion_path = failed_completion_path.resolve(strict=True)
+    source_root = failed_completion_path.parent
+    failed = _load_json(
+        failed_completion_path, label="failed vLLM context-recovery completion"
+    )
+    fields = {
+        "schema",
+        "status",
+        "controller_exit_code",
+        "completed_at_utc",
+        "expected_commit",
+        "runner_code_version",
+        "target_answer_retries",
+        "input_recovery_completion",
+        "recovery_selection",
+        "context_config",
+        "gate5_amendment",
+        "unit_order",
+        "unit_results",
+        "unit_failures",
+        "target_execution",
+        "no_completed_rows_repeated",
+        "cross_context_condition_pooling_permitted",
+        "paid_provider_calls",
+    }
+    expected_log = source_root / "units" / UNIT_ID / "measured.run.log"
+    failures = failed.get("unit_failures")
+    failure = failures.get(UNIT_ID) if isinstance(failures, dict) else None
+    if (
+        set(failed) != fields
+        or source_root.is_symlink()
+        or source_root.resolve(strict=True) != source_root
+        or source_root.parent.name != "engineering"
+        or failed.get("schema") != SCHEMA
+        or failed.get("status") != "complete_with_failures"
+        or failed.get("controller_exit_code") != 1
+        or failed.get("runner_code_version") != CODE_VERSION
+        or failed.get("target_answer_retries") != 1
+        or failed.get("unit_order") != [UNIT_ID]
+        or failed.get("unit_results") != {}
+        or failed.get("target_execution")
+        != {
+            "target_attempts": 0,
+            "successful_target_generations": 0,
+            "missing_responses": 0,
+        }
+        or failure
+        != {
+            "status": "failed",
+            "error_type": "RuntimeError",
+            "error": f"Runner exited -6; see {expected_log}",
+        }
+        or failed.get("no_completed_rows_repeated") is not True
+        or failed.get("cross_context_condition_pooling_permitted") is not False
+        or failed.get("paid_provider_calls") != 0
+        or _stable_file(
+            source_root / ".exit", label="failed context-recovery exit marker"
+        ).decode("ascii").strip()
+        != "1"
+    ):
+        raise ValueError("postwrite source is not the exact vLLM teardown failure")
+    state_path = source_root / "units" / UNIT_ID / "state.json"
+    state = _load_json(state_path, label="postwrite source measured state")
+    argv = state.get("runner_argv")
+    result_root = Path(str(state.get("result_root", "")))
+    expected_result_root = runner_root / UNIT_ID / source_root.name
+    if (
+        state.get("schema") != STATE_SCHEMA
+        or state.get("unit_id") != UNIT_ID
+        or state.get("source_lane") != SOURCE_LANE
+        or state.get("corpus") != CORPUS
+        or state.get("selected_records") != CONTEXT_RECOVERY_RECORDS
+        or state.get("target_answer_retries") != 1
+        or state.get("target_call_cap") != CONTEXT_RECOVERY_RECORDS * 2
+        or not isinstance(argv, list)
+        or any(not isinstance(item, str) for item in argv)
+        or result_root.is_symlink()
+        or result_root.resolve(strict=True) != expected_result_root
+    ):
+        raise ValueError("postwrite source measured state changed")
+    log_payload = _stable_file(expected_log, label="postwrite source measured log")
+    required_log_fragments = (
+        b"done: 1 cells written, 0 already complete, 0 failed; artifacts in ",
+        b"Assertion failed: pfd.revents & POLLIN",
+        b"Bad file descriptor",
+    )
+    if any(fragment not in log_payload for fragment in required_log_fragments):
+        raise ValueError("Runner failure was not the admitted postwrite teardown abort")
+    if len(list(result_root.glob("*.complete.json"))) != 1:
+        raise ValueError("postwrite source lacks one sealed completion marker")
+    return {
+        "failed": failed,
+        "source_root": source_root,
+        "state": state,
+        "state_path": state_path,
+        "result_root": result_root,
+        "measured_log": expected_log,
+    }
+
+
+def _validate_postwrite_receipt(
+    descriptor: object,
+    *,
+    runner_root: Path,
+) -> dict[str, Any]:
+    receipt_path = _validate_descriptor(
+        descriptor, label="vLLM postwrite recovery receipt"
+    )
+    receipt = _load_json(receipt_path, label="vLLM postwrite recovery receipt")
+    fields = {
+        "schema",
+        "status",
+        "recovered_at_utc",
+        "recovery_implementation_commit",
+        "failed_completion",
+        "source_control_root",
+        "measured_run_log",
+        "result_root",
+        "observed_runner_exit_code",
+        "classification",
+        "recovery_target_calls",
+        "successful_rows_repeated",
+    }
+    failed_path = _validate_descriptor(
+        receipt.get("failed_completion"), label="postwrite failed completion"
+    )
+    source = _postwrite_source(failed_path, runner_root=runner_root)
+    log_path = _validate_descriptor(
+        receipt.get("measured_run_log"), label="postwrite measured log"
+    )
+    if (
+        set(receipt) != fields
+        or receipt.get("schema") != POSTWRITE_RECEIPT_SCHEMA
+        or receipt.get("status") != "recovered"
+        or HEX40.fullmatch(str(receipt.get("recovery_implementation_commit", "")))
+        is None
+        or receipt.get("source_control_root") != str(source["source_root"])
+        or log_path != source["measured_log"]
+        or receipt.get("result_root") != str(source["result_root"])
+        or receipt.get("observed_runner_exit_code") != -6
+        or receipt.get("classification")
+        != "vllm_worker_teardown_abort_after_sealed_result"
+        or receipt.get("recovery_target_calls") != 0
+        or receipt.get("successful_rows_repeated") != 0
+        or re.fullmatch(
+            r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z",
+            str(receipt.get("recovered_at_utc", "")),
+        )
+        is None
+    ):
+        raise ValueError("vLLM postwrite recovery receipt changed")
+    source["receipt_path"] = receipt_path
+    return source
 
 
 def build_context_selection(
@@ -280,9 +445,12 @@ def validate_completion(
         "cross_context_condition_pooling_permitted",
         "paid_provider_calls",
     }
+    postwrite = value.get("schema") == POSTWRITE_SCHEMA
+    if postwrite:
+        fields.add("postwrite_recovery")
     if (
         set(value) != fields
-        or value.get("schema") != SCHEMA
+        or value.get("schema") not in {SCHEMA, POSTWRITE_SCHEMA}
         or value.get("status") != "complete"
         or value.get("controller_exit_code") != 0
         or HEX40.fullmatch(str(value.get("expected_commit", ""))) is None
@@ -307,6 +475,25 @@ def validate_completion(
         or control_root.parent.name != "engineering"
     ):
         raise ValueError("vLLM context-recovery control root changed")
+    metric_control_root = control_root
+    if postwrite:
+        source = _validate_postwrite_receipt(
+            value.get("postwrite_recovery"), runner_root=runner_root
+        )
+        if source["receipt_path"] != control_root / "postwrite-recovery.json":
+            raise ValueError("vLLM postwrite recovery receipt moved")
+        metric_control_root = source["source_root"]
+        failed = source["failed"]
+        for field in (
+            "expected_commit",
+            "runner_code_version",
+            "input_recovery_completion",
+            "recovery_selection",
+            "context_config",
+            "gate5_amendment",
+        ):
+            if value.get(field) != failed.get(field):
+                raise ValueError("postwrite completion changed its source binding")
 
     input_path = _validate_descriptor(
         value.get("input_recovery_completion"),
@@ -332,9 +519,10 @@ def validate_completion(
         value.get("gate5_amendment"), label="vLLM context Gate 5 amendment"
     )
     if (
-        selector_path != control_root / "inputs/gptgeochat-context-incompatible.json"
-        or config_path != control_root / "configs/qwen3-vl-hardware-fit.json"
-        or amendment_path != control_root / "gate5-context-amendment.json"
+        selector_path
+        != metric_control_root / "inputs/gptgeochat-context-incompatible.json"
+        or config_path != metric_control_root / "configs/qwen3-vl-hardware-fit.json"
+        or amendment_path != metric_control_root / "gate5-context-amendment.json"
         or _load_json(selector_path, label="vLLM context selector") != expected_selector
     ):
         raise ValueError("vLLM context-recovery bound artifact changed")
@@ -389,7 +577,7 @@ def validate_completion(
         corpus=CORPUS,
         selected_records=CONTEXT_RECOVERY_RECORDS,
         runner_root=runner_root,
-        control_root=control_root,
+        control_root=metric_control_root,
         state_schema=STATE_SCHEMA,
         completion=completion_descriptor,
     )
@@ -659,6 +847,155 @@ def run(args: argparse.Namespace) -> int:
     return int(completion["controller_exit_code"])
 
 
+def run_postwrite_recovery(args: argparse.Namespace) -> int:
+    """Seal an already-complete result after a vLLM worker teardown abort."""
+
+    if HEX40.fullmatch(args.recovery_commit) is None:
+        raise ValueError("recovery commit must be one lowercase Git object ID")
+    project_root = args.project_root.resolve(strict=True)
+    python = _project_python(project_root, args.python)
+    work_root = args.work_root.resolve(strict=True)
+    runner_root = (work_root / "runs/thesis/runner").resolve(strict=True)
+    control_root = args.control_root
+    if control_root.exists() or control_root.is_symlink():
+        raise FileExistsError("fresh postwrite-recovery root already exists")
+    if (
+        not control_root.is_absolute()
+        or control_root.parent.resolve(strict=True) != work_root / "runs/engineering"
+    ):
+        raise ValueError("postwrite-recovery root must be a direct engineering campaign")
+    failed_path = args.failed_completion.resolve(strict=True)
+    failed_payload = _stable_file(
+        failed_path, label="failed vLLM context-recovery completion"
+    )
+    if hashlib.sha256(failed_payload).hexdigest() != args.failed_completion_sha256:
+        raise ValueError("failed vLLM context-recovery completion digest changed")
+    source = _postwrite_source(failed_path, runner_root=runner_root)
+
+    control_root.mkdir(mode=0o700)
+    _create_json(
+        control_root / "launch.json",
+        {
+            "schema": "ura-vllm-context-postwrite-recovery-launch/1",
+            "started_at_utc": _utc_now(),
+            "recovery_implementation_commit": args.recovery_commit,
+            "failed_completion": _descriptor(
+                failed_path, label="failed vLLM context-recovery completion"
+            ),
+            "recovery_target_calls": 0,
+            "successful_rows_repeated": 0,
+        },
+    )
+    start_child_controller(
+        work_root=work_root,
+        control_root=control_root,
+        campaign_id=control_root.name,
+        release_commit=args.recovery_commit,
+        evidence_class="measured_local_vllm_postwrite_recovery",
+        hard_stop_hours=1,
+        tmux_socket=args.tmux_socket,
+        tmux_session=args.tmux_session,
+        target_execution=False,
+    )
+    try:
+        unit_root = source["source_root"] / "units" / UNIT_ID
+        attempted, successful, missing = _level1_counts(
+            python=python,
+            lane_root=unit_root,
+            state=source["state"],
+            timeout=3600,
+        )
+        if attempted != CONTEXT_RECOVERY_RECORDS:
+            raise ValueError(
+                f"postwrite result completed {attempted}, expected "
+                f"{CONTEXT_RECOVERY_RECORDS} rows"
+            )
+        receipt_path = control_root / "postwrite-recovery.json"
+        _create_json(
+            receipt_path,
+            {
+                "schema": POSTWRITE_RECEIPT_SCHEMA,
+                "status": "recovered",
+                "recovered_at_utc": _utc_now(),
+                "recovery_implementation_commit": args.recovery_commit,
+                "failed_completion": _descriptor(
+                    failed_path, label="failed vLLM context-recovery completion"
+                ),
+                "source_control_root": str(source["source_root"]),
+                "measured_run_log": _descriptor(
+                    source["measured_log"], label="postwrite measured log"
+                ),
+                "result_root": str(source["result_root"]),
+                "observed_runner_exit_code": -6,
+                "classification": "vllm_worker_teardown_abort_after_sealed_result",
+                "recovery_target_calls": 0,
+                "successful_rows_repeated": 0,
+            },
+        )
+        failed = source["failed"]
+        result = {
+            "status": "complete",
+            "unit_id": UNIT_ID,
+            "source_lane": SOURCE_LANE,
+            "corpus": CORPUS,
+            "selected_records": CONTEXT_RECOVERY_RECORDS,
+            "target_answer_retries": 1,
+            "target_call_cap": CONTEXT_RECOVERY_RECORDS * 2,
+            "target_attempts": attempted,
+            "successful_target_generations": successful,
+            "missing_responses": missing,
+            "result_root": str(source["result_root"]),
+            "state": _descriptor(source["state_path"], label="context state"),
+            "level1": _descriptor(unit_root / "level1.json", label="Level 1 evidence"),
+        }
+        completion_path = control_root / "completion.json"
+        _create_json(
+            completion_path,
+            {
+                "schema": POSTWRITE_SCHEMA,
+                "status": "complete",
+                "controller_exit_code": 0,
+                "completed_at_utc": _utc_now(),
+                "expected_commit": failed["expected_commit"],
+                "runner_code_version": failed["runner_code_version"],
+                "target_answer_retries": 1,
+                "input_recovery_completion": failed["input_recovery_completion"],
+                "recovery_selection": failed["recovery_selection"],
+                "context_config": failed["context_config"],
+                "gate5_amendment": failed["gate5_amendment"],
+                "postwrite_recovery": _descriptor(
+                    receipt_path, label="vLLM postwrite recovery receipt"
+                ),
+                "unit_order": [UNIT_ID],
+                "unit_results": {UNIT_ID: result},
+                "unit_failures": {},
+                "target_execution": {
+                    "target_attempts": attempted,
+                    "successful_target_generations": successful,
+                    "missing_responses": missing,
+                },
+                "no_completed_rows_repeated": True,
+                "cross_context_condition_pooling_permitted": False,
+                "paid_provider_calls": 0,
+            },
+        )
+        validate_completion(completion_path, runner_root=runner_root)
+        with (control_root / ".exit").open("xb") as handle:
+            handle.write(b"0\n")
+        finish_child_controller(
+            work_root=work_root, control_root=control_root, exit_code=0
+        )
+        return 0
+    except BaseException:
+        if not (control_root / ".exit").exists():
+            with (control_root / ".exit").open("xb") as handle:
+                handle.write(b"1\n")
+        finish_child_controller(
+            work_root=work_root, control_root=control_root, exit_code=1
+        )
+        raise
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--expected-commit", required=True)
@@ -676,8 +1013,28 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def build_postwrite_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=run_postwrite_recovery.__doc__)
+    parser.add_argument("--recovery-commit", required=True)
+    parser.add_argument("--project-root", type=Path, required=True)
+    parser.add_argument("--python", type=Path, required=True)
+    parser.add_argument("--work-root", type=Path, required=True)
+    parser.add_argument("--control-root", type=Path, required=True)
+    parser.add_argument("--failed-completion", type=Path, required=True)
+    parser.add_argument("--failed-completion-sha256", required=True)
+    parser.add_argument("--tmux-socket", required=True)
+    parser.add_argument("--tmux-session", required=True)
+    return parser
+
+
 def main(argv: Sequence[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    raw_argv = list(os.sys.argv[1:] if argv is None else argv)
+    if raw_argv[:1] == ["postwrite-recover"]:
+        args = build_postwrite_parser().parse_args(raw_argv[1:])
+        if HEX64.fullmatch(args.failed_completion_sha256) is None:
+            raise ValueError("failed completion SHA-256 is invalid")
+        return run_postwrite_recovery(args)
+    args = build_parser().parse_args(raw_argv)
     if HEX64.fullmatch(args.project_revision_sha256) is None:
         raise ValueError("project revision SHA-256 is invalid")
     if HEX64.fullmatch(args.input_recovery_completion_sha256) is None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import inspect
 
 import pytest
 
@@ -107,3 +108,41 @@ def test_context_recovery_cli_requires_the_retained_input_completion() -> None:
 
     assert parsed.input_recovery_completion.name == "completion.json"
     assert recovery.STATE_SCHEMA == "ura-vllm-context-recovery-phase6-unit-state/2"
+
+
+def test_postwrite_recovery_is_level1_validated_and_makes_no_model_call() -> None:
+    source = inspect.getsource(recovery.run_postwrite_recovery)
+
+    assert "_level1_counts(" in source
+    assert "validate_completion(completion_path" in source
+    assert "experiments.run_matrix" not in source
+    assert '"recovery_target_calls": 0' in source
+    assert '"successful_rows_repeated": 0' in source
+
+
+def test_postwrite_recovery_cli_binds_the_failed_completion() -> None:
+    parsed = recovery.build_postwrite_parser().parse_args(
+        [
+            "--recovery-commit",
+            "b" * 40,
+            "--project-root",
+            "/project",
+            "--python",
+            "/project/.venv/bin/python",
+            "--work-root",
+            "/work",
+            "--control-root",
+            "/work/runs/engineering/postwrite-recovery",
+            "--failed-completion",
+            "/work/runs/engineering/context-recovery/completion.json",
+            "--failed-completion-sha256",
+            hashlib.sha256(b"failed").hexdigest(),
+            "--tmux-socket",
+            "postwrite-socket",
+            "--tmux-session",
+            "postwrite-session",
+        ]
+    )
+
+    assert parsed.failed_completion.name == "completion.json"
+    assert recovery.POSTWRITE_SCHEMA.endswith("/3")

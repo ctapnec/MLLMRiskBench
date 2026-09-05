@@ -27,6 +27,41 @@ def _multi_corpus_vllm_args(out: Path) -> list[str]:
     ]
 
 
+def _single_cell_vllm_args(out: Path) -> list[str]:
+    argv = _multi_corpus_vllm_args(out)
+    argv[argv.index("--corpora") + 1] = "first"
+    return argv
+
+
+def test_single_cell_vllm_grid_recovers_postwrite_teardown_abort(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    out = tmp_path / "run"
+    calls = 0
+
+    def child(_command, *, env, check):
+        nonlocal calls
+        assert env[run_matrix._VLLM_GRID_CHILD_ENV] == "1"
+        assert check is False
+        calls += 1
+        out.mkdir(exist_ok=True)
+        if calls == 1:
+            (out / "only.complete.json").write_text("{}", encoding="utf-8")
+            return SimpleNamespace(returncode=-6)
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.delenv(run_matrix._VLLM_GRID_CHILD_ENV, raising=False)
+    monkeypatch.setattr(run_matrix.subprocess, "run", child)
+    monkeypatch.setattr(
+        run_matrix,
+        "_main",
+        lambda _argv: pytest.fail("the recycling parent must not load a model"),
+    )
+
+    assert run_matrix.main(_single_cell_vllm_args(out)) == 0
+    assert calls == 2
+
+
 def test_multi_cell_vllm_grid_recycles_only_after_durable_progress(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

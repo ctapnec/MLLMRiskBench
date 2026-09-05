@@ -7903,10 +7903,11 @@ def _vllm_grid_process_recycling(
     """Return the output root and cell bound for a recyclable vLLM grid.
 
     vLLM 0.27's synchronous in-process engine can retain its CUDA allocations
-    after its official shutdown hook.  A multi-cell post-factum run would then
-    fail while reopening the same model for its next cell.  Keep each attempt
-    inside the normal in-process admission boundary, but let the operating
-    system reclaim that child before another incomplete cell is resumed.
+    or abort a tensor-parallel worker after its official shutdown hook. Keep
+    each attempt inside the normal in-process admission boundary, but let the
+    operating system reclaim that child before the parent verifies that no
+    incomplete cell remains. This also covers a one-cell grid whose sealed
+    result was written before a late worker teardown abort.
     """
 
     if _PROCESS_ENVIRON.get(_VLLM_GRID_CHILD_ENV) == "1" or not any(
@@ -7948,7 +7949,7 @@ def _vllm_grid_process_recycling(
     ):
         return None
     cell_bound = len(corpora) * len(attackers)
-    if cell_bound <= 1:
+    if cell_bound < 1:
         return None
     return Path(args.out), cell_bound
 
