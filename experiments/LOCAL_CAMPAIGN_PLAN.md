@@ -45,6 +45,20 @@ conditions; input coverage does not authorize metric pooling. This
 paragraph is operating status, not thesis
 evidence and not a product feature.
 
+RR analysis supplement. The validated 144-condition historical inventory keeps
+its original scope and revision-separated results. The current-profile RR
+controller in `experiments.local_campaign.rr_profiled_phase6` publishes its own
+parent and measured-unit Jobs. After all four units complete,
+`experiments.local_campaign.rr_profiled_analysis` validates that completion and
+uses the existing Level-1/Level-2 exporters and generic Stats registration for a
+separate RR cohort. It reports coverage, outcomes, model stability, effective
+context, output allowance, token usage and truncation. This does not overwrite
+the historical RR failures or pool RR with the base model. A paired defense
+estimate additionally requires matching input and serving conditions. Gate 7
+for the whole local program requires both the historical analysis and this
+supplement, plus the input-alignment audit; a historical-only analysis seal
+does not authorize the hosted follow-on.
+
 Goal: exercise and, where the admission gates allow, measure the complete
 portfolio without spending provider budget:
 
