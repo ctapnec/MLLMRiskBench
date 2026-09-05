@@ -1,5 +1,13 @@
 {
+  "openai:gpt-6-astra": {
+    "modalities": ["text", "image"],
+    "max_tokens": 4096,
+    "temperature": null
+  },
   "anthropic-fable:claude-fable-5;effort=high;max_tokens=25000": {
+    "modalities": ["text", "image"]
+  },
+  "anthropic-fable:claude-fable-5;effort=high;max_tokens=4096": {
     "modalities": ["text", "image"]
   },
   "anthropic:claude-opus-5": {
@@ -22,6 +30,9 @@
     "temperature": 0.0
   },
   "openai-responses:gpt-5.6-sol;reasoning_mode=pro;reasoning_effort=medium;reasoning_context=all_turns": {
+    "modalities": ["text", "image"]
+  },
+  "openai-responses:gpt-5.6-sol;reasoning_mode=pro;reasoning_effort=medium;reasoning_context=all_turns;max_output_tokens=4096": {
     "modalities": ["text", "image"]
   },
   "openai:gpt-5.6-terra": {

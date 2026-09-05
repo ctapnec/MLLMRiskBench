@@ -132,7 +132,7 @@ def test_pair_ceiling_cannot_exceed_the_complete_hosted_campaign() -> None:
     local = [_candidate(0, cohort="local")]
     hosted = [_candidate(0, cohort="hosted")]
 
-    with pytest.raises(ValueError, match=r"\[1,590\]"):
+    with pytest.raises(ValueError, match=r"\[1,1350\]"):
         _build(local, hosted, limit=subject.MAX_PAIR_LIMIT + 1)
 
 

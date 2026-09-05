@@ -148,9 +148,9 @@ def canonical_api_target_identity(spec: str) -> tuple[str, str]:
     requested = spec.strip()
     if not requested:
         raise ValueError("API target identity requires a non-blank spec")
-    if requested in {_ANTHROPIC_FABLE_MODEL, _ANTHROPIC_FABLE_SPEC}:
+    if requested in {_ANTHROPIC_FABLE_MODEL, _ANTHROPIC_FABLE_SPEC, _ANTHROPIC_FABLE_BUDGET_SPEC}:
         return "anthropic", _ANTHROPIC_FABLE_MODEL
-    if requested == _OPENAI_SOL_PRO_SPEC:
+    if requested in {_OPENAI_SOL_PRO_SPEC, _OPENAI_SOL_BUDGET_SPEC}:
         return "openai", _OPENAI_SOL_PRO_MODEL
     if ":" in requested:
         provider, model = requested.split(":", 1)
@@ -179,6 +179,7 @@ _MODEL_ADAPTER_MODALITIES: dict[tuple[str, str], tuple[str, ...]] = {
     ("anthropic", "claude-fable-5"): ("text", "image"),
     ("anthropic", "claude-haiku-4-5-20251001"): ("text", "image"),
     ("openai", "gpt-5.6-sol"): ("text", "image"),
+    ("openai", "gpt-6-astra"): ("text", "image"),
     ("openai", "gpt-5.6-terra"): ("text", "image"),
     ("openai", "gpt-5.6-luna"): ("text", "image"),
     ("openai", "gpt-5.1-2025-11-13"): ("text", "image"),
@@ -1183,6 +1184,9 @@ _ANTHROPIC_FABLE_MODEL = "claude-fable-5"
 _ANTHROPIC_FABLE_SPEC = (
     "anthropic-fable:claude-fable-5;effort=high;max_tokens=25000"
 )
+_ANTHROPIC_FABLE_BUDGET_SPEC = (
+    "anthropic-fable:claude-fable-5;effort=high;max_tokens=4096"
+)
 
 
 class AnthropicFableTarget(AnthropicTarget):
@@ -1190,6 +1194,8 @@ class AnthropicFableTarget(AnthropicTarget):
 
     name = _ANTHROPIC_FABLE_SPEC
     MAX_TOKENS = 25_000
+    BUDGET_SPEC = _ANTHROPIC_FABLE_BUDGET_SPEC
+    BUDGET_MAX_TOKENS = 4_096
     EFFORT = "high"
     THINKING_TYPE = "adaptive"
     accepts_provider_thinking = True
@@ -1207,15 +1213,18 @@ class AnthropicFableTarget(AnthropicTarget):
             raise ValueError(
                 "the fixed Fable condition requires model 'claude-fable-5'"
             )
-        if requested_spec is not None and requested_spec != _ANTHROPIC_FABLE_SPEC:
+        if requested_spec is not None and requested_spec not in {
+            _ANTHROPIC_FABLE_SPEC, _ANTHROPIC_FABLE_BUDGET_SPEC
+        }:
             raise ValueError(
                 "the Fable target must use the canonical spec "
                 f"{_ANTHROPIC_FABLE_SPEC!r}"
             )
         super().__init__(
             model,
-            max_tokens=self.MAX_TOKENS,
-            requested_spec=_ANTHROPIC_FABLE_SPEC,
+            max_tokens=(self.BUDGET_MAX_TOKENS
+                        if requested_spec == self.BUDGET_SPEC else self.MAX_TOKENS),
+            requested_spec=requested_spec or _ANTHROPIC_FABLE_SPEC,
             timeout=timeout,
             max_retries=max_retries,
             media_roots=media_roots,
@@ -1621,7 +1630,7 @@ class OpenAITarget(BaseTarget):
         self.sdk_max_retries = 0
         self.max_transport_attempts_per_call = self.max_retries + 1
         self.media_roots = _media_roots(media_roots)
-        self.supports_seed = bool(supports_seed)
+        self.supports_seed = bool(supports_seed) and model != "gpt-6-astra"
         self.modality_support = _validated_provider_modalities(
             provider,
             modality_support or _adapter_modalities(provider, model)
@@ -1703,9 +1712,9 @@ class OpenAITarget(BaseTarget):
         client = self._get_client()
         messages = self._to_messages(dialog)
 
-        # GPT-5 / o-series reasoning models require max_completion_tokens
+        # GPT-5/6 and o-series reasoning models require max_completion_tokens.
         token_key = ("max_completion_tokens"
-                     if self.model.startswith(("gpt-5", "o1", "o3", "o4")) else "max_tokens")
+                     if self.model.startswith(("gpt-5", "gpt-6", "o1", "o3", "o4")) else "max_tokens")
         request: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
@@ -1859,6 +1868,7 @@ _OPENAI_SOL_PRO_SPEC = (
     "openai-responses:gpt-5.6-sol;reasoning_mode=pro;"
     "reasoning_effort=medium;reasoning_context=all_turns"
 )
+_OPENAI_SOL_BUDGET_SPEC = _OPENAI_SOL_PRO_SPEC + ";max_output_tokens=4096"
 
 
 class OpenAIResponsesTarget(OpenAITarget):
@@ -1873,6 +1883,8 @@ class OpenAIResponsesTarget(OpenAITarget):
 
     name = _OPENAI_SOL_PRO_SPEC
     MAX_OUTPUT_TOKENS = 25_000
+    BUDGET_SPEC = _OPENAI_SOL_BUDGET_SPEC
+    BUDGET_MAX_OUTPUT_TOKENS = 4_096
     REASONING_MODE = "pro"
     REASONING_EFFORT = "medium"
     REASONING_CONTEXT = "all_turns"
@@ -1890,16 +1902,19 @@ class OpenAIResponsesTarget(OpenAITarget):
             raise ValueError(
                 "the fixed Sol Pro condition requires model 'gpt-5.6-sol'"
             )
-        if requested_spec is not None and requested_spec != _OPENAI_SOL_PRO_SPEC:
+        if requested_spec is not None and requested_spec not in {
+            _OPENAI_SOL_PRO_SPEC, _OPENAI_SOL_BUDGET_SPEC
+        }:
             raise ValueError(
                 "the Sol Pro target must use the canonical spec "
                 f"{_OPENAI_SOL_PRO_SPEC!r}"
             )
         super().__init__(
             model,
-            max_tokens=self.MAX_OUTPUT_TOKENS,
+            max_tokens=(self.BUDGET_MAX_OUTPUT_TOKENS
+                        if requested_spec == self.BUDGET_SPEC else self.MAX_OUTPUT_TOKENS),
             provider="openai",
-            requested_spec=_OPENAI_SOL_PRO_SPEC,
+            requested_spec=requested_spec or _OPENAI_SOL_PRO_SPEC,
             temperature=0.0,
             timeout=timeout,
             max_retries=max_retries,
@@ -1907,7 +1922,7 @@ class OpenAIResponsesTarget(OpenAITarget):
             supports_seed=False,
         )
         self.api_surface = "responses"
-        self.max_output_tokens = self.MAX_OUTPUT_TOKENS
+        self.max_output_tokens = self.max_tokens
         self.reasoning_mode = self.REASONING_MODE
         self.reasoning_effort = self.REASONING_EFFORT
         self.reasoning_context = self.REASONING_CONTEXT
@@ -3034,7 +3049,8 @@ def api_target_endpoint_identity(
 def api_target_requires_config(spec: str) -> bool:
     """Whether a measured target needs an explicit exact-spec API condition."""
 
-    if spec in {_ANTHROPIC_FABLE_SPEC, _OPENAI_SOL_PRO_SPEC, _ANTHROPIC_FABLE_MODEL}:
+    if spec in {_ANTHROPIC_FABLE_SPEC, _OPENAI_SOL_PRO_SPEC, _ANTHROPIC_FABLE_MODEL,
+                _ANTHROPIC_FABLE_BUDGET_SPEC, _OPENAI_SOL_BUDGET_SPEC}:
         return False
     if ":" in spec:
         return True
@@ -3254,22 +3270,22 @@ def build_api_target(
         provider, model = spec.split(":", 1)
         provider = provider.lower()
         if provider == "anthropic-fable":
-            if spec != _ANTHROPIC_FABLE_SPEC:
+            if spec not in {_ANTHROPIC_FABLE_SPEC, _ANTHROPIC_FABLE_BUDGET_SPEC}:
                 raise ValueError(
                     "the only fixed Anthropic Fable condition is "
                     f"{_ANTHROPIC_FABLE_SPEC!r}"
                 )
             return AnthropicFableTarget(
-                _ANTHROPIC_FABLE_MODEL, requested_spec=_ANTHROPIC_FABLE_SPEC
+                _ANTHROPIC_FABLE_MODEL, requested_spec=spec
             )
         if provider == "openai-responses":
-            if spec != _OPENAI_SOL_PRO_SPEC:
+            if spec not in {_OPENAI_SOL_PRO_SPEC, _OPENAI_SOL_BUDGET_SPEC}:
                 raise ValueError(
                     "the only fixed OpenAI Responses condition is "
                     f"{_OPENAI_SOL_PRO_SPEC!r}"
                 )
             return OpenAIResponsesTarget(
-                _OPENAI_SOL_PRO_MODEL, requested_spec=_OPENAI_SOL_PRO_SPEC
+                _OPENAI_SOL_PRO_MODEL, requested_spec=spec
             )
         if provider in {"anthropic", "claude"}:
             if model == _ANTHROPIC_FABLE_MODEL:

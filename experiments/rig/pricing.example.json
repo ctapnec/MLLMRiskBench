@@ -261,6 +261,23 @@
     },
     "openai": {
       "models": {
+        "gpt-6-astra": {
+          "rates": [
+            {
+              "currency": "USD",
+              "effective_date": "2026-09-05",
+              "per_million_tokens": {
+                "batch_input": null,
+                "batch_output": null,
+                "cache_read": null,
+                "cache_write": null,
+                "input": null,
+                "output": null,
+                "reasoning": null
+              }
+            }
+          ]
+        },
         "gpt-5.5": {
           "rates": [
             {

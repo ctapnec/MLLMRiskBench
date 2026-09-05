@@ -29,8 +29,12 @@ from ura.targets.api import DEFAULT_HOSTED_HTTP_ERROR_RETRIES
 
 SCHEMA = "ura-retained-response-judge-pair-plan/1"
 ALGORITHM = "seeded_balanced_round_robin_matched_retained_output_pairs_v1"
-MAX_PAIR_LIMIT = 590
-MAX_COST_MICROUSD = 7_750_000
+# The operator's 80-percent allocation includes both members of every pair.
+# Historical /1 plans retain their own smaller content-bound quantity and spend.
+MAX_PAIR_LIMIT = 1_350
+MAX_COST_MICROUSD = 18_000_000
+DEFAULT_PAIR_LIMIT = MAX_PAIR_LIMIT
+DEFAULT_COST_MICROUSD = MAX_COST_MICROUSD
 _PAIR_DIMENSIONS = (
     "local_exact_model",
     "hosted_exact_model",
@@ -258,9 +262,9 @@ def build_pair_plan(
     judge_model: str,
     api_config_sha256: str,
     pricing_condition: Mapping[str, object],
-    limit: int = MAX_PAIR_LIMIT,
+    limit: int = DEFAULT_PAIR_LIMIT,
     seed: int = 0,
-    max_cost_microusd: int = MAX_COST_MICROUSD,
+    max_cost_microusd: int = DEFAULT_COST_MICROUSD,
 ) -> dict[str, Any]:
     judge_model = _text(judge_model, label="judge model")
     if not judge_model.startswith("anthropic:claude-haiku-"):
@@ -273,7 +277,7 @@ def build_pair_plan(
         or not 1 <= max_cost_microusd <= MAX_COST_MICROUSD
     ):
         raise ValueError(
-            "matched Haiku cost ceiling must be positive and at most USD 7.75"
+            "matched Haiku cost ceiling must be positive and at most USD 18"
         )
     edges, match_audit = _pair_edges(
         local_candidates, hosted_candidates, seed=seed
@@ -511,9 +515,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--pricing-config", type=Path, required=True)
     parser.add_argument("--pricing-config-sha256", required=True)
     parser.add_argument("--pricing-as-of", required=True)
-    parser.add_argument("--pair-limit", type=int, default=MAX_PAIR_LIMIT)
+    parser.add_argument("--pair-limit", type=int, default=DEFAULT_PAIR_LIMIT)
     parser.add_argument("--sample-seed", type=int, default=0)
-    parser.add_argument("--max-cost-microusd", type=int, default=MAX_COST_MICROUSD)
+    parser.add_argument("--max-cost-microusd", type=int, default=DEFAULT_COST_MICROUSD)
     parser.add_argument("--ack-hosted-judge-data-transfer", action="store_true")
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)

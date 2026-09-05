@@ -113,6 +113,11 @@ are observed.
 
 ### Budget-fitted execution plan
 
+Revised 5 September 2026: the operator authorizes 80 percent provider ceilings
+and shorter output allowances in exchange for more inputs. Anthropic available
+funds are USD 90, giving a USD 72 cap including all Haiku judging. OpenAI's
+ceiling is USD 32. The earlier per-arm forecast above remains historical.
+
 The funded plan uses the operator-requested quantities as global retained-input
 caps. It draws an exact balanced subset from the local Phase 7 inputs, and each
 selected entry permits one paid target call. This avoids the unintended
@@ -126,47 +131,55 @@ target call. The maximum column instead uses the route's configured
 columns assume at most 4,000 input tokens per selected entry. Exact provider
 tokenization must enforce that input bound or reduce and reseal the selection.
 
+OpenAI maximum reservations additionally reserve 1.25 times the ordinary input
+rate, or a higher published cache-write rate. Astra lists USD 10 input, USD 50
+output and USD 12.50 cache writes per million tokens. The same 25 percent
+allowance is conservatively reserved on the other OpenAI routes; it is not a
+claim that they always incur that premium. Expected costs use ordinary input
+rates. [OpenAI Astra model documentation](https://developers.openai.com/api/docs/models/gpt-6-astra).
+
 | Provider | Target | Global calls | USD/M input | USD/M output | Max output tokens | Expected USD | Max-token USD |
 |---|---|---:|---:|---:|---:|---:|---:|
-| Anthropic | Claude Fable 5 | 5 | 10.00 | 50.00 | 25,000 | 0.3250 | 6.4500 |
-| Anthropic | Claude Opus 5 | 10 | 5.00 | 25.00 | 4,096 | 0.3250 | 1.2240 |
-| Anthropic | Claude Sonnet 5 | 50 | 2.00 | 10.00 | 4,096 | 0.6500 | 2.4480 |
-| Anthropic | Claude Haiku 4.5 | 100 | 1.00 | 5.00 | 2,048 | 0.6500 | 1.4240 |
-| OpenAI | GPT-5.6 Sol | 5 | 4.00 | 20.00 | 25,000 | 0.1300 | 2.5800 |
-| OpenAI | GPT-5.6 Terra | 20 | 2.00 | 12.00 | 4,096 | 0.2800 | 1.1430 |
-| OpenAI | GPT-5.6 Luna | 100 | 0.20 | 1.20 | 4,096 | 0.1400 | 0.5715 |
-| OpenAI | GPT-5.5 | 100 | 5.00 | 30.00 | 4,096 | 3.5000 | 14.2880 |
-| Moonshot | Kimi K3 | 100 | 3.00 | 15.00 | 4,096 | 1.9500 | 7.3440 |
-| DeepSeek | DeepSeek V4-Pro off-peak | 100 | 0.66 | 1.98 | 4,096 | 0.3630 | 1.0750 |
-| **Total targets** | | **590** | | | | **8.3130** | **38.5476** |
+| Anthropic | Claude Fable 5 | 50 | 10.00 | 50.00 | 4,096 | 3.2500 | 12.2400 |
+| Anthropic | Claude Opus 5 | 100 | 5.00 | 25.00 | 4,096 | 3.2500 | 12.2400 |
+| Anthropic | Claude Sonnet 5 | 200 | 2.00 | 10.00 | 4,096 | 2.6000 | 9.7920 |
+| Anthropic | Claude Haiku 4.5 | 200 | 1.00 | 5.00 | 2,048 | 1.3000 | 2.8480 |
+| OpenAI | GPT-6 Astra | 50 | 10.00 | 50.00 | 4,096 | 3.2500 | 12.7400 |
+| OpenAI | GPT-5.6 Sol | 50 | 4.00 | 20.00 | 4,096 | 1.3000 | 5.0960 |
+| OpenAI | GPT-5.6 Terra | 50 | 2.00 | 12.00 | 4,096 | 0.7000 | 2.9576 |
+| OpenAI | GPT-5.6 Luna | 150 | 0.20 | 1.20 | 4,096 | 0.2100 | 0.8873 |
+| OpenAI | GPT-5.5 | 50 | 5.00 | 30.00 | 4,096 | 1.7500 | 7.3940 |
+| Moonshot | Kimi K3 | 150 | 3.00 | 15.00 | 4,096 | 2.9250 | 11.0160 |
+| DeepSeek | DeepSeek V4-Pro off-peak | 300 | 0.66 | 1.98 | 4,096 | 1.0890 | 3.2250 |
+| **Total targets** | | **1,350** | | | | **21.6240** | **80.4359** |
 
-Expected target cost is USD 8.3130 under the stated average-token model.
-The 590-call target projection contains 2.36 million input and 295,000 expected
-output tokens. Its configured maxima retain the same 2.36 million input bound
-and permit at most 2,420,880 output tokens.
-The matched Haiku plan adds at most 590 pairs or 1,180 judge calls. At 4,000
-input and 500 output tokens it costs USD 7.67. A dedicated judge config fixes
+Expected target cost is USD 21.6240 under the stated average-token model.
+The 1,350-call target projection contains 5.4 million input and 675,000 expected
+output tokens. Its configured maxima retain the same 5.4 million input bound
+and permit at most 5,120,000 output tokens.
+The matched Haiku plan adds at most 1,350 pairs or 2,700 judge calls. At 4,000
+input and 500 output tokens it costs USD 17.55. A dedicated judge config fixes
 `max_tokens=512`; if every judge input is at most 4,000 tokens, the maximum is
-USD 7.7408. Thus the expected combined campaign is USD 15.9830 and the
-max-token reservation is USD 46.288368.
-Across targets and judging, that is 7.08 million input plus 885,000 expected
-output tokens, or at most 3,025,040 output tokens under the configured route
+USD 17.712. Thus the expected combined campaign is USD 39.1740 and the
+max-token reservation is USD 98.147904.
+Across targets and judging, that is 16.2 million input plus 2,025,000 expected
+output tokens, or at most 6,502,400 output tokens under the configured route
 maxima.
 
-Provider reconciliation remains inside the 50 percent rule: Anthropic target
-maximum USD 11.546 plus judge maximum USD 7.7408 is USD 19.2868 of USD 50; OpenAI
-is USD 18.5826 of USD 20; Moonshot is USD 7.3440 of USD 7.50; and DeepSeek is
-USD 1.0750 of USD 5. These are monetary ceilings, not permission to spend.
+Provider reconciliation remains inside the 80 percent rule: Anthropic target
+maximum USD 37.12 plus judge maximum USD 17.712 is USD 54.832 of USD 72; OpenAI
+is USD 29.07488 of USD 32; Moonshot is USD 11.016 of USD 12; and DeepSeek is
+USD 3.225024 of USD 8. These are monetary ceilings, not permission to spend.
 Exact no-call selection, provider token counting and one-call canaries must
 fit before authorization. If they do not, only the affected prospective count
 is reduced and resealed before any output is observed.
 
-The 590 target-call cap includes every paid readiness and diagnostic canary.
+The 1,350 target-call cap includes every paid readiness and diagnostic canary.
 Those calls consume their target's global cap rather than adding an unbudgeted
 request. The create-only `hosted_campaign_budget` projection reads and binds the
 exact API config, effective-dated pricing and budget registries, reproduces the
 expected and maximum-token columns, and reports a blocked status if any
-provider exceeds half its configured balance. It constructs no target or judge.
+provider exceeds 80 percent of its configured balance. It constructs no target or judge.
 
 Paid targets and Haiku judging use zero answer-quality retries and three
 harness retries only for the fixed status-bearing retryable HTTP errors.
@@ -196,23 +209,23 @@ acknowledgement. The dedicated `retained_response_judge_pair` selector and
 they remain pending deployment and must not be replaced by a naive Runner rerun
 that could regenerate targets.
 
-The budget-fitted cohort selects at most 590 eligible local/hosted pairs, so
+The budget-fitted cohort selects at most 1,350 eligible local/hosted pairs, so
 the local and hosted judged populations contain the same input entries. Exact
 identity binds the rendered prompt, media-reference digest, datapoint, source
 cluster, seed, arm/framework, modality, risk, expected behavior and source
 policy. Seed-0 balanced round-robin sampling spans both target models and those
 input strata, and no retained output is reused. Missing responses remain in
 coverage statistics but require no judge call and cannot form a judged pair.
-The pair limit equals the hosted campaign's 590-target ceiling and therefore
+The pair limit equals the hosted campaign's 1,350-target ceiling and therefore
 includes every eligible answered hosted output exactly once rather than drawing
 a smaller outcome-selected sample.
 Source-authoritative R-Judge and GPTGeoChat decisions are excluded. Haiku's own
 target outputs are included by explicit operator decision and labelled
 same-model, non-independent evidence.
-Under the central 4,000-input/500-output assumption, 1,180 judgments use 4.72
-million input and 590,000 output tokens and cost USD 7.67 standard or USD
-3.835 with Batch pricing, within the USD 7.75 judging allocation. With the
-dedicated 512-token output cap, the corresponding maximum is USD 7.7408. Exact
+Under the central 4,000-input/500-output assumption, 2,700 judgments use 10.8
+million input and 1,350,000 output tokens and cost USD 17.55 standard or USD
+8.775 with Batch pricing, within the USD 18 judging allocation. With the
+dedicated 512-token output cap, the corresponding maximum is USD 17.712. Exact
 retained-output token counts may reduce the selected population before its
 immutable selector is sealed; they may not change it after judgments are
 observed.
@@ -221,7 +234,7 @@ The later comparison is a matched selected-cohort analysis, not a full-corpus
 estimate. It publishes separate hosted/local member tables from the identical
 pair inventory plus unpaired coverage counts.
 Every hosted target lane already applies the sealed local `rules,guardrail`
-cascade, adding at most 590 rule evaluations and 590 Llama Guard calls but no
+cascade, adding at most 1,350 rule evaluations and 1,350 Llama Guard calls but no
 hosted-provider cost. The Haiku selector reuses those unchanged local trails on
 the exact hosted pair members. Local versus Haiku agreement is reported only on
 comparable decided labels, with the local decision denominator and abstentions

@@ -280,16 +280,17 @@ cap; these values are not Runner per-arm limits:
 
 | Hosted target condition | Global input/call cap |
 |---|---:|
-| Claude Fable 5 | 5 |
-| Claude Opus 5 | 10 |
-| Claude Sonnet 5 | 50 |
-| Claude Haiku 4.5 | 100 |
-| GPT-5.6 Sol | 5 |
-| GPT-5.6 Terra | 20 |
-| GPT-5.6 Luna | 100 |
-| GPT-5.5 | 100 |
-| Kimi K3 | 100 |
-| DeepSeek V4-Pro | 100 |
+| Claude Fable 5 | 50 |
+| Claude Opus 5 | 100 |
+| Claude Sonnet 5 | 200 |
+| Claude Haiku 4.5 | 200 |
+| GPT-5.6 Sol | 50 |
+| GPT-6 Astra | 50 |
+| GPT-5.6 Terra | 50 |
+| GPT-5.6 Luna | 150 |
+| GPT-5.5 | 50 |
+| Kimi K3 | 150 |
+| DeepSeek V4-Pro | 300 |
 
 These budget-fitted limits supersede the larger planning scenario without
 changing the seed, sampler or compatible arm inventory. They are prospective
@@ -299,17 +300,17 @@ disabled, while the harness permits three retries only for the fixed
 status-bearing HTTP errors. The first retained failed target output or
 non-retryable or exhausted target transport failure stops the paid grid before
 another paid call. The complete
-follow-on may use at most 50 percent of each configured provider budget. Exact
+follow-on may use at most 80 percent of each configured provider budget. Exact
 no-call projections may only reduce a condition before acquisition and execution if
 the provider-token canary shows that its registered monetary ceiling would be
 exceeded; an observed model outcome may never trigger a limit change.
 Every paid readiness or diagnostic canary consumes the applicable global cap;
-it never sits outside the 590-call budget. Admission separately binds the
+it never sits outside the 1,350-call budget. Admission separately binds the
 4,000-input/500-output expected-token cost and the reservation obtained from
 4,000 input tokens plus each route's configured maximum output.
 
 After the local and hosted campaigns are sealed, a separate zero-target Haiku
-re-adjudication cohort selects at most 590 matched local/hosted row pairs.
+re-adjudication cohort selects at most 1,350 matched local/hosted row pairs.
 Both members have the same rendered-input, media-reference, source-cluster,
 seed, framework, modality and source-policy identity. Deterministic seed 0
 balanced round-robin sampling spans both target models and those input strata,
@@ -321,11 +322,11 @@ non-independent evidence. Selection is content-bound before a judge call,
 original judgments are preserved, and the re-adjudication path is forbidden
 from constructing or calling any model under test. Its planning process stores
 only content digests and imports no target-under-test or Runner factory. The
-executor may construct only the exact Haiku judge, uses one application and
-transport attempt, and opens the global `paid_provider` circuit on the first
-judge output or transport failure. The paired plan has a USD 7.75 ceiling and a
-dedicated 512-token maximum output configuration. Its 1,180-call central
-forecast is USD 7.67 at 4,000 input and 500 output tokens per call.
+executor may construct only the exact Haiku judge, uses one logical judge call
+and at most four status-only HTTP attempts, and opens the global `paid_provider` circuit on the first
+judge output or transport failure. The paired plan has a USD 18 ceiling and a
+dedicated 512-token maximum output configuration. Its 2,700-call central
+forecast is USD 17.55 at 4,000 input and 500 output tokens per call.
 
 Every hosted target lane uses the sealed local `rules,guardrail` cascade, so
 each answered hosted row retains its local judgment before Haiku selection.

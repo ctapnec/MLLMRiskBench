@@ -882,7 +882,7 @@ decisions are separate numeric fields. Physical retries and repeated judge
 applications never count as new experimental inputs or outputs. The local
 summary reconciles 42,882 prospective target calls before optional defense
 work, 8,680 source-authoritative R-Judge/GPTGeoChat rows and at most 34,202
-common-judge-eligible rows. The later hosted campaign may select at most 590
+common-judge-eligible rows. The later hosted campaign may select at most 1,350
 matched local/hosted output pairs for Haiku; that sealed pair stratum is
 attached without mutating the zero-hosted-call local report. The same validated
 table drives the response funnel, missing-output coverage, judge coverage,

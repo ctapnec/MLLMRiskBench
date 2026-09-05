@@ -1004,6 +1004,7 @@ def _responses_result(
     refusal: str | None = None,
     status: str = "completed",
     reason: str | None = None,
+    max_output_tokens: int = 25_000,
 ):
     content = []
     if text is not None:
@@ -1020,7 +1021,7 @@ def _responses_result(
             SimpleNamespace(reason=reason) if reason is not None else None
         ),
         model="gpt-5.6-sol",
-        max_output_tokens=25_000,
+        max_output_tokens=max_output_tokens,
         truncation="disabled",
         service_tier="default",
         reasoning=SimpleNamespace(
@@ -1408,6 +1409,46 @@ def _chat_result(
             prompt_tokens=7, completion_tokens=3, total_tokens=10,
         ),
     )
+
+
+def test_astra_sends_completion_budget_and_omits_sampling_options() -> None:
+    target = build_api_target("openai:gpt-6-astra", config={
+        "modalities": ["text", "image"],
+        "max_tokens": 4_096,
+        "temperature": None,
+    })
+    result = _chat_result()
+    result.model = "gpt-6-astra"
+    captured = {}
+
+    def create(**kwargs):
+        captured.update(kwargs)
+        return result
+
+    target._client = SimpleNamespace(chat=SimpleNamespace(
+        completions=SimpleNamespace(create=create),
+    ))
+    response = target.generate([DialogTurn(role="user", content="fixture")], seed=0)
+    assert captured["max_completion_tokens"] == 4_096
+    assert not {"max_tokens", "temperature", "seed"}.intersection(captured)
+    assert response.output_turns[0].content == "complete"
+    assert response.raw["resolved_model"] == "gpt-6-astra"
+
+
+def test_budget_fable_and_sol_send_lower_allowances_without_mutating_legacy() -> None:
+    fable = build_api_target(AnthropicFableTarget.BUDGET_SPEC)
+    captured = _install_fable_fixture(fable, _fable_result())
+    fable.generate([DialogTurn(role="user", content="fixture")], seed=0)
+    assert captured["max_tokens"] == 4_096
+    assert fable.name.endswith("max_tokens=4096")
+    assert AnthropicFableTarget().max_tokens == 25_000
+
+    sol = build_api_target(OpenAIResponsesTarget.BUDGET_SPEC)
+    captured = _install_responses_fixture(sol, _responses_result(max_output_tokens=4096))
+    sol.generate([DialogTurn(role="user", content="fixture")], seed=0)
+    assert captured["max_output_tokens"] == 4_096
+    assert sol.name.endswith("max_output_tokens=4096")
+    assert OpenAIResponsesTarget().max_output_tokens == 25_000
 
 
 def test_generic_openai_chat_terminal_states_fail_closed() -> None:

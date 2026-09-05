@@ -18,6 +18,7 @@ def _api_config() -> dict:
 
 def _pricing() -> dict:
     rates = {
+        ("openai", "gpt-6-astra"): (10, 50),
         ("anthropic", "claude-fable-5"): (10, 50),
         ("anthropic", "claude-opus-5"): (5, 25),
         ("anthropic", "claude-sonnet-5"): (2, 10),
@@ -49,7 +50,7 @@ def _pricing() -> dict:
 def _budgets() -> dict:
     return {
         "providers": [
-            {"name": "Anthropic", "match": "anthropic", "prepaid": "$100"},
+            {"name": "Anthropic", "match": "anthropic", "prepaid": "$90"},
             {"name": "OpenAI", "match": "openai", "prepaid": "$40"},
             {"name": "Moonshot", "match": "kimi", "prepaid": "$15"},
             {"name": "DeepSeek", "match": "deepseek", "prepaid": "$10"},
@@ -80,38 +81,43 @@ def test_projection_binds_expected_and_maximum_token_costs() -> None:
 
     assert value["status"] == "budget_fit"
     assert value["totals"] == {
-        "target_paid_call_cap": 590,
-        "judge_paid_call_cap": 1_180,
-        "target_expected_input_tokens": 2_360_000,
-        "target_maximum_input_tokens": 2_360_000,
-        "target_expected_output_tokens": 295_000,
-        "target_maximum_output_tokens": 2_420_880,
-        "judge_expected_input_tokens": 4_720_000,
-        "judge_maximum_input_tokens": 4_720_000,
-        "judge_expected_output_tokens": 590_000,
-        "judge_maximum_output_tokens": 604_160,
-        "combined_expected_input_tokens": 7_080_000,
-        "combined_maximum_input_tokens": 7_080_000,
-        "combined_expected_output_tokens": 885_000,
-        "combined_maximum_output_tokens": 3_025_040,
-        "target_expected_cost_microusd": 8_313_000,
-        "target_maximum_cost_microusd": 38_547_568,
-        "judge_expected_cost_microusd": 7_670_000,
-        "judge_maximum_cost_microusd": 7_740_800,
-        "combined_expected_cost_microusd": 15_983_000,
-        "combined_maximum_cost_microusd": 46_288_368,
+        "target_paid_call_cap": 1_350,
+        "judge_paid_call_cap": 2_700,
+        "target_expected_input_tokens": 5_400_000,
+        "target_maximum_input_tokens": 5_400_000,
+        "target_expected_output_tokens": 675_000,
+        "target_maximum_output_tokens": 5_120_000,
+        "judge_expected_input_tokens": 10_800_000,
+        "judge_maximum_input_tokens": 10_800_000,
+        "judge_expected_output_tokens": 1_350_000,
+        "judge_maximum_output_tokens": 1_382_400,
+        "combined_expected_input_tokens": 16_200_000,
+        "combined_maximum_input_tokens": 16_200_000,
+        "combined_expected_output_tokens": 2_025_000,
+        "combined_maximum_output_tokens": 6_502_400,
+        "target_expected_cost_microusd": 21_624_000,
+        "target_maximum_cost_microusd": 80_435_904,
+        "judge_expected_cost_microusd": 17_550_000,
+        "judge_maximum_cost_microusd": 17_712_000,
+        "combined_expected_cost_microusd": 39_174_000,
+        "combined_maximum_cost_microusd": 98_147_904,
     }
     sonnet = next(row for row in value["routes"] if row["label"] == "Claude Sonnet 5")
-    assert sonnet["expected_cost_microusd"] == 650_000
-    assert sonnet["maximum_cost_microusd"] == 2_448_000
+    assert sonnet["expected_cost_microusd"] == 2_600_000
+    assert sonnet["maximum_cost_microusd"] == 9_792_000
     assert sonnet["transport_retries"] == 3
-    assert sonnet["maximum_http_attempts"] == 200
+    assert sonnet["maximum_http_attempts"] == 800
     assert all(row["paid_call_cap_includes_readiness_and_canaries"] for row in value["routes"])
     assert value["judge"]["maximum_output_tokens_per_call"] == 512
     assert value["judge"]["transport_retries"] == 3
-    assert value["judge"]["maximum_http_attempts"] == 4_720
-    assert value["judge"]["selected_pair_cap"] == 590
+    assert value["judge"]["maximum_http_attempts"] == 10_800
+    assert value["judge"]["selected_pair_cap"] == 1_350
     assert all(row["fits_campaign_cap"] for row in value["providers"])
+    astra = next(row for row in value["routes"] if row["model"] == "gpt-6-astra")
+    assert astra["maximum_cost_microusd"] == 12_740_000
+    assert astra["reserved_input_usd_per_million_tokens"] == "12.50"
+    anthropic = next(row for row in value["providers"] if row["provider"] == "anthropic")
+    assert anthropic["campaign_cap_microusd"] == 72_000_000
 
 
 def test_api_config_maximum_is_not_a_prose_only_assumption() -> None:
@@ -120,6 +126,25 @@ def test_api_config_maximum_is_not_a_prose_only_assumption() -> None:
 
     with pytest.raises(ValueError, match="max_tokens changed"):
         _projection(api_config=config)
+
+
+def test_new_pair_defaults_match_budget_and_admit_historical_smaller_limits() -> None:
+    from experiments import retained_response_judge_pair as pairs
+
+    assert pairs.DEFAULT_PAIR_LIMIT == subject.JUDGE_PAIR_CAP == 1_350
+    assert pairs.DEFAULT_COST_MICROUSD == 18_000_000
+    assert pairs.MAX_PAIR_LIMIT >= 590
+    assert pairs.MAX_COST_MICROUSD >= 7_750_000
+
+
+def test_higher_published_astra_cache_write_rate_is_reserved() -> None:
+    pricing = _pricing()
+    pricing["providers"]["openai"]["models"]["gpt-6-astra"]["rates"][0][
+        "per_million_tokens"
+    ]["cache_write"] = 20
+    astra = next(row for row in _projection(pricing=pricing)["routes"]
+                 if row["model"] == "gpt-6-astra")
+    assert astra["maximum_cost_microusd"] == 14_240_000
 
 
 def test_missing_or_non_usd_price_blocks_projection() -> None:
@@ -132,7 +157,7 @@ def test_missing_or_non_usd_price_blocks_projection() -> None:
         _projection(pricing=pricing)
 
 
-def test_half_budget_failure_is_explicit() -> None:
+def test_eighty_percent_budget_failure_is_explicit() -> None:
     budgets = copy.deepcopy(_budgets())
     next(row for row in budgets["providers"] if row["match"] == "openai")[
         "prepaid"

@@ -424,23 +424,24 @@ response artifacts remain authoritative.
   linked Job. The downloaded tag remains unavailable to Build until that
   identity-bound follow-up writes a passing profile.
 - Post-hoc Haiku re-adjudication does not use `run_matrix` and cannot regenerate
-  a target response. `retained_response_judge_pair` admits at most 590 pairs
+  a target response. This campaign uses `retained_response_judge_pair` for at most 1,350 pairs
   from the exact local/hosted input-identity intersection, without reusing an
   output; `retained_response_judge_pair_execute` reconciles both validated
   Runner views and constructs only the named Haiku judge. It reserves zero
-  target calls, uses one judge/HTTP attempt per selected output, checkpoints
+  target calls, uses one logical judge call with at most four status-only HTTP
+  attempts per selected output, checkpoints
   every paid decision, binds and revalidates the effective-dated pricing bytes,
   and opens its global `paid_provider` circuit on the first judge or transport
-  failure. Its one USD 7.75 ceiling covers at most 1,180 calls: USD 7.67 at the
-  4,000-input/500-output planning average and USD 7.7408 at the fixed 512-token
+  failure. Its one USD 18 ceiling covers at most 2,700 calls: USD 17.55 at the
+  4,000-input/500-output planning average and USD 17.712 at the fixed 512-token
   output maximum.
-- The hosted follow-on uses ten global target caps totaling 590 calls, including
+- The hosted follow-on uses eleven global target caps totaling 1,350 calls, including
   readiness and diagnostic canaries. `hosted_campaign_budget` creates a
   zero-call projection from the exact API-config, effective-dated pricing and
   budget bytes. It reports both the 4,000-input/500-output expectation and each
   route's configured-maximum-output reservation, and blocks any provider above
-  half its configured balance. The current planning values are USD 8.3130 and
-  USD 38.5476 for targets, or USD 15.9830 and USD 46.288368 including Haiku.
+  80 percent of its configured balance. The current planning values are USD 21.6240 and
+  USD 80.4359 for targets, or USD 39.1740 and USD 98.147904 including Haiku.
   Every hosted Runner lane uses the sealed local `rules,guardrail` cascade, so
   its retained response already has the local judgment later compared with
   Haiku on the exact paired row. The local cascade has no provider cost.

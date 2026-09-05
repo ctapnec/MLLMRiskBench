@@ -15,6 +15,8 @@ from experiments.rig_web_app.reports import rate_for
 from ura.converters import _CONVERTERS
 from ura.data_models import RiskCategory
 from ura.targets.api import (
+    AnthropicFableTarget,
+    OpenAIResponsesTarget,
     api_target_requires_config,
     build_api_target,
     canonical_api_target_identity,
@@ -79,7 +81,8 @@ def test_advertised_hosted_roster_builds_offline_and_exactly_matches_pricing(
             normalized = normalize_api_target_config(spec, raw_config)
             target = build_api_target(spec, config=normalized)
         else:
-            assert spec in {_FABLE, _SOL}
+            assert spec in {_FABLE, _SOL, AnthropicFableTarget.BUDGET_SPEC,
+                            OpenAIResponsesTarget.BUDGET_SPEC}
             assert set(raw_config) == {"modalities"}
             target = build_api_target(spec)
         assert tuple(raw_config["modalities"]) == tuple(target.modality_support)
@@ -627,21 +630,21 @@ def test_hosted_follow_on_is_a_no_retry_local_input_subset() -> None:
         "transport or network failure",
         "There is no automatic paid resumption",
         "Build sets and locks",
-        "at most 50 percent",
-        "590 selected local",
-        "590 selected hosted",
+        "at most 80 percent",
+        "1,350 selected local",
+        "1,350 selected hosted",
         "same_model_judge=true",
         "matched-input intersection",
         "full-corpus estimates",
         "target calls 0",
-        "USD 7.67 standard",
-        "590 target attempts",
-        "USD 8.3130",
-        "USD 46.288368",
+        "USD 17.55 standard",
+        "1,350 target attempts",
+        "USD 21.6240",
+        "USD 98.147904",
         "experiments.hosted_campaign_budget",
         "experiments.retained_response_judge_pair_execute",
         "--judges rules,guardrail",
-        "590 Llama Guard calls",
+        "1,350 Llama Guard calls",
         "local-versus-Haiku agreement",
         "every eligible answered hosted output exactly once",
     )
@@ -656,16 +659,17 @@ def test_hosted_follow_on_is_a_no_retry_local_input_subset() -> None:
         assert "use the same selected retry count" not in value
         assert "`retained_response_judge` selector" not in value
         for target, limit in (
-            ("Claude Fable 5", 5),
-            ("Claude Opus 5", 10),
-            ("Claude Sonnet 5", 50),
-            ("Claude Haiku 4.5", 100),
-            ("GPT-5.6 Sol", 5),
-            ("GPT-5.6 Terra", 20),
-            ("GPT-5.6 Luna", 100),
-            ("GPT-5.5", 100),
-            ("Kimi K3", 100),
-            ("DeepSeek V4-Pro", 100),
+            ("Claude Fable 5", 50),
+            ("Claude Opus 5", 100),
+            ("Claude Sonnet 5", 200),
+            ("Claude Haiku 4.5", 200),
+            ("GPT-5.6 Sol", 50),
+            ("GPT-6 Astra", 50),
+            ("GPT-5.6 Terra", 50),
+            ("GPT-5.6 Luna", 150),
+            ("GPT-5.5", 50),
+            ("Kimi K3", 150),
+            ("DeepSeek V4-Pro", 300),
         ):
             assert f"| {target} | {limit} |" in value
 
@@ -691,7 +695,7 @@ def test_hosted_follow_on_is_a_no_retry_local_input_subset() -> None:
     with pytest.raises(AssertionError):
         assert "global `paid_provider` circuit" in changed_plan
     cost_flat = " ".join(cost.split())
-    for forecast in ("590 target-call cap", "USD 8.3130", "USD 46.288368"):
+    for forecast in ("1,350 target-call cap", "USD 21.6240", "USD 98.147904"):
         changed_cost = cost_flat.replace(forecast, "MUTATED_FORECAST", 1)
         assert changed_cost != cost_flat
         with pytest.raises(AssertionError):

@@ -26,7 +26,7 @@ from ura.targets.api import (
 )
 
 
-SCHEMA = "ura-hosted-campaign-budget-projection/1"
+SCHEMA = "ura-hosted-campaign-budget-projection/2"
 EXPECTED_INPUT_TOKENS = 4_000
 MAX_INPUT_TOKENS = 4_000
 EXPECTED_OUTPUT_TOKENS = 500
@@ -37,12 +37,20 @@ _MONEY = re.compile(r"\$(0|[1-9][0-9]*)(?:\.([0-9]{1,2}))?")
 
 ROUTES: tuple[dict[str, Any], ...] = (
     {
+        "label": "GPT-6 Astra",
+        "spec": "openai:gpt-6-astra",
+        "provider": "openai",
+        "model": "gpt-6-astra",
+        "call_cap": 50,
+        "max_output_tokens": 4_096,
+    },
+    {
         "label": "Claude Fable 5",
-        "spec": AnthropicFableTarget.name,
+        "spec": AnthropicFableTarget.BUDGET_SPEC,
         "provider": "anthropic",
         "model": "claude-fable-5",
-        "call_cap": 5,
-        "max_output_tokens": AnthropicFableTarget.MAX_TOKENS,
+        "call_cap": 50,
+        "max_output_tokens": AnthropicFableTarget.BUDGET_MAX_TOKENS,
         "inherent_config": True,
     },
     {
@@ -50,7 +58,7 @@ ROUTES: tuple[dict[str, Any], ...] = (
         "spec": "anthropic:claude-opus-5",
         "provider": "anthropic",
         "model": "claude-opus-5",
-        "call_cap": 10,
+        "call_cap": 100,
         "max_output_tokens": 4_096,
     },
     {
@@ -58,7 +66,7 @@ ROUTES: tuple[dict[str, Any], ...] = (
         "spec": "anthropic:claude-sonnet-5",
         "provider": "anthropic",
         "model": "claude-sonnet-5",
-        "call_cap": 50,
+        "call_cap": 200,
         "max_output_tokens": 4_096,
     },
     {
@@ -66,16 +74,16 @@ ROUTES: tuple[dict[str, Any], ...] = (
         "spec": "anthropic:claude-haiku-4-5-20251001",
         "provider": "anthropic",
         "model": JUDGE_MODEL,
-        "call_cap": 100,
+        "call_cap": 200,
         "max_output_tokens": 2_048,
     },
     {
         "label": "GPT-5.6 Sol",
-        "spec": OpenAIResponsesTarget.name,
+        "spec": OpenAIResponsesTarget.BUDGET_SPEC,
         "provider": "openai",
         "model": "gpt-5.6-sol",
-        "call_cap": 5,
-        "max_output_tokens": OpenAIResponsesTarget.MAX_OUTPUT_TOKENS,
+        "call_cap": 50,
+        "max_output_tokens": OpenAIResponsesTarget.BUDGET_MAX_OUTPUT_TOKENS,
         "inherent_config": True,
     },
     {
@@ -83,7 +91,7 @@ ROUTES: tuple[dict[str, Any], ...] = (
         "spec": "openai:gpt-5.6-terra",
         "provider": "openai",
         "model": "gpt-5.6-terra",
-        "call_cap": 20,
+        "call_cap": 50,
         "max_output_tokens": 4_096,
     },
     {
@@ -91,7 +99,7 @@ ROUTES: tuple[dict[str, Any], ...] = (
         "spec": "openai:gpt-5.6-luna",
         "provider": "openai",
         "model": "gpt-5.6-luna",
-        "call_cap": 100,
+        "call_cap": 150,
         "max_output_tokens": 4_096,
     },
     {
@@ -99,7 +107,7 @@ ROUTES: tuple[dict[str, Any], ...] = (
         "spec": "openai:gpt-5.5",
         "provider": "openai",
         "model": "gpt-5.5",
-        "call_cap": 100,
+        "call_cap": 50,
         "max_output_tokens": 4_096,
     },
     {
@@ -107,7 +115,7 @@ ROUTES: tuple[dict[str, Any], ...] = (
         "spec": "kimi:kimi-k3",
         "provider": "kimi",
         "model": "kimi-k3",
-        "call_cap": 100,
+        "call_cap": 150,
         "max_output_tokens": 4_096,
     },
     {
@@ -115,7 +123,7 @@ ROUTES: tuple[dict[str, Any], ...] = (
         "spec": "deepseek:deepseek-v4-pro",
         "provider": "deepseek",
         "model": "deepseek-v4-pro",
-        "call_cap": 100,
+        "call_cap": 300,
         "max_output_tokens": 4_096,
     },
 )
@@ -229,7 +237,7 @@ def _provider_budgets(value: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
         result[provider] = {
             "display_name": row.get("name"),
             "configured_budget_microusd": configured,
-            "campaign_cap_microusd": configured // 2,
+            "campaign_cap_microusd": configured * 4 // 5,
         }
     return result
 
@@ -262,6 +270,17 @@ def _priced_row(
         raise ValueError(f"price for {route['label']} must be in USD")
     input_rate = _decimal(per_million.get("input"), label="input price")
     output_rate = _decimal(per_million.get("output"), label="output price")
+    # Reserve a cold cache write for OpenAI even when the average estimate
+    # assumes ordinary uncached input. Published new-model writes cost 1.25x;
+    # using that bound for older OpenAI routes leaves additional headroom.
+    reserved_input_rate = input_rate
+    if route["provider"] == "openai":
+        reserved_input_rate *= Decimal("1.25")
+    if route["provider"] == "openai" and per_million.get("cache_write") is not None:
+        reserved_input_rate = max(
+            reserved_input_rate,
+            _decimal(per_million["cache_write"], label="cache-write price"),
+        )
     calls = int(route["call_cap"])
     maximum_output = int(route["max_output_tokens"])
     return {
@@ -283,6 +302,7 @@ def _priced_row(
         "expected_total_output_tokens": calls * EXPECTED_OUTPUT_TOKENS,
         "maximum_total_output_tokens": calls * maximum_output,
         "input_usd_per_million_tokens": str(input_rate),
+        "reserved_input_usd_per_million_tokens": str(reserved_input_rate),
         "output_usd_per_million_tokens": str(output_rate),
         "pricing_effective_date": rate["effective_date"],
         "expected_cost_microusd": _cost_microusd(
@@ -296,7 +316,7 @@ def _priced_row(
             calls=calls,
             input_tokens=MAX_INPUT_TOKENS,
             output_tokens=maximum_output,
-            input_rate=input_rate,
+            input_rate=reserved_input_rate,
             output_rate=output_rate,
         ),
     }
@@ -412,8 +432,8 @@ def build_projection(
             "transport_retry_trigger": "retryable_http_status_only",
             "paid_target_call_cap_includes_readiness_and_canaries": True,
             "pricing_as_of": pricing_as_of,
-            "budget_fraction_numerator": 1,
-            "budget_fraction_denominator": 2,
+            "budget_fraction_numerator": 4,
+            "budget_fraction_denominator": 5,
         },
         "sources": {key: dict(value) for key, value in sorted(descriptors.items())},
         "routes": rows,
