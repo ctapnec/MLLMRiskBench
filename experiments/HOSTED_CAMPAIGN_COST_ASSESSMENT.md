@@ -145,6 +145,14 @@ its larger output ceiling remains available for complete final answers. This
 is a budget-conditioned comparison, not an equal-compute model ranking.
 [Kimi reasoning controls](https://platform.kimi.ai/docs/guide/use-reasoning-effort).
 
+Sol Pro's USD 5.5152 maximum-token forecast uses total generated tokens, not
+visible answer length. The provider documents aggregate Pro usage at the
+model's token rates and an output allowance covering non-visible tokens too.
+Reconcile the returned total usage under the ordinary per-attempt reservation;
+do not invent an internal-worker multiplier or disable Pro mode.
+[OpenAI Pro-mode billing](https://developers.openai.com/api/docs/guides/reasoning#reasoning-mode),
+[output-usage contract](https://developers.openai.com/api/docs/guides/token-counting#understand-output-token-counts).
+
 OpenAI maximum reservations additionally reserve 1.25 times the ordinary input
 rate, or a higher published cache-write rate. Astra lists USD 10 input, USD 50
 output and USD 12.50 cache writes per million tokens. The same 25 percent

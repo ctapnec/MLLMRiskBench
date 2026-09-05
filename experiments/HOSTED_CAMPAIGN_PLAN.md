@@ -215,6 +215,13 @@ unfunded admitted exposure; it cannot guarantee that an estimated future bill
 never exceeds the reserved amount. Any observed overage is retained and stops
 new spending. The table's maximum-token arithmetic remains conditional on its
 stated input assumptions, not a verified end-to-end billing ceiling.
+For Sol Pro, reserve and reconcile total reported output, including reasoning
+and formatting tokens, rather than visible answer tokens. The documented
+output allowance applies to all generated tokens. Preserve Pro mode and use
+the same funded-pilot and usage-reconciliation rules as the other routes;
+do not add a guessed internal-worker multiplier or an unsupported Pro-specific
+rejection.
+[OpenAI output-usage contract](https://developers.openai.com/api/docs/guides/token-counting#understand-output-token-counts).
 
 ## A0 - Bind the retained local population
 
