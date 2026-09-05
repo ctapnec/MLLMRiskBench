@@ -1268,6 +1268,9 @@ def _runner_view_controller(
             "metric_lane_order": ["lane-a"],
         }
     }
+    # This copy-integrity fixture supplies its one already-selected input lane.
+    # Full campaign population selection is exercised independently.
+    controller._all_metric_lanes = lambda: ["lane-a"]
     controller.runner_view = tmp_path / "view"
     controller.runner_view_receipt = tmp_path / "view-receipt.json"
     controller.runner_view_ready = False
@@ -1374,6 +1377,13 @@ def test_phase7_lifecycle_view_write_cannot_modify_phase6_source(
         "followon": {"lane_order": [], "lifecycle": {}},
     }
     controller.lifecycle_runner_view_path = tmp_path / "lifecycle-view"
+    controller.inputs["current_ollama"] = {"lane_order": [], "lifecycle": {}}
+    for family in (
+        "current_ollama_stability", "current_ollama_population_alignment",
+        "failed_output_recovery", "vllm_stability", "vllm_context_recovery",
+        "local_hardware_fit_recovery",
+    ):
+        controller.inputs[family] = {"unit_order": []}
     controller.lifecycle_runner_view_receipt = (
         tmp_path / "lifecycle-view-receipt.json"
     )
