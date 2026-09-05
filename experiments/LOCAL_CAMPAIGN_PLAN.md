@@ -23,8 +23,10 @@ primary-model recovery inventory is terminal; the four current-policy GraySwan
 RR lanes remain unfinished. Its existing readiness profile passes 10/10 text
 and 3/5 images with a 4,096-token allowance and 32,768-token effective context,
 but its four measured populations had not been executed at the audit. The
-targeted current-profile controller is now running on the rig under `e9f1c33`,
-after zero-download acquisition, a live canary and no-call projection. The
+original current-profile controller under `e9f1c33` was stopped at a closed-cell
+boundary with 200 responses and all 200 judgments retained. The two-worker
+continuation under `5207b3d` started preparation at 18:42 UTC on 5 September,
+with 3,657 remaining inputs assigned to GPU0 and 3,749 to GPU1. The
 planned same-base comparison still requires completion of its 7,606 selected
 inputs (3,854 static text, 1,632 static image, 100 R-Judge and 2,020 GPTGeoChat).
 Reuse the sealed checkpoint and admitted profile; do not repeat installation,
@@ -118,6 +120,21 @@ roughly 66 seconds per response, two balanced workers imply about 68 hours of
 generation for the then-remaining population; loading, image processing,
 judging and retries are additional. Replace that extrapolation with measured
 parallel throughput, and report scheduling conditions separately in Stats.
+
+Parallel handoff record, 5 September, 18:42 UTC. The original prefix has 199
+length-ended responses, one normal stop and no missing output. All 200 original
+closed-cell judgments are retained; none requires a repeated target call or
+judge call. Its interrupted parent is not promoted. The first parallel startup
+was stopped before measured execution because sealed-cache verification took
+an exclusive resource lock and conflicted with another reader. The correction
+uses shared locks only for existing published resources, retains exclusive
+writer locks, and waits within the already declared acquisition deadline.
+Two real concurrent cache verifications passed while runtime read leases stayed
+held, with zero downloads or model calls. The focused deployment passed 134
+tests with four platform skips. The fresh continuation is
+`phase6-rr-parallel-5207b3d-20260905T184300Z`; both worker Jobs resolve in the UI.
+Preparation is not yet measured throughput, and the 68-hour estimate still
+excludes its overhead. Existing framework environments and model files are reused.
 
 Initial RR interpretation check (5 September). The first 11 retained measured
 StrongREJECT outputs all ended at the approved 4,096-token allowance in about
