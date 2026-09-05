@@ -1,7 +1,8 @@
 # Prospective hosted campaign cost assessment
 
-Status: planning only, 1 September 2026. This document authorizes no provider
-call and reports no hosted-model result.
+Status: planning only, revised 5 September 2026. This document authorizes no
+provider call and reports no hosted-model result. The earlier per-arm scenario
+is historical; the later global-cap allocation is the current proposal.
 
 The executable gate sequence and exact local-input subset rule are in
 [`HOSTED_CAMPAIGN_PLAN.md`](HOSTED_CAMPAIGN_PLAN.md).
@@ -39,7 +40,7 @@ from the common Haiku-judge population. The resulting common-judge counts are
 593, 1,199, 2,382, 5,979 and 10,095 at limits 5, 10, 20, 50 and 100. The
 DeepSeek text-only limit-100 condition has 8,463 common-judge-eligible calls.
 
-## Cost model
+## Historical per-arm cost model
 
 The central planning scenario assumes, per target call:
 
@@ -201,6 +202,13 @@ provider exceeds 80 percent of its configured balance. It constructs no target o
 Paid targets and Haiku judging use zero answer-quality retries and three
 harness retries only for the fixed status-bearing retryable HTTP errors.
 Provider SDK retries are disabled, so every HTTP attempt remains visible.
+The current monetary controller must reserve each physical attempt's complete
+input bound and maximum output cost before sending it. The table is the funded
+first-attempt population, not an assumption that retries are free. Retry
+exposure uses available contingency or already settled savings while keeping
+remaining selected calls and the Haiku allocation funded. Unknown usage keeps
+its conservative reservation. If another attempt cannot fit, it is not sent;
+the configured retry count does not override the provider or judge dollar cap.
 
 Anthropic Batch gives a 50 percent input/output discount and is appropriate for
 post-hoc judging of immutable retained responses. Adaptive target trajectories
