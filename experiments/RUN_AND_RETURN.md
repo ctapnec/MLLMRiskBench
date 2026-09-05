@@ -2040,6 +2040,15 @@ support was declared or assumed. No provider/model call is made by this
 inventory. `python -m experiments.local_targets` prints the GPU/profile data for
 CLI inspection.
 
+The two retained legacy LLaVA-Mistral templates have no system-role channel.
+For those exact tokenizer templates, vLLM preserves a leading system instruction
+as the prefix of the first user instruction, keeping the original dialogue,
+transcript whitespace and media unchanged. The response records
+`chat_template_rendering`; this is an explicit rendering condition, not a claim
+of native system-role support. Other templates keep their native behavior.
+Do not remove corpus instructions or rewrite retained inputs to satisfy a
+provider template.
+
 In the Build tab, one large role-aware model-picker modal serves both target and
 LLM-judge selection. Choose hosted or local, then use the hosted provider filter
 (`All` by default) or the local filtering surface. Target mode binds one or more
