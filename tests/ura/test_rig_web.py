@@ -5586,6 +5586,27 @@ def test_every_ui_command_parses_with_its_real_module_parser() -> None:
             parser.parse_args(argv[3:])
 
 
+def test_human_audit_ui_preserves_historical_configuration_selector() -> None:
+    values = {
+        "--results": "runs/runner-view", "--prepare": "2",
+        "--historical-code-repository": "/home/ura/MLLMRiskBench",
+        "--judge-configuration-sha256": "a" * 64,
+        "--acknowledge-sensitive-content": "on",
+    }
+    argv = build_argv("human_audit", values)
+    assert argv[argv.index("--historical-code-repository") + 1] == "/home/ura/MLLMRiskBench"
+    assert argv[argv.index("--judge-configuration-sha256") + 1] == "a" * 64
+    for changed in (
+        {**values, "--historical-code-repository": ""},
+        {**values, "--prepare": "", "--prepare-source-task": "2"},
+        {**values, "--prepare": "", "--source-task-labels": "runs/labels.csv"},
+    ):
+        with pytest.raises(ValueError, match="historical common frame"):
+            build_argv("human_audit", changed)
+    with pytest.raises(ValueError, match="64 lowercase hex"):
+        build_argv("human_audit", {**values, "--judge-configuration-sha256": "invalid"})
+
+
 def test_human_audit_ui_matches_exploratory_and_bound_analysis_contract() -> None:
     labels = {
         "--results": "runs/runner-view",

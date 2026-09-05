@@ -74,7 +74,66 @@ if request["joined"]:
               and raw.get("policy_evaluable_turn") is True)
         for raw in rows
     )
-    if eligible:
+    if request.get("separate_judge_configurations", False):
+        if frame != "common":
+            raise ValueError("judge configuration separation requires the common frame")
+        # Validate the WHOLE original grid, including orphan/source/grid checks,
+        # before taking an in-memory view of any configuration's actual cells.
+        original_inventory = human_audit._validated_artifacts
+        all_roles, validated_cells = original_inventory(root)
+        original_by_run = {cell["run_id"]: cell for cell in cells}
+        validated_by_run = {cell["run_id"]: cell for cell in validated_cells}
+        if (len(original_by_run) != len(cells)
+            or len(validated_by_run) != len(validated_cells)
+            or original_by_run.keys() != validated_by_run.keys()):
+            raise ValueError("human-audit full-grid inventory differs")
+        for run_id, cell in validated_by_run.items():
+            original = original_by_run[run_id]
+            if (cell["manifest"] != original["manifest"]
+                or cell["artifacts"] != original["artifacts"]):
+                raise ValueError("human-audit validated cell identity differs")
+        groups = {}
+        expected_keys = set()
+        for cell in validated_cells:
+            common_rows = [row for row in original_by_run[cell["run_id"]]["judgments"]
+                           if row["raw"].get("common_metrics_eligible") is True
+                           and row["raw"].get("policy_evaluable_turn") is True]
+            if not common_rows:
+                continue
+            binding = human_audit._judge_configuration_binding([cell])
+            groups.setdefault(binding["sha256"], []).append(cell)
+            for row in common_rows:
+                key = human_audit._record_key(row)
+                if key in expected_keys:
+                    raise ValueError("duplicate common-frame identity across validated cells")
+                expected_keys.add(key)
+        result["joined_by_configuration"] = {}
+        observed_keys = set()
+        try:
+            for fingerprint, selected_cells in sorted(groups.items()):
+                selected_roles = {
+                    role: [Path(cell["artifacts"][role]) for cell in selected_cells]
+                    for role in all_roles
+                }
+                def scoped_inventory(requested_root):
+                    if requested_root != root:
+                        raise ValueError("scoped human-audit root differs")
+                    return selected_roles, selected_cells
+                human_audit._validated_artifacts = scoped_inventory
+                joined = human_audit._joined_artifacts(root, frame="common")
+                predictors, metadata, judgments, audit = joined
+                if (metadata.keys() != judgments.keys()
+                    or observed_keys.intersection(metadata)
+                    or audit["judge_configuration_binding"]["sha256"] != fingerprint
+                    or any(set(labels) - metadata.keys() for labels in predictors.values())):
+                    raise ValueError("configuration-scoped human-audit join differs")
+                observed_keys.update(metadata)
+                result["joined_by_configuration"][fingerprint] = joined
+        finally:
+            human_audit._validated_artifacts = original_inventory
+        if observed_keys != expected_keys:
+            raise ValueError("configuration-scoped joins omit or add common-frame rows")
+    elif eligible:
         result["joined"] = human_audit._joined_artifacts(root, frame=frame)
     elif frame == "common":
         result["joined"] = [{}, {}, {}, {
@@ -291,10 +350,15 @@ def grid_partitions(root: Path) -> list[tuple[Path, str, str]]:
 def read_partitions(
     root: Path, *, joined: bool, frame: str = "common",
     code_repository: Path = _REPOSITORY,
+    separate_judge_configurations: bool = False,
 ) -> list[dict[str, Any]]:
     """Validate each grid without changing the caller's code or result files."""
     if frame not in {"common", "source_task"}:
         raise ValueError(f"unknown human-audit frame {frame!r}")
+    if type(separate_judge_configurations) is not bool:
+        raise ValueError("judge configuration separation must be boolean")
+    if separate_judge_configurations and (not joined or frame != "common"):
+        raise ValueError("judge configuration separation requires a joined common frame")
     from experiments.human_audit import _portable_media_references
 
     partitions = grid_partitions(root)
@@ -329,6 +393,8 @@ def read_partitions(
                     "joined": joined, "media_export_source": export_source,
                     "frame": frame,
                 }
+                if separate_judge_configurations:
+                    request["separate_judge_configurations"] = True
                 result = subprocess.run(
                     [sys.executable, "-c", _WORKER], cwd=worktree,
                     env=environment, input=json.dumps(request), text=True,

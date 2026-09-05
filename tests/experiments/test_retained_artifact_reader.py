@@ -278,6 +278,108 @@ def test_haiku_reader_and_reconciliation_use_historical_join(tmp_path, monkeypat
     assert judge.load_retained_metadata(tmp_path) == expected[1]
 
 
+@pytest.mark.parametrize("failure", [None, "full-grid", "omit-row", "orphan-prediction", "wrong-config"])
+def test_grouped_worker_validates_full_grid_before_exact_disjoint_source_joins(
+    tmp_path, monkeypatch, capsys, failure,
+):
+    from experiments import figure_results, human_audit
+    from ura import runner
+
+    revision = {
+        "expected_commit": COMMIT, "observed_commit": COMMIT, "head_tree": TREE,
+        "harness_source_sha256": "c" * 64,
+        "driver_source_sha256": hashlib.sha256(b"driver").hexdigest(),
+    }
+    cells = []
+    for index in range(2):
+        run_id = f"run-{index}"
+        cells.append({
+            "run_id": run_id,
+            "manifest": {"config": {"run": {"project_revision": revision}},
+                         "group": str(index + 1) * 64},
+            "artifacts": {"judgments": tmp_path / f"{run_id}.jsonl"},
+            "judgments": [{"run_id": run_id, "attempt_id": "attempt", "raw": {
+                "model": "model", "common_metrics_eligible": True,
+                "policy_evaluable_turn": True,
+            }}],
+        })
+    calls = []
+
+    def original_inventory(root):
+        assert root == tmp_path
+        calls.append("full original grid validation")
+        if failure == "full-grid":
+            raise ValueError("original full-grid validator refused")
+        return {"judgments": [cell["artifacts"]["judgments"] for cell in cells]}, cells
+
+    def original_join(root, *, frame):
+        assert calls[:2] == ["source cells", "full original grid validation"]
+        assert frame == "common"
+        roles, selected = human_audit._validated_artifacts(root)
+        assert len(selected) == 1
+        cell = selected[0]
+        assert roles == {"judgments": [cell["artifacts"]["judgments"]]}
+        calls.append(cell["run_id"])
+        key = human_audit._record_key(cell["judgments"][0])
+        metadata = {key: {"run_id": cell["run_id"]}}
+        predictions = ({"rules": {key: "violation"}, "cascade_authoritative": {key: "violation"}}
+                       if cell["run_id"] == "run-0"
+                       else {"rules": {}, "cascade_authoritative": {}})
+        if failure == "omit-row":
+            metadata = {}
+            predictions = {}
+        if failure == "orphan-prediction":
+            predictions["rules"]["unjoined"] = "safe"
+        audit = {"judge_configuration_binding": {"sha256": (
+            "f" * 64 if failure == "wrong-config" else cell["manifest"]["group"]
+        )}}
+        return predictions, metadata, {key: {} for key in metadata}, audit
+
+    monkeypatch.setattr(figure_results, "_load_cells", lambda root: calls.append("source cells") or cells)
+    monkeypatch.setattr(figure_results, "_read_object", figure_results._read_object)
+    monkeypatch.setattr(human_audit, "_validated_artifacts", original_inventory)
+    monkeypatch.setattr(human_audit, "_joined_artifacts", original_join)
+    monkeypatch.setattr(human_audit, "_judge_configuration_binding", lambda selected:
+                        {"sha256": selected[0]["manifest"]["group"]})
+    monkeypatch.setattr(human_audit, "_portable_media_references", lambda turns: "old exporter")
+    monkeypatch.setattr(runner, "_harness_source_identity", lambda: {"sha256": "c" * 64})
+    original_read = Path.read_bytes
+    monkeypatch.setattr(Path, "read_bytes", lambda path: b"driver"
+                        if str(path) == "experiments/run_matrix.py" else original_read(path))
+    request = {
+        "results": str(tmp_path), "commit": COMMIT, "tree": TREE, "joined": True,
+        "frame": "common", "separate_judge_configurations": True,
+        "media_export_source": 'def _portable_media_references(turns): return "current exporter"',
+    }
+    monkeypatch.setattr(subject.sys, "stdin", io.StringIO(json.dumps(request)))
+    if failure:
+        with pytest.raises(ValueError, match="full-grid validator|omit or add|join differs"):
+            exec(subject._WORKER, {})
+    else:
+        exec(subject._WORKER, {})
+        result = json.loads(capsys.readouterr().out)
+        assert "joined" not in result
+        groups = result["joined_by_configuration"]
+        assert set(groups) == {"1" * 64, "2" * 64}
+        assert groups["1" * 64][0]["rules"] == {"run-0|model|attempt": "violation"}
+        assert groups["2" * 64][0]["cascade_authoritative"] == {}
+        assert set(groups["2" * 64][1]) == {"run-1|model|attempt"}
+        assert calls == ["source cells", "full original grid validation", "run-0", "run-1"]
+    assert human_audit._validated_artifacts is original_inventory
+
+
+@pytest.mark.parametrize("joined,frame,separate", [
+    (False, "common", True), (True, "source_task", True), (True, "common", 1),
+])
+def test_configuration_separation_rejects_invalid_mode_before_source_access(
+    tmp_path, monkeypatch, joined, frame, separate,
+):
+    monkeypatch.setattr(subject, "grid_partitions", lambda *args: pytest.fail("opened source"))
+    with pytest.raises(ValueError, match="configuration separation"):
+        subject.read_partitions(tmp_path, joined=joined, frame=frame,
+                                separate_judge_configurations=separate)
+
+
 def test_level2_cli_explicit_historical_reader(tmp_path, monkeypatch):
     from experiments import level2_report
 

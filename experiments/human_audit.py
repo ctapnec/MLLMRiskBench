@@ -1732,10 +1732,137 @@ def _joined_artifacts(
     return per_judge, metadata, evaluable_judgments, audit
 
 
-def prepare_sample(results: Path, output: Path, n: int) -> int:
+def _merge_historical_audits(audits: list[dict]) -> dict:
+    """Combine same-configuration counters, preserving the existing report contract."""
+    first = audits[0]
+    if any(audit.keys() != first.keys() for audit in audits):
+        raise ValueError("historical human-audit counter contracts differ")
+    merged = {}
+    for field, initial in first.items():
+        values = [audit[field] for audit in audits]
+        if field == "cascade_authoritative_decision_coverage":
+            continue
+        if field == "judge_configuration_binding":
+            if "validated_cells" in initial:
+                defining = {key: value for key, value in initial.items()
+                            if key != "validated_cells"}
+                if any({key: value for key, value in binding.items()
+                        if key != "validated_cells"} != defining for binding in values):
+                    raise ValueError("historical human audit cannot pool judge configurations")
+                merged[field] = {**defining, "validated_cells": sum(
+                    binding["validated_cells"] for binding in values)}
+            elif all(value == initial for value in values):
+                merged[field] = initial
+            else:
+                raise ValueError("historical source-task judge contracts differ")
+        elif isinstance(initial, bool):
+            if any(not isinstance(value, bool) for value in values):
+                raise ValueError("historical human-audit integrity counter types differ")
+            merged[field] = all(values)
+        elif type(initial) is int:
+            if any(type(value) is not int for value in values):
+                raise ValueError("historical human-audit counter types differ")
+            merged[field] = sum(values)
+        elif isinstance(initial, dict):
+            counter: Counter = Counter()
+            for value in values:
+                if not isinstance(value, dict) or any(type(n) is not int for n in value.values()):
+                    raise ValueError("historical human-audit integrity modes differ")
+                counter.update(value)
+            merged[field] = dict(counter)
+        elif all(value == initial for value in values):
+            merged[field] = initial
+        else:
+            raise ValueError(f"historical human-audit contract differs for {field}")
+    completed = merged["cascade_authoritative_completed"]
+    merged["cascade_authoritative_decision_coverage"] = (
+        merged["cascade_authoritative_decided"] / completed if completed else None
+    )
+    return merged
+
+
+def _audit_artifacts(
+    results: Path, *, frame: str = "common",
+    historical_code_repository: Path | None = None,
+    judge_configuration_sha256: str | None = None,
+) -> tuple[dict[str, dict[str, str]], dict[str, dict], dict[str, dict], dict]:
+    """Use original joins and one explicitly selected realized judge configuration."""
+    if judge_configuration_sha256 is not None:
+        if historical_code_repository is None or frame != "common":
+            raise ValueError("judge configuration selection requires a historical common frame")
+        if (len(judge_configuration_sha256) != 64
+            or any(c not in "0123456789abcdef" for c in judge_configuration_sha256)):
+            raise ValueError("judge configuration SHA-256 must be 64 lowercase hex digits")
+    if historical_code_repository is None:
+        return (_joined_artifacts(results) if frame == "common"
+                else _joined_artifacts(results, frame=frame))
+    from experiments.retained_artifact_reader import read_partitions
+
+    partitions = read_partitions(
+        results, joined=True, frame=frame, code_repository=historical_code_repository,
+        separate_judge_configurations=frame == "common",
+    )
+    groups: dict[str, list] = defaultdict(list)
+    seen_runs: set[str] = set()
+    seen_keys: set[str] = set()
+    for partition in partitions:
+        for cell in partition["cells"]:
+            if cell["run_id"] in seen_runs:
+                raise ValueError("historical human audit contains a duplicate completed run")
+            seen_runs.add(cell["run_id"])
+        joined_groups = (partition["joined_by_configuration"] if frame == "common"
+                         else {"source_task": partition["joined"]})
+        for fingerprint, joined in joined_groups.items():
+            predictors, metadata, judgments, audit = joined
+            if (metadata.keys() != judgments.keys() or seen_keys.intersection(metadata)
+                or any(set(labels) - metadata.keys() for labels in predictors.values())):
+                raise ValueError("historical human audit contains a lossy or duplicate join")
+            seen_keys.update(metadata)
+            if not metadata:
+                continue
+            if audit["frame"] != frame:
+                raise ValueError("historical human-audit source frame differs")
+            if frame == "common" and audit["judge_configuration_binding"]["sha256"] != fingerprint:
+                raise ValueError("historical human-audit judge configuration differs")
+            groups[fingerprint].append(joined)
+    if not groups:
+        raise ValueError(f"no {frame} samples found for historical human audit")
+    selected = judge_configuration_sha256
+    if selected is None:
+        if len(groups) != 1:
+            inventory = {key: sum(len(row[1]) for row in rows)
+                         for key, rows in sorted(groups.items())}
+            raise ValueError(
+                "historical human audit cannot pool judge configurations; select "
+                "--judge-configuration-sha256 separately for each retained group: "
+                + json.dumps(inventory, sort_keys=True)
+            )
+        selected = next(iter(groups))
+    if selected not in groups:
+        raise ValueError("selected historical judge configuration has no joined rows")
+    predictors: dict[str, dict[str, str]] = {}
+    metadata, judgments = {}, {}
+    audits = []
+    for part_predictors, part_metadata, part_judgments, audit in groups[selected]:
+        for judge, labels in part_predictors.items():
+            predictors.setdefault(judge, {}).update(labels)
+        metadata.update(part_metadata)
+        judgments.update(part_judgments)
+        audits.append(audit)
+    return predictors, metadata, judgments, _merge_historical_audits(audits)
+
+
+def prepare_sample(
+    results: Path, output: Path, n: int, *,
+    historical_code_repository: Path | None = None,
+    judge_configuration_sha256: str | None = None,
+) -> int:
     if n < 1:
         raise ValueError("human-audit unique-cluster sample size must be positive")
-    per_judge, joined_meta, judgments_by_key, _ = _joined_artifacts(results)
+    per_judge, joined_meta, judgments_by_key, _ = _audit_artifacts(
+        results, historical_code_repository=historical_code_repository,
+        judge_configuration_sha256=judge_configuration_sha256,
+    )
 
     candidates: list[dict] = []
     for key, judgment in sorted(judgments_by_key.items()):
@@ -2024,7 +2151,10 @@ def _select_source_task_clusters(
     return dict(clusters), selected_keys, sampling, descriptor
 
 
-def prepare_source_task_sample(results: Path, output: Path, n: int) -> int:
+def prepare_source_task_sample(
+    results: Path, output: Path, n: int, *,
+    historical_code_repository: Path | None = None,
+) -> int:
     """Export a source-task classification audit frame.
 
     This frame verifies source-defined classification semantics (did the model
@@ -2034,8 +2164,8 @@ def prepare_source_task_sample(results: Path, output: Path, n: int) -> int:
     parser output and the source reference so raters answer independently.
     """
 
-    _, joined_meta, judgments_by_key, _ = _joined_artifacts(
-        results, frame="source_task"
+    _, joined_meta, judgments_by_key, _ = _audit_artifacts(
+        results, frame="source_task", historical_code_repository=historical_code_repository,
     )
 
     candidates: list[dict] = []
@@ -2220,6 +2350,7 @@ def analyse_source_task(
     report_path: Path | None = None,
     prepared_rating_form: Path | None = None,
     prepared_rating_form_sha256: str | None = None,
+    historical_code_repository: Path | None = None,
 ) -> int:
     """Analyse a completed source-task audit CSV against exact artifacts."""
 
@@ -2241,8 +2372,8 @@ def analyse_source_task(
         rating_fields=_SOURCE_TASK_RATING_FIELDS,
         frame="source-task",
     )
-    _, artifact_meta, _, artifact_audit = _joined_artifacts(
-        results, frame="source_task"
+    _, artifact_meta, _, artifact_audit = _audit_artifacts(
+        results, frame="source_task", historical_code_repository=historical_code_repository,
     )
 
     if not rows:
@@ -3381,6 +3512,8 @@ def analyse(
     report_path: Path | None = None,
     prepared_rating_form: Path | None = None,
     prepared_rating_form_sha256: str | None = None,
+    historical_code_repository: Path | None = None,
+    judge_configuration_sha256: str | None = None,
 ) -> int:
     if n_resamples < 1 or not 0 < alpha < 1:
         raise ValueError("human-audit bootstrap requires n_resamples>=1 and 0<alpha<1")
@@ -3398,7 +3531,10 @@ def analyse(
         rating_fields=_RATING_FIELDS,
         frame="common",
     )
-    per_judge, artifact_meta, _, artifact_audit = _joined_artifacts(results)
+    per_judge, artifact_meta, _, artifact_audit = _audit_artifacts(
+        results, historical_code_repository=historical_code_repository,
+        judge_configuration_sha256=judge_configuration_sha256,
+    )
     by_rater, label_meta, label_audit = _load_labels(completed_snapshot)
     dimension_ratings = label_audit.pop("_dimension_ratings", {})
     dimensions_present = bool(label_audit.get("dimension_columns_present"))
@@ -4035,6 +4171,14 @@ def analyse(
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Prepare or analyse a stratified human audit.")
     parser.add_argument("--results", type=Path, required=True)
+    parser.add_argument(
+        "--historical-code-repository", type=Path,
+        help="trusted Git repository for exact retained-source artifact joins",
+    )
+    parser.add_argument(
+        "--judge-configuration-sha256",
+        help="select one exact historical common-frame judge configuration; never pool them",
+    )
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument(
         "--prepare", type=int, metavar="N",
@@ -4078,6 +4222,17 @@ def main(argv=None) -> int:
     parser.add_argument("--alpha", type=float)
     parser.add_argument("--seed", type=int)
     args = parser.parse_args(argv)
+    historical_options = {}
+    if args.historical_code_repository is not None:
+        historical_options["historical_code_repository"] = args.historical_code_repository
+    if args.judge_configuration_sha256 is not None:
+        if (args.historical_code_repository is None
+            or args.prepare_source_task is not None or args.source_task_labels is not None):
+            parser.error("judge configuration selection requires a historical common frame")
+        if (len(args.judge_configuration_sha256) != 64
+            or any(c not in "0123456789abcdef" for c in args.judge_configuration_sha256)):
+            parser.error("judge configuration SHA-256 must be 64 lowercase hex digits")
+        historical_options["judge_configuration_sha256"] = args.judge_configuration_sha256
 
     prepared_binding_supplied = (
         args.prepared_rating_form is not None
@@ -4134,7 +4289,7 @@ def main(argv=None) -> int:
         if not args.acknowledge_sensitive_content:
             raise SystemExit("preparation exports harmful content; pass --acknowledge-sensitive-content")
         output = args.output or args.results / "human_audit_sample.csv"
-        return prepare_sample(args.results, output, args.prepare)
+        return prepare_sample(args.results, output, args.prepare, **historical_options)
     if args.prepare_source_task is not None:
         if not args.acknowledge_sensitive_content:
             raise SystemExit(
@@ -4143,7 +4298,7 @@ def main(argv=None) -> int:
             )
         output = args.output or args.results / "source_task_audit_sample.csv"
         return prepare_source_task_sample(
-            args.results, output, args.prepare_source_task
+            args.results, output, args.prepare_source_task, **historical_options,
         )
     if args.source_task_labels is not None:
         return analyse_source_task(
@@ -4153,6 +4308,7 @@ def main(argv=None) -> int:
             seed=seed, report_path=args.output,
             prepared_rating_form=args.prepared_rating_form,
             prepared_rating_form_sha256=args.prepared_rating_form_sha256,
+            **historical_options,
         )
     return analyse(
         args.results, args.labels, args.allow_single_rater,
@@ -4160,6 +4316,7 @@ def main(argv=None) -> int:
         report_path=args.output,
         prepared_rating_form=args.prepared_rating_form,
         prepared_rating_form_sha256=args.prepared_rating_form_sha256,
+        **historical_options,
     )
 
 

@@ -840,6 +840,8 @@ def _commands() -> dict[str, Command]:
             "Prepare or analyse the human-audit frames",
             (
                 CommandParam("--results", "path", required=True),
+                CommandParam("--historical-code-repository", "path"),
+                CommandParam("--judge-configuration-sha256", "str"),
                 CommandParam("--prepare", "int"),
                 CommandParam("--prepare-source-task", "int"),
                 CommandParam("--labels", "path"),
@@ -1265,6 +1267,14 @@ def build_argv(
         }
         if len(populated) != 1:
             raise ValueError("human_audit requires exactly one preparation or labels mode")
+        judge_configuration = values.get("--judge-configuration-sha256", "").strip()
+        historical_repository = values.get("--historical-code-repository", "").strip()
+        if judge_configuration:
+            if not historical_repository or populated & {"--prepare-source-task", "--source-task-labels"}:
+                raise ValueError("judge configuration selection requires a historical common frame")
+            if (len(judge_configuration) != 64
+                or any(c not in "0123456789abcdef" for c in judge_configuration)):
+                raise ValueError("judge configuration SHA-256 must be 64 lowercase hex digits")
         output = values.get("--output", "")
         output = output.strip() if isinstance(output, str) else ""
         prepared_path = values.get("--prepared-rating-form", "")
