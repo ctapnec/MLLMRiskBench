@@ -1701,7 +1701,8 @@ def test_phase7_requires_failed_output_recovery_as_six_separate_strata() -> None
     )
     required = (
         "validate_failed_output_recovery_completion(",
-        'failed_output_recovery.get(\n                "metric_project_revision_receipt_sha256", {}',
+        '"lifecycle_project_revision_receipt_sha256",',
+        'failed_output_recovery.get("metric_project_revision_receipt_sha256", {})',
         '"failed_output_recovery": failed_output_recovery,',
         "failed_output_recovery=failed_output_recovery,",
         "def _failed_output_recovery_metric_lanes(self)",
@@ -2013,6 +2014,8 @@ def test_phase7_phase8_bind_historical_c926_and_separate_seven_amendment() -> No
         assert (
             '"target_runtime_terminal": 7' in candidate
             or "HISTORICAL_GATE5_TARGET_RUNTIME_TERMINAL = 7" in candidate
+            or ('"target_runtime_terminal": len(RR_RUNTIME_TERMINAL_LANES)'
+                '\n        + len(ollama_static_terminals)' in candidate)
         )
         assert "SEVEN_AMENDMENT_LANES = (" in candidate
         assert '"local-llava-rr-text-primary-100"' in candidate
@@ -4921,7 +4924,7 @@ def test_phase7_publishes_exact_execution_accounting_from_final_runner_view() ->
     required = (
         "def record_execution_accounting(self) -> None:",
         "runner_view = self.human_audit_runner_input_view()",
-        "_load_cells(runner_view)",
+        'load_cells(runner_view, code_repository=Path("@@PROJECT_ROOT@@"))',
         'self.analysis / "campaign-execution-accounting.json"',
         "build_execution_accounting(",
         '"execution-accounting"',
@@ -7535,7 +7538,9 @@ def test_phase7_retained_extended_root_collisions_are_registry_only() -> None:
         "unowned measured output root already exists:",
         "if retained_lane_parent_failures:",
         "if lane in retained_extended_collision_lanes:",
-        "pre_runner_failure_artifacts.append(descriptor(failure_path))",
+        "pre_runner_failure_artifacts = lifecycle_pre_runner_failure_artifacts(",
+        "pre_runner_failures = lifecycle_pre_runner_failure_artifacts(",
+        "if retained_parent_collision:\n        return [descriptor(failure_path)]",
     )
 
     def assert_contract(value: str) -> None:
@@ -7553,8 +7558,8 @@ def test_phase7_retained_extended_root_collisions_are_registry_only() -> None:
             "if False and retained_lane_parent_failures:",
         ),
         (
-            "pre_runner_failure_artifacts.append(descriptor(failure_path))",
-            "pre_runner_failure_artifacts.clear()",
+            "if retained_parent_collision:\n        return [descriptor(failure_path)]",
+            "if retained_parent_collision:\n        return []",
         ),
     ):
         changed = source.replace(original, replacement, 1)
