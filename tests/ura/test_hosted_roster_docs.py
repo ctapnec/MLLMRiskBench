@@ -633,20 +633,22 @@ def test_hosted_follow_on_is_a_no_retry_local_input_subset() -> None:
         "There is no automatic paid resumption",
         "Build sets and locks",
         "at most 80 percent",
-        "1,350 selected local",
-        "1,350 selected hosted",
+        "1,110 selected local",
+        "1,110 selected hosted",
         "same_model_judge=true",
         "matched-input intersection",
         "full-corpus estimates",
         "target calls 0",
-        "USD 17.55 standard",
-        "1,350 target attempts",
-        "USD 21.6240",
-        "USD 98.147904",
+        "USD 32.96256",
+        "1,110 target attempts",
+        "USD 27.939392",
+        "USD 117.804128",
+        "12,288 complete input tokens",
+        "reasoning_effort=low",
         "experiments.hosted_campaign_budget",
         "experiments.retained_response_judge_pair_execute",
         "--judges rules,guardrail",
-        "1,350 Llama Guard calls",
+        "1,110 Llama Guard calls",
         "local-versus-Haiku agreement",
         "every eligible answered hosted output exactly once",
     )
@@ -661,16 +663,16 @@ def test_hosted_follow_on_is_a_no_retry_local_input_subset() -> None:
         assert "use the same selected retry count" not in value
         assert "`retained_response_judge` selector" not in value
         for target, limit in (
-            ("Claude Fable 5", 50),
-            ("Claude Opus 5", 100),
-            ("Claude Sonnet 5", 200),
+            ("Claude Fable 5", 30),
+            ("Claude Opus 5", 80),
+            ("Claude Sonnet 5", 150),
             ("Claude Haiku 4.5", 200),
-            ("GPT-5.6 Sol", 50),
-            ("GPT-6 Astra", 50),
-            ("GPT-5.6 Terra", 50),
+            ("GPT-5.6 Sol", 30),
+            ("GPT-6 Astra", 30),
+            ("GPT-5.6 Terra", 30),
             ("GPT-5.6 Luna", 150),
-            ("GPT-5.5", 50),
-            ("Kimi K3", 150),
+            ("GPT-5.5", 30),
+            ("Kimi K3", 80),
             ("DeepSeek V4-Pro", 300),
         ):
             assert f"| {target} | {limit} |" in value
@@ -697,8 +699,8 @@ def test_hosted_follow_on_is_a_no_retry_local_input_subset() -> None:
     with pytest.raises(AssertionError):
         assert "global `paid_provider` circuit" in changed_plan
     cost_flat = " ".join(cost.split())
-    for forecast in ("1,350 target-call cap", "USD 21.6240", "USD 98.147904"):
-        changed_cost = cost_flat.replace(forecast, "MUTATED_FORECAST", 1)
+    for forecast in ("1,110 target-call cap", "USD 27.939392", "USD 117.804128"):
+        changed_cost = cost_flat.replace(forecast, "MUTATED_FORECAST")
         assert changed_cost != cost_flat
         with pytest.raises(AssertionError):
             assert forecast in changed_cost
