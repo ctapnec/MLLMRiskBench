@@ -2071,6 +2071,14 @@ scope alone does not implement a monetary budget. Without an explicit scope,
 existing adapter behavior is unchanged. Each executing thread enters its own
 scope.
 
+Anthropic, Fable, OpenAI Chat/compatible and Responses targets expose
+`build_request(dialog, seed=...)` for an exact offline request preview. Live
+generation uses that same builder before constructing its SDK client. A
+preview preserves complete history, physical-media bytes and the selected
+token/effort controls; it is not itself a provider token count or paid
+authorization. Bind token-count evidence to this full body, not only the last
+user turn, and recheck the body at the physical-attempt reservation hook.
+
 In the Build tab, one large role-aware model-picker modal serves both target and
 LLM-judge selection. Choose hosted or local, then use the hosted provider filter
 (`All` by default) or the local filtering surface. Target mode binds one or more

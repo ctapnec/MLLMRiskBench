@@ -64,6 +64,15 @@ for the whole local program requires both the historical analysis and this
 supplement, plus the input-alignment audit; a historical-only analysis seal
 does not authorize the hosted follow-on.
 
+Historical analysis completed on 5 September at 20:41 UTC. Its 38 validated
+reports are now published at
+`/stats/job/historical-analysis-144-20260905`, including metric charts,
+execution accounting and resolvable artifacts. Completed producers were reused.
+Sensitivity/kappa retain their declared limitations; transfer is explicitly
+unavailable where exact execution conditions do not support a comparison.
+This closes the historical handoff only. RR completion and its separate analysis
+remain required, and the original failed jobs remain unchanged.
+
 RR bounded continuation. Each measured unit has an 86,400-second subprocess
 bound and a durable 86,400-second Runner call-start deadline. Restarting the
 same command does not reset that deadline. The parent's 96-hour Jobs field is
