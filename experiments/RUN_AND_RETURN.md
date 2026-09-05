@@ -2095,6 +2095,27 @@ count projection remain labelled estimates. The generation body is unchanged.
 to all selected Haiku grading requests. Omitting `token_counts` preserves the
 earlier explicitly estimated byte-based preparation and its retained bytes.
 
+The hosted retained-input controller consumes the ordinary sealed Runner argv
+from a bound execution program:
+
+```bash
+python -m experiments.hosted_retained_execute \
+  --program /resolved/path/hosted-program.json \
+  --program-sha256 '<program SHA-256>' \
+  --budget-root /resolved/path/shared-hosted-budget \
+  --budget-plan-sha256 '<shared plan SHA-256>'
+```
+
+This is not a shortcut around the completed local campaign or normal Runner
+admission. Pilot and measured jobs use separate output roots and disjoint
+subsets of the original selected inputs, with all pilots ordered first. The
+execution plan explicitly binds its unchanged input-selection predecessor and
+its surface-specific counting policy. Future Haiku slots are funded using
+input identities; the later paired-output binding does not invent output
+hashes in advance. Run the caller in tmux and use the existing campaign/task
+event registration so the real jobs, logs and output artifacts appear in the
+console. Do not register an unstarted job as measured work.
+
 In the Build tab, one large role-aware model-picker modal serves both target and
 LLM-judge selection. Choose hosted or local, then use the hosted provider filter
 (`All` by default) or the local filtering surface. Target mode binds one or more

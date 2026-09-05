@@ -310,6 +310,40 @@ or authorize execution. Those existing A0-A3 prerequisites remain separate.
 Gate A1: every hosted row is a local-input subset, projected total spend
 including probes/canaries is within its partition, and target/judge calls are 0.
 
+The prospective executor, `experiments.hosted_retained_execute`, consumes one
+bound program containing the existing Runner argv for each pilot and measured
+job. It revalidates the complete historical and RR evidence, reproduces the
+outcome-independent selection, and checks the exact registry, prices, request
+counts and funded slots before running those commands. Normal source,
+acquisition and transport admission still belongs to Runner. The tmux caller
+must register actual Jobs and task events through the existing campaign
+lifecycle; calling Runner alone does not publish an external job.
+
+The earlier input-selection `/1` bytes remain unchanged, including its
+descriptive `authority.requires_exact_provider_token_counts` field. That plan
+never authorized paid execution. The separate execution-plan `/1` binds its
+exact predecessor schema, ID and digest and explicitly adopts
+`surface_specific_counts_with_declared_estimates_v1`. This prospective
+counting policy distinguishes the available provider surfaces; it does not
+change selected inputs or represent an estimate as an exact token bound.
+
+Each selected target input funds its target slot and prospective local/hosted
+Haiku slots before A2. Judge-slot identities derive from the hosted condition
+and retained input identity, not an output hash that does not exist yet. A4
+binds the actual unique retained outputs to these slots and reuses a shared
+local judgment once. Missing or source-only rows leave unused judge slots;
+they do not authorize extra inputs selected after observing results.
+
+DeepSeek's forecast is conditional on off-peak pricing. Its published peak
+periods are 01:00-04:00 and 06:00-10:00 UTC; peak prices double the planned
+rates. The same 300-call maximum would then cost USD 11.316096, exceeding its
+USD 8 partition. A date-bound price file alone does not enforce that schedule.
+Before DeepSeek dispatch, bind the actual tariff window and boundary exposure,
+or fund a smaller pre-output subset at peak rates. The current executor does
+not yet enforce this clock condition, so this route remains pending that
+focused correction. It does not stop the local campaign.
+[DeepSeek pricing](https://api-docs.deepseek.com/quick_start/pricing/?push_animated=1&show_loading=0&theme=light&webview_progress_bar=1).
+
 ## A2 - Paid readiness and canaries
 
 Use the pilot below for both readiness and the purpose-bound diagnostic canary

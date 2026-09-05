@@ -194,7 +194,8 @@ Every judging input includes prompt, answer and rubric. The retained-response
 judge sends text context, not the original physical image; it is not an
 independent visual reinspection. The
 former 4,000-token grading assumption did not reserve enough room for long
-retained answers. Exact Haiku token counts must replace these planning bounds
+retained answers. Complete-request Haiku count receipts, with the provider's
+estimation uncertainty retained, must replace these planning assumptions
 before paid execution; no truncation of the answer is permitted to force a fit.
 
 Provider reconciliation remains inside the 80 percent rule: Anthropic target
