@@ -33,10 +33,15 @@ identity. The example records only the first two statuses. A measured cell
 requires the third as well, for a documentation-verified and a candidate row
 alike.
 
-The shipped example contains exactly these twenty keys:
+The shipped example contains exactly these 23 keys. Astra and the two bounded
+Fable/Sol variants were added on 5 September 2026; the other dated entries above
+remain subject to their existing account checks.
 
 | Registry key | Declared adapter input combinations | Example status |
 |---|---|---|
+| `openai:gpt-6-astra` | text; text + image | documentation-verified 2026-09-05; account canary pending |
+| `anthropic-fable:claude-fable-5;effort=high;max_tokens=4096` | text; text + image | bounded Fable condition; modalities-only row |
+| `openai-responses:gpt-5.6-sol;reasoning_mode=pro;reasoning_effort=medium;reasoning_context=all_turns;max_output_tokens=4096` | text; text + image | bounded Sol condition; modalities-only row |
 | `anthropic-fable:claude-fable-5;effort=high;max_tokens=25000` | text; text + image | fixed focal condition; modalities-only row |
 | `openai-responses:gpt-5.6-sol;reasoning_mode=pro;reasoning_effort=medium;reasoning_context=all_turns` | text; text + image | fixed focal condition; modalities-only row |
 | `anthropic:claude-opus-5` | text; text + image | documentation-verified |
@@ -59,7 +64,8 @@ The shipped example contains exactly these twenty keys:
 | `glm:glm-5.2` | text | candidate |
 
 The generic rows use `temperature: null`, which tells the adapters to omit the
-temperature field, and a common 4096-token response bound. Opus and Sonnet also
+temperature field, and a 4096-token response bound, except Haiku's explicit
+2048-token, zero-temperature target condition. Opus and Sonnet also
 use the adapter's explicit adaptive-thinking contract at `effort: high`. Change
 a condition only deliberately and retain the changed config digest with the run.
 
