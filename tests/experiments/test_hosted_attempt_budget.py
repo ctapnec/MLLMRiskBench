@@ -136,6 +136,29 @@ def test_three_http_retries_each_hold_their_own_full_exposure(budget):
         budget.reserve("O", 5, provider="openai")
 
 
+def test_actual_attempt_count_preserves_unknown_settled_and_unstarted_prefixes_on_resume(budget):
+    initial = (budget.root / "ledger.json").read_bytes()
+    assert budget.reserved_attempt_count("O") == 0
+    assert (budget.root / "ledger.json").read_bytes() == initial
+    budget.reserve("O", 1, provider="openai")
+    assert budget.reserved_attempt_count("O") == 1
+    budget.settle("O", 1, None)
+    resumed = reopen(budget)
+    assert resumed.reserved_attempt_count("O") == 1
+    assert resumed.reserved_attempt_count("A") == 0
+    resumed.reserve("O", 2, provider="openai")
+    resumed.settle("O", 2, 2)
+    before = (budget.root / "ledger.json").read_bytes()
+    assert reopen(budget).reserved_attempt_count("O") == 2
+    assert (budget.root / "ledger.json").read_bytes() == before
+
+
+@pytest.mark.parametrize("call_id", ["missing", None, True, []])
+def test_actual_attempt_count_rejects_unknown_or_malformed_call_id(budget, call_id):
+    with pytest.raises(mod.BudgetError):
+        budget.reserved_attempt_count(call_id)
+
+
 @pytest.mark.parametrize("number,provider", [(True, "anthropic"), (0, "anthropic"), (2, "anthropic"),
                                               (1.0, "anthropic"), (1, "openai")])
 def test_invalid_attempt_number_or_provider_is_refused_without_charge(budget, number, provider):

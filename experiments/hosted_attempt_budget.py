@@ -202,6 +202,15 @@ class AttemptBudget:
             partial = dict(plan, planned_calls=[calls[value] for value in selected])
             return sum(pool["liability_microusd"] for pool in self._totals(partial, ledger)["pools"].values())
 
+    def reserved_attempt_count(self, call_id: str) -> int:
+        """Read actual admitted ordinals, not a Runner's conservative exposure."""
+        call_id = _name(call_id, "call ID")
+        with _exclusive_lock(self.root):
+            _plan_value, ledger, calls = self._load()
+            if call_id not in calls:
+                raise BudgetError("call ID is outside the immutable funded plan")
+            return len(ledger["attempts"].get(call_id, {}))
+
     def reserve(self, call_id: str, attempt_number: int, *, provider: str) -> dict:
         """Fsync money before one SDK attempt. Repeated callbacks always refuse."""
         call_id, provider = _name(call_id, "call ID"), _name(provider, "provider")
