@@ -204,6 +204,73 @@ def execute(*, program_path: Path, program_sha256: str, budget_root: Path,
     return outputs
 
 
+def build_matched_judge_requests(*, programs: Sequence[dict], budget: AttemptBudget,
+                                plan_path: Path, plan_sha256: str, local_runner_view: Path,
+                                hosted_runner_view: Path, source_receipt: Path, api_config: Path,
+                                token_counts: Mapping[str, dict] | None = None) -> dict:
+    """Bind actual unique A4 outputs to their already funded input-derived slots.
+
+    The existing pair plan retains missing/setup coverage; this does not change
+    target selection or create replacement queries for unjudgeable outputs.
+    """
+    from experiments import retained_response_judge as retained
+    from experiments import retained_response_judge_execute as judge
+    from experiments.retained_response_judge_pair import SHARED_SCHEMA, validate_pair_plan
+    from experiments.retained_response_judge_pair_execute import _reconcile_pair_selection
+
+    funded = {}
+    for program in programs:
+        for admission in _validated_jobs(program, budget):
+            for key, entry in admission.entries.items():
+                identity = (program["target"], key)
+                if identity in funded:
+                    raise ValueError("matched judging cannot duplicate a funded hosted input")
+                funded[identity] = (entry["origin"], admission.requests[key]["judge_call_ids"])
+    if not funded:
+        raise ValueError("matched judging requires its fully admitted target programs")
+    plan = validate_pair_plan(load_bound_json(plan_path, plan_sha256)[0])
+    if plan["schema"] != SHARED_SCHEMA:
+        raise ValueError("prospective shared funding requires the unique-output paired plan")
+    source = retained._regular_descriptor(source_receipt, plan["source"]["sha256"])
+    if source != plan["source"]:
+        raise ValueError("matched judge source receipt changed")
+    items = _reconcile_pair_selection(local_runner_view, hosted_runner_view, plan, source)
+    # Reuse the exact-source reader, not a new guessed origin-to-output join.
+    cells = retained._read_view(Path(hosted_runner_view).resolve(strict=True))[0]
+    by_run = {cell["run_id"]: cell for cell in cells}
+    call_ids, local_slots = {}, {}
+    for row, _prompt, _response in items:
+        if row["cohort"] != "hosted":
+            continue
+        origin = by_run[row["run_id"]]["attempts"][row["attempt_id"]]["params"].get("retained_origin")
+        key = origin.get("selection", {}).get("input_identity_sha256") if isinstance(origin, dict) else None
+        binding = funded.get((row["exact_model"], key))
+        if binding is None or origin != binding[0]:
+            raise ValueError("matched hosted output differs from its exact funded original input")
+        digest = row["retained_row_sha256"]
+        call_ids[digest] = binding[1]["hosted"]
+        local_slots[digest] = binding[1]["local"]
+    # Each hosted output occurs in exactly one validated /2 edge. A reused
+    # local counterpart takes the first such slot once, leaving others unused.
+    for pair in plan["pairs"]:
+        call_ids.setdefault(pair["local_retained_row_sha256"], local_slots[pair["hosted_retained_row_sha256"]])
+    if (set(call_ids) != {row["retained_row_sha256"] for row, _, _ in items}
+        or len(set(call_ids.values())) != len(call_ids)):
+        raise ValueError("unique matched outputs do not have distinct funded judge slots")
+    condition = plan["judge_condition"]
+    normalized, _descriptor = judge._load_api_config(api_config, judge_model=condition["model"],
+                                                    expected_sha256=condition["api_config_sha256"])
+    requests = judge.build_shared_request_receipts(items, judge_model=condition["model"],
+        normalized_api=normalized, call_ids=call_ids, token_counts=token_counts)
+    for receipt in requests.values():
+        slot = budget.call(receipt["call_id"])
+        cost = (receipt["input_tokens_estimate"] * condition["input_microusd_per_token"]
+                + receipt["max_output_tokens"] * condition["output_microusd_per_token"])
+        if slot["provider"] != "anthropic" or slot["pool"] != "judge" or cost > slot["bound_microusd"]:
+            raise ValueError("full matched judge request exceeds its existing funded slot")
+    return requests
+
+
 def _validated_jobs(program: dict, budget: AttemptBudget) -> list[_Admission]:
     """Rebuild fixed input selection from complete historical and RR evidence."""
     if (not isinstance(program, dict) or program.get("schema") != SCHEMA

@@ -323,3 +323,117 @@ def test_program_rejects_changed_selection_count_retry_or_unfinished_local(tmp_p
         monkeypatch.setattr(run_matrix, "build_target", lambda *args, **kwargs: pytest.fail("unfinished local source reached target factory"))
     with pytest.raises(ValueError):
         subject._validated_jobs(program, budget)
+
+
+def _matched_funding(tmp_path, monkeypatch):
+    from experiments import retained_response_judge as retained
+    from experiments import retained_response_judge_execute as judging
+    from experiments import retained_response_judge_pair as pairs
+    from test_retained_input_replay import _matching_view, _runner
+    from test_retained_response_judge_execute import JUDGE, _prepared
+    from ura.runner import _portable_attempt_dump
+
+    source_root = tmp_path / "original"
+    source_root.mkdir()
+    points, original, _plan, _bindings, value, config = _fixture(source_root, adaptive=True)
+    prepared = _prepared(tmp_path, monkeypatch)
+    api = json.loads(prepared["api_config"].read_bytes())
+    api[JUDGE]["max_tokens"] = 512
+    prepared["api_config"].write_bytes(judging._canonical(api))
+    api_sha = hashlib.sha256(prepared["api_config"].read_bytes()).hexdigest()
+    programs, slots, admissions, hosted_cells = [], [], {}, []
+    for spec in ("openai:gpt-5.5", "openai:gpt-5.6-terra", "anthropic:claude-haiku-4-5"):
+        mock = _RecordingMock()
+        mock.name = spec
+        runner = _runner(config, target=mock)
+        runner.run(points, run_config={"attacker": "replay", "corpus": "retained-corpus",
+                                      "project_revision": {"sha256": "c" * 64}})
+        hosted_cells.append({"source_identity_validated": True, "run_id": runner.last_manifest.run_id,
+            "model": spec, "manifest": runner.last_manifest.model_dump(mode="json"),
+            "attempts": {a.id: _portable_attempt_dump(a) for a in runner.attempts}})
+        entries, requests = {}, {}
+        for entry in value["entries"]:
+            key = entry["origin"]["selection"]["input_identity_sha256"]
+            ids = {cohort: "judge-" + cohort + "-" + subject._sha({"target": spec, "input_id": key})
+                   for cohort in ("local", "hosted")}
+            entries[key] = entry
+            requests[key] = {"judge_call_ids": ids}
+            slots += [{"call_id": call_id, "provider": "anthropic", "pool": "judge", "bound_microusd": 14848}
+                      for call_id in ids.values()]
+        admissions[spec] = [SimpleNamespace(entries=entries, requests=requests)]
+        programs.append({"target": spec})
+    hosted_view = tmp_path / "hosted"
+    hosted_view.mkdir()
+    local_view = _matching_view(original)
+    views = [_matching_view(cell) for cell in hosted_cells]
+    hosted = (hosted_cells, {k: v for view in views for k, v in view[1].items()},
+              {k: v for view in views for k, v in view[2].items()},
+              {"policy_evaluable_samples": 3, "common_ineligible_evaluable_rows_excluded": 0})
+    # Only the absent final campaign seal/read-only artifact boundary is
+    # synthetic. Actual Runner Attempts, origin checks and paired join execute.
+    monkeypatch.setattr(subject, "_validated_jobs", lambda program, budget: admissions[program["target"]])
+    monkeypatch.setattr(retained, "_read_view", lambda path: hosted if path == hosted_view else local_view)
+    (local_rows, local_audit), (hosted_rows, hosted_audit), _ = retained.load_pair_candidate_views(prepared["runner_view"], hosted_view)
+    condition = prepared["plan"]["judge_condition"]
+    pricing = {key: condition[key] for key in (
+        "pricing_config_sha256", "pricing_as_of", "pricing_effective_date", "pricing_currency",
+        "input_microusd_per_token", "output_microusd_per_token")}
+    plan = pairs.build_pair_plan(local_rows, hosted_rows, local_population_audit=local_audit,
+        hosted_population_audit=hosted_audit, source_descriptor=prepared["plan"]["source"],
+        judge_model=JUDGE, api_config_sha256=api_sha, pricing_condition=pricing, limit=3, share_local_judgments=True)
+    prepared["plan_path"].write_bytes(judging._canonical(plan))
+    descriptor = create_budget(tmp_path / "funded-pairs", provider_budgets_microusd={"anthropic": 90000000}, planned_calls=slots)
+    budget = AttemptBudget(tmp_path / "funded-pairs", descriptor["sha256"])
+    kwargs = {key: prepared[key] for key in ("plan_path", "source_receipt", "api_config")}
+    kwargs.update(programs=programs, budget=budget, plan_sha256=hashlib.sha256(prepared["plan_path"].read_bytes()).hexdigest(),
+                  local_runner_view=prepared["runner_view"], hosted_runner_view=hosted_view)
+    return prepared, plan, admissions, kwargs
+
+
+def test_actual_retained_pair_outputs_bind_four_unique_slots_and_resume_once(tmp_path, monkeypatch):
+    from experiments import retained_response_judge_pair_execute as paired
+    from test_retained_judge_shared_budget import HookHaiku
+    from experiments import retained_response_judge_execute as judging
+    prepared, plan, _admissions, kwargs = _matched_funding(tmp_path, monkeypatch)
+    requests = subject.build_matched_judge_requests(**kwargs)
+    assert len(plan["pairs"]) == 3 and len(plan["selected"]) == len(requests) == 4
+    assert sum(value["call_id"].startswith("judge-local-") for value in requests.values()) == 1
+    assert len({value["call_id"] for value in requests.values()}) == 4
+    assert subject.build_matched_judge_requests(**kwargs) == requests
+    condition = plan["judge_condition"]
+    config, _ = judging._load_api_config(prepared["api_config"], judge_model=condition["model"],
+                                        expected_sha256=condition["api_config_sha256"])
+    fake = HookHaiku(config)
+    execute_kwargs = {key: prepared[key] for key in ("plan_path", "source_receipt", "api_config", "pricing_config", "out")}
+    execute_kwargs.update(local_runner_view=kwargs["local_runner_view"], hosted_runner_view=kwargs["hosted_runner_view"],
+                          shared_budget=kwargs["budget"], shared_requests=requests, judge_factory=lambda *_: fake)
+    result = paired.execute(**execute_kwargs)
+    assert fake.calls == fake.http_calls == 4
+    assert paired.execute(**execute_kwargs) == result and fake.http_calls == 4
+    pool = kwargs["budget"].snapshot()["pools"]["anthropic:judge"]
+    assert pool["settled_attempts"] == 4
+    assert pool["unstarted_first_commitments_microusd"] == 8 * 14848
+
+
+@pytest.mark.parametrize("mutation", ["changed_origin", "missing_program", "duplicate_program", "underfunded_request"])
+def test_matched_slot_binding_rejects_unfunded_or_changed_actual_input(tmp_path, monkeypatch, mutation):
+    prepared, plan, admissions, kwargs = _matched_funding(tmp_path, monkeypatch)
+    if mutation == "missing_program":
+        kwargs["programs"].pop()
+    elif mutation == "duplicate_program":
+        kwargs["programs"].append(kwargs["programs"][0])
+    elif mutation == "changed_origin":
+        for admission in admissions[kwargs["programs"][0]["target"]]:
+            admission.entries = copy.deepcopy(admission.entries)
+            for entry in admission.entries.values():
+                entry["origin"]["original_attempt"]["strategy"] = "different funded source"
+    else:
+        from experiments import retained_response_judge_execute as judging
+        actual = judging.build_shared_request_receipts
+        def oversized(*args, **named):
+            receipts = actual(*args, **named)
+            next(iter(receipts.values()))["input_tokens_estimate"] = 1000000
+            return receipts
+        monkeypatch.setattr(judging, "build_shared_request_receipts", oversized)
+    with pytest.raises(ValueError, match="funded"):
+        subject.build_matched_judge_requests(**kwargs)
