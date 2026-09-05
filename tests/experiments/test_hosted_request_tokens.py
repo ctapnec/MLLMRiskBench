@@ -1,5 +1,6 @@
 """Full real-adapter request previews; count services are mocked, never generation."""
 import copy
+import json
 import runpy
 from pathlib import Path
 from types import SimpleNamespace
@@ -148,3 +149,37 @@ def test_deepseek_offline_estimate_does_not_use_an_openai_counter(tmp_path, monk
     receipt = count_request(target, request, allow_network=True)
     assert receipt["method"] == "local_estimate" and receipt["count_http_attempts"] == 0
     assert validate_receipt(target, request, receipt) == receipt
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_installed_sdk_serializes_only_count_endpoint(kind, tmp_path, monkeypatch):
+    httpx = pytest.importorskip("httpx")
+    openai = pytest.importorskip("openai")
+    anthropic = pytest.importorskip("anthropic")
+    target = _target(kind, tmp_path)
+    expected_path = ("/v1/messages/count_tokens" if kind in {"haiku", "fable"} else
+                     "/v1/tokenizers/estimate-token-count" if kind == "kimi" else
+                     "/v1/responses/input_tokens")
+    delivered = []
+
+    def handle(request):
+        assert request.method == "POST" and request.url.path == expected_path
+        delivered.append(json.loads(request.content))
+        result = ({"data": {"total_tokens": 731}} if kind == "kimi" else
+                  {"input_tokens": 731, "object": "response.input_tokens"})
+        return httpx.Response(200, json=result, request=request)
+
+    transport = httpx.Client(transport=httpx.MockTransport(handle))
+    if kind in {"haiku", "fable"}:
+        client = anthropic.Anthropic(api_key="not-a-real-key", base_url="https://api.anthropic.com",
+                                     max_retries=0, http_client=transport)
+    else:
+        base = "https://api.moonshot.ai/v1" if kind == "kimi" else "https://api.openai.com/v1"
+        client = openai.OpenAI(api_key="not-a-real-key", base_url=base, max_retries=0, http_client=transport)
+    monkeypatch.setattr(target, "_get_client", lambda: client)
+    try:
+        receipt = count_request(target, target.build_request(_dialog(tmp_path)), allow_network=True)
+    finally:
+        client.close()
+    assert receipt["input_tokens"] == 731 and len(delivered) == 1
+    assert receipt["count_request_sha256"] == request_sha256(delivered[0])
