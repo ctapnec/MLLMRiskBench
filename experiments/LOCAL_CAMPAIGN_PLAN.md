@@ -28,10 +28,13 @@ shutdown abort without a new model call. The
 25-unit hardware-fit correction is complete and validates 4,463 unique rows,
 4,366 successful generations, 97 retained missing responses and zero repeated
 successful rows. Phase 7 analysis and Phase 8 human-audit gating have not yet
-completed on this terminal union. Before sealing it, Phase 7 must reconcile
-exact datapoint IDs, seeds, rendered inputs and media hashes across the vLLM
-and Ollama populations, including retained partial prefixes and their recovery
-suffixes. Equal row counts alone do not establish aligned inputs. This
+completed on this terminal union. A checkpoint-inclusive structure audit now
+reconciles all 27 replay arms: 7,606 unique inputs for each of Qwen3-VL, LLaVA
+base, Gemma and Ministral, and 3,954 text-compatible inputs for each of DeepSeek
+and GPT-OSS. Comparable arms have identical datapoint IDs, seeds, rendered
+inputs and media identities, including retained partial prefixes and recovery
+suffixes. Final Phase 7 publication must preserve the distinct execution
+conditions; input coverage does not authorize metric pooling. This
 paragraph is operating status, not thesis
 evidence and not a product feature.
 

@@ -562,6 +562,7 @@ def test_measured_grid_binds_runner_resolved_ollama_digest(
         source_sha="1" * 64, source_config_sha="2" * 64,
     )
     request["models"] = [f"{selector}@sha256:{digest}"]
+    request["limit"] = 50
     kwargs = dict(
         lane="rjudge-ollama-rwkv-g1d-0p4b", spec=spec, model_selector=selector,
         expected_project_binding=project, expected_source_sha="1" * 64,
