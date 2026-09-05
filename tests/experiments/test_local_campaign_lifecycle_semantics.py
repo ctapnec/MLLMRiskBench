@@ -129,6 +129,20 @@ def test_native_terminal_uses_its_historical_plan_revision(phase7, tmp_path):
         phase7.validate_native_terminal_revision({**native, "project_revision": wrong_revision})
 
 
+def test_analysis_config_copies_preserve_retained_bytes_not_checkout_location(
+    phase7, tmp_path,
+):
+    retained = tmp_path / "retained.json"
+    copied = tmp_path / "analysis.json"
+    retained.write_bytes(b'{"revision":"pinned"}\n')
+    copied.write_bytes(retained.read_bytes())
+    phase7.require_matching_checkout_file(retained, copied, label="config")
+    copied.write_bytes(b'{"revision":"changed"}\n')
+    with pytest.raises(phase7.Phase7Error, match="bytes differ"):
+        phase7.require_matching_checkout_file(retained, copied, label="config")
+    assert retained.read_bytes() == b'{"revision":"pinned"}\n'
+
+
 def test_analysis_project_identity_is_exact_not_a_directory_basename(
     phase7, tmp_path, monkeypatch,
 ):

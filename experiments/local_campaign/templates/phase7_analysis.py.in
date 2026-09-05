@@ -3425,6 +3425,16 @@ def _validate_rr_projection_artifact_binding(
         raise Phase7Error(f"{label} RR projection artifact validation failed") from exc
 
 
+def require_matching_checkout_file(
+    retained: Path, checkout_file: Path, *, label: str,
+) -> None:
+    """Keep retained locators unchanged while checking exact analysis-copy bytes."""
+    _retained_path, retained_bytes = _stable_regular_bytes(retained, label=label)
+    _checkout_path, checkout_bytes = _stable_regular_bytes(checkout_file, label=label)
+    if retained_bytes != checkout_bytes:
+        raise Phase7Error(f"{label}: retained and analysis-checkout bytes differ")
+
+
 def validate_rr_runtime_project_continuity(
     terminal_descriptor: Mapping[str, Any] | None,
     *,
@@ -3449,12 +3459,12 @@ def validate_rr_runtime_project_continuity(
     local_config_path, local_config_payload = descriptor_bytes(
         local_config, label=f"{label} RR local config"
     )
-    expected_config_path = (
-        project_root / "experiments" / "local-llava-rr.json"
-    ).resolve(strict=True)
+    require_matching_checkout_file(
+        local_config_path, project_root / "experiments" / "local-llava-rr.json",
+        label=f"{label} RR local config",
+    )
     if (
-        local_config_path != expected_config_path
-        or local_config.get("sha256") != RR_LOCAL_CONFIG_SHA256
+        local_config.get("sha256") != RR_LOCAL_CONFIG_SHA256
         or local_config.get("bytes") != RR_LOCAL_CONFIG_BYTES
     ):
         raise Phase7Error(f"{label} RR local config identity changed")
@@ -7346,8 +7356,9 @@ def validate_native_controller(
         plan_code["framework_lock"], label="Phase 6 native framework lock"
     )
     expected_framework_lock = Path.cwd() / "experiments" / "framework_runtime_lock.json"
-    if framework_lock_path != expected_framework_lock.resolve(strict=True):
-        raise Phase7Error("Phase 6 native plan references another framework lock")
+    require_matching_checkout_file(
+        framework_lock_path, expected_framework_lock, label="Phase 6 native framework lock",
+    )
     native_project_path = descriptor_file(
         plan_code.get("project_revision"),
         label="Phase 6 native project-revision receipt",
@@ -8648,12 +8659,14 @@ def validate_followon_inventory(
             raise Phase7Error(
                 f"{lane}: follow-on lanes use different project revisions"
             )
+        for option, name in (("--local-config", "local-qwen3-vl.json"),
+                             ("--source-config", "source-instances.json")):
+            require_matching_checkout_file(
+                bound_paths[option], Path.cwd() / "experiments" / name,
+                label=f"{lane} follow-on {option}",
+            )
         if (
-            bound_paths["--local-config"]
-            != (Path.cwd() / "experiments" / "local-qwen3-vl.json").resolve(strict=True)
-            or bound_paths["--source-config"]
-            != (Path.cwd() / "experiments" / "source-instances.json").resolve(strict=True)
-            or bound_paths["--source-conformance"]
+            bound_paths["--source-conformance"]
             != Path(EXPECTED_SOURCE_CONFORMANCE_MANIFEST).resolve(strict=True)
             or options["--source-conformance-sha256"]
             != EXPECTED_SOURCE_CONFORMANCE_SHA256
