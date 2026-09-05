@@ -3429,8 +3429,12 @@ def require_matching_checkout_file(
     retained: Path, checkout_file: Path, *, label: str,
 ) -> None:
     """Keep retained locators unchanged while checking exact analysis-copy bytes."""
-    _retained_path, retained_bytes = _stable_regular_bytes(retained, label=label)
-    _checkout_path, checkout_bytes = _stable_regular_bytes(checkout_file, label=label)
+    _retained_path, retained_bytes = _stable_regular_bytes(
+        retained, label=label, max_bytes=4 * 1024 * 1024,
+    )
+    _checkout_path, checkout_bytes = _stable_regular_bytes(
+        checkout_file, label=label, max_bytes=4 * 1024 * 1024,
+    )
     if retained_bytes != checkout_bytes:
         raise Phase7Error(f"{label}: retained and analysis-checkout bytes differ")
 
