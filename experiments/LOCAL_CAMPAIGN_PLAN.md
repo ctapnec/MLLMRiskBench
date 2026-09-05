@@ -1,7 +1,8 @@
 # All-local test campaign plan: every corpus arm, every framework runtime, free models only
 
-Status: plan, written 20 August 2026 after the readiness audit of the big rig
-(Debian, 2x RTX 4090 24,564 MiB, 125 GiB RAM, /mnt/stor 7.1 TB free). It is an
+Status: active operating plan, written 20 August 2026 after the readiness audit
+of the big rig (Debian, 2x RTX 4090 24,564 MiB, 125 GiB RAM, /mnt/stor 7.1 TB
+free). It is an
 operating plan for the rig, not thesis evidence. It complements, and never
 replaces, the operator runbook [`RUN_AND_RETURN.md`](RUN_AND_RETURN.md): every
 command below is a runbook command (section numbers in brackets) restricted to
@@ -16,6 +17,16 @@ The forward runtime inventory was amended on 25 August 2026 to admit T3MP3ST
 at an exact source commit, increasing the managed inventory from 15 to 16. The
 dated readiness snapshot below remains a historical record of what was found on
 20 August.
+
+Execution status, 5 September 2026. Gates 0 through 5 are met. The measured
+Phase 6 inventory is terminal except for two exact, disjoint conditions: the
+active 230-row Qwen3-VL larger-context recovery and the pending six-unit,
+2,350-row Ollama R-Judge/GPTGeoChat population-alignment continuation. The
+25-unit hardware-fit correction is complete and validates 4,463 unique rows,
+4,366 successful generations, 97 retained missing responses and zero repeated
+successful rows. Phase 7 analysis and Phase 8 human-audit gating have not yet
+run on this terminal union. This paragraph is operating status, not thesis
+evidence and not a product feature.
 
 Goal: exercise and, where the admission gates allow, measure the complete
 portfolio without spending provider budget:
