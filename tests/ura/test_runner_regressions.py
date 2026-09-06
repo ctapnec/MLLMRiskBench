@@ -7123,6 +7123,60 @@ def test_empty_source_metric_response_is_retained_as_model_stability_failure(
     )
 
 
+@pytest.mark.parametrize("outcome", ["empty", "incompatible", "usable"])
+def test_checkpoint_resume_preserves_nonresponse_source_evaluation(
+    outcome: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class OutcomeTarget(_RecordingTarget):
+        forbidden = False
+
+        def generate(self, dialog, *, seed=None):
+            if self.forbidden:
+                pytest.fail("checkpoint resume repeated a target call")
+            response = super().generate(dialog, seed=seed)
+            if outcome == "incompatible":
+                raise TargetInputError("context does not fit", category="context_limit_exceeded")
+            response.output_turns = (
+                [] if outcome == "empty" else [DialogTurn(role="assistant", content="safe")]
+            )
+            return response
+
+    point = _datapoint().model_copy(update={
+        "source": "rjudge", "expected_behavior": "safe_answer",
+        "meta": {"common_metrics_eligible": False,
+                 "required_metric": "rjudge_safety_judgment", "reference_label": "safe"},
+    })
+    evaluated = []
+    original = runner_module.source_metrics.evaluate_source_response
+
+    def observe_source(dp, response):
+        evaluated.append(response.attempt_id)
+        return original(dp, response)
+
+    monkeypatch.setattr(runner_module.source_metrics, "evaluate_source_response", observe_source)
+    first = _runner(_FloodAttacker(), OutcomeTarget())
+    records = []
+    expected, _ = first.run([point], on_record=records.append)
+    assert len(evaluated) == int(outcome == "usable")
+    assert (expected[0].raw["source_evaluation"] is not None) == (outcome == "usable")
+
+    target = OutcomeTarget()
+    target.forbidden = True
+    resumed = _runner(_FloodAttacker(), target)
+    actual, _ = resumed.run([point], resume_records={r["attempt"]["id"]: r for r in records})
+    assert [j.model_dump(mode="json") for j in actual] == [j.model_dump(mode="json") for j in expected]
+    assert len(evaluated) == 2 * int(outcome == "usable")
+    assert target._dialogs == []
+
+    if outcome != "usable":
+        changed = json.loads(json.dumps(records[0]))
+        changed["judgment"]["raw"]["source_evaluation"] = {"invented": True}
+        with pytest.raises(ValueError, match="does not match its authoritative trail"):
+            _runner(_FloodAttacker(), target).run(
+                [point], resume_records={changed["attempt"]["id"]: changed},
+            )
+
+
 def test_skip_ids_cannot_create_a_selected_subset_without_checkpoint() -> None:
     runner = _runner(_FloodAttacker(), _RecordingTarget())
     with pytest.raises(ValueError, match="only name attempts restored"):

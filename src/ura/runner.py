@@ -2322,6 +2322,8 @@ class Runner:
             (
                 source_metrics.evaluate_source_response(datapoint, response)
                 if expected.params["policy_evaluable_turn"] is True
+                and response.raw.get("model_stability_status") != "failed_output"
+                and response.raw.get("target_input_status") != "incompatible"
                 else None
             ),
         )
