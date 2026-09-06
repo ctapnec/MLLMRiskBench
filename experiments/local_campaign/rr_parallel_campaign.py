@@ -406,8 +406,13 @@ def template_retry_selection(launch_path: Path, worker_path: Path, gpu: str) -> 
                 and str(error.get("message", "")).endswith(_ROLE_ERROR)):
             continue
         old_result = Path(launch["work_root"]) / "runs/thesis/runner" / unit.unit_id / worker_root.name
-        if ((unit_root / "state.json").exists() or any(path.stat().st_size for path in old_result.glob("*.responses*.jsonl"))
-                or error.get("completed_attempts") != 0 or error.get("corpus") != unit.corpus
+        if ((unit_root / "state.json").exists()
+                or any(path.stat().st_size for path in old_result.glob("*.responses*.jsonl"))):
+            # A failed measured/scoring unit can retain an earlier canary
+            # error. It needs its own checkpoint recovery, not target replay;
+            # do not let it block independent zero-measured template retries.
+            continue
+        if (error.get("completed_attempts") != 0 or error.get("corpus") != unit.corpus
                 or error.get("model_spec") != prior.RR_SPEC):
             raise ValueError("RR template retry requires zero original measured responses and no measured state")
         base = unit.spec["base_argv"]
