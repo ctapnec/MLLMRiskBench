@@ -206,6 +206,124 @@ def test_complete_analysis_requires_all_grids_and_preserves_separate_prefix_scop
     assert "reported_original_coverage" not in handoff
 
 
+@pytest.fixture
+def rescored(complete, monkeypatch):
+    f = complete
+    unit = mod.Unit(**f.launch["units"][0])
+    gpu = next(gpu for gpu, queue in f.launch["queues"].items() if unit.unit_id in queue)
+    worker_root = Path(f.launch["workers"][gpu])
+    item = f.results[unit.unit_id]
+    state_path = Path(item["evidence"]["state"]["path"])
+    state = json.loads(state_path.read_text())
+    state.update(unit_id=unit.unit_id, source_lane=unit.source_lane, corpus=unit.corpus,
+                 result_root=item["root"], selected_records=unit.selected_records)
+    state["runner_argv"].extend(["--project-revision-sha256", f.launch["project_revision"]["sha256"],
+                                 "--source-conformance-sha256", "c" * 64])
+    state_descriptor = write(state_path, state)
+    worker = f.workers[gpu]
+    worker["status"] = "complete_with_failures"
+    failure = {"error_type": "RuntimeError", "error": "fixture local judging interruption"}
+    worker["failures"][unit.unit_id] = failure
+    del worker["results"][unit.unit_id]
+    # The historical reader reported only seven rows from the failed unit.
+    worker["target_attempts"] += 7 - unit.selected_records
+    worker["successful_generations"] += 6 - unit.selected_records
+    f.value["worker_completions"][gpu] = write(worker_root / "completion.json", worker)
+    write(worker_root / f"{unit.unit_id}.terminal.json", {"result": None, "failure": failure})
+    f.value["worker_exit_codes"][gpu] = 1
+    f.value["status"] = "complete_with_failures"
+    f.value["coverage"] = {**f.coverage, "complete": False,
+                           "retained_inputs": 7606 - unit.selected_records + 7}
+    write(f.path, f.value)
+    current = f.cells[Path(item["root"])][0]
+    scoring_path = f.work / "runs/engineering/separate-scoring/completion.json"
+    write(scoring_path, {"fixture": "separately completed scoring"})
+    view = {"source_completion": mod._descriptor(scoring_path),
+            "launch": {"source": {"state": state_descriptor}},
+            "counts": {"retained_responses": unit.selected_records, "existing_judgments": 7,
+                       "new_judgments": unit.selected_records - 7, "total_judgments": unit.selected_records},
+            "report_views": {"input_cell": current, "metric_cells": {
+                "original-judgments": {**current, "fixture_scope": "original"},
+                "recovered-judgments": {**current, "fixture_scope": "recovered"}}, "joined": None}}
+    monkeypatch.setattr(mod.scoring, "load_completed", lambda *a, **kw: view)
+    counts = {key: {field: w[field] for field in ("target_attempts", "successful_generations")}
+              for key, w in f.workers.items()}
+
+    def old_accounting(launch, *, project, worker_accounting=False):
+        assert worker_accounting is True
+        return {"coverage": f.value["coverage"], "worker_accounting": counts}
+
+    monkeypatch.setattr(mod, "_execution_source_coverage", old_accounting)
+    return f, unit, gpu, scoring_path, view, counts
+
+
+def test_separate_scoring_completes_coverage_without_promoting_old_grid(rescored):
+    f, unit, _gpu, path, view, counts = rescored
+    handoff, units, cells, prefix = mod.validate(f.path, work=f.work, project=f.work,
+                                              judging_completions=[path])
+    assert handoff["status"] == "complete"
+    assert handoff["coverage"]["retained_inputs"] == 7606
+    assert handoff["original_worker_accounting"] == counts
+    assert handoff["separately_completed_judging"][unit.unit_id] == view["counts"]
+    assert units[unit.unit_id]["root"] not in handoff["completed_grid_roots"]
+    assert Path(units[unit.unit_id]["root"]) not in f.checked
+    scopes = mod._metric_scopes(units, cells, prefix)
+    assert len(scopes) == 3
+    assert all(cell["run_id"] != unit.unit_id for cell in scopes["completed-segments"])
+    assert len(cells) == 4
+    assert handoff["old_grid_promoted"] is False
+
+
+@pytest.mark.parametrize("change", ["count", "input", "failure", "profile", "duplicate"])
+def test_separate_scoring_does_not_relax_original_worker_or_selection_checks(rescored, change):
+    f, unit, gpu, path, view, _counts = rescored
+    if change == "count":
+        f.workers[gpu]["target_attempts"] += 1
+        f.value["worker_completions"][gpu] = write(Path(f.launch["workers"][gpu]) / "completion.json", f.workers[gpu])
+        write(f.path, f.value)
+    elif change == "input":
+        view["report_views"]["input_cell"]["attempts"].popitem()
+    elif change == "failure":
+        write(Path(f.launch["workers"][gpu]) / f"{unit.unit_id}.terminal.json",
+              {"result": None, "failure": {"error": "different failure"}})
+    elif change == "profile":
+        state = view["launch"]["source"]["state"]
+        state_path = Path(state["path"])
+        value = json.loads(state_path.read_text())
+        index = value["runner_argv"].index("--local-config-sha256") + 1
+        value["runner_argv"][index] = "d" * 64
+        view["launch"]["source"]["state"] = write(state_path, value)
+    with pytest.raises(ValueError):
+        mod.validate(f.path, work=f.work, project=f.work,
+                     judging_completions=[path, path] if change == "duplicate" else [path])
+
+
+def test_old_source_accounting_includes_retained_rows_of_failed_units(tmp_path, monkeypatch):
+    from ura import runner
+
+    launch = {"queues": {"0": ["failed", "complete"], "1": []}, "work_root": str(tmp_path),
+              "workers": {"0": str(tmp_path / "worker0"), "1": str(tmp_path / "worker1")}}
+    for unit in launch["queues"]["0"]:
+        write(tmp_path / "runs/thesis/runner" / unit / "worker0" / "fixture.responses.jsonl", {"fixture": unit})
+    outcomes = {"failed": {"a": "usable_first_response", "b": "failed_output"},
+                "complete": {"c": "usable_first_response", "d": "recovered_after_retry", "e": "usable_first_response"}}
+    monkeypatch.setattr(mod.campaign.prior, "_durable_outcomes",
+                        lambda path: ({}, outcomes[path.parent.name], [], []))
+    monkeypatch.setattr(mod.campaign, "coverage", lambda launch: {"retained_inputs": 5})
+    monkeypatch.setattr(runner, "_harness_source_identity", lambda: {"sha256": "c" * 64})
+    revision = {"harness_source_sha256": "c" * 64,
+                "driver_source_sha256": hashlib.sha256(Path("experiments/run_matrix.py").read_bytes()).hexdigest()}
+    request = {"commit": "a" * 40, "revision": revision, "launch": launch, "worker_accounting": True}
+    monkeypatch.setattr(mod.sys, "stdin", io.StringIO(json.dumps(request)))
+    output = io.StringIO()
+    monkeypatch.setattr(mod.sys, "stdout", output)
+    exec(mod._COVERAGE_WORKER, {})
+    assert json.loads(output.getvalue())["worker_accounting"] == {
+        "0": {"target_attempts": 5, "successful_generations": 4},
+        "1": {"target_attempts": 0, "successful_generations": 0},
+    }
+
+
 @pytest.mark.parametrize("change", [None, "harness", "driver"])
 def test_original_counter_worker_requires_the_exact_execution_source(monkeypatch, change):
     from ura import runner

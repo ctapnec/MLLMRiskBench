@@ -179,7 +179,11 @@ if request.get("report_source"):
     launch, source = recovery.load_launch(Path(completion["launch"]["path"]), completion["launch"]["sha256"],
                                           work=Path(request["work"]), project=Path.cwd())
     result["report_views"] = _report_views(source, result["records"], completion, joined=request["joined"])
-print(json.dumps(result, default=str, allow_nan=False))
+def json_default(value):
+    if isinstance(value, Path):
+        return str(value)
+    raise TypeError(type(value).__name__)
+print(json.dumps(result, default=json_default, allow_nan=False))
 '''
 
 

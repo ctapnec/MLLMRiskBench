@@ -20,6 +20,7 @@ from experiments import retained_artifact_reader as retained
 from experiments.hosted_retained_inputs import candidates_from_cells
 from experiments.level2_report import build_level2_report
 from experiments.local_campaign import rr_parallel_campaign as campaign
+from experiments.local_campaign import rr_retained_judging_analysis as scoring
 from experiments.local_campaign.console_events import finish_child_controller, start_child_controller
 from experiments.local_campaign.rr_profiled_analysis import export_level1_strata
 from experiments.local_campaign.vllm_input_recovery_phase6 import _validate_metric_result
@@ -37,7 +38,7 @@ PREFIX_SCOPE = "source_validated_closed_cell_in_interrupted_grid"
 _COVERAGE_WORKER = r'''
 import hashlib, json, sys
 from pathlib import Path
-from experiments.local_campaign.rr_parallel_campaign import coverage
+from experiments.local_campaign.rr_parallel_campaign import coverage, prior
 from ura.runner import _harness_source_identity
 
 request = json.load(sys.stdin)
@@ -45,7 +46,21 @@ revision = request["revision"]
 if (revision["harness_source_sha256"] != _harness_source_identity()["sha256"]
     or revision["driver_source_sha256"] != hashlib.sha256(Path("experiments/run_matrix.py").read_bytes()).hexdigest()):
     raise ValueError("RR reported coverage source differs from its original checkout")
-print(json.dumps({"validator_commit": request["commit"], "coverage": coverage(request["launch"])}))
+result = {"validator_commit": request["commit"], "coverage": coverage(request["launch"])}
+if request.get("worker_accounting"):
+    launch = request["launch"]
+    result["worker_accounting"] = {}
+    for gpu, queue in launch["queues"].items():
+        counts = {"target_attempts": 0, "successful_generations": 0}
+        for unit in queue:
+            root = Path(launch["work_root"]) / "runs/thesis/runner" / unit / Path(launch["workers"][gpu]).name
+            if list(root.glob("*.responses*.jsonl")):
+                _attempts, outcomes, _af, _rf = prior._durable_outcomes(root)
+                counts["target_attempts"] += len(outcomes)
+                counts["successful_generations"] += sum(
+                    value in {"usable_first_response", "recovered_after_retry"} for value in outcomes.values())
+        result["worker_accounting"][gpu] = counts
+print(json.dumps(result))
 '''
 
 # Every semantic check below is the ORIGINAL source function. The caller-bound
@@ -143,7 +158,7 @@ def _same_launch(completion: dict, launch: dict) -> None:
         raise ValueError("RR completion changed its bound launch")
 
 
-def _execution_source_coverage(launch: dict, *, project: Path) -> dict:
+def _execution_source_coverage(launch: dict, *, project: Path, worker_accounting: bool = False) -> dict:
     """Reproduce the retained controller's counter, not its completion claim."""
     revision_path = _validate_descriptor(launch["project_revision"], label="RR counter source receipt")
     receipt, descriptor = load_project_revision_file(
@@ -170,16 +185,17 @@ def _execution_source_coverage(launch: dict, *, project: Path) -> dict:
                     environment.pop(key)
             result = subprocess.run(
                 [sys.executable, "-c", _COVERAGE_WORKER], cwd=worktree, env=environment,
-                input=json.dumps({"launch": launch, "revision": revision, "commit": commit}),
+                input=json.dumps({"launch": launch, "revision": revision, "commit": commit,
+                                  **({"worker_accounting": True} if worker_accounting else {})}),
                 capture_output=True, text=True, encoding="utf-8", timeout=600, check=False,
             )
             if result.returncode:
                 raise ValueError("RR original coverage reader failed: " + result.stderr[-4000:])
             value = retained._decode_validator_ipc(result.stdout)
-            if (not isinstance(value, dict) or set(value) != {"validator_commit", "coverage"}
+            if (not isinstance(value, dict) or set(value) != {"validator_commit", "coverage", *(["worker_accounting"] if worker_accounting else [])}
                     or value["validator_commit"] != commit or not isinstance(value["coverage"], dict)):
                 raise ValueError("RR original coverage reader returned an invalid result")
-            return value["coverage"]
+            return value if worker_accounting else value["coverage"]
         finally:
             if installed:
                 retained._git(project, "worktree", "remove", "--force", str(worktree))
@@ -314,8 +330,30 @@ def _retry_results(paths: Sequence[Path], *, original_launch: Path, work: Path) 
     return replacements
 
 
+def _judging_results(paths: Sequence[Path], *, launch: dict, work: Path, project: Path) -> dict:
+    results = {}
+    for path in paths:
+        view = scoring.load_completed(path, work=work, project=project, reports=True, joined=True)
+        state_path = _validate_descriptor(view["launch"]["source"]["state"], label="RR scoring source state")
+        state = _load_json(state_path, label="RR scoring source state")
+        unit = state["unit_id"]
+        gpu = next((key for key, queue in launch["queues"].items() if unit in queue), None)
+        if (unit in results or gpu is None
+                or state_path != Path(launch["workers"][gpu]) / "units" / unit / "state.json"
+                or _option(state["runner_argv"], "--project-revision-sha256") != launch["project_revision"]["sha256"]):
+            raise ValueError("RR separate scoring belongs to a different original worker or unit")
+        results[unit] = {
+            "scoring_recovery": view, "physical_gpu": gpu, "root": state["result_root"],
+            "source_lane": state["source_lane"], "corpus": state["corpus"],
+            "revision": _option(state["runner_argv"], "--project-revision-sha256"),
+            "source": _option(state["runner_argv"], "--source-conformance-sha256"),
+            "evidence": {"state": view["launch"]["source"]["state"]},
+        }
+    return results
+
+
 def validate(completion_path: Path, *, work: Path, project: Path,
-             retry_completions: Sequence[Path] = ()) -> tuple[dict, dict, list[dict], list[dict]]:
+             retry_completions: Sequence[Path] = (), judging_completions: Sequence[Path] = ()) -> tuple[dict, dict, list[dict], list[dict]]:
     path = completion_path.resolve(strict=True)
     root = path.parent
     if root.parent != work / "runs/engineering":
@@ -325,8 +363,8 @@ def validate(completion_path: Path, *, work: Path, project: Path,
     launch = _load_json(launch_path, label="RR parallel launch")
     if (launch_path != root / "launch.json" or value.get("schema") != campaign.SCHEMA
             or value.get("status") not in ({"responses_complete_pending_prefix_validation", "complete_with_failures"}
-                                          if retry_completions else {"responses_complete_pending_prefix_validation"})
-            or (not retry_completions and value.get("worker_exit_codes") != {"0": 0, "1": 0})
+                                          if retry_completions or judging_completions else {"responses_complete_pending_prefix_validation"})
+            or (not (retry_completions or judging_completions) and value.get("worker_exit_codes") != {"0": 0, "1": 0})
             or set(value.get("worker_exit_codes", {})) != {"0", "1"}
             or set(value.get("worker_completions", {})) != {"0", "1"}
             or launch.get("original_population") != 7606 or launch.get("max_tokens") != 4096
@@ -340,6 +378,9 @@ def validate(completion_path: Path, *, work: Path, project: Path,
     if launch["queues"] != campaign.balanced_queues(units):
         raise ValueError("RR parallel analysis queue assignment changed")
     replacements = _retry_results(retry_completions, original_launch=launch_path, work=work)
+    recovered = _judging_results(judging_completions, launch=launch, work=work, project=project)
+    if set(replacements) & set(recovered):
+        raise ValueError("RR unit cannot be both regenerated and separately scored")
     snapshot_path = _validate_descriptor(launch["interruption"], label="RR interrupted prefix")
     snapshot = _load_json(snapshot_path, label="RR interrupted prefix")
     prefix_cells, prefix = validated_prefix(snapshot, runner_root=work / "runs/thesis/runner", project=project)
@@ -351,7 +392,11 @@ def validate(completion_path: Path, *, work: Path, project: Path,
         raise ValueError("RR parallel analysis requires the exact 7,606-input disjoint union")
     reported_coverage = value.get("coverage")
     counter_correction = original_coverage != reported_coverage
-    if counter_correction and _execution_source_coverage(launch, project=project) != reported_coverage:
+    original_accounting = (_execution_source_coverage(launch, project=project, worker_accounting=True)
+                           if recovered else None)
+    original_report = (original_accounting["coverage"] if original_accounting else
+                       _execution_source_coverage(launch, project=project) if counter_correction else reported_coverage)
+    if original_report != reported_coverage:
         raise ValueError("RR reported coverage differs from its exact original execution source")
     revision_path = _validate_descriptor(launch["project_revision"], label="RR parallel revision")
     revision = _load_json(revision_path, label="RR parallel revision")["repository"]
@@ -369,6 +414,8 @@ def validate(completion_path: Path, *, work: Path, project: Path,
         worker_launch = _load_json(worker_launch_path, label="RR worker launch")
         failures = worker.get("failures", {})
         retried = {key for key, item in replacements.items() if item["gpu"] == gpu}
+        rescored = {key for key, item in recovered.items() if item["physical_gpu"] == gpu}
+        corrected = retried | rescored
         if (launch["workers"][gpu] != str(worker_root) or worker_path != worker_root / "completion.json"
                 or worker_launch_path != worker_root / "launch.json"
                 or worker_launch != {"schema": campaign.SCHEMA, "parent": value["launch"],
@@ -376,13 +423,31 @@ def validate(completion_path: Path, *, work: Path, project: Path,
                 or worker.get("schema") != campaign.SCHEMA
                 or worker.get("status") != ("complete_with_failures" if failures else "complete")
                 or value["worker_exit_codes"][gpu] != int(bool(failures))
-                or worker.get("physical_gpu") != gpu or set(failures) != retried
-                or set(worker.get("results", {})) & retried
-                or set(worker.get("results", {})) | retried != set(launch["queues"][gpu])):
+                or worker.get("physical_gpu") != gpu or set(failures) != corrected
+                or set(worker.get("results", {})) & corrected
+                or set(worker.get("results", {})) | corrected != set(launch["queues"][gpu])):
             raise ValueError("RR worker terminal or original GPU assignment changed")
         worker_cells = []
         for unit_id in launch["queues"][gpu]:
             unit = by_id[unit_id]
+            if unit_id in recovered:
+                item = recovered[unit_id]
+                terminal = _load_json(worker_root / f"{unit_id}.terminal.json", label="RR original failed terminal")
+                if terminal != {"result": None, "failure": failures[unit_id]}:
+                    raise ValueError("RR separate scoring changed the original failure")
+                cell = item["scoring_recovery"]["report_views"]["input_cell"]
+                expected = set(snapshot["selected_ids"][unit.source_lane][unit.corpus]) - set(snapshot["lanes"][unit.source_lane]["outcomes"])
+                ids = [row["datapoint_id"] for row in cell["attempts"].values()]
+                state = _load_json(Path(item["evidence"]["state"]["path"]), label="RR scoring state")
+                if (len(ids) != unit.selected_records or set(ids) != expected or len(set(ids)) != len(ids)
+                        or item["source_lane"] != unit.source_lane or item["corpus"] != unit.corpus
+                        or _option(state["runner_argv"], "--guardrail-device") != "cuda:0"
+                        or _option(state["runner_argv"], "--local-config-sha256") != _option(unit.spec["base_argv"], "--local-config-sha256")):
+                    raise ValueError("RR separately scored unit changed its selected inputs or profile")
+                validated[unit_id] = item
+                source_strata.add(item["source"])
+                cells.append(cell)
+                continue
             retry = replacements.get(unit_id)
             if retry and retry["original_worker"] != value["worker_completions"][gpu]:
                 raise ValueError("RR retry refers to a different original worker completion")
@@ -417,13 +482,17 @@ def validate(completion_path: Path, *, work: Path, project: Path,
                 cells.extend(current)
             else:
                 worker_cells.extend(current)
-        if (worker.get("target_attempts") != sum(len(cell["responses"]) for cell in worker_cells)
-                or worker.get("successful_generations") != sum(validated[key]["successful"] for key in worker["results"])):
+        expected_counts = (original_accounting["worker_accounting"][gpu] if original_accounting else {
+            "target_attempts": sum(len(cell["responses"]) for cell in worker_cells),
+            "successful_generations": sum(validated[key]["successful"] for key in worker["results"]),
+        })
+        if any(type(expected_counts.get(key)) is not int or worker.get(key) != expected_counts[key]
+               for key in ("target_attempts", "successful_generations")):
             raise ValueError("RR worker terminal response accounting changed")
         cells.extend(worker_cells)
     if replaced != set(replacements):
         raise ValueError("RR retry coverage omitted or added a failed unit")
-    if value["status"] != ("complete_with_failures" if replaced else "responses_complete_pending_prefix_validation"):
+    if value["status"] != ("complete_with_failures" if replaced or recovered else "responses_complete_pending_prefix_validation"):
         raise ValueError("RR original parent terminal status changed")
     if len(source_strata) != 1 or len({cell["run_id"] for cell in [*prefix_cells, *cells]}) != len(prefix_cells) + len(cells):
         raise ValueError("RR supplement has duplicate cells or mixed source conformance")
@@ -431,7 +500,7 @@ def validate(completion_path: Path, *, work: Path, project: Path,
                "source_completion": _descriptor(path), "interruption": launch["interruption"],
                "execution_commit": launch["expected_commit"],
                "coverage": measured_coverage, "prefix": prefix,
-               "completed_grid_roots": [item["root"] for item in validated.values()],
+               "completed_grid_roots": [item["root"] for item in validated.values() if "scoring_recovery" not in item],
                "source_validated_prefix_markers": [_descriptor(cell["complete_path"]) for cell in prefix_cells],
                "historical_144_conditions_replaced": False, "old_grid_promoted": False,
                "cross_condition_pooling_permitted": False, "target_calls": 0, "judge_calls": 0}
@@ -443,6 +512,11 @@ def validate(completion_path: Path, *, work: Path, project: Path,
         handoff.update(reported_original_coverage=reported_coverage,
                        corrected_original_coverage=original_coverage,
                        reported_coverage_validator_commit=launch["expected_commit"])
+    if recovered:
+        handoff.update(judging_completions=[_descriptor(path) for path in judging_completions],
+                       original_worker_accounting=original_accounting["worker_accounting"],
+                       separately_completed_judging={key: item["scoring_recovery"]["counts"]
+                                                    for key, item in recovered.items()})
     return handoff, validated, cells, prefix_cells
 
 
@@ -467,6 +541,18 @@ def _merge_judge_views(parts: list[tuple]) -> tuple[list[dict], dict, dict, dict
     return cells, metadata, judgments, audit
 
 
+def _metric_scopes(units: dict, cells: list[dict], prefix_cells: list[dict]) -> dict:
+    recovered_ids = {item["scoring_recovery"]["report_views"]["input_cell"]["run_id"]
+                     for item in units.values() if "scoring_recovery" in item}
+    scopes = {"completed-segments": [cell for cell in cells if cell["run_id"] not in recovered_ids],
+              "closed-prefix-cells": prefix_cells}
+    for unit, item in units.items():
+        if "scoring_recovery" in item:
+            for label, cell in item["scoring_recovery"]["report_views"]["metric_cells"].items():
+                scopes[f"retained-judging-{unit}-{label}"] = [cell]
+    return {key: population for key, population in scopes.items() if population}
+
+
 def load_judge_view(root: Path, *, project: Path = retained._REPOSITORY):
     """Revalidate an already complete analysis before any paid-plan selection.
 
@@ -483,12 +569,16 @@ def load_judge_view(root: Path, *, project: Path = retained._REPOSITORY):
     retry_paths = [_validate_descriptor(item, label="RR retained retry completion")
                    for item in saved.get("retry_completions", [])]
     retry_options = {"retry_completions": retry_paths} if retry_paths else {}
+    judging_paths = [_validate_descriptor(item, label="RR retained judging completion")
+                     for item in saved.get("judging_completions", [])]
+    if judging_paths:
+        retry_options["judging_completions"] = judging_paths
     fresh, units, cells, prefix_cells = validate(source_path, work=work, project=project, **retry_options)
     if (fresh["status"] != "complete" or not fresh["prefix"]["judging_complete"]
             or any(saved.get(key) != value for key, value in fresh.items())):
         raise ValueError("RR judging handoff changed its complete coverage/source bindings")
-    expected_level2 = {"completed-segments", *(["closed-prefix-cells"] if prefix_cells else [])}
-    if (set(saved["level1_by_execution_revision"]) != {item["revision"] for item in units.values()}
+    expected_level2 = set(_metric_scopes(units, cells, prefix_cells))
+    if (set(saved["level1_by_execution_revision"]) != {item["revision"] for item in units.values() if "scoring_recovery" not in item}
             or set(saved["level2_by_evidence_scope"]) != expected_level2):
         raise ValueError("RR judging handoff changed its revision or evidence-scope reports")
     reports = [saved["retained_inputs"], *saved["level1_by_execution_revision"].values(),
@@ -496,7 +586,14 @@ def load_judge_view(root: Path, *, project: Path = retained._REPOSITORY):
     for descriptor in reports:
         if not _validate_descriptor(descriptor, label="RR analysis report").is_relative_to(root):
             raise ValueError("RR judging report escaped its completed analysis root")
-    parts = [retained.load_joined(Path(item["root"]), code_repository=project) for item in units.values()]
+    parts = []
+    for item in units.values():
+        if "scoring_recovery" in item:
+            views = item["scoring_recovery"]["report_views"]
+            _predictors, metadata, judgments, audit = views["joined"]
+            parts.append(([views["input_cell"]], metadata, judgments, audit))
+        else:
+            parts.append(retained.load_joined(Path(item["root"]), code_repository=project))
     snapshot_path = _validate_descriptor(saved["interruption"], label="RR stopped prefix")
     snapshot = _load_json(snapshot_path, label="RR stopped prefix")
     old_cells, joins = _source_prefix_cells(snapshot, project=project, joined=True)
@@ -514,13 +611,12 @@ def load_judge_view(root: Path, *, project: Path = retained._REPOSITORY):
 
 def _publish(output: Path, *, handoff: dict, units: dict, cells: list[dict],
              prefix_cells: list[dict], project: Path, work: Path, job_id: str) -> None:
-    level1 = export_level1_strata(units, output=output, project=project, continuation=True)
+    regular_units = {key: item for key, item in units.items() if "scoring_recovery" not in item}
+    level1 = export_level1_strata(regular_units, output=output, project=project, continuation=True)
     reports = [ExternalAnalysisReportSpec(Path(item["path"]), "level1", f"RR parallel input coverage - {revision[:12]}")
                for revision, item in level1.items()]
     level2 = {}
-    for label, population in (("completed-segments", cells), ("closed-prefix-cells", prefix_cells)):
-        if not population:
-            continue
+    for label, population in _metric_scopes(units, cells, prefix_cells).items():
         path = output / f"level2-{label}.json"
         _create_json(path, build_level2_report(population, []))
         level2[label] = _descriptor(path)
@@ -541,6 +637,8 @@ def _publish(output: Path, *, handoff: dict, units: dict, cells: list[dict],
         work_label="GraySwan RR - two-GPU supplement", completion_status="complete_with_explicit_limitations",
         explicit_limitations={"prefix_scope": "Old closed cells are independently source-validated; their interrupted parent grid is not promoted.",
                               "prefix_judging": f"{pending} retained prefix responses still need post-factum judging; no old judgment is rerun automatically.",
+                              **({"separate_scoring": "Recovered scoring has separate original/recovered judgment reports and full retained-input coverage; its old failed grid is excluded from complete-grid Level 1."}
+                                 if handoff.get("judging_completions") else {}),
                               "comparison_scope": "Historical 144 conditions and execution revisions remain separate; a paired contrast requires exact matching."},
         reports=reports)
 
@@ -552,9 +650,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     for name in ("tmux-socket", "tmux-session"):
         parser.add_argument(f"--{name}", required=True)
     parser.add_argument("--retry-completion", type=Path, action="append", default=[])
+    parser.add_argument("--judging-completion", type=Path, action="append", default=[])
     args = parser.parse_args(argv)
     work, project = args.work_root.resolve(strict=True), args.project_root.resolve(strict=True)
     retry_options = {"retry_completions": args.retry_completion} if args.retry_completion else {}
+    if args.judging_completion:
+        retry_options["judging_completions"] = args.judging_completion
     handoff, units, cells, prefix_cells = validate(args.completion, work=work, project=project, **retry_options)
     handoff["analysis_commit"] = retained._git(project, "rev-parse", "HEAD")
     output = args.out
