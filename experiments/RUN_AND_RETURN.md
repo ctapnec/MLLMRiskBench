@@ -2086,6 +2086,13 @@ scoring with a one-hour process bound, and resumes scheduling in `finally`.
 Never pause a measured target or repin its live checkout for this recovery.
 Keep the recovery checkout unchanged while its waiter or classifier is live.
 
+The saved responses may come from either worker of the same bound parallel
+campaign. `wait-execute` still takes the original GPU0 controller PID, waits
+for that worker's canary boundary, and scores on physical GPU0. It rejects a
+source worker outside that original parent and never pauses GPU1 generation.
+The launch's existing physical-GPU0, one-hour and no-target-call contract is
+unchanged; a source on GPU1 does not authorize borrowing an unrelated GPU0 job.
+
 The classifier retains the original cascade configuration. Its new checkpoint
 contains only missing judgments and can resume without repeating durable
 judgments, using a fresh invocation directory. It cannot call a target, replace

@@ -129,6 +129,26 @@ This resolves the pending scoring described in the earlier dated observations.
 The original failed grid remains unchanged. Full RR analysis, Stats publication
 and the Phase 7 seal still require the ongoing workers and GPTGeoChat recovery.
 
+AirBench scoring interruption, observed at 20:11 UTC on 6 September. The GPU1
+unit retained all 1,854 responses, then its judge cascade stopped after 644
+judgments. The remaining 1,210 judgments are required; no target query is
+missing from that unit. GPU1 continued to its next generation unit. The exact
+failed classifier output was not retained by the old execution source, so the
+previous MMSafety framing cause is not asserted for this separate failure.
+
+`081666d` lets the existing judge-only recovery use retained responses from
+either worker of the same bound campaign while keeping its original physical
+GPU0 boundary and execution contract. All eight affected rig boundary checks,
+Ruff and two reversal checks pass. The real no-call preparation validates
+1,854 responses, 644 existing judgments, 1,210 pending IDs and 21 source files.
+Its launch SHA-256 is
+`2aedd74d1393cd7cb6f6bfbe0e7d2d53312c5546202e8a0be80055a0976ce3b9`.
+The tmux waiter `ura-rr-air-judging-20260906/recover` was launched at 20:23 UTC
+to score those saved responses at the next GPU0 canary boundary, leaving GPU1
+generation untouched. These classifications and their actual completion/report
+validation remain pending; the full analysis must include this additional
+separate judging completion as well as the completed MMSafety recovery.
+
 RR counter reconciliation, 6 September. The final analysis preserves the
 controller's reported count separately from corrected checkpoint-inclusive
 coverage. If these differ, the reported value must be reproduced by the exact
