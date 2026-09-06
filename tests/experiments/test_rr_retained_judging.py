@@ -367,6 +367,42 @@ def test_boundary_never_pauses_or_runs_on_measured_child(boundary_fixture, monke
     assert signals == []
 
 
+@pytest.mark.parametrize("source_gpu", ["0", "1", "foreign"])
+def test_boundary_scores_either_original_worker_on_gpu0_only(boundary_fixture, monkeypatch, source_gpu):
+    source, controller, child, signals = boundary_fixture
+    worker0 = recovery.Path(source.source["state"]["path"]).parents[2]
+    parent = recovery.Path(recovery._option(controller["argv"], "--launch"))
+    source_worker = worker0 if source_gpu == "0" else worker0.with_name("source-" + source_gpu)
+    source_worker.mkdir(exist_ok=True)
+    workers = {"0": str(worker0)}
+    if source_gpu == "1":
+        workers["1"] = str(source_worker)
+    parent.write_text(json.dumps({"workers": workers}))
+    descriptor = recovery._descriptor(parent, label="parent")
+    (source_worker / "launch.json").write_text(json.dumps({"parent": descriptor}))
+    controller["argv"][-1] = descriptor["sha256"]
+    source.source["state"]["path"] = str(source_worker / "units/unit/state.json")
+    observations = iter([child, child, None])
+    monkeypatch.setattr(recovery.rr_parallel_campaign, "_process",
+                        lambda pid: controller if pid == 10 else next(observations))
+    calls = []
+
+    def score():
+        assert signals == [(10, recovery.signal.SIGSTOP)]
+        assert recovery._option(controller["argv"], "--gpu") == "0"
+        calls.append("scoring")
+        return 0
+
+    if source_gpu == "foreign":
+        with pytest.raises(ValueError, match="original GPU0 RR worker"):
+            recovery.at_canary_boundary(source, 10, score)
+        assert signals == calls == []
+    else:
+        assert recovery.at_canary_boundary(source, 10, score) == 0
+        assert calls == ["scoring"]
+        assert signals == [(10, recovery.signal.SIGSTOP), (10, recovery.signal.SIGCONT)]
+
+
 def test_report_scopes_keep_original_and_recovered_judging_separate(
     completed_scoring, retained_source,
 ):
