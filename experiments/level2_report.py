@@ -413,6 +413,8 @@ def _estimate_rows(cell: dict[str, Any]) -> list[dict[str, Any]]:
             )
         rows.append({
             "run_id": cell["run_id"],
+            **({"post_factum_judging": cell["post_factum_judging"]}
+               if "post_factum_judging" in cell else {}),
             "corpus_arm": run["corpus"],
             "model_spec": run["model_spec"],
             "resolved_model": cell["model"],
@@ -521,6 +523,8 @@ def build_level2_report(
         run = cell["manifest"]["config"]["run"]
         cell_bindings.append({
             "run_id": cell["run_id"],
+            **({"post_factum_judging": cell["post_factum_judging"]}
+               if "post_factum_judging" in cell else {}),
             "corpus_arm": run["corpus"],
             "attacker": run["attacker"],
             "model_spec": run["model_spec"],

@@ -68,8 +68,100 @@ def _completed_view(path: Path, *, work: Path, project: Path) -> dict:
     }
 
 
+def _report_views(source, records: dict, completion: dict, *, joined: bool) -> dict:
+    """Derive read-only metric scopes; the original generation manifest is unchanged."""
+    from experiments import human_audit
+    from ura.runner import _portable_attempt_dump, _write_jsonl_models, realized_identity_summary
+
+    manifest = source.manifest.model_dump(mode="json")
+    original_root = Path(source.state["result_root"])
+    manifest_path = recovery._one_file(original_root, "*.manifest.json", label="RR generation manifest")
+    persisted = [*source.source["files"], completion["launch"], completion["checkpoint"],
+                 completion["invocation"]]
+    artifacts = {f"source_{index:03}": Path(item["path"]) for index, item in enumerate(persisted)}
+    checkpoint_root = Path(completion["checkpoint"]["path"]).parent
+    completion_path = checkpoint_root / "completion.json"
+    artifacts["scoring_completion"] = completion_path
+    original_ids = list(source.judgments)
+    recovered_ids = source.pending_ids
+    if set(records) != set(source.inputs) or set(original_ids) & set(recovered_ids):
+        raise ValueError("RR scoring report cannot omit or overlap a judging partition")
+    scopes = {"all-retained-inputs": list(source.inputs),
+              "original-judgments": original_ids, "recovered-judgments": recovered_ids}
+    cells, joins = {}, None
+    for name, ids in scopes.items():
+        runner = recovery._reader_runner(source.manifest, recovery.source_cascade(source.manifest))
+        for key in ids:
+            point, attempt = source.inputs[key]
+            runner._restore_record(point, attempt, records[key], source.manifest.run_id)
+        # This is aggregation context only. No manifest is built, saved or
+        # rewritten, and the old run ID remains the generation foreign key.
+        runner._last_manifest = source.manifest
+        with tempfile.TemporaryDirectory(prefix="ura-rr-scoring-join-") as scratch:
+            directory = Path(scratch)
+            runner.save_trails(directory / "trails.jsonl")
+            trails = [json.loads(line) for line in (directory / "trails.jsonl").read_text().splitlines()]
+            cell = {
+                "run_id": source.manifest.run_id, "model": source.manifest.models[0],
+                "manifest": manifest, "manifest_path": manifest_path, "complete_path": completion_path,
+                "artifacts": artifacts,
+                "attempts": {attempt.id: _portable_attempt_dump(attempt) for attempt in runner.attempts},
+                "responses": {row.attempt_id: row.model_dump(mode="json") for row in runner.responses},
+                "judgments": [row.model_dump(mode="json") for row in runner.judgments], "trails": trails,
+                "aggregate_results": [], "source_identity_validated": True,
+                "realized_identities": realized_identity_summary(runner.responses, trails),
+                "integrity_mode": "source_validated_generation_separate_completed_scoring",
+                "grid_audit": {"mode": "original_failed_grid_not_promoted", "old_grid_promoted": False},
+            }
+            if name != "all-retained-inputs":
+                cell["aggregate_results"] = [row.model_dump(mode="json") for row in runner.aggregate(
+                    runner.judgments, source.manifest.config["run"]["group_keys"],
+                )]
+                cell["post_factum_judging"] = {
+                    "scope": name, "generation_run_id": source.manifest.run_id,
+                    "generation_revision": source.source["generation_revision"],
+                    "judging_revision": (source.source["generation_revision"] if name == "original-judgments"
+                                         else completion["judging_revision"]),
+                    "scoring_completion": _descriptor(completion_path, label="RR scoring completion"),
+                    "partition_attempt_ids": ids, "old_grid_promoted": False,
+                    "partition_is_random_sample": False, "cross_partition_pooling_permitted": False,
+                }
+            elif joined:
+                runner.save_attempts(directory / "attempts.jsonl")
+                runner.save_responses(directory / "responses.jsonl")
+                _write_jsonl_models(runner.judgments, directory / "judgments.jsonl")
+                roles = {role: [directory / f"{role}.jsonl"]
+                         for role in ("attempts", "responses", "judgments", "trails")}
+                original_inventory = human_audit._validated_artifacts
+
+                def scoped_inventory(requested):
+                    if requested != directory:
+                        raise ValueError("RR scoring join changed its validated scope")
+                    return roles, [cell]
+
+                try:
+                    # All records were strictly restored above and in
+                    # _completed_view. Reuse only the existing lossless join;
+                    # no original grid status or validator is substituted.
+                    human_audit._validated_artifacts = scoped_inventory
+                    joins = human_audit._joined_artifacts(directory, frame="common")
+                finally:
+                    human_audit._validated_artifacts = original_inventory
+                for meta in joins[1].values():
+                    meta["judging_execution_revision"] = (
+                        source.source["generation_revision"] if meta["attempt_id"] in source.judgments
+                        else completion["judging_revision"]
+                    )
+                joins[3]["old_grid_promoted"] = False
+                joins[3]["separate_judging_partitions"] = {
+                    "original_judgments": len(original_ids), "recovered_judgments": len(recovered_ids),
+                }
+            cells[name] = cell
+    return {"input_cell": cells.pop("all-retained-inputs"), "metric_cells": cells, "joined": joins}
+
+
 _WORKER = '''
-import json, sys
+import json, sys, tempfile
 from pathlib import Path
 from experiments.local_campaign import rr_retained_judging as recovery
 from experiments.local_campaign.vllm_stability_phase6 import _descriptor, _load_json, _validate_descriptor
@@ -77,11 +169,17 @@ from ura.runner import Runner
 request = json.load(sys.stdin)
 exec(request["reader_source"], globals())
 result = _completed_view(Path(request["completion"]), work=Path(request["work"]), project=Path.cwd())
-print(json.dumps(result, allow_nan=False))
+if request.get("report_source"):
+    exec(request["report_source"], globals())
+    completion = _load_json(Path(request["completion"]), label="RR completed scoring")
+    launch, source = recovery.load_launch(Path(completion["launch"]["path"]), completion["launch"]["sha256"],
+                                          work=Path(request["work"]), project=Path.cwd())
+    result["report_views"] = _report_views(source, result["records"], completion, joined=request["joined"])
+print(json.dumps(result, default=str, allow_nan=False))
 '''
 
 
-def load_completed(path: Path, *, work: Path, project: Path) -> dict:
+def load_completed(path: Path, *, work: Path, project: Path, reports: bool = False, joined: bool = False) -> dict:
     """Run the strict record reader against the actual retained scoring source."""
     path = path.resolve(strict=True)
     bound = _descriptor(path, label="RR scoring completion")
@@ -105,6 +203,8 @@ def load_completed(path: Path, *, work: Path, project: Path) -> dict:
                     env.pop(key)
             request = {"completion": str(path), "work": str(work),
                        "reader_source": inspect.getsource(_completed_view)}
+            if reports or joined:
+                request.update(report_source=inspect.getsource(_report_views), joined=joined)
             process = subprocess.run(
                 [sys.executable, "-c", _WORKER], cwd=checkout, env=env,
                 input=json.dumps(request), capture_output=True, text=True,
@@ -117,6 +217,9 @@ def load_completed(path: Path, *, work: Path, project: Path) -> dict:
                     or view.get("launch", {}).get("judging_revision") != revision):
                 raise ValueError("RR scoring reader changed its completion/source binding")
             _validate_descriptor(bound, label="RR scoring completion after read")
+            if reports or joined:
+                for cell in [view["report_views"]["input_cell"], *view["report_views"]["metric_cells"].values()]:
+                    retained._restore_cell_paths(cell)
             return view
         finally:
             if installed:

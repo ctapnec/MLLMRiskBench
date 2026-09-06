@@ -101,7 +101,7 @@ def _fixture_cascade():
 @pytest.fixture
 def retained_source(tmp_path):
     class FixtureTarget(BaseTarget):
-        name = "retained-rr"
+        name = "vllm:retained-rr"
         modality_support = ("text", "image")
 
         def generate(self, dialog, *, seed=None):
@@ -118,7 +118,11 @@ def retained_source(tmp_path):
     responses, records = [], []
     _judgments, saved_manifest = original.run(
         points, on_response=responses.append, on_record=records.append,
-        run_config={"expected_target_identity": None, "approximate_common_metrics": False},
+        run_config={"expected_target_identity": None, "approximate_common_metrics": False,
+                    "model_spec": "vllm:retained-rr", "corpus": "unit", "defense": "none",
+                    "attacker": "replay", "dry_run": False,
+                    "group_keys": ["model", "source", "risk", "effective_modality", "expected_behavior",
+                                   "attacker", "source_policy_id", "source_policy_version"]},
     )
     root = tmp_path / "original"
     root.mkdir()
@@ -128,7 +132,8 @@ def retained_source(tmp_path):
     by_id = {point.id: point for point in prepared}
     return recovery.RetainedUnit(
         saved_manifest, {"result_root": str(root), "selected_records": 2},
-        {"files": [recovery._descriptor(path, label="source")]}, original,
+        {"files": [recovery._descriptor(path, label="source")],
+         "generation_revision": {"expected_commit": "b" * 40}}, original,
         {attempt.id: (by_id[attempt.datapoint_id], attempt) for attempt in original.attempts},
         {record["attempt"]["id"]: record for record in responses},
         {record["attempt"]["id"]: record for record in records[:1]},
@@ -360,6 +365,33 @@ def test_boundary_never_pauses_or_runs_on_measured_child(boundary_fixture, monke
     with pytest.raises(InterruptedError, match="stopped waiting"):
         recovery.at_canary_boundary(source, 10, lambda: pytest.fail("must not score"))
     assert signals == []
+
+
+def test_report_scopes_keep_original_and_recovered_judging_separate(
+    completed_scoring, retained_source,
+):
+    from experiments import level2_report
+    from experiments.local_campaign import rr_retained_judging_analysis as analysis
+
+    work, project, root, completion = completed_scoring
+    original_manifest = retained_source.manifest.model_dump(mode="json")
+    manifest_path = recovery.Path(retained_source.state["result_root"]) / "fixture.manifest.json"
+    manifest_path.write_text(json.dumps(original_manifest))
+    view = analysis._completed_view(root / "completion.json", work=work, project=project)
+    reports = analysis._report_views(retained_source, view["records"], completion, joined=True)
+    assert len(reports["input_cell"]["responses"]) == 2
+    assert reports["input_cell"]["aggregate_results"] == []
+    assert len(reports["joined"][1]) == 2
+    original, recovered = reports["metric_cells"].values()
+    assert set(original["responses"]).isdisjoint(recovered["responses"])
+    assert set(original["responses"]) | set(recovered["responses"]) == set(view["records"])
+    for name, cell in reports["metric_cells"].items():
+        assert len(cell["responses"]) == 1
+        assert cell["manifest"] == original_manifest
+        report = level2_report.build_level2_report([cell], [])
+        assert report["inputs"]["cells"][0]["post_factum_judging"]["scope"] == name
+        assert all(row["post_factum_judging"]["scope"] == name for row in report["common"]["estimates"])
+    assert retained_source.manifest.model_dump(mode="json") == original_manifest
 
 
 def test_boundary_closes_canary_to_measured_transition_race(boundary_fixture, monkeypatch):
