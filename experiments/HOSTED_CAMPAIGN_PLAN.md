@@ -321,6 +321,26 @@ registers that exact controller as one hosted-capable Jobs row with its call cap
 on success or failure it publishes durable target execution counts and a
 terminal event. Calling Runner alone does not publish an external job.
 
+`experiments.hosted_campaign_prepare` produces these programs from the
+materialized corpus replays. Its bound request names the final historical and
+RR views, budget projection, API/pricing/budget registries, media index, replay
+artifacts for each target, shared Runner admission arguments and execution
+directory. It validates local membership before any provider counting request,
+then creates one shared monetary ledger and one program per target. Counting
+uses the exact delivered conversation and media. A request above the declared
+input allowance requires a revised prospective budget/selection; preparation
+does not shorten it or skip to a cheaper input.
+
+Pilot membership is fixed from the selected input order: up to three text and
+two image inputs, leaving at least one measured input. Pilots run individually
+before the remaining corpus partitions. The query and turn allowances cover
+every retained turn of each selected datapoint, while the total target-call
+cap remains the exact partition size. The preparation receipt reports token
+count methods and counting HTTP attempts separately from its zero generation
+and judge calls. Provider counting is opt-in with `--allow-network-counts` and
+is admitted only after the final local source validates. Normal Runner
+acquisition, transport and source checks still run during execution.
+
 The earlier input-selection `/1` bytes remain unchanged, including its
 descriptive `authority.requires_exact_provider_token_counts` field. That plan
 never authorized paid execution. The separate execution-plan `/1` binds its

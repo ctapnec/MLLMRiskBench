@@ -2098,6 +2098,27 @@ earlier explicitly estimated byte-based preparation and its retained bytes.
 The hosted retained-input controller consumes the ordinary sealed Runner argv
 from a bound execution program:
 
+Prepare those programs with `python -m experiments.hosted_campaign_prepare
+--request /resolved/path/campaign-request.json --request-sha256 '<SHA-256>'
+--out-root /resolved/path/fresh-hosted-preparation`. The request schema is
+`ura-hosted-retained-campaign-request/1`. It carries `results_root`,
+`runner_view`, `rr_analysis_root`, `pricing_as_of`, `execution_root`,
+`runner_common_argv`, `sources` and `routes`. Each source is an exact
+`path`/`sha256`/`bytes` descriptor; source keys are `historical_result`,
+`api_config`, `pricing`, `budgets`, `budget_projection` and `media_index`.
+Each route contains `target` and its `replay_artifacts` descriptors, covering
+all selected corpora. Shared arguments provide the normal project/source,
+transport and acquired local-judge admission. The preparer supplies the exact
+target, replay partition, output path and call/retry limits.
+
+Add `--allow-network-counts` for complete provider counting, required for
+physical media. Final local membership validates before counting. The command
+writes `receipt.json`, the shared `budget/plan.json`, attacker configs and one
+program per target. It does not generate answers. Use each emitted program
+descriptor and the shared budget descriptor in the execution command below.
+Retained multi-turn inputs keep all selected turns inside the exact total
+call cap. The pilot and measured partitions are disjoint.
+
 ```bash
 python -m experiments.hosted_retained_execute \
   --program /resolved/path/hosted-program.json \
