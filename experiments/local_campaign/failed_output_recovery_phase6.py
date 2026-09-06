@@ -136,7 +136,8 @@ def _optional_option(argv: Sequence[str], flag: str) -> str | None:
 
 
 def _active_jsonl(result_root: Path, role: str) -> list[Path]:
-    finals = sorted(result_root.glob(f"*.{role}.jsonl"))
+    # A failure before the first judgment can leave empty final exports.
+    finals = sorted(path for path in result_root.glob(f"*.{role}.jsonl") if path.stat().st_size)
     selected = list(finals)
     for checkpoint in sorted(result_root.glob(f"*.{role}.checkpoint.jsonl")):
         final = checkpoint.with_name(
@@ -144,7 +145,7 @@ def _active_jsonl(result_root: Path, role: str) -> list[Path]:
                 f".{role}.checkpoint.jsonl", f".{role}.jsonl"
             )
         )
-        if not final.exists():
+        if final not in selected:
             selected.append(checkpoint)
         elif role == "responses":
             # A judging failure writes only the judged prefix to the final
