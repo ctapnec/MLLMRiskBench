@@ -456,7 +456,10 @@ def test_analysis_restores_every_judgment_without_calls_or_source_relabelling(co
     assert set(original) | set(recovered) == set(view["records"])
 
 
-def test_analysis_worker_protocol_uses_self_contained_strict_reader(completed_scoring, monkeypatch):
+@pytest.mark.parametrize("reports", [False, True])
+def test_analysis_worker_protocol_uses_self_contained_strict_reader(
+    completed_scoring, retained_source, monkeypatch, reports,
+):
     import inspect
     import io
     from experiments.local_campaign import rr_retained_judging_analysis as analysis
@@ -464,6 +467,10 @@ def test_analysis_worker_protocol_uses_self_contained_strict_reader(completed_sc
     work, _project, root, _completion = completed_scoring
     request = {"completion": str(root / "completion.json"), "work": str(work),
                "reader_source": inspect.getsource(analysis._completed_view)}
+    if reports:
+        manifest_path = recovery.Path(retained_source.state["result_root"]) / "fixture.manifest.json"
+        manifest_path.write_text(json.dumps(retained_source.manifest.model_dump(mode="json")))
+        request.update(report_source=inspect.getsource(analysis._report_views), joined=True)
     monkeypatch.setattr(analysis.sys, "stdin", io.StringIO(json.dumps(request)))
     output = io.StringIO()
     monkeypatch.setattr(analysis.sys, "stdout", output)
@@ -471,6 +478,9 @@ def test_analysis_worker_protocol_uses_self_contained_strict_reader(completed_sc
     result = json.loads(output.getvalue())
     assert result["counts"]["total_judgments"] == 2
     assert result["target_calls"] == result["judge_calls"] == 0
+    if reports:
+        assert len(result["report_views"]["joined"][1]) == 2
+        assert set(result["report_views"]["metric_cells"]) == {"original-judgments", "recovered-judgments"}
 
 
 @pytest.mark.parametrize("change", ["counts", "revision", "old_grid", "incomplete"])

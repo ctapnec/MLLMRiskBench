@@ -71,6 +71,7 @@ def _completed_view(path: Path, *, work: Path, project: Path) -> dict:
 def _report_views(source, records: dict, completion: dict, *, joined: bool) -> dict:
     """Derive read-only metric scopes; the original generation manifest is unchanged."""
     from experiments import human_audit
+    from experiments.local_campaign.vllm_stability_phase6 import _sha256_json
     from ura.runner import _portable_attempt_dump, _write_jsonl_models, realized_identity_summary
 
     manifest = source.manifest.model_dump(mode="json")
@@ -127,7 +128,8 @@ def _report_views(source, records: dict, completion: dict, *, joined: bool) -> d
                     "judging_revision": (source.source["generation_revision"] if name == "original-judgments"
                                          else completion["judging_revision"]),
                     "scoring_completion": _descriptor(completion_path, label="RR scoring completion"),
-                    "partition_attempt_ids": ids, "old_grid_promoted": False,
+                    "partition_attempt_ids_sha256": _sha256_json(sorted(ids)),
+                    "partition_attempts": len(ids), "old_grid_promoted": False,
                     "partition_is_random_sample": False, "cross_partition_pooling_permitted": False,
                 }
             elif joined:
