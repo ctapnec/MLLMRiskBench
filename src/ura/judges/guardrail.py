@@ -634,6 +634,7 @@ class GuardrailJudge(BaseJudge):
         self, raw_output: str, *, attempt_id: str, subject: str
     ) -> Judgment:
         is_unsafe, codes = self._parse_verdict(raw_output)
+        generation_output_trace = getattr(self, "_generation_output_trace", None)
 
         categories = [_LLAMA_GUARD_CATEGORIES.get(c, c) for c in codes]
         parsed = is_unsafe is not None
@@ -668,9 +669,9 @@ class GuardrailJudge(BaseJudge):
                 "output": raw_output.strip(),
                 "moderation_subject": subject,
                 "guardrail_queried": True,
-                **({"guard_generation": self._generation_output_trace}
-                   if self._generation_output_trace is not None
-                   and self._generation_output_trace["output"] == raw_output else {}),
+                **({"guard_generation": generation_output_trace}
+                   if generation_output_trace is not None
+                   and generation_output_trace["output"] == raw_output else {}),
             },
         )
 
