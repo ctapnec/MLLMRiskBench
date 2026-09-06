@@ -2332,6 +2332,13 @@ and must not schedule new target calls. An unresolved judge abstention remains
 a scoring failure, never a fabricated safety verdict or an intrinsic
 target-stability failure.
 
+An exhausted judge cascade retains its full stage trail in the cell error
+artifact under `judge_decision_failure`, with `authoritative_verdict=false`.
+These are diagnostic outputs, including the unparsed classifier text and its
+confidence, not final judgments or metric observations. The normal confidence
+checks, error status and response checkpoint remain unchanged. Inspect this
+trail before issuing another judge call solely to recover missing error details.
+
 Checkpoint reconstruction applies the same source-scoring exclusions as live
 execution: neither `failed_output` nor an `incompatible` input receives a
 source evaluation. Reconstructing one on resume would invent provenance that
