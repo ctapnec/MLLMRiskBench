@@ -82,6 +82,16 @@ role framing lost during decoding from malformed classifier text. Do not strip
 an arbitrary `assistant` prefix, invent a safe verdict, repeat target generation
 or promote the failed grid. All 224 pending judgments remain required.
 
+RR counter reconciliation, 6 September. The final analysis preserves the
+controller's reported count separately from corrected checkpoint-inclusive
+coverage. If these differ, the reported value must be reproduced by the exact
+execution-source reader before acceptance; current complete input coverage and
+judgment checks remain mandatory. A call-free check on the frozen MMSafety and
+HoliSafe segments reproduces 76 versus 300 MMSafety responses and the unchanged
+239-row HoliSafe control. Neither the original failed artifacts nor the
+200-response prefix is rewritten. This repairs counter reconciliation, not the
+remaining scoring recovery or the whole-campaign seal.
+
 RR analysis supplement. The validated 144-condition historical inventory keeps
 its original scope and revision-separated results. The current-profile RR
 controller in `experiments.local_campaign.rr_profiled_phase6` publishes its own
