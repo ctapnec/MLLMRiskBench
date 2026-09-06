@@ -386,3 +386,85 @@ def test_boundary_rejects_other_gpu_controller(boundary_fixture, monkeypatch):
     with pytest.raises(ValueError, match="original GPU0"):
         recovery.at_canary_boundary(source, 10, lambda: pytest.fail("must not score"))
     assert signals == []
+
+
+@pytest.fixture
+def completed_scoring(prepared_launch, monkeypatch):
+    pytest.importorskip("fcntl")
+    work, project, root, path, digest, _launch = prepared_launch
+    cascade, calls = _fixture_cascade()
+    monkeypatch.setattr(recovery, "source_cascade", lambda *a, **k: cascade)
+    monkeypatch.setattr(recovery, "_require_free_gpu", lambda: None)
+    completion = recovery.execute(path, digest, work=work, project=project,
+                                  control=work / "runs/engineering/invocation-one",
+                                  tmux_socket="fixture", tmux_session="fixture")
+    assert len(calls) == 1
+
+    def forbidden(*a, **k):
+        pytest.fail("analysis cannot classify or append a checkpoint")
+
+    monkeypatch.setattr(cascade.stages[1], "_run_guard", forbidden)
+    monkeypatch.setattr(Runner, "append_checkpoint", forbidden)
+    return work, project, root, completion
+
+
+def test_analysis_restores_every_judgment_without_calls_or_source_relabelling(completed_scoring):
+    from experiments.local_campaign import rr_retained_judging_analysis as analysis
+
+    work, project, root, completion = completed_scoring
+    view = analysis._completed_view(root / "completion.json", work=work, project=project)
+    assert view["counts"]["total_judgments"] == len(view["records"]) == 2
+    assert view["generation_manifest"]["run_id"] == completion["generation_run_id"]
+    assert view["launch"]["judging_revision"] == completion["judging_revision"]
+    assert view["target_calls"] == view["judge_calls"] == 0
+    assert view["old_grid_promoted"] is False
+    original, recovered = view["judging_strata"].values()
+    assert len(original) == len(recovered) == 1
+    assert set(original).isdisjoint(recovered)
+    assert set(original) | set(recovered) == set(view["records"])
+
+
+@pytest.mark.parametrize("change", ["counts", "revision", "old_grid", "incomplete"])
+def test_analysis_cannot_admit_changed_or_incomplete_completion(completed_scoring, change):
+    from experiments.local_campaign import rr_retained_judging_analysis as analysis
+
+    work, project, root, completion = completed_scoring
+    if change == "counts":
+        completion["new_judgments"] = 99
+    elif change == "revision":
+        completion["judging_revision"] = {"expected_commit": "d" * 40}
+    elif change == "old_grid":
+        completion["old_grid_promoted"] = True
+    else:
+        checkpoint = root / "judgments.checkpoint.jsonl"
+        checkpoint.write_text("")
+        completion["checkpoint"] = recovery._descriptor(checkpoint, label="empty checkpoint")
+        completion["new_judgments"] = 0
+        completion["total_judgments"] = 1
+    (root / "completion.json").write_text(json.dumps(completion))
+    with pytest.raises(ValueError, match="identity|omits or repeats"):
+        analysis._completed_view(root / "completion.json", work=work, project=project)
+
+
+def test_analysis_rejects_even_a_valid_new_judgment_on_another_response(
+    completed_scoring, retained_source, monkeypatch,
+):
+    from experiments.local_campaign import rr_retained_judging_analysis as analysis
+
+    work, project, root, completion = completed_scoring
+    key = retained_source.pending_ids[0]
+    point, attempt = retained_source.inputs[key]
+    modified = copy.deepcopy(retained_source.responses[key])
+    modified["response"]["output_turns"][0]["content"] = "different fixture answer"
+    # Build the substitute using the real Runner record writer, not a fictitious shape.
+    cascade, _calls = _fixture_cascade()
+    writer = recovery._reader_runner(retained_source.manifest, cascade)
+    records = []
+    writer._execute_or_restore(point, attempt, retained_source.manifest.run_id, None,
+                              records.append, response_record=modified)
+    checkpoint = root / "judgments.checkpoint.jsonl"
+    checkpoint.write_text(json.dumps(records[0]) + "\n")
+    completion["checkpoint"] = recovery._descriptor(checkpoint, label="substituted checkpoint")
+    (root / "completion.json").write_text(json.dumps(completion))
+    with pytest.raises(ValueError, match="retained target response"):
+        analysis._completed_view(root / "completion.json", work=work, project=project)
