@@ -13,7 +13,9 @@ import os
 from pathlib import Path
 import signal
 import subprocess
+import sys
 import tarfile
+import time
 from typing import Any
 
 from experiments import figure_results, level1_evidence, retained_artifact_reader, run_matrix
@@ -436,6 +438,106 @@ def execute(path: Path, digest: str, *, work: Path, project: Path, control: Path
                 finish_child_controller(work_root=work, control_root=control, exit_code=exit_code)
 
 
+def _boundary_child(process: dict, worker: Path) -> dict | None:
+    if len(process["children"]) != 1:
+        return None
+    child = rr_parallel_campaign._process(process["children"][0])
+    if (child and "--diagnostic-canary" in child["argv"]
+            and "experiments.run_matrix" in child["argv"]
+            and any(str(worker) + "/" in arg for arg in child["argv"])):
+        return child
+    return None
+
+
+def at_canary_boundary(source: RetainedUnit, controller_pid: int, action) -> int:
+    """Pause only the scheduler; let its canary exit before exclusive scoring."""
+    worker = Path(source.source["state"]["path"]).parents[2]
+    parent = _load_json(worker / "launch.json", label="RR source worker")["parent"]
+    parent_path = _validate_descriptor(parent, label="RR source parent")
+    original = _load_json(parent_path, label="RR source parent")
+    controller = rr_parallel_campaign._process(controller_pid)
+    if (not controller or original["workers"]["0"] != str(worker)
+            or "experiments.local_campaign.rr_parallel_campaign" not in controller["argv"]
+            or "worker" not in controller["argv"] or _option(controller["argv"], "--gpu") != "0"
+            or _option(controller["argv"], "--launch") != str(parent_path)
+            or _option(controller["argv"], "--launch-sha256") != parent["sha256"]):
+        raise ValueError("PID does not own the original GPU0 RR worker")
+
+    def interrupt(signum, _frame):
+        raise InterruptedError(f"RR judging boundary interrupted by signal {signum}")
+
+    previous = {sig: signal.signal(sig, interrupt) for sig in (signal.SIGTERM, signal.SIGINT)}
+    paused = False
+    try:
+        deadline = time.monotonic() + 86400
+        while time.monotonic() < deadline:
+            current = rr_parallel_campaign._process(controller_pid)
+            if not current or current["start_ticks"] != controller["start_ticks"]:
+                raise RuntimeError("original RR scheduler terminated before the scoring handoff")
+            child = _boundary_child(current, worker)
+            if child:
+                # Recheck after STOP to close the canary-to-measured launch race.
+                os.kill(controller_pid, signal.SIGSTOP)
+                paused = True
+                stopped = rr_parallel_campaign._process(controller_pid)
+                if stopped and _boundary_child(stopped, worker) == child:
+                    break
+                os.kill(controller_pid, signal.SIGCONT)
+                paused = False
+            time.sleep(60)
+        else:
+            raise TimeoutError("no safe RR canary boundary within 24 hours")
+        deadline = time.monotonic() + 600
+        while time.monotonic() < deadline:
+            current = rr_parallel_campaign._process(child["pid"])
+            if (not current or current["start_ticks"] != child["start_ticks"]
+                    or current["argv"] == [""]):
+                break
+            time.sleep(5)
+        else:
+            raise TimeoutError("RR canary did not exit within ten minutes")
+        return action()
+    finally:
+        try:
+            current = rr_parallel_campaign._process(controller_pid)
+            if paused and current and current["start_ticks"] == controller["start_ticks"]:
+                os.kill(controller_pid, signal.SIGCONT)
+        finally:
+            for sig, handler in previous.items():
+                signal.signal(sig, handler)
+
+
+def wait_execute(args, kwargs) -> int:
+    launch, source = load_launch(args.launch, args.launch_sha256, **kwargs)
+    wait_root = args.control.with_name(args.control.name + "-wait")
+    wait_root.mkdir()
+    start_child_controller(
+        work_root=kwargs["work"], control_root=wait_root, campaign_id=wait_root.name,
+        release_commit=launch["judging_revision"]["expected_commit"],
+        evidence_class="local_judging_gpu_handoff", hard_stop_hours=26,
+        tmux_socket=args.tmux_socket, tmux_session=args.tmux_session,
+    )
+    exit_code = 1
+    try:
+        command = [sys.executable, "-m", "experiments.local_campaign.rr_retained_judging",
+                   "--work", str(kwargs["work"]), "--project", str(kwargs["project"]),
+                   "execute", "--launch", str(args.launch), "--launch-sha256", args.launch_sha256,
+                   "--control", str(args.control), "--tmux-socket", args.tmux_socket,
+                   "--tmux-session", args.tmux_session]
+
+        def action():
+            environment = dict(os.environ, CUDA_VISIBLE_DEVICES="0")
+            # subprocess.run kills and waits for its own child on exceptions,
+            # before the boundary's finally resumes the RR scheduler.
+            return subprocess.run(command, cwd=kwargs["project"], env=environment,
+                                  timeout=launch["wall_seconds"] + 180, check=False).returncode
+
+        exit_code = at_canary_boundary(source, args.controller_pid, action)
+        return exit_code
+    finally:
+        finish_child_controller(work_root=kwargs["work"], control_root=wait_root, exit_code=exit_code)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work", type=Path, required=True)
@@ -446,14 +548,16 @@ def main() -> None:
     prepare_parser.add_argument("--out", type=Path, required=True)
     prepare_parser.add_argument("--project-revision", type=Path, required=True)
     prepare_parser.add_argument("--project-revision-sha256", required=True)
-    for action in ("validate", "execute"):
+    for action in ("validate", "execute", "wait-execute"):
         command = actions.add_parser(action)
         command.add_argument("--launch", type=Path, required=True)
         command.add_argument("--launch-sha256", required=True)
-        if action == "execute":
+        if action in ("execute", "wait-execute"):
             command.add_argument("--control", type=Path, required=True)
             command.add_argument("--tmux-socket", required=True)
             command.add_argument("--tmux-session", required=True)
+        if action == "wait-execute":
+            command.add_argument("--controller-pid", type=int, required=True)
     args = parser.parse_args()
     kwargs = {"work": args.work.resolve(strict=True), "project": args.project.resolve(strict=True)}
     if args.action == "prepare":
@@ -461,6 +565,8 @@ def main() -> None:
                 revision_sha256=args.project_revision_sha256)
     elif args.action == "validate":
         load_launch(args.launch, args.launch_sha256, **kwargs)
+    elif args.action == "wait-execute":
+        raise SystemExit(wait_execute(args, kwargs))
     else:
         execute(args.launch, args.launch_sha256, **kwargs, control=args.control,
                 tmux_socket=args.tmux_socket, tmux_session=args.tmux_session)

@@ -300,3 +300,89 @@ def test_failed_execution_retains_checkpoint_and_resumes_without_reclassifying(
                                   control=work / "runs/engineering/invocation-two",
                                   tmux_socket="fixture", tmux_session="fixture")
     assert len(calls) == 1 and completion["total_judgments"] == 2
+
+
+@pytest.fixture
+def boundary_fixture(tmp_path, monkeypatch):
+    worker = tmp_path / "worker"
+    parent = tmp_path / "parent.json"
+    worker.mkdir()
+    parent.write_text(json.dumps({"workers": {"0": str(worker)}}))
+    descriptor = recovery._descriptor(parent, label="parent")
+    (worker / "launch.json").write_text(json.dumps({"parent": descriptor}))
+    source = SimpleNamespace(source={"state": {"path": str(worker / "units/unit/state.json")}})
+    controller = {"pid": 10, "start_ticks": 1, "children": [11], "argv": [
+        "python", "-m", "experiments.local_campaign.rr_parallel_campaign", "worker",
+        "--gpu", "0", "--launch", str(parent), "--launch-sha256", descriptor["sha256"],
+    ]}
+    child = {"pid": 11, "start_ticks": 2, "children": [], "argv": [
+        "python", "-m", "experiments.run_matrix", "--diagnostic-canary", "--out", str(worker / "canary"),
+    ]}
+    signals = []
+    monkeypatch.setattr(recovery.os, "kill", lambda pid, sig: signals.append((pid, sig)))
+    return source, controller, child, signals
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_boundary_waits_for_canary_and_always_resumes_scheduler(boundary_fixture, monkeypatch, failure):
+    source, controller, child, signals = boundary_fixture
+    observations = iter([child, child, None])
+    monkeypatch.setattr(recovery.rr_parallel_campaign, "_process",
+                        lambda pid: controller if pid == 10 else next(observations))
+    calls = []
+
+    def action():
+        assert signals == [(10, recovery.signal.SIGSTOP)]
+        calls.append("scoring")
+        if failure:
+            raise RuntimeError("fixture scoring failure")
+        return 0
+
+    if failure:
+        with pytest.raises(RuntimeError, match="fixture scoring failure"):
+            recovery.at_canary_boundary(source, 10, action)
+    else:
+        assert recovery.at_canary_boundary(source, 10, action) == 0
+    assert calls == ["scoring"]
+    assert signals == [(10, recovery.signal.SIGSTOP), (10, recovery.signal.SIGCONT)]
+
+
+def test_boundary_never_pauses_or_runs_on_measured_child(boundary_fixture, monkeypatch):
+    source, controller, child, signals = boundary_fixture
+    child["argv"].remove("--diagnostic-canary")
+    monkeypatch.setattr(recovery.rr_parallel_campaign, "_process",
+                        lambda pid: controller if pid == 10 else child)
+
+    def stop_waiting(_seconds):
+        raise InterruptedError("fixture stopped waiting")
+
+    monkeypatch.setattr(recovery.time, "sleep", stop_waiting)
+    with pytest.raises(InterruptedError, match="stopped waiting"):
+        recovery.at_canary_boundary(source, 10, lambda: pytest.fail("must not score"))
+    assert signals == []
+
+
+def test_boundary_closes_canary_to_measured_transition_race(boundary_fixture, monkeypatch):
+    source, controller, child, signals = boundary_fixture
+    measured = copy.deepcopy(child)
+    measured["argv"].remove("--diagnostic-canary")
+    observations = iter([child, measured])
+    monkeypatch.setattr(recovery.rr_parallel_campaign, "_process",
+                        lambda pid: controller if pid == 10 else next(observations))
+
+    def stop_waiting(_seconds):
+        raise InterruptedError("fixture stopped waiting")
+
+    monkeypatch.setattr(recovery.time, "sleep", stop_waiting)
+    with pytest.raises(InterruptedError, match="stopped waiting"):
+        recovery.at_canary_boundary(source, 10, lambda: pytest.fail("must not score"))
+    assert signals == [(10, recovery.signal.SIGSTOP), (10, recovery.signal.SIGCONT)]
+
+
+def test_boundary_rejects_other_gpu_controller(boundary_fixture, monkeypatch):
+    source, controller, _child, signals = boundary_fixture
+    controller["argv"][controller["argv"].index("--gpu") + 1] = "1"
+    monkeypatch.setattr(recovery.rr_parallel_campaign, "_process", lambda pid: controller)
+    with pytest.raises(ValueError, match="original GPU0"):
+        recovery.at_canary_boundary(source, 10, lambda: pytest.fail("must not score"))
+    assert signals == []
