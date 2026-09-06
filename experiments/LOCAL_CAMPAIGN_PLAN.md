@@ -97,6 +97,13 @@ completed judgment and preserves the original failed grid. Completion of the
 224 classifications and their separate Phase 7 analysis handoff remain pending;
 the successful preparation is not empirical scoring evidence.
 
+The separate completion reader at `29b67e5` has seven passing focused rig
+checks, including its self-contained worker protocol, and four detected
+reversals. It accepts only the full recovered judgment set, preserves the
+original/recovered partitions and invokes no classifier. The exact-source
+read of the real completion remains pending until scoring finishes, followed
+by integration into the parallel RR analysis and its separate reports.
+
 RR counter reconciliation, 6 September. The final analysis preserves the
 controller's reported count separately from corrected checkpoint-inclusive
 coverage. If these differ, the reported value must be reproduced by the exact

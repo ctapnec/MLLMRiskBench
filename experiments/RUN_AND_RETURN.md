@@ -2095,6 +2095,14 @@ judging revision. The original failed grid and partial artifacts remain
 unchanged. This completion requires its own analysis handoff; it is not a
 fabricated successful Runner grid or automatic whole-campaign admission.
 
+`rr_retained_judging_analysis.load_completed` validates that separate completion
+in a temporary checkout of its actual judging revision. It restores every
+original and recovered record with no classifier call or checkpoint append,
+requires the complete pending-ID set, and returns the original/recovered
+judging partitions separately. Consumers must retain those partitions and
+their generation-versus-judging source bindings; this reader alone neither
+publishes Stats nor closes the parallel campaign's analysis gate.
+
 Hosted controllers may use `ura.targets.api.provider_attempt_admission` to
 reserve each physical SDK request, including HTTP retries. The scoped callback
 receives the provider, final request mapping and one-based attempt number; it
