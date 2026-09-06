@@ -7128,10 +7128,10 @@ def test_checkpoint_resume_preserves_nonresponse_source_evaluation(
     outcome: str, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class OutcomeTarget(_RecordingTarget):
-        forbidden = False
+        _forbidden = False
 
         def generate(self, dialog, *, seed=None):
-            if self.forbidden:
+            if self._forbidden:
                 pytest.fail("checkpoint resume repeated a target call")
             response = super().generate(dialog, seed=seed)
             if outcome == "incompatible":
@@ -7161,7 +7161,7 @@ def test_checkpoint_resume_preserves_nonresponse_source_evaluation(
     assert (expected[0].raw["source_evaluation"] is not None) == (outcome == "usable")
 
     target = OutcomeTarget()
-    target.forbidden = True
+    target._forbidden = True
     resumed = _runner(_FloodAttacker(), target)
     actual, _ = resumed.run([point], resume_records={r["attempt"]["id"]: r for r in records})
     assert [j.model_dump(mode="json") for j in actual] == [j.model_dump(mode="json") for j in expected]
