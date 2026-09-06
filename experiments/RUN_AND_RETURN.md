@@ -2103,6 +2103,26 @@ judging partitions separately. Consumers must retain those partitions and
 their generation-versus-judging source bindings; this reader alone neither
 publishes Stats nor closes the parallel campaign's analysis gate.
 
+After the original parallel workers and their corrective jobs are terminal,
+supply each separate scoring completion to
+`experiments.local_campaign.rr_parallel_analysis --judging-completion <file>`.
+This accompanies, rather than replaces, `--retry-completion` for zero-response
+template failures. A unit cannot use both routes. Analysis verifies the exact
+7,606-input union, original failure and GPU/profile assignment, and reproduces
+the old worker's counters with its exact execution source, including retained
+rows from failed units. Do not replace those historical counters with the new
+checkpoint-inclusive count.
+
+The recovered unit stays outside complete-grid Level 1. Its full input inventory
+and lossless audit/retained-judge join include all original responses. Two
+separate Level-2 scopes cover original and recovered judgments, preserving the
+generation run ID and adding `post_factum_judging` provenance with the actual
+judging revision, partition count and partition-ID digest. These deterministic
+interruption partitions are not random samples and are not silently pooled.
+The standard Stats registration publishes their separate reports. Publication
+and later hosted/local-judge selection revalidate the complete handoff; an old
+failed Runner grid is never promoted to admit these views.
+
 Hosted controllers may use `ura.targets.api.provider_attempt_admission` to
 reserve each physical SDK request, including HTTP retries. The scoped callback
 receives the provider, final request mapping and one-based attempt number; it

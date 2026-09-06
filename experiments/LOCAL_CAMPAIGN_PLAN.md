@@ -104,6 +104,20 @@ original/recovered partitions and invokes no classifier. The exact-source
 read of the real completion remains pending until scoring finishes, followed
 by integration into the parallel RR analysis and its separate reports.
 
+The analysis integration is now implemented through `484cf25` and verified on
+the rig. `rr_parallel_analysis --judging-completion` accepts the separately
+completed scoring alongside the independent template retry. It preserves the
+original worker counters and failed grid, includes every retained input, and
+exports original/recovered judgment scopes separately with their actual source
+bindings. The same validated join supports the later matched judging selection.
+Sixty-four handoff checks, the focused scoring/report checks, the Level-2
+exporter checks and five reversals pass. An exact-source read of the frozen
+MMSafety/HoliSafe subset reproduces 315 worker responses and 285 successful
+responses, excluding the separate 200-response prefix; all 37 source files
+remain unchanged. This is a bounded accounting proof, not full-cohort analysis.
+Execution on the actual completed recovery, publication and the full Phase 7
+seal still await the ongoing workers and 224 pending scoring records.
+
 RR counter reconciliation, 6 September. The final analysis preserves the
 controller's reported count separately from corrected checkpoint-inclusive
 coverage. If these differ, the reported value must be reproduced by the exact
