@@ -33,6 +33,20 @@ from experiments.rig_web_app.external_analysis import (
 SCHEMA = "ura-rr-parallel-analysis/1"
 PREFIX_SCOPE = "source_validated_closed_cell_in_interrupted_grid"
 
+_COVERAGE_WORKER = r'''
+import hashlib, json, sys
+from pathlib import Path
+from experiments.local_campaign.rr_parallel_campaign import coverage
+from ura.runner import _harness_source_identity
+
+request = json.load(sys.stdin)
+revision = request["revision"]
+if (revision["harness_source_sha256"] != _harness_source_identity()["sha256"]
+    or revision["driver_source_sha256"] != hashlib.sha256(Path("experiments/run_matrix.py").read_bytes()).hexdigest()):
+    raise ValueError("RR reported coverage source differs from its original checkout")
+print(json.dumps({"validator_commit": request["commit"], "coverage": coverage(request["launch"])}))
+'''
+
 # Every semantic check below is the ORIGINAL source function. The caller-bound
 # reference describes membership in the original request, not an invented grid
 # status. In particular, neither the source grid nor its missing cell inventory
@@ -126,6 +140,44 @@ def _descriptor(path: Path, label: str = "RR analysis artifact") -> dict:
 def _same_launch(completion: dict, launch: dict) -> None:
     if any(completion.get(key) != value for key, value in launch.items() if key != "status"):
         raise ValueError("RR completion changed its bound launch")
+
+
+def _execution_source_coverage(launch: dict, *, project: Path) -> dict:
+    """Reproduce the retained controller's counter, not its completion claim."""
+    revision_path = _validate_descriptor(launch["project_revision"], label="RR counter source receipt")
+    revision = _load_json(revision_path, label="RR counter source receipt")["repository"]
+    commit = launch["expected_commit"]
+    if any(revision.get(key) != commit for key in ("expected_commit", "observed_commit")):
+        raise ValueError("RR counter source receipt changed")
+    retained._git(project, "merge-base", "--is-ancestor", commit, retained._git(project, "rev-parse", "HEAD"))
+    if retained._git(project, "rev-parse", f"{commit}^{{tree}}") != revision["head_tree"]:
+        raise ValueError("RR counter source tree changed")
+    with tempfile.TemporaryDirectory(prefix="ura-rr-counter-reader-") as scratch:
+        worktree = Path(scratch).resolve() / "source"
+        installed = False
+        try:
+            retained._git(project, "worktree", "add", "--quiet", "--detach", str(worktree), commit)
+            installed = True
+            environment = dict(os.environ)
+            environment.update(PYTHONPATH=str(worktree / "src"), PYTHONDONTWRITEBYTECODE="1")
+            for key in list(environment):
+                if key.endswith(("_API_KEY", "_TOKEN")):
+                    environment.pop(key)
+            result = subprocess.run(
+                [sys.executable, "-c", _COVERAGE_WORKER], cwd=worktree, env=environment,
+                input=json.dumps({"launch": launch, "revision": revision, "commit": commit}),
+                capture_output=True, text=True, encoding="utf-8", timeout=600, check=False,
+            )
+            if result.returncode:
+                raise ValueError("RR original coverage reader failed: " + result.stderr[-4000:])
+            value = retained._decode_validator_ipc(result.stdout)
+            if (not isinstance(value, dict) or set(value) != {"validator_commit", "coverage"}
+                    or value["validator_commit"] != commit or not isinstance(value["coverage"], dict)):
+                raise ValueError("RR original coverage reader returned an invalid result")
+            return value["coverage"]
+        finally:
+            if installed:
+                retained._git(project, "worktree", "remove", "--force", str(worktree))
 
 
 def _source_prefix_cells(snapshot: dict, *, project: Path, joined: bool = False):
@@ -290,9 +342,12 @@ def validate(completion_path: Path, *, work: Path, project: Path,
     measured_coverage = (campaign.coverage(launch, replacement_roots={
         key: work / "runs/thesis/runner" / key / item["root"].name for key, item in replacements.items()})
         if replacements else original_coverage)
-    if (not measured_coverage["complete"] or measured_coverage["expected_inputs"] != 7606
-            or original_coverage != value.get("coverage")):
+    if not measured_coverage["complete"] or measured_coverage["expected_inputs"] != 7606:
         raise ValueError("RR parallel analysis requires the exact 7,606-input disjoint union")
+    reported_coverage = value.get("coverage")
+    counter_correction = original_coverage != reported_coverage
+    if counter_correction and _execution_source_coverage(launch, project=project) != reported_coverage:
+        raise ValueError("RR reported coverage differs from its exact original execution source")
     revision_path = _validate_descriptor(launch["project_revision"], label="RR parallel revision")
     revision = _load_json(revision_path, label="RR parallel revision")["repository"]
     if any(revision.get(key) != launch["expected_commit"] for key in ("expected_commit", "observed_commit")):
@@ -379,6 +434,10 @@ def validate(completion_path: Path, *, work: Path, project: Path,
         handoff.update(retry_completions=[_descriptor(path) for path in retry_completions],
                        original_coverage=original_coverage,
                        retry_execution_commits=sorted({item["commit"] for item in replacements.values()}))
+    if counter_correction:
+        handoff.update(reported_original_coverage=reported_coverage,
+                       corrected_original_coverage=original_coverage,
+                       reported_coverage_validator_commit=launch["expected_commit"])
     return handoff, validated, cells, prefix_cells
 
 

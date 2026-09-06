@@ -203,6 +203,37 @@ def test_complete_analysis_requires_all_grids_and_preserves_separate_prefix_scop
     assert len(f.checked) == len(units) == len(cells) == 4 and prefix == []
     assert handoff["target_calls"] == handoff["judge_calls"] == 0
     assert handoff["old_grid_promoted"] is handoff["historical_144_conditions_replaced"] is False
+    assert "reported_original_coverage" not in handoff
+
+
+@pytest.mark.parametrize("change", [None, "harness", "driver"])
+def test_original_counter_worker_requires_the_exact_execution_source(monkeypatch, change):
+    from ura import runner
+
+    revision = {"harness_source_sha256": "c" * 64,
+                "driver_source_sha256": hashlib.sha256(Path("experiments/run_matrix.py").read_bytes()).hexdigest()}
+    if change:
+        revision[f"{change}_source_sha256"] = "d" * 64
+    request = {"commit": "a" * 40, "revision": revision, "launch": {"original": True}}
+    counted = []
+    def count(launch):
+        counted.append(launch)
+        return {"complete": False, "retained_inputs": 515}
+    monkeypatch.setattr(mod.campaign, "coverage", count)
+    monkeypatch.setattr(runner, "_harness_source_identity", lambda: {"sha256": "c" * 64})
+    monkeypatch.setattr(mod.sys, "stdin", io.StringIO(json.dumps(request)))
+    output = io.StringIO()
+    monkeypatch.setattr(mod.sys, "stdout", output)
+    if change:
+        with pytest.raises(ValueError, match="original checkout"):
+            exec(mod._COVERAGE_WORKER, {})
+        assert counted == []
+    else:
+        exec(mod._COVERAGE_WORKER, {})
+        assert counted == [request["launch"]]
+        assert json.loads(output.getvalue()) == {
+            "validator_commit": "a" * 40, "coverage": {"complete": False, "retained_inputs": 515},
+        }
 
 
 @pytest.mark.parametrize("change", ["running_grid", "worker_failed", "worker_gpu", "missing", "revision", "foreign_cell", "changed_launch", "loader_rejects"])
@@ -423,6 +454,49 @@ def test_analysis_keeps_failed_parent_and_validates_complete_retry_union_separat
     assert units["u0"]["root"] == str(f.result_root)
     assert "retry-u0" in {row["run_id"] for row in cells} and "u0" not in {row["run_id"] for row in cells}
     assert len({item["revision"] for item in units.values()}) == 2
+
+
+@pytest.mark.parametrize("forged", [False, True])
+def test_analysis_reconciles_only_source_reproduced_historical_counters(retried, monkeypatch, forged):
+    f = retried
+    corrected_original = dict(mod.campaign.coverage(f.base.launch))
+    # Isolate accounting reconciliation from the separately tested grid/retry
+    # validators. Both old and corrected original populations remain incomplete;
+    # only the validated replacement union supplies full coverage.
+    reported = {**corrected_original, "retained_inputs": corrected_original["retained_inputs"] - 224}
+    f.base.value["coverage"] = reported
+    write(f.base.path, f.base.value)
+    before = f.base.path.read_bytes()
+    checked = []
+    def original_source(launch, *, project):
+        assert launch == f.base.launch and project == f.base.work
+        checked.append(launch["expected_commit"])
+        return {**reported, "retained_inputs": reported["retained_inputs"] - 1} if forged else reported
+    monkeypatch.setattr(mod, "_execution_source_coverage", original_source)
+    if forged:
+        with pytest.raises(ValueError, match="exact original execution source"):
+            mod.validate(f.base.path, work=f.base.work, project=f.base.work, retry_completions=[f.path])
+    else:
+        handoff, _units, _cells, _prefix = mod.validate(
+            f.base.path, work=f.base.work, project=f.base.work, retry_completions=[f.path],
+        )
+        assert handoff["coverage"]["complete"] is True
+        assert handoff["coverage"]["retained_inputs"] == 7606
+        assert handoff["reported_original_coverage"] == reported
+        assert handoff["corrected_original_coverage"] == corrected_original
+        assert handoff["reported_coverage_validator_commit"] == f.base.launch["expected_commit"]
+        assert handoff["old_grid_promoted"] is False
+    assert checked == [f.base.launch["expected_commit"]]
+    assert f.base.path.read_bytes() == before
+
+
+def test_historical_counter_cannot_replace_missing_current_coverage(retried, monkeypatch):
+    f = retried
+    f.base.coverage["complete"] = False
+    monkeypatch.setattr(mod, "_execution_source_coverage", lambda *a, **kw: pytest.fail(
+        "historical counts must not authorize incomplete current coverage"))
+    with pytest.raises(ValueError, match="7,606-input disjoint union"):
+        mod.validate(f.base.path, work=f.base.work, project=f.base.work, retry_completions=[f.path])
 
 
 @pytest.mark.parametrize("change", ["missing", "duplicate", "input", "missing_row", "running_grid", "revision", "terminal", "pending", "selection"])
