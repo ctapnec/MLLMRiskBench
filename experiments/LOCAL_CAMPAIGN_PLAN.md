@@ -64,6 +64,15 @@ the assigned GPU is available. Keep the separate GPTGeoChat preparation retry
 and remaining target units running; no runtime reinstall or completed target
 replay is warranted.
 
+The first judge-only diagnostic stopped before inference because the old
+checkpoint reader attempted source scoring on a retained failed output, unlike
+the live writer. The corrected source reader reconstructs all 76 actual
+judgments exactly and repeats zero target or judge calls; reversing the fix
+reproduces the real first-row restore failure. This repairs reconstruction,
+not the unresolved classifier output on the first unjudged response. The
+diagnostic used a copied results directory, and the GPU0 controller resumed
+after its canary boundary; original artifacts and GPU1 execution were unchanged.
+
 RR analysis supplement. The validated 144-condition historical inventory keeps
 its original scope and revision-separated results. The current-profile RR
 controller in `experiments.local_campaign.rr_profiled_phase6` publishes its own

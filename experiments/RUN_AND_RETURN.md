@@ -2332,6 +2332,13 @@ and must not schedule new target calls. An unresolved judge abstention remains
 a scoring failure, never a fabricated safety verdict or an intrinsic
 target-stability failure.
 
+Checkpoint reconstruction applies the same source-scoring exclusions as live
+execution: neither `failed_output` nor an `incompatible` input receives a
+source evaluation. Reconstructing one on resume would invent provenance that
+the original writer correctly omitted. The complete reconstructed judgment
+must still match the retained judgment exactly; do not remove that comparison
+or reissue the target request to get past a restore error.
+
 After verified target teardown, the judge performs a fresh hardware-fit
 selection and may use one or both GPUs under its own local configuration. Do
 not reserve an arbitrary fraction of the second GPU during target measurement.
