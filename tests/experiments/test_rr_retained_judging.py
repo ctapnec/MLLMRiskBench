@@ -437,7 +437,7 @@ def test_analysis_cannot_admit_changed_or_incomplete_completion(completed_scorin
         completion["old_grid_promoted"] = True
     else:
         checkpoint = root / "judgments.checkpoint.jsonl"
-        checkpoint.write_text("")
+        checkpoint.write_text("\n")
         completion["checkpoint"] = recovery._descriptor(checkpoint, label="empty checkpoint")
         completion["new_judgments"] = 0
         completion["total_judgments"] = 1
