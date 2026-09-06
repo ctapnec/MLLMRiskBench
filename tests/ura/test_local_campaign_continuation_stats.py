@@ -184,7 +184,12 @@ def test_historical_publication_is_discoverable_with_actual_stats_diagrams(tmp_p
         text = detail.decode("utf-8")
         assert "Campaign execution accounting" in text
         assert "Local campaign input, call and output funnel" in text
-        assert "refusal_rate" in text and "class='barchart'" in text
+        assert "refusal_rate" not in text and "class='barchart'" in text
+        registration = load_external_analysis_registration(tmp_path, job_id)
+        selected = next(index for index, report in enumerate(registration.reports)
+                        if report.kind == "level2")
+        status, _, report = app.handle("GET", f"/stats/job/{job_id}?report={selected}&fragment=1")
+        assert status == 200 and "refusal_rate" in report.decode()
         assert "Registered external analysis" in text
         assert "no whole-campaign completion" in text
         assert "invalid</span>" not in text

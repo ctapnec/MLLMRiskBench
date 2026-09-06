@@ -1216,7 +1216,8 @@ def test_stats_links_sealed_phase7_reports_to_watcher_campaign(
     assert "metric-strata/333333333333-cccccccccccc/level2-report.json" in detail_text
     assert "metric-strata/666666666666-eeeeeeeeeeee/level2-report.json" in detail_text
     assert "metric-strata/888888888888-999999999999/level2-report.json" in detail_text
-    assert "refusal_rate" in detail_text
+    assert "refusal_rate" not in detail_text
+    assert "data-stats-report" in detail_text
     assert "class='barchart'" in detail_text
     assert "Open full job record" in detail_text
 

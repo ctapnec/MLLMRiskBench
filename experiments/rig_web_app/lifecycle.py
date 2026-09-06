@@ -3954,6 +3954,7 @@ class LifecycleMixin:
                 detail = self._stats_job_detail_page(
                     job_id,
                     fragment=query.get("fragment") == "1",
+                    report=query.get("report"),
                 )
                 if detail is None:
                     return 404, "text/plain; charset=utf-8", b"unknown campaign job"

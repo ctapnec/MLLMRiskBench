@@ -1844,7 +1844,9 @@ class DashboardMixin:
             )
         return "<span class='badge green'>validated but unlinked</span>"
 
-    def _stats_campaign_detail(self, campaign: Mapping[str, Any]) -> str:
+    def _stats_campaign_detail(
+        self, campaign: Mapping[str, Any], *, report_index: int | None = None,
+    ) -> str:
         state_label, state_tone = self._stats_state_badge(str(campaign["state"]))
         job_href = str(campaign.get("job_href") or f"/jobs/{quote(str(campaign['job_id']))}")
         artifact_link = ""
@@ -1872,9 +1874,34 @@ class DashboardMixin:
         }:
             evidence_tone = "amber"
             evidence_label = "not established"
-        reports = "".join(
-            self._stats_report_card(report) for report in campaign["reports"]
+        available = campaign["reports"]
+        selected = (
+            [available[report_index]] if report_index is not None
+            else [report for report in available if report.get("kind") in {
+                "terminal_inventory", "execution_accounting",
+            }] or available[:1]
         )
+        report_navigation = ""
+        if len(available) > 1:
+            detail_url = "/stats/job/" + quote(str(campaign["job_id"]))
+            links = []
+            for index, report in enumerate(available):
+                label = str(report.get("display_name") or report.get("path") or f"Report {index + 1}")
+                current = " aria-current='page'" if index == report_index else ""
+                artifact = str(report.get("path") or "")
+                links.append(
+                    f"<li><a data-stats-report href='{detail_url}?report={index}'{current}>"
+                    + html.escape(label) + "</a>"
+                    + (f" <a href='/artifacts?path={quote(artifact)}'>JSON</a>" if artifact else "")
+                    + "</li>"
+                )
+            report_navigation = (
+                "<nav class='card' aria-label='Campaign reports'><h3>Reports</h3>"
+                f"<a data-stats-report href='{detail_url}'>Overview</a>"
+                "<p class='note'>Choose a report to view its tables and diagrams.</p><ul>"
+                + "".join(links) + "</ul></nav>"
+            )
+        reports = "".join(self._stats_report_card(report) for report in selected)
         if not reports:
             reports = (
                 "<div class='card'><p class='note'>No validated Level-1/Level-2 "
@@ -1929,6 +1956,7 @@ class DashboardMixin:
             "root and completion-bound artifacts. It is not mixed with diagnostic, "
             "synthetic, engineering, or temporary trees.</p></div>"
             + runner_results
+            + report_navigation
             + reports
             + "<p class='stats-modal-links'><a href='"
             + html.escape(job_href, quote=True)
@@ -2076,6 +2104,7 @@ class DashboardMixin:
         job_id: str,
         *,
         fragment: bool,
+        report: str | None = None,
     ) -> bytes | None:
         if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", job_id) is None:
             return None
@@ -2104,7 +2133,14 @@ class DashboardMixin:
         campaign = campaigns[0]
         if campaign.get("_external_analysis_registration") is None:
             self._stats_attach_job_reports(campaigns)
-        detail = self._stats_campaign_detail(campaign)
+        report_index = None
+        if report is not None:
+            if not re.fullmatch(r"[0-9]{1,6}", report):
+                return None
+            report_index = int(report)
+            if report_index >= len(campaign["reports"]):
+                return None
+        detail = self._stats_campaign_detail(campaign, report_index=report_index)
         if fragment:
             return detail.encode("utf-8")
         title = f"Campaign statistics: {job_id}"
@@ -2136,22 +2172,26 @@ function open(opener){if(!modal||!body){return;}if(active){close();}
 active=true;lastFocus=opener||document.activeElement;modal.classList.add('is-open');
 modal.setAttribute('aria-modal','true');document.body.classList.add(
 'stats-modal-open');var nodes=focusable(modal);(nodes[0]||modal).focus();}
-document.querySelectorAll('[data-stats-job]').forEach(function(trigger){
-trigger.addEventListener('click',function(event){event.preventDefault();
-open(trigger);if(title){title.textContent=trigger.getAttribute('data-stats-job')||
-'Campaign statistics';}trigger.setAttribute('aria-expanded','true');
+function load(href){
 var current=++requestId;body.setAttribute('aria-busy','true');
 body.innerHTML="<p class='note'>Loading " +
-"validated campaign statistics...</p>";var separator=trigger.href.indexOf('?')>=0?'&':'?';
-fetch(trigger.href+separator+'fragment=1',{credentials:'same-origin',headers:{
+"validated campaign statistics...</p>";var separator=href.indexOf('?')>=0?'&':'?';
+fetch(href+separator+'fragment=1',{credentials:'same-origin',headers:{
 'X-Requested-With':'ura-stats-modal'}}).then(function(response){
 if(!response.ok){throw new Error('detail request failed');}return response.text();})
 .then(function(markup){if(active&&current===requestId){body.innerHTML=markup;
 body.removeAttribute('aria-busy');}})
 .catch(function(){if(active&&current===requestId){body.innerHTML=
 "<div class='notice red'>Campaign details could not be loaded. <a href='"+
-trigger.href+"'>Open the standalone detail page</a>.</div>";
-body.removeAttribute('aria-busy');}});});});
+href+"'>Open the standalone detail page</a>.</div>";
+body.removeAttribute('aria-busy');}});}
+document.querySelectorAll('[data-stats-job]').forEach(function(trigger){
+trigger.addEventListener('click',function(event){event.preventDefault();
+open(trigger);if(title){title.textContent=trigger.getAttribute('data-stats-job')||
+'Campaign statistics';}trigger.setAttribute('aria-expanded','true');load(trigger.href);});});
+if(body){body.addEventListener('click',function(event){
+var link=event.target.closest('[data-stats-report]');
+if(active&&link&&body.contains(link)){event.preventDefault();load(link.href);}});}
 document.querySelectorAll('[data-stats-close]').forEach(function(button){
 button.addEventListener('click',close);});
 if(modal){modal.addEventListener('click',function(event){

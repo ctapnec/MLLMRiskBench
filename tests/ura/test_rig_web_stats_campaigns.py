@@ -685,6 +685,36 @@ def test_lazy_job_detail_binds_only_the_selected_job_report(tmp_path: Path) -> N
     app.close()
 
 
+def test_report_navigation_renders_only_the_requested_report(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    root = app.results_root / "thesis" / "many-reports"
+    _write_completed_cell(root, run_id="run-many", target="target-many")
+    _record_run(app, tmp_path, job_id="job-many", out=root)
+    for index in range(3):
+        report = app.results_root / "thesis" / "analysis" / f"{index}.json"
+        _write_level2(report, run_id="run-many", model="target-many", metric=f"metric_{index}")
+        _record_analysis_job(app, tmp_path, job_id=f"report-{index}", results=root, report=report)
+    try:
+        status, _, response = app.handle("GET", "/stats/job/job-many?fragment=1")
+        text = response.decode()
+        assert status == 200
+        assert sum(f"metric_{index}" in text for index in range(3)) == 1
+        assert text.count("data-stats-report") == 4
+        for index in range(3):
+            status, _, response = app.handle("GET", f"/stats/job/job-many?report={index}&fragment=1")
+            text = response.decode()
+            assert status == 200
+            assert sum(f"metric_{number}" in text for number in range(3)) == 1
+            assert f"?report={index}' aria-current='page'" in text
+        for selection in ("-1", "3", "invalid", "999999999999"):
+            assert app.handle("GET", f"/stats/job/job-many?report={selection}")[0] == 404
+        script = app._stats_modal_script()
+        assert "event.target.closest('[data-stats-report]')" in script
+        assert "load(link.href)" in script
+    finally:
+        app.close()
+
+
 def test_missing_and_malformed_job_evidence_fails_closed(tmp_path: Path) -> None:
     app = _app(tmp_path)
     missing = app.results_root / "thesis" / "missing"
