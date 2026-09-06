@@ -459,3 +459,54 @@ def test_durable_outcomes_accept_checkpoint_before_attempts_file(tmp_path) -> No
     assert [path.name for path in response_files] == [
         "beta.responses.checkpoint.jsonl"
     ]
+
+
+@pytest.mark.parametrize("final_count", [0, 1, 2])
+def test_partial_judging_does_not_hide_generated_responses(tmp_path, final_count) -> None:
+    records = []
+    for index in range(2):
+        records.append({
+            "schema_version": SCHEMA_VERSION,
+            "run_id": "run-a",
+            "attempt": {
+                "id": f"attempt-{index}", "datapoint_id": f"row-{index}",
+                "attacker": "replay", "target": "target", "run_id": "run-a",
+                "rendered_input": [{"role": "user", "content": "fixture"}],
+            },
+            "response": {
+                "attempt_id": f"attempt-{index}", "target": "target", "run_id": "run-a",
+                "output_turns": [{"role": "assistant", "content": "answer"}], "raw": {},
+            },
+            "budget_after_target": None,
+        })
+    checkpoint = tmp_path / "fixture.responses.checkpoint.jsonl"
+    checkpoint.write_text("".join(json.dumps(row) + "\n" for row in records), encoding="utf-8")
+    for role in ("attempt", "response"):
+        (tmp_path / f"fixture.{role}s.jsonl").write_text(
+            "".join(json.dumps(row[role]) + "\n" for row in records[:final_count]), encoding="utf-8"
+        )
+    attempts, outcomes, _af, rf = _durable_outcomes(tmp_path)
+    assert len(attempts) == len(outcomes) == 2
+    assert set(outcomes.values()) == {"usable_first_response"}
+    assert rf == [tmp_path / ("fixture.responses.jsonl" if final_count == 2 else checkpoint.name)]
+
+    # The recovery selector must not schedule the unjudged response again.
+    with pytest.raises(ValueError, match="no failed or unfinished"):
+        build_completed_selection(
+            selected_ids={"arm": ["row-0", "row-1"]},
+            eligible_ids={"arm": ["row-0", "row-1"]}, outcomes=outcomes,
+        )
+
+
+@pytest.mark.parametrize("mutation", ["changed", "outside", "duplicate"])
+def test_partial_judging_refuses_conflicting_final_responses(tmp_path, mutation) -> None:
+    test_partial_judging_does_not_hide_generated_responses(tmp_path, 1)
+    final = tmp_path / "fixture.responses.jsonl"
+    row = json.loads(final.read_text())
+    if mutation == "changed":
+        row["raw"]["model_stability_status"] = "failed_output"
+    elif mutation == "outside":
+        row["attempt_id"] = "not-checkpointed"
+    final.write_text((json.dumps(row) + "\n") * (2 if mutation == "duplicate" else 1), encoding="utf-8")
+    with pytest.raises(ValueError, match="differs from its response checkpoint|duplicated"):
+        _durable_outcomes(tmp_path)

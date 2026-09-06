@@ -146,6 +146,25 @@ def _active_jsonl(result_root: Path, role: str) -> list[Path]:
         )
         if not final.exists():
             selected.append(checkpoint)
+        elif role == "responses":
+            # A judging failure writes only the judged prefix to the final
+            # JSONL. The response-phase checkpoint still owns the whole target
+            # population. Accept that larger inventory only when every final
+            # response agrees exactly, and preserve final-file selection for
+            # already complete historical cells.
+            records = Runner.load_response_checkpoint(checkpoint)
+            final_ids: set[str] = set()
+            for payload in _jsonl(final, label="final responses"):
+                response = Response.model_validate(payload)
+                record = records.get(response.attempt_id)
+                if response.attempt_id in final_ids:
+                    raise ValueError("failed-output response datapoint is duplicated")
+                final_ids.add(response.attempt_id)
+                if record is None or response != Response.model_validate(record["response"]):
+                    raise ValueError("final response differs from its response checkpoint")
+            if len(records) > len(final_ids):
+                selected.remove(final)
+                selected.append(checkpoint)
     if not selected:
         raise ValueError(f"result root has no durable {role} JSONL")
     return selected
