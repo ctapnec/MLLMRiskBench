@@ -50,6 +50,20 @@ conditions; input coverage does not authorize metric pooling. This
 paragraph is operating status, not thesis
 evidence and not a product feature.
 
+RR judging interruption, 6 September. The first parallel MMSafety image segment
+retained all 300 responses, then its rules/guardrail cascade failed after 76
+judgments without a confidence-qualified verdict. Its 224 remaining judgments
+are required; none of those responses is an unexecuted target query. The old
+counter preferred the partial final response export and hid those 224 rows.
+The corrected reader verifies final/checkpoint agreement and counts the full
+response checkpoint. At 00:29 UTC the corrected union contained 892 of 7,606
+responses, with zero repeated inputs, while both GPUs were generating. The
+judge failure remains unresolved; do not promote its cell or classify it as
+target instability. Diagnose and resume scoring from retained responses after
+the assigned GPU is available. Keep the separate GPTGeoChat preparation retry
+and remaining target units running; no runtime reinstall or completed target
+replay is warranted.
+
 RR analysis supplement. The validated 144-condition historical inventory keeps
 its original scope and revision-separated results. The current-profile RR
 controller in `experiments.local_campaign.rr_profiled_phase6` publishes its own

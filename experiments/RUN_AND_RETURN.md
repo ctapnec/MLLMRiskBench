@@ -2322,6 +2322,16 @@ bounded. The original target-phase start time is preserved rather than replaced
 by the later judge start. Runtime-backed attackers retain their closing-seal
 path. The same Runner behavior applies to commands composed by Rig Web.
 
+A scoring failure can leave a partial or empty final response export beside
+a complete response-phase checkpoint. Count the checkpoint's full population
+only after verifying every exported response matches it exactly; a final
+filename alone does not supersede a larger checkpoint. The local campaign
+recovery readers enforce this agreement and retain final-file selection for
+complete historical cells. Pending judgments are not missing target responses
+and must not schedule new target calls. An unresolved judge abstention remains
+a scoring failure, never a fabricated safety verdict or an intrinsic
+target-stability failure.
+
 After verified target teardown, the judge performs a fresh hardware-fit
 selection and may use one or both GPUs under its own local configuration. Do
 not reserve an arbitrary fraction of the second GPU during target measurement.
