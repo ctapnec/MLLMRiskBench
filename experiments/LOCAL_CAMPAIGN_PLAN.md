@@ -115,8 +115,19 @@ exporter checks and five reversals pass. An exact-source read of the frozen
 MMSafety/HoliSafe subset reproduces 315 worker responses and 285 successful
 responses, excluding the separate 200-response prefix; all 37 source files
 remain unchanged. This is a bounded accounting proof, not full-cohort analysis.
-Execution on the actual completed recovery, publication and the full Phase 7
-seal still await the ongoing workers and 224 pending scoring records.
+The 224-record scoring recovery completed at 13:37:08 UTC on 6 September,
+with zero target or hosted calls. Its completion SHA-256 is
+`2206bfb60ddce5742af807fee259d114e64b64a909436ec8446176d5ac776d09`.
+The subsequent real-data read through `484cf25` validates all 300 original
+responses and judgments, with no missing, orphaned or duplicate joins and all
+21 bound source files unchanged. The joined inventory retains 276 decided
+judgments and 24 abstentions. Separate original/recovered Level-2 reports cover
+76 and 224 responses; the proof forbids new classification and makes zero
+target or judge calls. Evidence is retained under
+`engineering/rr-scoring-analysis-29b67e5/actual-completion-20260906`.
+This resolves the pending scoring described in the earlier dated observations.
+The original failed grid remains unchanged. Full RR analysis, Stats publication
+and the Phase 7 seal still require the ongoing workers and GPTGeoChat recovery.
 
 RR counter reconciliation, 6 September. The final analysis preserves the
 controller's reported count separately from corrected checkpoint-inclusive
