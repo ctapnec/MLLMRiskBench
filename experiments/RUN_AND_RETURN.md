@@ -2339,6 +2339,16 @@ confidence, not final judgments or metric observations. The normal confidence
 checks, error status and response checkpoint remain unchanged. Inspect this
 trail before issuing another judge call solely to recover missing error details.
 
+Guard classifier decoding preserves token IDs and both framed and ordinary
+decodings in `guard_generation`. It removes only an explicit generated
+assistant header ending in an actual special header-control token, including
+the observed `assistant<|end_header_id|>` form. The token's added-token metadata
+is authoritative even when `all_special_ids` lists only BOS/EOS. Literal
+`assistantsafe`, user headers, empty verdicts and contradictory verdicts are
+not repaired into decisions. The verdict parser and confidence threshold are
+unchanged. Historical judgments without this optional diagnostic field remain
+readable; a changed judging implementation still requires its own provenance.
+
 Checkpoint reconstruction applies the same source-scoring exclusions as live
 execution: neither `failed_output` nor an `incompatible` input receives a
 source evaluation. Reconstructing one on resume would invent provenance that

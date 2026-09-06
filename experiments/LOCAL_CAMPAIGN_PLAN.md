@@ -76,11 +76,16 @@ after its canary boundary; original artifacts and GPU1 execution were unchanged.
 The subsequent single-response classifier diagnostic returned `assistantsafe`
 under the original 20-token guard allowance. The parser correctly retained an
 unconfident, unparsed output. The pinned template already supplies the assistant
-header; adding a generation-header flag would not change it. A token-level
-observation is queued at the next free canary boundary to distinguish genuine
-role framing lost during decoding from malformed classifier text. Do not strip
-an arbitrary `assistant` prefix, invent a safe verdict, repeat target generation
-or promote the failed grid. All 224 pending judgments remain required.
+header; adding a generation-header flag would not change it. At 10:39 UTC the
+token-level diagnostic confirmed the generated sequence
+`assistant<|end_header_id|>safe<|eot_id|>`. Skipping special tokens had joined the
+role name to the verdict. The corrected decoder recognizes the actual special
+header token and retains the original token sequence and both decodings. The
+real-tokenizer proof, focused rig tests and reversals pass with no further
+inference; literal `assistantsafe` remains unparsed. The diagnostic resumed
+GPU0 scheduling and changed no checkpoint. All 224 pending campaign judgments
+still require separately provenanced scoring; neither the diagnostic nor this
+fix promotes the failed grid or authorizes target regeneration.
 
 RR counter reconciliation, 6 September. The final analysis preserves the
 controller's reported count separately from corrected checkpoint-inclusive
