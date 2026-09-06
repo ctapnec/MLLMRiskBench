@@ -61,6 +61,42 @@ _GUARD_ROLE = {
 }
 
 
+def _decode_guard_output(tokenizer: Any, generated: Any) -> tuple[str, dict[str, Any]]:
+    """Remove only an explicit generated assistant header, retaining its tokens."""
+    token_ids = generated.tolist() if hasattr(generated, "tolist") else list(generated)
+    framed = tokenizer.decode(generated, skip_special_tokens=False)
+    ordinary = tokenizer.decode(generated, skip_special_tokens=True)
+    decoded = ordinary
+    removed: list[int] = []
+    special_ids = set(getattr(tokenizer, "all_special_ids", ()))
+    header_ends = [
+        index + 1 for index, token in enumerate(token_ids)
+        if token in special_ids
+        and tokenizer.convert_ids_to_tokens(token) == "<|end_header_id|>"
+    ]
+    if len(header_ends) == 1:
+        boundary = header_ends[0]
+        header = tokenizer.decode(token_ids[:boundary], skip_special_tokens=False)
+        if header in {
+            "assistant<|end_header_id|>",
+            "<|start_header_id|>assistant<|end_header_id|>",
+        } and not any(
+            token in special_ids
+            and tokenizer.convert_ids_to_tokens(token) == "<|start_header_id|>"
+            for token in token_ids[boundary:]
+        ):
+            removed = token_ids[:boundary]
+            decoded = tokenizer.decode(token_ids[boundary:], skip_special_tokens=True)
+    return decoded, {
+        "decoding_policy": "llama_guard_explicit_assistant_header_v1",
+        "output_token_ids": token_ids,
+        "decoded_with_special_tokens": framed,
+        "decoded_without_special_tokens": ordinary,
+        "removed_assistant_header_token_ids": removed,
+        "output": decoded,
+    }
+
+
 class GuardrailJudge(BaseJudge):
     """Judge a Response with a HF guardrail classifier (Llama-Guard-family).
 
@@ -117,6 +153,7 @@ class GuardrailJudge(BaseJudge):
         # Populated by preflight or, for direct library use, the first judge call.
         self._tokenizer: Any = None
         self._model: Any = None
+        self._generation_output_trace: Optional[dict[str, Any]] = None
 
     @staticmethod
     def _release_loaded(tokenizer: Any, model: Any) -> None:
@@ -419,7 +456,11 @@ class GuardrailJudge(BaseJudge):
                     pad_token_id=self._tokenizer.eos_token_id,
                 )
             generated = output[0][input_ids.shape[-1]:]
-            return self._tokenizer.decode(generated, skip_special_tokens=True)
+            decoded, trace = _decode_guard_output(self._tokenizer, generated)
+            self._generation_output_trace = {
+                **trace, "output_allowance": self.max_new_tokens,
+            }
+            return decoded
 
         return self._model_runtime.private_execution(
             self._managed_model_role,
@@ -466,6 +507,7 @@ class GuardrailJudge(BaseJudge):
     # ------------------------------------------------------------------ #
     def judge_input(self, dialog: list[DialogTurn]) -> Judgment:
         """Moderate an input conversation with its original user-side roles."""
+        self._generation_output_trace = None
         self._ensure_loaded()
         conversation: list[dict[str, str]] = []
         for turn in dialog:
@@ -483,6 +525,7 @@ class GuardrailJudge(BaseJudge):
         )
 
     def judge(self, datapoint: DataPoint, response: Response) -> Judgment:
+        self._generation_output_trace = None
         if response.raw.get("provider_refusal") is True:
             benign = datapoint.expected_behavior in ("safe_answer", "comply_safely")
             category = response.raw.get("provider_refusal_category")
@@ -625,6 +668,9 @@ class GuardrailJudge(BaseJudge):
                 "output": raw_output.strip(),
                 "moderation_subject": subject,
                 "guardrail_queried": True,
+                **({"guard_generation": self._generation_output_trace}
+                   if self._generation_output_trace is not None
+                   and self._generation_output_trace["output"] == raw_output else {}),
             },
         )
 

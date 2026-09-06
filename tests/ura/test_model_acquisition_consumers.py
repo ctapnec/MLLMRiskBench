@@ -574,8 +574,10 @@ def test_guardrail_close_releases_loaded_state_once(
     assert guard._model is None and guard._tokenizer is None
 
 
+@pytest.mark.parametrize("framed", [False, True])
 def test_guardrail_inference_requests_a_tensor_from_current_transformers(
     monkeypatch: pytest.MonkeyPatch,
+    framed: bool,
 ) -> None:
     events: list[object] = []
 
@@ -599,6 +601,10 @@ def test_guardrail_inference_requests_a_tensor_from_current_transformers(
 
     class Tokenizer:
         eos_token_id = 2
+        all_special_ids = (128007, 128009)
+
+        def convert_ids_to_tokens(self, token):
+            return {128007: "<|end_header_id|>", 128009: "<|eot_id|>"}[token]
 
         def apply_chat_template(self, conversation, **kwargs):
             events.append(("template", conversation, kwargs))
@@ -608,12 +614,17 @@ def test_guardrail_inference_requests_a_tensor_from_current_transformers(
 
         def decode(self, generated, *, skip_special_tokens: bool) -> str:
             events.append(("decode", generated, skip_special_tokens))
+            if framed:
+                tokens = {78191: "assistant", 19193: "safe",
+                          128007: "<|end_header_id|>", 128009: "<|eot_id|>"}
+                return "".join(tokens[token] for token in generated
+                               if not skip_special_tokens or token not in self.all_special_ids)
             return "safe"
 
     class GeneratedRow:
         def __getitem__(self, selected: slice):
             assert selected == slice(3, None, None)
-            return (17,)
+            return (78191, 128007, 19193, 128009) if framed else (17,)
 
     class GeneratedBatch:
         def __getitem__(self, selected: int):
@@ -654,6 +665,13 @@ def test_guardrail_inference_requests_a_tensor_from_current_transformers(
     ]
 
     assert guard._run_guard(conversation) == "safe"
+    if framed:
+        judgment = guard._make_judgment("safe", attempt_id="saved", subject="assistant_response")
+        assert judgment.raw["parsed"] is True
+        assert judgment.raw["guard_generation"]["output_token_ids"] == [78191, 128007, 19193, 128009]
+        assert judgment.raw["guard_generation"]["decoded_without_special_tokens"] == "assistantsafe"
+        assert events[0] == ("private", "guardrail_judge")
+        return
     assert events == [
         ("private", "guardrail_judge"),
         (
@@ -673,6 +691,7 @@ def test_guardrail_inference_requests_a_tensor_from_current_transformers(
             },
         ),
         "no-grad-exit",
+        ("decode", (17,), False),
         ("decode", (17,), True),
     ]
 
