@@ -117,6 +117,55 @@ def source_cascade(manifest: RunManifest, *, model_runtime=None) -> JudgeCascade
     return cascade
 
 
+def _reader_runner(manifest: RunManifest, cascade: JudgeCascade, *, call_budget=None) -> Runner:
+    run = manifest.config["run"]
+    return Runner(
+        ReplayAttacker(), _NoTarget(manifest), cascade,
+        AttackBudget(**manifest.config["budget"]), manifest.seeds, call_budget=call_budget,
+        expected_target_identity=run["expected_target_identity"],
+        approximate_common_metrics=run["approximate_common_metrics"], execution_stage="judgments",
+    )
+
+
+def score_pending(source: RetainedUnit, cascade: JudgeCascade, *, checkpoint: Path) -> Runner:
+    """Append only missing judgments; run IDs refer to the original generation.
+
+    The caller binds this separate checkpoint to its actual judging revision.
+    No Runner manifest or grid is constructed or promoted by this function.
+    Original transport budgets were validated by load_source; local Guard does
+    not use the Runner's hosted-transport budget, and no target can be called.
+    """
+    if _component_config(cascade) != source.manifest.config["components"]["judge_cascade"]:
+        raise ValueError("RR retained judging changed the saved scoring configuration")
+    if checkpoint.resolve().is_relative_to(Path(source.state["result_root"]).resolve()):
+        raise ValueError("new judging cannot write inside the original generation root")
+    if (set(source.inputs) != set(source.responses) or set(source.judgments) - set(source.inputs)
+            or len(source.inputs) != source.state["selected_records"]):
+        raise ValueError("RR judging source selection is no longer complete")
+    source.validate_unchanged()
+    saved = Runner.load_checkpoint(checkpoint, expected_run_id=source.manifest.run_id)
+    if set(saved) - set(source.pending_ids):
+        raise ValueError("RR judging checkpoint adds or repeats an original completed judgment")
+    runner = _reader_runner(source.manifest, cascade)
+    # Validate every saved new record before making another classifier call.
+    for key, record in saved.items():
+        point, attempt = source.inputs[key]
+        if record["response"] != source.responses[key]["response"]:
+            raise ValueError("RR judging checkpoint changed the original target response")
+        runner._restore_record(point, attempt, record, source.manifest.run_id)
+    for key, (point, attempt) in source.inputs.items():
+        record = source.judgments.get(key, saved.get(key))
+        runner._execute_or_restore(
+            point, attempt, source.manifest.run_id, record,
+            lambda value: Runner.append_checkpoint(checkpoint, value),
+            response_record=source.responses[key],
+        )
+    source.validate_unchanged()
+    if len(runner.judgments) != len(source.responses):
+        raise ValueError("RR judging did not cover the exact retained response set")
+    return runner
+
+
 def load_source(state_path: Path, *, work: Path, project: Path) -> RetainedUnit:
     """Strictly reconstruct a terminal response-complete, partly judged RR unit."""
     state_path = state_path.resolve(strict=True)
@@ -172,10 +221,8 @@ def load_source(state_path: Path, *, work: Path, project: Path) -> RetainedUnit:
     _durable_outcomes(root)
     attacker = ReplayAttacker()
     budget = AttackBudget(**manifest.config["budget"])
-    runner = Runner(attacker, _NoTarget(manifest), source_cascade(manifest), budget, manifest.seeds,
-                    call_budget=GlobalCallBudget(budget_id=ledger["budget_id"]),
-                    expected_target_identity=run["expected_target_identity"],
-                    approximate_common_metrics=run["approximate_common_metrics"], execution_stage="judgments")
+    runner = _reader_runner(manifest, source_cascade(manifest),
+                            call_budget=GlobalCallBudget(budget_id=ledger["budget_id"]))
     corpora, _audit = _selected_rows(argv)
     corpus = [point for rows in corpora.values() for point in rows]
     contracts = runner._plan_attacker_input_contracts(corpus)
@@ -198,6 +245,8 @@ def load_source(state_path: Path, *, work: Path, project: Path) -> RetainedUnit:
                 or runner._restore_response(expected, record, manifest.run_id).model_dump(mode="json") != record["response"]):
             raise ValueError("RR retained response is not its exact original input/output")
         if expected.id in judgments:
+            if judgments[expected.id]["response"] != record["response"]:
+                raise ValueError("RR original judgment changed its checkpointed target response")
             runner._restore_record(point, expected, judgments[expected.id], manifest.run_id)
         inputs[expected.id] = (point, expected)
     if (set(inputs) != set(responses) or set(judgments) - set(inputs)
