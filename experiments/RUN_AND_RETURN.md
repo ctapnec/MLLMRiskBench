@@ -2132,6 +2132,12 @@ the old worker's counters with its exact execution source, including retained
 rows from failed units. Do not replace those historical counters with the new
 checkpoint-inclusive count.
 
+The template retry's retained error may name the target as either the original
+alias or `alias@revision`. Match only the independently pinned RR revision;
+never strip or ignore an arbitrary revision suffix. Both the zero-measured
+response requirement and absence of measured state remain mandatory. Canary
+artifacts from other failed units do not authorize replay of their targets.
+
 The recovered unit stays outside complete-grid Level 1. Its full input inventory
 includes all original responses. For version 1, the lossless
 audit/retained-judge join also includes all those responses. Version 2 joins

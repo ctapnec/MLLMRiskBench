@@ -182,6 +182,32 @@ and reuses the sealed judge without downloads. The failed version-1 recovery
 remains immutable historical evidence; use the version-2 terminal for the
 eventual AirBench analysis handoff, alongside the completed MMSafety terminal.
 
+AirBench version-2 recovery completed at 23:01:51 UTC on 6 September. All 1,210
+pending classifications were attempted: 1,208 yielded judgments and two retained
+the invalid `saidsafe` output without a safety verdict. Together with the 644
+original judgments, this gives 1,852 judgments over all 1,854 retained responses.
+The actual exact-source report read passes with zero inference, a lossless
+1,852-row judgment join, explicit two-row evaluator-failure coverage, and all
+21 original files unchanged. Original/recovered reports remain separate at
+644/1,208 rows. Evidence is under
+`engineering/rr-evaluator-failure-20260906/actual-air-completion`; the result
+SHA-256 is `8888f058052b6d956e543188338ace5fcda24a47060f7f7feabe4588ce02852e`.
+There are no unattempted AirBench classifications. Judging coverage is still
+incomplete by two verdicts, and the original failed grid is not promoted.
+
+The original GPU0 worker is terminal. R-Judge, like GPTGeoChat earlier, failed
+its canary on the legacy chat template before any measured response. The
+existing retry transport already fixes that rendering, but its selector
+compared the error's revision-resolved model identity against an unqualified
+alias. `72b13e1` accepts only that alias or its independently pinned exact
+revision; foreign repositories/revisions and any measured-response replay remain
+rejected. Sixteen affected rig tests, Ruff, two reversals and the real no-call
+selection pass. The selected recovery is exactly 100 R-Judge plus 2,020
+GPTGeoChat inputs, excluding every measured MMSafety response. It started at
+23:25 UTC in `ura-rr-template-retry-72b13e1/retry` on the released GPU0, with
+the unchanged 4,096-token, one-GPU profile and one answer retry. GPU1 continues
+its original queue. The old failed waiter remains terminal, not a live job.
+
 RR counter reconciliation, 6 September. The final analysis preserves the
 controller's reported count separately from corrected checkpoint-inclusive
 coverage. If these differ, the reported value must be reproduced by the exact
