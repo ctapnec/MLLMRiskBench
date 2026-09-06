@@ -190,3 +190,113 @@ def test_writer_cannot_write_into_original_generation_directory(retained_source)
     with pytest.raises(ValueError, match="original generation root"):
         recovery.score_pending(retained_source, cascade, checkpoint=checkpoint)
     assert calls == [] and not checkpoint.exists()
+
+
+@pytest.fixture
+def prepared_launch(retained_source, tmp_path, monkeypatch):
+    work = tmp_path / "work"
+    (work / "runs/engineering").mkdir(parents=True)
+    project = tmp_path / "project"
+    project.mkdir()
+    receipt = tmp_path / "revision.json"
+    receipt.write_text("fixture revision")
+    state = tmp_path / "state.json"
+    state.write_text("fixture state")
+    retained_source.source["state"] = recovery._descriptor(state, label="state")
+    monkeypatch.setattr(recovery, "load_source", lambda *a, **k: retained_source)
+    revision = {"expected_commit": "c" * 40}
+    monkeypatch.setattr(recovery, "_revision", lambda *a: revision)
+    monkeypatch.setattr(recovery, "_runtime", lambda source: (object(), {"selection": "fixture"}))
+    root = work / "runs/engineering/new-judging"
+    launch = recovery.prepare(state, work=work, project=project, out=root,
+                              revision_path=receipt, revision_sha256="a" * 64)
+    path = root / "launch.json"
+    digest = recovery._descriptor(path, label="launch")["sha256"]
+    return work, project, root, path, digest, launch
+
+
+def test_prepare_is_call_free_and_binding_rejects_changed_selection(prepared_launch, monkeypatch):
+    work, project, _root, path, digest, launch = prepared_launch
+    saved, source = recovery.load_launch(path, digest, work=work, project=project)
+    assert saved == launch
+    assert saved["target_calls"] == saved["hosted_calls"] == 0
+    assert saved["pending_ids"] == source.pending_ids
+    source.inputs = dict(reversed(list(source.inputs.items())))
+    source.judgments = {}
+    with pytest.raises(ValueError, match="source or scoring binding"):
+        recovery.load_launch(path, digest, work=work, project=project)
+
+
+def test_launch_requires_its_actual_scoring_revision(prepared_launch, monkeypatch):
+    work, project, _root, path, digest, _launch = prepared_launch
+    monkeypatch.setattr(recovery, "_revision", lambda *a: {"expected_commit": "d" * 40})
+    with pytest.raises(ValueError, match="source or scoring binding"):
+        recovery.load_launch(path, digest, work=work, project=project)
+
+
+@pytest.mark.parametrize("visible,owners", [("1", ""), ("0,1", ""), ("0", "GPU-fixture, 123")])
+def test_scoring_rejects_wrong_visibility_or_an_occupied_gpu(monkeypatch, visible, owners):
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", visible)
+    monkeypatch.setattr(recovery.subprocess, "check_output", lambda argv, **kw:
+                        "GPU-fixture" if "--id=0" in argv else owners)
+    with pytest.raises((ValueError, RuntimeError), match="visibility|occupied"):
+        recovery._require_free_gpu()
+
+
+def test_scoring_accepts_gpu0_free_while_gpu1_is_busy(monkeypatch):
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0")
+    monkeypatch.setattr(recovery.subprocess, "check_output", lambda argv, **kw:
+                        "GPU-fixture" if "--id=0" in argv else "GPU-other, 456")
+    recovery._require_free_gpu()
+
+
+def test_execution_retains_new_provenance_and_refuses_second_execution(
+    prepared_launch, monkeypatch,
+):
+    pytest.importorskip("fcntl")
+    work, project, root, path, digest, launch = prepared_launch
+    cascade, calls = _fixture_cascade()
+    monkeypatch.setattr(recovery, "source_cascade", lambda *a, **k: cascade)
+    monkeypatch.setattr(recovery, "_require_free_gpu", lambda: None)
+    completion = recovery.execute(path, digest, work=work, project=project,
+                                  control=work / "runs/engineering/invocation-one",
+                                  tmux_socket="fixture", tmux_session="fixture")
+    assert len(calls) == completion["new_judgments"] == 1
+    assert completion["total_judgments"] == 2
+    assert completion["target_calls"] == completion["hosted_calls"] == 0
+    assert completion["old_grid_promoted"] is False
+    assert completion["judging_revision"] == launch["judging_revision"]
+    assert recovery._load_json(root / "completion.json", label="completion") == completion
+    with pytest.raises(ValueError, match="already completed"):
+        recovery.execute(path, digest, work=work, project=project,
+                         control=work / "runs/engineering/invocation-two",
+                         tmux_socket="fixture", tmux_session="fixture")
+    assert len(calls) == 1
+
+
+def test_failed_execution_retains_checkpoint_and_resumes_without_reclassifying(
+    prepared_launch, monkeypatch,
+):
+    pytest.importorskip("fcntl")
+    work, project, root, path, digest, _launch = prepared_launch
+    cascade, calls = _fixture_cascade()
+    monkeypatch.setattr(recovery, "source_cascade", lambda *a, **k: cascade)
+    monkeypatch.setattr(recovery, "_require_free_gpu", lambda: None)
+    original = recovery.score_pending
+
+    def fail_after_checkpoint(*args, **kwargs):
+        original(*args, **kwargs)
+        raise RuntimeError("fixture interruption after durable judgment")
+
+    monkeypatch.setattr(recovery, "score_pending", fail_after_checkpoint)
+    first = work / "runs/engineering/invocation-one"
+    with pytest.raises(RuntimeError, match="fixture interruption"):
+        recovery.execute(path, digest, work=work, project=project, control=first,
+                         tmux_socket="fixture", tmux_session="fixture")
+    assert not (root / "completion.json").exists()
+    assert (first / "error.json").is_file() and len(calls) == 1
+    monkeypatch.setattr(recovery, "score_pending", original)
+    completion = recovery.execute(path, digest, work=work, project=project,
+                                  control=work / "runs/engineering/invocation-two",
+                                  tmux_socket="fixture", tmux_session="fixture")
+    assert len(calls) == 1 and completion["total_judgments"] == 2

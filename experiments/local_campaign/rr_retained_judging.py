@@ -5,19 +5,23 @@ rewrites that run's manifest, checkpoints, failed grid or completion state.
 """
 from __future__ import annotations
 
+import argparse
 from dataclasses import dataclass
 import hashlib
 import io
+import os
 from pathlib import Path
+import signal
 import subprocess
 import tarfile
 from typing import Any
 
 from experiments import figure_results, level1_evidence, retained_artifact_reader, run_matrix
 from experiments.local_campaign import rr_parallel_campaign
+from experiments.local_campaign.console_events import finish_child_controller, start_child_controller
 from experiments.local_campaign.failed_output_recovery_phase6 import _durable_outcomes, _selected_rows
 from experiments.local_campaign.vllm_stability_phase6 import (
-    _descriptor, _load_json, _one_file, _option, _validate_descriptor,
+    _create_json, _descriptor, _load_json, _one_file, _option, _utc_now, _validate_descriptor,
 )
 from ura.adapters.base import AttackBudget
 from ura.adapters.replay import ReplayAttacker
@@ -25,8 +29,17 @@ from ura.data_models import Attempt, DataPoint, RunManifest
 from ura.judges.base import JudgeCascade
 from ura.judges.guardrail import GuardrailJudge
 from ura.judges.rules import RuleJudge
+from ura.model_acquisition import hub_requirement
+from ura.model_acquisition_runtime import (
+    ModelRequirementSet, admit_managed_model_runtime, build_runtime_selection,
+    validate_public_selection_descriptor,
+)
+from ura.project_revision import load_project_revision_file, project_revision_binding
 from ura.runner import GlobalCallBudget, Runner, _component_config, _portable_attempt_dump
 from ura.targets.base import BaseTarget
+
+SCHEMA = "ura-rr-retained-judging/1"
+COMPLETION_SCHEMA = "ura-rr-retained-judging-completion/1"
 
 
 class _NoTarget(BaseTarget):
@@ -260,3 +273,198 @@ def load_source(state_path: Path, *, work: Path, project: Path) -> RetainedUnit:
     }, runner, inputs, responses, judgments)
     result.validate_unchanged()
     return result
+
+
+def _revision(path: Path, digest: str, project: Path) -> dict:
+    receipt, descriptor = load_project_revision_file(
+        path, digest, project / "experiments/run_matrix.py", recheck_checkout=True,
+    )
+    return project_revision_binding(receipt, descriptor)
+
+
+def _runtime(source: RetainedUnit):
+    root = Path(source.state["result_root"])
+    grid = _load_json(_one_file(root, "*.grid.json", label="RR grid"), label="RR grid")
+    selection = validate_public_selection_descriptor(grid["request"]["model_acquisition"]["selection"])
+    runtime_selection = build_runtime_selection(
+        ModelRequirementSet(tuple(
+            hub_requirement(role, resource["repo_id"], resource["revision"])
+            for resource in selection["resources"] for role in resource["roles"]
+        ), tuple(selection["exceptions"])), input_bindings=selection["input_bindings"],
+    )
+    if runtime_selection.selection_sha256 != selection["selection_sha256"]:
+        raise ValueError("RR retained judging runtime selection changed")
+    argv = source.state["runner_argv"]
+    return admit_managed_model_runtime(
+        selection=runtime_selection,
+        plan_path=_option(argv, "--model-acquisition-plan"),
+        plan_sha256=_option(argv, "--model-acquisition-plan-sha256"),
+        receipt_path=_option(argv, "--model-acquisition-receipt"),
+        receipt_sha256=_option(argv, "--model-acquisition-receipt-sha256"),
+        managed_store=_option(argv, "--model-acquisition-store"),
+    )
+
+
+def prepare(state_path: Path, *, work: Path, project: Path, out: Path,
+            revision_path: Path, revision_sha256: str) -> dict:
+    """Bind a new scoring execution without downloading or loading any model."""
+    source = load_source(state_path, work=work, project=project)
+    revision = _revision(revision_path, revision_sha256, project)
+    _managed, runtime = _runtime(source)
+    if (out != out.resolve() or out.parent != work / "runs/engineering"
+            or out.exists()):
+        raise ValueError("RR judging needs a new resolved engineering directory")
+    launch = {
+        "schema": SCHEMA, "created_at_utc": _utc_now(), "source": source.source,
+        "judging_revision_file": _descriptor(revision_path, label="judging revision"),
+        "judging_revision": revision, "model_runtime": runtime,
+        "judge_cascade": source.manifest.config["components"]["judge_cascade"],
+        "pending_ids": source.pending_ids, "data_root": str(out),
+        "physical_gpu": "0", "target_calls": 0, "hosted_calls": 0,
+        "wall_seconds": 3600, "old_grid_promoted": False,
+    }
+    out.mkdir()
+    _create_json(out / "launch.json", launch)
+    return launch
+
+
+def load_launch(path: Path, digest: str, *, work: Path, project: Path):
+    launch = rr_parallel_campaign._bound(path, digest, "RR retained judging launch")
+    root = Path(launch["data_root"])
+    if (launch.get("schema") != SCHEMA or root != root.resolve(strict=True)
+            or root.parent != work / "runs/engineering" or path != root / "launch.json"
+            or launch.get("target_calls") != 0 or launch.get("hosted_calls") != 0
+            or launch.get("physical_gpu") != "0" or launch.get("wall_seconds") != 3600
+            or launch.get("old_grid_promoted") is not False):
+        raise ValueError("RR retained judging execution contract changed")
+    descriptor = launch["judging_revision_file"]
+    revision = _revision(_validate_descriptor(descriptor, label="judging revision"),
+                         descriptor["sha256"], project)
+    source_path = _validate_descriptor(launch["source"]["state"], label="RR source state")
+    source = load_source(source_path, work=work, project=project)
+    if (source.source != launch["source"] or source.pending_ids != launch["pending_ids"]
+            or revision != launch["judging_revision"]
+            or launch["judge_cascade"] != source.manifest.config["components"]["judge_cascade"]):
+        raise ValueError("RR retained judging source or scoring binding changed")
+    return launch, source
+
+
+def _require_free_gpu() -> None:
+    if os.environ.get("CUDA_VISIBLE_DEVICES") != "0":
+        raise ValueError("RR retained judging requires physical GPU0 visibility only")
+    uuid = subprocess.check_output([
+        "nvidia-smi", "--id=0", "--query-gpu=uuid", "--format=csv,noheader",
+    ], text=True).strip()
+    owners = subprocess.check_output([
+        "nvidia-smi", "--query-compute-apps=gpu_uuid,pid", "--format=csv,noheader",
+    ], text=True)
+    if not uuid or any(line.split(",")[0].strip() == uuid for line in owners.splitlines()):
+        raise RuntimeError("GPU0 is occupied; retained judging will not overlap a worker")
+
+
+def execute(path: Path, digest: str, *, work: Path, project: Path, control: Path,
+            tmux_socket: str, tmux_session: str) -> dict:
+    """Use a fresh Jobs invocation, with a resumable separate scoring checkpoint."""
+    import fcntl
+
+    launch, source = load_launch(path, digest, work=work, project=project)
+    root = Path(launch["data_root"])
+    if (control != control.resolve() or control.parent != work / "runs/engineering"
+            or control.exists()):
+        raise ValueError("RR judging invocation needs a new engineering control root")
+    if (root / "completion.json").exists():
+        raise ValueError("RR retained judging already completed; no calls permitted")
+    # Kernel-owned lock releases after process death; the checkpoint survives.
+    with (root / "execution.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        _require_free_gpu()
+        runtime, runtime_descriptor = _runtime(source)
+        if runtime_descriptor != launch["model_runtime"]:
+            raise ValueError("RR retained judging managed resource binding changed")
+        cascade = source_cascade(source.manifest, model_runtime=runtime)
+        control.mkdir()
+        start_child_controller(
+            work_root=work, control_root=control, campaign_id=control.name,
+            release_commit=launch["judging_revision"]["expected_commit"],
+            evidence_class="post_factum_local_judging", hard_stop_hours=1,
+            tmux_socket=tmux_socket, tmux_session=tmux_session,
+        )
+        _create_json(control / "invocation.json", {
+            "launch": _descriptor(path, label="judging launch"), "started_at_utc": _utc_now(),
+            "generation_run_id": source.manifest.run_id,
+        })
+        exit_code = 1
+
+        def interrupt(signum, _frame):
+            raise InterruptedError(f"RR retained judging interrupted by signal {signum}")
+
+        previous = {sig: signal.signal(sig, interrupt)
+                    for sig in (signal.SIGALRM, signal.SIGTERM, signal.SIGINT)}
+        signal.alarm(launch["wall_seconds"])
+        try:
+            checkpoint = root / "judgments.checkpoint.jsonl"
+            scored = score_pending(source, cascade, checkpoint=checkpoint)
+            # Recheck the actual scoring source before publishing its completion.
+            load_launch(path, digest, work=work, project=project)
+            completion = {
+                "schema": COMPLETION_SCHEMA, "completed_at_utc": _utc_now(),
+                "launch": _descriptor(path, label="judging launch"),
+                "checkpoint": _descriptor(checkpoint, label="new judgments"),
+                "invocation": _descriptor(control / "invocation.json", label="judging invocation"),
+                "generation_run_id": source.manifest.run_id,
+                "judging_revision": launch["judging_revision"],
+                "retained_responses": len(source.responses), "total_judgments": len(scored.judgments),
+                "existing_judgments": len(source.judgments), "new_judgments": len(source.pending_ids),
+                "target_calls": 0, "hosted_calls": 0, "old_grid_promoted": False,
+            }
+            _create_json(root / "completion.json", completion)
+            exit_code = 0
+            return completion
+        except Exception as exc:
+            _create_json(control / "error.json", {
+                "error": type(exc).__name__, "message": str(exc),
+                **run_matrix._failed_judge_decision(exc),
+            })
+            raise
+        finally:
+            signal.alarm(0)
+            try:
+                cascade.stages[1].close()
+            finally:
+                for sig, handler in previous.items():
+                    signal.signal(sig, handler)
+                finish_child_controller(work_root=work, control_root=control, exit_code=exit_code)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--work", type=Path, required=True)
+    parser.add_argument("--project", type=Path, required=True)
+    actions = parser.add_subparsers(dest="action", required=True)
+    prepare_parser = actions.add_parser("prepare")
+    prepare_parser.add_argument("--state", type=Path, required=True)
+    prepare_parser.add_argument("--out", type=Path, required=True)
+    prepare_parser.add_argument("--project-revision", type=Path, required=True)
+    prepare_parser.add_argument("--project-revision-sha256", required=True)
+    for action in ("validate", "execute"):
+        command = actions.add_parser(action)
+        command.add_argument("--launch", type=Path, required=True)
+        command.add_argument("--launch-sha256", required=True)
+        if action == "execute":
+            command.add_argument("--control", type=Path, required=True)
+            command.add_argument("--tmux-socket", required=True)
+            command.add_argument("--tmux-session", required=True)
+    args = parser.parse_args()
+    kwargs = {"work": args.work.resolve(strict=True), "project": args.project.resolve(strict=True)}
+    if args.action == "prepare":
+        prepare(args.state, **kwargs, out=args.out, revision_path=args.project_revision,
+                revision_sha256=args.project_revision_sha256)
+    elif args.action == "validate":
+        load_launch(args.launch, args.launch_sha256, **kwargs)
+    else:
+        execute(args.launch, args.launch_sha256, **kwargs, control=args.control,
+                tmux_socket=args.tmux_socket, tmux_session=args.tmux_session)
+
+
+if __name__ == "__main__":
+    main()
