@@ -407,9 +407,10 @@ def template_retry_selection(launch_path: Path, worker_path: Path, gpu: str) -> 
             continue
         old_result = Path(launch["work_root"]) / "runs/thesis/runner" / unit.unit_id / worker_root.name
         if ((unit_root / "state.json").exists() or any(path.stat().st_size for path in old_result.glob("*.responses*.jsonl"))
-                or error.get("completed_attempts") != 0 or error.get("corpus") != unit.corpus
-                or error.get("model_spec") != prior.RR_SPEC):
+                or error.get("completed_attempts") != 0 or error.get("corpus") != unit.corpus):
             raise ValueError("RR template retry requires zero original measured responses and no measured state")
+        if error.get("model_spec") not in {prior.RR_SPEC, f"{prior.RR_SPEC}@{prior.RR_REVISION}"}:
+            raise ValueError("RR template retry canary model identity differs from the pinned target")
         base = unit.spec["base_argv"]
         config = _bound(Path(_option(base, "--local-config")), _option(base, "--local-config-sha256"), "RR retry model config")[prior.RR_SPEC]
         rows, _audit = prior._selected_rows(_replace_option(base, "--corpora", unit.corpus))

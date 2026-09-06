@@ -46,7 +46,8 @@ def failed(tmp_path, monkeypatch):
     write(worker / "failed.terminal.json", terminal)
     canary = worker / "units/failed/canary"
     error = {"exception_type": "ExternalCallFailure", "message": "sealed target: " + mod._ROLE_ERROR,
-             "completed_attempts": 0, "corpus": "arm", "model_spec": mod.prior.RR_SPEC}
+             "completed_attempts": 0, "corpus": "arm",
+             "model_spec": f"{mod.prior.RR_SPEC}@{mod.prior.RR_REVISION}"}
     write(canary / "cell.error.json", error)
     write(canary / "grid.grid.json", {"status": "error"})
     (canary.parent / "canary.run.log").write_text(mod._ROLE_ERROR)
@@ -78,6 +79,26 @@ def test_selection_keeps_only_qualified_failed_unit_and_original_positive_select
     assert launch == f.launch and units == [f.unit]
     assert evidence["failed"]["remaining_ids_sha256"] == mod._sha256_json(["a", "b", "c", "d"])
     assert "passed" not in evidence and units[0].recovery["corpora"]["arm"]["completed_datapoint_ids"] == ["old"]
+
+
+@pytest.mark.parametrize("identity", ["resolved", "legacy", "wrong_revision", "wrong_repository"])
+def test_retry_model_identity_matches_only_the_independently_pinned_target(failed, identity):
+    f = failed
+    model = f"{mod.prior.RR_SPEC}@{mod.prior.RR_REVISION}"
+    if identity == "legacy":
+        model = mod.prior.RR_SPEC
+    elif identity == "wrong_revision":
+        model = mod.prior.RR_SPEC + "@" + "f" * 40
+    elif identity == "wrong_repository":
+        model = "vllm:another/model@" + mod.prior.RR_REVISION
+    f.error["model_spec"] = model
+    write(f.canary / "cell.error.json", f.error)
+    if identity in {"resolved", "legacy"}:
+        _launch, units, _evidence = mod.template_retry_selection(f.parent_path, f.worker_path, "0")
+        assert units == [f.unit]
+    else:
+        with pytest.raises(ValueError, match="model identity"):
+            mod.template_retry_selection(f.parent_path, f.worker_path, "0")
 
 
 @pytest.mark.parametrize("change", ["wrong_failure", "measured", "state", "running", "ids", "config", "selector"])
