@@ -91,9 +91,13 @@ def _report_views(source, records: dict, completion: dict, *, joined: bool) -> d
     cells, joins = {}, None
     for name, ids in scopes.items():
         runner = recovery._reader_runner(source.manifest, recovery.source_cascade(source.manifest))
+
+        def no_append(_record):
+            raise RuntimeError("RR analysis cannot append a new judgment")
+
         for key in ids:
             point, attempt = source.inputs[key]
-            runner._restore_record(point, attempt, records[key], source.manifest.run_id)
+            runner._execute_or_restore(point, attempt, source.manifest.run_id, records[key], no_append)
         # This is aggregation context only. No manifest is built, saved or
         # rewritten, and the old run ID remains the generation foreign key.
         runner._last_manifest = source.manifest
