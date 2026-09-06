@@ -110,7 +110,7 @@ from ura.data_models import (                         # noqa: E402
     RunManifest,
 )
 from ura.eligibility import build_eligibility_plan    # noqa: E402
-from ura.judges.base import JudgeCascade              # noqa: E402
+from ura.judges.base import JudgeCascade, JudgeCascadeDecisionError  # noqa: E402
 from ura.judges.llm import LLMJudge                   # noqa: E402
 from ura.judges.rules import RuleJudge                # noqa: E402
 from ura.lane_projection import (                     # noqa: E402
@@ -292,6 +292,21 @@ def _release_artifact_lock(path: Path, token: str) -> None:
 def _safe_external_audit(exc: Exception) -> dict[str, object]:
     value = getattr(exc, "call_audit", None)
     return dict(value) if isinstance(value, dict) else {}
+
+
+def _failed_judge_decision(exc: Exception) -> dict[str, object]:
+    """Keep the exhausted cascade's diagnostic trail, never a final verdict."""
+    if not isinstance(exc, ExternalCallFailure) or exc.phase != "judge_call":
+        return {}
+    cause = exc.__cause__
+    if not isinstance(cause, JudgeCascadeDecisionError):
+        return {}
+    return {
+        "judge_decision_failure": {
+            "authoritative_verdict": False,
+            "trail": [item.model_dump(mode="json") for item in cause.trail],
+        }
+    }
 
 
 def _remove_superseded_cell_errors(
@@ -7810,6 +7825,7 @@ def _main(argv=None) -> int:
                             "call_budget_snapshot": call_budget.snapshot(),
                             "call_audit": _safe_external_audit(exc),
                             "execution_started": execution_started,
+                            **_failed_judge_decision(exc),
                         })
                     cell_statuses.append({
                         "corpus": corpus_name,
