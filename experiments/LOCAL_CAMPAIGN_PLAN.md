@@ -73,6 +73,15 @@ not the unresolved classifier output on the first unjudged response. The
 diagnostic used a copied results directory, and the GPU0 controller resumed
 after its canary boundary; original artifacts and GPU1 execution were unchanged.
 
+The subsequent single-response classifier diagnostic returned `assistantsafe`
+under the original 20-token guard allowance. The parser correctly retained an
+unconfident, unparsed output. The pinned template already supplies the assistant
+header; adding a generation-header flag would not change it. A token-level
+observation is queued at the next free canary boundary to distinguish genuine
+role framing lost during decoding from malformed classifier text. Do not strip
+an arbitrary `assistant` prefix, invent a safe verdict, repeat target generation
+or promote the failed grid. All 224 pending judgments remain required.
+
 RR analysis supplement. The validated 144-condition historical inventory keeps
 its original scope and revision-separated results. The current-profile RR
 controller in `experiments.local_campaign.rr_profiled_phase6` publishes its own
