@@ -149,6 +149,39 @@ generation untouched. These classifications and their actual completion/report
 validation remain pending; the full analysis must include this additional
 separate judging completion as well as the completed MMSafety recovery.
 
+AirBench recovery observation, 20:51 UTC on 6 September. The first new scoring
+attempt returned the actual tokens `[1071, 19193, 128009]`, decoded as
+` saidsafe<|eot_id|>`. This is not the earlier special-token header defect and
+is not a valid safety verdict. The recovery retained its raw shadow trail,
+completed zero new judgments, and automatically resumed GPU0 scheduling.
+No target response was regenerated.
+
+The opt-in recovery at `098bdcc` records such unparsed local Guard outputs as
+separate evaluator failures and continues the other saved responses. Its new
+launch/completion version 2 binds that policy explicitly; version 1 keeps its
+original fail-stop behavior. A failure cannot overlap a judgment, change its
+response identity, or contain a confidence-qualified verdict. Infrastructure,
+configuration and admission errors still stop execution. No parser, confidence
+threshold, judge configuration or Runner grid is relaxed. Forty-two affected
+recovery checks, nine handoff/publication checks, Ruff and four reversals pass
+on the rig. The actual 1,854/644/1,210 source and malformed output validate with
+zero new inference and all 21 original files unchanged.
+
+Every pending response still requires an attempted classification. Invalid
+classifier outputs are not target instability or missing target responses.
+Analysis must retain their count, identities and trails, show incomplete
+judging coverage, keep the full input population, and restrict safety metrics
+and the ordinary audit join to actual valid judgments. The original failed
+grid remains failed. This is a terminal failure disposition under Gate 7's
+existing success-only analysis rule, not permission to claim full scoring.
+Actual continuation, terminal reconciliation and report validation remain open.
+The version-2 waiter `ura-rr-air-judging-v2-20260906/recover` was queued at
+21:10 UTC. Its 53,619-byte launch binds SHA-256
+`dbf1a30cfcac3b03a123043665d8a339b88c4a18ea22158dcbfc512bbf20bb36`
+and reuses the sealed judge without downloads. The failed version-1 recovery
+remains immutable historical evidence; use the version-2 terminal for the
+eventual AirBench analysis handoff, alongside the completed MMSafety terminal.
+
 RR counter reconciliation, 6 September. The final analysis preserves the
 controller's reported count separately from corrected checkpoint-inclusive
 coverage. If these differ, the reported value must be reproduced by the exact

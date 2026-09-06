@@ -2110,6 +2110,18 @@ judging partitions separately. Consumers must retain those partitions and
 their generation-versus-judging source bindings; this reader alone neither
 publishes Stats nor closes the parallel campaign's analysis gate.
 
+For an actual unparsed local Guard output, `prepare --retain-judge-failures`
+selects launch/completion version 2. The default version 1 remains fail-stop.
+Version 2 attempts every pending classification, retaining each malformed
+classifier result in a separate create-only `evaluator-failures` artifact.
+These records bind the unchanged response and full unqualified stage trail;
+they are not `Judgment` records or target-stability failures. Resume skips
+both completed judgments and already retained evaluator failures. Other
+exceptions, including infrastructure and admission failures, still stop.
+No invalid placeholder may be promoted to safe, violation or over-refusal.
+The completion reports valid judgments, failed classifications and attempted
+pending rows separately, with `judging_complete=false` when any failure remains.
+
 After the original parallel workers and their corrective jobs are terminal,
 supply each separate scoring completion to
 `experiments.local_campaign.rr_parallel_analysis --judging-completion <file>`.
@@ -2121,7 +2133,10 @@ rows from failed units. Do not replace those historical counters with the new
 checkpoint-inclusive count.
 
 The recovered unit stays outside complete-grid Level 1. Its full input inventory
-and lossless audit/retained-judge join include all original responses. Two
+includes all original responses. For version 1, the lossless
+audit/retained-judge join also includes all those responses. Version 2 joins
+only actual valid judgments and reports excluded evaluator failures explicitly;
+its full input inventory does not shrink. Two nonempty
 separate Level-2 scopes cover original and recovered judgments, preserving the
 generation run ID and adding `post_factum_judging` provenance with the actual
 judging revision, partition count and partition-ID digest. These deterministic
