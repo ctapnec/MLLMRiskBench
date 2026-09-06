@@ -432,7 +432,7 @@ def test_stats_lists_real_jobs_with_distinct_authority_and_one_lazy_modal(
         card = text.split(f"data-job-id='{job_id}'", 1)[1].split("</article>", 1)[0]
         assert "Statistics details" in card
         assert "Statistics &amp; diagrams" not in card
-    assert "fetch(trigger.href" in text
+    assert "load(trigger.href)" in text and "fetch(href" in text
     assert "aria-haspopup='dialog'" in text
     assert "event.key==='Escape'" in text and "last.focus()" in text
     assert "class='barchart'" not in text
@@ -689,7 +689,7 @@ def test_report_navigation_renders_only_the_requested_report(tmp_path: Path) -> 
     app = _app(tmp_path)
     root = app.results_root / "thesis" / "many-reports"
     _write_completed_cell(root, run_id="run-many", target="target-many")
-    _record_run(app, tmp_path, job_id="job-many", out=root)
+    _record_run(app, tmp_path, job_id="job-many", out=root, extra=[])
     for index in range(3):
         report = app.results_root / "thesis" / "analysis" / f"{index}.json"
         _write_level2(report, run_id="run-many", model="target-many", metric=f"metric_{index}")

@@ -1312,7 +1312,9 @@ def test_render_revalidates_registered_report_bytes(
     )
     try:
         detail = app._stats_campaign_detail(
-            app._stats_external_analysis_campaign(campaign, registration)
+            app._stats_external_analysis_campaign(campaign, registration),
+            report_index=next(index for index, report in enumerate(registration.reports)
+                              if report.path == level2_path),
         )
     finally:
         app.close()
