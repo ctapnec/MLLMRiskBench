@@ -29,6 +29,7 @@ from experiments.local_campaign.vllm_stability_phase6 import (
 from experiments.rig_web_app.external_analysis import (
     ExternalAnalysisReportSpec, publish_external_analysis_registration,
 )
+from ura.project_revision import load_project_revision_file, project_revision_binding
 
 SCHEMA = "ura-rr-parallel-analysis/1"
 PREFIX_SCOPE = "source_validated_closed_cell_in_interrupted_grid"
@@ -145,7 +146,11 @@ def _same_launch(completion: dict, launch: dict) -> None:
 def _execution_source_coverage(launch: dict, *, project: Path) -> dict:
     """Reproduce the retained controller's counter, not its completion claim."""
     revision_path = _validate_descriptor(launch["project_revision"], label="RR counter source receipt")
-    revision = _load_json(revision_path, label="RR counter source receipt")["repository"]
+    receipt, descriptor = load_project_revision_file(
+        revision_path, launch["project_revision"]["sha256"],
+        project / "experiments/run_matrix.py", recheck_checkout=False,
+    )
+    revision = project_revision_binding(receipt, descriptor)
     commit = launch["expected_commit"]
     if any(revision.get(key) != commit for key in ("expected_commit", "observed_commit")):
         raise ValueError("RR counter source receipt changed")
