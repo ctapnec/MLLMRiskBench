@@ -2067,6 +2067,34 @@ and exact disjoint selected-input union before claiming completion. A retry
 that has already emitted measured responses cannot be restarted as fresh
 preparation by this path.
 
+An RR segment with all responses retained but incomplete local judgments uses
+the separate plan-owned `experiments.local_campaign.rr_retained_judging` path,
+not the target-generation retry. Its `prepare` action binds the original
+inputs, media, response and partial-judgment checkpoints, original generation
+identity, actual new judging revision and existing sealed Guard resources.
+It neither downloads a runtime nor calls a model. `validate` repeats these
+call-free checks. Both actions require `--work` and `--project` before the
+subcommand; preparation additionally takes `--state`, a new resolved `--out`,
+`--project-revision` and `--project-revision-sha256`.
+
+`execute` takes the prepared `--launch` and `--launch-sha256`, a fresh
+engineering `--control` directory and its `--tmux-socket`/`--tmux-session`.
+It requires free physical GPU0, exposed alone as `CUDA_VISIBLE_DEVICES=0`.
+`wait-execute` adds the exact original GPU0 `--controller-pid`: it waits for
+a canary boundary, pauses only the scheduler, lets the canary finish, runs
+scoring with a one-hour process bound, and resumes scheduling in `finally`.
+Never pause a measured target or repin its live checkout for this recovery.
+Keep the recovery checkout unchanged while its waiter or classifier is live.
+
+The classifier retains the original cascade configuration. Its new checkpoint
+contains only missing judgments and can resume without repeating durable
+judgments, using a fresh invocation directory. It cannot call a target, replace
+a retained response or write inside the original generation directory. The
+generation run ID is a foreign key; the separate completion binds the actual
+judging revision. The original failed grid and partial artifacts remain
+unchanged. This completion requires its own analysis handoff; it is not a
+fabricated successful Runner grid or automatic whole-campaign admission.
+
 Hosted controllers may use `ura.targets.api.provider_attempt_admission` to
 reserve each physical SDK request, including HTTP retries. The scoped callback
 receives the provider, final request mapping and one-based attempt number; it

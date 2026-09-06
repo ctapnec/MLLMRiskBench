@@ -87,6 +87,16 @@ GPU0 scheduling and changed no checkpoint. All 224 pending campaign judgments
 still require separately provenanced scoring; neither the diagnostic nor this
 fix promotes the failed grid or authorizes target regeneration.
 
+The separate scoring recovery is implemented and rig-verified at `3db7401`.
+Its actual call-free preparation binds all 300 responses, the 76 existing
+judgments, 224 pending identities and the corrected judging source. Twenty-four
+focused cases and five reversals pass. The tmux-owned `rr_retained_judging`
+waiter was launched at 12:02 UTC on 6 September to use the next GPU0 canary
+boundary; target generation remains at `5207b3d`. It repeats no target or
+completed judgment and preserves the original failed grid. Completion of the
+224 classifications and their separate Phase 7 analysis handoff remain pending;
+the successful preparation is not empirical scoring evidence.
+
 RR counter reconciliation, 6 September. The final analysis preserves the
 controller's reported count separately from corrected checkpoint-inclusive
 coverage. If these differ, the reported value must be reproduced by the exact
