@@ -888,6 +888,12 @@ attached without mutating the zero-hosted-call local report. The same validated
 table drives the response funnel, missing-output coverage, judge coverage,
 framework/source-arm composition and matched-input local/hosted diagrams.
 
+Stats opens a campaign overview with its terminal inventory and execution
+accounting. Select a report to load that report's tables and diagrams inside
+the modal, or use its standalone link. All registered reports and their JSON
+artifacts remain accessible. Rendering one selected report avoids loading every
+metric stratum into the overview at once; report validation is unchanged.
+
 Keep the population total separate from the retained-strata forecast. The
 planned chain predicts 46,537 selected input identities and 49,537 initial
 target calls after adding 2,792 failed-output corrections, 230 larger-context
