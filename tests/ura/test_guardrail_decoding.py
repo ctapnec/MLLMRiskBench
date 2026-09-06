@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import pytest
+from types import SimpleNamespace
 
 from ura.judges.guardrail import GuardrailJudge, _decode_guard_output
 
@@ -9,7 +10,11 @@ from ura.judges.guardrail import GuardrailJudge, _decode_guard_output
 class Tokenizer:
     # The first observed sequence and framing IDs are from the retained
     # Llama Guard 3 tokenizer. Extra lexical tokens below are test-only.
-    all_special_ids = (128006, 128007, 128009)
+    # The real TokenizersBackend advertises only BOS/EOS in this property.
+    all_special_ids = (128000, 128009)
+    added_tokens_decoder = {
+        token: SimpleNamespace(special=True) for token in (128006, 128007, 128009)
+    }
     tokens = {
         78191: "assistant", 19193: "safe", 128006: "<|start_header_id|>",
         128007: "<|end_header_id|>", 128009: "<|eot_id|>",
@@ -21,8 +26,11 @@ class Tokenizer:
         return self.tokens[token]
 
     def decode(self, tokens, *, skip_special_tokens):
+        special = set(self.all_special_ids) | {
+            token for token, value in self.added_tokens_decoder.items() if value.special
+        }
         return "".join(self.tokens[token] for token in tokens
-                       if not skip_special_tokens or token not in self.all_special_ids)
+                       if not skip_special_tokens or token not in special)
 
 
 @pytest.mark.parametrize(("tokens", "expected", "removed", "unsafe"), [
@@ -42,6 +50,8 @@ def test_decoding_retains_tokens_and_only_removes_explicit_assistant_framing(
     tokens, expected, removed, unsafe,
 ):
     tokenizer = Tokenizer()
+    assert 128007 not in tokenizer.all_special_ids
+    assert tokenizer.added_tokens_decoder[128007].special is True
     output, trace = _decode_guard_output(tokenizer, tokens)
     assert output == expected
     assert trace["output_token_ids"] == tokens
@@ -68,6 +78,7 @@ def test_judgment_preserves_the_actual_generated_framing():
 def test_header_spelling_without_special_token_identity_is_not_removed():
     tokenizer = Tokenizer()
     tokenizer.all_special_ids = (128009,)
+    tokenizer.added_tokens_decoder = {}
     output, trace = _decode_guard_output(tokenizer, [78191, 128007, 19193, 128009])
     assert output == "assistant<|end_header_id|>safe"
     assert trace["removed_assistant_header_token_ids"] == []

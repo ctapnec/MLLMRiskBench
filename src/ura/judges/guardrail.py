@@ -69,6 +69,12 @@ def _decode_guard_output(tokenizer: Any, generated: Any) -> tuple[str, dict[str,
     decoded = ordinary
     removed: list[int] = []
     special_ids = set(getattr(tokenizer, "all_special_ids", ()))
+    # TokenizersBackend may advertise only BOS/EOS here, although its added
+    # token decoder marks the header controls special and decode skips them.
+    special_ids.update(
+        token for token, value in getattr(tokenizer, "added_tokens_decoder", {}).items()
+        if getattr(value, "special", False) is True
+    )
     header_ends = [
         index + 1 for index, token in enumerate(token_ids)
         if token in special_ids
