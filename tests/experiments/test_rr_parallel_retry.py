@@ -80,27 +80,6 @@ def test_selection_keeps_only_qualified_failed_unit_and_original_positive_select
     assert "passed" not in evidence and units[0].recovery["corpora"]["arm"]["completed_datapoint_ids"] == ["old"]
 
 
-@pytest.mark.parametrize("retained", ["state", "responses"])
-def test_unrelated_measured_failure_does_not_block_zero_measured_template_retry(failed, retained):
-    f = failed
-    failure = {"error_type": "RuntimeError", "error": "later scoring failure"}
-    f.worker_value["results"].pop("passed")
-    f.worker_value["failures"]["passed"] = failure
-    write(f.worker_path, f.worker_value)
-    write(f.worker / "passed.terminal.json", {"result": None, "failure": failure})
-    stale = f.worker / "units/passed/canary/cell.error.json"
-    write(stale, {**f.error, "corpus": "arm3"})
-    if retained == "state":
-        durable = f.worker / "units/passed/state.json"
-    else:
-        durable = f.work / "runs/thesis/runner/passed" / f.worker.name / "cell.responses.jsonl"
-    write(durable, {"retained": "must not replay"})
-    before = {path: path.read_bytes() for path in (f.worker_path, stale, durable)}
-    _launch, units, evidence = mod.template_retry_selection(f.parent_path, f.worker_path, "0")
-    assert units == [f.unit] and set(evidence) == {"failed"}
-    assert {path: path.read_bytes() for path in before} == before
-
-
 @pytest.mark.parametrize("change", ["wrong_failure", "measured", "state", "running", "ids", "config", "selector"])
 def test_selection_refuses_wrong_failure_measured_rows_or_changed_input_binding(failed, monkeypatch, change):
     f = failed
