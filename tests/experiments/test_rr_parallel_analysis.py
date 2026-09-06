@@ -274,6 +274,20 @@ def test_separate_scoring_completes_coverage_without_promoting_old_grid(rescored
     assert handoff["old_grid_promoted"] is False
 
 
+def test_scoring_failure_disposition_keeps_metric_coverage_incomplete(rescored):
+    f, unit, _gpu, path, view, _counts = rescored
+    view["counts"].update(failed_judgments=1, attempted_pending_judgments=unit.selected_records - 7)
+    view["counts"]["new_judgments"] -= 1
+    view["counts"]["total_judgments"] -= 1
+    handoff, _units, _cells, _prefix = mod.validate(f.path, work=f.work, project=f.work,
+                                                  judging_completions=[path])
+    assert handoff["coverage"]["retained_inputs"] == 7606
+    assert handoff["evaluator_coverage"]["judging_complete"] is False
+    assert handoff["evaluator_coverage"]["failed_judgments"] == 1
+    assert handoff["evaluator_coverage"]["failed_outputs_are_safety_verdicts"] is False
+    assert handoff["evaluator_coverage"]["all_assigned_scoring_attempted"] is True
+
+
 @pytest.mark.parametrize("change", ["count", "input", "failure", "profile", "duplicate"])
 def test_separate_scoring_does_not_relax_original_worker_or_selection_checks(rescored, change):
     f, unit, gpu, path, view, _counts = rescored
@@ -380,13 +394,16 @@ def test_analysis_rejects_unfinished_or_changed_segments(complete, monkeypatch, 
         mod.validate(f.path, work=f.work, project=f.work)
 
 
-def test_publication_keeps_prefix_metrics_separate_and_has_no_paid_authority(tmp_path, monkeypatch):
+@pytest.mark.parametrize("evaluator_failures", [0, 2])
+def test_publication_keeps_prefix_metrics_separate_and_has_no_paid_authority(tmp_path, monkeypatch, evaluator_failures):
     output = tmp_path / "runs/analysis"
     source = tmp_path / "runs/engineering/parallel/completion.json"
     source_descriptor = write(source, {})
     cells, prefix = [cell(tmp_path, ["new"], run_id="new")], [cell(tmp_path, ["old"], run_id="old")]
     handoff = {"source_completion": source_descriptor, "execution_commit": "a" * 40, "status": "complete",
                "prefix": {"post_factum_judging_required_ids": {"lane": []}}}
+    if evaluator_failures:
+        handoff["evaluator_coverage"] = {"failed_judgments": evaluator_failures, "judging_complete": False}
     monkeypatch.setattr(mod, "validate", lambda *a, **kw: (handoff, {}, cells, prefix))
     monkeypatch.setattr(mod.retained, "_git", lambda *a: "b" * 40)
     monkeypatch.setattr(mod, "export_level1_strata", lambda *a, **kw: {})
@@ -407,6 +424,11 @@ def test_publication_keeps_prefix_metrics_separate_and_has_no_paid_authority(tmp
     assert len(published) == 1 and len(published[0]["reports"]) == 2
     assert published[0]["job_id"] == "parallel-analysis"
     assert "not promoted" in published[0]["explicit_limitations"]["prefix_scope"]
+    if evaluator_failures:
+        assert published[0]["explicit_limitations"]["evaluator_failures"].startswith("2 retained responses")
+        assert "no safety verdict" in published[0]["explicit_limitations"]["evaluator_failures"]
+    else:
+        assert "evaluator_failures" not in published[0]["explicit_limitations"]
     job = tmp_path / "runs/engineering/parallel-analysis"
     marker = json.loads((job / "ENGINEERING_ONLY.json").read_text())
     assert marker["release_commit"] == "b" * 40

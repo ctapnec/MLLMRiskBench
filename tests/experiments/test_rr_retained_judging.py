@@ -159,6 +159,87 @@ def test_writer_scores_only_missing_rows_and_resumes_without_any_call(retained_s
     source.validate_unchanged()
 
 
+def _malformed_then_valid_cascade():
+    cascade, calls = _fixture_cascade()
+
+    def classify(_conversation):
+        calls.append("guard")
+        return " saidsafe" if len(calls) == 1 else "unsafe\nS1"
+
+    cascade.stages[1]._run_guard = classify
+    return cascade, calls
+
+
+def test_unparsed_guard_is_retained_without_verdict_and_later_rows_continue(retained_source, tmp_path):
+    source = retained_source
+    source.judgments = {}
+    cascade, calls = _malformed_then_valid_cascade()
+    checkpoint, failures_path = tmp_path / "judgments.jsonl", tmp_path / "failures"
+    scored = recovery.score_pending(source, cascade, checkpoint=checkpoint, failures_path=failures_path)
+    failed = recovery.load_failures(failures_path, source)
+    assert len(calls) == 2 and len(scored.judgments) == len(failed) == 1
+    first, second = source.pending_ids
+    assert list(failed) == [first]
+    assert [row.attempt_id for row in scored.judgments] == [second]
+    assert failed[first]["trail"][-1]["raw"]["output"] == "saidsafe"
+    assert all(row["raw"]["cascade_role"] == "shadow" for row in failed[first]["trail"])
+    before = {path: path.read_bytes() for path in [checkpoint, *failures_path.iterdir()]}
+    resumed = recovery.score_pending(source, cascade, checkpoint=checkpoint, failures_path=failures_path)
+    assert len(calls) == 2 and len(resumed.judgments) == 1
+    assert {path: path.read_bytes() for path in before} == before
+    source.validate_unchanged()
+
+
+@pytest.mark.parametrize("change", ["response", "authority", "parsed", "qualified", "identity"])
+def test_retained_evaluator_failure_cannot_mask_changed_or_qualified_results(retained_source, tmp_path, change):
+    cascade, calls = _malformed_then_valid_cascade()
+    checkpoint, failures_path = tmp_path / "judgments.jsonl", tmp_path / "failures"
+    recovery.score_pending(retained_source, cascade, checkpoint=checkpoint, failures_path=failures_path)
+    path = next(failures_path.iterdir())
+    record = json.loads(path.read_text())
+    if change == "response":
+        record["response_sha256"] = "a" * 64
+    elif change == "authority":
+        record["trail"][-1]["raw"]["cascade_role"] = "authoritative"
+    elif change == "parsed":
+        record["trail"][-1]["raw"]["parsed"] = True
+    elif change == "qualified":
+        record["trail"][0]["raw"]["confidence"] = 1.0
+    else:
+        record["trail"][-1]["attempt_id"] = "other-response"
+    path.write_text(json.dumps(record))
+    with pytest.raises(ValueError):
+        recovery.score_pending(retained_source, cascade, checkpoint=checkpoint, failures_path=failures_path)
+    assert len(calls) == 1
+
+
+def test_retained_evaluator_failure_cannot_overlap_a_completed_judgment(retained_source, tmp_path):
+    cascade, _calls = _malformed_then_valid_cascade()
+    checkpoint, failures_path = tmp_path / "judgments.jsonl", tmp_path / "failures"
+    recovery.score_pending(retained_source, cascade, checkpoint=checkpoint, failures_path=failures_path)
+    valid, _calls = _fixture_cascade()
+    recovery.score_pending(retained_source, valid, checkpoint=checkpoint)
+    with pytest.raises(ValueError, match="overlaps"):
+        recovery.score_pending(retained_source, valid, checkpoint=checkpoint, failures_path=failures_path)
+
+
+def test_legacy_judging_and_infrastructure_errors_still_stop(retained_source, tmp_path):
+    from ura.runner import ExternalCallFailure
+
+    cascade, _calls = _malformed_then_valid_cascade()
+    with pytest.raises(ExternalCallFailure):
+        recovery.score_pending(retained_source, cascade, checkpoint=tmp_path / "legacy.jsonl")
+
+    def infrastructure(_conversation):
+        raise RuntimeError("device unavailable")
+
+    cascade.stages[1]._run_guard = infrastructure
+    with pytest.raises(ExternalCallFailure, match="device unavailable"):
+        recovery.score_pending(retained_source, cascade, checkpoint=tmp_path / "new.jsonl",
+                               failures_path=tmp_path / "failures")
+    assert not (tmp_path / "failures").exists()
+
+
 def test_saved_scoring_cannot_substitute_an_internally_valid_different_response(retained_source, tmp_path):
     source = retained_source
     key = source.pending_ids[0]
@@ -230,6 +311,88 @@ def test_prepare_is_call_free_and_binding_rejects_changed_selection(prepared_lau
     source.judgments = {}
     with pytest.raises(ValueError, match="source or scoring binding"):
         recovery.load_launch(path, digest, work=work, project=project)
+
+
+@pytest.fixture
+def failed_scoring_completion(prepared_launch, monkeypatch):
+    pytest.importorskip("fcntl")
+    work, project, old_root, _path, _digest, original = prepared_launch
+    root = old_root.with_name("continued-judging")
+    revision = original["judging_revision_file"]
+    launch = recovery.prepare(recovery.Path(original["source"]["state"]["path"]),
+                              work=work, project=project, out=root,
+                              revision_path=recovery.Path(revision["path"]),
+                              revision_sha256=revision["sha256"], retain_judge_failures=True)
+    assert launch["schema"] == recovery.CONTINUE_SCHEMA
+    assert original["schema"] == recovery.SCHEMA
+    assert "evaluator_failure_policy" not in original
+    path = root / "launch.json"
+    digest = recovery._descriptor(path, label="launch")["sha256"]
+    cascade, calls = _malformed_then_valid_cascade()
+    monkeypatch.setattr(recovery, "source_cascade", lambda *a, **k: cascade)
+    monkeypatch.setattr(recovery, "_require_free_gpu", lambda: None)
+    completion = recovery.execute(path, digest, work=work, project=project,
+                                  control=work / "runs/engineering/continued-invocation",
+                                  tmux_socket="fixture", tmux_session="fixture")
+    assert len(calls) == 1
+
+    def forbidden(*a, **k):
+        pytest.fail("analysis cannot classify retained results")
+
+    monkeypatch.setattr(cascade.stages[1], "_run_guard", forbidden)
+    return work, project, root, completion
+
+
+def test_failure_completion_counts_attempts_not_safety_verdicts(failed_scoring_completion, retained_source):
+    from experiments import level2_report
+    from experiments.local_campaign import rr_retained_judging_analysis as analysis
+
+    work, project, root, completion = failed_scoring_completion
+    assert completion["schema"] == recovery.CONTINUE_COMPLETION_SCHEMA
+    assert completion["retained_responses"] == 2
+    assert completion["total_judgments"] == completion["failed_judgments"] == 1
+    assert completion["new_judgments"] == 0 and completion["attempted_pending_judgments"] == 1
+    assert completion["judging_complete"] is False and completion["old_grid_promoted"] is False
+    assert completion["checkpoint"] is None
+    view = analysis._completed_view(root / "completion.json", work=work, project=project)
+    assert len(view["records"]) == len(view["evaluator_failures"]) == 1
+    assert set(view["records"]).isdisjoint(view["evaluator_failures"])
+    manifest_path = recovery.Path(retained_source.state["result_root"]) / "fixture.manifest.json"
+    manifest_path.write_text(json.dumps(retained_source.manifest.model_dump(mode="json")))
+    reports = analysis._report_views(retained_source, view["records"], completion, joined=True)
+    assert len(reports["input_cell"]["responses"]) == 2
+    assert len(reports["input_cell"]["judgments"]) == 1
+    assert set(reports["metric_cells"]) == {"original-judgments"}
+    assert len(reports["joined"][1]) == 1
+    assert reports["joined"][3]["evaluator_coverage"]["evaluator_failures"] == 1
+    report = level2_report.build_level2_report(list(reports["metric_cells"].values()), [])
+    assert report["common"]["estimates"]
+    assert all(row["post_factum_judging"]["evaluator_coverage"]["judging_complete"] is False
+               for row in report["common"]["estimates"])
+    retained_source.validate_unchanged()
+
+
+@pytest.mark.parametrize("change", ["missing", "unbound", "count", "complete", "policy"])
+def test_failure_completion_cannot_hide_missing_scoring(failed_scoring_completion, change):
+    from experiments.local_campaign import rr_retained_judging_analysis as analysis
+
+    work, project, root, completion = failed_scoring_completion
+    if change == "missing":
+        recovery.Path(completion["evaluator_failures"][0]["path"]).unlink()
+        completion["evaluator_failures"] = []
+        completion["failed_judgments"] = 0
+        completion["judging_complete"] = True
+    elif change == "unbound":
+        completion["evaluator_failures"][0]["sha256"] = "a" * 64
+    elif change == "count":
+        completion["failed_judgments"] = 0
+    elif change == "complete":
+        completion["judging_complete"] = True
+    else:
+        completion["evaluator_failure_policy"] = "accept_last_safe_placeholder"
+    (root / "completion.json").write_text(json.dumps(completion))
+    with pytest.raises(ValueError, match="failure|omits or repeats"):
+        analysis._completed_view(root / "completion.json", work=work, project=project)
 
 
 def test_launch_requires_its_actual_scoring_revision(prepared_launch, monkeypatch):

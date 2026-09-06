@@ -27,8 +27,8 @@ from experiments.local_campaign.vllm_stability_phase6 import (
 )
 from ura.adapters.base import AttackBudget
 from ura.adapters.replay import ReplayAttacker
-from ura.data_models import Attempt, DataPoint, RunManifest
-from ura.judges.base import JudgeCascade
+from ura.data_models import Attempt, DataPoint, Judgment, Response, RunManifest
+from ura.judges.base import BaseJudge, JudgeCascade, JudgeCascadeDecisionError
 from ura.judges.guardrail import GuardrailJudge
 from ura.judges.rules import RuleJudge
 from ura.model_acquisition import hub_requirement
@@ -37,11 +37,17 @@ from ura.model_acquisition_runtime import (
     validate_public_selection_descriptor,
 )
 from ura.project_revision import load_project_revision_file, project_revision_binding
-from ura.runner import GlobalCallBudget, Runner, _component_config, _portable_attempt_dump
+from ura.runner import (
+    ExternalCallFailure, GlobalCallBudget, Runner, _component_config, _portable_attempt_dump, _sha256_json,
+)
 from ura.targets.base import BaseTarget
 
 SCHEMA = "ura-rr-retained-judging/1"
 COMPLETION_SCHEMA = "ura-rr-retained-judging-completion/1"
+FAILURE_SCHEMA = "ura-rr-retained-judge-failure/1"
+CONTINUE_SCHEMA = "ura-rr-retained-judging/2"
+CONTINUE_COMPLETION_SCHEMA = "ura-rr-retained-judging-completion/2"
+FAILURE_POLICY = "retain_unparsed_local_guard_output_without_verdict"
 
 
 class _NoTarget(BaseTarget):
@@ -142,7 +148,63 @@ def _reader_runner(manifest: RunManifest, cascade: JudgeCascade, *, call_budget=
     )
 
 
-def score_pending(source: RetainedUnit, cascade: JudgeCascade, *, checkpoint: Path) -> Runner:
+class _RecordedJudge(BaseJudge):
+    """Recheck a retained cascade failure without running any classifier."""
+
+    def __init__(self, judgment: Judgment, threshold: float):
+        self.name = judgment.judge
+        self.escalate_below = threshold
+        self._judgment = judgment
+
+    def judge(self, datapoint, response):
+        return self._judgment
+
+
+def validate_failure(record: dict, source: RetainedUnit) -> str:
+    key = record.get("attempt_id")
+    if (set(record) != {"schema", "attempt_id", "generation_run_id", "response_sha256", "trail"}
+            or record.get("schema") != FAILURE_SCHEMA or key not in source.pending_ids
+            or record.get("generation_run_id") != source.manifest.run_id
+            or record.get("response_sha256") != _sha256_json(source.responses[key]["response"])):
+        raise ValueError("RR evaluator failure changed its retained response identity")
+    trail = [Judgment.model_validate(item, strict=True) for item in record["trail"]]
+    stages = source.manifest.config["components"]["judge_cascade"]["stages"]
+    if (len(trail) != len(stages) or [item.judge for item in trail] != source.manifest.judges
+            or not trail or trail[-1].judge != "guardrail"
+            or trail[-1].raw.get("parsed") is not False
+            or trail[-1].raw.get("guardrail_queried") is not True):
+        raise ValueError("RR evaluator failure is not an unparsed local Guard output")
+    point, _attempt = source.inputs[key]
+    cascade = JudgeCascade([_RecordedJudge(item, stage["escalate_below"])
+                            for item, stage in zip(trail, stages)])
+    try:
+        cascade.judge(point, Response.model_validate(source.responses[key]["response"]))
+    except JudgeCascadeDecisionError as exc:
+        if [item.model_dump(mode="json") for item in exc.trail] != record["trail"]:
+            raise ValueError("RR evaluator failure changed its unqualified shadow trail") from exc
+    else:
+        raise ValueError("RR evaluator failure contains a qualified verdict")
+    return key
+
+
+def load_failures(directory: Path, source: RetainedUnit) -> dict:
+    """Each create-only failure record has its own durable identity; none is a judgment."""
+    if directory.is_symlink() or (directory.exists() and not directory.is_dir()):
+        raise ValueError("RR evaluator failures need a regular directory")
+    failures = {}
+    if directory.exists():
+        for path in sorted(directory.iterdir()):
+            record = _load_json(path, label="RR evaluator failure")
+            key = validate_failure(record, source)
+            if (path.name != _sha256_json(key) + ".json" or path.is_symlink()
+                    or key in failures):
+                raise ValueError("RR evaluator failure repeats or changes its artifact identity")
+            failures[key] = record
+    return failures
+
+
+def score_pending(source: RetainedUnit, cascade: JudgeCascade, *, checkpoint: Path,
+                  failures_path: Path | None = None) -> Runner:
     """Append only missing judgments; run IDs refer to the original generation.
 
     The caller binds this separate checkpoint to its actual judging revision.
@@ -154,11 +216,18 @@ def score_pending(source: RetainedUnit, cascade: JudgeCascade, *, checkpoint: Pa
         raise ValueError("RR retained judging changed the saved scoring configuration")
     if checkpoint.resolve().is_relative_to(Path(source.state["result_root"]).resolve()):
         raise ValueError("new judging cannot write inside the original generation root")
+    if failures_path is not None and (
+            failures_path.resolve().is_relative_to(Path(source.state["result_root"]).resolve())
+            or failures_path.resolve() == checkpoint.resolve()):
+        raise ValueError("new evaluator failures cannot write inside the original generation root")
     if (set(source.inputs) != set(source.responses) or set(source.judgments) - set(source.inputs)
             or len(source.inputs) != source.state["selected_records"]):
         raise ValueError("RR judging source selection is no longer complete")
     source.validate_unchanged()
     saved = Runner.load_checkpoint(checkpoint, expected_run_id=source.manifest.run_id)
+    failures = load_failures(failures_path, source) if failures_path is not None else {}
+    if set(saved) & set(failures):
+        raise ValueError("RR evaluator failure overlaps a completed judgment")
     if set(saved) - set(source.pending_ids):
         raise ValueError("RR judging checkpoint adds or repeats an original completed judgment")
     runner = _reader_runner(source.manifest, cascade)
@@ -169,14 +238,29 @@ def score_pending(source: RetainedUnit, cascade: JudgeCascade, *, checkpoint: Pa
             raise ValueError("RR judging checkpoint changed the original target response")
         runner._restore_record(point, attempt, record, source.manifest.run_id)
     for key, (point, attempt) in source.inputs.items():
+        if key in failures:
+            continue
         record = source.judgments.get(key, saved.get(key))
-        runner._execute_or_restore(
-            point, attempt, source.manifest.run_id, record,
-            lambda value: Runner.append_checkpoint(checkpoint, value),
-            response_record=source.responses[key],
-        )
+        try:
+            runner._execute_or_restore(
+                point, attempt, source.manifest.run_id, record,
+                lambda value: Runner.append_checkpoint(checkpoint, value),
+                response_record=source.responses[key],
+            )
+        except ExternalCallFailure as exc:
+            if (failures_path is None or exc.phase != "judge_call"
+                    or not isinstance(exc.__cause__, JudgeCascadeDecisionError)):
+                raise
+            failure = {"schema": FAILURE_SCHEMA, "attempt_id": key,
+                       "generation_run_id": source.manifest.run_id,
+                       "response_sha256": _sha256_json(source.responses[key]["response"]),
+                       "trail": [item.model_dump(mode="json") for item in exc.__cause__.trail]}
+            validate_failure(failure, source)
+            failures_path.mkdir(exist_ok=True)
+            _create_json(failures_path / (_sha256_json(key) + ".json"), failure)
+            failures[key] = failure
     source.validate_unchanged()
-    if len(runner.judgments) != len(source.responses):
+    if len(runner.judgments) + len(failures) != len(source.responses):
         raise ValueError("RR judging did not cover the exact retained response set")
     return runner
 
@@ -308,7 +392,7 @@ def _runtime(source: RetainedUnit):
 
 
 def prepare(state_path: Path, *, work: Path, project: Path, out: Path,
-            revision_path: Path, revision_sha256: str) -> dict:
+            revision_path: Path, revision_sha256: str, retain_judge_failures: bool = False) -> dict:
     """Bind a new scoring execution without downloading or loading any model."""
     source = load_source(state_path, work=work, project=project)
     revision = _revision(revision_path, revision_sha256, project)
@@ -325,6 +409,8 @@ def prepare(state_path: Path, *, work: Path, project: Path, out: Path,
         "physical_gpu": "0", "target_calls": 0, "hosted_calls": 0,
         "wall_seconds": 3600, "old_grid_promoted": False,
     }
+    if retain_judge_failures:
+        launch.update(schema=CONTINUE_SCHEMA, evaluator_failure_policy=FAILURE_POLICY)
     out.mkdir()
     _create_json(out / "launch.json", launch)
     return launch
@@ -333,12 +419,16 @@ def prepare(state_path: Path, *, work: Path, project: Path, out: Path,
 def load_launch(path: Path, digest: str, *, work: Path, project: Path):
     launch = rr_parallel_campaign._bound(path, digest, "RR retained judging launch")
     root = Path(launch["data_root"])
-    if (launch.get("schema") != SCHEMA or root != root.resolve(strict=True)
+    continuing = launch.get("schema") == CONTINUE_SCHEMA
+    if (launch.get("schema") not in {SCHEMA, CONTINUE_SCHEMA} or root != root.resolve(strict=True)
             or root.parent != work / "runs/engineering" or path != root / "launch.json"
             or launch.get("target_calls") != 0 or launch.get("hosted_calls") != 0
             or launch.get("physical_gpu") != "0" or launch.get("wall_seconds") != 3600
             or launch.get("old_grid_promoted") is not False):
         raise ValueError("RR retained judging execution contract changed")
+    if ((continuing and launch.get("evaluator_failure_policy") != FAILURE_POLICY)
+            or (not continuing and "evaluator_failure_policy" in launch)):
+        raise ValueError("RR retained judging evaluator failure policy changed")
     descriptor = launch["judging_revision_file"]
     revision = _revision(_validate_descriptor(descriptor, label="judging revision"),
                          descriptor["sha256"], project)
@@ -405,20 +495,33 @@ def execute(path: Path, digest: str, *, work: Path, project: Path, control: Path
         signal.alarm(launch["wall_seconds"])
         try:
             checkpoint = root / "judgments.checkpoint.jsonl"
-            scored = score_pending(source, cascade, checkpoint=checkpoint)
+            continuing = launch["schema"] == CONTINUE_SCHEMA
+            failures_path = root / "evaluator-failures" if continuing else None
+            scored = score_pending(source, cascade, checkpoint=checkpoint, failures_path=failures_path)
+            failures = load_failures(failures_path, source) if continuing else {}
             # Recheck the actual scoring source before publishing its completion.
             load_launch(path, digest, work=work, project=project)
             completion = {
                 "schema": COMPLETION_SCHEMA, "completed_at_utc": _utc_now(),
                 "launch": _descriptor(path, label="judging launch"),
-                "checkpoint": _descriptor(checkpoint, label="new judgments"),
+                "checkpoint": _descriptor(checkpoint, label="new judgments") if checkpoint.exists() else None,
                 "invocation": _descriptor(control / "invocation.json", label="judging invocation"),
                 "generation_run_id": source.manifest.run_id,
                 "judging_revision": launch["judging_revision"],
                 "retained_responses": len(source.responses), "total_judgments": len(scored.judgments),
-                "existing_judgments": len(source.judgments), "new_judgments": len(source.pending_ids),
+                "existing_judgments": len(source.judgments),
+                "new_judgments": len(scored.judgments) - len(source.judgments),
                 "target_calls": 0, "hosted_calls": 0, "old_grid_promoted": False,
             }
+            if continuing:
+                completion.update(
+                    schema=CONTINUE_COMPLETION_SCHEMA, failed_judgments=len(failures),
+                    attempted_pending_judgments=len(source.pending_ids),
+                    judging_complete=not failures, evaluator_failure_policy=FAILURE_POLICY,
+                    evaluator_failures=[_descriptor(failures_path / (_sha256_json(key) + ".json"),
+                                                    label="RR evaluator failure")
+                                        for key in sorted(failures)],
+                )
             _create_json(root / "completion.json", completion)
             exit_code = 0
             return completion
@@ -551,6 +654,7 @@ def main() -> None:
     prepare_parser.add_argument("--out", type=Path, required=True)
     prepare_parser.add_argument("--project-revision", type=Path, required=True)
     prepare_parser.add_argument("--project-revision-sha256", required=True)
+    prepare_parser.add_argument("--retain-judge-failures", action="store_true")
     for action in ("validate", "execute", "wait-execute"):
         command = actions.add_parser(action)
         command.add_argument("--launch", type=Path, required=True)
@@ -565,7 +669,8 @@ def main() -> None:
     kwargs = {"work": args.work.resolve(strict=True), "project": args.project.resolve(strict=True)}
     if args.action == "prepare":
         prepare(args.state, **kwargs, out=args.out, revision_path=args.project_revision,
-                revision_sha256=args.project_revision_sha256)
+                revision_sha256=args.project_revision_sha256,
+                retain_judge_failures=args.retain_judge_failures)
     elif args.action == "validate":
         load_launch(args.launch, args.launch_sha256, **kwargs)
     elif args.action == "wait-execute":

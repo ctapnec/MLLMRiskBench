@@ -517,6 +517,14 @@ def validate(completion_path: Path, *, work: Path, project: Path,
                        original_worker_accounting=original_accounting["worker_accounting"],
                        separately_completed_judging={key: item["scoring_recovery"]["counts"]
                                                     for key, item in recovered.items()})
+        failures = sum(item["scoring_recovery"]["counts"].get("failed_judgments", 0)
+                       for item in recovered.values())
+        if failures:
+            handoff["evaluator_coverage"] = {
+                "failed_judgments": failures, "judging_complete": False,
+                "all_assigned_scoring_attempted": True, "failed_outputs_are_safety_verdicts": False,
+                "metric_scope": "Only valid judgments; full retained inputs remain separately counted.",
+            }
     return handoff, validated, cells, prefix_cells
 
 
@@ -632,6 +640,7 @@ def _publish(output: Path, *, handoff: dict, units: dict, cells: list[dict],
                                               "level2_by_evidence_scope": level2,
                                               "retained_inputs": _descriptor(input_path)})
     pending = sum(map(len, handoff["prefix"]["post_factum_judging_required_ids"].values()))
+    evaluator_failures = handoff.get("evaluator_coverage", {}).get("failed_judgments", 0)
     publish_external_analysis_registration(
         work / "runs", job_id=job_id, analysis_root=output,
         work_label="GraySwan RR - two-GPU supplement", completion_status="complete_with_explicit_limitations",
@@ -639,6 +648,8 @@ def _publish(output: Path, *, handoff: dict, units: dict, cells: list[dict],
                               "prefix_judging": f"{pending} retained prefix responses still need post-factum judging; no old judgment is rerun automatically.",
                               **({"separate_scoring": "Recovered scoring has separate original/recovered judgment reports and full retained-input coverage; its old failed grid is excluded from complete-grid Level 1."}
                                  if handoff.get("judging_completions") else {}),
+                              **({"evaluator_failures": f"{evaluator_failures} retained responses have invalid classifier outputs and no safety verdict. All assigned scoring was attempted; judging coverage is incomplete and metric reports exclude these failures."}
+                                 if evaluator_failures else {}),
                               "comparison_scope": "Historical 144 conditions and execution revisions remain separate; a paired contrast requires exact matching."},
         reports=reports)
 
