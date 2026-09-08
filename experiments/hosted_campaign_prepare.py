@@ -159,6 +159,36 @@ def _pilot_ids(plan: Mapping[str, Any]) -> list[str]:
     return result
 
 
+def _pilot_groups(plan: Mapping[str, Any]) -> list[list[str]]:
+    """Keep multi-record source clusters intact without conflating retained turns."""
+    selected = plan["selected"]
+    cluster_points: dict[tuple[str, str, str], set[str]] = {}
+    for row in selected:
+        cluster = (row["corpus"], row["source"], row["source_cluster_id"])
+        cluster_points.setdefault(cluster, set()).add(row["datapoint_id"])
+    groups: dict[tuple[str, ...], list[str]] = {}
+    keys = {}
+    for row in selected:
+        cluster = (row["corpus"], row["source"], row["source_cluster_id"])
+        identity = row["input_identity_sha256"]
+        # Several retained conversations for one datapoint can remain separate
+        # jobs: each still contains the whole original one-record cluster.
+        # A shared-image cluster with several datapoints cannot be split this way.
+        key = cluster if len(cluster_points[cluster]) > 1 else (*cluster, identity)
+        groups.setdefault(key, []).append(identity)
+        keys[identity] = key
+    if len(groups) < 2:
+        raise ValueError("hosted selection must leave a whole source cluster for measurement")
+    chosen = []
+    seen = set()
+    for identity in _pilot_ids(plan):
+        key = keys[identity]
+        if key not in seen and len(seen) < len(groups) - 1:
+            chosen.append(groups[key])
+            seen.add(key)
+    return chosen
+
+
 def _job_argv(
     *,
     common: Sequence[str],
@@ -346,6 +376,7 @@ def prepare_campaign(
     for route in routes:
         plan = route["replays"][0]["value"]["plan"]
         inputs.resolve_inputs(plan, candidates=candidates, **bindings)
+        _pilot_groups(plan)  # Unrunnable partitions must fail before provider counting.
 
     from experiments import run_matrix
 
@@ -457,13 +488,15 @@ def prepare_campaign(
             )
 
         slug = _slug(target_spec)
-        pilot = _pilot_ids(plan)
-        pilot_set = set(pilot)
+        pilot = _pilot_groups(plan)
+        pilot_set = {identity for group in pilot for identity in group}
         jobs: list[dict[str, Any]] = []
         config_rows: list[tuple[str, dict, list[str], bool]] = []
-        for number, identity in enumerate(pilot, start=1):
-            replay, _entry = entries[identity]
-            config_rows.append((f"{slug}-pilot-{number:02d}", replay, [identity], True))
+        for number, ids in enumerate(pilot, start=1):
+            replay, _entry = entries[ids[0]]
+            if any(entries[identity][0] is not replay for identity in ids):
+                raise ValueError("one pilot source cluster spans different corpus replays")
+            config_rows.append((f"{slug}-pilot-{number:02d}", replay, ids, True))
         for replay in route["replays"]:
             ids = [
                 identity

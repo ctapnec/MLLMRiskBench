@@ -278,3 +278,67 @@ def test_resumed_preparation_reports_zero_new_http_attempts_for_retained_counts(
     assert receipt["token_count_http_attempts"] == 0
     assert receipt["referenced_count_http_attempts"] == 2
     assert receipt["count_cache"] == {"cache_hits": 2, "new_receipts": 0, "http_attempts": 0}
+
+
+def test_shared_image_cluster_is_one_pilot_group_with_all_datapoints_and_variants():
+    def row(identity, *, point=None, image=False):
+        return {"input_identity_sha256": identity, "corpus": "holisafe_full" if image else "text-arm",
+                "source": "holisafe" if image else "text-source",
+                "source_cluster_id": "holisafe:image:shared.jpg" if image else identity,
+                "datapoint_id": point or identity, "modality": "image" if image else "text",
+                "required_modalities": ["text", "image"] if image else ["text"]}
+
+    # A real HoliSafe shared-image cluster has multiple question records and
+    # several retained local-model inputs for each, not a singleton image row.
+    selected = [row("text-1"), row("text-2"), row("text-3")]
+    selected += [row(f"image-{index}", point=f"holisafe:{index % 2}", image=True)
+                 for index in range(6)]
+    selected.append(row("measured-text"))
+    original = json.dumps(selected, sort_keys=True)
+    groups = subject._pilot_groups({"selected": selected})
+    assert groups == [["text-1"], ["text-2"], ["text-3"],
+                      [f"image-{index}" for index in range(6)]]
+    assert json.dumps(selected, sort_keys=True) == original
+    assert "measured-text" not in {identity for group in groups for identity in group}
+
+
+def test_preparation_uses_the_grouped_partition_for_config_calls_and_measurement(tmp_path, monkeypatch):
+    request, _execution_root = _request(tmp_path, monkeypatch)
+    seen = []
+
+    def last_input_pilot(plan):
+        group = [plan["selected"][-1]["input_identity_sha256"]]
+        seen.append(group)
+        return [group]
+
+    monkeypatch.setattr(subject, "_pilot_groups", last_input_pilot)
+    receipt = subject.prepare_campaign(request=request, request_descriptor={},
+                                       out_root=tmp_path / "grouped", allow_network_counts=False)
+    program = json.loads(Path(receipt["programs"][0]["path"]).read_text())
+    assert len(seen) == 2  # Before counting and when constructing the jobs.
+    assert program["jobs"][0]["input_ids"] == seen[0] == seen[1]
+    assert program["jobs"][0]["input_ids"] != program["jobs"][1]["input_ids"]
+    assert receipt["programs"][0]["selected_target_calls"] == 2
+
+
+def test_unrunnable_cluster_partition_stops_before_counting(tmp_path, monkeypatch):
+    request, _execution_root = _request(tmp_path, monkeypatch)
+
+    def invalid(plan):
+        raise ValueError("cannot partition whole source clusters")
+
+    monkeypatch.setattr(subject, "_pilot_groups", invalid)
+    monkeypatch.setattr(subject, "count_request", lambda *a, **k: pytest.fail("count endpoint reached"))
+    with pytest.raises(ValueError, match="cannot partition whole source clusters"):
+        subject.prepare_campaign(request=request, request_descriptor={},
+                                 out_root=tmp_path / "invalid", allow_network_counts=True)
+    assert not (tmp_path / "invalid").exists()
+
+
+def test_single_multirecord_cluster_cannot_be_split_into_pilot_and_measurement():
+    selected = [{"input_identity_sha256": str(index), "corpus": "holisafe_full",
+                 "source": "holisafe", "source_cluster_id": "shared-image",
+                 "datapoint_id": str(index), "modality": "image", "required_modalities": ["image"]}
+                for index in range(2)]
+    with pytest.raises(ValueError, match="whole source cluster"):
+        subject._pilot_groups({"selected": selected})
