@@ -707,6 +707,26 @@ def test_hosted_follow_on_is_a_no_retry_local_input_subset() -> None:
             assert forecast in changed_cost
 
 
+def test_matched_report_runbook_uses_funded_caps_and_rig_source_locators() -> None:
+    runbook = (_ROOT / "experiments" / "RUN_AND_RETURN.md").read_text(encoding="utf-8")
+    start = runbook.index("python -m experiments.retained_response_judge_pair ")
+    block = runbook[start:runbook.index("```", start)]
+    required = (
+        'python -m experiments.retained_response_judge_report',
+        '--source-receipt "$URA_SOURCE_CONFORMANCE_MANIFEST"',
+        '--source-receipt-sha256 "$URA_SOURCE_CONFORMANCE_SHA256"',
+        '--pair-limit "$FUNDED_PAIR_CAP"',
+        '--max-cost-microusd "$FUNDED_HAIKU_CEILING_MICROUSD"',
+    )
+    def check(text: str) -> None:
+        assert all(token in text for token in required)
+        assert "$URA_SOURCE_CONFORMANCE_RECEIPT" not in text
+    check(block)
+    for token in required:
+        with pytest.raises(AssertionError):
+            check(block.replace(token, "removed_bound_argument"))
+
+
 def test_follow_on_runbook_keeps_purpose_and_media_contracts() -> None:
     runbook = (_ROOT / "experiments" / "RUN_AND_RETURN.md").read_text(
         encoding="utf-8"

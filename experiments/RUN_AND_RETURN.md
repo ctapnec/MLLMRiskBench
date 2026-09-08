@@ -1791,8 +1791,8 @@ an archive is not sufficient if the original locator was removed.
 python -m experiments.retained_response_judge_pair \
   --local-runner-view "$FINAL_LOCAL_RUNNER_VIEW" \
   --hosted-runner-view "$FINAL_HOSTED_RUNNER_VIEW" \
-  --source-receipt "$URA_SOURCE_CONFORMANCE_RECEIPT" \
-  --source-receipt-sha256 "$URA_SOURCE_CONFORMANCE_RECEIPT_SHA256" \
+  --source-receipt "$URA_SOURCE_CONFORMANCE_MANIFEST" \
+  --source-receipt-sha256 "$URA_SOURCE_CONFORMANCE_SHA256" \
   --judge-model anthropic:claude-haiku-4-5-20251001 \
   --api-config-sha256 "$URA_HAIKU_JUDGE_CONFIG_SHA256" \
   --pricing-config "$URA_PRICING_CONFIG" \
@@ -1806,7 +1806,7 @@ python -m experiments.retained_response_judge_pair_execute \
   --plan "$HAIKU_PLAN" \
   --local-runner-view "$FINAL_LOCAL_RUNNER_VIEW" \
   --hosted-runner-view "$FINAL_HOSTED_RUNNER_VIEW" \
-  --source-receipt "$URA_SOURCE_CONFORMANCE_RECEIPT" \
+  --source-receipt "$URA_SOURCE_CONFORMANCE_MANIFEST" \
   --api-config "$URA_HAIKU_JUDGE_CONFIG" \
   --pricing-config "$URA_PRICING_CONFIG" --out "$HAIKU_RESULT" \
   --ack-paid-execution
@@ -1815,7 +1815,7 @@ python -m experiments.retained_response_judge_report \
   --plan "$HAIKU_PLAN" --execution-root "$HAIKU_RESULT" \
   --local-runner-view "$FINAL_LOCAL_RUNNER_VIEW" \
   --hosted-runner-view "$FINAL_HOSTED_RUNNER_VIEW" \
-  --source-receipt "$URA_SOURCE_CONFORMANCE_RECEIPT" \
+  --source-receipt "$URA_SOURCE_CONFORMANCE_MANIFEST" \
   --out "$HAIKU_COMPARISON_REPORT"
 ```
 
