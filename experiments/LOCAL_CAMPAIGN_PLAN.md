@@ -18,7 +18,7 @@ at an exact source commit, increasing the managed inventory from 15 to 16. The
 dated readiness snapshot below remains a historical record of what was found on
 20 August.
 
-Execution update, 8 September 2026 at 13:30 UTC. All local target generation
+Execution update, 8 September 2026 at 13:57 UTC. All local target generation
 is terminal. The complete RR union contains 7,606 distinct assigned inputs,
 7,215 usable outputs and 391 retained failed outputs, with no repeated completed
 response. There are 7,604 scoring records and two explicitly retained invalid
@@ -29,8 +29,19 @@ input/source validation but failed during Level-1 export because the command
 omitted the existing bound live-attestation inputs. The focused `7c34451` fix
 forwards those exact receipts within each execution-revision stratum and gives
 each fresh export its own job directory. Eight affected rig tests, Ruff and two
-reversals pass. A fresh read-only analysis is running; no target or judgment is
-regenerated. Final publication, deployment and the hosted handoff remain pending.
+reversals pass. A subsequent input-metadata join exposed the two retained
+AirBench evaluator failures. `6d4d40e` separates source-derived input metadata
+from judgment success; its nine focused cases and two reversals pass, including
+the corrected measured-manifest fixture at `6856d3c`.
+Final RR analysis completed at 13:56:59 UTC, with all 438 source files unchanged
+and zero target or judge calls. It publishes two revision-specific Level-1 and
+six separately scoped Level-2 reports at
+`/stats/job/rr-analysis-6856d3c-20260908T135500Z-control` (HTTP 200).
+The retained-input inventory includes all 7,606 inputs. The completion SHA-256 is
+`de836b871dd80b3f49596da3531f9e1a233076bc23401d3f405e0c5bd9d063da`.
+Historical and corrected conditions, and the two missing evaluator verdicts,
+remain explicit. Console deployment, the combined hosted handoff and the
+human-only audit requirements remain pending.
 The following dated observations are retained history, not additional queued
 model work.
 

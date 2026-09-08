@@ -2161,6 +2161,14 @@ The standard Stats registration publishes their separate reports. Publication
 and later hosted/local-judge selection revalidate the complete handoff; an old
 failed Runner grid is never promoted to admit these views.
 
+The source reader also returns `input_metadata` for every retained Attempt,
+reconstructed from the exact corpus: source, risk category and expected
+behavior. Input selection does not require a successful classifier output.
+The hosted selector requires a complete input-metadata key set and checks it
+against every available judgment's input stamps. It neither removes unjudged
+inputs nor fills their missing safety verdicts. Older fully judged cells may
+continue to supply the same input stamps through their judgments.
+
 Hosted controllers may use `ura.targets.api.provider_attempt_admission` to
 reserve each physical SDK request, including HTTP retries. The scoped callback
 receives the provider, final request mapping and one-based attempt number; it
