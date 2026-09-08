@@ -443,6 +443,13 @@ def load_pair_candidate_views(local_root: Path, hosted_root: Path) -> tuple:
 
 
 def _read_view(root: Path) -> tuple[list[dict], dict, dict, dict]:
+    if (root / "retained-view.json").exists():
+        from experiments.retained_response_view import read_view
+        return read_view(root)
+    return _read_native_view(root)
+
+
+def _read_native_view(root: Path) -> tuple[list[dict], dict, dict, dict]:
     from experiments.retained_artifact_reader import grid_partitions, read_partitions
     from experiments.local_campaign.rr_parallel_analysis import SCHEMA, load_judge_view
     from experiments.local_campaign.vllm_stability_phase6 import _load_json

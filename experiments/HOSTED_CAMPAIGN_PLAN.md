@@ -42,6 +42,15 @@ judge condition to hosted and local retained outputs. Every hosted lane uses
 the sealed local `rules,guardrail` cascade during its measured Runner execution,
 so the hosted member of every later Haiku pair already has its local judgment.
 
+For the local judging side, compose the historical and RR native response
+views with `experiments.retained_response_view`, explicitly selecting the seven
+current local model identities. This read-only view binds both validated source
+contents and is consumed by the existing selector and executor. Retired-model
+answers are excluded from judge candidates, while their original input
+provenance remains available to verify any hosted replay derived from it.
+The view does not pool historical/corrected execution conditions or invent
+verdicts for missing and invalid outputs.
+
 ## Fixed design
 
 - Sampling policy: seeded_pseudorandom_whole_cluster_prefix_v1.

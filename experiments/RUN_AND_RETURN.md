@@ -2206,6 +2206,17 @@ earlier explicitly estimated byte-based preparation and its retained bytes.
 The hosted retained-input controller consumes the ordinary sealed Runner argv
 from a bound execution program:
 
+To judge a model-scoped union of existing retained results, run
+`python -m experiments.retained_response_view --source-view /resolved/view-a
+--source-view /resolved/view-b --model 'exact:model-a' --model 'exact:model-b'
+--out-root /resolved/fresh-view`. Sources must be validated native views without
+overlapping run identities. The output's `retained-view.json` binds their
+content digests and the exact model scope. Pass its directory as the existing
+`--local-runner-view` and the file as `--source-receipt` with its digest when
+preparing matched judgments. Both candidate selection and execution revalidate
+the same view. Model filtering applies only to judge candidates, not original
+input provenance; no source artifact, response or verdict is rewritten.
+
 Prepare those programs with `python -m experiments.hosted_campaign_prepare
 --request /resolved/path/campaign-request.json --request-sha256 '<SHA-256>'
 --out-root /resolved/path/fresh-hosted-preparation`. The request schema is
