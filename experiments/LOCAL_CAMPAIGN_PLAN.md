@@ -40,8 +40,14 @@ six separately scoped Level-2 reports at
 The retained-input inventory includes all 7,606 inputs. The completion SHA-256 is
 `de836b871dd80b3f49596da3531f9e1a233076bc23401d3f405e0c5bd9d063da`.
 Historical and corrected conditions, and the two missing evaluator verdicts,
-remain explicit. Console deployment, the combined hosted handoff and the
-human-only audit requirements remain pending.
+remain explicit. Console deployment completed at 14:13 UTC under `0b27f26`;
+the actual serving process and the reduced Stats renderer were verified, not
+just HTTP availability. Combined historical/RR input validation completed at
+14:09:56 UTC with 372 cells and 27,847 input candidates. These are distinct
+historical and corrected memberships, not a pooled comparable population.
+The separate hosted follow-on is now preparing exact input replays and request
+counts. Local generation and analysis must not be restarted. Human-only audit
+requirements remain outstanding.
 The following dated observations are retained history, not additional queued
 model work.
 

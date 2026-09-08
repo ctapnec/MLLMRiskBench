@@ -2219,6 +2219,11 @@ all selected corpora. Shared arguments provide the normal project/source,
 transport and acquired local-judge admission. The preparer supplies the exact
 target, replay partition, output path and call/retry limits.
 
+The API loader returns configuration entries only for generic target specs.
+Fixed Fable and Sol condition IDs carry their own immutable settings and must
+reach the target factory without a generic config override. Their registry
+modality declarations still participate in selection and budget validation.
+
 Add `--allow-network-counts` for complete provider counting, required for
 physical media. Final local membership validates before counting. The command
 writes `receipt.json`, the shared `budget/plan.json`, attacker configs and one

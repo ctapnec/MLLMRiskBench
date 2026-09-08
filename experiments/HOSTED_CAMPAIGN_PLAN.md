@@ -1,8 +1,27 @@
 # Hosted subset and Haiku re-adjudication campaign plan
 
-Status: prospective follow-on, revised 5 September 2026. This document authorizes no
+Status: follow-on preparation, revised 8 September 2026. This document authorizes no
 paid call. Start only after the all-local campaign seals its Phase 7 inventory.
 Run every controller on the rig in a named tmux session.
+
+Execution update, 8 September. The required local generation and both analysis
+publications are terminal, and their combined retained-input handoff validates.
+The rig's eleven target configurations and effective-dated prices have been
+updated through the normal console editor/fetch actions. The exact no-call
+projection `hosted-budget-1542d8cec0d5d2f53b2e99e2` reproduces the ceiling table
+below within every 80 percent provider cap. Authenticated model discovery
+identifies all eleven requested model IDs; this is not a generation pilot.
+
+The actual seed-0 whole-cluster prefixes contain 941 target inputs: 29 each for
+Astra, Fable, Sol, Terra and GPT-5.5; 79 each for Opus and Kimi; 148 each for
+Sonnet and Luna; 199 for Haiku; and 143 text inputs for DeepSeek. Unused capacity
+is retained when the next complete cluster would exceed a cap, rather than
+splitting or skipping that cluster. These counts precede full-request token
+admission and do not increase any target or judge allowance. Every selected
+input has a non-retired local-model membership. Retired RWKV history does not
+restore those models to a future target or judge-counterpart schedule.
+Exact prompt/media replay materialization is in progress; no generation or
+Haiku call has been made.
 
 The frozen 144-condition historical report alone is insufficient: the four-lane,
 7,606-input current-profile GraySwan RR supplement, its separate validated
