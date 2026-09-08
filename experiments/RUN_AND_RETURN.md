@@ -866,7 +866,11 @@ controller, input, inventory, and report chain before it creates the generic
 `external-analysis-jobs` registration. A validation or publication failure is
 a failed watcher task, not a published success. Rig Web does not contain or
 interpret the campaign's phase or gate schemas; no registration grants report
-or metric authority. A pre-automatic controller generation can use the manual
+or metric authority. An external analysis registration must name an existing
+actual campaign owner; an arbitrary analysis-directory name alone does not
+create a Jobs or Stats row. Reports produced after a hosted target completes
+can attach to that existing target controller without inventing a retrospective
+analysis start. A pre-automatic controller generation can use the manual
 adapter command in `experiments/local_campaign/README.md` when no registration
 exists. The measured-job registration field and CLI flag are
 named `admission_sha256` and `--admission-sha256`; this local campaign supplies
@@ -2212,13 +2216,22 @@ To judge a model-scoped union of existing retained results, run
 --out-root /resolved/fresh-view`. Sources must be validated native views without
 overlapping run identities. The output's `retained-view.json` binds their
 content digests and the exact model scope. Pass its directory as the existing
-`--local-runner-view` and the file as `--source-receipt` with its digest when
-preparing matched judgments. Both candidate selection and execution revalidate
+`--local-runner-view`; preserve the paired plan's separately bound
+`--source-receipt` and digest. Do not replace an already selected receipt with
+the composed-view file merely because a new view was prepared. Both candidate
+selection and execution revalidate
 the same view. Model filtering applies only to judge candidates, not original
 input provenance; no source artifact, response or verdict is rewritten.
 New composed views distinguish judgment content from the reader-added temporary
 `_artifact_file` locator. The original view version retains its original
 identity check; a failed predecessor is never promoted by rewriting it.
+The view also retains auxiliary-reader revision attribution. If deployment
+changes that attribution, compare the old and current reader module bytes and
+the full canonical source view, including an untouched control. Create a
+separate current-reader view only after identifying the exact differences;
+never dismiss changed responses or judgments as a deployment effect. Preserve
+the previous view and its failed read, and bind the new directory explicitly
+before matched judging. This refresh makes no target or judge call.
 
 Prepare those programs with `python -m experiments.hosted_campaign_prepare
 --request /resolved/path/campaign-request.json --request-sha256 '<SHA-256>'

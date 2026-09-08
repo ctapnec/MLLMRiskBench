@@ -1,6 +1,6 @@
 # Hosted subset and Haiku re-adjudication campaign plan
 
-Status: follow-on preparation, revised 8 September 2026. This document authorizes no
+Status: hosted target collection active, revised 8 September 2026. This document authorizes no
 paid call. Start only after the all-local campaign seals its Phase 7 inventory.
 Run every controller on the rig in a named tmux session.
 
@@ -57,6 +57,12 @@ incomplete. The corrected Haiku preparation finished at 18:50:53 UTC, reusing
 that response and twenty unchanged job preparations. Only three affected job
 preparations were replaced, with zero model downloads. The other routes reuse
 successful preparation records; failed setup records remain diagnostic only.
+The first complete target programme is Astra: 29 usable responses at
+19:23:14 UTC, comprising nine diagnostic inputs and 20 measured inputs.
+Its six measured source-arm jobs have validated coverage and outcome reports,
+with generation-condition charts linked to the existing target campaign in
+Stats. These are original local-cascade/source-specific results, not Haiku
+re-adjudication or human-calibrated estimates.
 
 The frozen 144-condition historical report alone is insufficient: the four-lane,
 7,606-input current-profile GraySwan RR supplement, its separate validated
