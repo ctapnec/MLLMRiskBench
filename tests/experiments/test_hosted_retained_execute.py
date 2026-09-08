@@ -92,6 +92,25 @@ def test_registered_count_uses_funded_starts_and_final_or_checkpointed_responses
     assert subject._retained_execution_counts(program, admission.budget) == (2, 1)
 
 
+@pytest.mark.parametrize("final_prefix", [0, 1])
+def test_registered_count_keeps_paid_checkpoint_beside_incomplete_final(tmp_path, final_prefix):
+    points, attacker, target, _calls, admission = _setup(tmp_path)
+    records = []
+    _runner(attacker, target, admission).run(points, on_response=records.append)
+    output = tmp_path / "partial"
+    output.mkdir()
+    (output / "cell.responses.jsonl").write_text("".join(
+        json.dumps(row["response"]) + "\n" for row in records[:final_prefix]
+    ))
+    for row in records:
+        Runner.append_checkpoint(output / "cell.responses.checkpoint.jsonl", row)
+    program = {
+        "target": target.name, "requests": admission.requests,
+        "jobs": [{"argv": ["--out", str(output)]}],
+    }
+    assert subject._retained_execution_counts(program, admission.budget) == (2, 2)
+
+
 def test_target_money_settles_after_checkpoint_and_resume_never_reissues(tmp_path):
     points, attacker, target, calls, admission = _setup(tmp_path)
     checkpoint = tmp_path / "responses.jsonl"

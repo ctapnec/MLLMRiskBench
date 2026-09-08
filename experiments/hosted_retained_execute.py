@@ -299,16 +299,14 @@ def _retained_execution_counts(program: Mapping[str, Any], budget: AttemptBudget
     for job in program["jobs"]:
         out = Path(run_matrix.build_parser().parse_args(job["argv"]).out)
         finals = sorted(out.glob("*.responses.jsonl")) if out.is_dir() else []
-        final_names = {path.name for path in finals}
         for path in finals:
             if path.is_symlink() or path.stat().st_size > 64 * 1024 * 1024:
                 raise ValueError("hosted controller response file is unsafe or oversized")
             for row in run_matrix._read_jsonl(path):  # noqa: SLF001
                 register(row)
         for path in sorted(out.glob("*.responses.checkpoint.jsonl")) if out.is_dir() else []:
-            final_name = path.name.replace(".responses.checkpoint.jsonl", ".responses.jsonl")
-            if final_name in final_names:
-                continue
+            # A failed cell can leave an empty or partial final writer beside
+            # its paid checkpoint. Merge exact duplicates; never hide its tail.
             for record in Runner.load_response_checkpoint(path).values():
                 register(record["response"])
     successful = sum(
