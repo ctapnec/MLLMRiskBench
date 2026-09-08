@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from experiments.hosted_request_tokens import (
-    TokenCountUnavailable, count_request, request_sha256, validate_receipt,
+    TokenCountUnavailable, cached_count_request, count_request, request_sha256, validate_receipt,
 )
 from ura.data_models import DialogTurn
 from ura.targets.api import OpenAICompatibleTarget
@@ -184,3 +184,42 @@ def test_installed_sdk_serializes_only_count_endpoint(kind, tmp_path, monkeypatc
         client.close()
     assert receipt["input_tokens"] == 731 and len(delivered) == 1
     assert receipt["count_request_sha256"] == request_sha256(delivered[0])
+
+
+def test_completed_counts_survive_next_request_interruption_without_recount(tmp_path, monkeypatch):
+    target = _target("astra", tmp_path)
+    first = target.build_request(_dialog(tmp_path))
+    cache = tmp_path / "counts"
+    cache.mkdir()
+    observed, _options = _client(target, monkeypatch)
+    receipt = cached_count_request(target, first, cache_root=cache, allow_network=True)
+    assert len(observed) == 1
+    failed, _options = _client(target, monkeypatch, error=TimeoutError("interrupted"))
+    second = dict(first, max_completion_tokens=17)
+    with pytest.raises(TimeoutError):
+        cached_count_request(target, second, cache_root=cache, allow_network=True)
+    assert len(failed) == 1 and len(list(cache.glob("*.json"))) == 1
+    assert cached_count_request(target, first, cache_root=cache, allow_network=True) == receipt
+    assert len(failed) == 1  # Even the unavailable client is not reached on resume.
+    resumed, _options = _client(target, monkeypatch)
+    cached_count_request(target, second, cache_root=cache, allow_network=True)
+    assert len(resumed) == 1 and len(list(cache.glob("*.json"))) == 2
+
+
+def test_cached_count_cannot_change_request_identity_or_counting_method(tmp_path, monkeypatch):
+    target = _target("astra", tmp_path)
+    request = target.build_request(_dialog(tmp_path))
+    cache = tmp_path / "counts"
+    cache.mkdir()
+    observed, _options = _client(target, monkeypatch)
+    cached_count_request(target, request, cache_root=cache, allow_network=True)
+    path = next(cache.glob("*.json"))
+    damaged = json.loads(path.read_text())
+    damaged["request_sha256"] = "0" * 64
+    path.write_text(json.dumps(damaged))
+    with pytest.raises(ValueError, match="request, model or counting method changed"):
+        cached_count_request(target, request, cache_root=cache, allow_network=True)
+    assert len(observed) == 1
+    with pytest.raises(TokenCountUnavailable, match="physical media"):
+        cached_count_request(target, request, cache_root=cache, allow_network=False)
+    assert len(observed) == 1

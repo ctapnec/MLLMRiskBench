@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 from ura.targets.api import (
@@ -181,3 +182,32 @@ def validate_receipt(target, request: Mapping, receipt: Mapping) -> dict:
     if method == "local_estimate" and tokens != len(_canonical(counted)) + 256:
         raise ValueError("retained local token estimate changed")
     return dict(receipt)
+
+
+def cached_count_request(target, request: Mapping, *, cache_root: Path,
+                         allow_network: bool = False) -> dict:
+    """Persist each completed counter result; resume validates without recounting."""
+    from experiments.retained_response_judge_execute import _exclusive_lock, _read_regular, _write_new
+
+    if type(allow_network) is not bool:
+        raise ValueError("allow_network must be an explicit boolean")
+    root = Path(cache_root)
+    if (not root.is_absolute() or root.is_symlink()
+        or root.resolve(strict=True) != root or not root.is_dir()):
+        raise ValueError("token-count cache must be one canonical existing directory")
+    body = _checked_request(target, request)
+    method, method_id, _counted, _fee = _count_plan(target, body, network=allow_network)
+    key = request_sha256({"request": body, "target": target.requested_spec,
+                          "provider": target.provider, "base_url": str(target.base_url),
+                          "method": method, "method_id": method_id})
+    path = root / f"{key}.json"
+    with _exclusive_lock(root):
+        if path.exists() or path.is_symlink():
+            receipt, _descriptor = _read_regular(path, label="retained token count", max_bytes=65536)
+            checked = validate_receipt(target, body, receipt)
+            if checked["method"] != method or checked["method_id"] != method_id:
+                raise ValueError("cached token-count method differs from the requested policy")
+            return checked
+        receipt = count_request(target, body, allow_network=allow_network)
+        _write_new(path, receipt)
+        return receipt

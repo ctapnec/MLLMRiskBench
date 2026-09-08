@@ -25,6 +25,8 @@ from ura.targets.api import provider_attempt_admission
 
 
 SCHEMA = "ura-hosted-retained-execution-plan/1"
+COUNTED_INPUT_SCHEMA = "ura-hosted-retained-execution-plan/2"
+COUNTED_INPUT_POLICY = "counted_requests_within_route_reservation_v1"
 TOKEN_COUNT_POLICY = "surface_specific_counts_with_declared_estimates_v1"
 _HEX40 = re.compile(r"[0-9a-f]{40}\Z")
 
@@ -42,6 +44,23 @@ def _integer(value: object, label: str, *, zero: bool = False) -> int:
 def _cost(input_tokens: int, output_tokens: int, prices: Mapping[str, Any]) -> int:
     value = Decimal(input_tokens) * Decimal(prices["input"]) + Decimal(output_tokens) * Decimal(prices["output"])
     return int(value.to_integral_value(rounding=ROUND_CEILING))
+
+
+def _validate_input_budget(program: Mapping[str, Any], route: Mapping[str, Any]) -> None:
+    """Keep the original per-call contract or fund the explicit counted successor."""
+    counted = program.get("schema") == COUNTED_INPUT_SCHEMA
+    if counted:
+        if program.get("input_budget_policy") != COUNTED_INPUT_POLICY:
+            raise ValueError("counted input allocation policy differs")
+    elif program.get("schema") != SCHEMA or "input_budget_policy" in program:
+        raise ValueError("hosted input allocation schema differs")
+    requests = program["requests"].values()
+    if not counted and any(
+        row["input_tokens"] > route["maximum_input_tokens_per_call"] for row in requests
+    ):
+        raise ValueError("selected hosted request exceeds the projected input-token ceiling")
+    if sum(row["bound_microusd"] for row in requests) > route["maximum_cost_microusd"]:
+        raise ValueError("exact selected target requests exceed the route's funded projection")
 
 
 class _Admission:
@@ -419,7 +438,7 @@ def build_matched_judge_requests(*, programs: Sequence[dict], budget: AttemptBud
 
 def _validated_jobs(program: dict, budget: AttemptBudget) -> list[_Admission]:
     """Rebuild fixed input selection from complete historical and RR evidence."""
-    if (not isinstance(program, dict) or program.get("schema") != SCHEMA
+    if (not isinstance(program, dict) or program.get("schema") not in {SCHEMA, COUNTED_INPUT_SCHEMA}
         or program.get("budget_plan_sha256") != budget.expected_plan_sha256
         or program.get("token_count_policy") != TOKEN_COUNT_POLICY
         or program.get("replaced_descriptive_prerequisite") != "authority.requires_exact_provider_token_counts"):
@@ -575,6 +594,7 @@ def _validated_jobs(program: dict, budget: AttemptBudget) -> list[_Admission]:
         raise ValueError("fixed pilot and measured calls must partition the complete selected population once")
     # Pilot membership is fixed from inputs, never picked/replaced after output.
     # The bounded main cohort and all first attempts remain funded upfront.
+    _validate_input_budget(program, route)
     return admitted
 
 

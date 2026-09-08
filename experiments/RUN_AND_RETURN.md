@@ -2232,6 +2232,15 @@ descriptor and the shared budget descriptor in the execution command below.
 Retained multi-turn inputs keep all selected turns inside the exact total
 call cap. The pilot and measured partitions are disjoint.
 
+For variable counted input sizes, request schema `/2` adds the mandatory
+`input_budget_policy: counted_requests_within_route_reservation_v1` field and
+emits execution-plan `/2`. Both preparation and execution require the sum of
+full-request input costs plus maximum output costs to fit the unchanged route
+reservation. The original `/1` retains its per-call input ceiling. Neither
+condition changes call/output caps, the protected judge reserve or provider
+budgets. Pass `--count-cache /resolved/existing/counts` to persist each completed
+count and resume without recounting it; identity and method are revalidated.
+
 ```bash
 python -m experiments.hosted_retained_execute \
   --program /resolved/path/hosted-program.json \

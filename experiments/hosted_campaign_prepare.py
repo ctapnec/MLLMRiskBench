@@ -21,12 +21,13 @@ from typing import Any
 from experiments import hosted_campaign_budget as projection
 from experiments import hosted_retained_execute as executor, hosted_retained_inputs as inputs
 from experiments.hosted_attempt_budget import AttemptBudget, create_budget
-from experiments.hosted_request_tokens import count_request
+from experiments.hosted_request_tokens import cached_count_request, count_request
 from experiments.retained_response_judge_execute import _canonical, _write_new
 from ura.adapters.replay import ReplayAttacker, retained_dialog
 
 
 REQUEST_SCHEMA = "ura-hosted-retained-campaign-request/1"
+COUNTED_INPUT_REQUEST_SCHEMA = "ura-hosted-retained-campaign-request/2"
 RECEIPT_SCHEMA = "ura-hosted-retained-campaign-preparation/1"
 _REPLAY_SCHEMA = "ura-retained-input-replay/1"
 _CONTROLLED = frozenset(
@@ -277,6 +278,7 @@ def prepare_campaign(
     request_descriptor: Mapping[str, Any],
     out_root: Path,
     allow_network_counts: bool,
+    count_cache: Path | None = None,
 ) -> dict:
     """Create programs and one shared zero-attempt monetary ledger."""
     if type(allow_network_counts) is not bool:
@@ -292,7 +294,12 @@ def prepare_campaign(
         "runner_common_argv",
         "execution_root",
     }
-    if not isinstance(request, Mapping) or set(request) != required or request["schema"] != REQUEST_SCHEMA:
+    counted_inputs = isinstance(request, Mapping) and request.get("schema") == COUNTED_INPUT_REQUEST_SCHEMA
+    if counted_inputs:
+        required.add("input_budget_policy")
+    if (not isinstance(request, Mapping) or set(request) != required
+        or request["schema"] not in {REQUEST_SCHEMA, COUNTED_INPUT_REQUEST_SCHEMA}
+        or (counted_inputs and request["input_budget_policy"] != executor.COUNTED_INPUT_POLICY)):
         raise ValueError("hosted campaign preparation request fields differ")
     root = _canonical_new_root(out_root, label="hosted preparation root")
     execution_root = _canonical_existing_root(request["execution_root"], label="hosted execution root")
@@ -382,8 +389,13 @@ def prepare_campaign(
         for identity in selected_ids:
             _replay, entry = entries[identity]
             body = target.build_request(retained_dialog(entry["rendered_input"]), seed=0)
-            counted = count_request(target, body, allow_network=allow_network_counts)
-            if counted["input_tokens"] > funded["maximum_input_tokens_per_call"]:
+            counted = (
+                count_request(target, body, allow_network=allow_network_counts)
+                if count_cache is None else
+                cached_count_request(target, body, cache_root=count_cache,
+                                     allow_network=allow_network_counts)
+            )
+            if not counted_inputs and counted["input_tokens"] > funded["maximum_input_tokens_per_call"]:
                 raise ValueError("selected hosted request exceeds the projected input-token ceiling")
             method = counted["method"] + ":" + counted["method_id"]
             count_methods[method] = count_methods.get(method, 0) + 1
@@ -492,7 +504,8 @@ def prepare_campaign(
             )
         programs.append(
             {
-                "schema": executor.SCHEMA,
+                "schema": executor.COUNTED_INPUT_SCHEMA if counted_inputs else executor.SCHEMA,
+                **({"input_budget_policy": executor.COUNTED_INPUT_POLICY} if counted_inputs else {}),
                 "sources": copy.deepcopy(sources),
                 "results_root": request["results_root"],
                 "runner_view": request["runner_view"],
@@ -578,6 +591,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--request", type=Path, required=True)
     parser.add_argument("--request-sha256", required=True)
     parser.add_argument("--out-root", type=Path, required=True)
+    parser.add_argument("--count-cache", type=Path,
+                        help="reuse validated full-request count receipts after interruption")
     parser.add_argument(
         "--allow-network-counts",
         action="store_true",
@@ -595,6 +610,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         request_descriptor=descriptor,
         out_root=args.out_root,
         allow_network_counts=args.allow_network_counts,
+        count_cache=args.count_cache,
     )
     print(
         json.dumps(

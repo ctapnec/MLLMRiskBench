@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -194,3 +195,52 @@ def test_invalid_local_membership_stops_before_network_count(tmp_path, monkeypat
         subject.prepare_campaign(request=request, request_descriptor={}, out_root=out,
                                  allow_network_counts=True)
     assert not out.exists()
+
+
+@pytest.mark.parametrize("tokens, fits", [(27116, True), (1000000, False)])
+def test_counted_successor_preserves_large_inputs_but_not_above_route_money(
+    tmp_path, monkeypatch, tokens, fits
+):
+    from ura.targets.api import OpenAITarget
+
+    request, _execution_root = _request(tmp_path, monkeypatch)
+    request.update(schema=subject.COUNTED_INPUT_REQUEST_SCHEMA,
+                   input_budget_policy=subject.executor.COUNTED_INPUT_POLICY)
+    client = SimpleNamespace(responses=SimpleNamespace(input_tokens=SimpleNamespace(
+        count=lambda **body: SimpleNamespace(object="response.input_tokens", input_tokens=tokens)
+    )))
+    client.with_options = lambda **options: client
+    monkeypatch.setattr(OpenAITarget, "_get_client", lambda self: client)
+    out = tmp_path / "prepared"
+    if not fits:
+        with pytest.raises(ValueError, match="route's funded projection"):
+            subject.prepare_campaign(request=request, request_descriptor={}, out_root=out,
+                                     allow_network_counts=True)
+        assert not out.exists()
+        return
+    receipt = subject.prepare_campaign(request=request, request_descriptor={}, out_root=out,
+                                       allow_network_counts=True)
+    program = json.loads(Path(receipt["programs"][0]["path"]).read_text())
+    assert program["schema"] == subject.executor.COUNTED_INPUT_SCHEMA
+    assert {row["input_tokens"] for row in program["requests"].values()} == {tokens}
+    budget = subject.AttemptBudget(out / "budget", receipt["budget"]["sha256"])
+    assert len(subject.executor._validated_jobs(program, budget)) == 2
+    route = next(row for row in json.loads(Path(request["sources"]["budget_projection"]["path"]).read_text())["routes"]
+                 if row["target_spec"] == program["target"])
+    changed = dict(program, requests={key: dict(row, bound_microusd=route["maximum_cost_microusd"])
+                                    for key, row in program["requests"].items()})
+    with pytest.raises(ValueError, match="route's funded projection"):
+        subject.executor._validate_input_budget(changed, route)
+    program["schema"] = subject.executor.SCHEMA
+    program.pop("input_budget_policy")
+    with pytest.raises(ValueError, match="input-token ceiling"):
+        subject.executor._validated_jobs(program, budget)
+
+
+def test_counted_input_policy_must_be_explicit_before_counting(tmp_path, monkeypatch):
+    request, _execution_root = _request(tmp_path, monkeypatch)
+    request["schema"] = subject.COUNTED_INPUT_REQUEST_SCHEMA
+    monkeypatch.setattr(subject, "count_request", lambda *a, **k: pytest.fail("counter reached"))
+    with pytest.raises(ValueError, match="request fields differ"):
+        subject.prepare_campaign(request=request, request_descriptor={}, out_root=tmp_path / "out",
+                                 allow_network_counts=True)

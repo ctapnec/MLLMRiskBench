@@ -20,8 +20,14 @@ splitting or skipping that cluster. These counts precede full-request token
 admission and do not increase any target or judge allowance. Every selected
 input has a non-retired local-model membership. Retired RWKV history does not
 restore those models to a future target or judge-counterpart schedule.
-Exact prompt/media replay materialization is in progress; no generation or
-Haiku call has been made.
+Exact prompt/media replay materialization completed at 14:56:55 UTC: all 941
+entries, 199 unique inputs and 67 original source runs reproduce their bound
+corpus and media identities. No generation or Haiku call has been made.
+Offline counting finds 15 of DeepSeek's 143 requests above the 4,000-token
+planning assumption, with a largest conservative estimate of 27,116 tokens.
+Their combined maximum-output reservation is USD 5.034545, below the route's
+unchanged USD 7.544064 allowance. This requires the explicit counted-input
+successor below, not relabelling the old per-call projection as satisfied.
 
 The frozen 144-condition historical report alone is insufficient: the four-lane,
 7,606-input current-profile GraySwan RR supplement, its separate validated
@@ -347,8 +353,22 @@ artifacts for each target, shared Runner admission arguments and execution
 directory. It validates local membership before any provider counting request,
 then creates one shared monetary ledger and one program per target. Counting
 uses the exact delivered conversation and media. A request above the declared
-input allowance requires a revised prospective budget/selection; preparation
-does not shorten it or skip to a cheaper input.
+input allowance requires an explicit prospective input-budget policy;
+preparation does not shorten it or skip to a cheaper input. Request `/1` and
+execution-plan `/1` retain the 4,000-token per-call restriction. Request `/2`
+and execution-plan `/2` explicitly bind
+`counted_requests_within_route_reservation_v1`: individual input sizes may vary,
+but the sum of their counted-input plus maximum-output reservations must fit
+the original route's monetary allowance. Call caps, selected inputs, output
+allowances, protected Haiku funding and the 80 percent provider ceilings do
+not increase. The executor independently repeats the monetary check before
+any generation. The old budget projection remains an unchanged conditional
+planning reference, not a claim that every new request has at most 4,000 tokens.
+
+Use `--count-cache` with an existing canonical directory. Each completed count
+is saved immediately, keyed by the exact request, target, endpoint and counting
+method. Resume validates retained receipts without repeating their provider
+calls. Changed or damaged evidence is rejected, not silently recounted.
 
 Pilot membership is fixed from the selected input order: up to three text and
 two image inputs, leaving at least one measured input. Pilots run individually
