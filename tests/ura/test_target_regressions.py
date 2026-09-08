@@ -1340,12 +1340,12 @@ def test_frontier_targets_disable_hidden_retries_and_audit_failure(
 
 @pytest.mark.parametrize("provider", ["openai", "anthropic", "httpx"])
 def test_actual_sdk_network_errors_use_bounded_visible_retries(provider, monkeypatch):
-    import httpx
+    httpx = pytest.importorskip("httpx")
     request = httpx.Request("POST", "https://example.test/inference")
     if provider == "httpx":
         failure = httpx.ReadError("connection interrupted", request=request)
     else:
-        module = __import__(provider)
+        module = pytest.importorskip(provider)
         failure = module.APIConnectionError(request=request)
     calls = []
 
