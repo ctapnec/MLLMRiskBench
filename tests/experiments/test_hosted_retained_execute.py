@@ -225,7 +225,7 @@ def test_transport_failure_is_retained_retry_pending_not_a_model_answer(tmp_path
     assert response["raw"]["model_stability_category"] == "transport_failure"
     assert response["output_turns"] == [] and response["tokens"] is None
     assert json.loads((admission.budget.root / "paid-circuit.json").read_text())["category"] == "transport_retry_pending"
-    physical = 4 if isinstance(failure, _HTTP500) else 1
+    physical = 4
     assert len(calls) == physical
     assert admission.budget.snapshot()["pools"]["openai:target"]["unknown_usage_attempts"] == physical
     assert admission.budget.snapshot()["pools"]["openai:target"]["unstarted_first_commitments_microusd"] == 10000
@@ -239,20 +239,22 @@ def test_transport_failure_is_retained_retry_pending_not_a_model_answer(tmp_path
             validate_response_refusal_state(retained.model_copy(update={"raw": bad_raw}))
 
 
-def test_status_retry_reserves_each_physical_attempt_and_holds_unknown_charge(tmp_path, monkeypatch):
+@pytest.mark.parametrize("failure", [_HTTP500("mock"), ConnectionError("disconnected")])
+def test_status_retry_reserves_each_physical_attempt_and_holds_unknown_charge(tmp_path, monkeypatch, failure):
     monkeypatch.setattr("ura.targets.api.time.sleep", lambda seconds: None)
     points, attacker, target, calls, admission = _setup(tmp_path, adaptive=False,
-                                                       outputs=[_HTTP500("mock"), "usable"])
+                                                       outputs=[failure, "usable"])
     _runner(attacker, target, admission).run(points, on_response=lambda row: None)
     state = admission.budget.snapshot()["pools"]["openai:target"]
     assert len(calls) == 2 and state["unknown_usage_attempts"] == 1
     assert state["reserved_exposure_microusd"] == 10000 and state["settled_cost_microusd"] == 44
 
 
-def test_retry_cannot_spend_remaining_selected_first_calls(tmp_path, monkeypatch):
+@pytest.mark.parametrize("failure", [_HTTP500("mock"), ConnectionError("disconnected")])
+def test_retry_cannot_spend_remaining_selected_first_calls(tmp_path, monkeypatch, failure):
     monkeypatch.setattr("ura.targets.api.time.sleep", lambda seconds: None)
     points, attacker, target, calls, admission = _setup(tmp_path, tight=True,
-                                                       outputs=[_HTTP500("mock"), "must never run"])
+                                                       outputs=[failure, "must never run"])
     with pytest.raises(Exception, match="retry cannot consume"):
         _runner(attacker, target, admission).run(points, on_response=lambda row: None)
     state = admission.budget.snapshot()["pools"]["openai:target"]

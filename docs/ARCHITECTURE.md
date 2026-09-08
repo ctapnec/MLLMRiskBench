@@ -320,6 +320,13 @@ not assert that the provider generated an empty answer, that a retry worker
 is running, or that a retry is already authorized by the monetary ledger.
 Unknown charges remain reserved, and any continuation must preserve the
 original input and count every physical attempt within its remaining cap.
+The shared hosted transport loop retries typed transient connection/timeout
+failures as well as HTTP 408, 409, 425, 429 and 5xx. Its default remains three
+retries, or four physical attempts total; no provider SDK retries are hidden
+under that count. Statusless network attempts with unknown provider acceptance
+retain their complete monetary reservation before another attempt is admitted.
+Authentication, request-validation and arbitrary programming errors are not
+automatically retried. Exhausted transport stays pending for reviewed recovery.
 
 Every Hugging Face model is admitted through one sealed acquisition boundary.
 `collect_run_requirements` projects the five supported roles (vLLM target,

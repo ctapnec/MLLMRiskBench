@@ -151,7 +151,7 @@ class _Admission:
                 or number != ordinal + 1):
                 raise ValueError("physical request identity or retry ordinal differs from its funded slot")
             if ordinal:
-                # A subsequent SDK callback proves a status-bearing HTTP retry.
+                # A subsequent SDK callback proves an admitted HTTP/network retry.
                 # The unsuccessful attempt's unknown bill remains fully held.
                 self.budget.settle(call_id, ordinal, None)
             self.budget.reserve(call_id, number, provider=self.program["provider"])

@@ -485,16 +485,18 @@ missing-response artifact retains that normalized identity and compares it
 across the retry. This can satisfy route attestation without turning the absent
 answer into policy evidence. The current local campaign pins
 one answer retry for vLLM and Ollama. The budget-fitted hosted campaign pins
-answer and provider SDK retries to 0. The harness permits three retries only
-for status-bearing HTTP 408, 409, 425, 429, and 5xx failures, for at most four
-visible HTTP attempts per logical paid call. Build sets and locks
+answer and provider SDK retries to 0. The harness permits three retries for
+HTTP 408, 409, 425, 429, and 5xx failures and typed transient connection/timeout
+errors, including statusless SDK connection failures. At most four physical
+attempts are separately reserved and audited per logical paid call. Build sets and locks
 the answer-retry field to 0 whenever a hosted target is selected, and server
 validation rejects a nonzero submitted value. The first durably retained failed
-hosted-target output, or any hosted target transport/network failure, opens the
+hosted-target output, or a non-retryable or exhausted transport failure, opens the
 global `paid_provider` circuit before another paid call can start. Classify a
 provider-completed empty response separately from interrupted transport, resolve
-the cause, derive a fresh bound plan and explicitly reset the circuit. Never
-resume paid execution automatically.
+the cause and explicitly review the stopped input before continuation. Reuse
+the original input and remaining funded transport allowance; rebind the plan
+only if its execution settings change. Never clear the paid circuit automatically.
 Runner 2.26 separately retains an exact deterministic target-input rejection as
 `target_input_status=incompatible`. It makes no answer retry for the unchanged
 input, does not query the policy judge, records missing-response coverage, and
@@ -1675,8 +1677,8 @@ The campaign run after the all-local plan supersedes the broader 13 August
 roster for that future execution only. It may consume no more than 80 percent
 of each configured provider budget, including Haiku judging charged to
 Anthropic. Paid targets and Haiku judging use `--target-answer-retries 0` and
-disable provider SDK retries. The harness permits three retries only for the
-fixed status-bearing HTTP errors. The first retained failed hosted-target
+disable provider SDK retries. The harness permits three retries for the
+fixed transient HTTP statuses and typed connection/timeout failures. The first retained failed hosted-target
 output or non-retryable or exhausted transport failure opens the global
 `paid_provider` circuit before another paid call. The
 operator must classify and resolve the failure before a fresh bound plan and

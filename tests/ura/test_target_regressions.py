@@ -1297,7 +1297,9 @@ def test_sol_pro_rejects_missing_encrypted_stateless_reasoning() -> None:
 @pytest.mark.parametrize("target_type", [AnthropicFableTarget, OpenAIResponsesTarget])
 def test_frontier_targets_disable_hidden_retries_and_audit_failure(
     target_type,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(api_module.time, "sleep", lambda _seconds: None)
     target = target_type()
 
     def fail(**_kwargs):
@@ -1317,7 +1319,7 @@ def test_frontier_targets_disable_hidden_retries_and_audit_failure(
         else "openai-responses"
     )
     assert caught.value.call_audit == {
-        "transport_attempt_count": 1,
+        "transport_attempt_count": 4,
         "logical_call_count": 1,
         "provider": expected_provider,
         "operation": "generate",
@@ -1326,14 +1328,42 @@ def test_frontier_targets_disable_hidden_retries_and_audit_failure(
         "provider_request_id": None,
     }
     assert caught.value.transport_attempts == [{
-        "attempt": 1,
+        "attempt": number,
         "outcome": "error",
         "error_type": "TimeoutError",
         "status_code": None,
         "request_id": None,
-        "retryable": False,
-        "latency_ms": caught.value.transport_attempts[0]["latency_ms"],
-    }]
+        "retryable": True,
+        "latency_ms": caught.value.transport_attempts[number - 1]["latency_ms"],
+    } for number in range(1, 5)]
+
+
+@pytest.mark.parametrize("provider", ["openai", "anthropic", "httpx"])
+def test_actual_sdk_network_errors_use_bounded_visible_retries(provider, monkeypatch):
+    import httpx
+    request = httpx.Request("POST", "https://example.test/inference")
+    if provider == "httpx":
+        failure = httpx.ReadError("connection interrupted", request=request)
+    else:
+        module = __import__(provider)
+        failure = module.APIConnectionError(request=request)
+    calls = []
+
+    def call(**_kwargs):
+        calls.append(1)
+        if len(calls) < 3:
+            raise failure
+        return SimpleNamespace(request_id="after-network-recovery")
+
+    monkeypatch.setattr(api_module.time, "sleep", lambda _seconds: None)
+    result, audit = api_module._call_with_retry(call, {}, provider=provider, max_retries=3)
+    assert result.request_id == "after-network-recovery"
+    assert len(calls) == 3
+    assert [row["retryable"] for row in audit] == [True, True, None]
+    assert not api_module._retryable_transport_error(ValueError("APIConnectionError"))
+    bad_status = RuntimeError("not authorized")
+    bad_status.status_code = 401
+    assert not api_module._retryable_transport_error(bad_status)
 
 
 @pytest.mark.parametrize("status_code", [409, 500])

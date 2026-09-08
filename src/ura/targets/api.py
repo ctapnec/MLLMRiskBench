@@ -364,8 +364,21 @@ def _transport_request_id(value: Any) -> str | None:
 
 def _retryable_transport_error(exc: BaseException) -> bool:
     status = _transport_status_code(exc)
-    return status in _RETRYABLE_HTTP_STATUS_CODES or (
-        status is not None and 500 <= status <= 599
+    if status is not None:
+        return status in _RETRYABLE_HTTP_STATUS_CODES or 500 <= status <= 599
+    if isinstance(exc, (ConnectionError, TimeoutError)):
+        return True
+    # Keep provider SDKs optional. Recognize their actual typed network-error
+    # ancestry, not exception text or arbitrary SDK/programming errors.
+    network_types = {
+        "openai": {"APIConnectionError", "APITimeoutError"},
+        "anthropic": {"APIConnectionError", "APITimeoutError"},
+        "httpx": {"NetworkError", "TimeoutException", "RemoteProtocolError"},
+        "requests": {"ConnectionError", "Timeout"},
+    }
+    return any(
+        cls.__name__ in network_types.get(cls.__module__.split(".", 1)[0], set())
+        for cls in type(exc).__mro__
     )
 
 

@@ -100,8 +100,8 @@ preserving all 360 source files.
 The user's subsequent network-recovery instruction requires an explicit
 `retry pending` state for network and HTTP failures. This is distinct from
 an answer-quality retry and must not enter an intrinsic model-failure claim.
-Unknown charges remain fully reserved. Automatic status-bearing retries still
-obey the configured physical-attempt cap; exhausted or statusless attempts
+Unknown charges remain fully reserved. Automatic HTTP/network retries still
+obey the configured physical-attempt cap; exhausted transport attempts
 remain pending for reviewed continuation, not silently successful, excluded,
 or repeatedly charged. Pending describes unresolved work, not a running job.
 Existing retained records are immutable. New response metadata and new Stats
@@ -144,9 +144,11 @@ verdicts for missing and invalid outputs.
 - Incompatible modalities are N/A. They are never captioned or transformed.
 - Paid targets and Haiku judging use zero answer-quality retries. The harness
   permits three retries, for at most four HTTP attempts per logical call, only
-  when the provider exception carries status 408, 409, 425, 429, or 5xx.
-  Connection failures without an HTTP status and valid HTTP responses with
-  unusable content are not retried. Provider SDK retries are disabled.
+  for HTTP 408, 409, 425, 429, or 5xx and typed transient connection/timeout
+  failures, including statusless SDK connection errors. Each physical attempt
+  is separately reserved and audited; previous unknown charges remain held.
+  Valid HTTP responses with unusable content are not retried. Provider SDK
+  retries remain disabled. Other HTTP errors require configuration review.
 - Hosted output-token limits are the explicit budget-derived values in this
   plan. They never inherit the vLLM/Ollama readiness profile, local 4,096-token
   fallback, or local request deadline.
@@ -545,12 +547,12 @@ routes are typed failed or N/A and are never silently substituted.
 ## A3 - Measured hosted subset
 
 Execute only the A1 selectors with zero answer retries and the fixed
-three-retry status-bearing HTTP policy. Each completed row
+three-retry HTTP/transient-network policy. Each completed row
 checkpoints independently and retains its `rules,guardrail` trail. Empty,
 malformed, binary/control-like or symbol-only
 output is durably retained as a model-stability missing response, then the
 global `paid_provider` circuit stops the grid before another paid call. A
-transport or network exception opens the same circuit without inventing a
+non-retryable or exhausted network/HTTP exception opens the same circuit without inventing a
 completed response. The operator must classify provider-completed empty output
 separately from interrupted transport, resolve the route, derive a fresh bound
 plan, and explicitly reset the circuit. There is no automatic paid resumption.
