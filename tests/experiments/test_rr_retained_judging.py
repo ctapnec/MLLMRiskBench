@@ -119,6 +119,7 @@ def retained_source(tmp_path):
     _judgments, saved_manifest = original.run(
         points, on_response=responses.append, on_record=records.append,
         run_config={"expected_target_identity": None, "approximate_common_metrics": False,
+                    "project_revision": {"expected_commit": "b" * 40},
                     "model_spec": "vllm:retained-rr", "corpus": "unit", "defense": "none",
                     "attacker": "replay", "dry_run": False,
                     "group_keys": ["model", "source", "risk", "effective_modality", "expected_behavior",
