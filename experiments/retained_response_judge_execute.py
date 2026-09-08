@@ -364,7 +364,9 @@ def _shared_binding(budget, requests, items, condition, normalized_api, plan_sha
 
 
 def _open_shared_circuit(budget, row, exc):
-    with _exclusive_lock(budget.root):
+    from experiments.hosted_attempt_budget import _budget_lock
+
+    with _budget_lock(budget.root):
         path = budget.root / "paid-circuit.json"
         if not path.exists() and not path.is_symlink():
             _write_atomic(path, {"schema": "ura-hosted-paid-circuit/1", "status": "open",

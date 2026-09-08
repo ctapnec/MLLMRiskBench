@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import multiprocessing
 import os
+import threading
+from types import SimpleNamespace
 
 import pytest
 
@@ -29,6 +31,79 @@ def budget(tmp_path):
 
 def reopen(budget):
     return mod.AttemptBudget(budget.root, budget.expected_plan_sha256)
+
+
+def _hold_budget_lock(root, ready, release):
+    with mod._exclusive_lock(root):
+        ready.set()
+        if not release.wait(10):
+            raise TimeoutError("test did not release the shared budget lock")
+
+
+@pytest.mark.parametrize("operation", ["snapshot", "call", "liability", "count", "reserve", "settle",
+                                       "target_circuit", "judge_circuit"])
+def test_short_budget_contention_waits_instead_of_aborting_unrelated_work(budget, operation):
+    from experiments import hosted_retained_execute, retained_response_judge_execute
+
+    if operation == "settle":
+        budget.reserve("A", 1, provider="anthropic")
+    before = (budget.root / "ledger.json").read_bytes()
+    actions = {
+        "snapshot": budget.snapshot,
+        "call": lambda: budget.call("A"),
+        "liability": lambda: budget.liability(["A"]),
+        "count": lambda: budget.reserved_attempt_count("A"),
+        "reserve": lambda: budget.reserve("A", 1, provider="anthropic"),
+        "settle": lambda: budget.settle("A", 1, 7),
+        "target_circuit": lambda: hosted_retained_execute._Admission._circuit(
+            SimpleNamespace(budget=budget), "missing_target_output", "A"),
+        "judge_circuit": lambda: retained_response_judge_execute._open_shared_circuit(
+            budget, {"retained_row_sha256": "0" * 64}, ValueError("missing judge output")),
+    }
+    context = multiprocessing.get_context("spawn")
+    ready, release = context.Event(), context.Event()
+    holder = context.Process(target=_hold_budget_lock, args=(budget.root, ready, release))
+    timer = threading.Timer(0.1, release.set)
+    holder.start()
+    try:
+        assert ready.wait(10)
+        timer.start()
+        actions[operation]()
+    finally:
+        release.set()
+        timer.cancel()
+        holder.join(timeout=10)
+        assert holder.exitcode == 0
+    if operation in {"snapshot", "call", "liability", "count", "target_circuit", "judge_circuit"}:
+        assert (budget.root / "ledger.json").read_bytes() == before
+    if operation.endswith("circuit"):
+        with pytest.raises(mod.BudgetError, match="circuit is open"):
+            budget.reserve("A", 1, provider="anthropic")
+    elif operation == "reserve":
+        assert budget.reserved_attempt_count("A") == 1
+    elif operation == "settle":
+        assert budget.snapshot()["pools"]["anthropic:target"]["settled_cost_microusd"] == 7
+
+
+def test_budget_lock_wait_is_bounded_and_never_modifies_money_on_timeout(budget, monkeypatch):
+    monkeypatch.setattr(mod, "_LOCK_WAIT_SECONDS", 0.02)
+    before = (budget.root / "ledger.json").read_bytes()
+    with mod._exclusive_lock(budget.root):
+        with pytest.raises(mod.BudgetError, match="lock wait expired"):
+            budget.reserve("A", 1, provider="anthropic")
+    assert (budget.root / "ledger.json").read_bytes() == before
+
+
+def test_transaction_body_error_is_not_retried_as_lock_contention(budget, monkeypatch):
+    calls = []
+    def broken_read(*args, **kwargs):
+        calls.append(args)
+        raise RuntimeError("transaction body failed") from BlockingIOError("not lock acquisition")
+    monkeypatch.setattr(mod, "_read_regular", broken_read)
+    monkeypatch.setattr(mod.time, "sleep", lambda _: pytest.fail("transaction body was retried"))
+    with pytest.raises(RuntimeError, match="transaction body failed"):
+        budget.snapshot()
+    assert len(calls) == 1
 
 
 def test_initial_commitments_protect_first_calls_and_separate_judge_pool(budget):

@@ -15,9 +15,9 @@ from decimal import Decimal, ROUND_CEILING
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from experiments.hosted_attempt_budget import AttemptBudget
+from experiments.hosted_attempt_budget import AttemptBudget, _budget_lock
 from experiments.hosted_campaign_budget import _sha, load_bound_json
-from experiments.retained_response_judge_execute import _exclusive_lock, _write_new, _read_regular
+from experiments.retained_response_judge_execute import _write_new, _read_regular
 from ura.adapters.replay import ReplayAttacker, retained_dialog, retained_dialog_sha256
 from ura.runner import retained_execution_admission
 from ura.model_identity import canonical_provider_name
@@ -132,7 +132,7 @@ class _Admission:
         return self.requests[identity]
 
     def _circuit(self, category: str, call_id: str) -> None:
-        with _exclusive_lock(self.budget.root):
+        with _budget_lock(self.budget.root):
             path = self.budget.root / "paid-circuit.json"
             if not path.exists():
                 _write_new(path, {"schema": "ura-hosted-paid-circuit/1", "stage": "target",

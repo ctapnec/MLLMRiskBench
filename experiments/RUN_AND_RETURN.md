@@ -2278,6 +2278,14 @@ Cached preparation receipts distinguish actual new counting HTTP attempts from
 references to previously counted requests. A cache hit is not another HTTP call
 or another generation. The original uncached receipt contract is unchanged.
 
+The shared monetary ledger serializes short transactions with a bounded
+30-second lock wait. Brief contention from another model, judging worker or
+status read must not abort unrelated work. Only lock acquisition is retried;
+transaction-body failures and provider calls are never replayed by this wait.
+An expired wait still refuses spending. Whole judgment-output directories
+retain their separate single-executor lock, and all monetary caps, immutable
+slots, duplicate-attempt checks and unknown-charge retention remain unchanged.
+
 ```bash
 python -m experiments.hosted_retained_execute \
   --program /resolved/path/hosted-program.json \

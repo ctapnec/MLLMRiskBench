@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import time
 from collections.abc import Mapping, Sequence
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 from experiments.retained_response_judge_execute import (
@@ -20,10 +22,33 @@ LEDGER_SCHEMA = "ura-hosted-attempt-budget-ledger/1"
 MAX_HAIKU_MICROUSD = 33_000_000
 MAX_ATTEMPTS = 4
 _MAX_BYTES = 64 * 1024 * 1024
+_LOCK_WAIT_SECONDS = 30.0
+_LOCK_RETRY_SECONDS = 0.05
 
 
 class BudgetError(ValueError):
     """No paid attempt may follow this failed monetary admission."""
+
+
+@contextmanager
+def _budget_lock(root: Path):
+    """Serialize brief shared-ledger transactions, not whole model executions."""
+    deadline = time.monotonic() + _LOCK_WAIT_SECONDS
+    with ExitStack() as stack:
+        while True:
+            try:
+                stack.enter_context(_exclusive_lock(root))
+            except RuntimeError as exc:
+                if not isinstance(exc.__cause__, BlockingIOError):
+                    raise
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise BudgetError("shared budget transaction lock wait expired") from exc
+                time.sleep(min(_LOCK_RETRY_SECONDS, remaining))
+            else:
+                break
+        # Body failures must propagate once, never replay a money transaction.
+        yield
 
 
 def _integer(value: object, label: str, *, zero: bool = False) -> int:
@@ -87,7 +112,7 @@ def create_budget(root: Path, *, provider_budgets_microusd: Mapping[str, int],
     if not root.is_absolute() or root.resolve() != root or root.exists() or root.is_symlink():
         raise BudgetError("budget needs a fresh canonical absolute directory")
     root.mkdir(mode=0o700)
-    with _exclusive_lock(root):
+    with _budget_lock(root):
         path = root / "plan.json"
         _write_new(path, plan)
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
@@ -175,14 +200,14 @@ class AttemptBudget:
 
     def snapshot(self) -> dict:
         """Return exposure and commitments without changing any retained state."""
-        with _exclusive_lock(self.root):
+        with _budget_lock(self.root):
             plan, ledger, _calls = self._load()
             return self._totals(plan, ledger)
 
     def call(self, call_id: str) -> dict:
         """The callback checks the provider/request allowance against this slot."""
         call_id = _name(call_id, "call ID")
-        with _exclusive_lock(self.root):
+        with _budget_lock(self.root):
             _plan_value, _ledger, calls = self._load()
             if call_id not in calls:
                 raise BudgetError("call ID is outside the immutable funded plan")
@@ -195,7 +220,7 @@ class AttemptBudget:
         selected = [_name(value, "call ID") for value in call_ids]
         if not selected or len(set(selected)) != len(selected):
             raise BudgetError("liability call IDs must be nonempty and unique")
-        with _exclusive_lock(self.root):
+        with _budget_lock(self.root):
             plan, ledger, calls = self._load()
             if any(value not in calls for value in selected):
                 raise BudgetError("liability call ID is outside the funded plan")
@@ -205,7 +230,7 @@ class AttemptBudget:
     def reserved_attempt_count(self, call_id: str) -> int:
         """Read actual admitted ordinals, not a Runner's conservative exposure."""
         call_id = _name(call_id, "call ID")
-        with _exclusive_lock(self.root):
+        with _budget_lock(self.root):
             _plan_value, ledger, calls = self._load()
             if call_id not in calls:
                 raise BudgetError("call ID is outside the immutable funded plan")
@@ -215,7 +240,7 @@ class AttemptBudget:
         """Fsync money before one SDK attempt. Repeated callbacks always refuse."""
         call_id, provider = _name(call_id, "call ID"), _name(provider, "provider")
         number = _integer(attempt_number, "physical attempt number")
-        with _exclusive_lock(self.root):
+        with _budget_lock(self.root):
             if (self.root / "paid-circuit.json").exists() or (self.root / "paid-circuit.json").is_symlink():
                 raise BudgetError("shared paid-provider circuit is open")
             plan, ledger, calls = self._load()
@@ -244,7 +269,7 @@ class AttemptBudget:
         number = str(_integer(attempt_number, "physical attempt number"))
         if actual_cost_microusd is not None:
             _integer(actual_cost_microusd, "actual attempt cost", zero=True)
-        with _exclusive_lock(self.root):
+        with _budget_lock(self.root):
             plan, ledger, _calls = self._load()
             attempt = ledger["attempts"].get(call_id, {}).get(number)
             if attempt is None:
