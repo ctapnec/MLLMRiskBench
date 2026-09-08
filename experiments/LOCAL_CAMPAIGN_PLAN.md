@@ -1721,7 +1721,7 @@ reconciles the prospective 42,882 local target calls before optional defense
 work, including 8,680 source-authoritative R-Judge or GPTGeoChat rows and at
 most 34,202 common-judge-eligible rows. The separately planned follow-on
 outputs may raise the Haiku-eligible planning inventory to 34,261, but the
-hosted plan selects at most 1,110 matched local/hosted output pairs for Haiku.
+hosted plan selects at most 1,010 matched local/hosted output pairs for Haiku.
 Local-only Phase 7 therefore reports zero hosted and zero Haiku calls; a later
 hosted comparison attaches its sealed matched stratum without rewriting the
 local report. `retained_response_judge_pair` selects only identical input
