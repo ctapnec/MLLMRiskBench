@@ -22,7 +22,8 @@ input has a non-retired local-model membership. Retired RWKV history does not
 restore those models to a future target or judge-counterpart schedule.
 Exact prompt/media replay materialization completed at 14:56:55 UTC: all 941
 entries, 199 unique inputs and 67 original source runs reproduce their bound
-corpus and media identities. No generation or Haiku call has been made.
+corpus and media identities. No generation or Haiku judging call had been made
+at that materialization cut-off.
 Offline counting finds 15 of DeepSeek's 143 requests above the 4,000-token
 planning assumption, with a largest conservative estimate of 27,116 tokens.
 Their combined maximum-output reservation is USD 5.034545, below the route's
@@ -50,6 +51,12 @@ The separate judge configuration fixes 512 output tokens. Complete grading
 requests still require their own counts after the target answers exist.
 At 17:36 UTC, the monetary ledger contained zero paid attempts. Original
 funded request bodies, input selections and count receipts remain unchanged.
+The subsequent first Haiku text pilot retained one usable response. An image
+pilot then failed before a provider call because its selected source group was
+incomplete. The corrected Haiku preparation finished at 18:50:53 UTC, reusing
+that response and twenty unchanged job preparations. Only three affected job
+preparations were replaced, with zero model downloads. The other routes reuse
+successful preparation records; failed setup records remain diagnostic only.
 
 The frozen 144-condition historical report alone is insufficient: the four-lane,
 7,606-input current-profile GraySwan RR supplement, its separate validated
@@ -445,12 +452,19 @@ to two selected images where supported, all charged inside the table's caps.
 The selected pilot records are seeds for complete source-record groups, not
 permission to split a shared-image cluster. If several source questions share
 one image, retain all selected inputs from that multi-record cluster in one
-pilot job and remove those inputs from the measured partition. Its actual call
+pilot group and remove those inputs from the measured partition. Its actual call
 count can therefore exceed the number of pilot seeds, without increasing the
 route's total allocation. Distinct conversations for a single source record
 remain independently partitionable. Report diagnostic and measured support
 separately, and do not describe several questions about one image as several
 independent images.
+Transport probes still allow one query and one turn per selected source
+record. For the selected two-record HoliSafe group, use one existing input per
+record for that probe and the remaining four variants in a separate diagnostic
+canary. Each job retains both original records, and their disjoint union is the
+original six-input pilot group. Use new output directories for changed jobs;
+even failed argument validation may have retained an error in an earlier one.
+Never overwrite those records or repeat completed paid inputs.
 Include a short task, a reasoning-demanding task and a longer-input task; no
 extra prompt rewriting, target answer retry or security-outcome tuning is
 allowed. Record visible-answer presence, finish reason, total output tokens,
