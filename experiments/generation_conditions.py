@@ -11,9 +11,11 @@ from typing import Any, Mapping
 from experiments.figure_results import _base_target_component
 
 
-SCHEMA = "ura-generation-conditions/1"
+LEGACY_SCHEMA = "ura-generation-conditions/1"
+SCHEMA = "ura-generation-conditions/2"
 _COUNTS = ("rows", "normal_stop", "truncated", "other_stop", "unknown_stop",
            "missing_output", "input_context_error")
+_TRANSPORT_COUNTS = ("transport_failure", "transport_retry_pending")
 _IDENTITY = ("run_id", "model_spec", "corpus_arm", "attacker", "modality",
              "context_tokens", "context_source", "context_policy",
              "output_allowance", "output_source")
@@ -104,7 +106,7 @@ def build_generation_conditions(cells: list[dict[str, Any]]) -> dict[str, Any]:
             }
             key = json.dumps(identity, sort_keys=True)
             group = groups.setdefault(key, {
-                **identity, **dict.fromkeys(_COUNTS, 0),
+                **identity, **dict.fromkeys(_COUNTS + _TRANSPORT_COUNTS, 0),
                 "input_tokens": {"reported_rows": 0, "sum": 0, "minimum": None, "maximum": None},
                 "output_tokens": {"reported_rows": 0, "sum": 0, "minimum": None, "maximum": None},
             })
@@ -114,6 +116,11 @@ def build_generation_conditions(cells: list[dict[str, Any]]) -> dict[str, Any]:
                        or raw.get("target_input_status") == "incompatible"
                        or judgments.get(attempt_id, {}).get("policy_evaluation_status") == "model_nonresponse")
             group["missing_output"] += int(missing)
+            transport = missing and raw.get("model_stability_category") == "transport_failure"
+            group["transport_failure"] += int(transport)
+            group["transport_retry_pending"] += int(
+                transport and raw.get("transport_retry_status") == "pending"
+            )
             group["input_context_error"] += int(
                 raw.get("target_input_status") == "incompatible"
                 and raw.get("target_input_category") == "context_limit_exceeded"
@@ -138,23 +145,27 @@ def build_generation_conditions(cells: list[dict[str, Any]]) -> dict[str, Any]:
 def validate_generation_conditions(value: object, run_ids: set[str]) -> None:
     document = _map(value)
     if (set(document) != {"schema", "cross_condition_pooling_permitted", "conditions"}
-        or document.get("schema") != SCHEMA
+        or document.get("schema") not in {LEGACY_SCHEMA, SCHEMA}
         or document.get("cross_condition_pooling_permitted") is not False
         or not isinstance(document.get("conditions"), list)):
         raise ValueError("invalid generation-condition report")
     seen = set()
+    counts = _COUNTS + (_TRANSPORT_COUNTS if document["schema"] == SCHEMA else ())
     for row in document["conditions"]:
-        if not isinstance(row, dict) or set(row) != set(_IDENTITY + _COUNTS) | {"input_tokens", "output_tokens"}:
+        if not isinstance(row, dict) or set(row) != set(_IDENTITY + counts) | {"input_tokens", "output_tokens"}:
             raise ValueError("invalid generation-condition fields")
         key = json.dumps({k: row[k] for k in _IDENTITY}, sort_keys=True)
         if key in seen or row["run_id"] not in run_ids:
             raise ValueError("duplicate or unbound generation condition")
         seen.add(key)
-        if any(type(row[k]) is not int or row[k] < 0 for k in _COUNTS):
+        if any(type(row[k]) is not int or row[k] < 0 for k in counts):
             raise ValueError("invalid generation-condition count")
         if (row["rows"] < 1 or sum(row[k] for k in _COUNTS[1:5]) != row["rows"]
             or row["missing_output"] > row["rows"] or row["input_context_error"] > row["missing_output"]):
             raise ValueError("generation-condition counts do not reconcile")
+        if (document["schema"] == SCHEMA
+            and not 0 <= row["transport_retry_pending"] <= row["transport_failure"] <= row["missing_output"]):
+            raise ValueError("transport retry counts do not reconcile")
         for key, sources in (("context", {"response_runtime", "configured_not_observed", "not_recorded"}),
                              ("output", {"response_request", "manifest_config", "not_recorded"})):
             count = row["context_tokens" if key == "context" else "output_allowance"]

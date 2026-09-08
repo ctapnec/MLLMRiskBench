@@ -64,6 +64,53 @@ with generation-condition charts linked to the existing target campaign in
 Stats. These are original local-cascade/source-specific results, not Haiku
 re-adjudication or human-calibrated estimates.
 
+Haiku completed all 199 assigned target inputs at 20:16:33 UTC. Its continuation
+reused 163 retained responses and made exactly 36 new calls, preserving every
+earlier response file. A separate Fable pilot failure exposed an adapter check
+that rejected the provider's documented omitted-thinking representation. The
+shared Fable/Opus/Sonnet fix passed 114 focused rig tests and three reversed-fix
+checks. Affected routes require the corrected adapter; unaffected routes retain
+their existing execution settings. The failed Fable call is not silently
+repeated, relabelled as a genuine empty model answer, or removed from coverage.
+
+Sol's first answer is retained, usable and non-truncated. Its pilot stopped in
+billing bookkeeping, not generation: zero cache-write tokens must not require
+an absent cache-write rate. The corrected settlement passed 96 focused rig
+tests and five reversed-fix cases. A related Jobs counter fix passed three
+focused cases and two reversed-fix cases, so an empty final writer cannot hide
+a usable checkpoint. Sol's existing funded reservation remains fully held
+until checkpoint-based billing recovery; no second answer attempt is allowed.
+
+Preliminary actual-output matching validates local counterparts for all 18
+eligible Astra measured outputs. Its two source-authoritative classification
+rows remain separate. This is a zero-call matching check, not the final funded
+Haiku selection, and it does not alter the input sample or any budget.
+
+At 20:36 UTC Luna retained a statusless `APIConnectionError` after one physical
+attempt. No response body or token usage was observed. This is an infrastructure
+failure, not evidence of token exhaustion or intrinsic model instability.
+Its input remains unresolved for transport retry; the original attempt and
+unknown cost must remain retained. Terra stopped on the shared paid circuit
+after 14 usable outputs, with no failed Terra answer. The operational snapshot
+contains 253 usable responses from 255 started inputs. The 686 unstarted inputs
+remain assigned, not discarded. Haiku's measured-only analysis subsequently
+completed with 190 measured inputs, excluding nine diagnostic inputs and
+preserving all 360 source files.
+
+The user's subsequent network-recovery instruction requires an explicit
+`retry pending` state for network and HTTP failures. This is distinct from
+an answer-quality retry and must not enter an intrinsic model-failure claim.
+Unknown charges remain fully reserved. Automatic status-bearing retries still
+obey the configured physical-attempt cap; exhausted or statusless attempts
+remain pending for reviewed continuation, not silently successful, excluded,
+or repeatedly charged. Pending describes unresolved work, not a running job.
+Existing retained records are immutable. New response metadata and new Stats
+reports expose this distinction; old reports show unavailable retry metadata
+as not recorded. The initial state/publication correction does not itself
+authorize or execute a checkpoint retry. Exact resumed execution must preserve
+input identity, prior attempts, the remaining retry allowance and all monetary
+ceilings before a new physical request is admitted.
+
 The frozen 144-condition historical report alone is insufficient: the four-lane,
 7,606-input current-profile GraySwan RR supplement, its separate validated
 analysis, and the final input/condition reconciliation must also be terminal.

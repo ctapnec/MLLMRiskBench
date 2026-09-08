@@ -93,6 +93,36 @@ def test_missing_answer_is_not_an_input_context_error():
     assert row["missing_output"] == 1
     assert row["input_context_error"] == 0
     assert row["truncated"] == 0
+    assert row["transport_failure"] == row["transport_retry_pending"] == 0
+
+
+def test_transport_failure_and_pending_retry_are_separate_from_model_output():
+    cell = _cell()
+    cell["responses"] = {"missing": {"raw": {
+        "model_stability_status": "failed_output", "model_stability_category": "transport_failure",
+        "transport_retry_status": "pending",
+    }, "tokens": None}}
+    report = build_generation_conditions([cell])
+    row = report["conditions"][0]
+    assert row["missing_output"] == row["transport_failure"] == row["transport_retry_pending"] == 1
+    assert row["truncated"] == row["input_context_error"] == 0
+    rendered = DashboardMixin()._render_generation_conditions({"generation_conditions": report})
+    assert "Transport retry pending" in rendered
+    assert "not evidence of model quality" in rendered
+    row["transport_retry_pending"] = 2
+    with pytest.raises(ValueError, match="transport retry counts"):
+        validate_generation_conditions(report, {"run-one"})
+
+
+def test_original_generation_report_stays_readable_without_invented_retry_counts():
+    report = build_generation_conditions([_cell()])
+    report["schema"] = "ura-generation-conditions/1"
+    for row in report["conditions"]:
+        row.pop("transport_failure")
+        row.pop("transport_retry_pending")
+    validate_generation_conditions(report, {"run-one"})
+    rendered = DashboardMixin()._render_generation_conditions({"generation_conditions": report})
+    assert "<td>not recorded</td><td>not recorded</td>" in rendered
 
 
 @pytest.mark.parametrize("field,value", [

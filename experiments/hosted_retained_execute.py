@@ -219,7 +219,10 @@ class _Admission:
             self._circuit("reported_usage_requires_above_reservation_billing_review", call_id)
             raise RuntimeError("durable target usage may exceed its funded exposure; billing review is required")
         if missing or (self.job["purpose"] != "measured_run" and response.raw.get("output_truncated") is True):
-            self._circuit("missing_target_output" if missing else "pilot_output_truncated", call_id)
+            category = ("transport_retry_pending"
+                        if response.raw.get("model_stability_category") == "transport_failure"
+                        else "missing_target_output" if missing else "pilot_output_truncated")
+            self._circuit(category, call_id)
             raise RuntimeError("paid target circuit opened after retaining its durable response")
 
 

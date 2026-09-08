@@ -1393,6 +1393,8 @@ class Runner:
                     "model_stability_reason": str(answer_error)[:500],
                     "model_stability_retry_count": len(failures) - 1,
                     "model_stability_failures": failures,
+                    **({"transport_retry_status": "pending"}
+                       if answer_error.category == "transport_failure" else {}),
                     "target_identity_observed": bool(retained_identity),
                     **retained_identity,
                     "transport_attempt_count": observed,
@@ -6129,6 +6131,13 @@ def validate_response_refusal_state(response: Response) -> None:
                 value = response.raw.get(field)
                 if not isinstance(value, str) or not value.strip():
                     raise ValueError(f"failed target output lacks {field}")
+    retry_status = response.raw.get("transport_retry_status")
+    if retry_status is not None and (
+        retry_status != "pending"
+        or stability != "failed_output"
+        or response.raw.get("model_stability_category") != "transport_failure"
+    ):
+        raise ValueError("transport retry state requires a retained transport failure")
     input_status = response.raw.get("target_input_status")
     input_fields = (
         "target_input_category",

@@ -17,8 +17,8 @@ from ura.adapters.base import AttackBudget
 from ura.adapters.replay import ReplayAttacker, retained_dialog
 from ura.judges.base import JudgeCascade
 from ura.judges.rules import RuleJudge
-from ura.runner import Runner, retained_execution_admission, current_retained_execution_admission
-from ura.data_models import DialogTurn
+from ura.runner import Runner, retained_execution_admission, current_retained_execution_admission, validate_response_refusal_state
+from ura.data_models import DialogTurn, Response
 from ura.targets.api import OpenAITarget
 
 
@@ -207,6 +207,36 @@ def test_request_change_fails_before_reservation_and_sdk(tmp_path):
 
 class _HTTP500(Exception):
     status_code = 500
+
+
+@pytest.mark.parametrize("failure", [ConnectionError("disconnected"), _HTTP500("unavailable")])
+def test_transport_failure_is_retained_retry_pending_not_a_model_answer(tmp_path, monkeypatch, failure):
+    monkeypatch.setattr("ura.targets.api.time.sleep", lambda seconds: None)
+    points, attacker, target, calls, admission = _setup(tmp_path, outputs=[failure] * 4)
+    checkpoint = tmp_path / "responses.jsonl"
+    with pytest.raises(RuntimeError, match="durable response"):
+        _runner(attacker, target, admission).run(
+            points, on_response=lambda row: Runner.append_checkpoint(checkpoint, row),
+        )
+    records = Runner.load_response_checkpoint(checkpoint)
+    assert len(records) == 1
+    response = next(iter(records.values()))["response"]
+    assert response["raw"]["transport_retry_status"] == "pending"
+    assert response["raw"]["model_stability_category"] == "transport_failure"
+    assert response["output_turns"] == [] and response["tokens"] is None
+    assert json.loads((admission.budget.root / "paid-circuit.json").read_text())["category"] == "transport_retry_pending"
+    physical = 4 if isinstance(failure, _HTTP500) else 1
+    assert len(calls) == physical
+    assert admission.budget.snapshot()["pools"]["openai:target"]["unknown_usage_attempts"] == physical
+    assert admission.budget.snapshot()["pools"]["openai:target"]["unstarted_first_commitments_microusd"] == 10000
+    retained = Response.model_validate(response)
+    validate_response_refusal_state(retained)
+    for bad_raw in (
+        {**retained.raw, "transport_retry_status": "complete"},
+        {**retained.raw, "model_stability_category": "empty_final_output"},
+    ):
+        with pytest.raises(ValueError, match="transport retry state"):
+            validate_response_refusal_state(retained.model_copy(update={"raw": bad_raw}))
 
 
 def test_status_retry_reserves_each_physical_attempt_and_holds_unknown_charge(tmp_path, monkeypatch):

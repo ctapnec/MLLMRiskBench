@@ -2462,6 +2462,8 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
         sections = ["<section data-section='generation-conditions'><h3>Token windows and completion</h3>"
                     "<p class='note'>Context capacity, output allowance and reported usage are separate. "
                     "Truncated usable text remains analysable; missing output is a separate count. "
+                    "Transport failures are infrastructure observations, not evidence of model quality. "
+                    "Retry pending means an unresolved transport attempt, not an active worker or an extra answer retry. "
                     "Stop reasons are provider-reported, never inferred from token totals. "
                     "Each row below retains its own run, model, arm and token condition.</p>"]
 
@@ -2482,7 +2484,8 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
                 "<details class='card'><summary>" + html.escape(label) + f" - {row['rows']} responses</summary>"
                 + "<div class='scroll'><table><thead><tr><th>Run</th><th>Context tokens</th>"
                 "<th>Output allowance</th><th>Reported input tokens</th><th>Reported output tokens</th>"
-                "<th>Missing output</th><th>Input context errors</th></tr></thead><tbody><tr>"
+                "<th>Missing output</th><th>Input context errors</th>"
+                "<th>Transport failures</th><th>Transport retry pending</th></tr></thead><tbody><tr>"
                 + f"<td>{html.escape(row['run_id'])}</td>"
                 + f"<td>{shown(row['context_tokens'])} ({html.escape(row['context_source'])}; "
                 + f"policy {shown(row['context_policy'])})</td>"
@@ -2490,7 +2493,9 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
                 + f"<td>{usage(row['input_tokens'], row['rows'])}</td>"
                 + f"<td>{usage(row['output_tokens'], row['rows'])}</td>"
                 + f"<td>{row['missing_output']}/{row['rows']}</td>"
-                + f"<td>{row['input_context_error']}/{row['rows']}</td></tr></tbody></table></div>"
+                + f"<td>{row['input_context_error']}/{row['rows']}</td>"
+                + f"<td>{shown(row.get('transport_failure'))}</td>"
+                + f"<td>{shown(row.get('transport_retry_pending'))}</td></tr></tbody></table></div>"
                 + "<h4 data-chart='generation-completion'>Provider completion reasons</h4>"
                 + self._count_bar_chart([
                     ("Normal stop", row["normal_stop"]), ("Truncated", row["truncated"]),
