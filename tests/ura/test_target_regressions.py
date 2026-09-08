@@ -697,7 +697,8 @@ def _fable_result(
         output_tokens_details = None
     else:
         content = [SimpleNamespace(
-            type="thinking", thinking="fixture reasoning", signature="sig"
+            # Newer Claude models default to omitted thinking, not a summary.
+            type="thinking", thinking="", signature="sig"
         )]
         if text is not None:
             content.append(SimpleNamespace(type="text", text=text))
@@ -760,6 +761,41 @@ def test_fable_captures_verbatim_thinking_blocks_on_the_assistant_turn() -> None
     assert response.raw["continuation_state_sha256"] == hashlib.sha256(
         continuation
     ).hexdigest()
+
+
+def test_fable_51_preserves_omitted_thinking_and_visible_answer() -> None:
+    target = AnthropicFableTarget("claude-fable-5-1")
+    result = _fable_result()
+    result.model = "claude-fable-5-1"
+    _install_fable_fixture(target, result)
+    dialog = [DialogTurn(role="user", content="request")]
+
+    response = target.generate(dialog, seed=0)
+
+    assert response.output_turns[0].content == "A complete Fable answer."
+    assert response.tokens["reasoning"] == 5
+    assert response.raw["output_truncated"] is False
+    assert response.raw["transport_attempt_count"] == 1
+    block = {"type": "thinking", "thinking": "", "signature": "sig"}
+    assert response.output_turns[0].provider_thinking == [block]
+    request = target.build_request([
+        *dialog, *response.output_turns,
+        DialogTurn(role="user", content="follow up"),
+    ])
+    assert request["messages"][1]["content"][0] == block
+
+
+@pytest.mark.parametrize("thinking,signature", [
+    (None, "sig"), (1, "sig"), ([], "sig"),
+    ("", None), ("", ""), ("", "   "), ("", 1),
+])
+def test_anthropic_omitted_thinking_still_requires_typed_signed_state(
+    thinking, signature,
+) -> None:
+    with pytest.raises(ValueError, match="invalid Anthropic thinking"):
+        api_module._validated_anthropic_thinking_blocks([{
+            "type": "thinking", "thinking": thinking, "signature": signature,
+        }])
 
 
 def test_fable_rejects_thinking_reordered_after_visible_text() -> None:

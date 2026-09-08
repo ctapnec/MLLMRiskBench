@@ -1676,6 +1676,16 @@ global input/call caps, not Runner's per-arm `--limit`: Fable 5.1 30, Opus 80,
 Sonnet 150, Haiku 200, Astra 30, Sol 30, Terra 30, Luna 150, GPT-5.5 30,
 Kimi K3 80 and DeepSeek V4-Pro 200. Haiku's output ceiling is 2,048;
 Sonnet/Luna use 4,096, Opus/Terra 6,144, and the other six routes 8,192.
+
+For adaptive Anthropic routes, an empty `thinking` string with a non-empty
+signature is valid omitted reasoning, not an empty final answer. Preserve it
+unchanged for continuation and score only the separate visible text. Fixtures
+must cover this default format as well as summarized thinking. An adapter
+validation failure is an execution defect until investigated, not evidence of
+intrinsic model instability. Never spend another answer attempt to compensate
+silently for a discarded provider reply.
+[Anthropic thinking format](https://platform.claude.com/docs/en/build-with-claude/thinking).
+
 Fable 5.1 (`anthropic-fable:claude-fable-5-1;effort=high;max_tokens=8192`)
 and Sol select the explicit 8,192-token variants,
 not their retained 25,000-token identities. Every selected entry permits one target call; retained

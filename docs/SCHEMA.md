@@ -508,6 +508,10 @@ Provider-native continuation data is explicit rather than hidden:
 
 - Anthropic thinking/redacted-thinking blocks are retained on assistant turns
   so the next Fable request can return them unchanged.
+  A signed thinking block may contain an empty `thinking` string when the
+  provider omits its reasoning summary. This is valid continuation data, not
+  a missing final answer. The signature remains required; only visible answer
+  text is evaluated. The same rule applies to adaptive Opus and Sonnet routes.
 - OpenAI Responses with `store=false` retains only bounded `reasoning` and
   assistant `message` items in `ProviderContinuationState`. Encrypted reasoning
   is required for the stateless `all_turns` continuation used by the study.

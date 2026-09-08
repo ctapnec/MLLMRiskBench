@@ -777,10 +777,13 @@ def _validated_anthropic_thinking_blocks(
     for block in blocks:
         block_type = block.get("type")
         if block_type == "thinking":
-            if set(block) != {"type", "thinking", "signature"} or any(
-                not isinstance(block.get(field), str)
-                or not str(block[field]).strip()
-                for field in ("thinking", "signature")
+            # Omitted thinking is a valid empty string. The opaque signature
+            # still carries the provider's continuation state and is required.
+            if (
+                set(block) != {"type", "thinking", "signature"}
+                or not isinstance(block.get("thinking"), str)
+                or not isinstance(block.get("signature"), str)
+                or not block["signature"].strip()
             ):
                 raise ValueError("invalid Anthropic thinking continuation block")
         elif block_type == "redacted_thinking":

@@ -425,8 +425,12 @@ def test_llm_judge_uses_the_same_explicit_api_condition() -> None:
     assert judge_target.base_url == "https://example.invalid/compatible/v1"
 
 
-def test_claude_5_config_preserves_adaptive_thinking_across_turns() -> None:
-    spec = "anthropic:claude-opus-5"
+@pytest.mark.parametrize("model", ["claude-opus-5", "claude-sonnet-5"])
+@pytest.mark.parametrize("thinking", ["", "summary"])
+def test_claude_5_config_preserves_adaptive_thinking_across_turns(
+    model: str, thinking: str,
+) -> None:
+    spec = f"anthropic:{model}"
     target = build_api_target(spec, config={
         "modalities": ["text", "image"],
         "max_tokens": 4096,
@@ -443,12 +447,12 @@ def test_claude_5_config_preserves_adaptive_thinking_across_turns() -> None:
                 id="msg-opus",
                 type="message",
                 role="assistant",
-                model="claude-opus-5",
+                model=model,
                 stop_reason="end_turn",
                 stop_sequence=None,
                 content=[
                     SimpleNamespace(
-                        type="thinking", thinking="private", signature="signed"
+                        type="thinking", thinking=thinking, signature="signed"
                     ),
                     SimpleNamespace(type="text", text="visible"),
                 ],
@@ -463,12 +467,13 @@ def test_claude_5_config_preserves_adaptive_thinking_across_turns() -> None:
     assert request["output_config"] == {"effort": "medium"}
     assert "temperature" not in request
     assert response.output_turns[0].provider_thinking == [{
-        "type": "thinking", "thinking": "private", "signature": "signed",
+        "type": "thinking", "thinking": thinking, "signature": "signed",
     }]
     _system, continuation = target._to_messages([
         response.output_turns[0], DialogTurn(role="user", content="follow up")
     ])
     assert continuation[0]["content"][0]["signature"] == "signed"
+    assert continuation[0]["content"][0]["thinking"] == thinking
 
 
 def test_claude_5_config_requires_explicit_adaptive_condition() -> None:
