@@ -114,6 +114,13 @@ def test_rr_chain_analysis_counts_prefix_without_promoting_interrupted_grids(tmp
 def test_rr_level1_reports_never_pool_distinct_execution_revisions(tmp_path, monkeypatch, continuation):
     units = {name: {"revision": revision, "root": name, "eligibility_plan": {"path": name + ".eligibility"}}
              for name, revision in (("original-image", "a" * 64), ("original-rjudge", "a" * 64), ("suffix-text", "b" * 64))}
+    for name, item in units.items():
+        state = tmp_path / f"{name}.state.json"
+        state.write_text(json.dumps({"runner_argv": [
+            "--live-attestation", str(tmp_path / f"{item['revision']}.attestation.json"),
+            "--live-attestation-sha256", item["revision"],
+        ]}))
+        item["evidence"] = {"state": mod._descriptor(state, label="fixture")}
     calls = []
 
     def export(argv):
@@ -134,3 +141,36 @@ def test_rr_level1_reports_never_pool_distinct_execution_revisions(tmp_path, mon
     assert roots == [["original-image", "original-rjudge"], ["suffix-text"]]
     for argv in calls:
         assert argv[argv.index("--historical-code-repository") + 1] == str(tmp_path)
+    for argv, revision in zip(calls, sorted(reports), strict=True):
+        assert argv.count("--live-attestation") == argv.count("--live-attestation-sha256") == 1
+        assert argv[argv.index("--live-attestation"):][-4:] == [
+            "--live-attestation", str(tmp_path / f"{revision}.attestation.json"),
+            "--live-attestation-sha256", revision,
+        ]
+
+
+@pytest.mark.parametrize("change", ["missing_path", "missing_digest", "changed_state", "export_rejected"])
+def test_rr_level1_cannot_drop_or_replace_bound_attestation(tmp_path, monkeypatch, change):
+    measured = ["--live-attestation", str(tmp_path / "live.json"),
+                "--live-attestation-sha256", "a" * 64]
+    if change == "missing_path":
+        measured = measured[2:]
+    elif change == "missing_digest":
+        measured = measured[:2]
+    state = tmp_path / "state.json"
+    state.write_text(json.dumps({"runner_argv": measured}))
+    descriptor = mod._descriptor(state, label="fixture")
+    if change == "changed_state":
+        state.write_text("{}")
+    calls = []
+    def reject(argv):
+        calls.append(argv)
+        return 1
+    monkeypatch.setattr(mod.level1_evidence, "main", reject)
+    units = {"unit": {"revision": "a" * 64, "root": str(tmp_path),
+                       "eligibility_plan": {"path": "plan.json"},
+                       "evidence": {"state": descriptor}}}
+    with pytest.raises(ValueError):
+        mod.export_level1_strata(units, output=tmp_path, project=tmp_path, continuation=True)
+    assert len(calls) == (1 if change == "export_rejected" else 0)
+    assert not (tmp_path / ("level1-" + "a" * 64 + ".json")).exists()

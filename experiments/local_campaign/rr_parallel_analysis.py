@@ -672,7 +672,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     output = args.out
     if not output.is_absolute() or output.exists() or not output.is_relative_to(work / "runs"):
         raise ValueError("RR parallel analysis needs a fresh output directory")
-    control = work / "runs/engineering" / (args.completion.parent.name + "-analysis")
+    # Each fresh export owns a fresh job; a failed earlier export stays intact.
+    control = work / "runs/engineering" / (output.name + "-control")
     control.mkdir(mode=0o700)
     output.mkdir(parents=True, mode=0o700)
     # The measured parent has two registered workers, but no fake parent job.

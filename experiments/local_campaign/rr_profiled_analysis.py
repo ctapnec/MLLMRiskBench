@@ -134,8 +134,18 @@ def export_level1_strata(units, *, output: Path, project: Path, continuation: bo
         path = output / f"{stem}.json"
         argv = ["--out-json", str(path), "--out-csv", str(output / f"{stem}.csv"),
                 "--historical-code-repository", str(project)]
+        attestations = {}
         for item in items:
             argv.extend(("--results", item["root"], "--eligibility", item["eligibility_plan"]["path"]))
+            state = _load_json(_validate_descriptor(item["evidence"]["state"], label="RR measured state"),
+                               label="RR measured state")
+            measured = state["runner_argv"]
+            # RR binds one receipt per measured request. Shared receipts are
+            # supplied once per revision, never borrowed from another cohort.
+            attestations.setdefault(_option(measured, "--live-attestation-sha256"),
+                                    _option(measured, "--live-attestation"))
+        for digest, attestation in sorted(attestations.items()):
+            argv.extend(("--live-attestation", attestation, "--live-attestation-sha256", digest))
         if level1_evidence.main(argv):
             raise ValueError("RR revision-specific Level-1 export failed; nothing published to Stats")
         reports[revision] = _descriptor(path, label="RR revision-specific Level 1")

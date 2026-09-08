@@ -399,6 +399,10 @@ def test_publication_keeps_prefix_metrics_separate_and_has_no_paid_authority(tmp
     output = tmp_path / "runs/analysis"
     source = tmp_path / "runs/engineering/parallel/completion.json"
     source_descriptor = write(source, {})
+    failed_control = source.parent.with_name("parallel-analysis")
+    failed_log = failed_control / "task-log.jsonl"
+    write(failed_log, {"event": "campaign_end", "status": "failed"})
+    retained_failure = failed_log.read_bytes()
     cells, prefix = [cell(tmp_path, ["new"], run_id="new")], [cell(tmp_path, ["old"], run_id="old")]
     handoff = {"source_completion": source_descriptor, "execution_commit": "a" * 40, "status": "complete",
                "prefix": {"post_factum_judging_required_ids": {"lane": []}}}
@@ -422,14 +426,15 @@ def test_publication_keeps_prefix_metrics_separate_and_has_no_paid_authority(tmp
     inputs = json.loads((output / "retained-inputs.json").read_text())
     assert inputs["input_count"] == 2 and inputs["paid_calls_authorized"] is False
     assert len(published) == 1 and len(published[0]["reports"]) == 2
-    assert published[0]["job_id"] == "parallel-analysis"
+    assert published[0]["job_id"] == "analysis-control"
+    assert failed_log.read_bytes() == retained_failure
     assert "not promoted" in published[0]["explicit_limitations"]["prefix_scope"]
     if evaluator_failures:
         assert published[0]["explicit_limitations"]["evaluator_failures"].startswith("2 retained responses")
         assert "no safety verdict" in published[0]["explicit_limitations"]["evaluator_failures"]
     else:
         assert "evaluator_failures" not in published[0]["explicit_limitations"]
-    job = tmp_path / "runs/engineering/parallel-analysis"
+    job = tmp_path / "runs/engineering/analysis-control"
     marker = json.loads((job / "ENGINEERING_ONLY.json").read_text())
     assert marker["release_commit"] == "b" * 40
     assert marker["model_tasks"] == [] and marker["hosted_calls_allowed"] is False
