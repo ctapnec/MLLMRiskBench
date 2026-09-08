@@ -2369,6 +2369,20 @@ An expired wait still refuses spending. Whole judgment-output directories
 retain their separate single-executor lock, and all monetary caps, immutable
 slots, duplicate-attempt checks and unknown-charge retention remain unchanged.
 
+After a reviewed transport interruption, use an execution-plan version 3
+successor with the exact failed checkpoint in `transport_recoveries`; never
+restart its funded attempt counter. Preserve the old output directory and use
+separate successor output roots for unfinished jobs. Keep completed jobs bound
+to their original artifacts and skip their verified executions. The recovery
+descriptor binds the selected input, request digest and physical attempts
+already made. One previous failed attempt leaves three, not four, further
+attempts. Usable responses and parser/content errors are not transport retries.
+The provider-independent wrapper records only newly issued requests in the
+successor's transport-call count, with physical ordinals continued from the
+original ledger. Keep the predecessor failure for aggregate accounting and
+retain unknown charges until actual usage can be reconciled. Do not launch
+an old controller that assumes zero prior attempts or an obsolete checkout.
+
 ```bash
 python -m experiments.hosted_retained_execute \
   --program /resolved/path/hosted-program.json \

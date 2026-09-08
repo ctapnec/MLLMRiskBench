@@ -260,6 +260,25 @@ the eligibility plan in the separate preflight tree. These two instances may
 bind different execution purposes and must not be substituted merely because
 their call totals match.
 
+## Funded hosted transport continuation
+
+Funded hosted transport continuation uses
+`ura-hosted-retained-execution-plan/3`. It retains version 2's counted-input
+and monetary bindings and adds a nonempty `transport_recoveries` map keyed by
+selected input identity. Each entry binds a regular response-checkpoint file
+by path, SHA-256 and byte length, its exact attempt ID, the previous physical
+attempt count and unchanged counted request digest. Versions 1 and 2 cannot
+acquire this field retrospectively.
+
+Admission checks the original rendered dialogue and source identity, target,
+typed retryable HTTP/network failure, absent output and absent token usage.
+An exhausted allowance, usable answer, parser error or changed request cannot
+be resumed through this path. The same funded call retains prior unknown
+charges. New transport records continue their physical ordinals, while their
+reported call count includes only calls made by the new invocation; the old
+checkpoint remains separately bound evidence. Unrelated inputs start at
+attempt one. This contract does not increase any target, judge or retry budget.
+
 ## Live route and transport attestation
 
 `python -m experiments.live_attestation` strictly revalidates one completed,

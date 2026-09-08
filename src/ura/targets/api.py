@@ -97,10 +97,13 @@ _AttemptAdmission = Callable[[str, Mapping[str, Any], int], None]
 _PROVIDER_ATTEMPT_ADMISSION: ContextVar[Optional[_AttemptAdmission]] = ContextVar(
     "ura_provider_attempt_admission", default=None
 )
+_PROVIDER_ATTEMPTS_USED: ContextVar[int] = ContextVar("ura_provider_attempts_used", default=0)
 
 
 @contextmanager
-def provider_attempt_admission(reserve: _AttemptAdmission) -> Iterator[None]:
+def provider_attempt_admission(
+    reserve: _AttemptAdmission, *, attempts_used: int = 0,
+) -> Iterator[None]:
     """Scope a controller's durable reservation to each physical HTTP attempt.
 
     The callback receives provider, final request and one-based attempt number.
@@ -108,14 +111,20 @@ def provider_attempt_admission(reserve: _AttemptAdmission) -> Iterator[None]:
     each retry; its exceptions stop execution without becoming retryable SDK
     errors. The owning controller supplies pricing, durable accounting and
     settlement. This hook alone is not a dollar budget or paid admission.
-    Each executing thread must enter its own scope.
+    Each executing thread must enter its own scope. A reviewed transport
+    continuation supplies its already-used physical attempts; these consume
+    the same retry allowance and are not counted as new SDK calls.
     """
     if not callable(reserve):
         raise TypeError("provider attempt admission must be callable")
+    if type(attempts_used) is not int or attempts_used < 0:
+        raise ValueError("used provider attempts must be a nonnegative integer")
     token = _PROVIDER_ATTEMPT_ADMISSION.set(reserve)
+    used_token = _PROVIDER_ATTEMPTS_USED.set(attempts_used)
     try:
         yield
     finally:
+        _PROVIDER_ATTEMPTS_USED.reset(used_token)
         _PROVIDER_ATTEMPT_ADMISSION.reset(token)
 
 
@@ -391,7 +400,10 @@ def _call_with_retry(
 ) -> tuple[Any, list[dict[str, Any]]]:
     """Run one provider call with bounded, secret-free attempt provenance."""
     audit: list[dict[str, Any]] = []
-    for attempt_number in range(1, max_retries + 2):
+    attempts_used = _PROVIDER_ATTEMPTS_USED.get()
+    if attempts_used > max_retries:
+        raise ValueError("provider transport retry allowance is exhausted")
+    for attempt_number in range(attempts_used + 1, max_retries + 2):
         admission = _PROVIDER_ATTEMPT_ADMISSION.get()
         if admission is not None:
             admission(provider, request, attempt_number)

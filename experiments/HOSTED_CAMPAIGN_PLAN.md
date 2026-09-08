@@ -118,6 +118,17 @@ physical attempt, and tight-budget cases stop before a retry can consume a
 different selected input's reservation. This is offline implementation
 verification, not evidence that the stopped Luna input has been retried.
 
+The reviewed Luna stop was archived at 22:47 UTC on 8 September without a
+provider call or budget change. The user then explicitly requested retrying
+that failed network attempt after correcting API handling. Luna remains in
+the campaign, alongside Kimi and DeepSeek. Its continuation must use the same
+counted request and original funded call, retain the old failed checkpoint,
+and continue with physical attempt two, not restart a four-attempt allowance.
+Only the remaining three transport attempts are available. A new successful
+output does not erase the earlier infrastructure failure or its unknown bill.
+The failed Fable parser response is a different incident and is not covered
+by this network-retry authorization.
+
 Haiku's actual-output matching completed at 21:14:54 UTC. All 176 eligible
 measured outputs have local counterparts across 81 distinct comparison inputs.
 The full 190-response measured population comprises those 176 candidates,

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import re
 import stat
 import subprocess
@@ -26,6 +27,7 @@ from ura.targets.api import provider_attempt_admission
 
 SCHEMA = "ura-hosted-retained-execution-plan/1"
 COUNTED_INPUT_SCHEMA = "ura-hosted-retained-execution-plan/2"
+TRANSPORT_RECOVERY_SCHEMA = "ura-hosted-retained-execution-plan/3"
 COUNTED_INPUT_POLICY = "counted_requests_within_route_reservation_v1"
 TOKEN_COUNT_POLICY = "surface_specific_counts_with_declared_estimates_v1"
 _HEX40 = re.compile(r"[0-9a-f]{40}\Z")
@@ -48,7 +50,7 @@ def _cost(input_tokens: int, output_tokens: int, prices: Mapping[str, Any]) -> i
 
 def _validate_input_budget(program: Mapping[str, Any], route: Mapping[str, Any]) -> None:
     """Keep the original per-call contract or fund the explicit counted successor."""
-    counted = program.get("schema") == COUNTED_INPUT_SCHEMA
+    counted = program.get("schema") in {COUNTED_INPUT_SCHEMA, TRANSPORT_RECOVERY_SCHEMA}
     if counted:
         if program.get("input_budget_policy") != COUNTED_INPUT_POLICY:
             raise ValueError("counted input allocation policy differs")
@@ -74,6 +76,7 @@ class _Admission:
         self.attacker = attacker
         self.requests = copy.deepcopy(dict(requests))
         self.prices = copy.deepcopy(prices)
+        self.transport_recoveries = {}
         self.entries = {entry["origin"]["selection"]["input_identity_sha256"]: entry
                         for entry in attacker._selected_entries}
         if set(self.entries) != set(job["input_ids"]) or set(self.requests) != set(self.entries):
@@ -94,6 +97,16 @@ class _Admission:
                 raise ValueError("request allowance is not funded by its exact target slot")
             if receipt["max_output_tokens"] != program["max_output_tokens"]:
                 raise ValueError("funded request changed the configured output allowance")
+        recovery = program.get("transport_recoveries", {})
+        if recovery and program.get("schema") != TRANSPORT_RECOVERY_SCHEMA:
+            raise ValueError("transport recovery requires its explicit execution contract")
+        if not isinstance(recovery, dict) or not set(recovery) <= set(program.get("requests", self.requests)):
+            raise ValueError("transport recovery names an unfunded input")
+        for key in set(recovery) & set(self.requests):
+            self.transport_recoveries[key] = _validate_transport_recovery(
+                recovery[key], program=program, entry=self.entries[key],
+                receipt=self.requests[key], budget=budget,
+            )
 
     def validate_cli(self, argv: list[str], args: argparse.Namespace) -> None:
         if argv != self.job["argv"]:
@@ -143,7 +156,11 @@ class _Admission:
     def attempt(self, runner: Any, attempt: Any):
         receipt = self._receipt(attempt)
         call_id = receipt["call_id"]
-        ordinal = 0
+        key = attempt.params["retained_origin"]["selection"]["input_identity_sha256"]
+        prior = self.transport_recoveries.get(key, 0)
+        if self.budget.reserved_attempt_count(call_id) != prior:
+            raise ValueError("transport continuation no longer matches its reviewed attempt prefix")
+        ordinal = prior
 
         def reserve(provider: str, request: Mapping[str, Any], number: int) -> None:
             nonlocal ordinal
@@ -160,9 +177,9 @@ class _Admission:
         try:
             if _sha(runner.target.build_request(attempt.rendered_input, seed=attempt.seed)) != receipt["request_sha256"]:
                 raise ValueError("target request changed since full-request counting")
-            with provider_attempt_admission(reserve):
+            with provider_attempt_admission(reserve, attempts_used=prior):
                 yield
-            if not ordinal:
+            if ordinal == prior:
                 raise ValueError("target bypassed its physical-attempt monetary reservation")
         except BaseException:
             if ordinal:
@@ -224,6 +241,64 @@ class _Admission:
                         else "missing_target_output" if missing else "pilot_output_truncated")
             self._circuit(category, call_id)
             raise RuntimeError("paid target circuit opened after retaining its durable response")
+
+
+def _validate_transport_recovery(
+    value: object, *, program: Mapping[str, Any], entry: Mapping[str, Any],
+    receipt: Mapping[str, Any], budget: AttemptBudget,
+) -> int:
+    """Admit only a retained retryable transport failure, never an answer retry."""
+    from ura.data_models import Attempt, Response
+    from ura.runner import Runner
+
+    fields = {"checkpoint", "attempt_id", "prior_attempts", "request_sha256"}
+    if not isinstance(value, dict) or set(value) != fields:
+        raise ValueError("transport recovery fields differ")
+    prior = _integer(value["prior_attempts"], "prior transport attempts")
+    if prior >= 4 or value["request_sha256"] != receipt["request_sha256"]:
+        raise ValueError("transport recovery is exhausted or changed its exact request")
+    descriptor = value["checkpoint"]
+    if not isinstance(descriptor, dict) or set(descriptor) != {"path", "sha256", "bytes"}:
+        raise ValueError("transport recovery checkpoint descriptor differs")
+    path = Path(descriptor["path"])
+    if (not path.is_absolute() or path.resolve(strict=True) != path
+        or not stat.S_ISREG(path.lstat().st_mode) or path.stat().st_size > 64 * 1024 * 1024):
+        raise ValueError("transport recovery checkpoint must be one bounded regular file")
+    data = path.read_bytes()
+    if len(data) != descriptor["bytes"] or hashlib.sha256(data).hexdigest() != descriptor["sha256"]:
+        raise ValueError("transport recovery checkpoint bytes changed")
+    records = Runner.load_response_checkpoint(path)
+    record = records.get(value["attempt_id"])
+    if record is None:
+        raise ValueError("transport recovery attempt is absent from its checkpoint")
+    attempt = Attempt.model_validate(record["attempt"])
+    response = Response.model_validate(record["response"])
+    origin = entry["origin"]
+    raw = response.raw
+    audit = raw.get("call_audit", {})
+    if (attempt.params.get("retained_origin") != origin
+        or retained_dialog_sha256(attempt.rendered_input) != origin["delivered_input_sha256"]
+        or response.attempt_id != attempt.id or response.target != program["target"]
+        or raw.get("model_stability_status") != "failed_output"
+        or raw.get("model_stability_category") != "transport_failure"
+        or response.output_turns or response.tokens is not None
+        or not isinstance(audit, dict) or audit.get("operation") != "generate"
+        or _billing_provider(str(audit.get("provider", ""))) != program["provider"]
+        or audit.get("logical_call_count") != 1
+        or raw.get("transport_attempt_count") != prior
+        or audit.get("transport_attempt_count") != prior):
+        raise ValueError("transport recovery is not the exact retained failed request")
+    status = audit.get("status_code")
+    retryable = (type(status) is int and (status in {408, 409, 425, 429} or 500 <= status <= 599))
+    if status is None:
+        retryable = audit.get("error_type") in {
+            "APIConnectionError", "APITimeoutError", "ConnectionError", "TimeoutError",
+            "ConnectError", "ReadError", "WriteError", "RemoteProtocolError",
+            "ConnectTimeout", "ReadTimeout", "WriteTimeout", "PoolTimeout",
+        }
+    if not retryable or budget.reserved_attempt_count(receipt["call_id"]) < prior:
+        raise ValueError("transport recovery lacks a retryable funded failure prefix")
+    return prior
 
 
 def execute(*, program_path: Path, program_sha256: str, budget_root: Path,
@@ -443,11 +518,19 @@ def build_matched_judge_requests(*, programs: Sequence[dict], budget: AttemptBud
 
 def _validated_jobs(program: dict, budget: AttemptBudget) -> list[_Admission]:
     """Rebuild fixed input selection from complete historical and RR evidence."""
-    if (not isinstance(program, dict) or program.get("schema") not in {SCHEMA, COUNTED_INPUT_SCHEMA}
+    if (not isinstance(program, dict) or program.get("schema") not in {
+        SCHEMA, COUNTED_INPUT_SCHEMA, TRANSPORT_RECOVERY_SCHEMA,
+    }
         or program.get("budget_plan_sha256") != budget.expected_plan_sha256
         or program.get("token_count_policy") != TOKEN_COUNT_POLICY
         or program.get("replaced_descriptive_prerequisite") != "authority.requires_exact_provider_token_counts"):
         raise ValueError("complete local-source program admission requires its exact funded plan")
+    recovery = program.get("transport_recoveries")
+    if program["schema"] == TRANSPORT_RECOVERY_SCHEMA:
+        if not isinstance(recovery, dict) or not recovery:
+            raise ValueError("transport recovery contract requires its retained failures")
+    elif recovery is not None:
+        raise ValueError("historical execution contracts cannot add transport recovery")
     from experiments import hosted_campaign_budget as projection, hosted_retained_inputs as inputs
     from experiments.hosted_request_tokens import validate_receipt
     from experiments import run_matrix
