@@ -292,7 +292,8 @@ fresh child process. That process exits before the next lower candidate, so an
 interrupted vLLM request cannot retain CUDA state or contaminate later
 measurements.
 Hosted targets and judges never read this registry: their explicit output caps
-remain paid-budget inputs and their retry count remains zero.
+remain paid-budget inputs and their answer-quality retry count remains zero.
+Transport attempts have a separate configured allowance.
 
 The target boundary keeps output stability separate from input compatibility.
 Runner 2.26 retains an exact deterministic target-input rejection, such as a
@@ -311,6 +312,14 @@ disabled. Local vLLM and Ollama exhausted-answer handling remains one shared
 Runner policy. A hosted target instead requires zero answer retries; its first
 retained failed output or target transport/network failure opens the global
 `paid_provider` circuit before another paid call.
+
+Network and HTTP failures retain an explicit pending transport-retry state,
+separate from unusable model-generated content. The common response boundary
+validates that this state belongs only to a typed transport failure. It does
+not assert that the provider generated an empty answer, that a retry worker
+is running, or that a retry is already authorized by the monetary ledger.
+Unknown charges remain reserved, and any continuation must preserve the
+original input and count every physical attempt within its remaining cap.
 
 Every Hugging Face model is admitted through one sealed acquisition boundary.
 `collect_run_requirements` projects the five supported roles (vLLM target,
@@ -907,5 +916,9 @@ reported token usage with coverage, and completion-reason diagrams alongside
 missing-output counts. Model/run/arm/modality and different token settings remain
 distinct. The exporter never derives historical settings from today's model
 roster and never interprets a cap-sized token count as evidence of truncation.
+New generation-condition reports additionally separate transport failures and
+explicit pending retries. Older reports remain readable without invented retry
+metadata. The all-cause missing-output diagram is labelled response availability,
+not intrinsic model stability; transport loss is not a model-quality observation.
 Historical Level-2 `/1` remains readable. Campaign-specific recovery orchestration
 stays outside this product reporting layer.
