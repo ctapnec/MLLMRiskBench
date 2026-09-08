@@ -2229,9 +2229,29 @@ Prepare those programs with `python -m experiments.hosted_campaign_prepare
 `path`/`sha256`/`bytes` descriptor; source keys are `historical_result`,
 `api_config`, `pricing`, `budgets`, `budget_projection` and `media_index`.
 Each route contains `target` and its `replay_artifacts` descriptors, covering
-all selected corpora. Shared arguments provide the normal project/source,
-transport and acquired local-judge admission. The preparer supplies the exact
-target, replay partition, output path and call/retry limits.
+all selected corpora. Shared arguments provide project/source configuration,
+the local judge configuration and the execution deadline. The preparer supplies
+the exact target, replay partition, output path and call/retry limits. Bind the
+purpose-specific transport and local-judge acquisition evidence per job; one
+acquisition receipt cannot stand in for distinct request selections.
+
+Acquisition planning for a funded retained-input job must carry the same
+funded execution context as execution. A standalone Runner invocation correctly
+rejects that real replay as unadmitted. Retain a plan-only program with the same
+requests, funding, job purposes and arguments, adding only
+`--model-acquisition-plan-only` and each job's canonical plan directory. Validate
+that program through `hosted_retained_execute._validated_jobs`, then call Runner
+inside `retained_execution_admission` for each returned admission. Do not add
+`--preflight-only` to a canary or transport probe: it changes the purpose and
+therefore the acquisition identity. Planning must leave every paid attempt
+counter unchanged. Reuse sealed model bytes with a zero-byte download cap,
+then retain the execution program with its exact per-job acquisition locators.
+
+When no current transport receipt exists, the first already-funded pilot in
+each selected modality can serve as the normal attestation probe. Derive its
+receipt only after that probe completes, then retain a successor program with
+the exact receipt locators for later canary/measured jobs. No input, output
+allowance or monetary cap increases, and completed probes are not called again.
 
 The API loader returns configuration entries only for generic target specs.
 Fixed Fable and Sol condition IDs carry their own immutable settings and must
