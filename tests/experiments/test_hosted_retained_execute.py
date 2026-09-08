@@ -299,7 +299,10 @@ def _program(
     value = materializer.materialize_replay(plan, cells=[cell], source_corpora={cell["run_id"]: points},
                                             corpus="retained-corpus", **bindings)
     replay = save("real-shaped-replay.json", value)
-    target = run_matrix.build_target(target_spec, api_config=api[target_spec])
+    normalized, _api_artifact = run_matrix._load_api_config(
+        sources["api_config"]["path"], [target_spec], sources["api_config"]["sha256"],
+    )
+    target = run_matrix.build_target(target_spec, api_config=normalized.get(target_spec))
     requests, jobs, slots = {}, [], []
     for index, entry in enumerate(value["entries"]):
         key = entry["origin"]["selection"]["input_identity_sha256"]
