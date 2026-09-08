@@ -54,6 +54,42 @@ def test_composed_source_change_refuses_before_judging(tmp_path, monkeypatch):
         judge.load_retained_metadata(root)
 
 
+def test_temporary_reader_path_is_not_judgment_content_but_verdict_is(tmp_path, monkeypatch):
+    sources, views = _views(tmp_path, monkeypatch)
+    for row in views[sources[1]][2].values():
+        row.update(_artifact_file="/tmp/first-reconstruction/rows.jsonl", _artifact_line=1,
+                   label="safe", raw={"_artifact_file": "persisted nested content"})
+    root = tmp_path / "scope"
+    value = subject.compose(sources=sources, models=["vllm:base", "vllm:defended"], out_root=root)
+    assert value["schema"] == subject.SCHEMA
+    for row in views[sources[1]][2].values():
+        row["_artifact_file"] = "/tmp/second-reconstruction/rows.jsonl"
+    assert len(judge.load_retained_metadata(root)) == 4
+    row = next(iter(views[sources[1]][2].values()))
+    row["label"] = "violation"
+    with pytest.raises(ValueError, match="source view content changed"):
+        judge.load_retained_metadata(root)
+    row["label"] = "safe"
+    row["raw"]["_artifact_file"] = "changed persisted nested content"
+    with pytest.raises(ValueError, match="source view content changed"):
+        judge.load_retained_metadata(root)
+
+
+def test_legacy_view_keeps_its_original_locator_sensitive_identity(tmp_path, monkeypatch):
+    sources, views = _views(tmp_path, monkeypatch)
+    root = tmp_path / "scope"
+    subject.compose(sources=sources, models=["vllm:base"], out_root=root)
+    value = json.loads((root / "retained-view.json").read_text())
+    value["schema"] = subject.LEGACY_SCHEMA
+    for source in value["sources"]:
+        source["view_sha256"] = subject._native(type(root)(source["root"]), include_reader_locator=True)[1]
+    (root / "retained-view.json").write_text(json.dumps(value))
+    assert len(judge.load_retained_metadata(root)) == 2
+    next(iter(views[sources[0]][2].values()))["_artifact_file"] = "/tmp/new-observer-path"
+    with pytest.raises(ValueError, match="source view content changed"):
+        judge.load_retained_metadata(root)
+
+
 @pytest.mark.parametrize("defect", ["duplicate-run", "absent-model", "nested"])
 def test_invalid_response_scope_cannot_create_output(tmp_path, monkeypatch, defect):
     sources, views = _views(tmp_path, monkeypatch)

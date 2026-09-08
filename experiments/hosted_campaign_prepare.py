@@ -29,6 +29,7 @@ from ura.adapters.replay import ReplayAttacker, retained_dialog
 REQUEST_SCHEMA = "ura-hosted-retained-campaign-request/1"
 COUNTED_INPUT_REQUEST_SCHEMA = "ura-hosted-retained-campaign-request/2"
 RECEIPT_SCHEMA = "ura-hosted-retained-campaign-preparation/1"
+CACHED_RECEIPT_SCHEMA = "ura-hosted-retained-campaign-preparation/2"
 _REPLAY_SCHEMA = "ura-retained-input-replay/1"
 _CONTROLLED = frozenset(
     {
@@ -358,6 +359,7 @@ def prepare_campaign(
     configs: list[tuple[Path, dict]] = []
     slots: list[dict[str, Any]] = []
     count_methods: dict[str, int] = {}
+    count_audit = {"cache_hits": 0, "new_receipts": 0, "http_attempts": 0}
     planned_paths: set[Path] = set()
     for route in routes:
         target_spec = route["target"]
@@ -393,7 +395,7 @@ def prepare_campaign(
                 count_request(target, body, allow_network=allow_network_counts)
                 if count_cache is None else
                 cached_count_request(target, body, cache_root=count_cache,
-                                     allow_network=allow_network_counts)
+                                     allow_network=allow_network_counts, audit=count_audit)
             )
             if not counted_inputs and counted["input_tokens"] > funded["maximum_input_tokens_per_call"]:
                 raise ValueError("selected hosted request exceeds the projected input-token ceiling")
@@ -564,19 +566,23 @@ def prepare_campaign(
                 ),
             }
         )
+    referenced_count_http_attempts = sum(
+        receipt["token_count"]["count_http_attempts"]
+        for program in programs for receipt in program["requests"].values()
+    )
     receipt = {
-        "schema": RECEIPT_SCHEMA,
+        "schema": RECEIPT_SCHEMA if count_cache is None else CACHED_RECEIPT_SCHEMA,
         "status": "prepared_no_generation_calls",
         "request": dict(request_descriptor),
         "local_inventory": historical_inventory,
         "budget": budget_descriptor,
         "programs": program_descriptors,
         "token_count_methods": dict(sorted(count_methods.items())),
-        "token_count_http_attempts": sum(
-            receipt["token_count"]["count_http_attempts"]
-            for program in programs
-            for receipt in program["requests"].values()
-        ),
+        "token_count_http_attempts": (referenced_count_http_attempts if count_cache is None
+                                      else count_audit["http_attempts"]),
+        **({"count_cache": count_audit,
+            "referenced_count_http_attempts": referenced_count_http_attempts}
+           if count_cache is not None else {}),
         "target_calls": 0,
         "judge_calls": 0,
         "generation_http_attempts": 0,

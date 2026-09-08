@@ -2216,6 +2216,9 @@ content digests and the exact model scope. Pass its directory as the existing
 preparing matched judgments. Both candidate selection and execution revalidate
 the same view. Model filtering applies only to judge candidates, not original
 input provenance; no source artifact, response or verdict is rewritten.
+New composed views distinguish judgment content from the reader-added temporary
+`_artifact_file` locator. The original view version retains its original
+identity check; a failed predecessor is never promoted by rewriting it.
 
 Prepare those programs with `python -m experiments.hosted_campaign_prepare
 --request /resolved/path/campaign-request.json --request-sha256 '<SHA-256>'
@@ -2251,6 +2254,9 @@ reservation. The original `/1` retains its per-call input ceiling. Neither
 condition changes call/output caps, the protected judge reserve or provider
 budgets. Pass `--count-cache /resolved/existing/counts` to persist each completed
 count and resume without recounting it; identity and method are revalidated.
+Cached preparation receipts distinguish actual new counting HTTP attempts from
+references to previously counted requests. A cache hit is not another HTTP call
+or another generation. The original uncached receipt contract is unchanged.
 
 ```bash
 python -m experiments.hosted_retained_execute \

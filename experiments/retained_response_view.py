@@ -9,19 +9,27 @@ from experiments import retained_response_judge as judge
 from experiments.retained_response_judge_execute import _read_regular, _write_new
 
 
-SCHEMA = "ura-retained-response-view/1"
+LEGACY_SCHEMA = "ura-retained-response-view/1"
+SCHEMA = "ura-retained-response-view/2"
 SCOPE = "judge_candidates_only_preserve_source_provenance"
 
 
-def _native(root: Path):
+def _native(root: Path, *, include_reader_locator: bool = False):
     if (not root.is_absolute() or root.is_symlink() or not root.is_dir()
         or root.resolve(strict=True) != root or (root / "retained-view.json").exists()):
         raise ValueError("response view sources must be canonical native views, without nesting")
     view = judge._read_native_view(root)
     cells, metadata, judgments, audit = view
+    # human_audit adds this diagnostic path after reading a persisted row.
+    # Reconstructed source files have fresh temporary paths on every read;
+    # neither that observer locator nor its lifetime is judgment content.
+    content_judgments = judgments if include_reader_locator else {
+        key: {field: value for field, value in row.items() if field != "_artifact_file"}
+        for key, row in judgments.items()
+    }
     identity = judge._sha({
         "manifests": {cell["run_id"]: cell["manifest"] for cell in cells},
-        "metadata": metadata, "judgments": judgments, "audit": audit,
+        "metadata": metadata, "judgments": content_judgments, "audit": audit,
     })
     return view, identity
 
@@ -87,7 +95,7 @@ def read_view(root: Path):
     value, _descriptor = _read_regular(root / "retained-view.json", label="composed response view",
                                      max_bytes=1024 * 1024)
     if (set(value) != {"schema", "scope", "sources", "models"}
-        or value["schema"] != SCHEMA or value["scope"] != SCOPE
+        or value["schema"] not in {LEGACY_SCHEMA, SCHEMA} or value["scope"] != SCOPE
         or not isinstance(value["sources"], list) or not value["sources"]):
         raise ValueError("composed response view contract differs")
     views, seen = [], set()
@@ -97,7 +105,8 @@ def read_view(root: Path):
         if source["root"] in seen:
             raise ValueError("composed response sources overlap")
         seen.add(source["root"])
-        view, identity = _native(Path(source["root"]))
+        view, identity = _native(Path(source["root"]),
+                                 include_reader_locator=value["schema"] == LEGACY_SCHEMA)
         if identity != source["view_sha256"]:
             raise ValueError("validated source view content changed")
         views.append(view)

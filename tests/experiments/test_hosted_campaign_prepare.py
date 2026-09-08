@@ -244,3 +244,37 @@ def test_counted_input_policy_must_be_explicit_before_counting(tmp_path, monkeyp
     with pytest.raises(ValueError, match="request fields differ"):
         subject.prepare_campaign(request=request, request_descriptor={}, out_root=tmp_path / "out",
                                  allow_network_counts=True)
+
+
+def test_resumed_preparation_reports_zero_new_http_attempts_for_retained_counts(tmp_path, monkeypatch):
+    from experiments import run_matrix
+    from ura.adapters.replay import retained_dialog
+    from ura.targets.api import OpenAITarget
+
+    request, _execution_root = _request(tmp_path, monkeypatch)
+    api = request["sources"]["api_config"]
+    spec = request["routes"][0]["target"]
+    normalized, _artifact = run_matrix._load_api_config(api["path"], [spec], api["sha256"])
+    target = run_matrix.build_target(spec, api_config=normalized[spec])
+    calls = []
+    def count(**body):
+        calls.append(body)
+        return SimpleNamespace(object="response.input_tokens", input_tokens=731)
+    client = SimpleNamespace(responses=SimpleNamespace(input_tokens=SimpleNamespace(count=count)))
+    client.with_options = lambda **options: client
+    monkeypatch.setattr(OpenAITarget, "_get_client", lambda self: client)
+    cache = tmp_path / "counts"
+    cache.mkdir()
+    route = subject._replay_inventory(request["routes"])[0]
+    for replay in route["replays"]:
+        for entry in replay["entries"]:
+            subject.cached_count_request(target, target.build_request(retained_dialog(entry["rendered_input"]), seed=0),
+                                         cache_root=cache, allow_network=True)
+    assert len(calls) == 2
+    monkeypatch.setattr(OpenAITarget, "_get_client", lambda self: pytest.fail("completed count repeated"))
+    receipt = subject.prepare_campaign(request=request, request_descriptor={}, out_root=tmp_path / "out",
+                                       allow_network_counts=True, count_cache=cache)
+    assert receipt["schema"] == subject.CACHED_RECEIPT_SCHEMA
+    assert receipt["token_count_http_attempts"] == 0
+    assert receipt["referenced_count_http_attempts"] == 2
+    assert receipt["count_cache"] == {"cache_hits": 2, "new_receipts": 0, "http_attempts": 0}

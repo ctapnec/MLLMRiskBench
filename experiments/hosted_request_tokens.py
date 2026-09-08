@@ -185,7 +185,7 @@ def validate_receipt(target, request: Mapping, receipt: Mapping) -> dict:
 
 
 def cached_count_request(target, request: Mapping, *, cache_root: Path,
-                         allow_network: bool = False) -> dict:
+                         allow_network: bool = False, audit: dict | None = None) -> dict:
     """Persist each completed counter result; resume validates without recounting."""
     from experiments.retained_response_judge_execute import _exclusive_lock, _read_regular, _write_new
 
@@ -207,7 +207,12 @@ def cached_count_request(target, request: Mapping, *, cache_root: Path,
             checked = validate_receipt(target, body, receipt)
             if checked["method"] != method or checked["method_id"] != method_id:
                 raise ValueError("cached token-count method differs from the requested policy")
+            if audit is not None:
+                audit["cache_hits"] = audit.get("cache_hits", 0) + 1
             return checked
         receipt = count_request(target, body, allow_network=allow_network)
         _write_new(path, receipt)
+        if audit is not None:
+            audit["new_receipts"] = audit.get("new_receipts", 0) + 1
+            audit["http_attempts"] = audit.get("http_attempts", 0) + receipt["count_http_attempts"]
         return receipt
