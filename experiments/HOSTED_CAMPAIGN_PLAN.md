@@ -29,6 +29,28 @@ Their combined maximum-output reservation is USD 5.034545, below the route's
 unchanged USD 7.544064 allowance. This requires the explicit counted-input
 successor below, not relabelling the old per-call projection as satisfied.
 
+Full-request funding completed at 16:36 UTC on 8 September. The retained count
+cache contains 391 distinct provider-counting requests and 73 offline estimates;
+798 references to those receipts do not represent 798 network requests. The
+actual funded allocation is:
+
+| Billing provider | Target responses allocated | Maximum target reservation (USD) | Prospective Haiku reservation (USD) | Combined reservation (USD) | Provider ceiling (USD) |
+|---|---:|---:|---:|---:|---:|
+| Anthropic | 455 | 33.033253 | 27.943936 | 60.977189 | 72.00 |
+| OpenAI | 264 | 27.038255 | 0 | 27.038255 | 32.00 |
+| Kimi | 79 | 9.923055 | 0 | 9.923055 | 12.00 |
+| DeepSeek | 143 | 5.034545 | 0 | 5.034545 | 8.00 |
+| Total | 941 | 75.029108 | 27.943936 | 102.973044 | 124.00 |
+
+These are maximum-token reservations, not expenditure or predicted invoices.
+The shared plan protects a USD 29.992960 judging pool; its unallocated margin
+is not transferred to target calls. Its 1,882 prospective judgment slots are
+an upper bound before the actual eligible-output matching and deduplication.
+The separate judge configuration fixes 512 output tokens. Complete grading
+requests still require their own counts after the target answers exist.
+At 17:36 UTC, the monetary ledger contained zero paid attempts. Original
+funded request bodies, input selections and count receipts remain unchanged.
+
 The frozen 144-condition historical report alone is insufficient: the four-lane,
 7,606-input current-profile GraySwan RR supplement, its separate validated
 analysis, and the final input/condition reconciliation must also be terminal.
