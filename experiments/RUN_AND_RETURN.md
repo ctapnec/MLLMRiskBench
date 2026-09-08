@@ -2253,6 +2253,14 @@ receipt only after that probe completes, then retain a successor program with
 the exact receipt locators for later canary/measured jobs. No input, output
 allowance or monetary cap increases, and completed probes are not called again.
 
+Concurrent preparation and status readers share the short monetary-ledger
+transaction lock. Contention waits for at most 30 seconds; a transaction body
+or provider request is never replayed by this wait. Target and judge circuit
+writes use the same bounded lock. The separate judgment-output directory lock
+still permits only one executor for that output. Diagnose a timeout from its
+recorded owner and operation instead of treating it as a model failure or
+restarting completed requests.
+
 The API loader returns configuration entries only for generic target specs.
 Fixed Fable and Sol condition IDs carry their own immutable settings and must
 reach the target factory without a generic config override. Their registry
