@@ -22,8 +22,8 @@ def _save(path: Path, value: object) -> dict:
     }
 
 
-def _request(tmp_path: Path, monkeypatch) -> tuple[dict, Path]:
-    program, _budget = _program(tmp_path, monkeypatch)
+def _request(tmp_path: Path, monkeypatch, **program_options) -> tuple[dict, Path]:
+    program, _budget = _program(tmp_path, monkeypatch, **program_options)
     config_path = Path(
         program["jobs"][0]["argv"][
             program["jobs"][0]["argv"].index("--attacker-config") + 1
@@ -82,6 +82,39 @@ def test_preparation_creates_funded_disjoint_pilot_and_measured_program_without_
     assert len(ids) == len(set(ids)) == len(saved["requests"]) == 2
     budget = json.loads((tmp_path / "prepared" / "budget" / "plan.json").read_text())
     assert len(budget["planned_calls"]) == 6
+
+
+@pytest.mark.parametrize("target_spec", [
+    "anthropic-fable:claude-fable-5-1;effort=high;max_tokens=8192",
+    "openai-responses:gpt-5.6-sol;reasoning_mode=pro;reasoning_effort=medium;reasoning_context=all_turns;max_output_tokens=8192",
+])
+def test_preparation_accepts_inherent_target_without_generic_config(
+    tmp_path, monkeypatch, target_spec
+):
+    from experiments import run_matrix
+    from ura.targets.api import AnthropicTarget, OpenAITarget
+
+    request, _execution_root = _request(tmp_path, monkeypatch, target_spec=target_spec)
+    api = request["sources"]["api_config"]
+    normalized, _artifact = run_matrix._load_api_config(
+        api["path"], [target_spec], api["sha256"]
+    )
+    assert target_spec not in normalized  # The actual loader's fixed-condition contract.
+    for cls in (AnthropicTarget, OpenAITarget):
+        monkeypatch.setattr(cls, "_get_client", lambda self: pytest.fail("SDK client reached"))
+    receipt = subject.prepare_campaign(
+        request=request,
+        request_descriptor={},
+        out_root=tmp_path / "prepared",
+        allow_network_counts=False,
+    )
+    assert receipt["status"] == "prepared_no_generation_calls"
+    assert receipt["target_calls"] == receipt["judge_calls"] == 0
+    assert receipt["generation_http_attempts"] == 0
+    program = json.loads(Path(receipt["programs"][0]["path"]).read_text())
+    assert program["target"] == target_spec
+    assert program["max_output_tokens"] == 8192
+    assert len(program["requests"]) == 2
 
 
 def test_preparation_rejects_controlled_runner_argument_before_creating_artifacts(

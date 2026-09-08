@@ -357,7 +357,7 @@ def prepare_campaign(
         if target_spec not in route_budget:
             raise ValueError("hosted route is absent from the funded projection")
         funded = route_budget[target_spec]
-        target = run_matrix.build_target(target_spec, api_config=normalized[target_spec])
+        target = run_matrix.build_target(target_spec, api_config=normalized.get(target_spec))
         plans = [replay["value"]["plan"] for replay in route["replays"]]
         if any(plan != plans[0] for plan in plans[1:]):
             raise ValueError("one target's corpus replays do not share one input plan")

@@ -269,7 +269,7 @@ def _program(
     from experiments import hosted_campaign_budget as money, hosted_retained_inputs as materializer
     from experiments.hosted_request_tokens import count_request
     points, cell, _old_plan, _old_bindings, _value, _config = _fixture(tmp_path, adaptive=True)
-    billing_provider = "deepseek" if target_spec.startswith("deepseek:") else "openai"
+    billing_provider = subject._billing_provider(target_spec.split(":", 1)[0])
     api = _api_config()
     api[target_spec]["temperature"] = None
 
