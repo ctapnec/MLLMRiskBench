@@ -106,8 +106,9 @@ def candidates_from_cells(cells: Sequence[Mapping[str, Any]]) -> list[dict]:
     """Use only input metadata from cells already accepted by the exact source reader.
 
     All Attempt rows participate, including rows with missing or poor answers.
-    The raw judgment contributes only the immutable input risk/behavior stamps;
-    its outcome and response objects are deliberately never consulted.
+    Input stamps may come directly from the source reader's reconstructed
+    corpus, including when scoring failed. Older complete cells retain the same
+    stamps in raw judgments. Outcomes and response objects are never consulted.
     """
     candidates: dict[str, dict] = {}
     for cell in cells:
@@ -122,9 +123,19 @@ def candidates_from_cells(cells: Sequence[Mapping[str, Any]]) -> list[dict]:
         source = {"run_id": cell["run_id"], "local_model": cell["model"],
                   "artifacts_sha256": _sha(artifacts), "artifacts": artifacts,
                   "project_revision": copy.deepcopy(run["project_revision"])}
-        metadata = {row["attempt_id"]: row["raw"] for row in cell["judgments"]}
-        if set(metadata) != set(cell["attempts"]):
+        judged_metadata = {row["attempt_id"]: row["raw"] for row in cell["judgments"]}
+        metadata = cell.get("input_metadata", judged_metadata)
+        if (not isinstance(metadata, Mapping) or set(metadata) != set(cell["attempts"])
+                or any(not isinstance(raw, Mapping) for raw in metadata.values())
+                or not set(judged_metadata) <= set(metadata)
+                or len(judged_metadata) != len(cell["judgments"])):
             raise ValueError("retained inputs have an incomplete metadata join")
+        for attempt_id, raw in judged_metadata.items():
+            supplied = metadata[attempt_id]
+            if any(supplied.get(key, supplied.get("risk") if key == "risk_category" else None)
+                   != raw.get(key, raw.get("risk") if key == "risk_category" else None)
+                   for key in ("source", "risk_category", "expected_behavior")):
+                raise ValueError("retained input metadata disagrees with its source judgment stamps")
         for attempt_id, attempt in cell["attempts"].items():
             params, raw = attempt["params"], metadata[attempt_id]
             turns = attempt.get("rendered_input")

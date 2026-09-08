@@ -144,6 +144,13 @@ def _report_views(source, records: dict, completion: dict, *, joined: bool) -> d
                 "manifest": manifest, "manifest_path": manifest_path, "complete_path": completion_path,
                 "artifacts": artifacts,
                 "attempts": {attempt.id: _portable_attempt_dump(attempt) for attempt in runner.attempts},
+                # Input stamps come from the exactly reconstructed corpus, not
+                # from whether a classifier produced a usable safety verdict.
+                "input_metadata": {source.inputs[key][1].id: {
+                    "source": source.inputs[key][0].source,
+                    "risk_category": source.inputs[key][0].risk_category.value,
+                    "expected_behavior": source.inputs[key][0].expected_behavior,
+                } for key in ids},
                 "responses": {row.attempt_id: row.model_dump(mode="json") for row in runner.responses},
                 "judgments": [row.model_dump(mode="json") for row in runner.judgments], "trails": trails,
                 "aggregate_results": [], "source_identity_validated": True,

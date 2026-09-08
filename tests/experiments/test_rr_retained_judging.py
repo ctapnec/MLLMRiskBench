@@ -344,7 +344,7 @@ def failed_scoring_completion(prepared_launch, monkeypatch):
 
 
 def test_failure_completion_counts_attempts_not_safety_verdicts(failed_scoring_completion, retained_source):
-    from experiments import level2_report
+    from experiments import hosted_retained_inputs, level2_report
     from experiments.local_campaign import rr_retained_judging_analysis as analysis
 
     work, project, root, completion = failed_scoring_completion
@@ -362,6 +362,10 @@ def test_failure_completion_counts_attempts_not_safety_verdicts(failed_scoring_c
     reports = analysis._report_views(retained_source, view["records"], completion, joined=True)
     assert len(reports["input_cell"]["responses"]) == 2
     assert len(reports["input_cell"]["judgments"]) == 1
+    assert set(reports["input_cell"]["input_metadata"]) == set(reports["input_cell"]["attempts"])
+    candidates = hosted_retained_inputs.candidates_from_cells([reports["input_cell"]])
+    assert len(candidates) == 2
+    assert {row["datapoint_id"] for row in candidates} == {"a", "b"}
     assert set(reports["metric_cells"]) == {"original-judgments"}
     assert len(reports["joined"][1]) == 1
     assert reports["joined"][3]["evaluator_coverage"]["evaluator_failures"] == 1

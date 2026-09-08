@@ -100,6 +100,29 @@ def test_cap_is_global_nested_and_keeps_whole_clusters(tmp_path: Path) -> None:
     assert first["selected"] == larger["selected"][:4]
 
 
+@pytest.mark.parametrize("change", [None, "missing", "extra", "invalid", "risk", "source", "expected_behavior"])
+def test_source_input_metadata_keeps_unjudged_inputs_without_inventing_verdicts(tmp_path, change):
+    cell = _cell(tmp_path, count=2)
+    expected = subject.candidates_from_cells([cell])
+    cell["input_metadata"] = {row["attempt_id"]: copy.deepcopy(row["raw"]) for row in cell["judgments"]}
+    cell["judgments"].pop()
+    if change == "missing":
+        cell["input_metadata"].pop("attempt-1")
+    elif change == "extra":
+        cell["input_metadata"]["foreign"] = cell["input_metadata"]["attempt-0"]
+    elif change == "invalid":
+        cell["input_metadata"]["attempt-0"] = None
+    elif change:
+        key = "risk_category" if change == "risk" else change
+        cell["input_metadata"]["attempt-0"][key] = "changed"
+    if change:
+        with pytest.raises(ValueError, match="metadata"):
+            subject.candidates_from_cells([cell])
+    else:
+        assert subject.candidates_from_cells([cell]) == expected
+        assert len(cell["judgments"]) == 1
+
+
 def test_exact_adaptive_dialogue_and_source_parameters_survive_resolution(tmp_path: Path) -> None:
     cell = _cell(tmp_path, count=1)
     attempt = cell["attempts"]["attempt-0"]
