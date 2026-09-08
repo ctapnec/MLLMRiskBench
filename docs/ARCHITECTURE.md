@@ -451,6 +451,18 @@ sequencing, not an unbound later re-adjudication. Crescendo remains inline
 because the verdict changes the following turn. A defense guard remains in the
 target phase because it changes the treatment being measured.
 
+Retained-output re-adjudication is a separate workflow. Its read-only comparison
+report validates a completed paired-judge execution against both original
+source views and retains the original cascade's decision or abstention. Unique
+judged outputs and comparison links are separate counts, so reusing a local
+answer across hosted comparisons neither repeats its paid judgment nor creates
+independent observations. Stats renders this as `judge_comparison`, with
+revision/output-policy/cascade strata, same-model annotations, cluster-weighted
+uncertainty and the selected outputs' generation conditions. Neither the report
+nor its UI registration constructs a target or judge or establishes human
+calibration. Source campaign reports retain missing-input and target-cost
+accounting outside the answered matched cohort.
+
 After verified target teardown, the judge performs its own hardware-fit
 selection and may use one or both GPUs. The target phase does not reserve a
 fraction of another device for later scoring, so target utilization and memory

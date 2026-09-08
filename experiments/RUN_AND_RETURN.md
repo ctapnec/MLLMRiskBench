@@ -1798,7 +1798,8 @@ python -m experiments.retained_response_judge_pair \
   --pricing-config "$URA_PRICING_CONFIG" \
   --pricing-config-sha256 "$URA_PRICING_CONFIG_SHA256" \
   --pricing-as-of "$URA_PRICING_AS_OF" \
-  --pair-limit 1010 --sample-seed 0 --max-cost-microusd 33000000 \
+  --pair-limit "$FUNDED_PAIR_CAP" --sample-seed 0 \
+  --max-cost-microusd "$FUNDED_HAIKU_CEILING_MICROUSD" \
   --ack-hosted-judge-data-transfer --out "$HAIKU_PLAN"
 
 python -m experiments.retained_response_judge_pair_execute \
@@ -1809,15 +1810,34 @@ python -m experiments.retained_response_judge_pair_execute \
   --api-config "$URA_HAIKU_JUDGE_CONFIG" \
   --pricing-config "$URA_PRICING_CONFIG" --out "$HAIKU_RESULT" \
   --ack-paid-execution
+
+python -m experiments.retained_response_judge_report \
+  --plan "$HAIKU_PLAN" --execution-root "$HAIKU_RESULT" \
+  --local-runner-view "$FINAL_LOCAL_RUNNER_VIEW" \
+  --hosted-runner-view "$FINAL_HOSTED_RUNNER_VIEW" \
+  --source-receipt "$URA_SOURCE_CONFORMANCE_RECEIPT" \
+  --out "$HAIKU_COMPARISON_REPORT"
 ```
+
+Set the pair cap and judge ceiling from the funded campaign, not the generic
+planner maxima. The current campaign funds 941 target inputs and protects
+29,992,960 micro-USD for at most 1,882 prospective judge slots. Its paid
+controller must supply the shared budget and exact per-output request receipts
+to the paired executor; the standalone CLI above does not replace that binding.
+The reporting command is read-only except for its create-only output. It
+requires completed execution, reconciles each unique paid output, and rebuilds
+the source selection. Publish it through the generic external-analysis registry
+as `judge_comparison`, never as a Level-2 or human-calibration result. Its
+condition-specific rates and contrasts use equal source-cluster weights and
+whole-cluster bootstrap intervals, with no interval for fewer than two clusters.
 
 Each hosted measured lane must use `--judges rules,guardrail`, the exact sealed
 Llama Guard revision, and a judge-call ceiling covering its selected answered
 rows. The Runner checkpoints the paid response and its local cascade trail in
 the same retained cell. Consequently the Haiku selector above must bind the
 existing local trail on every selected hosted member by retained-row digest; it
-must not rerun either the target or the local judge. Across the 1,010-call hosted
-cap this permits at most 1,010 rule evaluations and 1,010 Llama Guard calls, with
+must not rerun either the target or the local judge. Each funded hosted input
+permits at most one rule evaluation and one Llama Guard call, with
 no additional provider cost. Analysis reports local decision coverage and
 abstentions before agreement because the guardrail safe/violation labels cannot
 decide every benign over-refusal row.
@@ -1827,7 +1847,7 @@ content hashes. It binds the exact effective-dated pricing file and refuses a
 rate other than the funded USD 1 input / USD 5 output per million-token
 condition. The executor revalidates the same pricing bytes, reconstructs only
 the selected Haiku judge,
-enforces zero answer retries and the three-retry status-only transport policy,
+enforces zero answer retries and the three-retry HTTP/transient-network policy,
 with SDK retries disabled, fsyncs a reservation
 before every paid call, and stops the cohort on its first output or transport
 failure. An unresolved reservation after process loss requires manual provider

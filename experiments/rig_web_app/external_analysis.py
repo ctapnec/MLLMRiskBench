@@ -219,6 +219,7 @@ def _validated_report(
     if kind not in {
         "level1",
         "level2",
+        "judge_comparison",
         "terminal_inventory",
         "execution_accounting",
     }:

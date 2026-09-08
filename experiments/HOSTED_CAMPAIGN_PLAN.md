@@ -579,7 +579,9 @@ provider ledgers reconcile within all monetary ceilings.
 
 ## A4 - Zero-target matched Haiku re-adjudication
 
-Create one content-bound selector for at most 1,010 local/hosted pairs. A pair
+Create one content-bound selector for at most 941 local/hosted pairs, matching
+the actually funded target population rather than the earlier 1,010-call
+projection. A pair
 is eligible only when both retained outputs bind the same rendered prompt,
 media-reference digest, datapoint, source cluster, seed, arm/framework,
 modality, risk, expected behavior and source-policy identity. Use deterministic
@@ -587,7 +589,7 @@ seed-0 balanced round-robin selection across local target, hosted target and
 those input strata. Judge each distinct output once and link an existing local
 judgment to multiple hosted comparisons when necessary. Preserve original
 judgments and report distinct judged outputs separately from comparison pairs.
-When the eligible hosted population remains at or below 1,010, selection must
+When the eligible hosted population remains at or below 941, selection must
 include every eligible hosted output rather than downsample it.
 Missing responses and source-authoritative R-Judge/GPTGeoChat rows remain in
 coverage accounting but receive no judge call and cannot form a judged pair.
@@ -598,12 +600,14 @@ The re-adjudicator reads only content-bound retained responses and minimum
 grading context. Its planner cannot import a target-under-test or Runner
 factory. Its executor may construct only the exact Haiku judge; it cannot
 construct a model under test or reserve a target call. The paired plan receives
-one USD 33 ceiling. Its judgment strata record the hosted-transfer
+the protected USD 29.992960 judge-pool ceiling. The generic tool's USD 33
+maximum is not this campaign's allowance. Its judgment strata record the hosted-transfer
 acknowledgement, one logical judge call per output, and at most four HTTP
-attempts under the status-only retry rule.
+attempts under the HTTP/transient-network retry rule. Each physical retry
+requires its own funded reservation; unknown earlier charges remain held.
 
-Gate A4: target calls 0, original mutations 0, Haiku calls at most 2,020,
-Haiku spend at most USD 33, and complete selected/missing/excluded accounting.
+Gate A4: target calls 0, original mutations 0, Haiku calls at most 1,882,
+Haiku exposure at most USD 29.992960, and complete selected/missing/excluded accounting.
 Every selected hosted member must bind the unchanged local cascade trail from
 its A3 result by retained-row digest.
 
@@ -618,7 +622,8 @@ diagrams cover:
 
 1. selected, answered, missing and judged counts by target/modality;
 2. Haiku and local-cascade outcome rates with cluster-aware uncertainty;
-3. failed-output model-stability rates and one-attempt response coverage;
+3. response availability and one-attempt coverage, separating diagnosed
+   model-output failures from transport and execution-condition failures;
 4. source-arm, attack/framework, risk and behavior composition;
 5. matched-input model contrasts where support exists; and
 6. billed input/output tokens and cost against each 80 percent provider cap;
@@ -634,9 +639,21 @@ Gate A5: the comparison package, figure inputs, figures and Stats campaign
 detail validate from the same sealed inventories. UI state and job-log prose
 are not analysis sources.
 
+`experiments.retained_response_judge_report` reads a completed paired judge
+execution and revalidates the original local and hosted source views. It
+reconciles the exact per-output artifacts with the execution ledger, preserves
+original cascade abstentions, and counts a shared local judgment only once.
+The separate `judge_comparison` Stats report renders condition-specific
+outcomes, same-output agreement, matched contrasts, coverage and generation
+allowances. Rates use equal source-cluster weighting and whole-cluster
+bootstrap intervals; fewer than two clusters produces no interval. This report
+does not execute a model, replace the source campaign's missing-input and
+target-spending reports, or establish human calibration.
+
 ## Stop conditions
 
-Stop the paid grid on the first target transport/network failure or first
+Stop the paid grid on the first non-retryable or retry-exhausted target
+transport/network failure or first
 durably retained failed target output, and stop the affected hosted condition
 for identity drift, provider-budget exhaustion, invalid transfer
 acknowledgement, deterministic route incompatibility or irreconcilable

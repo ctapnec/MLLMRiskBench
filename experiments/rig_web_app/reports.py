@@ -28,6 +28,7 @@ from .artifacts import (
 )
 
 _REPORT_SCHEMAS = {
+    "ura-retained-judge-comparison/1": "judge_comparison",
     "ura-local-campaign-execution-accounting/1": "execution_accounting",
     "ura-level1-evidence/3": "level1",
     "ura-level1-evidence/2": "level1",
@@ -278,6 +279,12 @@ def _validate_content_id(
 
 def _validate_report_document(kind: str, document: Mapping[str, Any]) -> None:
     """Fail closed before a retained document receives a scientific badge."""
+
+    if kind == "judge_comparison":
+        from experiments.retained_response_judge_report import validate_report
+
+        validate_report(dict(document))
+        return
 
     if kind == "execution_accounting":
         from experiments.local_campaign.execution_accounting import (

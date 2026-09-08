@@ -1774,6 +1774,7 @@ class DashboardMixin:
         if kind not in {
             "level1",
             "level2",
+            "judge_comparison",
             "terminal_inventory",
             "execution_accounting",
         } or (
@@ -1802,6 +1803,8 @@ class DashboardMixin:
                 "is produced.</p></div>"
             )
         try:
+            if kind == "judge_comparison":
+                return self._render_judge_comparison(display_name, doc)
             if kind == "terminal_inventory":
                 return self._render_terminal_inventory(
                     display_name, doc, artifact_relative=rel
@@ -1820,6 +1823,73 @@ class DashboardMixin:
                 "<p class='note'>Validated identity but unrenderable structure; "
                 "no chart is rendered.</p></div>"
             )
+
+    def _render_judge_comparison(self, name: str, doc: Mapping[str, Any]) -> str:
+        """Display matched judgments, never infer them from logs or job state."""
+        def estimate(value: Mapping[str, Any]) -> str:
+            point = value["value"]
+            if point is None:
+                return "No comparable decisions"
+            ci = (f"95% CI {value['ci_low']:.3f} to {value['ci_high']:.3f}"
+                  if value["ci_low"] is not None else "CI unavailable: fewer than two source clusters")
+            return f"{point:.3f}; {ci}; {value['n_records']} rows / {value['n_clusters']} clusters"
+
+        def condition_label(condition: Mapping[str, Any]) -> str:
+            annotation = " [same-model Haiku judge]" if condition["same_model_judge"] else ""
+            return " / ".join(str(condition[key]) for key in (
+                "cohort", "exact_model", "modality", "framework", "corpus", "risk", "expected_behavior"
+            )) + annotation
+
+        summary, completion = doc["summary"], doc["completion"]
+        parts = [f"<div class='card'><h3>{html.escape(name)}</h3>",
+                 "<p class='note'>Selected matched-output comparison. Counts precede rates; "
+                 "shared local judgments are charged once.</p>",
+                 self._count_bar_chart([
+                     ("Distinct local outputs judged", summary["cohorts"]["local"]),
+                     ("Distinct hosted outputs judged", summary["cohorts"]["hosted"]),
+                     ("Comparison links (not paid calls)", summary["comparison_pairs"]),
+                 ], label="Unique judged outputs and comparison links"),
+                 f"<p>Haiku: {completion['judge_calls']} logical calls; {completion['http_attempts']} HTTP attempts; "
+                 f"{completion['input_tokens']:,} input / {completion['output_tokens']:,} output tokens; "
+                 f"token-priced usage USD {completion['actual_cost_microusd'] / 1e6:.6f} / "
+                 f"plan ceiling USD {completion['max_cost_microusd'] / 1e6:.6f}.</p>",
+                 "<details><summary>Source-view coverage before matched selection</summary>"]
+        for cohort in ("local", "hosted"):
+            audit = doc["plan"]["population"][cohort]
+            parts.append(f"<h4>{cohort.title()} source frame</h4>" + self._count_bar_chart(
+                [(key.replace("_", " "), value) for key, value in audit.items()],
+                label=f"{cohort} source-view coverage, not selected-cohort rates"))
+        parts.append("</details>")
+        for row in summary["strata"]:
+            condition = row["condition"]
+            label = condition_label(condition)
+            parts.extend([f"<details><summary>{html.escape(label)} - {row['selected_outputs']} outputs</summary>",
+                          "<p class='note'>Separate revision/output-policy/cascade condition: "
+                          + html.escape(" / ".join(str(condition[key]) for key in (
+                              "project_revision_sha256", "output_policy_sha256", "cascade_configuration_sha256"))) + "</p>"])
+            for judge in ("cascade", "haiku"):
+                outcome = row[judge]
+                parts.append(f"<h4>{judge.title()}: {outcome['decided']} decided / {outcome['abstained']} abstained</h4>")
+                chart = self._bar_chart([(label_name.replace("_", " "), rate["value"])
+                                         for label_name, rate in outcome["rates"].items() if rate["value"] is not None])
+                parts.append(chart.replace("aria-label='result chart'", "aria-label='" + html.escape(judge + " outcomes: " + label, quote=True) + "'"))
+                parts.append("<div class='table-scroll'><table><thead><tr><th>Label</th><th>Count</th><th>Equal-cluster rate and uncertainty</th></tr></thead><tbody>")
+                for label_name, rate in outcome["rates"].items():
+                    parts.append(f"<tr><td>{html.escape(label_name)}</td><td>{outcome['labels'][label_name]}</td><td>{estimate(rate)}</td></tr>")
+                parts.append("</tbody></table></div>")
+            parts.append("<p>Same-output label agreement: " + estimate(row["agreement"])
+                         + f"; {row['agreement']['excluded_abstentions']} excluded for abstention.</p></details>")
+        parts.append("<details><summary>Matched model contrasts</summary>")
+        for contrast in summary["contrasts"]:
+            label = condition_label(contrast["hosted_condition"]) + " versus " + condition_label(contrast["local_condition"])
+            parts.append(f"<h4>{html.escape(label)}</h4><p>{contrast['pairs']} matched links; "
+                         f"{html.escape(contrast['event'])}, hosted minus local.</p>")
+            for judge in ("cascade", "haiku"):
+                rate = contrast[judge]
+                parts.append(f"<p>{judge.title()}: {estimate(rate)}; {rate['excluded_abstentions']} abstained pairs.</p>")
+        parts.append("</details>" + self._render_generation_conditions(doc))
+        parts.extend(f"<p class='note'>{html.escape(note)}</p>" for note in doc["limitations"])
+        return "".join(parts) + "</div>"
 
     def _stats_report_index_badge(self, report: Mapping[str, Any]) -> str:
         """Compact validation status for an unlinked report; never a chart."""
