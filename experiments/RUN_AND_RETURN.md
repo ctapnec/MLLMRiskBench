@@ -2253,6 +2253,26 @@ receipt only after that probe completes, then retain a successor program with
 the exact receipt locators for later canary/measured jobs. No input, output
 allowance or monetary cap increases, and completed probes are not called again.
 
+Pilot partitions must preserve the original source's multi-record clusters.
+For example, different HoliSafe questions can share one image: selecting only
+one question does not form a complete source cluster. The preparer keeps all
+selected inputs from such a multi-record cluster together, removes them from
+the measured partition, and derives call caps from the actual group size.
+Different retained conversations for a single source record may remain
+separate jobs because each still contains that whole one-record cluster.
+Invalid partitions are rejected before provider token counting. A repair to
+job grouping does not authorize new inputs, repeat completed responses, or
+require replacing unchanged acquisition receipts.
+
+The transport-probe purpose also fixes one query and one turn per source
+record. A multi-record pilot containing several retained conversations per
+record must therefore use one existing input per record for its transport
+probe, with any additional variants in a disjoint diagnostic-canary job.
+Both jobs must still contain complete original record clusters. Validate that
+the remaining variants cover every record in the cluster before deriving
+their purpose-specific receipts; never increase the probe's query/turn limit
+or repeat an already completed input to fill a missing record.
+
 Concurrent preparation and status readers share the short monetary-ledger
 transaction lock. Contention waits for at most 30 seconds; a transaction body
 or provider request is never replayed by this wait. Target and judge circuit

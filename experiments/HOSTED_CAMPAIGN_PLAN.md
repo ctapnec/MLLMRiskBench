@@ -442,6 +442,15 @@ exact served identity, billed tokens, effective price and spend.
 
 Use a small fixed technical pilot, normally three selected text inputs and up
 to two selected images where supported, all charged inside the table's caps.
+The selected pilot records are seeds for complete source-record groups, not
+permission to split a shared-image cluster. If several source questions share
+one image, retain all selected inputs from that multi-record cluster in one
+pilot job and remove those inputs from the measured partition. Its actual call
+count can therefore exceed the number of pilot seeds, without increasing the
+route's total allocation. Distinct conversations for a single source record
+remain independently partitionable. Report diagnostic and measured support
+separately, and do not describe several questions about one image as several
+independent images.
 Include a short task, a reasoning-demanding task and a longer-input task; no
 extra prompt rewriting, target answer retry or security-outcome tuning is
 allowed. Record visible-answer presence, finish reason, total output tokens,
