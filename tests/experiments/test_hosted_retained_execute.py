@@ -111,6 +111,43 @@ def test_target_money_settles_after_checkpoint_and_resume_never_reissues(tmp_pat
     assert current_retained_execution_admission() is None
 
 
+@pytest.mark.parametrize("read_rate,write_rate,cached,written,expected_cost", [
+    ("0.5", None, 0, 0, 88),
+    ("0.5", None, 2, 0, 82),
+    (None, "3", 0, 1, 90),
+    (None, "3", 1, 0, None),
+    ("0.5", None, 0, 1, None),
+])
+def test_zero_cache_usage_needs_no_rate_and_resume_never_rebills(
+    tmp_path, monkeypatch, read_rate, write_rate, cached, written, expected_cost,
+):
+    points, attacker, target, calls, admission = _setup(tmp_path)
+    admission.prices.update(cache_read=read_rate, cache_write=write_rate)
+    generate = target.generate
+
+    def with_cache_usage(dialog, *, seed=None):
+        response = generate(dialog, seed=seed)
+        response.tokens.update(cached_input=cached, cache_write_input=written)
+        return response
+
+    monkeypatch.setattr(target, "generate", with_cache_usage)
+    checkpoint = tmp_path / "responses.jsonl"
+    _runner(attacker, target, admission).run(
+        points, on_response=lambda row: Runner.append_checkpoint(checkpoint, row),
+    )
+    state = admission.budget.snapshot()["pools"]["openai:target"]
+    assert state["unresolved_attempts"] == 0
+    if expected_cost is None:
+        assert state["unknown_usage_attempts"] == 2
+        assert state["reserved_exposure_microusd"] == 20000
+    else:
+        assert state["unknown_usage_attempts"] == 0
+        assert state["settled_cost_microusd"] == expected_cost
+    resumed = _runner(attacker, target, admission)
+    resumed.run(points, response_records=Runner.load_response_checkpoint(checkpoint))
+    assert len(calls) == len(resumed.responses) == 2
+
+
 def test_peak_funded_route_does_not_release_an_assumed_off_peak_discount(tmp_path):
     points, attacker, target, calls, admission = _setup(tmp_path)
     admission.prices.update(reservation_input="4", reservation_output="12",

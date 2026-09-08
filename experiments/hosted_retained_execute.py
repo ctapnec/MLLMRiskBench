@@ -197,10 +197,14 @@ class _Admission:
             elif "cached_input" in tokens and "cache_write_input" in tokens:
                 cached, written = tokens["cached_input"], tokens["cache_write_input"]
                 if (type(cached) is int and type(written) is int and min(cached, written) >= 0
-                    and cached + written <= tokens["input"]):
+                    and cached + written <= tokens["input"]
+                    and (cached == 0 or self.prices.get("cache_read") is not None)
+                    and (written == 0 or self.prices.get("cache_write") is not None)):
+                    # Providers may omit a price for an unused cache operation.
+                    # Zero tokens need no rate; positive usage still does.
                     total = (Decimal(tokens["input"] - cached - written) * Decimal(self.prices["input"])
-                             + Decimal(cached) * Decimal(self.prices["cache_read"])
-                             + Decimal(written) * Decimal(self.prices["cache_write"])
+                             + (Decimal(cached) * Decimal(self.prices["cache_read"]) if cached else Decimal(0))
+                             + (Decimal(written) * Decimal(self.prices["cache_write"]) if written else Decimal(0))
                              + Decimal(tokens["output"]) * Decimal(self.prices["output"]))
                     cost = int(total.to_integral_value(rounding=ROUND_CEILING))
         self.budget.settle(call_id, count, cost)
