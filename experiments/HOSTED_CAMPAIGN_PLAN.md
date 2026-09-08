@@ -111,6 +111,21 @@ authorize or execute a checkpoint retry. Exact resumed execution must preserve
 input identity, prior attempts, the remaining retry allowance and all monetary
 ceilings before a new physical request is admitted.
 
+The subsequent transient-network extension passed 31 focused rig cases,
+including the installed OpenAI and Anthropic SDK exception types. Its three
+reversed-fix network regressions fail. Unknown charges remain reserved for each
+physical attempt, and tight-budget cases stop before a retry can consume a
+different selected input's reservation. This is offline implementation
+verification, not evidence that the stopped Luna input has been retried.
+
+Haiku's actual-output matching completed at 21:14:54 UTC. All 176 eligible
+measured outputs have local counterparts across 81 distinct comparison inputs.
+The full 190-response measured population comprises those 176 candidates,
+12 nonevaluable setup turns and two source-authoritative classification rows.
+There are no missing joins, orphan rows or unexplained exclusions. Setup and
+source-task rows stay in execution coverage but are not common Haiku-judge
+candidates. This preliminary match does not spend or finalize judge selection.
+
 The frozen 144-condition historical report alone is insufficient: the four-lane,
 7,606-input current-profile GraySwan RR supplement, its separate validated
 analysis, and the final input/condition reconciliation must also be terminal.
