@@ -18,6 +18,22 @@ at an exact source commit, increasing the managed inventory from 15 to 16. The
 dated readiness snapshot below remains a historical record of what was found on
 20 August.
 
+Execution update, 8 September 2026 at 13:30 UTC. All local target generation
+is terminal. The complete RR union contains 7,606 distinct assigned inputs,
+7,215 usable outputs and 391 retained failed outputs, with no repeated completed
+response. There are 7,604 scoring records and two explicitly retained invalid
+AirBench classifier outputs; every assigned scoring input was attempted.
+The `72b13e1` retry completed R-Judge's 100 inputs and GPTGeoChat's 2,020 inputs.
+Both GPUs have no remaining compute owner. The final RR analysis passed its
+input/source validation but failed during Level-1 export because the command
+omitted the existing bound live-attestation inputs. The focused `7c34451` fix
+forwards those exact receipts within each execution-revision stratum and gives
+each fresh export its own job directory. Eight affected rig tests, Ruff and two
+reversals pass. A fresh read-only analysis is running; no target or judgment is
+regenerated. Final publication, deployment and the hosted handoff remain pending.
+The following dated observations are retained history, not additional queued
+model work.
+
 Execution status, 5 September 2026. Gates 0 through 5 are met. The measured
 primary-model recovery inventory is terminal; the four current-policy GraySwan
 RR lanes remain unfinished. Its existing readiness profile passes 10/10 text

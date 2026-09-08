@@ -2132,6 +2132,16 @@ the old worker's counters with its exact execution source, including retained
 rows from failed units. Do not replace those historical counters with the new
 checkpoint-inclusive count.
 
+The RR Level-1 exporter forwards the live-attestation path and paired SHA-256
+from each validated measured state, deduplicating shared receipt bytes within
+each execution-revision stratum. The existing Level-1 binder still checks the
+exact grid-bound receipt and rejects missing, changed or out-of-cohort inputs.
+Do not derive a new live attestation for historical analysis. A corrected
+analysis uses a fresh `--out`; its Jobs control directory is
+`runs/engineering/<output-name>-control`. Keep an earlier failed export and
+its task log intact. Retrying analysis never authorizes another target or
+judge call.
+
 The template retry's retained error may name the target as either the original
 alias or `alias@revision`. Match only the independently pinned RR revision;
 never strip or ignore an arbitrary revision suffix. Both the zero-measured
