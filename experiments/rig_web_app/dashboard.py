@@ -2626,12 +2626,13 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
                     ))
             stability_chart = (
                 "<h4 data-chart='model-stability-failed-output'>"
-                "Model stability - failed-output rate</h4>"
+                "Response availability - failed-output rate</h4>"
                 + self._bar_chart(stability_bars)
-                + "<p class='note'>Failed or missing model outputs are retained "
-                "as coverage failures and excluded from security-rate denominators.</p>"
+                + "<p class='note'>Missing responses include model-output and infrastructure failures. "
+                "This all-cause coverage rate is not an intrinsic model-stability estimate. "
+                "Missing responses are retained in coverage and excluded from security-rate denominators.</p>"
                 if stability_bars
-                else "<h4>Model stability</h4><p class='note'>N/A: this older "
+                else "<h4>Response availability</h4><p class='note'>N/A: this older "
                 "report does not carry completed and missing-response counts.</p>"
             )
             table_rows = []
@@ -2732,7 +2733,7 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
                 "<th>corpus_arm</th><th>attacker</th><th>defense</th>"
                 "<th>value</th><th>ci_low, ci_high</th><th>n_records</th>"
                 "<th>n_clusters</th><th>decided/completed</th>"
-                "<th>model stability: failed/missing responses</th>"
+                "<th>failed/missing responses (all causes)</th>"
                 "<th>model queries/reference uses</th><th>evidence</th>"
                 "<th>reliability</th></tr>"
                 + "".join(table_rows)
