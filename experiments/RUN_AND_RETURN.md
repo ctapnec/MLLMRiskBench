@@ -2419,6 +2419,13 @@ funded slot and unknown charge remain in force; recovery cannot restart its
 four-attempt lifetime allowance or consume another input's first reservation.
 The older transport-only contract continues to reject parser failures.
 
+If that same checkpoint also contains usable responses, use execution-plan
+version 5 and restrict the affected job's retained-input selector to unfinished
+IDs. Keep its original complete selection and monetary slots in the program.
+Admission reconciles the selected remaining IDs with the unchanged checkpoint's
+usable records. Do not regenerate a good earlier turn or rewrite its provenance
+merely because a later turn in that job failed parsing.
+
 ```bash
 python -m experiments.hosted_retained_execute \
   --program /resolved/path/hosted-program.json \

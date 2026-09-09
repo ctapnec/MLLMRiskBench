@@ -289,6 +289,15 @@ source/request identity and the clean repaired target implementation. The
 monetary ledger, not an old conservative transport-count estimate, supplies
 the used physical-attempt prefix. Ordinary paid answer retries remain zero.
 
+For a checkpoint containing both usable responses and the reviewed parser
+failure, `ura-hosted-retained-execution-plan/5` preserves the usable native
+records as completed inputs. Jobs select only remaining retained input IDs,
+including the failed input. Admission verifies that those jobs and the exact
+checkpoint-backed completed inputs form the original funded selection once,
+without overlap or omissions. Counter reconciliation reads the unchanged old
+records; it does not rewrite their run IDs or claim new generations. Earlier
+contracts do not acquire this mixed-checkpoint completion behavior.
+
 ## Live route and transport attestation
 
 `python -m experiments.live_attestation` strictly revalidates one completed,

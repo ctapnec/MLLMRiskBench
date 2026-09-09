@@ -29,6 +29,7 @@ SCHEMA = "ura-hosted-retained-execution-plan/1"
 COUNTED_INPUT_SCHEMA = "ura-hosted-retained-execution-plan/2"
 TRANSPORT_RECOVERY_SCHEMA = "ura-hosted-retained-execution-plan/3"
 ADAPTER_RECOVERY_SCHEMA = "ura-hosted-retained-execution-plan/4"
+ADAPTER_PREFIX_RECOVERY_SCHEMA = "ura-hosted-retained-execution-plan/5"
 COUNTED_INPUT_POLICY = "counted_requests_within_route_reservation_v1"
 TOKEN_COUNT_POLICY = "surface_specific_counts_with_declared_estimates_v1"
 _HEX40 = re.compile(r"[0-9a-f]{40}\Z")
@@ -51,7 +52,9 @@ def _cost(input_tokens: int, output_tokens: int, prices: Mapping[str, Any]) -> i
 
 def _validate_input_budget(program: Mapping[str, Any], route: Mapping[str, Any]) -> None:
     """Keep the original per-call contract or fund the explicit counted successor."""
-    counted = program.get("schema") in {COUNTED_INPUT_SCHEMA, TRANSPORT_RECOVERY_SCHEMA, ADAPTER_RECOVERY_SCHEMA}
+    counted = program.get("schema") in {
+        COUNTED_INPUT_SCHEMA, TRANSPORT_RECOVERY_SCHEMA, ADAPTER_RECOVERY_SCHEMA, ADAPTER_PREFIX_RECOVERY_SCHEMA,
+    }
     if counted:
         if program.get("input_budget_policy") != COUNTED_INPUT_POLICY:
             raise ValueError("counted input allocation policy differs")
@@ -119,7 +122,7 @@ class _Admission:
                 receipt=self.requests[key], budget=budget,
             )
         repairs = program.get("adapter_recoveries", {})
-        if repairs and program.get("schema") != ADAPTER_RECOVERY_SCHEMA:
+        if repairs and program.get("schema") not in {ADAPTER_RECOVERY_SCHEMA, ADAPTER_PREFIX_RECOVERY_SCHEMA}:
             raise ValueError("reviewed adapter recovery requires its explicit execution contract")
         if not isinstance(repairs, dict) or not set(repairs) <= set(program.get("requests", self.requests)):
             raise ValueError("reviewed adapter recovery names an unfunded input")
@@ -432,6 +435,53 @@ def _fresh_control_root(work_root: Path, control_root: Path) -> Path:
     return control
 
 
+def _reviewed_completed_responses(program: Mapping[str, Any], budget: AttemptBudget) -> dict[str, dict]:
+    """Retain usable native prefix records without regenerating or relabelling them."""
+    if program.get("schema") != ADAPTER_PREFIX_RECOVERY_SCHEMA:
+        return {}
+    from experiments import run_matrix
+    from ura.data_models import Attempt, Response
+    from ura.runner import Runner
+
+    completed = {}
+    for key, recovery in program.get("adapter_recoveries", {}).items():
+        descriptor = recovery["checkpoint"]
+        path = Path(descriptor["path"])
+        if (not path.is_absolute() or path.resolve(strict=True) != path
+                or not stat.S_ISREG(path.lstat().st_mode) or path.stat().st_size > 64 * 1024 * 1024):
+            raise ValueError("reviewed response prefix requires a bounded regular checkpoint")
+        data = path.read_bytes()
+        if descriptor["sha256"] != hashlib.sha256(data).hexdigest() or descriptor["bytes"] != len(data):
+            raise ValueError("reviewed response prefix checkpoint bytes changed")
+        owners = [job for job in program["jobs"] if key in job["input_ids"]]
+        if len(owners) != 1:
+            raise ValueError("reviewed response prefix lacks its exact recovery job")
+        args = run_matrix.build_parser().parse_args(owners[0]["argv"])
+        config, _artifact = run_matrix._load_attacker_config(args.attacker_config, ["replay"], args.attacker_config_sha256)
+        attacker = ReplayAttacker(**config["replay"])
+        entries = {entry["origin"]["selection"]["input_identity_sha256"]: entry
+                   for entry in attacker._retained["entries"]}
+        for record in Runner.load_response_checkpoint(path).values():
+            response = Response.model_validate(record["response"])
+            if (response.raw.get("model_stability_status") == "failed_output"
+                    or response.raw.get("target_input_status") == "incompatible"):
+                continue
+            attempt = Attempt.model_validate(record["attempt"])
+            origin = attempt.params.get("retained_origin", {})
+            identity = origin.get("selection", {}).get("input_identity_sha256")
+            entry = entries.get(identity)
+            if (entry is None or origin != entry["origin"] or identity not in program["requests"]
+                or retained_dialog_sha256(attempt.rendered_input) != origin["delivered_input_sha256"]
+                or response.attempt_id != attempt.id or response.target != program["target"]
+                or budget.reserved_attempt_count(program["requests"][identity]["call_id"]) < 1
+                or not (_typed_provider_refusal(response) or any((turn.content or "").strip() for turn in response.output_turns))):
+                raise ValueError("reviewed response prefix differs from its funded input")
+            if identity in completed and completed[identity] != record:
+                raise ValueError("reviewed response prefixes contain conflicting native records")
+            completed[identity] = record
+    return completed
+
+
 def _retained_execution_counts(program: Mapping[str, Any], budget: AttemptBudget) -> tuple[int, int]:
     """Count logical target starts and durable usable responses for Jobs only."""
     from experiments import run_matrix
@@ -469,6 +519,8 @@ def _retained_execution_counts(program: Mapping[str, Any], budget: AttemptBudget
             # its paid checkpoint. Merge exact duplicates; never hide its tail.
             for record in Runner.load_response_checkpoint(path).values():
                 register(record["response"])
+    for record in _reviewed_completed_responses(program, budget).values():
+        register(record["response"])
     successful = sum(
         row.get("raw", {}).get("model_stability_status") != "failed_output"
         and row.get("raw", {}).get("target_input_status") != "incompatible"
@@ -602,7 +654,7 @@ def build_matched_judge_requests(*, programs: Sequence[dict], budget: AttemptBud
 def _validated_jobs(program: dict, budget: AttemptBudget) -> list[_Admission]:
     """Rebuild fixed input selection from complete historical and RR evidence."""
     if (not isinstance(program, dict) or program.get("schema") not in {
-        SCHEMA, COUNTED_INPUT_SCHEMA, TRANSPORT_RECOVERY_SCHEMA, ADAPTER_RECOVERY_SCHEMA,
+        SCHEMA, COUNTED_INPUT_SCHEMA, TRANSPORT_RECOVERY_SCHEMA, ADAPTER_RECOVERY_SCHEMA, ADAPTER_PREFIX_RECOVERY_SCHEMA,
     }
         or program.get("budget_plan_sha256") != budget.expected_plan_sha256
         or program.get("token_count_policy") != TOKEN_COUNT_POLICY
@@ -615,7 +667,7 @@ def _validated_jobs(program: dict, budget: AttemptBudget) -> list[_Admission]:
     elif recovery is not None:
         raise ValueError("historical execution contracts cannot add transport recovery")
     repairs = program.get("adapter_recoveries")
-    if program["schema"] == ADAPTER_RECOVERY_SCHEMA:
+    if program["schema"] in {ADAPTER_RECOVERY_SCHEMA, ADAPTER_PREFIX_RECOVERY_SCHEMA}:
         if not isinstance(repairs, dict) or not repairs:
             raise ValueError("reviewed adapter recovery contract requires its retained failures")
     elif repairs is not None:
@@ -681,6 +733,7 @@ def _validated_jobs(program: dict, budget: AttemptBudget) -> list[_Admission]:
         prices.update(settlement_input=prices["reservation_input"],
                       settlement_output=prices["reservation_output"])
     requests = program["requests"]
+    carried = _reviewed_completed_responses(program, budget)
     planned_ids, observed_ids, outputs, names = None, [], set(), set()
     checked_plan = None
     admitted = []
@@ -728,7 +781,9 @@ def _validated_jobs(program: dict, budget: AttemptBudget) -> list[_Admission]:
         if plan["target_condition"]["target_spec"] != program["target"]:
             raise ValueError("retained input selection names a different hosted target")
         by_source = {cell["run_id"]: cell for cell in cells}
-        for entry in attacker._selected_entries:
+        carried_entries = [entry for entry in attacker._retained["entries"]
+                           if entry["origin"]["selection"]["input_identity_sha256"] in carried]
+        for entry in [*attacker._selected_entries, *carried_entries]:
             origin = entry["origin"]
             source = origin["source_membership"]
             if by_source[source["run_id"]]["attempts"][source["attempt_id"]] != origin["original_attempt"]:
@@ -765,8 +820,9 @@ def _validated_jobs(program: dict, budget: AttemptBudget) -> list[_Admission]:
                                requests={key: requests[key] for key in job["input_ids"]}, prices=prices)
         admission.validate_cli(job["argv"], args)
         admitted.append(admission)
-    if (len(observed_ids) != len(set(observed_ids)) or set(observed_ids) != set(planned_ids or [])
-        or set(requests) != set(observed_ids) or len(observed_ids) > route["paid_call_cap"]
+    if (len(observed_ids) != len(set(observed_ids)) or set(observed_ids) & set(carried)
+        or set(observed_ids) | set(carried) != set(planned_ids or [])
+        or set(requests) != set(observed_ids) | set(carried) or len(requests) > route["paid_call_cap"]
         or not pilot_ids or not any(job["purpose"] == "measured_run" for job in jobs)):
         raise ValueError("fixed pilot and measured calls must partition the complete selected population once")
     # Pilot membership is fixed from inputs, never picked/replaced after output.

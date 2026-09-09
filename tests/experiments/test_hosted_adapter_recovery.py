@@ -19,7 +19,7 @@ from ura.runner import Runner
 from ura.targets import api
 
 
-def _prefix(tmp_path, monkeypatch, provider, *, tight=False):
+def _prefix(tmp_path, monkeypatch, provider, *, tight=False, after_usable=False):
     fixtures = runpy.run_path(str(Path(__file__).parents[1] / 'ura/test_target_regressions.py'))
     points, _original, _plan, _bindings, value, config = _fixture(tmp_path, adaptive=True)
     ids = [row['origin']['selection']['input_identity_sha256'] for row in value['entries']]
@@ -57,7 +57,12 @@ def _prefix(tmp_path, monkeypatch, provider, *, tight=False):
         for key, entry in zip(ids, value['entries'], strict=True)}
     program = {'target': target.name, 'provider': provider, 'max_output_tokens': target.max_tokens,
                'requests': requests}
-    job = {'purpose': 'measured_run', 'input_ids': ids, 'argv': []}
+    config_path = tmp_path / 'attacker.json'
+    config_path.write_text(json.dumps({'replay': {**config, 'retained_input_ids': ids}}))
+    job = {'purpose': 'measured_run', 'input_ids': ids, 'argv': [
+        '--out', str(tmp_path / 'successor'), '--attacker-config', str(config_path),
+        '--attacker-config-sha256', hashlib.sha256(config_path.read_bytes()).hexdigest()]}
+    program['jobs'] = [job]
     prices = {'input': '2', 'output': '6'}
     original = subject._Admission(program=program, job=job, budget=budget, attacker=attacker,
                                   requests=requests, prices=prices)
@@ -67,7 +72,9 @@ def _prefix(tmp_path, monkeypatch, provider, *, tight=False):
     def old_parser(dialog, *, seed=None):
         # Exercise the real adapter/physical reservation, then reproduce the
         # historical parser exception whose original payload was not retained.
-        generate(dialog, seed=seed)
+        response = generate(dialog, seed=seed)
+        if after_usable and len(calls) == 1:
+            return response
         raise error
 
     with monkeypatch.context() as patch:
@@ -76,16 +83,19 @@ def _prefix(tmp_path, monkeypatch, provider, *, tight=False):
             _runner(attacker, target, original).run(
                 points, on_response=lambda row: Runner.append_checkpoint(checkpoint, row))
     records = Runner.load_response_checkpoint(checkpoint)
-    assert len(records) == len(calls) == 1
-    attempt_id, record = next(iter(records.items()))
+    assert len(records) == len(calls) == (2 if after_usable else 1)
+    failed = [(key, row) for key, row in records.items() if row['response']['raw'].get('model_stability_status') == 'failed_output']
+    assert len(failed) == 1
+    attempt_id, record = failed[0]
+    failed_key = record['attempt']['params']['retained_origin']['selection']['input_identity_sha256']
     raw = record['response']['raw']
     assert raw['model_stability_category'] == 'unusable_output'
     assert raw['transport_attempt_count'] == 4 and budget.reserved_attempt_count(ids[0]) == 1
     budget.root.joinpath('paid-circuit.json').rename(tmp_path / 'reviewed-stop.json')
     data = checkpoint.read_bytes()
-    program.update(schema=subject.ADAPTER_RECOVERY_SCHEMA, adapter_recoveries={ids[0]: {
+    program.update(schema=subject.ADAPTER_RECOVERY_SCHEMA, adapter_recoveries={failed_key: {
         'checkpoint': {'path': str(checkpoint), 'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()},
-        'attempt_id': attempt_id, 'prior_attempts': 1, 'request_sha256': requests[ids[0]]['request_sha256'],
+        'attempt_id': attempt_id, 'prior_attempts': 1, 'request_sha256': requests[failed_key]['request_sha256'],
         'repair_commit': 'a' * 40, 'error_type': type(error).__name__, 'error_reason': str(error),
     }})
     checked = []
@@ -172,8 +182,66 @@ def test_complete_program_admits_only_explicit_adapter_recovery_contract(tmp_pat
                    adapter_recoveries={key: {'fixture': 'checked separately against real parser checkpoints'}})
     reviewed = []
     monkeypatch.setattr(subject, '_validate_adapter_recovery', lambda value, **kwargs: reviewed.append(value) or 1)
+    monkeypatch.setattr(subject, '_reviewed_completed_responses', lambda *args: {})
     assert len(subject._validated_jobs(program, budget)) == 2
     assert reviewed == [program['adapter_recoveries'][key]]
     program['schema'] = subject.COUNTED_INPUT_SCHEMA
     with pytest.raises(ValueError, match='historical execution contracts'):
         subject._validated_jobs(program, budget)
+
+
+def test_mixed_parser_checkpoint_preserves_usable_prefix_and_retries_only_failed_input(tmp_path, monkeypatch):
+    points, _attacker, target, calls, original, program, prior, _checked = _prefix(
+        tmp_path, monkeypatch, 'openai', after_usable=True)
+    program['schema'] = subject.ADAPTER_PREFIX_RECOVERY_SCHEMA
+    failed = next(iter(program['adapter_recoveries']))
+    job = program['jobs'][0]
+    config_path = Path(job['argv'][job['argv'].index('--attacker-config') + 1])
+    config = json.loads(config_path.read_text())
+    config['replay']['retained_input_ids'] = [failed]
+    selected = tmp_path / 'remaining-attacker.json'
+    selected.write_text(json.dumps(config))
+    job['input_ids'] = [failed]
+    job['argv'] = ['--out', str(tmp_path / 'successor'), '--attacker-config', str(selected),
+                   '--attacker-config-sha256', hashlib.sha256(selected.read_bytes()).hexdigest()]
+    assert subject._retained_execution_counts(program, original.budget) == (2, 1)
+    carried = subject._reviewed_completed_responses(program, original.budget)
+    assert len(carried) == 1 and failed not in carried
+    attacker = ReplayAttacker(**config['replay'])
+    admission = subject._Admission(program=program, job=job, budget=original.budget,
+        attacker=attacker, requests={failed: original.requests[failed]}, prices=original.prices)
+    output = tmp_path / 'successor'
+    output.mkdir()
+    checkpoint = output / 'cell.responses.checkpoint.jsonl'
+    _runner(attacker, target, admission).run(points, on_response=lambda row: Runner.append_checkpoint(checkpoint, row))
+    assert len(calls) == 3 and calls[1] == calls[2] and calls[0] != calls[2]
+    assert subject._retained_execution_counts(program, original.budget) == (2, 2)
+    assert (tmp_path / 'original.responses.checkpoint.jsonl').read_bytes() == prior
+    _runner(attacker, target, admission).run(points, response_records=Runner.load_response_checkpoint(checkpoint))
+    assert len(calls) == 3
+
+
+@pytest.mark.parametrize('mutation', ['digest', 'origin', 'target', 'unfunded'])
+def test_mixed_checkpoint_rejects_changed_usable_prefix(tmp_path, monkeypatch, mutation):
+    _points, _attacker, _target, calls, original, program, _prior, _checked = _prefix(
+        tmp_path, monkeypatch, 'openai', after_usable=True)
+    program['schema'] = subject.ADAPTER_PREFIX_RECOVERY_SCHEMA
+    recovery = next(iter(program['adapter_recoveries'].values()))
+    if mutation == 'digest':
+        recovery['checkpoint']['sha256'] = '0' * 64
+    else:
+        rows = [json.loads(line) for line in Path(recovery['checkpoint']['path']).read_text().splitlines()]
+        if mutation == 'origin':
+            rows[0]['attempt']['params']['retained_origin']['delivered_input_sha256'] = '0' * 64
+        elif mutation == 'target':
+            rows[0]['response']['target'] = 'openai:different'
+        else:
+            key = rows[0]['attempt']['params']['retained_origin']['selection']['input_identity_sha256']
+            program['requests'].pop(key)
+        path = tmp_path / 'changed-prefix.responses.checkpoint.jsonl'
+        path.write_text(''.join(json.dumps(row) + '\n' for row in rows))
+        data = path.read_bytes()
+        recovery['checkpoint'] = {'path': str(path), 'sha256': hashlib.sha256(data).hexdigest(), 'bytes': len(data)}
+    with pytest.raises(ValueError):
+        subject._retained_execution_counts(program, original.budget)
+    assert len(calls) == 2
