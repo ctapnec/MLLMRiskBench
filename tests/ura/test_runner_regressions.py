@@ -1246,6 +1246,7 @@ def test_probe_producer_and_measured_run_bind_one_fake_live_route(
     probe_root = tmp_path / "probe"
     common = [
         "--api", target_spec, *api_args,
+        "--target-answer-retries", "0",
         "--attackers", "replay", "--judges", "rules",
         "--corpora", "synth", "--limit", "1", "--sample-seed", "0",
         "--max-queries", "1", "--max-turns", "1", *_finite_budget_args(),
