@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import copy
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -83,6 +84,99 @@ def test_preparation_creates_funded_disjoint_pilot_and_measured_program_without_
     assert len(ids) == len(set(ids)) == len(saved["requests"]) == 2
     budget = json.loads((tmp_path / "prepared" / "budget" / "plan.json").read_text())
     assert len(budget["planned_calls"]) == 6
+
+
+def _distinct_request(tmp_path, monkeypatch):
+    from experiments import run_matrix
+    capture = {}
+    request, _ = _request(tmp_path, monkeypatch, extra_points=8, source_capture=capture)
+    sources = request["sources"]
+    budget = json.loads(Path(sources["budget_projection"]["path"]).read_text())
+    api = json.loads(Path(sources["api_config"]["path"]).read_text())
+    old_replay = json.loads(Path(request["routes"][0]["replay_artifacts"][0]["path"]).read_text())
+    predecessor = old_replay["plan"]
+    descriptor = _save(tmp_path / "original-plan.json", predecessor)
+    cells, inventory = subject.executor._validated_local_cells({})
+    normalized, _ = run_matrix._load_api_config(sources["api_config"]["path"], [request["routes"][0]["target"]], sources["api_config"]["sha256"])
+    target = run_matrix.build_target(request["routes"][0]["target"], api_config=normalized.get(request["routes"][0]["target"]))
+    bindings = {"budget": budget, "budget_descriptor": subject._portable(sources["budget_projection"]),
+                "api_config": api, "api_descriptor": subject._portable(sources["api_config"]),
+                "media_index": {}, "local_inventory_descriptor": subject._portable(inventory)}
+    candidates = subject.inputs.candidates_from_cells(cells)
+    builder = subject.inputs.provider_request_builder(target, {})
+    plan = subject.inputs.build_distinct_plan(candidates=candidates, predecessor=predecessor,
+        predecessor_descriptor=descriptor, source_prefix_cap=len(candidates), call_cap=5,
+        request_builder=builder, **bindings)
+    replay = subject.inputs.materialize_replay(plan, cells=cells,
+        source_corpora={capture["cell"]["run_id"]: capture["points"]}, corpus="retained-corpus",
+        request_builder=builder, **bindings)
+    request["routes"][0]["replay_artifacts"] = [_save(tmp_path / "distinct-replay.json", replay)]
+    old_root = tmp_path / "program-money"
+    old_plan = json.loads((old_root / "plan.json").read_text())
+    old_ledger = json.loads((old_root / "ledger.json").read_text())
+    allocation = {"schema": "ura-hosted-additional-funding/1",
+        "previous_budget_plan": {"path": str(old_root / "plan.json"),
+            "sha256": hashlib.sha256((old_root / "plan.json").read_bytes()).hexdigest(),
+            "bytes": (old_root / "plan.json").stat().st_size},
+        "previous_budget_ledger": {"path": str(old_root / "ledger.json"),
+            "sha256": hashlib.sha256((old_root / "ledger.json").read_bytes()).hexdigest(),
+            "bytes": (old_root / "ledger.json").stat().st_size},
+        "balances_microusd": dict(old_plan["provider_budgets_microusd"]),
+        "known_new_charges_microusd": dict.fromkeys(old_plan["provider_budgets_microusd"], 0),
+        "unposted_margin_microusd": dict.fromkeys(old_plan["provider_budgets_microusd"], 100000),
+        "minimum_reserves_microusd": {key: value // 5 for key, value in old_plan["provider_budgets_microusd"].items()},
+        "provider_budgets_microusd": {key: value - 1000000 for key, value in old_plan["provider_budgets_microusd"].items()},
+        "protected_haiku_microusd": 1000000,
+        "judging_inventory": _save(tmp_path / "local-judges.json", {"unjudged_rows": [
+            {"retained_row_sha256": "e" * 64}, {"retained_row_sha256": "f" * 64}]}),
+    }
+    sources["additional_funding"] = _save(tmp_path / "funding.json", allocation)
+    request.update(schema=subject.DISTINCT_INPUT_REQUEST_SCHEMA, input_budget_policy=subject.executor.COUNTED_INPUT_POLICY)
+    return request, old_plan, old_ledger
+
+
+def test_distinct_preparation_funds_all_local_answers_and_preserves_old_accounting(tmp_path, monkeypatch):
+    request, old_plan, old_ledger = _distinct_request(tmp_path, monkeypatch)
+    old_bytes = {name: (tmp_path / "program-money" / name).read_bytes() for name in ["plan.json", "ledger.json"]}
+    receipt = subject.prepare_campaign(request=request, request_descriptor={}, out_root=tmp_path / "prepared",
+                                       allow_network_counts=False)
+    program = json.loads(Path(receipt["programs"][0]["path"]).read_text())
+    assert program["schema"] == subject.executor.DISTINCT_INPUT_SCHEMA
+    assert receipt["target_calls"] == receipt["judge_calls"] == 0
+    assert all(set(row["judge_call_ids"]) == {"hosted"} for row in program["requests"].values())
+    budget = subject.AttemptBudget(tmp_path / "prepared/budget", receipt["budget"]["sha256"])
+    assert budget.call("judge-local-" + "e" * 64)["pool"] == "judge"
+    assert budget.call("judge-local-" + "f" * 64)["pool"] == "judge"
+    assert len(subject.executor._validated_jobs(program, budget)) >= 2
+    assert all((tmp_path / "program-money" / name).read_bytes() == value for name, value in old_bytes.items())
+    assert not old_ledger["attempts"] and old_plan["provider_budgets_microusd"]["openai"] == 40000000
+    changed = copy.deepcopy(program)
+    changed["schema"] = subject.executor.COUNTED_INPUT_SCHEMA
+    with pytest.raises(ValueError, match="historical execution"):
+        subject.executor._validated_jobs(changed, budget)
+
+
+@pytest.mark.parametrize("change", ["reserve", "balance", "margin", "old_ledger", "duplicates"])
+def test_distinct_funding_refuses_unavailable_money_or_changed_sources_before_counting(tmp_path, monkeypatch, change):
+    request, _old, _ledger = _distinct_request(tmp_path, monkeypatch)
+    descriptor = request["sources"]["additional_funding"]
+    value = json.loads(Path(descriptor["path"]).read_text())
+    if change == "reserve":
+        value["minimum_reserves_microusd"]["openai"] = 0
+    elif change == "balance":
+        value["balances_microusd"]["openai"] = 1000000
+    elif change == "margin":
+        value["unposted_margin_microusd"]["openai"] = 40000000
+    elif change == "old_ledger":
+        Path(value["previous_budget_ledger"]["path"]).write_text("{}")
+    else:
+        value["judging_inventory"] = _save(tmp_path / "duplicates.json", {"unjudged_rows": [
+            {"retained_row_sha256": "e" * 64}, {"retained_row_sha256": "e" * 64}]})
+    request["sources"]["additional_funding"] = _save(tmp_path / "changed-funding.json", value)
+    monkeypatch.setattr(subject, "count_request", lambda *a, **k: pytest.fail("counter reached"))
+    with pytest.raises(ValueError):
+        subject.prepare_campaign(request=request, request_descriptor={}, out_root=tmp_path / "prepared", allow_network_counts=True)
+    assert not (tmp_path / "prepared").exists()
 
 
 @pytest.mark.parametrize("target_spec", [

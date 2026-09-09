@@ -412,11 +412,32 @@ def _program(
     *,
     target_spec="openai:gpt-5.5",
     judge_rates=(1, 5),
+    extra_points=0,
+    source_capture=None,
 ):
     from test_hosted_campaign_budget import _api_config, _pricing, _budgets
     from experiments import hosted_campaign_budget as money, hosted_retained_inputs as materializer
     from experiments.hosted_request_tokens import count_request
     points, cell, _old_plan, _old_bindings, _value, _config = _fixture(tmp_path, adaptive=True)
+    if extra_points:
+        from ura.converters._common import canonical_converted_corpus_sha256
+        for number in range(extra_points):
+            point = points[0].model_copy(update={"id": f"extra-{number}",
+                "payload_text": f"Additional source question {number}",
+                "meta": {**points[0].meta, "source_cluster_id": f"extra-cluster-{number}"}})
+            points.append(point)
+            attempt = copy.deepcopy(cell["attempts"]["original-0"])
+            attempt.update(id=f"extra-{number}", datapoint_id=point.id)
+            attempt["params"]["source_cluster_id"] = point.meta["source_cluster_id"]
+            attempt["rendered_input"][-1]["content"] = point.payload_text
+            cell["attempts"][attempt["id"]] = attempt
+            cell["responses"][attempt["id"]] = {"output_turns": []}
+            cell["judgments"].append({"attempt_id": attempt["id"],
+                                     "raw": copy.deepcopy(cell["judgments"][0]["raw"])})
+        cell["manifest"]["dataset_hashes"]["corpus"] = canonical_converted_corpus_sha256(points)
+        cell["artifacts"]["attempts"].write_text("\n".join(json.dumps(row) for row in cell["attempts"].values()) + "\n")
+    if source_capture is not None:
+        source_capture.update(points=points, cell=cell)
     billing_provider = subject._billing_provider(target_spec.split(":", 1)[0])
     api = _api_config()
     api[target_spec]["temperature"] = None

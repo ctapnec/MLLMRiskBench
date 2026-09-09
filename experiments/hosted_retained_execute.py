@@ -30,6 +30,7 @@ COUNTED_INPUT_SCHEMA = "ura-hosted-retained-execution-plan/2"
 TRANSPORT_RECOVERY_SCHEMA = "ura-hosted-retained-execution-plan/3"
 ADAPTER_RECOVERY_SCHEMA = "ura-hosted-retained-execution-plan/4"
 ADAPTER_PREFIX_RECOVERY_SCHEMA = "ura-hosted-retained-execution-plan/5"
+DISTINCT_INPUT_SCHEMA = "ura-hosted-retained-execution-plan/6"
 COUNTED_INPUT_POLICY = "counted_requests_within_route_reservation_v1"
 TOKEN_COUNT_POLICY = "surface_specific_counts_with_declared_estimates_v1"
 _HEX40 = re.compile(r"[0-9a-f]{40}\Z")
@@ -54,6 +55,7 @@ def _validate_input_budget(program: Mapping[str, Any], route: Mapping[str, Any])
     """Keep the original per-call contract or fund the explicit counted successor."""
     counted = program.get("schema") in {
         COUNTED_INPUT_SCHEMA, TRANSPORT_RECOVERY_SCHEMA, ADAPTER_RECOVERY_SCHEMA, ADAPTER_PREFIX_RECOVERY_SCHEMA,
+        DISTINCT_INPUT_SCHEMA,
     }
     if counted:
         if program.get("input_budget_policy") != COUNTED_INPUT_POLICY:
@@ -658,10 +660,80 @@ def build_matched_judge_requests(*, programs: Sequence[dict], budget: AttemptBud
     return requests
 
 
-def _validated_jobs(program: dict, budget: AttemptBudget) -> list[_Admission]:
+def _additional_funding(descriptor: Mapping, configured: Mapping, *, budget_plan: dict | None = None) -> dict:
+    """Keep new allocation below reported remaining credits and original reserves.
+
+    The predecessor accounting remains immutable, including unknown charges.
+    This is a separately bounded allocation after the reported balance snapshot,
+    never a reset or settlement of the predecessor ledger.
+    """
+    value, _ = _bound(descriptor)
+    fields = {"schema", "previous_budget_plan", "previous_budget_ledger", "balances_microusd",
+              "known_new_charges_microusd", "minimum_reserves_microusd", "provider_budgets_microusd",
+              "unposted_margin_microusd", "protected_haiku_microusd", "judging_inventory"}
+    if set(value) != fields or value["schema"] != "ura-hosted-additional-funding/1":
+        raise ValueError("additional funding fields differ")
+    old_plan, _ = _bound(value["previous_budget_plan"])
+    old_ledger, _ = _bound(value["previous_budget_ledger"])
+    if old_ledger.get("plan_sha256") != value["previous_budget_plan"]["sha256"]:
+        raise ValueError("additional funding predecessor ledger differs")
+    old = AttemptBudget(Path(value["previous_budget_plan"]["path"]).parent, old_ledger["plan_sha256"])
+    if any(pool["unresolved_attempts"] for pool in old.snapshot()["pools"].values()):
+        raise ValueError("additional funding cannot overlap an unresolved predecessor attempt")
+    for field in ("balances_microusd", "known_new_charges_microusd", "minimum_reserves_microusd",
+                  "provider_budgets_microusd", "unposted_margin_microusd"):
+        if not isinstance(value[field], dict) or set(value[field]) != set(configured):
+            raise ValueError("additional funding provider inventory differs")
+    for provider, original in configured.items():
+        balance = _integer(value["balances_microusd"][provider], "reported remaining balance")
+        charges = _integer(value["known_new_charges_microusd"][provider], "known later charges", zero=True)
+        reserve = _integer(value["minimum_reserves_microusd"][provider], "protected original reserve", zero=True)
+        margin = _integer(value["unposted_margin_microusd"][provider], "unposted charge margin", zero=True)
+        allocation = _integer(value["provider_budgets_microusd"][provider], "additional provider allocation")
+        original_budget = original["configured_budget_microusd"]
+        if (old_plan["provider_budgets_microusd"][provider] != original_budget
+            or reserve < original_budget - original_budget * 4 // 5
+            or allocation > balance - charges
+            or allocation * 4 // 5 > balance - charges - reserve - margin):
+            raise ValueError("additional funding would consume protected or unavailable credits")
+    inventory, _ = _bound(value["judging_inventory"])
+    rows = inventory.get("unjudged_rows")
+    if not isinstance(rows, list) or not rows:
+        raise ValueError("additional funding needs its exact existing local judge population")
+    keys = [row.get("retained_row_sha256") for row in rows if isinstance(row, dict)]
+    if (len(keys) != len(rows) or len(set(keys)) != len(keys)
+        or any(not isinstance(key, str) or not re.fullmatch(r"[0-9a-f]{64}", key) for key in keys)):
+        raise ValueError("additional local judge population has invalid or duplicate identities")
+    if budget_plan is not None:
+        if (budget_plan["provider_budgets_microusd"] != value["provider_budgets_microusd"]
+            or budget_plan["protected_haiku_microusd"] != value["protected_haiku_microusd"]
+            or {row["call_id"] for row in budget_plan["planned_calls"]}
+                & {row["call_id"] for row in old_plan["planned_calls"]}):
+            raise ValueError("additional budget differs or repeats predecessor slots")
+    return value
+
+
+def _distinct_judge_ids(plan: dict, key: str, candidates: Sequence[dict]) -> dict[str, str]:
+    """One funded future slot per grading context, independent of source aliases."""
+    group = next(row for row in plan["selection"]["request_groups"]
+                 if row["representative_input_sha256"] == key)
+    by_id = {row["input_identity_sha256"]: row for row in candidates}
+    def context(identity):
+        return _sha({field: value for field, value in by_id[identity].items()
+                     if field not in {"input_identity_sha256", "converted_corpus_sha256", "local_sources", "rendered_input"}})
+    target = plan["target_condition"]["target_spec"]
+    result = {"hosted": "judge-hosted-" + _sha({"target": target, "input_id": key})}
+    for identity in sorted({context(identity) for identity in group["source_input_ids"]} - {context(key)}):
+        result["hosted-context-" + identity] = "judge-hosted-context-" + _sha({
+            "target": target, "request_sha256": group["request_sha256"], "grading_context": identity})
+    return result
+
+
+def _validated_jobs(program: dict, budget: AttemptBudget, *, local_context: tuple | None = None) -> list[_Admission]:
     """Rebuild fixed input selection from complete historical and RR evidence."""
     if (not isinstance(program, dict) or program.get("schema") not in {
         SCHEMA, COUNTED_INPUT_SCHEMA, TRANSPORT_RECOVERY_SCHEMA, ADAPTER_RECOVERY_SCHEMA, ADAPTER_PREFIX_RECOVERY_SCHEMA,
+        DISTINCT_INPUT_SCHEMA,
     }
         or program.get("budget_plan_sha256") != budget.expected_plan_sha256
         or program.get("token_count_policy") != TOKEN_COUNT_POLICY
@@ -683,7 +755,7 @@ def _validated_jobs(program: dict, budget: AttemptBudget) -> list[_Admission]:
     from experiments.hosted_request_tokens import validate_receipt
     from experiments import run_matrix
 
-    cells, historical_inventory = _validated_local_cells(program)
+    cells, historical_inventory = (_validated_local_cells(program) if local_context is None else local_context)
     sources = program["sources"]
     values = {key: _bound(sources[key])[0] for key in
               ("api_config", "pricing", "budgets", "budget_projection", "media_index")}
@@ -699,7 +771,20 @@ def _validated_jobs(program: dict, budget: AttemptBudget) -> list[_Admission]:
         raise ValueError("hosted program budget or effective-dated pricing projection changed")
     budget_plan, _descriptor = _read_regular(budget.root / "plan.json", label="funded program budget", max_bytes=64 * 1024 * 1024)
     configured = projection._provider_budgets(values["budgets"])
-    if budget_plan["provider_budgets_microusd"] != {
+    distinct = program["schema"] == DISTINCT_INPUT_SCHEMA
+    if distinct:
+        funding = _additional_funding(sources["additional_funding"], configured, budget_plan=budget_plan)
+        inventory, _ = _bound(funding["judging_inventory"])
+        judge = expected_projection["judge"]
+        local_bound = _cost(judge["maximum_input_tokens_per_call"], judge["maximum_output_tokens_per_call"],
+                            {"input": judge["input_usd_per_million_tokens"], "output": judge["output_usd_per_million_tokens"]})
+        for row in inventory["unjudged_rows"]:
+            slot = budget.call("judge-local-" + row["retained_row_sha256"])
+            if slot["provider"] != "anthropic" or slot["pool"] != "judge" or slot["bound_microusd"] < local_bound:
+                raise ValueError("complete matching local judge population is not funded upfront")
+    elif "additional_funding" in sources:
+        raise ValueError("historical execution cannot add supplemental funding")
+    elif budget_plan["provider_budgets_microusd"] != {
         key: row["configured_budget_microusd"] for key, row in configured.items()
     }:
         raise ValueError("shared funding differs from the bound current provider budgets")
@@ -771,13 +856,17 @@ def _validated_jobs(program: dict, budget: AttemptBudget) -> list[_Admission]:
         if getattr(attacker, "retained_input_ids", None) != job["input_ids"]:
             raise ValueError("job changed its exact funded pilot/measured input IDs")
         plan = attacker._retained["plan"]
+        if (plan["schema"] == inputs.DISTINCT_SCHEMA) != distinct:
+            raise ValueError("distinct retained inputs require their explicit execution contract")
         # Selection /1 was never paid admission. Its original descriptive
         # exact-count prerequisite is retained verbatim; only this prospective
         # execution condition adopts explicitly named provider estimates.
         if program.get("predecessor_selection") != {"schema": plan["schema"], "plan_id": plan["plan_id"], "sha256": _sha(plan)}:
             raise ValueError("prospective count policy changed its exact predecessor input selection")
         if checked_plan is None:
-            resolved = inputs.resolve_inputs(plan, candidates=candidates, **bindings)
+            resolved = inputs.resolve_inputs(plan, candidates=candidates,
+                **({"request_builder": inputs.provider_request_builder(target, values["media_index"])} if distinct else {}),
+                **bindings)
             checked_plan = (copy.deepcopy(plan), [row["input_identity_sha256"] for row in resolved])
         if plan != checked_plan[0]:
             raise ValueError("retained jobs changed their common input selection plan")
@@ -805,6 +894,8 @@ def _validated_jobs(program: dict, budget: AttemptBudget) -> list[_Admission]:
                 raise ValueError("counted request differs from its funded retained target input")
             expected_judges = {cohort: "judge-" + cohort + "-" + _sha({"target": program["target"], "input_id": key})
                                for cohort in ("local", "hosted")}
+            if distinct:
+                expected_judges = _distinct_judge_ids(plan, key, candidates)
             if receipt.get("judge_call_ids") != expected_judges:
                 raise ValueError("future matched judgments need exact input-derived funded slots, not invented output hashes")
             judge = expected_projection["judge"]

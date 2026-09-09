@@ -28,6 +28,7 @@ from ura.adapters.replay import ReplayAttacker, retained_dialog
 
 REQUEST_SCHEMA = "ura-hosted-retained-campaign-request/1"
 COUNTED_INPUT_REQUEST_SCHEMA = "ura-hosted-retained-campaign-request/2"
+DISTINCT_INPUT_REQUEST_SCHEMA = "ura-hosted-retained-campaign-request/3"
 RECEIPT_SCHEMA = "ura-hosted-retained-campaign-preparation/1"
 CACHED_RECEIPT_SCHEMA = "ura-hosted-retained-campaign-preparation/2"
 _REPLAY_SCHEMA = "ura-retained-input-replay/1"
@@ -244,7 +245,7 @@ def _job_argv(
     return argv
 
 
-def _replay_inventory(raw_routes: object) -> list[dict[str, Any]]:
+def _replay_inventory(raw_routes: object, *, distinct: bool = False) -> list[dict[str, Any]]:
     if not isinstance(raw_routes, list) or not raw_routes:
         raise ValueError("hosted preparation requires target routes")
     routes: list[dict[str, Any]] = []
@@ -269,7 +270,7 @@ def _replay_inventory(raw_routes: object) -> list[dict[str, Any]]:
             value, observed = _full_descriptor(descriptor, label="retained replay")
             corpus = value.get("corpus")
             if (
-                value.get("schema") != _REPLAY_SCHEMA
+                value.get("schema") != ("ura-retained-input-replay/2" if distinct else _REPLAY_SCHEMA)
                 or value.get("status") != "no_call_materialized"
                 or not isinstance(corpus, str)
                 or not corpus
@@ -325,11 +326,14 @@ def prepare_campaign(
         "runner_common_argv",
         "execution_root",
     }
-    counted_inputs = isinstance(request, Mapping) and request.get("schema") == COUNTED_INPUT_REQUEST_SCHEMA
+    distinct = isinstance(request, Mapping) and request.get("schema") == DISTINCT_INPUT_REQUEST_SCHEMA
+    counted_inputs = isinstance(request, Mapping) and request.get("schema") in {
+        COUNTED_INPUT_REQUEST_SCHEMA, DISTINCT_INPUT_REQUEST_SCHEMA,
+    }
     if counted_inputs:
         required.add("input_budget_policy")
     if (not isinstance(request, Mapping) or set(request) != required
-        or request["schema"] not in {REQUEST_SCHEMA, COUNTED_INPUT_REQUEST_SCHEMA}
+        or request["schema"] not in {REQUEST_SCHEMA, COUNTED_INPUT_REQUEST_SCHEMA, DISTINCT_INPUT_REQUEST_SCHEMA}
         or (counted_inputs and request["input_budget_policy"] != executor.COUNTED_INPUT_POLICY)):
         raise ValueError("hosted campaign preparation request fields differ")
     root = _canonical_new_root(out_root, label="hosted preparation root")
@@ -343,6 +347,8 @@ def prepare_campaign(
         "media_index",
         "historical_result",
     }
+    if distinct:
+        source_names.add("additional_funding")
     if not isinstance(request["sources"], Mapping) or set(request["sources"]) != source_names:
         raise ValueError("hosted preparation source inventory differs")
     values, sources = {}, {}
@@ -351,7 +357,9 @@ def prepare_campaign(
             request["sources"][name], label=name.replace("_", " ")
         )
     budget_projection = _validated_projection(request=request, sources=sources, values=values)
-    routes = _replay_inventory(request["routes"])
+    routes = _replay_inventory(request["routes"], distinct=distinct)
+    funding = (executor._additional_funding(sources["additional_funding"],
+                projection._provider_budgets(values["budgets"])) if distinct else None)
 
     skeleton = {
         "results_root": request["results_root"],
@@ -371,13 +379,6 @@ def prepare_campaign(
         "media_index": values["media_index"],
         "local_inventory_descriptor": _portable(historical_inventory),
     }
-    # Validate every route's source membership before a token-count endpoint
-    # can receive any retained dialogue or media.
-    for route in routes:
-        plan = route["replays"][0]["value"]["plan"]
-        inputs.resolve_inputs(plan, candidates=candidates, **bindings)
-        _pilot_groups(plan)  # Unrunnable partitions must fail before provider counting.
-
     from experiments import run_matrix
 
     normalized, _api_artifact = run_matrix._load_api_config(
@@ -385,6 +386,16 @@ def prepare_campaign(
         [route["target"] for route in routes],
         sources["api_config"]["sha256"],
     )
+    # Validate every route's source membership before a token-count endpoint
+    # can receive any retained dialogue or media.
+    for route in routes:
+        plan = route["replays"][0]["value"]["plan"]
+        target = run_matrix.build_target(route["target"], api_config=normalized.get(route["target"]))
+        inputs.resolve_inputs(plan, candidates=candidates,
+            **({"request_builder": inputs.provider_request_builder(target, values["media_index"])} if distinct else {}),
+            **bindings)
+        _pilot_groups(plan)  # Unrunnable partitions must fail before provider counting.
+
     route_budget = {row["target_spec"]: row for row in budget_projection["routes"]}
     programs: list[dict[str, Any]] = []
     configs: list[tuple[Path, dict]] = []
@@ -447,6 +458,8 @@ def prepare_campaign(
                 )
                 for cohort in ("local", "hosted")
             }
+            if distinct:
+                judge_ids = executor._distinct_judge_ids(plan, identity, candidates)
             requests[identity] = {
                 "call_id": call_id,
                 "request_sha256": projection._sha(body),
@@ -539,7 +552,8 @@ def prepare_campaign(
             )
         programs.append(
             {
-                "schema": executor.COUNTED_INPUT_SCHEMA if counted_inputs else executor.SCHEMA,
+                "schema": (executor.DISTINCT_INPUT_SCHEMA if distinct else
+                           executor.COUNTED_INPUT_SCHEMA if counted_inputs else executor.SCHEMA),
                 **({"input_budget_policy": executor.COUNTED_INPUT_POLICY} if counted_inputs else {}),
                 "sources": copy.deepcopy(sources),
                 "results_root": request["results_root"],
@@ -561,6 +575,10 @@ def prepare_campaign(
             }
         )
 
+    if distinct:
+        inventory, _ = executor._bound(funding["judging_inventory"])
+        slots.extend({"call_id": "judge-local-" + row["retained_row_sha256"], "provider": "anthropic",
+                      "pool": "judge", "bound_microusd": judge_bound} for row in inventory["unjudged_rows"])
     if len({row["call_id"] for row in slots}) != len(slots):
         raise ValueError("hosted target or judge slot identities collide")
     provider_budgets = projection._provider_budgets(values["budgets"])
@@ -569,12 +587,13 @@ def prepare_campaign(
     (root / "programs").mkdir(mode=0o700)
     budget_descriptor = create_budget(
         root / "budget",
-        provider_budgets_microusd={
+        provider_budgets_microusd=(funding["provider_budgets_microusd"] if distinct else {
             provider: row["configured_budget_microusd"]
             for provider, row in provider_budgets.items()
-        },
+        }),
         planned_calls=slots,
-        protected_haiku_microusd=budget_projection["judge"]["maximum_cost_microusd"],
+        protected_haiku_microusd=(funding["protected_haiku_microusd"] if distinct
+                                else budget_projection["judge"]["maximum_cost_microusd"]),
     )
     budget = AttemptBudget(root / "budget", budget_descriptor["sha256"])
     for path, value in configs:
@@ -582,7 +601,7 @@ def prepare_campaign(
     program_descriptors = []
     for program in programs:
         program["budget_plan_sha256"] = budget_descriptor["sha256"]
-        executor._validated_jobs(program, budget)
+        executor._validated_jobs(program, budget, local_context=(cells, historical_inventory))
         path = root / "programs" / f"{_slug(program['target'])}.json"
         _write_new(path, program)
         program_descriptors.append(
