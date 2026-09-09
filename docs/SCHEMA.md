@@ -297,6 +297,8 @@ checkpoint-backed completed inputs form the original funded selection once,
 without overlap or omissions. Counter reconciliation reads the unchanged old
 records; it does not rewrite their run IDs or claim new generations. Earlier
 contracts do not acquire this mixed-checkpoint completion behavior.
+The later matched-judging handoff retains the carried input's original funded
+judge slots, just as it does for inputs represented by completed jobs.
 
 ## Live route and transport attestation
 

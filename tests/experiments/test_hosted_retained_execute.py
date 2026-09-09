@@ -719,6 +719,24 @@ def test_matched_slot_binding_rejects_unfunded_or_changed_actual_input(tmp_path,
         subject.build_matched_judge_requests(**kwargs)
 
 
+def test_matched_funding_keeps_checkpoint_carried_input_judge_slots(tmp_path, monkeypatch):
+    _prepared, plan, admissions, kwargs = _matched_funding(tmp_path, monkeypatch)
+    program = kwargs['programs'][0]
+    original = admissions[program['target']][0]
+    program['requests'] = copy.deepcopy(original.requests)
+    carried = {key: {'attempt': {'params': {'retained_origin': copy.deepcopy(entry['origin'])}}}
+               for key, entry in original.entries.items()}
+    # The source reader and monetary/source bindings below are real fixture
+    # artifacts. Only selection admission is represented as an already-verified
+    # native prefix rather than a job that would regenerate those answers.
+    admissions[program['target']] = []
+    monkeypatch.setattr(subject, '_reviewed_completed_responses',
+                        lambda candidate, budget: carried if candidate is program else {})
+    receipts = subject.build_matched_judge_requests(**kwargs)
+    assert len(plan['selected']) == len(receipts) == 4
+    assert len({row['call_id'] for row in receipts.values()}) == 4
+
+
 def test_matched_slot_binding_revalidates_actual_source_artifacts_before_mapping(tmp_path, monkeypatch):
     _prepared, _plan, _admissions, kwargs = _matched_funding(tmp_path, monkeypatch)
     (tmp_path / "original" / "source.attempts.jsonl").write_text("changed original artifact\n")

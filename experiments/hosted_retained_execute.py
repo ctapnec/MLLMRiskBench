@@ -606,6 +606,12 @@ def build_matched_judge_requests(*, programs: Sequence[dict], budget: AttemptBud
                 if identity in funded:
                     raise ValueError("matched judging cannot duplicate a funded hosted input")
                 funded[identity] = (entry["origin"], admission.requests[key]["judge_call_ids"])
+        for key, record in _reviewed_completed_responses(program, budget).items():
+            identity = (program["target"], key)
+            if identity in funded:
+                raise ValueError("matched judging cannot duplicate a carried hosted input")
+            funded[identity] = (record["attempt"]["params"]["retained_origin"],
+                                program["requests"][key]["judge_call_ids"])
     if not funded:
         raise ValueError("matched judging requires its fully admitted target programs")
     plan = validate_pair_plan(load_bound_json(plan_path, plan_sha256)[0])
