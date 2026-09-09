@@ -146,6 +146,14 @@ The historical multiplicity counts and diagrams are published at
 `/stats/job/hosted-input-multiplicity-r3-20260909`. Its 941 assignments, 488
 input conditions and 464 distinct provider requests are separate quantities.
 
+The corresponding input-balanced comparison correction is implemented at
+`53624e9` and passed focused rig tests, reversed-fix checks and validation
+against the completed comparison. It preserves the original answers and
+charges. Its publication worker was launched; completion remains unverified
+after SSH timeouts. The prospective duplicate-request selector is still under
+development and is not yet an executable, funded supplement. Neither change
+permits additional calls before exact request counting and funding are complete.
+
 ## Selection and execution requirements
 
 1. Freeze the completed assignment by exact target condition and actual input

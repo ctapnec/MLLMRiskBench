@@ -15,8 +15,9 @@ import hashlib
 import json
 from collections import Counter, defaultdict, deque
 from collections.abc import Mapping, Sequence
+from itertools import groupby
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import unquote_to_bytes
 
 from experiments.hosted_campaign_budget import (
@@ -220,6 +221,78 @@ def _select(candidates: list[dict], *, modalities: list[str], cap: int) -> tuple
                       "compatible_inputs": sum(map(len, eligible.values())),
                       "selected_inputs": len(selected), "unused_call_capacity": cap - len(selected),
                       "next_whole_cluster_size": blocked_size}
+
+
+def select_distinct_requests(
+    candidates: list[dict], *, modalities: list[str], cap: int,
+    request_builder: Callable[[dict], Mapping[str, Any]],
+    previous_request_sha256: Sequence[str] = (),
+) -> dict:
+    """No-call prefix priced in unique provider requests, preserving source aliases.
+
+    Call separately for each fixed target configuration. The builder must be
+    the target's ordinary offline request builder, with media bytes resolved
+    through their validated content index. Its output is hashed but not saved.
+    This preview is not a funded execution plan and cannot alter a retained /1
+    source selection or authorize reuse of an answer under another source task.
+    """
+    if type(cap) is not int or cap < 1:
+        raise ValueError("distinct request cap must be a positive integer")
+    previous = {_digest(value, "previous provider request") for value in previous_request_sha256}
+    seen_inputs = set()
+    for row in candidates:
+        identity = {key: value for key, value in row.items()
+                    if key not in {"input_identity_sha256", "rendered_input", "local_sources"}}
+        if (row["input_identity_sha256"] != _sha(identity)
+                or row["rendered_input_sha256"] != _sha(row["rendered_input"])
+                or row["input_identity_sha256"] in seen_inputs):
+            raise ValueError("distinct request source input identity changed or was duplicated")
+        seen_inputs.add(row["input_identity_sha256"])
+    ordered, population = _select(candidates, modalities=modalities, cap=len(candidates))
+
+    def cluster(row):
+        return tuple(row[field] for field in
+                     ("corpus", "source", "framework", "source_cluster_id", "requested_seed"))
+
+    selected: dict[str, dict] = {}
+    excluded, admitted_clusters, blocked_size = [], 0, 0
+    for _cluster, source_rows in groupby(ordered, key=cluster):
+        requests, old_inputs = {}, []
+        for row in source_rows:
+            body = request_builder(copy.deepcopy(row))
+            if not isinstance(body, Mapping) or not body:
+                raise ValueError("offline provider request builder returned no request")
+            fingerprint = _sha(dict(body))
+            if fingerprint in previous:
+                old_inputs.append(row["input_identity_sha256"])
+            else:
+                requests.setdefault(fingerprint, []).append(copy.deepcopy(row))
+        new_requests = set(requests) - selected.keys()
+        if len(selected) + len(new_requests) > cap:
+            blocked_size = len(new_requests)
+            break
+        excluded.extend(old_inputs)
+        admitted_clusters += 1
+        for fingerprint, aliases in requests.items():
+            group = selected.setdefault(fingerprint, {
+                "request_sha256": fingerprint, "representative_input_sha256": aliases[0]["input_identity_sha256"],
+                "source_inputs": [],
+            })
+            group["source_inputs"].extend(aliases)
+    result = {"schema": "ura-hosted-distinct-request-selection/1", "status": "no_call_selection_only",
+        "paid_execution_authorized": False, "request_cap": cap,
+        "previous_request_sha256": sorted(previous), "selected": list(selected.values()),
+        "population": {"source_inputs": len(candidates),
+            "incompatible_modality_inputs": population["incompatible_modality_inputs"],
+            "selected_requests": len(selected),
+            "selected_source_inputs": sum(len(value["source_inputs"]) for value in selected.values()),
+            "previous_request_source_inputs": len(excluded), "admitted_source_clusters": admitted_clusters,
+            "unused_call_capacity": cap - len(selected), "next_whole_cluster_new_requests": blocked_size},
+        "excluded_previous_source_input_ids": excluded,
+        "selection_policy": "seed0_whole_cluster_prefix_unique_provider_requests",
+        "observed_output_used_for_selection": False}
+    result["selection_id"] = "distinct-requests-" + _sha(result)[:24]
+    return result
 
 
 def build_plan(*, candidates: list[dict], budget: dict, budget_descriptor: dict,

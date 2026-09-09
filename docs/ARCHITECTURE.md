@@ -473,6 +473,17 @@ nor its UI registration constructs a target or judge or establishes human
 calibration. Source campaign reports retain missing-input and target-cost
 accounting outside the answered matched cohort.
 
+Current comparisons average repeated outputs within each exact input before
+averaging inputs within a source cluster and applying equal cluster weights.
+Contrasts first count each distinct retained answer once on each side of an
+input comparison; repeated links to a shared answer do not multiply its weight.
+Stats exposes output, distinct-input and source-cluster counts separately.
+The report-only upgrade preserves every original response, judgment, usage
+record and selected execution condition. Historical reports remain readable
+with their original weighting, while a newly written report identifies the
+input-balanced method explicitly. This correction does not enlarge the
+selected cohort or turn repeated requests into independent experimental units.
+
 After verified target teardown, the judge performs its own hardware-fit
 selection and may use one or both GPUs. The target phase does not reserve a
 fraction of another device for later scoring, so target utilization and memory

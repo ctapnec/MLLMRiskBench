@@ -1849,8 +1849,28 @@ The reporting command is read-only except for its create-only output. It
 requires completed execution, reconciles each unique paid output, and rebuilds
 the source selection. Publish it through the generic external-analysis registry
 as `judge_comparison`, never as a Level-2 or human-calibration result. Its
-condition-specific rates and contrasts use equal source-cluster weights and
-whole-cluster bootstrap intervals, with no interval for fewer than two clusters.
+condition-specific rates and contrasts average repeated answers per exact input
+first, then average inputs within each source cluster and apply equal cluster
+weights. Each distinct retained answer counts once on each side of an input
+contrast, regardless of how many comparison links reference it. Whole-cluster
+bootstrap intervals remain unavailable for fewer than two clusters. Report
+output, distinct-input and source-cluster counts separately; source-subset
+aliases and repeated requests are not additional independent questions.
+
+To apply this weighting to an already completed comparison without repeating
+generation, judging or source-campaign analysis, write a separate report:
+
+```bash
+python -m experiments.retained_response_judge_report \
+  --from-report "$COMPLETED_HAIKU_COMPARISON_REPORT" \
+  --out "$INPUT_BALANCED_HAIKU_COMPARISON_REPORT"
+```
+
+The output path must be new. This validates the completed report, preserves its
+selected cohort, original source descriptors, judgments and token accounting,
+and recomputes only the statistical summary and method metadata. Publish the
+new report separately as `judge_comparison`; do not overwrite the predecessor
+or imply that a separate coverage extension has been added to its contrasts.
 
 Each hosted measured lane must use `--judges rules,guardrail`, the exact sealed
 Llama Guard revision, and a judge-call ceiling covering its selected answered

@@ -188,6 +188,47 @@ def test_multiple_local_sources_do_not_multiply_paid_inputs(tmp_path: Path) -> N
     assert len(_plan(candidates)["selected"]) == 2
 
 
+def test_distinct_provider_requests_collapse_subset_aliases_before_the_cap(tmp_path):
+    first = _cell(tmp_path, count=2)
+    for attempt in first["attempts"].values():
+        attempt["params"].update(source_cluster_id="one", planning_source="one-arm")
+    second = copy.deepcopy(first)
+    second["run_id"] = "recovered"
+    second["manifest"]["dataset_hashes"]["corpus"] = "c" * 64
+    candidates = subject.candidates_from_cells([first, second])
+    assert len(candidates) == 4
+    def builder(row):
+        return {"model": "fixed-target", "messages": row["rendered_input"], "seed": 0}
+
+    selection = subject.select_distinct_requests(candidates, modalities=["text"], cap=2, request_builder=builder)
+    assert selection["population"]["selected_requests"] == 2
+    assert selection["population"]["selected_source_inputs"] == 4
+    assert all(len(group["source_inputs"]) == 2 for group in selection["selected"])
+    assert selection == subject.select_distinct_requests(list(reversed(candidates)), modalities=["text"], cap=2, request_builder=builder)
+    assert selection["paid_execution_authorized"] is False
+    assert len(subject._select(candidates, modalities=["text"], cap=2)[0]) == 0
+    too_small = subject.select_distinct_requests(candidates, modalities=["text"], cap=1, request_builder=builder)
+    assert too_small["population"]["selected_requests"] == 0
+    assert too_small["population"]["next_whole_cluster_new_requests"] == 2
+    previous = selection["selected"][0]["request_sha256"]
+    tail = subject.select_distinct_requests(candidates, modalities=["text"], cap=1,
+        request_builder=builder, previous_request_sha256=[previous])
+    assert tail["population"]["selected_requests"] == 1
+    assert tail["population"]["previous_request_source_inputs"] == 2
+    assert tail["selected"][0]["request_sha256"] != previous
+
+
+def test_distinct_request_identity_keeps_generation_controls_and_rejects_changed_source(tmp_path):
+    candidates = subject.candidates_from_cells([_cell(tmp_path, count=1)])
+    def build(limit):
+        return subject.select_distinct_requests(candidates, modalities=["text"], cap=1,
+            request_builder=lambda row: {"messages": row["rendered_input"], "max_tokens": limit})
+    assert build(512)["selected"][0]["request_sha256"] != build(4096)["selected"][0]["request_sha256"]
+    candidates[0]["rendered_input"][0]["content"] = "Changed prompt"
+    with pytest.raises(ValueError, match="source input identity"):
+        build(512)
+
+
 @pytest.mark.parametrize("cap", [0, -1, True, 21])
 def test_budget_cap_cannot_expand(tmp_path: Path, cap) -> None:
     with pytest.raises(ValueError, match="global input cap"):
