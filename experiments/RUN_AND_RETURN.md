@@ -2225,6 +2225,14 @@ scope alone does not implement a monetary budget. Without an explicit scope,
 existing adapter behavior is unchanged. Each executing thread enters its own
 scope.
 
+Hosted HTTP failure artifacts retain bounded provider error codes and types,
+alongside the HTTP status and whether the transport policy permits a retry.
+Provider messages and echoed request bodies are not copied into this audit.
+Inspect these fields before resuming a paid failure: a provider policy rejection
+is not a transient network error or an observation of model instability. Do not
+automatically retry or rephrase a policy-rejected request. The existing bounded
+HTTP retry policy and zero paid answer retries are unchanged.
+
 Anthropic, Fable, OpenAI Chat/compatible and Responses targets expose
 `build_request(dialog, seed=...)` for an exact offline request preview. Live
 generation uses that same builder before constructing its SDK client. A

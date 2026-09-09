@@ -6496,6 +6496,7 @@ def _safe_call_audit(value: Any) -> dict[str, Any]:
         "transport_attempt_count", "logical_call_count", "provider",
         "operation", "resolved_model", "status_code", "error_type",
         "provider_request_id", "provider_response_id",
+        "provider_error_code", "provider_error_type", "transport_retryable",
     }
     audit: dict[str, Any] = {}
     for key in sorted(allowed & set(value)):

@@ -95,3 +95,42 @@ def test_unscoped_transport_preserves_error_audit(monkeypatch):
         api._call_with_retry(fail, {}, provider="example", max_retries=3)
     assert len(caught.value.transport_attempts) == 4
     assert all(item["status_code"] == 500 for item in caught.value.transport_attempts)
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_sdk_policy_error_keeps_machine_cause_without_retry_or_payload(nested):
+    import httpx
+    import openai
+    from ura.runner import _safe_call_audit
+
+    body = {"code": "cyber_policy", "type": "invalid_request_error",
+            "message": "private request text", "param": "private field"}
+    if nested:
+        body = {"error": body}
+    error = openai.BadRequestError(
+        "private request text",
+        response=httpx.Response(400, request=httpx.Request("POST", "https://example.test")),
+        body=body,
+    )
+    calls = []
+
+    def fail():
+        calls.append(1)
+        raise error
+
+    with pytest.raises(api.ProviderTransportError) as caught:
+        api._call_with_retry(fail, {}, provider="openai", max_retries=3)
+    assert len(calls) == 1
+    audit = _safe_call_audit(caught.value.call_audit)
+    assert audit["provider_error_code"] == "cyber_policy"
+    assert audit["provider_error_type"] == "invalid_request_error"
+    assert audit["transport_retryable"] is False
+    assert audit["status_code"] == 400
+    assert "private" not in repr(audit) + repr(caught.value.transport_attempts)
+
+
+@pytest.mark.parametrize("value", ["sk-secret", "Bearer-secret", "request text", "x" * 101, {"message": "private"}])
+def test_provider_error_metadata_omits_non_machine_fields(value):
+    error = RuntimeError("private")
+    error.body = {"code": value, "type": value, "message": "private"}
+    assert api._transport_error_metadata(error) == {}

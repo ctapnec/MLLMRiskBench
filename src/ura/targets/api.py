@@ -351,6 +351,9 @@ class ProviderTransportError(TargetAnswerError):
             "status_code": last.get("status_code"),
             "error_type": last.get("error_type"),
             "provider_request_id": last.get("request_id"),
+            "provider_error_code": last.get("provider_error_code"),
+            "provider_error_type": last.get("provider_error_type"),
+            "transport_retryable": last.get("retryable"),
         }
 
 
@@ -369,6 +372,24 @@ def _transport_request_id(value: Any) -> str | None:
         if isinstance(request_id, str) and request_id.strip():
             return request_id.strip()
     return None
+
+
+def _transport_error_metadata(exc: BaseException) -> dict[str, str]:
+    """Keep SDK machine codes, never provider messages or echoed requests."""
+    body = getattr(exc, "body", None)
+    if not isinstance(body, Mapping):
+        return {}
+    error = body.get("error", body)
+    if not isinstance(error, Mapping):
+        return {}
+    result = {}
+    for key in ("code", "type"):
+        value = error.get(key)
+        if (isinstance(value, str)
+                and re.fullmatch(r"[A-Za-z][A-Za-z0-9_.-]{0,99}", value)
+                and not value.lower().startswith(("sk-", "bearer"))):
+            result["provider_error_" + key] = value
+    return result
 
 
 def _retryable_transport_error(exc: BaseException) -> bool:
@@ -420,6 +441,7 @@ def _call_with_retry(
                 "status_code": _transport_status_code(exc),
                 "request_id": _transport_request_id(exc),
                 "retryable": retryable,
+                **_transport_error_metadata(exc),
                 "latency_ms": elapsed_ms,
             })
             if not retryable or attempt_number > max_retries:
