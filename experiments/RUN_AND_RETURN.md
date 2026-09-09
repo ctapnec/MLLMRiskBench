@@ -54,6 +54,15 @@ handoffs retain all started slots and close predecessor spending before new
 execution. Fractional microdollar projections round upward, never downward.
 An adapter-only continuation may preserve the original generation settings;
 it still selects exactly the unpaid complement and retains the old prefix.
+For admitted distinct-request replay, cluster completeness is checked against
+the validated funded physical-input population. Provider-identical source
+aliases and a validated paid prefix are not missing generation assignments.
+Remaining members of one funded cluster cannot be split between a probe and
+a measured job. Ordinary replay retains its full source-cluster check. The
+sampling audit names the funded coverage basis rather than implying a full
+raw-corpus sample. After regrouping, preserve the maximum number of retained
+framework variants per DataPoint in both query and turn caps; a single-request
+probe cap must not leak into a multi-variant measured job.
 Configured routes preserve explicitly declared conservative peak-price
 reservations. Offline preparation reuses a validated provider token-count
 receipt for the exact request, including media, without calling its counter

@@ -24,6 +24,10 @@ input matching validates them without regeneration. The local generation
 campaign is not reopened by that diagnostic. RA-412 and the separate
 [`HOSTED_SUPPLEMENT_PLAN.md`](HOSTED_SUPPLEMENT_PLAN.md) record the corrected
 judging join, prospective deduplication and remaining hosted analysis work.
+The 9 September hosted continuation also retains Luna's 37 previously saved
+answers for separate local-cascade and Haiku scoring. They are hosted outputs,
+not missing local-model generations. The original local campaign is unchanged;
+no local target work is reopened to repair that hosted scoring handoff.
 The forward runtime inventory was amended on 25 August 2026 to admit T3MP3ST
 at an exact source commit, increasing the managed inventory from 15 to 16. The
 dated readiness snapshot below remains a historical record of what was found on

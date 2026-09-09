@@ -2,6 +2,26 @@
 
 ## Current execution and required Google extension
 
+Update, 9 September at 23:50 UTC: DeepSeek's 55-input, 16k continuation is
+complete. The earlier 8k condition, including its missing final answer, remains
+separate. Opus retained its completed image probe; a text probe that split an
+AIRBench cluster is replaced only from the already funded, unstarted selection.
+Revision `0cb11b3` passed 100 focused rig tests, lint and reversed-fix checks.
+It checks whole clusters against the validated distinct-request population,
+including exact paid-prefix exclusions, rather than requiring duplicate or
+previously paid source rows to be generated again. A split among remaining
+unpaid members still fails. No source gate, budget or raw evidence is removed.
+The continuation queues cover Kimi, Luna, Opus, Fable, Terra, Astra, Sol,
+GPT-5.5 and both Google models. Completed DeepSeek inputs are not resubmitted.
+
+Luna's earlier interrupted AIRBench job retains 37 usable answers with no
+local verdicts. Their separate local and Haiku judging is explicitly queued;
+the 26 unpaid AIRBench inputs remain in the generation continuation. The two
+populations must reconcile without promoting the original failed job or
+repeating its saved answers. Post-hoc analysis uses a tested descendant
+checkout that contains the generation revision, not an older deployed HEAD.
+Every new eligible hosted answer still requires its own Haiku judgment.
+
 Update, 9 September at 23:08 UTC: all 359 unstarted supplemental inputs have
 prepared continuations, excluding every previously attempted input. Sol and
 Fable's fixed-spec configuration lookup is corrected at `73f08b1`, with 42
