@@ -357,7 +357,8 @@ def build_projection(
     routes = ROUTES if route_configuration is None else route_configuration
     if route_configuration is not None:
         required = {"label", "spec", "provider", "model", "call_cap", "max_output_tokens"}
-        optional = {"reasoning_effort", "maximum_priced_input_tokens"}
+        optional = {"reasoning_effort", "maximum_priced_input_tokens",
+                    "reservation_rate_multiplier", "reservation_price_condition"}
         if not isinstance(routes, (list, tuple)) or not routes:
             raise ValueError("configured routes must be a nonempty list")
         seen = set()
@@ -370,7 +371,9 @@ def build_projection(
                 or any(type(route[k]) is not int or route[k] <= 0 for k in
                        ("call_cap", "max_output_tokens"))
                 or ("maximum_priced_input_tokens" in route and
-                    (type(route["maximum_priced_input_tokens"]) is not int or route["maximum_priced_input_tokens"] <= 0))):
+                    (type(route["maximum_priced_input_tokens"]) is not int or route["maximum_priced_input_tokens"] <= 0))
+                or ("reservation_price_condition" in route and
+                    route["reservation_price_condition"] not in {"published_peak", "configured_effective_date"})):
                 raise ValueError("configured route identity, limits or fields differ")
             seen.add(route["spec"])
     judge_call_cap = JUDGE_CALL_CAP if route_configuration is None else 2 * sum(route["call_cap"] for route in routes)

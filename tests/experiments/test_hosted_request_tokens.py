@@ -220,9 +220,28 @@ def test_cached_count_cannot_change_request_identity_or_counting_method(tmp_path
     with pytest.raises(ValueError, match="request, model or counting method changed"):
         cached_count_request(target, request, cache_root=cache, allow_network=True)
     assert len(observed) == 1
-    with pytest.raises(TokenCountUnavailable, match="physical media"):
+    with pytest.raises(ValueError, match="request, model or counting method changed"):
         cached_count_request(target, request, cache_root=cache, allow_network=False)
     assert len(observed) == 1
+
+
+def test_offline_reuses_validated_provider_media_count_without_new_http(tmp_path, monkeypatch):
+    target = _target("astra", tmp_path)
+    request = target.build_request(_dialog(tmp_path))
+    cache = tmp_path / "counts"
+    cache.mkdir()
+    observed, _ = _client(target, monkeypatch)
+    receipt = cached_count_request(target, request, cache_root=cache, allow_network=True)
+    assert len(observed) == 1
+    def no_client():
+        pytest.fail("offline resume must not construct a provider client")
+    monkeypatch.setattr(target, "_get_client", no_client)
+    audit = {}
+    assert cached_count_request(target, request, cache_root=cache, allow_network=False, audit=audit) == receipt
+    assert audit == {"cache_hits": 1}
+    assert len(observed) == 1
+    with pytest.raises(TokenCountUnavailable, match="physical media"):
+        cached_count_request(target, dict(request, max_completion_tokens=17), cache_root=cache, allow_network=False)
 
 
 def test_cached_count_audit_counts_one_http_request_for_repeated_references(tmp_path, monkeypatch):

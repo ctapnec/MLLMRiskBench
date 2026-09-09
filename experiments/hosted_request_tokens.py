@@ -225,12 +225,28 @@ def cached_count_request(target, request: Mapping, *, cache_root: Path,
         or root.resolve(strict=True) != root or not root.is_dir()):
         raise ValueError("token-count cache must be one canonical existing directory")
     body = _checked_request(target, request)
-    method, method_id, _counted, _fee = _count_plan(target, body, network=allow_network)
-    key = request_sha256({"request": body, "target": target.requested_spec,
-                          "provider": target.provider, "base_url": str(target.base_url),
-                          "method": method, "method_id": method_id})
-    path = root / f"{key}.json"
+    def cache_path(method, method_id):
+        key = request_sha256({"request": body, "target": target.requested_spec,
+                              "provider": target.provider, "base_url": str(target.base_url),
+                              "method": method, "method_id": method_id})
+        return root / f"{key}.json"
+
     with _exclusive_lock(root):
+        # Offline means no new HTTP call, not discarding an exact count already
+        # retained for this full request. Building this lookup makes no call.
+        if not allow_network:
+            method, method_id, _counted, _fee = _count_plan(target, body, network=True)
+            path = cache_path(method, method_id)
+            if path.exists() or path.is_symlink():
+                receipt, _descriptor = _read_regular(path, label="retained token count", max_bytes=65536)
+                checked = validate_receipt(target, body, receipt)
+                if checked["method"] != method or checked["method_id"] != method_id:
+                    raise ValueError("cached token-count method differs from the requested policy")
+                if audit is not None:
+                    audit["cache_hits"] = audit.get("cache_hits", 0) + 1
+                return checked
+        method, method_id, _counted, _fee = _count_plan(target, body, network=allow_network)
+        path = cache_path(method, method_id)
         if path.exists() or path.is_symlink():
             receipt, _descriptor = _read_regular(path, label="retained token count", max_bytes=65536)
             checked = validate_receipt(target, body, receipt)

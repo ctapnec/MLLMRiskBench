@@ -14,6 +14,7 @@ from experiments.hosted_request_tokens import validate_receipt
 from ura.adapters.replay import ReplayAttacker, retained_dialog
 
 SCHEMA = "ura-hosted-pending-condition/1"
+CONTINUATION_SCHEMA = "ura-hosted-pending-condition/2"
 
 
 def _portable(descriptor):
@@ -25,7 +26,8 @@ def validated_jobs(program: dict, budget: AttemptBudget, *, local_context=None):
     """Revalidate old admission, closed old spending and the exact unpaid complement."""
     from experiments import run_matrix
 
-    if (program.get("schema") != SCHEMA or program.get("budget_plan_sha256") != budget.expected_plan_sha256
+    if (program.get("schema") not in {SCHEMA, CONTINUATION_SCHEMA}
+        or program.get("budget_plan_sha256") != budget.expected_plan_sha256
         or program.get("token_count_policy") != retained.TOKEN_COUNT_POLICY
         or program.get("input_budget_policy") != retained.COUNTED_INPUT_POLICY):
         raise ValueError("pending condition lacks its exact funded execution binding")
@@ -72,7 +74,7 @@ def validated_jobs(program: dict, budget: AttemptBudget, *, local_context=None):
     allowed = {"max_tokens", "reasoning_effort"}
     if ({k: v for k, v in config.items() if k not in allowed}
         != {k: v for k, v in original_config.items() if k not in allowed}
-        or config == original_config):
+        or (program["schema"] == SCHEMA and config == original_config)):
         raise ValueError("pending condition must change only the declared output settings")
     expected = projection.build_projection(api_config=values["api_config"], pricing=values["pricing"], budgets=values["budgets"],
         descriptors={"api_config": _portable(sources["api_config"]), "pricing_config": _portable(sources["pricing"]),

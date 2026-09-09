@@ -207,6 +207,21 @@ def test_fractional_microdollar_route_cost_reserves_upward() -> None:
     assert exact <= result < exact + 1
 
 
+def test_custom_deepseek_route_preserves_conservative_peak_reservation() -> None:
+    route = copy.deepcopy(next(r for r in subject.ROUTES if r['provider'] == 'deepseek'))
+    route.update(call_cap=55, max_output_tokens=16384)
+    api = _api_config()
+    api[route['spec']]['max_tokens'] = 16384
+    value = _projection(api_config=api, route_configuration=[route])
+    row = value['routes'][0]
+    assert row['maximum_cost_microusd'] == 3858836
+    assert row['reservation_price_condition'] == 'published_peak'
+    assert row['reserved_output_usd_per_million_tokens'] == '3.96'
+    route['reservation_rate_multiplier'] = 0.5
+    with pytest.raises(ValueError, match='reservation rate multiplier'):
+        _projection(api_config=api, route_configuration=[route])
+
+
 def test_missing_or_non_usd_price_blocks_projection() -> None:
     pricing = _pricing()
     pricing["providers"]["kimi"]["models"]["kimi-k3"]["rates"][0][

@@ -15,7 +15,7 @@ from test_hosted_campaign_prepare import _distinct_request, _save
 from ura.adapters.replay import retained_dialog
 
 
-def _pending(tmp_path, monkeypatch):
+def _pending(tmp_path, monkeypatch, *, change_output=True):
     request, _initial, _ = _distinct_request(tmp_path, monkeypatch)
     receipt = prepare.prepare_campaign(request=request, request_descriptor={}, out_root=tmp_path/'old', allow_network_counts=False)
     old = json.loads(Path(receipt['programs'][0]['path']).read_text())
@@ -31,12 +31,13 @@ def _pending(tmp_path, monkeypatch):
     pending = [key for job in old['jobs'] for key in job['input_ids'] if key != started]
     sources = copy.deepcopy(old['sources'])
     api = json.loads(Path(sources['api_config']['path']).read_text())
-    api[old['target']]['max_tokens'] = 16384
+    output_tokens = 16384 if change_output else api[old['target']]['max_tokens']
+    api[old['target']]['max_tokens'] = output_tokens
     sources['api_config'] = _save(tmp_path/'new-api.json', api)
     price = json.loads(Path(sources['pricing']['path']).read_text())
     configured = json.loads(Path(sources['budgets']['path']).read_text())
     config = [{'label': 'Pending fixture', 'spec': old['target'], 'provider': old['provider'],
-               'model': old['target'].split(':', 1)[1], 'call_cap': len(pending), 'max_output_tokens': 16384}]
+               'model': old['target'].split(':', 1)[1], 'call_cap': len(pending), 'max_output_tokens': output_tokens}]
     projected = projection.build_projection(api_config=api, pricing=price, budgets=configured,
         descriptors={'api_config': prepare._portable(sources['api_config']),
                      'pricing_config': prepare._portable(sources['pricing']), 'budgets': prepare._portable(sources['budgets'])},
@@ -48,9 +49,9 @@ def _pending(tmp_path, monkeypatch):
     for key in pending:
         body = target.build_request(retained_dialog(entries[key]['rendered_input']), seed=0)
         count = count_request(target, body, allow_network=False)
-        requests[key] = {**old['requests'][key], 'max_output_tokens': 16384,
+        requests[key] = {**old['requests'][key], 'max_output_tokens': output_tokens,
             'request_sha256': retained._sha(body), 'token_count': count, 'input_tokens': count['input_tokens'],
-            'bound_microusd': retained._cost(count['input_tokens'], 16384,
+            'bound_microusd': retained._cost(count['input_tokens'], output_tokens,
                 {'input': prices['reservation_input'], 'output': prices['reservation_output']})}
     replacement = {r['call_id']: r['bound_microusd'] for r in requests.values()}
     slots = [{**row, 'bound_microusd': replacement.get(row['call_id'], row['bound_microusd'])} for row in old_plan['planned_calls']]
@@ -79,7 +80,7 @@ def _pending(tmp_path, monkeypatch):
         job.update(name=f'new-{number}', input_ids=selection, purpose='diagnostic_canary' if number == 0 else 'measured_run')
         jobs.append(job)
     program = {**old, 'schema': subject.SCHEMA, 'sources': sources, 'budget_plan_sha256': descriptor['sha256'],
-        'max_output_tokens': 16384, 'requests': requests, 'jobs': jobs,
+        'max_output_tokens': output_tokens, 'requests': requests, 'jobs': jobs,
         'predecessor': {'program': {k: receipt['programs'][0][k] for k in ['path', 'sha256', 'bytes']}}}
     def descriptor_for(path):
         import hashlib
@@ -98,6 +99,18 @@ def test_pending_condition_keeps_complete_paid_prefix_and_exact_remaining_inputs
     assert {key for a in admitted for key in a.entries} == set(program['requests'])
     assert started not in program['requests']
     assert all(a.program['max_output_tokens'] == 16384 for a in admitted)
+    assert (old_budget.root/'ledger.json').read_bytes() == before
+
+
+def test_pending_continuation_accepts_unchanged_requests_without_mutating_v1(tmp_path, monkeypatch):
+    program, budget, old_budget, started = _pending(tmp_path, monkeypatch, change_output=False)
+    with pytest.raises(ValueError, match='declared output settings'):
+        retained._validated_jobs(program, budget)
+    program['schema'] = subject.CONTINUATION_SCHEMA
+    before = (old_budget.root/'ledger.json').read_bytes()
+    admitted = retained._validated_jobs(program, budget)
+    assert {key for a in admitted for key in a.entries} == set(program['requests'])
+    assert started not in program['requests']
     assert (old_budget.root/'ledger.json').read_bytes() == before
 
 
