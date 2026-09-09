@@ -1,8 +1,35 @@
 # Hosted subset and Haiku re-adjudication campaign plan
 
-Status: hosted target collection active, revised 8 September 2026. This document authorizes no
+Status: hosted target collection partial, revised 9 September 2026. This document authorizes no
 paid call. Start only after the all-local campaign seals its Phase 7 inventory.
 Run every controller on the rig in a named tmux session.
+
+Execution update, 9 September at 06:34 UTC. The original 941-input allocation
+retains 670 usable outcomes, three failed inputs and 268 unstarted inputs.
+Astra, Fable, Opus, Sonnet, Haiku and GPT-5.5 are complete. Kimi has completed
+its text continuation, with 44 of 79 assigned outcomes retained and 35 image
+inputs pending. DeepSeek retains 67 usable outcomes and one missing answer;
+its remaining work is paused for the documented output investigation. Sol,
+Terra and Luna also remain partial. Completed responses are not new work.
+Six previously unjudged hosted-prefix responses now have separate scoring
+records: four common-security decisions and two non-evaluable setup turns.
+Their final comparison-reader handoff remains pending.
+
+The completed measured-view snapshot covers 498 responses: 423 visible answers
+eligible for text-based re-adjudication, 33 explicit provider refusals without
+visible text, 14 source-authoritative-only outcomes and 28 non-evaluable setup
+turns. The 33 refusals are observed rejection outcomes, not missing model
+responses. Do not synthesize text or draw replacement inputs for Haiku.
+The generic selector's blank-text exclusion count must be interpreted with
+this response-state audit, not reported as intrinsic model instability.
+All 423 eligible hosted answers have matching local inputs. The current
+balanced selection would use 208 distinct local answers and 423 hosted answers,
+or 631 unique Haiku calls: USD 5.976832 at 8,192 input and 256 output tokens per
+call, and USD 9.369088 at 12,288 input and 512 output tokens per call. These are
+token scenarios, not charges or a final paid selection. The four partial
+routes, Kimi's pending images and the recovered prefixes are not included in
+this snapshot. Keep their originally funded slots; the protected judge pool
+remains USD 29.992960, with zero Haiku re-adjudication calls.
 
 Execution update, 8 September. The required local generation and both analysis
 publications are terminal, and their combined retained-input handoff validates.
