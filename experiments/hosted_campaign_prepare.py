@@ -325,8 +325,9 @@ def prepare_campaign(
     out_root: Path,
     allow_network_counts: bool,
     count_cache: Path | None = None,
+    shared_budget: AttemptBudget | None = None,
 ) -> dict:
-    """Create programs and one shared zero-attempt monetary ledger."""
+    """Create programs using fresh funding or exact unstarted shared slots."""
     if type(allow_network_counts) is not bool:
         raise ValueError("allow_network_counts must be an explicit boolean")
     required = {
@@ -378,6 +379,20 @@ def prepare_campaign(
         selected_providers = {executor._billing_provider(route["target"].split(":", 1)[0]) for route in routes}
         if not selected_providers | {"anthropic"} <= set(funding["provider_budgets_microusd"]):
             raise ValueError("selected target and judge providers must have supplemental funding")
+    provider_budgets = projection._provider_budgets(values["budgets"])
+    allocated = (funding["provider_budgets_microusd"] if distinct else {
+        provider: row["configured_budget_microusd"] for provider, row in provider_budgets.items()})
+    protected = (funding["protected_haiku_microusd"] if distinct else budget_projection["judge"]["maximum_cost_microusd"])
+    shared_descriptor = None
+    if shared_budget is not None:
+        plan_path = shared_budget.root / "plan.json"
+        retained_plan, descriptor = executor._read_regular(plan_path, label="shared preparation budget", max_bytes=64 * 1024 * 1024)
+        if (descriptor["sha256"] != shared_budget.expected_plan_sha256
+            or retained_plan["provider_budgets_microusd"] != allocated
+            or retained_plan["protected_haiku_microusd"] != protected
+            or (shared_budget.root / "paid-circuit.json").exists()):
+            raise ValueError("supplied shared budget differs from the declared available allocation")
+        shared_descriptor = {"path": str(plan_path), **{key: descriptor[key] for key in ("sha256", "bytes")}}
 
     skeleton = {
         "results_root": request["results_root"],
@@ -606,21 +621,19 @@ def prepare_campaign(
                       "pool": "judge", "bound_microusd": judge_bound} for row in inventory["unjudged_rows"])
     if len({row["call_id"] for row in slots}) != len(slots):
         raise ValueError("hosted target or judge slot identities collide")
-    provider_budgets = projection._provider_budgets(values["budgets"])
     root.mkdir(mode=0o700)
     (root / "attacker-configs").mkdir(mode=0o700)
     (root / "programs").mkdir(mode=0o700)
-    budget_descriptor = create_budget(
-        root / "budget",
-        provider_budgets_microusd=(funding["provider_budgets_microusd"] if distinct else {
-            provider: row["configured_budget_microusd"]
-            for provider, row in provider_budgets.items()
-        }),
-        planned_calls=slots,
-        protected_haiku_microusd=(funding["protected_haiku_microusd"] if distinct
-                                else budget_projection["judge"]["maximum_cost_microusd"]),
-    )
-    budget = AttemptBudget(root / "budget", budget_descriptor["sha256"])
+    if shared_budget is None:
+        budget_descriptor = create_budget(root / "budget", provider_budgets_microusd=allocated,
+                                          planned_calls=slots, protected_haiku_microusd=protected)
+        budget = AttemptBudget(root / "budget", budget_descriptor["sha256"])
+    else:
+        budget = shared_budget
+        for slot in slots:
+            if budget.call(slot["call_id"]) != slot or budget.reserved_attempt_count(slot["call_id"]):
+                raise ValueError("prepared requests require exact unstarted shared slots")
+        budget_descriptor = shared_descriptor
     for path, value in configs:
         _write_new(path, value)
     program_descriptors = []
@@ -676,12 +689,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--out-root", type=Path, required=True)
     parser.add_argument("--count-cache", type=Path,
                         help="reuse validated full-request count receipts after interruption")
+    parser.add_argument("--shared-budget-root", type=Path,
+                        help="use existing exact unstarted slots without creating another spending allocation")
+    parser.add_argument("--shared-budget-sha256")
     parser.add_argument(
         "--allow-network-counts",
         action="store_true",
         help="allow provider token-count endpoints after the local campaign seal",
     )
     args = parser.parse_args(argv)
+    if bool(args.shared_budget_root) != bool(args.shared_budget_sha256):
+        parser.error("shared budget root and SHA256 must be supplied together")
     request, descriptor = projection.load_bound_json(args.request, args.request_sha256)
     descriptor = {
         "path": str(args.request.resolve(strict=True)),
@@ -694,6 +712,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         out_root=args.out_root,
         allow_network_counts=args.allow_network_counts,
         count_cache=args.count_cache,
+        shared_budget=(AttemptBudget(args.shared_budget_root, args.shared_budget_sha256) if args.shared_budget_root else None),
     )
     print(
         json.dumps(

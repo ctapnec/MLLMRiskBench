@@ -157,6 +157,50 @@ def test_distinct_preparation_funds_all_local_answers_and_preserves_old_accounti
         subject.executor._validated_jobs(changed, budget)
 
 
+def test_preparation_uses_supplied_slots_without_new_allocation_or_ledger_writes(tmp_path, monkeypatch):
+    request, _old, _ledger = _distinct_request(tmp_path, monkeypatch)
+    first = subject.prepare_campaign(request=request, request_descriptor={}, out_root=tmp_path / "first", allow_network_counts=False)
+    budget = subject.AttemptBudget(tmp_path / "first/budget", first["budget"]["sha256"])
+    before = {name: (budget.root / name).read_bytes() for name in ["plan.json", "ledger.json"]}
+    monkeypatch.setattr(subject, "create_budget", lambda *args, **kwargs: pytest.fail("shared preparation created a second allocation"))
+    second = subject.prepare_campaign(request=request, request_descriptor={}, out_root=tmp_path / "second",
+                                      allow_network_counts=False, shared_budget=budget)
+    assert second["budget"] == first["budget"]
+    assert not (tmp_path / "second/budget").exists()
+    assert all((budget.root / name).read_bytes() == value for name, value in before.items())
+    program = json.loads(Path(second["programs"][0]["path"]).read_text())
+    assert subject.executor._validated_jobs(program, budget)
+
+
+def test_preparation_refuses_shared_slot_that_already_has_a_paid_attempt(tmp_path, monkeypatch):
+    request, _old, _ledger = _distinct_request(tmp_path, monkeypatch)
+    first = subject.prepare_campaign(request=request, request_descriptor={}, out_root=tmp_path / "first", allow_network_counts=False)
+    budget = subject.AttemptBudget(tmp_path / "first/budget", first["budget"]["sha256"])
+    program = json.loads(Path(first["programs"][0]["path"]).read_text())
+    call_id = next(iter(program["requests"].values()))["call_id"]
+    budget.reserve(call_id, 1, provider=program["provider"])
+    budget.settle(call_id, 1, None)
+    before = (budget.root / "ledger.json").read_bytes()
+    with pytest.raises(ValueError, match="exact unstarted shared slots"):
+        subject.prepare_campaign(request=request, request_descriptor={}, out_root=tmp_path / "second",
+                                 allow_network_counts=False, shared_budget=budget)
+    assert (budget.root / "ledger.json").read_bytes() == before
+
+
+def test_shared_allocation_mismatch_is_rejected_before_count_endpoints(tmp_path, monkeypatch):
+    request, _old, _ledger = _distinct_request(tmp_path, monkeypatch)
+    first = subject.prepare_campaign(request=request, request_descriptor={}, out_root=tmp_path / "first", allow_network_counts=False)
+    budget = subject.AttemptBudget(tmp_path / "first/budget", first["budget"]["sha256"])
+    funding = json.loads(Path(request["sources"]["additional_funding"]["path"]).read_text())
+    funding["protected_haiku_microusd"] += 1
+    request["sources"]["additional_funding"] = _save(tmp_path / "changed-shared-allocation.json", funding)
+    monkeypatch.setattr(subject, "count_request", lambda *args, **kwargs: pytest.fail("counter reached before allocation check"))
+    with pytest.raises(ValueError, match="supplied shared budget"):
+        subject.prepare_campaign(request=request, request_descriptor={}, out_root=tmp_path / "second",
+                                 allow_network_counts=True, shared_budget=budget)
+    assert not (tmp_path / "second").exists()
+
+
 def test_distinct_funding_does_not_require_new_balance_for_unselected_registry_provider(tmp_path, monkeypatch):
     request, old_plan, _ledger = _distinct_request(tmp_path, monkeypatch)
     funding = json.loads(Path(request["sources"]["additional_funding"]["path"]).read_text())
