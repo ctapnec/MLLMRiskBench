@@ -97,6 +97,7 @@ class _Admission:
         self.requests = copy.deepcopy(dict(requests))
         self.prices = copy.deepcopy(prices)
         self.transport_recoveries = {}
+        self.funded_cluster_population = None
         self.entries = {entry["origin"]["selection"]["input_identity_sha256"]: entry
                         for entry in attacker._selected_entries}
         if set(self.entries) != set(job["input_ids"]) or set(self.requests) != set(self.entries):
@@ -153,6 +154,30 @@ class _Admission:
             or args.max_total_http_attempts != 4 * len(self.entries)
             or args.max_total_judge_calls < len(self.entries)):
             raise ValueError("retained execution target, scope, retries or call caps differ")
+
+    def validate_funded_cluster_partition(self, name: str) -> dict | None:
+        """Use the admitted distinct-request population, including its paid exclusions.
+
+        Provider-exact deduplication can collapse several source DataPoints into
+        one request. A continuation can also omit already paid members. Neither
+        operation permits splitting the remaining funded cluster across jobs.
+        The population is installed only after complete source/plan admission.
+        """
+        population = self.funded_cluster_population
+        if population is None:
+            return None
+        def cluster(selection):
+            return (selection["corpus"], selection["source"], selection["source_cluster_id"])
+        selected = {key: entry["origin"]["selection"] for key, entry in self.entries.items()}
+        if any(row["corpus"] != name or population.get(key) != row for key, row in selected.items()):
+            raise ValueError("funded cluster partition differs from its admitted source population")
+        clusters = {cluster(row) for row in selected.values()}
+        expected = {key for key, row in population.items() if cluster(row) in clusters}
+        if expected != set(selected):
+            raise ValueError("funded replay partition must preserve whole unpaid source clusters")
+        return {"cluster_coverage_basis": "validated_distinct_funded_population",
+                "funded_population_input_count": len(population),
+                "selected_funded_input_count": len(selected)}
 
     def validate_runner(self, runner: Any) -> None:
         if (runner.attacker.retained_replay_id != self.attacker.retained_replay_id
@@ -966,7 +991,17 @@ def _validated_jobs(program: dict, budget: AttemptBudget, *, local_context: tupl
     # Pilot membership is fixed from inputs, never picked/replaced after output.
     # The bounded main cohort and all first attempts remain funded upfront.
     _validate_input_budget(program, route)
+    if distinct:
+        _bind_funded_cluster_population(admitted)
     return admitted
+
+
+def _bind_funded_cluster_population(admissions: list[_Admission]) -> None:
+    """Bind only the fully validated physical requests remaining in this program."""
+    population = {key: copy.deepcopy(entry["origin"]["selection"])
+                  for admission in admissions for key, entry in admission.entries.items()}
+    for admission in admissions:
+        admission.funded_cluster_population = copy.deepcopy(population)
 
 
 def _bound(raw: Mapping[str, Any]) -> tuple[dict, dict]:

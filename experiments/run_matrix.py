@@ -4094,8 +4094,9 @@ def load_retained_replay_corpus(
 ) -> tuple[list[DataPoint], dict[str, object]]:
     """Select exact funded inputs after full source validation, not a new prefix.
 
-    This is only the admitted retained-replay path. A bounded diagnostic still
-    contains whole original source clusters; ordinary canary sampling is intact.
+    A distinct funded population can collapse provider-identical source rows or
+    exclude a validated paid prefix. Its remaining clusters still stay whole;
+    ordinary unadmitted replay keeps the full source-cluster check.
     """
     full, audit = load_corpus_with_audit(
         name, 0, sample_seed, sampling_policy=sampling_policy, source_instance=source_instance,
@@ -4104,11 +4105,20 @@ def load_retained_replay_corpus(
     selected_clusters = set(result["selected_cluster_ids"])
     whole_ids = {point.id for index, point in zip(audit["selected_indices"], full)
                  if _cluster_key(index, point) in selected_clusters}
-    if whole_ids != {point.id for point in selected}:
+    from ura.runner import current_retained_execution_admission
+    from experiments.hosted_retained_execute import _Admission
+    admission = current_retained_execution_admission()
+    coverage = None
+    if isinstance(admission, _Admission):
+        if (attacker.retained_replay_id != admission.attacker.retained_replay_id
+            or attacker.retained_input_ids != admission.attacker.retained_input_ids):
+            raise ValueError("retained source selection differs from its funded admission")
+        coverage = admission.validate_funded_cluster_partition(name)
+    if coverage is None and whole_ids != {point.id for point in selected}:
         raise ValueError("retained replay partition must preserve whole original source clusters")
     if limit and len(selected_clusters) > limit:
         raise ValueError("retained replay partition exceeds the declared source-cluster limit")
-    return selected, {**result, "limit": limit, "pre_retained_loading_limit": 0}
+    return selected, {**result, **(coverage or {}), "limit": limit, "pre_retained_loading_limit": 0}
 
 
 def _resolve_model_selection(

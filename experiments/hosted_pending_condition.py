@@ -133,4 +133,5 @@ def validated_jobs(program: dict, budget: AttemptBudget, *, local_context=None):
         or any(p != "measured_run" for p in purposes[purposes.index("measured_run"):])):
         raise ValueError("pending pilot and measured jobs must partition the exact unpaid population")
     retained._validate_input_budget({**program, "schema": retained.COUNTED_INPUT_SCHEMA}, routes[0])
+    retained._bind_funded_cluster_population(admissions)
     return admissions

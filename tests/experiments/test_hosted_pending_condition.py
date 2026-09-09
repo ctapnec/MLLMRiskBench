@@ -103,6 +103,7 @@ def test_pending_condition_keeps_complete_paid_prefix_and_exact_remaining_inputs
     assert len(admitted) == 2
     assert {key for a in admitted for key in a.entries} == set(program['requests'])
     assert started not in program['requests']
+    assert all(set(a.funded_cluster_population) == set(program['requests']) for a in admitted)
     assert all(a.program['max_output_tokens'] == 16384 for a in admitted)
     assert (old_budget.root/'ledger.json').read_bytes() == before
 

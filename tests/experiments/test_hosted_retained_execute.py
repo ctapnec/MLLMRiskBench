@@ -384,6 +384,39 @@ def test_nonprefix_retained_pilot_is_one_original_cluster_not_extra_sample(tmp_p
     assert len(calls._dialogs) == 1 and runner.attempts[0].datapoint_id == chosen.id
 
 
+def test_funded_distinct_partition_does_not_regenerate_collapsed_source_rows(tmp_path, monkeypatch):
+    points, attacker, _target, calls, admission = _setup(tmp_path, adaptive=False)
+    sibling = points[0].model_copy(update={"id": "collapsed-source-alias"})
+    monkeypatch.setattr(run_matrix, "load_corpus_with_audit", lambda *a, **kw: (
+        [*points, sibling], {"selected_indices": [0, 1], "selected_records": 2}))
+    kwargs = dict(attacker=attacker, sampling_policy=None, source_instance={})
+    with pytest.raises(ValueError, match="whole original source clusters"):
+        run_matrix.load_retained_replay_corpus("retained-corpus", 1, 0, **kwargs)
+    # An ordinary monetary admission alone must not waive the raw-source check.
+    with retained_execution_admission(admission), pytest.raises(ValueError, match="whole original source clusters"):
+        run_matrix.load_retained_replay_corpus("retained-corpus", 1, 0, **kwargs)
+    subject._bind_funded_cluster_population([admission])
+    with retained_execution_admission(admission):
+        selected, audit = run_matrix.load_retained_replay_corpus("retained-corpus", 1, 0, **kwargs)
+    assert selected == points and not calls
+    assert audit["cluster_coverage_basis"] == "validated_distinct_funded_population"
+    assert audit["funded_population_input_count"] == audit["selected_funded_input_count"] == 1
+
+
+def test_funded_partition_cannot_split_one_unpaid_cluster_into_probe_and_measured(tmp_path):
+    _points, _attacker, _target, calls, whole = _setup(tmp_path, adaptive=True)
+    parts = []
+    for key in whole.entries:
+        part = copy.copy(whole)
+        part.entries = {key: whole.entries[key]}
+        parts.append(part)
+    subject._bind_funded_cluster_population(parts)
+    for part in parts:
+        with pytest.raises(ValueError, match="whole unpaid source clusters"):
+            part.validate_funded_cluster_partition("retained-corpus")
+    assert not calls
+
+
 def test_scoped_cli_uses_exact_nonprefix_inputs_and_seals_one_mock_response(tmp_path, monkeypatch):
     for key in list(os.environ):
         if key.startswith("URA_"):
