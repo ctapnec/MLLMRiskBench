@@ -18,14 +18,14 @@ all six records restore without target or judge calls, with the original
 generation manifests unchanged. The resulting read-only view is available
 for final cohort composition; it does not promote the failed source grids.
 
-The completed measured-view snapshot covers 498 responses: 423 visible answers
+The earlier seven-view snapshot covers 498 responses: 423 visible answers
 eligible for text-based re-adjudication, 33 explicit provider refusals without
 visible text, 14 source-authoritative-only outcomes and 28 non-evaluable setup
 turns. The 33 refusals are observed rejection outcomes, not missing model
 responses. Do not synthesize text or draw replacement inputs for Haiku.
 The generic selector's blank-text exclusion count must be interpreted with
 this response-state audit, not reported as intrinsic model instability.
-All 423 eligible hosted answers have matching local inputs. The current
+All 423 eligible hosted answers have matching local inputs. That earlier
 balanced selection would use 208 distinct local answers and 423 hosted answers,
 or 631 unique Haiku calls: USD 5.976832 at 8,192 input and 256 output tokens per
 call, and USD 9.369088 at 12,288 input and 512 output tokens per call. These are
@@ -44,6 +44,20 @@ nine usable diagnostic responses are not experimental estimates. These newly
 published partial-route views are not included in the earlier 631-call Haiku
 scenario. Final pairing, request counting and funding must include their
 eligible outcomes before the judging cohort is fixed.
+
+All-retained reconciliation completed at 07:42 UTC. The ten published groups
+and separate prefix scoring account for 581 measured outcomes: 500 visible
+common-security candidates, 33 explicit provider refusals without text,
+14 source-authoritative-only outcomes and 34 non-evaluable setup turns. All
+500 eligible hosted answers match local inputs, spanning 81 distinct input
+identities. The current balanced snapshot selects 229 distinct local answers
+and 500 hosted answers, or 729 unique Haiku calls. Its token scenarios are
+USD 6.905088 at 8,192 input / 256 output tokens and USD 10.824192 at 12,288
+input / 512 output tokens per call, before HTTP retries. These supersede the
+earlier 631-call snapshot for available data only. They do not finalize the
+paid cohort or release any of the 268 unstarted target assignments. Full
+grading-request counts, remaining target recovery and final funding are still
+required; the protected judging pool remains USD 29.992960 and unused.
 
 Execution update, 8 September. The required local generation and both analysis
 publications are terminal, and their combined retained-input handoff validates.
