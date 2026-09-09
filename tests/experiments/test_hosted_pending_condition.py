@@ -15,8 +15,8 @@ from test_hosted_campaign_prepare import _distinct_request, _save
 from ura.adapters.replay import retained_dialog
 
 
-def _pending(tmp_path, monkeypatch, *, change_output=True):
-    request, _initial, _ = _distinct_request(tmp_path, monkeypatch)
+def _pending(tmp_path, monkeypatch, *, change_output=True, **program_options):
+    request, _initial, _ = _distinct_request(tmp_path, monkeypatch, **program_options)
     receipt = prepare.prepare_campaign(request=request, request_descriptor={}, out_root=tmp_path/'old', allow_network_counts=False)
     old = json.loads(Path(receipt['programs'][0]['path']).read_text())
     old_budget = AttemptBudget(tmp_path/'old/budget', receipt['budget']['sha256'])
@@ -31,19 +31,24 @@ def _pending(tmp_path, monkeypatch, *, change_output=True):
     pending = [key for job in old['jobs'] for key in job['input_ids'] if key != started]
     sources = copy.deepcopy(old['sources'])
     api = json.loads(Path(sources['api_config']['path']).read_text())
-    output_tokens = 16384 if change_output else api[old['target']]['max_tokens']
-    api[old['target']]['max_tokens'] = output_tokens
+    output_tokens = 16384 if change_output else old['max_output_tokens']
+    if change_output:
+        api[old['target']]['max_tokens'] = output_tokens
     sources['api_config'] = _save(tmp_path/'new-api.json', api)
     price = json.loads(Path(sources['pricing']['path']).read_text())
     configured = json.loads(Path(sources['budgets']['path']).read_text())
     config = [{'label': 'Pending fixture', 'spec': old['target'], 'provider': old['provider'],
                'model': old['target'].split(':', 1)[1], 'call_cap': len(pending), 'max_output_tokens': output_tokens}]
-    projected = projection.build_projection(api_config=api, pricing=price, budgets=configured,
-        descriptors={'api_config': prepare._portable(sources['api_config']),
-                     'pricing_config': prepare._portable(sources['pricing']), 'budgets': prepare._portable(sources['budgets'])},
-        pricing_as_of=old['pricing_as_of'], route_configuration=config)
-    sources['budget_projection'] = _save(tmp_path/'new-projection.json', projected)
-    target = run_matrix.build_target(old['target'], api_config=api[old['target']])
+    if change_output:
+        projected = projection.build_projection(api_config=api, pricing=price, budgets=configured,
+            descriptors={'api_config': prepare._portable(sources['api_config']),
+                         'pricing_config': prepare._portable(sources['pricing']), 'budgets': prepare._portable(sources['budgets'])},
+            pricing_as_of=old['pricing_as_of'], route_configuration=config)
+        sources['budget_projection'] = _save(tmp_path/'new-projection.json', projected)
+    else:
+        sources['api_config'] = old['sources']['api_config']
+    normalized, _ = run_matrix._load_api_config(sources['api_config']['path'], [old['target']], sources['api_config']['sha256'])
+    target = run_matrix.build_target(old['target'], api_config=normalized.get(old['target']))
     requests = {}
     prices = old_admissions[0].prices
     for key in pending:
@@ -112,6 +117,21 @@ def test_pending_continuation_accepts_unchanged_requests_without_mutating_v1(tmp
     assert {key for a in admitted for key in a.entries} == set(program['requests'])
     assert started not in program['requests']
     assert (old_budget.root/'ledger.json').read_bytes() == before
+
+
+@pytest.mark.parametrize('target_spec', [
+    'anthropic-fable:claude-fable-5-1;effort=high;max_tokens=8192',
+    'openai-responses:gpt-5.6-sol;reasoning_mode=pro;reasoning_effort=medium;reasoning_context=all_turns;max_output_tokens=8192',
+])
+def test_pending_fixed_spec_uses_real_normalizer_without_generic_config(tmp_path, monkeypatch, target_spec):
+    program, budget, _, _ = _pending(tmp_path, monkeypatch, change_output=False, target_spec=target_spec)
+    program['schema'] = subject.CONTINUATION_SCHEMA
+    sources = program['sources']
+    normalized, _ = run_matrix._load_api_config(sources['api_config']['path'], [target_spec], sources['api_config']['sha256'])
+    assert target_spec not in normalized
+    admitted = retained._validated_jobs(program, budget)
+    assert sum(len(a.entries) for a in admitted) == len(program['requests'])
+    assert all(a.program['max_output_tokens'] == 8192 for a in admitted)
 
 
 @pytest.mark.parametrize('change', ['history', 'old_spending', 'omit_pending', 'include_paid', 'api_hash', 'request_hash', 'old_output'])

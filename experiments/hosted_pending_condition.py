@@ -87,7 +87,7 @@ def validated_jobs(program: dict, budget: AttemptBudget, *, local_context=None):
     if len(routes) != 1 or routes[0]["maximum_output_tokens_per_call"] != program["max_output_tokens"]:
         raise ValueError("pending output allowance differs from its funded route")
     normalized, _ = run_matrix._load_api_config(sources["api_config"]["path"], [program["target"]], sources["api_config"]["sha256"])
-    target = run_matrix.build_target(program["target"], api_config=normalized[program["target"]])
+    target = run_matrix.build_target(program["target"], api_config=normalized.get(program["target"]))
     originals = {key: (entry, admission.prices) for admission in old_admissions for key, entry in admission.entries.items()}
     old_outputs = [Path(run_matrix.build_parser().parse_args(j["argv"]).out) for j in old["jobs"]]
     observed, outputs, names, admissions, purposes = [], set(), set(), [], []

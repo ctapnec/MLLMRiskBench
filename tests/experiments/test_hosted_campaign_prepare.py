@@ -87,10 +87,10 @@ def test_preparation_creates_funded_disjoint_pilot_and_measured_program_without_
     assert len(budget["planned_calls"]) == 6
 
 
-def _distinct_request(tmp_path, monkeypatch):
+def _distinct_request(tmp_path, monkeypatch, **program_options):
     from experiments import run_matrix
     capture = {}
-    request, _ = _request(tmp_path, monkeypatch, extra_points=8, source_capture=capture)
+    request, _ = _request(tmp_path, monkeypatch, extra_points=8, source_capture=capture, **program_options)
     sources = request["sources"]
     budget = json.loads(Path(sources["budget_projection"]["path"]).read_text())
     api = json.loads(Path(sources["api_config"]["path"]).read_text())
