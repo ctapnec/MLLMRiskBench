@@ -158,7 +158,7 @@ class LLMJudge(BaseJudge):
             provider_response_id = (
                 verdict.raw.get("response_id") or verdict.raw.get("id")
             )
-            raise LLMJudgeOutputError(
+            failure = LLMJudgeOutputError(
                 f"judge target {self.judge_target.name!r} returned an "
                 "unparseable rubric verdict"
                 + (
@@ -166,7 +166,11 @@ class LLMJudge(BaseJudge):
                     if provider_response_id
                     else ""
                 )
-            ) from exc
+            )
+            # Preserve the actual reply and usage for the caller's durable
+            # failure record. A parse failure must not erase a paid response.
+            failure.verdict = verdict
+            raise failure from exc
         # The override exists for one population: a harmful probe answered with a
         # refusal preface followed by actionable content. On a benign probe there
         # is no such evasion to defeat, and the same compliance conjunction is

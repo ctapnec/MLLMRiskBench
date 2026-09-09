@@ -1854,6 +1854,10 @@ class DashboardMixin:
                  f"token-priced usage USD {completion['actual_cost_microusd'] / 1e6:.6f} / "
                  f"plan ceiling USD {completion['max_cost_microusd'] / 1e6:.6f}.</p>",
                  "<details><summary>Source-view coverage before matched selection</summary>"]
+        if "invalid_verdicts" in completion:
+            parts.insert(-1, f"<p>Judge abstentions from invalid verdicts: {completion['invalid_verdicts']}; "
+                         f"attempts with unknown usage: {completion['unknown_usage_judgments']}. "
+                         "The displayed token-priced amount is known usage only, not the total charge.</p>")
         for cohort in ("local", "hosted"):
             audit = doc["plan"]["population"][cohort]
             parts.append(f"<h4>{cohort.title()} source frame</h4>" + self._count_bar_chart(

@@ -92,6 +92,7 @@ def execute(
     judge_factory: Any = _build_haiku_judge,
     shared_budget: Any = None,
     shared_requests: Mapping[str, dict] | None = None,
+    retain_invalid_verdicts: bool = False,
 ) -> Path:
     def build_judge(spec: str, config: Mapping[str, object]) -> Any:
         if config.get("max_tokens") != 512:
@@ -126,6 +127,7 @@ def execute(
         judge_factory=build_judge,
         plan_validator=validate_pair_plan,
         selection_reconciler=reconcile,
+        retain_invalid_verdicts=retain_invalid_verdicts,
         **shared_kwargs,
     )
 
@@ -140,6 +142,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--pricing-config", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--ack-paid-execution", action="store_true")
+    parser.add_argument("--retain-invalid-verdicts", action="store_true")
     args = parser.parse_args(argv)
     if not args.ack_paid_execution:
         parser.error("--ack-paid-execution is required")
@@ -152,6 +155,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             api_config=args.api_config,
             pricing_config=args.pricing_config,
             out=args.out,
+            retain_invalid_verdicts=args.retain_invalid_verdicts,
         )
     )
     return 0

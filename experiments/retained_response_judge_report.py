@@ -18,6 +18,7 @@ from experiments.retained_response_judge import (
     _candidates_from_view, _read_view, _regular_descriptor, _sha,
 )
 from experiments.retained_response_judge_execute import (
+    INVALID_JUDGMENT_SCHEMA, OUTCOME_EXECUTION_SCHEMA,
     _artifact_http_attempts, _judgment_path, _read_regular,
     _validate_artifact, _validate_completion, _validate_ledger, _write_new,
 )
@@ -28,6 +29,7 @@ from ura.data_models import Judgment
 from ura.metrics import equal_cluster_bootstrap_ci, equal_cluster_mean
 
 SCHEMA = "ura-retained-judge-comparison/1"
+OUTCOME_SCHEMA = "ura-retained-judge-comparison/2"
 LABELS = ("safe", "violation", "refusal", "over_refusal")
 DIMENSIONS = (
     "cohort", "exact_model", "framework", "corpus", "source", "modality",
@@ -43,6 +45,10 @@ LIMITATIONS = [
     "Shared local judgments are counted once; comparison links are not independent observations.",
     "Cost is token-priced successful-judgment usage, not an invoice or release of unknown retry holds.",
     "Target spending and missing-input coverage remain in the source campaign reports.",
+]
+OUTCOME_LIMITATIONS = LIMITATIONS + [
+    "Invalid judge verdicts are abstentions, not safe or harmful labels, and are not answer-retried.",
+    "Usage totals include only reported tokens; unknown-usage attempts remain separately counted and fully reserved.",
 ]
 
 
@@ -184,7 +190,7 @@ def build_report(*, plan_path: Path, execution_root: Path, local_runner_view: Pa
         call_tokens = artifact["judgment"]["raw"]["judge_call"]["tokens"]
         if (call_tokens.get("input"), call_tokens.get("output")) != (artifact["input_tokens"], artifact["output_tokens"]):
             raise ValueError("judge artifact usage differs from the provider response")
-        observations.append({
+        observation = {
             "retained_row_sha256": row["retained_row_sha256"],
             "cascade_label": _decision(original, cascade=True),
             "haiku_label": _decision(artifact["judgment"], cascade=False),
@@ -192,7 +198,11 @@ def build_report(*, plan_path: Path, execution_root: Path, local_runner_view: Pa
             "cascade_judgment_sha256": _sha({k: v for k, v in original.items() if k != "_artifact_file"}),
             "input_tokens": artifact["input_tokens"], "output_tokens": artifact["output_tokens"],
             "cost_microusd": artifact["cost_microusd"], "http_attempts": _artifact_http_attempts(artifact),
-        })
+        }
+        if ledger["schema"] == OUTCOME_EXECUTION_SCHEMA:
+            observation.update(usage_status="unknown" if artifact["cost_microusd"] is None else "reported",
+                               judge_status="invalid_verdict" if artifact["schema"] == INVALID_JUDGMENT_SCHEMA else "valid_verdict")
+        observations.append(observation)
         descriptors.append(descriptor)
         selected_attempts[key].add(row["attempt_id"])
     generation_cells = []
@@ -202,13 +212,14 @@ def build_report(*, plan_path: Path, execution_root: Path, local_runner_view: Pa
             raise ValueError("selected output is absent from validated response artifacts")
         generation_cells.append({**cell, "responses": {a: cell["responses"][a] for a in sorted(attempts)}})
     report = {
-        "schema": SCHEMA, "status": "complete", "plan": plan,
+        "schema": OUTCOME_SCHEMA if ledger["schema"] == OUTCOME_EXECUTION_SCHEMA else SCHEMA,
+        "status": "complete", "plan": plan,
         "sources": {"plan": plan_descriptor, "execution": ledger_descriptor,
                     "completion": completion_descriptor, "judgments": descriptors},
         "execution": ledger, "completion": completion, "observations": observations,
         "summary": summarize(plan, observations),
         "generation_conditions": build_generation_conditions(generation_cells),
-        "limitations": LIMITATIONS,
+        "limitations": OUTCOME_LIMITATIONS if ledger["schema"] == OUTCOME_EXECUTION_SCHEMA else LIMITATIONS,
         "uncertainty": {"method": "equal_source_cluster_bootstrap", "resamples": 2000,
                         "seed": 0, "confidence": 0.95, "minimum_clusters": 2},
     }
@@ -221,7 +232,7 @@ def validate_report(value: object) -> None:
     if not isinstance(value, dict) or set(value) != {
         "schema", "status", "plan", "sources", "execution", "completion", "observations",
         "summary", "generation_conditions", "limitations", "uncertainty", "report_id",
-    } or value["schema"] != SCHEMA or value["status"] != "complete":
+    } or value["schema"] not in {SCHEMA, OUTCOME_SCHEMA} or value["status"] != "complete":
         raise ValueError("invalid matched judge comparison report")
     plan = validate_pair_plan(value["plan"])
     sources = value["sources"]
@@ -237,6 +248,9 @@ def validate_report(value: object) -> None:
             or any(c not in "0123456789abcdef" for c in descriptor["sha256"])):
             raise ValueError("invalid matched comparison source descriptor")
     ledger = _validate_ledger(value["execution"], plan, sources["plan"]["sha256"])
+    outcomes = value["schema"] == OUTCOME_SCHEMA
+    if outcomes != (ledger["schema"] == OUTCOME_EXECUTION_SCHEMA):
+        raise ValueError("judge outcome report and execution policies differ")
     if ledger["state"] != "complete":
         raise ValueError("matched comparison requires a completed execution")
     _validate_completion(value["completion"], plan=plan, ledger=ledger, plan_sha256=sources["plan"]["sha256"])
@@ -247,20 +261,34 @@ def validate_report(value: object) -> None:
         if not isinstance(obs, dict) or set(obs) != {
             "retained_row_sha256", "cascade_label", "haiku_label", "cascade_configuration_sha256",
             "cascade_judgment_sha256", "input_tokens", "output_tokens", "cost_microusd", "http_attempts",
-        } or obs["retained_row_sha256"] != row["retained_row_sha256"]:
+        } | ({"usage_status", "judge_status"} if outcomes else set()) or obs["retained_row_sha256"] != row["retained_row_sha256"]:
             raise ValueError("matched comparison same-output join changed")
         if any(obs[k] not in (*LABELS, None) for k in ("cascade_label", "haiku_label")):
             raise ValueError("matched comparison label is invalid")
         if any(not isinstance(obs[k], str) or len(obs[k]) != 64 or any(c not in "0123456789abcdef" for c in obs[k])
                for k in ("cascade_configuration_sha256", "cascade_judgment_sha256")):
             raise ValueError("matched comparison original judge identity is invalid")
+        if outcomes:
+            if (obs["usage_status"] not in {"reported", "unknown"}
+                or obs["judge_status"] not in {"valid_verdict", "invalid_verdict"}
+                or obs["judge_status"] == "invalid_verdict" and obs["haiku_label"] is not None):
+                raise ValueError("invalid judge verdict cannot contribute a safety label")
+            if obs["usage_status"] == "unknown":
+                if (obs["judge_status"] != "invalid_verdict"
+                    or any(obs[k] is not None for k in ("input_tokens", "output_tokens", "cost_microusd"))
+                    or type(obs["http_attempts"]) is not int or not 1 <= obs["http_attempts"] <= 4):
+                    raise ValueError("unknown judge usage must remain null, not zero-priced")
+                continue
         if (any(type(obs[k]) is not int or obs[k] < 0 for k in ("input_tokens", "output_tokens", "cost_microusd", "http_attempts"))
             or not 1 <= obs["http_attempts"] <= 4 or obs["cost_microusd"] != obs["input_tokens"] + obs["output_tokens"] * 5):
             raise ValueError("matched comparison usage is invalid")
     for source, target in (("input_tokens", "input_tokens"), ("output_tokens", "output_tokens"),
                            ("cost_microusd", "actual_cost_microusd"), ("http_attempts", "http_attempts_observed")):
-        if sum(obs[source] for obs in observations) != ledger[target]:
+        if sum(obs[source] for obs in observations if obs[source] is not None) != ledger[target]:
             raise ValueError("matched comparison unique-output usage does not reconcile")
+    if outcomes and (value["completion"]["invalid_verdicts"] != sum(obs["judge_status"] == "invalid_verdict" for obs in observations)
+        or value["completion"]["unknown_usage_judgments"] != sum(obs["usage_status"] == "unknown" for obs in observations)):
+        raise ValueError("matched comparison invalid-verdict coverage differs")
     validate_generation_conditions(value["generation_conditions"], {row["run_id"] for row in plan["selected"]})
     actual_runs: dict[str, int] = defaultdict(int)
     expected_runs: dict[str, int] = defaultdict(int)
@@ -270,7 +298,8 @@ def validate_report(value: object) -> None:
         expected_runs[row["run_id"]] += 1
     if actual_runs != expected_runs:
         raise ValueError("matched comparison generation population differs")
-    if (value["summary"] != summarize(plan, observations) or value["limitations"] != LIMITATIONS
+    if (value["summary"] != summarize(plan, observations)
+        or value["limitations"] != (OUTCOME_LIMITATIONS if outcomes else LIMITATIONS)
         or value["uncertainty"] != {"method": "equal_source_cluster_bootstrap", "resamples": 2000,
                                    "seed": 0, "confidence": 0.95, "minimum_clusters": 2}
         or value["report_id"] != "retained-judge-comparison-" + _sha({k: v for k, v in value.items() if k != "report_id"})[:24]):

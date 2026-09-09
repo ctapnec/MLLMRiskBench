@@ -21,7 +21,7 @@ from experiments.retained_response_judge import (
     validate_plan,
 )
 from ura.data_models import DataPoint, DialogTurn, Judgment, Response
-from ura.judges.llm import LLMJudge
+from ura.judges.llm import LLMJudge, LLMJudgeOutputError
 from ura.targets.api import (
     AnthropicTarget,
     DEFAULT_HOSTED_HTTP_ERROR_RETRIES,
@@ -34,6 +34,9 @@ EXECUTION_SCHEMA = "ura-retained-response-judge-execution/2"
 JUDGMENT_SCHEMA = "ura-retained-response-judge-artifact/2"
 CIRCUIT_SCHEMA = "ura-retained-response-judge-circuit/2"
 COMPLETION_SCHEMA = "ura-retained-response-judge-completion/2"
+OUTCOME_EXECUTION_SCHEMA = "ura-retained-response-judge-execution/3"
+INVALID_JUDGMENT_SCHEMA = "ura-retained-response-judge-artifact/3"
+OUTCOME_COMPLETION_SCHEMA = "ura-retained-response-judge-completion/3"
 SHARED_ESTIMATE_METHOD = "canonical_request_utf8_bytes_plus_256_conservative_estimate_v1"
 _LEDGER_FIELDS = frozenset(
     {
@@ -405,7 +408,7 @@ def _validate_ledger(value: object, plan: Mapping[str, Any], plan_sha256: str) -
     ):
         raise ValueError("retained-response execution ledger count is invalid")
     if (
-        value["schema"] != EXECUTION_SCHEMA
+        value["schema"] not in {EXECUTION_SCHEMA, OUTCOME_EXECUTION_SCHEMA}
         or value["plan_id"] != plan["plan_id"]
         or value["plan_sha256"] != plan_sha256
         or value["selected_outputs"] != selected
@@ -456,6 +459,67 @@ def _judgment_path(root: Path, index: int, row: Mapping[str, Any]) -> Path:
     )
 
 
+def invalid_verdict_artifact(*, plan: Mapping[str, Any], index: int, row: Mapping[str, Any],
+                             verdict: Response | None, reviewed_failure: Mapping[str, Any] | None = None) -> dict:
+    """Retain an undecidable judge outcome, never a replacement safety label.
+
+    The historical missing-reply case is operator-only: its immutable failure
+    evidence is mandatory, usage stays unknown, and the money hold is not zeroed.
+    """
+    if verdict is None:
+        if not isinstance(reviewed_failure, Mapping):
+            raise ValueError("unretained judge verdict requires reviewed failure evidence")
+        circuit = reviewed_failure.get("circuit")
+        if (not isinstance(circuit, Mapping) or circuit.get("error_type") != "LLMJudgeOutputError"
+            or circuit.get("plan_id") != plan["plan_id"] or circuit.get("selection_index") != index
+            or circuit.get("retained_row_sha256") != row["retained_row_sha256"]
+            or reviewed_failure.get("physical_attempts") != 1
+            or not isinstance(reviewed_failure.get("sources"), list) or not reviewed_failure["sources"]):
+            raise ValueError("reviewed invalid judge failure differs from its exact reserved input")
+        for source in reviewed_failure["sources"]:
+            if (not isinstance(source, Mapping) or set(source) != {"file", "sha256", "bytes"}
+                or Path(str(source["file"])).name != source["file"]
+                or type(source["bytes"]) is not int or source["bytes"] <= 0
+                or not isinstance(source["sha256"], str) or len(source["sha256"]) != 64
+                or any(c not in "0123456789abcdef" for c in source["sha256"])):
+                raise ValueError("reviewed invalid judge failure evidence descriptor is invalid")
+        input_tokens = output_tokens = cost = None
+        call = {"tokens": {"input": None, "output": None}, "transport_attempt_count": 1,
+                "provider_response_id": reviewed_failure.get("provider_response_id"),
+                "usage_status": "unknown_retained_failure"}
+    else:
+        if reviewed_failure is not None or not LLMJudge._response_text(verdict):
+            raise ValueError("empty judge output still requires investigation before continuation")
+        if verdict.target != plan["judge_condition"]["model"]:
+            raise ValueError("invalid verdict came from a different judge")
+        try:
+            LLMJudge._parse(LLMJudge.__new__(LLMJudge), LLMJudge._response_text(verdict))
+        except LLMJudgeOutputError:
+            pass
+        else:
+            raise ValueError("a valid rubric verdict cannot be relabelled as an abstention")
+        tokens = verdict.tokens or {}
+        input_tokens, output_tokens = tokens.get("input"), tokens.get("output")
+        if any(type(value) is not int or value < 0 for value in (input_tokens, output_tokens)):
+            raise ValueError("invalid judge verdict lacks exact usage")
+        cost = input_tokens + output_tokens * 5
+        call = {"tokens": dict(tokens), "transport_attempt_count": verdict.raw.get("transport_attempt_count"),
+                "transport_attempts": verdict.raw.get("transport_attempts", []),
+                "provider_response_id": verdict.raw.get("response_id") or verdict.raw.get("id"),
+                "usage_status": "reported"}
+    judgment = Judgment(attempt_id=row["attempt_id"], judge="llm-judge", label="not_applicable", score=0,
+        rationale="The judge did not supply a complete unambiguous rubric verdict; no safety label is assigned.",
+        raw={"parsed": False, "confidence": 0.0, "judge_model": plan["judge_condition"]["model"],
+             "judge_model_queried": True, "judge_call": call, "judge_status": "invalid_verdict"})
+    value = {"schema": INVALID_JUDGMENT_SCHEMA, "plan_id": plan["plan_id"], "selection_index": index,
+        "retained_row_sha256": row["retained_row_sha256"], "sample_key": row["sample_key"],
+        "same_model_judge": row["same_model_judge"], "judgment": judgment.model_dump(mode="json"),
+        "input_tokens": input_tokens, "output_tokens": output_tokens, "cost_microusd": cost,
+        "invalid_verdict": {"verdict": verdict.model_dump(mode="json") if verdict is not None else None,
+                            "reviewed_failure": dict(reviewed_failure) if reviewed_failure is not None else None}}
+    return value
+
+
 def _validate_artifact(
     value: object,
     *,
@@ -463,6 +527,7 @@ def _validate_artifact(
     index: int,
     row: Mapping[str, Any],
 ) -> dict:
+    invalid = isinstance(value, dict) and value.get("schema") == INVALID_JUDGMENT_SCHEMA
     if not isinstance(value, dict) or set(value) != {
         "schema",
         "plan_id",
@@ -474,12 +539,12 @@ def _validate_artifact(
         "input_tokens",
         "output_tokens",
         "cost_microusd",
-    }:
+    } | ({"invalid_verdict"} if invalid else set()):
         raise ValueError("retained-response judgment artifact fields changed")
     judgment = Judgment.model_validate(value.get("judgment"))
     call = judgment.raw.get("judge_call")
     if (
-        value["schema"] != JUDGMENT_SCHEMA
+        value["schema"] not in {JUDGMENT_SCHEMA, INVALID_JUDGMENT_SCHEMA}
         or value["plan_id"] != plan["plan_id"]
         or value["selection_index"] != index
         or value["retained_row_sha256"] != row["retained_row_sha256"]
@@ -499,6 +564,17 @@ def _validate_artifact(
     input_tokens = value.get("input_tokens")
     output_tokens = value.get("output_tokens")
     cost = value.get("cost_microusd")
+    if invalid:
+        failure = value["invalid_verdict"]
+        if not isinstance(failure, dict) or set(failure) != {"verdict", "reviewed_failure"}:
+            raise ValueError("invalid judge outcome lost its retained failure evidence")
+        rebuilt = invalid_verdict_artifact(plan=plan, index=index, row=row,
+            verdict=Response.model_validate(failure["verdict"]) if failure["verdict"] is not None else None,
+            reviewed_failure=failure["reviewed_failure"])
+        if value != rebuilt:
+            raise ValueError("invalid judge outcome or reported usage differs from its evidence")
+        if cost is None:
+            return value
     if any(
         isinstance(item, bool) or not isinstance(item, int) or item < 0
         for item in (input_tokens, output_tokens, cost)
@@ -508,7 +584,10 @@ def _validate_artifact(
 
 
 def _artifact_usage(value: Mapping[str, Any]) -> tuple[int, int, int]:
-    return value["input_tokens"], value["output_tokens"], value["cost_microusd"]
+    # Arithmetic is a known-usage subtotal. Unknown remains null in the
+    # artifact and fully reserved in the shared money ledger, never a free call.
+    return tuple(value[key] if value[key] is not None else 0
+                 for key in ("input_tokens", "output_tokens", "cost_microusd"))
 
 
 def _artifact_http_attempts(value: Mapping[str, Any]) -> int:
@@ -523,6 +602,7 @@ def _validate_completion(
     ledger: Mapping[str, Any],
     plan_sha256: str,
 ) -> dict:
+    outcomes = ledger["schema"] == OUTCOME_EXECUTION_SCHEMA
     if not isinstance(value, dict) or set(value) != {
         "schema",
         "status",
@@ -540,11 +620,11 @@ def _validate_completion(
         "independent_judge_rows",
         "same_model_judge_rows",
         "physical_media_sent_to_judge",
-    }:
+    } | ({"invalid_verdicts", "unknown_usage_judgments"} if outcomes else set()):
         raise ValueError("retained-response completion fields changed")
     condition = plan["judge_condition"]
     if (
-        value["schema"] != COMPLETION_SCHEMA
+        value["schema"] != (OUTCOME_COMPLETION_SCHEMA if outcomes else COMPLETION_SCHEMA)
         or value["status"] != "complete"
         or value["plan_id"] != plan["plan_id"]
         or value["plan_sha256"] != plan_sha256
@@ -562,6 +642,9 @@ def _validate_completion(
         or value["physical_media_sent_to_judge"] is not False
     ):
         raise ValueError("retained-response completion contract changed")
+    if outcomes and (any(type(value[key]) is not int for key in ("invalid_verdicts", "unknown_usage_judgments"))
+        or not 0 <= value["unknown_usage_judgments"] <= value["invalid_verdicts"] <= len(plan["selected"])):
+        raise ValueError("retained-response invalid-verdict coverage differs")
     return value
 
 
@@ -581,7 +664,10 @@ def execute(
     ] = _reconcile_selection,
     shared_budget: Any = None,
     shared_requests: Mapping[str, dict] | None = None,
+    retain_invalid_verdicts: bool = False,
 ) -> Path:
+    if type(retain_invalid_verdicts) is not bool:
+        raise ValueError("invalid-verdict retention policy must be explicit boolean")
     raw_plan, plan_descriptor = _read_regular(
         plan_path,
         label="retained-response judge plan",
@@ -685,11 +771,13 @@ def execute(
                 max_bytes=1024 * 1024,
             )
             ledger = _validate_ledger(raw_ledger, plan, plan_descriptor["sha256"])
+            if (ledger["schema"] == OUTCOME_EXECUTION_SCHEMA) != retain_invalid_verdicts:
+                raise ValueError("invalid-verdict continuation policy differs from its execution")
             if ledger["conservative_cost_microusd"] != conservative_total:
                 raise ValueError("retained-response conservative cost bound changed")
         else:
             ledger = {
-                "schema": EXECUTION_SCHEMA,
+                "schema": OUTCOME_EXECUTION_SCHEMA if retain_invalid_verdicts else EXECUTION_SCHEMA,
                 "plan_id": plan["plan_id"],
                 "plan_sha256": plan_descriptor["sha256"],
                 "selected_outputs": len(items),
@@ -843,8 +931,15 @@ def execute(
                 physical["last_reserved"] = number
 
             try:
-                with provider_attempt_admission(reserve_physical) if shared_binding is not None else contextlib.nullcontext():
-                    judgment = judge.judge(datapoint, response)
+                invalid_artifact = None
+                try:
+                    with provider_attempt_admission(reserve_physical) if shared_binding is not None else contextlib.nullcontext():
+                        judgment = judge.judge(datapoint, response)
+                except LLMJudgeOutputError as exc:
+                    if not retain_invalid_verdicts or not isinstance(getattr(exc, "verdict", None), Response):
+                        raise
+                    invalid_artifact = invalid_verdict_artifact(plan=plan, index=index, row=row, verdict=exc.verdict)
+                    judgment = Judgment.model_validate(invalid_artifact["judgment"])
                 call = judgment.raw.get("judge_call")
                 tokens = call.get("tokens") if isinstance(call, dict) else None
                 if (
@@ -872,6 +967,8 @@ def execute(
                     "output_tokens": tokens["output"],
                     "cost_microusd": cost,
                 }
+                if invalid_artifact is not None:
+                    artifact = invalid_artifact
                 _validate_artifact(artifact, plan=plan, index=index, row=row)
                 if shared_binding is not None and _artifact_http_attempts(artifact) != physical["last_reserved"]:
                     raise ValueError("judgment checkpoint disagrees with its physical paid reservations")
@@ -943,7 +1040,7 @@ def execute(
         ledger["state"] = "complete"
         _write_atomic(ledger_path, ledger)
         completion = {
-            "schema": COMPLETION_SCHEMA,
+            "schema": OUTCOME_COMPLETION_SCHEMA if retain_invalid_verdicts else COMPLETION_SCHEMA,
             "status": "complete",
             "plan_id": plan["plan_id"],
             "plan_sha256": plan_descriptor["sha256"],
@@ -960,6 +1057,11 @@ def execute(
             "same_model_judge_rows": condition["same_model_judge_rows"],
             "physical_media_sent_to_judge": False,
         }
+        if retain_invalid_verdicts:
+            retained = [_read_regular(_judgment_path(root, i, row), label="judge outcome", max_bytes=1024 * 1024)[0]
+                        for i, (row, _prompt, _response) in enumerate(items)]
+            completion.update(invalid_verdicts=sum(value["schema"] == INVALID_JUDGMENT_SCHEMA for value in retained),
+                              unknown_usage_judgments=sum(value["cost_microusd"] is None for value in retained))
         _validate_completion(
             completion,
             plan=plan,
@@ -979,6 +1081,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--pricing-config", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--ack-paid-execution", action="store_true")
+    parser.add_argument("--retain-invalid-verdicts", action="store_true")
     args = parser.parse_args(argv)
     if not args.ack_paid_execution:
         parser.error("--ack-paid-execution is required")
@@ -990,6 +1093,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             api_config=args.api_config,
             pricing_config=args.pricing_config,
             out=args.out,
+            retain_invalid_verdicts=args.retain_invalid_verdicts,
         )
     )
     return 0

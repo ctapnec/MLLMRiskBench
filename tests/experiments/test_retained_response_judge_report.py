@@ -142,6 +142,38 @@ def test_rates_weight_source_clusters_not_repeated_turns():
     assert rate["ci_low"] == 0 and rate["ci_high"] == 1
 
 
+def test_report_keeps_invalid_verdict_and_unknown_usage_out_of_labels_and_cost(completed):
+    from test_retained_invalid_verdict import _review
+    args, plan, _ = completed
+    root = args["execution_root"]
+    row = plan["selected"][0]
+    path = executor._judgment_path(root, 0, row)
+    previous = json.loads(path.read_bytes())
+    failure = executor.invalid_verdict_artifact(plan=plan, index=0, row=row, verdict=None, reviewed_failure=_review(plan))
+    path.write_bytes(executor._canonical(failure))
+    for filename, schema in [("execution.json", executor.OUTCOME_EXECUTION_SCHEMA),
+                             ("completion.json", executor.OUTCOME_COMPLETION_SCHEMA)]:
+        value = json.loads((root / filename).read_bytes())
+        value["schema"] = schema
+        for key in ("input_tokens", "output_tokens"):
+            value[key] -= previous[key]
+        value["actual_cost_microusd"] -= previous["cost_microusd"]
+        if filename == "completion.json":
+            value.update(invalid_verdicts=1, unknown_usage_judgments=1)
+        (root / filename).write_bytes(executor._canonical(value))
+    report = subject.build_report(**args)
+    assert report["schema"] == subject.OUTCOME_SCHEMA
+    assert report["observations"][0]["haiku_label"] is None
+    assert report["observations"][0]["input_tokens"] is None
+    assert report["observations"][0]["cost_microusd"] is None
+    assert report["completion"]["unknown_usage_judgments"] == 1
+    assert report["completion"]["actual_cost_microusd"] == 480
+    damaged = copy.deepcopy(report)
+    damaged["observations"][0]["cost_microusd"] = 0
+    with pytest.raises(ValueError, match="unknown judge usage"):
+        subject.validate_report(damaged)
+
+
 def test_stats_renders_registered_comparison_with_self_judge_and_token_conditions(completed, tmp_path):
     from experiments.rig_web import RigWebApp
     from experiments.rig_web_app.external_analysis import _validated_report
