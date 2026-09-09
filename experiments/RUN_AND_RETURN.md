@@ -1882,6 +1882,11 @@ unchanged. Request groups retain source aliases for later scoring and reporting,
 but only their representative triggers generation. This preparation alone never
 authorizes provider calls or supplies a monetary allocation.
 
+Read an existing composed response view with its retained reader revision.
+A newer reader can derive different metadata without a change to the source
+answers. Do not replace the saved view digest to make it pass; use the original
+reader for that view, or create a separately identified view for new semantics.
+
 Each hosted measured lane must use `--judges rules,guardrail`, the exact sealed
 Llama Guard revision, and a judge-call ceiling covering its selected answered
 rows. The Runner checkpoints the paid response before judging. A completed

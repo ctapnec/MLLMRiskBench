@@ -145,6 +145,17 @@ but is not the final allocation: it still gives too much of the increase to
 expensive routes. Neither preview changes the dispatched population or funds
 new target calls.
 
+The intermediate matching assessment completed at 17:51 UTC under the original
+local-view reader. Its 676 requests cover 190 common judging input identities
+with 750 eligible existing local answers. Reuse 278 exact previous assessments
+and fund 472 new local judgments. The conservative hosted grading ceiling is
+691 because different source-specific grading contexts can share one physical
+request. Up to 1,163 Haiku judgments reserve USD 17.268224; combined with the
+conditional target reservation this is USD 69.318669. The 282 newly added target
+requests still use a 4,000-input-token assumption and need complete counts.
+This completed assessment informs, but does not finalize, the operator's newer
+request for a larger increase concentrated on lower-cost models.
+
 Assess 500 additional distinct DeepSeek requests as the next planning target,
 not as an already funded count. Inspection of the retained 143-request DeepSeek
 continuation found 142 responses with token usage and 142 settled attempts,
