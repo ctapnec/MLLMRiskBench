@@ -248,8 +248,16 @@ class _HTTP500(Exception):
     status_code = 500
 
 
-@pytest.mark.parametrize("failure", [ConnectionError("disconnected"), _HTTP500("unavailable")])
-def test_transport_failure_is_retained_retry_pending_not_a_model_answer(tmp_path, monkeypatch, failure):
+class _HTTP400(Exception):
+    status_code = 400
+
+
+@pytest.mark.parametrize("failure,expected_state,physical", [
+    (ConnectionError("disconnected"), "exhausted", 4),
+    (_HTTP500("unavailable"), "exhausted", 4),
+    (_HTTP400("request rejected"), "not_retryable", 1),
+])
+def test_terminal_transport_failure_does_not_claim_a_pending_retry(tmp_path, monkeypatch, failure, expected_state, physical):
     monkeypatch.setattr("ura.targets.api.time.sleep", lambda seconds: None)
     points, attacker, target, calls, admission = _setup(tmp_path, outputs=[failure] * 4)
     checkpoint = tmp_path / "responses.jsonl"
@@ -260,11 +268,10 @@ def test_transport_failure_is_retained_retry_pending_not_a_model_answer(tmp_path
     records = Runner.load_response_checkpoint(checkpoint)
     assert len(records) == 1
     response = next(iter(records.values()))["response"]
-    assert response["raw"]["transport_retry_status"] == "pending"
+    assert response["raw"]["transport_retry_status"] == expected_state
     assert response["raw"]["model_stability_category"] == "transport_failure"
     assert response["output_turns"] == [] and response["tokens"] is None
-    assert json.loads((admission.budget.root / "paid-circuit.json").read_text())["category"] == "transport_retry_pending"
-    physical = 4
+    assert json.loads((admission.budget.root / "paid-circuit.json").read_text())["category"] == "terminal_transport_failure"
     assert len(calls) == physical
     assert admission.budget.snapshot()["pools"]["openai:target"]["unknown_usage_attempts"] == physical
     assert admission.budget.snapshot()["pools"]["openai:target"]["unstarted_first_commitments_microusd"] == 10000
@@ -276,6 +283,20 @@ def test_transport_failure_is_retained_retry_pending_not_a_model_answer(tmp_path
     ):
         with pytest.raises(ValueError, match="transport retry state"):
             validate_response_refusal_state(retained.model_copy(update={"raw": bad_raw}))
+
+
+@pytest.mark.parametrize("retryable,ordinal,retries,expected", [
+    (True, 1, 3, "pending"),
+    (True, 4, 3, "exhausted"),
+    (False, 1, 3, "not_retryable"),
+    (None, 1, 3, "needs_review"),
+])
+def test_transport_retry_state_uses_lifetime_ordinal_not_current_invocation_length(retryable, ordinal, retries, expected):
+    from types import SimpleNamespace
+    from ura.runner import _transport_failure_retry_state
+
+    error = SimpleNamespace(call_audit={"transport_retryable": retryable}, transport_attempts=[{"attempt": ordinal}])
+    assert _transport_failure_retry_state(error, SimpleNamespace(max_retries=retries)) == expected
 
 
 @pytest.mark.parametrize("failure", [_HTTP500("mock"), ConnectionError("disconnected")])

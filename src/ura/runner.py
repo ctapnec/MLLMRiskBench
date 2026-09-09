@@ -1400,7 +1400,7 @@ class Runner:
                     "model_stability_reason": str(answer_error)[:500],
                     "model_stability_retry_count": len(failures) - 1,
                     "model_stability_failures": failures,
-                    **({"transport_retry_status": "pending"}
+                    **({"transport_retry_status": _transport_failure_retry_state(answer_error, self.target)}
                        if answer_error.category == "transport_failure" else {}),
                     "target_identity_observed": bool(retained_identity),
                     **retained_identity,
@@ -6086,6 +6086,20 @@ def _write_jsonl_models(records: list[Any], path: Path) -> None:
     )
 
 
+def _transport_failure_retry_state(error: Any, target: Any) -> str:
+    """Describe remaining HTTP eligibility without authorizing another call."""
+    audit = getattr(error, "call_audit", {})
+    retryable = audit.get("transport_retryable") if isinstance(audit, dict) else None
+    if retryable is False:
+        return "not_retryable"
+    attempts = getattr(error, "transport_attempts", None)
+    used = attempts[-1].get("attempt") if isinstance(attempts, list) and attempts and isinstance(attempts[-1], dict) else None
+    retries = getattr(target, "max_retries", None)
+    if retryable is not True or type(used) is not int or used < 1 or type(retries) is not int or retries < 0:
+        return "needs_review"
+    return "exhausted" if used >= retries + 1 else "pending"
+
+
 def validate_response_refusal_state(response: Response) -> None:
     """Require one truthful output, refusal, or model-nonresponse state."""
 
@@ -6143,7 +6157,7 @@ def validate_response_refusal_state(response: Response) -> None:
                     raise ValueError(f"failed target output lacks {field}")
     retry_status = response.raw.get("transport_retry_status")
     if retry_status is not None and (
-        retry_status != "pending"
+        retry_status not in {"pending", "not_retryable", "exhausted", "needs_review"}
         or stability != "failed_output"
         or response.raw.get("model_stability_category") != "transport_failure"
     ):
