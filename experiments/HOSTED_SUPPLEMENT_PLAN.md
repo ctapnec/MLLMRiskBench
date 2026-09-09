@@ -2,6 +2,16 @@
 
 ## Current execution and required Google extension
 
+Update, 9 September at 23:08 UTC: all 359 unstarted supplemental inputs have
+prepared continuations, excluding every previously attempted input. Sol and
+Fable's fixed-spec configuration lookup is corrected at `73f08b1`, with 42
+focused rig tests and two failing reversed-fix cases. The two execution queues
+use that tested revision, the original inputs and request settings, and the
+shared history-preserving budget. A zero-call launcher error in the probe limit
+is corrected. Google remains a separate 324-input extension using its retained
+count receipts. Current preparation or a live controller is not a claim that
+the corresponding target responses or Haiku judgments are complete.
+
 Update, 9 September at 22:55 UTC: the tested adapter now retains explicit
 HTTP 400 `cyber_policy` outcomes without retries or a campaign-wide stop.
 Console deployment of `69b0bf0` is complete with HTTP 200. Its 77 focused rig
