@@ -52,6 +52,12 @@ condition validator checks the old program, immutable paid history, unchanged
 delivered inputs, new counted requests and future judge reservations. Budget
 handoffs retain all started slots and close predecessor spending before new
 execution. Fractional microdollar projections round upward, never downward.
+An adapter-only continuation may preserve the original generation settings;
+it still selects exactly the unpaid complement and retains the old prefix.
+Configured routes preserve explicitly declared conservative peak-price
+reservations. Offline preparation reuses a validated provider token-count
+receipt for the exact request, including media, without calling its counter
+again. Missing media counts cannot fall back to byte estimates.
 
 `hosted_campaign_prepare --shared-budget-root PATH --shared-budget-sha256 SHA`
 prepares against an existing allocation instead of creating another one. Both
@@ -60,12 +66,13 @@ requests; every selected slot must match and remain unstarted. Preparation does
 not change the ledger. This supports adding providers without independently
 allocating the same Anthropic judge credits twice.
 
-An HTTP 400 with the explicit provider code `cyber_policy` is a provider-policy
-rejection, not evidence of a network outage or an invalid token parameter.
+An HTTP 400 with the explicit provider code `cyber_policy` is a legitimate
+observed provider outcome, not a network outage or an invalid token parameter.
 Preserve its exact error and unknown billing hold, do not retry that input, and
-do not label it as a generated model answer. Reviewing such a terminal event
-must not cause unrelated completed answers to be repeated. A failed transport
-pilot does not attest the remaining lane; use an eligible unstarted assigned
+continue to the next input without opening a campaign-wide stop. Do not label
+it as generated answer text or fabricate a served-model identity. Reviewing
+such an outcome must not repeat completed answers. An outcome without observed
+model identity does not attest the remaining lane; use an eligible unstarted assigned
 input for any replacement pilot, without increasing the campaign call budget.
 
 This is the operator path from a clean Linux GPU machine to the evidence bundle

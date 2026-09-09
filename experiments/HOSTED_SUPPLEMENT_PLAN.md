@@ -2,6 +2,19 @@
 
 ## Current execution and required Google extension
 
+Update, 9 September at 22:55 UTC: the tested adapter now retains explicit
+HTTP 400 `cyber_policy` outcomes without retries or a campaign-wide stop.
+Console deployment of `69b0bf0` is complete with HTTP 200. Its 77 focused rig
+tests and reversed-fix test passed. Both historical Terra and Astra policy
+outcomes remain retained; neither input is resubmitted. The shared-budget
+handoff preserves the entire paid ledger and every started slot, including
+unknown charges, while preparing only the unstarted assignments on the fixed
+adapter. Unchanged generation settings remain unchanged; only the separately
+specified DeepSeek remainder uses 16k. Revision `4bd1867` passed 138 focused
+rig tests and three reversed-fix checks covering continuation, cached counts
+and conservative custom-route pricing. Pending-route execution workers are
+waiting for their exact prepared programs. This is not completed generation.
+
 Update, 9 September at 22:23 UTC: Sonnet and Haiku target routes and their
 post-hoc judging are complete. Together with the separately published 17
 DeepSeek measured answers, 187 supplemental hosted answers have received
