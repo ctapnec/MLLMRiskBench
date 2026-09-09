@@ -1,5 +1,25 @@
 # Run and return: broad thesis experiment program
 
+Hosted supplemental configuration: Gemini supports the same JSON-compatible
+request preview for token counting, physical-attempt reservation and generation.
+Its counter sends the full GenerateContentRequest through the existing sealed
+Google transport, including system instructions, history and physical media;
+the installed SDK's ordinary count helper omits unsupported system-instruction
+configuration. Counting cannot generate answers. Gemini configuration may set
+`thinking_level` explicitly; retained billed output includes reported thinking
+tokens as well as visible output, with both counts separately available.
+
+For a separately selected provider cohort, `hosted_campaign_budget` accepts an
+explicit route-configuration file and SHA-256. This creates a new projection
+without changing the historical eleven-route default. The selected routes,
+prices, API configuration and Haiku allocation are revalidated at preparation
+and execution. A price limited to a prompt-length tier must bind
+`maximum_priced_input_tokens`; requests above it cannot use that rate.
+See [the supplemental campaign](HOSTED_SUPPLEMENT_PLAN.md) for the required
+Google Flash/Pro matched-input collection, USD 17 Google ceiling and both judges.
+The configuration page groups provider-key editors separately from acquisition
+credentials; saving a key proves neither credit nor model access.
+
 This is the operator path from a clean Linux GPU machine to the evidence bundle
 for the thesis. It covers the broad hosted and local model roster, all twenty-five source converters, the runner-safe external attack bridges, and nine complete
 source-native evaluators. Experiments and the human audit are still pending.
