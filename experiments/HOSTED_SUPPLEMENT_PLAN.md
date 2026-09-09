@@ -11,7 +11,8 @@ bodies gives 464 distinct model/request pairs, because some payloads also recur
 across different framework or source conditions. This supplement
 responds to the operator's checked account balances and request for additional
 inputs. It is a new, non-overlapping cohort, not a restart of completed work.
-No supplemental target, token-count or judge request has been sent. The initial
+No supplemental target or judge request has been sent. Token counting completed
+at 17:18 UTC. The initial
 1,108-call arithmetic and later 1,135-assignment preview are superseded below;
 neither is an admissible distinct-input allocation.
 
@@ -20,9 +21,15 @@ The proposal contains 394 distinct new requests, representing all 395 selected
 source/framework-qualified conditions. Luna has 149 distinct requests rather
 than 150; every other model's quantity in the table is unchanged. All 941
 original request hashes were reproduced as controls, and none overlaps the new
-selection. The table retains the earlier conservative 395-call reservation
-ceiling until exact token counts replace the planning assumptions. No freed
-slot is automatically filled with a replacement input.
+selection. The table below now uses the 394 complete request-count receipts.
+No freed slot is automatically filled with a replacement input.
+
+Update at 17:18 UTC: all 394 requests were counted, using 340 count-endpoint
+attempts and no generation or judge calls. Fifteen receipts are provider-exact;
+325 are explicitly named provider estimates and 54 are local estimates. These
+methods must not all be described as exact provider counts. Their combined
+target reservation is USD 23.055748. Some count endpoints have unspecified fee
+status, so zero generation calls does not establish a zero provider invoice.
 
 Judging requirement clarified by the operator on 9 September: use exactly the
 same input identities in local and hosted Haiku assessment. Judge all eligible
@@ -81,30 +88,31 @@ entire amount. The first additional cohort below contains distinct model-input
 conditions, not source-membership aliases. It is an upper bound on new calls:
 exact provider-request deduplication within and against the previous assignment
 has now verified 394 new requests. An executable continuation still needs to
-bind this distinct-request selection and its source memberships. Full request token counts must replace
-the 4,000-input-token planning assumption before funding.
+bind this distinct-request selection and its source memberships. Complete
+request-count receipts have replaced the 4,000-input-token planning assumption
+for this first tier; counting does not itself fund or execute the cohort.
 After deducting the completed 45-answer extension, indicative headroom is
 USD 109.585672 before any other or delayed charges.
 
-| Target | Additional input conditions / call ceiling | Unchanged maximum output tokens | Conditional target reservation, USD |
+| Target | New distinct requests | Unchanged maximum output tokens | Counted target reservation, USD |
 |---|---:|---:|---:|
-| GPT-6 Astra | 6 | 8,192 | 2.757600 |
-| Claude Fable 5.1 | 6 | 8,192 | 2.697600 |
-| Claude Opus 5 | 24 | 6,144 | 4.166400 |
-| Claude Sonnet 5 | 56 | 4,096 | 2.741760 |
-| Claude Haiku 4.5 | 31 | 2,048 | 0.441440 |
-| GPT-5.6 Sol | 15 | 8,192 | 2.757600 |
-| GPT-5.6 Terra | 23 | 6,144 | 1.925744 |
-| GPT-5.6 Luna | 150 | 4,096 | 0.887280 |
-| GPT-5.5 | 6 | 8,192 | 1.624560 |
-| Kimi K3 | 24 | 8,192 | 3.237120 |
-| DeepSeek V4-Pro | 54 | 8,192 | 2.036898 |
-| Total targets | 395 | Model-specific | 25.274002 |
+| GPT-6 Astra | 6 | 8,192 | 2.530714 |
+| Claude Fable 5.1 | 6 | 8,192 | 2.523670 |
+| Claude Opus 5 | 24 | 6,144 | 3.787310 |
+| Claude Sonnet 5 | 56 | 4,096 | 2.397624 |
+| Claude Haiku 4.5 | 31 | 2,048 | 0.335281 |
+| GPT-5.6 Sol | 15 | 8,192 | 2.579735 |
+| GPT-5.6 Terra | 23 | 6,144 | 1.763075 |
+| GPT-5.6 Luna | 149 | 4,096 | 0.752205 |
+| GPT-5.5 | 6 | 8,192 | 1.511118 |
+| Kimi K3 | 24 | 8,192 | 2.995335 |
+| DeepSeek V4-Pro | 54 | 8,192 | 1.879681 |
+| Total targets | 394 | Model-specific | 23.055748 |
 
 Reservations use retained effective-dated prices, the existing conservative
 OpenAI input allowance and DeepSeek's peak tariff. These are conditional
-maximum-token calculations, not expected charges or measured affordability
-of an as-yet-unselected population. No output allowance or reasoning setting
+maximum-output-token calculations using the complete selected requests and the
+explicit count methods above, not expected charges or invoices. No output allowance or reasoning setting
 is changed to make this new cohort appear cheaper or more stable.
 
 The selected inputs have 687 eligible existing local answers on 181 common
@@ -115,13 +123,17 @@ new Haiku calls, with a conditional USD 12.873216 reservation at 12,288 input
 and 512 output tokens per judgment. Source-specific and setup turns must not
 be given a common-security verdict merely to equalize counts.
 
-The resulting conditional total is USD 38.147218. By provider, this comprises
-USD 9.952784 OpenAI, USD 22.920416 Anthropic including judging, USD 3.237120
-Kimi and USD 2.036898 DeepSeek. Indicative margin is USD 71.438454 before
+The resulting conditional total is USD 35.928964. By provider, this comprises
+USD 9.136847 OpenAI, USD 21.917101 Anthropic including judging, USD 2.995335
+Kimi and USD 1.879681 DeepSeek. Indicative margin is USD 73.656708 before
 unposted charges, in addition to the unchanged original USD 31 reserves.
 This is a conservative first distinct-input cohort, not a maximum-budget
-allocation or an expected invoice. More inputs can be considered after the
-selector enforces distinct request identity and exact counts establish room.
+allocation or an expected invoice. On 9 September the operator requested
+assessment of more requests. A larger tier is being assessed separately,
+using the existing local input pool and matched judging rather than increasing
+output allowances. It must preserve the counted tier and pass its own complete
+request counts and per-provider funding checks. No assessed increase is silently
+added to the current dispatch set.
 The historical unknown-cost holds remain unchanged and cannot be written off.
 
 The rig preview completed at 15:07 UTC. The next complete AirBench cluster
@@ -151,7 +163,12 @@ complete local comparison; `unique-input-budget.json` records this revised
 arithmetic. Earlier previews remain historical and are not paid admission.
 The no-call product selector at `de30f2f` passed 23 focused rig tests, lint,
 two reversed-fix checks and the actual-request audit. The executable preparation
-path still needs to bind this selection before this supplement can be funded. Do not mutate the original
+path still needs to bind this selection before this supplement can be funded.
+The distinct-input plan and replay implementation at `3161e2e` passed 51 focused
+rig tests, lint and two reversed-fix checks. Its regression includes an old
+request recurring under a later source condition. Historical plans and replays
+remain unchanged. This completes input materialization support, not paid
+preparation or dispatch. Do not mutate the original
 selection contract, reset historical budgets or send the uncorrected proposal.
 The historical multiplicity counts and diagrams are published at
 `/stats/job/hosted-input-multiplicity-r3-20260909`. Its 941 assignments, 488
