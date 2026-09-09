@@ -134,3 +134,53 @@ def test_provider_error_metadata_omits_non_machine_fields(value):
     error = RuntimeError("private")
     error.body = {"code": value, "type": value, "message": "private"}
     assert api._transport_error_metadata(error) == {}
+
+
+@pytest.mark.parametrize("surface", ["chat", "responses"])
+@pytest.mark.parametrize("nested", [False, True])
+def test_native_policy_400_is_a_retained_outcome_not_a_transport_failure(surface, nested):
+    from types import SimpleNamespace
+    import httpx
+    import openai
+    from ura.data_models import DialogTurn
+    from ura.runner import validate_response_refusal_state
+
+    target = api.OpenAITarget('gpt-5.6-terra') if surface == 'chat' else api.OpenAIResponsesTarget()
+    body = {'code': 'cyber_policy', 'type': 'invalid_request_error', 'message': 'private request'}
+    error = openai.BadRequestError('private request', response=httpx.Response(400,
+        headers={'x-request-id': 'request-policy-1'}, request=httpx.Request('POST', 'https://example.test')),
+        body={'error': body} if nested else body)
+    calls = []
+
+    def reject(**kwargs):
+        calls.append(kwargs)
+        raise error
+
+    target._client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=reject)),
+                                     responses=SimpleNamespace(create=reject))
+    response = target.generate([DialogTurn(role='user', content='retained input')], seed=0)
+    validate_response_refusal_state(response)
+    assert len(calls) == 1 and response.output_turns == [] and response.tokens is None
+    assert response.raw['provider_refusal_category'] == 'openai_http400_cyber_policy'
+    assert response.raw['provider_generation_observed'] is False and response.raw['resolved_model'] is None
+    assert response.raw['call_audit']['status_code'] == 400
+    assert response.raw['transport_attempt_count'] == 1
+    assert 'model_stability_status' not in response.raw and 'private' not in repr(response.raw)
+
+
+@pytest.mark.parametrize('provider,code', [('openai', 'invalid_parameter'), ('kimi', 'cyber_policy'), ('deepseek', 'cyber_policy')])
+def test_other_400_errors_are_not_misreported_as_native_policy_refusals(provider, code):
+    from types import SimpleNamespace
+    from ura.data_models import DialogTurn
+    target = api.OpenAITarget('example', provider=provider, modality_support=['text'])
+
+    class Rejected(RuntimeError):
+        status_code = 400
+        body = {'code': code}
+
+    def reject(**kwargs):
+        raise Rejected()
+
+    target._client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=reject)))
+    with pytest.raises(api.ProviderTransportError):
+        target.generate([DialogTurn(role='user', content='retained input')])

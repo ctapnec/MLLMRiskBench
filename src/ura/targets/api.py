@@ -1855,18 +1855,49 @@ class OpenAITarget(BaseTarget):
             request["seed"] = int(seed)
         return request
 
+    def _policy_rejection(
+        self, error: ProviderTransportError, dialog: list[DialogTurn],
+        *, seed: int | None, started: float,
+    ) -> Response:
+        """Retain an explicit native policy denial without inventing a completion."""
+        audit = error.call_audit
+        if (canonical_provider_name(self.provider) != "openai"
+            or audit.get("status_code") != 400
+            or audit.get("provider_error_code") != "cyber_policy"):
+            raise error
+        return Response(
+            attempt_id=_dialog_fingerprint(dialog), target=self.name,
+            output_turns=[], tokens=None,
+            latency_ms=(time.perf_counter() - started) * 1000.0,
+            raw={
+                "provider": "openai",
+                "endpoint_identity": canonical_https_endpoint_identity(self.base_url),
+                "requested_spec": self.requested_spec, "requested_model": self.model,
+                "resolved_model": None, "target_identity_observed": False,
+                "requested_seed": seed, "target_sampling_control": "not_observed_provider_policy_rejection",
+                "provider_refusal": True, "provider_refusal_category": "openai_http400_cyber_policy",
+                "provider_refusal_reason": "cyber_policy", "provider_request_id": audit.get("provider_request_id"),
+                "provider_policy_rejection": True, "provider_generation_observed": False,
+                "output_truncated": False, "call_audit": dict(audit),
+                "transport_attempt_count": len(error.transport_attempts),
+                "transport_attempts": error.transport_attempts,
+                "generation": {"max_tokens": self.max_tokens, "max_retries": self.max_retries},
+            },
+        )
+
     def generate(
         self, dialog: list[DialogTurn], *, seed: int | None = None
     ) -> Response:
         request = self.build_request(dialog, seed=seed)
         client = self._get_client()
         start = time.perf_counter()
-        resp, transport_attempts = _call_with_retry(
-            client.chat.completions.create,
-            request,
-            provider=self.provider,
-            max_retries=self.max_retries,
-        )
+        try:
+            resp, transport_attempts = _call_with_retry(
+                client.chat.completions.create, request,
+                provider=self.provider, max_retries=self.max_retries,
+            )
+        except ProviderTransportError as exc:
+            return self._policy_rejection(exc, dialog, seed=seed, started=start)
         latency_ms = (time.perf_counter() - start) * 1000.0
 
         response_id = _required_provider_string(
@@ -2498,12 +2529,13 @@ class OpenAIResponsesTarget(OpenAITarget):
         requested_reasoning = request["reasoning"]
         client = self._get_client()
         start = time.perf_counter()
-        resp, transport_attempts = _call_with_retry(
-            client.responses.create,
-            request,
-            provider="openai-responses",
-            max_retries=self.max_retries,
-        )
+        try:
+            resp, transport_attempts = _call_with_retry(
+                client.responses.create, request,
+                provider="openai-responses", max_retries=self.max_retries,
+            )
+        except ProviderTransportError as exc:
+            return self._policy_rejection(exc, dialog, seed=seed, started=start)
         latency_ms = (time.perf_counter() - start) * 1000.0
 
         response_id = _provider_field(resp, "id")
