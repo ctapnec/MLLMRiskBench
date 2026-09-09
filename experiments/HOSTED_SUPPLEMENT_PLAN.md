@@ -43,6 +43,15 @@ diagnostics remain outside measured campaign results, with a combined USD
 requests still need prospective configuration and funding before continuation;
 do not relabel or repeat the 47 completed answers or overwrite the failure.
 
+The pending-only 16k request preparation is complete: exactly 55 unstarted
+inputs, with USD 3.729192 maximum first-attempt target reservation. Keep
+default reasoning effort unchanged. Their future Haiku slots reserve up to
+USD 0.032768 per physical attempt so a longer visible answer is not cut to fit
+the former judging bound. Actual judge requests still require token counting.
+This is counted preparation, not restarted DeepSeek generation. Its 17
+completed measured answers are being published and judged independently; the
+other 30 completed answers were diagnostics and remain outside that result.
+
 The local judging inventory is published at
 `/stats/job/haiku-supplement-local-publication-20260909`: 750 answers to 190
 input identities, 742 valid verdicts and eight invalid, including two reused
@@ -110,6 +119,25 @@ first-attempt target reservations are USD 2.551136 for Flash and USD 8.129976
 for Pro. No Google generation has yet been made in this supplement. Google
 funding must leave existing Anthropic commitments intact, and completion still
 requires target collection, both judges and published comparisons.
+
+The complete Google/local match covers 651 existing local answers across 161
+common input identities; all 651 have their own saved Haiku outcomes. Eight
+source memberships have no scored local record and remain explicit coverage
+exceptions. There is no new local judging request in this matched Google
+inventory, and no judgment is transferred to a Google answer. The actual
+651-output/artifact check passes at `1d93a9d` without provider calls.
+
+A no-call combined budget proposal fits the existing ceilings: keep the
+Anthropic ceiling at USD 64, move its protected judging pool from USD 18 to
+USD 24, and add the approved USD 17 Google ceiling. The proposal contains 324
+Google generations and 338 prospective Haiku grading-context slots, together
+with the 55 pending DeepSeek requests at 16k. All previously started slot
+bounds remain unchanged. The larger judge reservation comes from unused
+Anthropic target capacity, not an additional Anthropic allocation. This is
+not yet the active budget. Activate it after the current workers finish,
+copying their exact paid ledger and closing the predecessor spending path;
+never leave two independently spendable allocations for the same credits.
+Evidence: `engineering/google-deepseek-budget-quote-r2-20260910/result.json`.
 
 ## Earlier assessment snapshots
 
