@@ -168,6 +168,12 @@ def test_report_keeps_invalid_verdict_and_unknown_usage_out_of_labels_and_cost(c
     assert report["observations"][0]["cost_microusd"] is None
     assert report["completion"]["unknown_usage_judgments"] == 1
     assert report["completion"]["actual_cost_microusd"] == 480
+    from experiments.rig_web import RigWebApp
+    app = object.__new__(RigWebApp)
+    page = app._render_judge_comparison("Reviewed judging", report)
+    assert "Judge abstentions from invalid verdicts: 1" in page
+    assert "attempts with unknown usage: 1" in page
+    assert "known usage only, not the total charge" in page
     damaged = copy.deepcopy(report)
     damaged["observations"][0]["cost_microusd"] = 0
     with pytest.raises(ValueError, match="unknown judge usage"):

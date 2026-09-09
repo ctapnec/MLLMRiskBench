@@ -1833,6 +1833,18 @@ planner maxima. The current campaign funds 941 target inputs and protects
 29,992,960 micro-USD for at most 1,882 prospective judge slots. Its paid
 controller must supply the shared budget and exact per-output request receipts
 to the paired executor; the standalone CLI above does not replace that binding.
+After investigating a malformed judge reply, the optional
+`--retain-invalid-verdicts` policy preserves subsequent non-empty but unparseable
+rubric replies as undecided judge outcomes. It makes no answer retry, assigns
+no safety label and retains the actual reply, provider identity and token usage.
+The default still stops for investigation. Empty replies, transport exceptions,
+request drift and budget failures still stop even with this option enabled.
+An already lost historical verdict requires a separate exact failure review;
+unknown tokens and cost remain null and the funded monetary hold remains intact.
+Such a review cannot relabel a valid verdict or rerun its input. Outcome-aware
+execution uses a separate versioned record; the original stopped execution
+and completed judgments remain unchanged. Stats reports invalid-verdict
+abstentions and unknown-usage attempts beside known token-priced usage.
 The reporting command is read-only except for its create-only output. It
 requires completed execution, reconciles each unique paid output, and rebuilds
 the source selection. Publish it through the generic external-analysis registry

@@ -951,3 +951,17 @@ metadata. The all-cause missing-output diagram is labelled response availability
 not intrinsic model stability; transport loss is not a model-quality observation.
 Historical Level-2 `/1` remains readable. Campaign-specific recovery orchestration
 stays outside this product reporting layer.
+
+### Retained judge failures
+
+A judge's malformed rubric is an evaluator failure, not a target safety label.
+The LLM judge attaches the actual provider reply and usage to its parse error
+so a caller can persist them. Retained-response execution can explicitly retain
+non-empty invalid verdicts as unscored outcomes without an answer retry; its
+default remains stop-for-investigation. Empty output and infrastructure,
+identity and monetary failures still stop. Valid verdicts cannot be converted
+to failure records. The failure-aware report separates invalid-verdict
+abstentions from valid decisions and keeps unknown historical usage null,
+with its original monetary reservation held. Reported usage totals are known
+subtotals, never inferred zero charges. Original execution records and their
+versioned interpretation remain immutable.
