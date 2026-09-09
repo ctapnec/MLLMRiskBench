@@ -156,6 +156,31 @@ requests still use a 4,000-input-token assumption and need complete counts.
 This completed assessment informs, but does not finalize, the operator's newer
 request for a larger increase concentrated on lower-cost models.
 
+Execution follow-up at 19:20 UTC: distinct supplemental preparation and funding
+support at `053c987` passed 127 focused rig regressions, lint and two reversed-fix
+checks. It binds reported credits and protected original reserves without
+resetting the previous ledger, and funds the matching local-answer inventory
+as well as hosted grading contexts. Offline materialization of this nested
+676-request tier and its remaining token counts are running in tmux; the 394
+completed counts are reused. No supplemental generation is yet claimed.
+The further lower-cost expansion remains required, subject to its exact input
+selection and cumulative target/judge liabilities within the approved balances.
+
+At 19:21:50 UTC, counting completed for all 676 requests: 394 cache hits,
+282 new receipts and 233 new count-endpoint attempts. The target reservation is
+USD 49.809190, split between OpenAI USD 20.166715, Anthropic USD 21.743817,
+Kimi USD 4.270713 and DeepSeek USD 3.627945. With the conservative 1,163-verdict
+Haiku allowance, the tier totals USD 67.077414 before retry margins. This is a
+reservation, not actual spend. The exact 121 corpus replay artifacts were
+materialized and all 60 originating run populations reproduced their retained
+corpus hashes, including recovery subsets. A funding-registry mismatch was
+fixed at `f504dd0`: the unused Google balance is not a prerequisite for this
+four-provider supplement, and every selected target/judge provider must still
+be funded. Eight focused rig checks and two reversed-fix checks passed.
+The 472 local Haiku answers are partitioned into two disjoint 236-answer jobs,
+retaining the existing per-job cost ceiling and shared campaign allocation.
+No completed target response or judge verdict is repeated.
+
 Assess 500 additional distinct DeepSeek requests as the next planning target,
 not as an already funded count. Inspection of the retained 143-request DeepSeek
 continuation found 142 responses with token usage and 142 settled attempts,

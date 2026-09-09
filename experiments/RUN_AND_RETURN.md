@@ -2383,6 +2383,30 @@ the exact target, replay partition, output path and call/retry limits. Bind the
 purpose-specific transport and local-judge acquisition evidence per job; one
 acquisition receipt cannot stand in for distinct request selections.
 
+For an additional distinct-request cohort, use request version `/3` with the
+explicit counted-input policy and version `/2` retained replays. It produces
+execution version `/6`; earlier request and execution artifacts stay unchanged.
+The additional `sources.additional_funding` descriptor binds the previous
+budget plan and ledger, reported remaining balances, known subsequent charges,
+protected original reserves, an unposted-charge margin and the new allocation.
+It also binds the complete inventory of matching local answers awaiting Haiku.
+Preparation funds each distinct hosted grading context and each unjudged local
+answer once, before any target call. Previous planned call IDs cannot be reused
+as new supplemental inputs. Unknown historical charges remain unknown and held.
+Use `--count-cache /resolved/existing-cache` to reuse exact prior token-count
+receipts; a cache hit is not another provider count. This preparation does not
+replace transport admission, source validation or actual judging.
+
+Additional allocations may select a subset of the provider registry. Reported
+balances are required for every selected target provider and the judge provider,
+not unused registry entries. The complete previous registry/ledger binding
+remains checked. When reusing a provider-method image count from the cache,
+select that same counting policy (`allow_network_counts=True` in Python);
+offline-estimate mode chooses a different cache identity and cannot count image
+bytes. A strict no-new-network preparation can separately prohibit connections
+and assert zero new counter attempts. Do not replace a retained provider count
+with a new byte estimate to make a cached preparation pass.
+
 Acquisition planning for a funded retained-input job must carry the same
 funded execution context as execution. A standalone Runner invocation correctly
 rejects that real replay as unadmitted. Retain a plan-only program with the same
