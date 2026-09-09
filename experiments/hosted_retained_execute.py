@@ -765,6 +765,9 @@ def _distinct_judge_ids(plan: dict, key: str, candidates: Sequence[dict]) -> dic
 
 def _validated_jobs(program: dict, budget: AttemptBudget, *, local_context: tuple | None = None) -> list[_Admission]:
     """Rebuild fixed input selection from complete historical and RR evidence."""
+    from experiments import hosted_pending_condition
+    if isinstance(program, dict) and program.get("schema") == hosted_pending_condition.SCHEMA:
+        return hosted_pending_condition.validated_jobs(program, budget, local_context=local_context)
     if (not isinstance(program, dict) or program.get("schema") not in {
         SCHEMA, COUNTED_INPUT_SCHEMA, TRANSPORT_RECOVERY_SCHEMA, ADAPTER_RECOVERY_SCHEMA, ADAPTER_PREFIX_RECOVERY_SCHEMA,
         DISTINCT_INPUT_SCHEMA,
