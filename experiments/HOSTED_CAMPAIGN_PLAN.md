@@ -295,8 +295,11 @@ input-price allowance for cache writes, or a higher published cache-write rate
 when present. This is a reserve, not an assumed charge on every request. The
 combined target and Haiku maximum is USD 116.720544 across providers; OpenAI
 uses USD 30.82512 of its USD 32 cap and Anthropic USD 67.56096 of USD 72.
-The difference between the calculated Haiku reservation and its USD 33 pool
-cap is retained headroom, not permission for extra judgments or content retries.
+The earlier USD 33 judging ceiling is superseded by the actual protected
+USD 29.992960 pool. Its difference from the funded USD 27.943936 prospective
+judgment reservation is retained headroom, not permission for extra judgments
+or content retries. The table above is the pre-funding planning envelope;
+the 941-input funded allocation at the start of this document is current.
 
 The monetary ceiling applies to physical HTTP attempts, not only successful
 logical calls. Before each initial attempt or retry, reserve its complete
@@ -309,8 +312,8 @@ funds stop before the next HTTP attempt, even when the configured three retries
 have not been exhausted. No outcome-based replacement input or hidden extra
 budget is permitted. These rules apply to target calls and Haiku alike.
 
-Haiku receives one matched cohort of at most 1,010 local/hosted output pairs.
-That is at most 1,010 selected local outputs and 1,010 selected hosted outputs
+Haiku receives one matched cohort of at most 941 local/hosted output pairs.
+That is at most 941 selected local outputs and 941 selected hosted outputs
 from their matched-input intersection. The pair limit equals the entire hosted
 target cap, so it selects every eligible answered hosted output exactly once;
 it is not a second sample of the hosted results. Each receives one deterministic
@@ -321,9 +324,10 @@ The local and hosted member of every pair has the same rendered-input identity,
 source cluster, seed, arm/framework, modality and source-policy stratum. Shared
 local judgments do not become independent observations or extra paid calls.
 The conservative judging scenario still reserves two calls per pair at 8,192
-input and 256 output tokens per call: at most 2,020 calls cost USD 19.13344.
+input and 256 output tokens per call: at most 1,882 calls cost USD 17.826304.
 The dedicated judge route fixes `max_tokens=512`; reserving 12,288 input
-tokens per complete judgment gives USD 29.99296, inside the USD 33 cap.
+tokens per complete judgment gives USD 27.943936, inside the protected
+USD 29.992960 pool, leaving USD 2.049024 of judging headroom.
 Judge input includes the prompt, retained answer and rubric, not just the
 original target prompt. This retained-response judge path sends text context,
 not the original physical images; image input identity remains paired evidence,
@@ -336,8 +340,8 @@ exact reservation does not fit. Do not drop long answers after observing the
 security result. Batch discounts are not needed for this funded plan and
 never authorize an outcome-dependent expansion.
 
-Across the full hosted population, local scoring performs at most 1,010 rule
-evaluations and 1,010 sealed Llama Guard calls, with no hosted-provider cost.
+Across the actual funded hosted population, local scoring performs at most
+941 rule evaluations and 941 sealed Llama Guard calls, with no hosted-provider cost.
 The guardrail's safe/violation label space cannot decide benign over-refusal
 where the rules stage is also undecided, so local decision coverage and
 abstentions must accompany every local-versus-Haiku agreement result.

@@ -1377,6 +1377,13 @@ class Runner:
                 for key, value in (failed_identity or {}).items()
                 if key != "target"
             }
+            reported_tokens = {
+                key: audit.get("reported_" + key + "_tokens")
+                for key in ("input", "output", "total")
+            }
+            if (not all(type(value) is int and value >= 0 for value in reported_tokens.values())
+                    or reported_tokens["total"] < reported_tokens["input"] + reported_tokens["output"]):
+                reported_tokens = None
             response = Response(
                 attempt_id=attempt.id,
                 target=self.target.name,
@@ -1384,7 +1391,7 @@ class Runner:
                 latency_ms=(
                     failed_response.latency_ms if failed_response is not None else None
                 ),
-                tokens=(failed_response.tokens if failed_response is not None else None),
+                tokens=(failed_response.tokens if failed_response is not None else reported_tokens),
                 raw={
                     "empty_completion_observed": True,
                     "model_stability_status": "failed_output",
@@ -1400,6 +1407,9 @@ class Runner:
                     "transport_attempt_count": observed,
                     "logical_call_count": 1,
                     **({"call_audit": audit} if audit else {}),
+                    **({"finish_reason": audit["finish_reason"],
+                        "output_truncated": audit["finish_reason"] == "length"}
+                       if audit.get("finish_reason") in {"stop", "length"} else {}),
                     "requested_seed": attempt.seed,
                     "target_sampling_control": "not_observed_failed_output",
                 },
@@ -6497,6 +6507,8 @@ def _safe_call_audit(value: Any) -> dict[str, Any]:
         "operation", "resolved_model", "status_code", "error_type",
         "provider_request_id", "provider_response_id",
         "provider_error_code", "provider_error_type", "transport_retryable",
+        "finish_reason", "requested_output_tokens", "reported_input_tokens",
+        "reported_output_tokens", "reported_total_tokens", "reported_reasoning_tokens",
     }
     audit: dict[str, Any] = {}
     for key in sorted(allowed & set(value)):

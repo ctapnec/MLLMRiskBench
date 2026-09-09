@@ -1922,9 +1922,30 @@ class OpenAITarget(BaseTarget):
                     f"finish_reason {finish_reason!r}"
                 )
             if not text.strip():
-                raise OpenAIChatOutputError(
-                    "OpenAI Chat stop response contained no visible text"
+                error = OpenAIChatOutputError(
+                    f"OpenAI Chat {finish_reason} response contained no visible text"
                 )
+                error.call_audit = {
+                    "provider": self.provider, "operation": "generate",
+                    "logical_call_count": 1,
+                    "transport_attempt_count": len(transport_attempts),
+                    "provider_response_id": response_id, "resolved_model": resolved_model,
+                    "finish_reason": finish_reason, "requested_output_tokens": self.max_tokens,
+                }
+                usage = _provider_field(resp, "usage")
+                for source, destination in (
+                    ("prompt_tokens", "reported_input_tokens"),
+                    ("completion_tokens", "reported_output_tokens"),
+                    ("total_tokens", "reported_total_tokens"),
+                ):
+                    value = _provider_field(usage, source)
+                    if type(value) is int and value >= 0:
+                        error.call_audit[destination] = value
+                details = _provider_field(usage, "completion_tokens_details")
+                reasoning = _provider_field(details, "reasoning_tokens")
+                if type(reasoning) is int and reasoning >= 0:
+                    error.call_audit["reported_reasoning_tokens"] = reasoning
+                raise error
             output_turns = [DialogTurn(role="assistant", content=text)]
             refusal_category = None
         usage = _provider_field(resp, "usage")

@@ -1664,6 +1664,33 @@ def test_generic_openai_chat_terminal_states_fail_closed() -> None:
         target.generate([DialogTurn(role="user", content="request")])
 
 
+@pytest.mark.parametrize("finish_reason", ["stop", "length"])
+def test_empty_chat_keeps_finish_usage_and_actual_http_count(finish_reason) -> None:
+    from openai.types.chat import ChatCompletion
+    from ura.runner import _safe_call_audit
+
+    result = ChatCompletion.model_validate({
+        "id": "chatcmpl-empty", "object": "chat.completion", "created": 0,
+        "model": "gpt-generic", "choices": [{"index": 0, "finish_reason": finish_reason,
+            "message": {"role": "assistant", "content": "", "reasoning_content": "private reasoning"}}],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 8192, "total_tokens": 8202,
+                  "completion_tokens_details": {"reasoning_tokens": 8192}},
+    })
+    target = OpenAITarget("gpt-generic", max_tokens=8192)
+    _install_chat_fixture(target, result)
+    with pytest.raises(OpenAIChatOutputError, match=finish_reason + " response") as caught:
+        target.generate([DialogTurn(role="user", content="private question")])
+    audit = _safe_call_audit(caught.value.call_audit)
+    assert audit["finish_reason"] == finish_reason
+    assert audit["transport_attempt_count"] == 1
+    assert audit["requested_output_tokens"] == 8192
+    assert audit["reported_input_tokens"] == 10
+    assert audit["reported_output_tokens"] == 8192
+    assert audit["reported_total_tokens"] == 8202
+    assert audit["reported_reasoning_tokens"] == 8192
+    assert "private" not in repr(audit)
+
+
 def test_openai_compatible_response_retains_only_hashed_endpoint_identity() -> None:
     endpoint = "https://Same.Example:443/compatible/../v1/"
     target = OpenAICompatibleTarget(

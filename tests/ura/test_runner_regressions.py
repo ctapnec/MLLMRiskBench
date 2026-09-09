@@ -6868,6 +6868,37 @@ def test_paid_output_gate_stops_after_one_durable_failed_response() -> None:
     assert runner.responses[0].raw["model_stability_status"] == "failed_output"
 
 
+@pytest.mark.parametrize("finish_reason,total", [("stop", 8202), ("length", 8202), ("length", 1)])
+def test_paid_empty_output_preserves_usage_and_truncation_before_stop(finish_reason, total) -> None:
+    class ReportedEmpty(_RecordingTarget):
+        def generate(self, dialog, *, seed=None):
+            self._dialogs.append(list(dialog))
+            error = TargetAnswerError("provider returned no visible answer")
+            error.call_audit = {
+                "transport_attempt_count": 1, "finish_reason": finish_reason,
+                "reported_input_tokens": 10, "reported_output_tokens": 8192,
+                "reported_total_tokens": total,
+            }
+            raise error
+
+    target = ReportedEmpty()
+    runner = Runner(_FloodAttacker(), target, JudgeCascade([RuleJudge()]),
+                    AttackBudget(max_queries=1, max_turns=1, seed=0), [0],
+                    target_answer_retries=0, stop_on_failed_output=True)
+    checkpoints = []
+    with pytest.raises(runner_module.RetainedFailedOutputStop):
+        runner.run([_datapoint("empty-paid"), _datapoint("must-not-start")],
+                   on_response=checkpoints.append)
+    assert len(target._dialogs) == len(checkpoints) == 1
+    response = runner.responses[0]
+    assert response.tokens == ({"input": 10, "output": 8192, "total": 8202} if total == 8202 else None)
+    assert response.raw["finish_reason"] == finish_reason
+    assert response.raw["output_truncated"] is (finish_reason == "length")
+    assert response.raw["transport_attempt_count"] == 1
+    assert response.raw["model_stability_status"] == "failed_output"
+    assert response.output_turns == []
+
+
 def test_runner_retains_verified_identity_when_answer_retries_exhausted() -> None:
     class VerifiedEmptyTarget(_RecordingTarget):
         def generate(

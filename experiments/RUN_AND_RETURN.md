@@ -2232,6 +2232,14 @@ Inspect these fields before resuming a paid failure: a provider policy rejection
 is not a transient network error or an observation of model instability. Do not
 automatically retry or rephrase a policy-rejected request. The existing bounded
 HTTP retry policy and zero paid answer retries are unchanged.
+An empty Chat/compatible answer also retains its actual finish reason,
+physical-attempt count, requested output allowance and available numeric usage.
+Runner checkpoints complete, internally consistent reported token totals even
+when the answer is missing, and records length termination separately. Missing
+or inconsistent usage stays unknown. None of this supplies a usable answer,
+authorizes a retry, or closes the paid-output stop. Older errors whose adapter
+discarded these fields cannot establish reasoning exhaustion or normal stopping
+from the error message alone.
 
 Anthropic, Fable, OpenAI Chat/compatible and Responses targets expose
 `build_request(dialog, seed=...)` for an exact offline request preview. Live
