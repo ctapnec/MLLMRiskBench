@@ -1742,12 +1742,12 @@ Moonshot USD 12 or DeepSeek USD 8, reduce and reseal only the affected prospecti
 any target output exists. Never increase or outcome-select a limit later.
 
 After local and hosted completion, create one content-bound zero-target Haiku
-selector for at most 1,010 matched local/hosted output pairs. Both members bind
+selector for at most 941 matched local/hosted output pairs in the funded campaign. Both members bind
 the same rendered prompt, media-reference digest, datapoint, source cluster,
 seed, arm/framework, modality, risk, expected behavior and source policy. The
 selector uses deterministic balanced round-robin sampling across local target,
 hosted target and those input strata, without repeated paid judgments. It preserves
-original judgments. Since the hosted campaign cap is 1,010, the 1,010-pair
+original judgments. Since the funded hosted campaign has 941 inputs, the 941-pair
 ceiling must include every eligible answered hosted output exactly once and
 assign one local counterpart; it is not a downsample of hosted results. New
 `/2` plans share local judgments across same-input comparisons when needed and
@@ -1757,9 +1757,10 @@ are not independent local observations; historical `/1` plans remain unchanged.
 It excludes missing responses plus source-authoritative
 R-Judge/GPTGeoChat rows from judge calls. Haiku target rows may be judged by
 Haiku under the operator's explicit decision, but must be labelled same-model
-and non-independent. The 2,020-call scenario is USD 19.13344 with 8,192 input
-and 256 output tokens per call; the maximum reservation is USD 29.99296 with
-12,288 input and 512 output tokens. Count the entire grading request with
+and non-independent. The 1,882-call upper-bound scenario is USD 17.826304 with
+8,192 input and 256 output tokens per call. First-attempt commitments are
+USD 27.943936 at 12,288 input and 512 output tokens, within the protected
+USD 29.992960 pool. Count the entire grading request with
 Haiku, including the retained answer and rubric. Do not silently truncate it
 or treat a target-provider token count as a Haiku count. Rebalance prospective
 hosted quantities before A3 if exact local grading input costs do not fit.
@@ -1773,7 +1774,7 @@ and inline locators retain their existing export forms.
 
 Do not emulate this re-adjudication with `run_matrix`: that would risk target
 regeneration. Create the paired cohort with the dedicated immutable zero-target
-path and one standard-API USD 33 ceiling. Use a private Haiku judge config that
+path and the funded standard-API USD 29.992960 ceiling. Use a private Haiku judge config that
 fixes `max_tokens=512`; do not reuse the 2,048-token Haiku target condition:
 
 The commands below validate retained grids through their exact source revisions

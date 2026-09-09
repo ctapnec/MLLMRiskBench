@@ -4,6 +4,36 @@ Status: hosted target collection partial, revised 9 September 2026. This documen
 paid call. Start only after the all-local campaign seals its Phase 7 inventory.
 Run every controller on the rig in a named tmux session.
 
+Restart update, 9 September at 09:48 UTC. The original allocation now retains
+671 usable responses, three failed inputs and 267 unstarted inputs. Sol's
+previous parser-failed input has a valid recovered answer; a different input
+received HTTP 400 and remains paused for request-error investigation, not an
+automatic answer retry. The older adapter did not preserve its explanatory
+provider code, so do not infer one from another request's rejection.
+
+Real-source transport-wrapper bookkeeping was corrected against the actual
+saved responses. Three replacement image diagnostics repeat one diagnostic
+answer each for Terra, Luna and Kimi, adding USD 0.209370 of first-attempt
+reservations within unchanged ceilings. No completed measured row is repeated.
+All three replacement diagnostics completed. At 10:11:36 UTC Terra completed
+all 29 assigned inputs; at 10:13:32 UTC Kimi completed all 79. Their continuations
+preserved 14 and 44 previous answers respectively. Luna started automatically
+at 10:12:07 UTC, preserving nine answers and covering 139 pending inputs,
+including its separately accounted HTTP recovery. Existing model preparations are
+reused without downloads or runtime installations. The protected Haiku pool
+remains USD 29.992960 with no re-adjudication call made. The persistent rig
+aggregate monitor records status every 30 minutes; diagnostics remain separate
+from the original 941-input campaign. RA-401 and RA-402 retain the operational
+evidence and unresolved HTTP-rejection classification issue.
+
+An explicit provider policy rejection is a retained provider-level outcome,
+not a model-generated answer or an automatically retryable network error.
+HTTP status alone does not establish its cause. Missing usage is also not
+evidence of zero cost: retain the existing monetary reservation until reported
+usage or provider billing supports settlement. Any verified saving remains
+inside the existing provider ceilings and does not consume the protected
+matched Haiku judging allocation.
+
 Execution update, 9 September at 06:34 UTC. The original 941-input allocation
 retains 670 usable outcomes, three failed inputs and 268 unstarted inputs.
 Astra, Fable, Opus, Sonnet, Haiku and GPT-5.5 are complete. Kimi has completed
