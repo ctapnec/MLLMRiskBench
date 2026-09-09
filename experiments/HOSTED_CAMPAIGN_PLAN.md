@@ -34,6 +34,17 @@ routes, Kimi's pending images and the recovered prefixes are not included in
 this snapshot. Keep their originally funded slots; the protected judge pool
 remains USD 29.992960, with zero Haiku re-adjudication calls.
 
+Completed-unit reporting update, 9 September at 07:30 UTC. Sol, Terra and
+DeepSeek now have published reports for 13, five and 59 measured responses
+respectively. Their campaigns remain partial. Together with the seven earlier
+publications, these reports cover 575 measured responses in completed units.
+The six separately scored prefix responses remain a distinct read-only source,
+not promoted completed units. Luna has no completed measured unit yet; its
+nine usable diagnostic responses are not experimental estimates. These newly
+published partial-route views are not included in the earlier 631-call Haiku
+scenario. Final pairing, request counting and funding must include their
+eligible outcomes before the judging cohort is fixed.
+
 Execution update, 8 September. The required local generation and both analysis
 publications are terminal, and their combined retained-input handoff validates.
 The rig's eleven target configurations and effective-dated prices have been
