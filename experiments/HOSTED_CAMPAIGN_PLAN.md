@@ -13,7 +13,10 @@ its remaining work is paused for the documented output investigation. Sol,
 Terra and Luna also remain partial. Completed responses are not new work.
 Six previously unjudged hosted-prefix responses now have separate scoring
 records: four common-security decisions and two non-evaluable setup turns.
-Their final comparison-reader handoff remains pending.
+Their separate comparison-reader handoff passed on the rig at 07:11 UTC:
+all six records restore without target or judge calls, with the original
+generation manifests unchanged. The resulting read-only view is available
+for final cohort composition; it does not promote the failed source grids.
 
 The completed measured-view snapshot covers 498 responses: 423 visible answers
 eligible for text-based re-adjudication, 33 explicit provider refusals without

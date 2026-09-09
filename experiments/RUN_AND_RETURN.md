@@ -1858,6 +1858,10 @@ against its unchanged response, and preserves non-evaluable turns. It makes
 no model calls and never promotes the failed generation grid. Its resulting
 view can be composed with completed native views using
 `experiments.retained_response_view`; duplicate run identities are rejected.
+The judging receipt rechecks both the driver and harness in the retained
+judging checkout, not the newer reader checkout. Judge identities come from
+the restored scoring trails; the unchanged generation manifest may predate
+all classifier calls and is not evidence of their realized identities.
 
 The planner imports no target-under-test or Runner factory and stores only
 content hashes. It binds the exact effective-dated pricing file and refuses a
