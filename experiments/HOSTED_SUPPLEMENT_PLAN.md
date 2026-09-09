@@ -38,6 +38,10 @@ the previous USD 0.014848 unknown-usage hold unchanged. No new target call was
 made. Deduct the extension charge from the reported Anthropic balance when
 funding the supplement; this gives an indicative USD 84.086442 balance before
 other or delayed charges, not a newly checked provider balance.
+Complete coverage was published at 14:54 UTC at
+`/stats/job/haiku-same-input-publication-20260909`, with per-model counts and a
+full verdict export. The attached historical matched-contrast report keeps its
+original 259-local selection and is labelled accordingly.
 
 ## Funds and first-batch scope
 
@@ -58,6 +62,8 @@ The combined headroom is USD 109.63923. It is not an instruction to spend the
 entire amount. The first additional batch has the following prospective caps.
 Final quantities may be lower because source clusters remain whole and full
 request token counts replace the 4,000-input-token planning assumption.
+After deducting the completed 45-answer extension, indicative headroom is
+USD 109.585672 before any other or delayed charges.
 
 | Target | Additional input cap | Unchanged maximum output tokens | Conditional target reservation, USD |
 |---|---:|---:|---:|
@@ -92,6 +98,17 @@ USD 61.648768 including judging, OpenAI for USD 25.755680, Kimi for USD
 5.395200 and DeepSeek for USD 6.789658. This leaves USD 10.049924 inside the
 additional headroom for counting differences, retry exposure and delayed old
 charges, in addition to the untouched original reserves.
+After the 45-answer extension charge, that indicative margin is USD 9.996366.
+Neither figure establishes affordability until the actual selected requests
+and all same-input local judging requests have been counted.
+
+The no-call prefix and local-counterpart preview is running on the rig under
+`engineering/hosted-supplement-selection-preview-r2-20260909/`. It checks that
+every original target assignment is the unchanged prefix, selects only the new
+whole-cluster tail and counts eligible local counterparts before new API outputs
+exist. It neither funds nor sends a paid request. An initial launcher import
+error failed before source analysis; the corrected preview imports the existing
+artifact writer directly, without changing product code or any admission rule.
 
 The no-call arithmetic is retained on the rig under
 `engineering/hosted-supplement-assessment-20260909/result.json`. The original
