@@ -2731,6 +2731,7 @@ class GeminiTarget(BaseTarget):
         media_roots: Optional[Iterable[str | Path]] = None,
         supports_seed: bool = False,
         modality_support: Optional[Iterable[str]] = None,
+        thinking_level: str | None = None,
     ) -> None:
         self.model = model
         self.provider = "google"
@@ -2744,6 +2745,12 @@ class GeminiTarget(BaseTarget):
         self.max_transport_attempts_per_call = self.max_retries + 1
         self.media_roots = _media_roots(media_roots)
         self.supports_seed = bool(supports_seed)
+        if thinking_level is not None and (
+            not model.startswith("gemini-3") or thinking_level not in {"minimal", "low", "medium", "high"}
+            or ("pro" in model and thinking_level == "minimal")
+        ):
+            raise ValueError("Gemini thinking_level is not supported for this model")
+        self.thinking_level = thinking_level
         self.modality_support = _validated_provider_modalities(
             "google",
             modality_support or _adapter_modalities("google", model)
@@ -2870,6 +2877,8 @@ class GeminiTarget(BaseTarget):
         config: dict[str, Any] = {
             "max_output_tokens": self.max_tokens,
         }
+        if self.thinking_level is not None:
+            config["thinking_config"] = {"thinking_level": self.thinking_level.upper()}
         if self.temperature is not None:
             config["temperature"] = self.temperature
         if system:
@@ -3009,6 +3018,13 @@ class GeminiTarget(BaseTarget):
             usage, "candidates_token_count", error=GeminiOutputError,
             location="Gemini usage",
         )
+        candidate_tokens = output_tokens
+        thoughts = _provider_field(usage, "thoughts_token_count")
+        if thoughts is not None:
+            output_tokens += _required_nonnegative_int(
+                usage, "thoughts_token_count", error=GeminiOutputError,
+                location="Gemini usage",
+            )
         total_tokens = _required_nonnegative_int(
             usage, "total_token_count", error=GeminiOutputError,
             location="Gemini usage",
@@ -3021,6 +3037,7 @@ class GeminiTarget(BaseTarget):
             "input": input_tokens,
             "output": output_tokens,
             "total": total_tokens,
+            **({"reasoning": thoughts, "visible_output": candidate_tokens} if thoughts is not None else {}),
         }
 
         return Response(
@@ -3042,6 +3059,7 @@ class GeminiTarget(BaseTarget):
                 "output_truncated": finish_reason == "MAX_TOKENS",
                 "finish_message": finish_message,
                 "prompt_block_reason": prompt_block_reason,
+                **({"requested_thinking_level": self.thinking_level} if self.thinking_level is not None else {}),
                 "safety_ratings": safety_ratings,
                 "requested_seed": seed,
                 "target_sampling_control": (
@@ -3276,7 +3294,7 @@ def normalize_api_target_config(
         raise ValueError(f"API target {spec!r} uses inherent config or is unregistered")
     allowed = {
         "modalities", "base_url", "max_tokens", "temperature",
-        "thinking", "effort", "reasoning_effort",
+        "thinking", "effort", "reasoning_effort", "thinking_level",
     }
     if set(config) - allowed:
         raise ValueError(f"API config {spec!r} contains unsupported execution fields")
@@ -3313,6 +3331,13 @@ def normalize_api_target_config(
         )
     modalities = _validated_provider_modalities(provider, raw_modalities)
     selected_model = spec.split(":", 1)[-1] if ":" in spec else spec
+    thinking_level = config.get("thinking_level")
+    if "thinking_level" in config and (
+        canonical_provider != "google" or not selected_model.startswith("gemini-3")
+        or not isinstance(thinking_level, str) or thinking_level not in {"minimal", "low", "medium", "high"}
+        or ("pro" in selected_model and thinking_level == "minimal")
+    ):
+        raise ValueError(f"API config {spec!r} thinking_level is unsupported")
     reasoning_effort = config.get("reasoning_effort")
     if "reasoning_effort" in config and (
         canonical_provider != "kimi" or selected_model != "kimi-k3"
@@ -3389,6 +3414,8 @@ def normalize_api_target_config(
         normalized["effort"] = effort
     if reasoning_effort is not None:
         normalized["reasoning_effort"] = reasoning_effort
+    if thinking_level is not None:
+        normalized["thinking_level"] = thinking_level
     configured_url = config.get("base_url")
     if provider in _COMPAT:
         default_url, _key = _COMPAT[provider]
@@ -3472,6 +3499,8 @@ def build_api_target(
         }
         if normalized.get("reasoning_effort") is not None:
             constructor_kwargs["reasoning_effort"] = normalized["reasoning_effort"]
+        if normalized.get("thinking_level") is not None:
+            constructor_kwargs["thinking_level"] = normalized["thinking_level"]
 
     if ":" in spec:
         provider, model = spec.split(":", 1)

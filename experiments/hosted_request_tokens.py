@@ -110,7 +110,7 @@ def _count_plan(target, request, *, network):
     if isinstance(target, GeminiTarget):
         body = _pick(request, {"model", "contents", "config"}, set())
         config = body["config"]
-        if not isinstance(config, dict) or set(config) - {"system_instruction", "max_output_tokens", "temperature", "seed"}:
+        if not isinstance(config, dict) or set(config) - {"system_instruction", "max_output_tokens", "temperature", "seed", "thinking_config"}:
             raise TokenCountUnavailable("Gemini counting cannot drop generation configuration")
         # Developer API countTokens supports the complete GenerateContentRequest;
         # the installed SDK's count_tokens helper cannot carry system instructions.

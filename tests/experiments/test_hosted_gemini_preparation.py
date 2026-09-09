@@ -112,3 +112,29 @@ def test_counted_request_cannot_cross_its_pricing_tier():
     route = {"maximum_priced_input_tokens": 200000, "maximum_cost_microusd": 100}
     with pytest.raises(ValueError, match="pricing tier"):
         _validate_input_budget(program, route)
+
+
+def test_gemini_billed_output_includes_reported_thinking_tokens():
+    fixtures = runpy.run_path(str(Path(__file__).parents[1] / "ura/test_target_regressions.py"))
+    target = GeminiTarget("gemini-generic")
+    result = fixtures["_gemini_result"]()
+    result.usage_metadata.thoughts_token_count = 11
+    result.usage_metadata.total_token_count = 21
+    fixtures["_install_gemini_fixture"](target, result)
+    response = target.generate([fixtures["DialogTurn"](role="user", content="A question.")])
+    assert response.tokens == {"input": 7, "output": 14, "total": 21, "reasoning": 11, "visible_output": 3}
+
+
+def test_google_thinking_level_survives_configuration_preview_and_counting():
+    from ura.data_models import DialogTurn
+    from ura.targets.api import build_api_target
+    config = {"modalities": ["text", "image"], "max_tokens": 4096, "temperature": None, "thinking_level": "low"}
+    target = build_api_target("google:gemini-3.1-pro-preview", config=config)
+    request = target.build_request([DialogTurn(role="user", content="Question")])
+    assert request["config"]["thinking_config"] == {"thinking_level": "LOW"}
+    _, _, count, _ = tokens._count_plan(target, request, network=True)
+    assert count["generateContentRequest"]["generationConfig"]["thinkingConfig"] == {"thinkingLevel": "LOW"}
+    with pytest.raises(ValueError, match="thinking_level"):
+        build_api_target("google:gemini-3.1-pro-preview", config={**config, "thinking_level": "minimal"})
+    with pytest.raises(ValueError, match="thinking_level"):
+        build_api_target("openai:gpt-5.5", config=config)

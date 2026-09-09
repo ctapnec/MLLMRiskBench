@@ -160,19 +160,18 @@ class SettingsMixin:
     #: (env var, provider label, funded).  Values are never displayed; only
     #: presence and a masked last-4 hint are ever surfaced.
     _SECRET_ENV_VARS: tuple[tuple[str, str, bool], ...] = (
-        ("ANTHROPIC_API_KEY", "Anthropic (focal Fable + Haiku judge)", True),
-        ("OPENAI_API_KEY", "OpenAI (focal Sol)", True),
+        ("ANTHROPIC_API_KEY", "Anthropic", True),
+        ("OPENAI_API_KEY", "OpenAI", True),
         ("GEMINI_API_KEY", "Google Gemini", True),
         ("DEEPSEEK_API_KEY", "DeepSeek", True),
-        ("MOONSHOT_API_KEY", "Moonshot (Kimi)", True),
+        ("MOONSHOT_API_KEY", "Moonshot / Kimi", True),
         (
             "HF_TOKEN",
-            "Hugging Face (write-only; acquisition children only: sealed "
-            "model acquisition and the aggregator corpus export)",
+            "Hugging Face",
             False,
         ),
-        ("DASHSCOPE_API_KEY", "Alibaba DashScope (Qwen) - unfunded", False),
-        ("ZHIPU_API_KEY", "Zhipu (GLM) - unfunded/unpayable", False),
+        ("DASHSCOPE_API_KEY", "Alibaba DashScope / Qwen", False),
+        ("ZHIPU_API_KEY", "Zhipu / GLM", False),
     )
     _SECRET_NAMES = frozenset(name for name, _label, _funded in _SECRET_ENV_VARS)
     # Acquisition credentials are deliberately process-scoped.  Unlike hosted
@@ -365,8 +364,9 @@ class SettingsMixin:
             os.environ.pop(name, None)
 
     def _secrets_page(self, *, error: str = "", saved: str = "") -> bytes:
-        rows = []
-        for row in self.secret_status():
+        groups = {"Campaign providers": [], "Additional providers": [], "Model and corpus downloads": []}
+        statuses = self.secret_status()
+        for row in statuses:
             tone = "green" if row["present"] else ("gray" if not row["funded"] else "amber")
             state = html.escape(row["hint"])
             clear = (
@@ -377,19 +377,26 @@ class SettingsMixin:
                 if row["present"]
                 else ""
             )
-            rows.append(
-                "<tr><td><code>" + html.escape(row["name"]) + "</code></td>"
-                f"<td>{html.escape(row['label'])}</td>"
-                f"<td><span class='badge {tone}'>{state}</span></td>"
-                "<td><input class='wide' type='password' autocomplete='off' "
-                f"form='setkey-{html.escape(row['name'])}' name='value' "
-                "placeholder='paste key to set/rotate'></td>"
-                "<td>"
+            group = ("Model and corpus downloads" if row["name"] == "HF_TOKEN" else
+                     "Campaign providers" if row["funded"] else "Additional providers")
+            groups[group].append(
+                "<article class='card provider-key-card'>"
+                "<div class='provider-key-heading'>"
+                f"<h3>{html.escape(row['label'])}</h3>"
+                f"<span class='badge {tone}'>{state}</span></div>"
+                "<code class='provider-key-variable'>" + html.escape(row["name"]) + "</code>"
+                "<details class='provider-key-editor'><summary>"
+                + ("Update key" if row["present"] else "Add key") + "</summary>"
                 f"<form id='setkey-{html.escape(row['name'])}' method='post' "
                 "action='/config/secrets'>"
                 f"<input type='hidden' name='name' value='{html.escape(row['name'])}'>"
                 "<input type='hidden' name='action' value='set'>"
-                "<button type='submit' class='small'>Save</button></form> " + clear + "</td></tr>"
+                f"<label for='key-{html.escape(row['name'])}'>New key</label>"
+                "<div class='provider-key-input-row'>"
+                f"<input id='key-{html.escape(row['name'])}' type='password' autocomplete='new-password' "
+                "name='value' placeholder='Paste a new key' required spellcheck='false'>"
+                "<button type='submit'>Save key</button></div></form>"
+                + clear + "</details></article>"
             )
         banner = ""
         if saved:
@@ -420,27 +427,22 @@ class SettingsMixin:
             "<p class='crumbs'><a href='/config'>Configuration</a>"
             "<span class='sep'>/</span>secrets</p>"
             + banner
-            + "<p class='note'>Set or rotate the hosted-provider API keys the "
-            "campaign uses. Keys are written to the operator secrets file "
-            "(<code>~/.ura_env</code>, mode 600) and applied to this console's "
-            "environment. <code>HF_TOKEN</code> is the exception: it is held "
-            "only in this console process and forwarded only to the acquisition "
-            "children (the sealed model acquisition worker and the "
-            "export_aggregators corpus export); it is never written to that "
-            "file. For your "
-            "safety the console <strong>never displays a stored key</strong> - "
-            "only whether it is set and, for hosted-provider keys, its last "
-            "four characters - and never writes a key to the database, a "
-            "backup, or a log. Secrets are still yours to manage; nothing "
-            "here is shared off this host.</p>"
-            "<div class='card scroll'><table><tr><th>Env var</th>"
-            "<th>Provider</th><th>Status</th><th>Set / rotate</th><th></th></tr>"
-            + "".join(rows)
-            + "</table></div>"
-            "<p class='note'>Unfunded providers (DashScope/Qwen, Zhipu/GLM) are "
-            "listed for completeness; their lanes record as structural N/A "
-            "unless a key is provided. A key set here takes effect for jobs "
-            "launched afterwards.</p>"
+            + "<p class='note'>Manage access for new jobs. Stored keys stay hidden; "
+            "a saved key does not establish model access or available credit.</p>"
+            f"<p>{sum(row['present'] for row in statuses)} of {len(statuses)} credentials configured</p>"
+            "<style>.provider-key-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:16px}"
+            ".provider-key-card{min-width:0;margin:0}.provider-key-heading{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px}"
+            ".provider-key-heading h3{margin:0}.provider-key-variable{display:block;overflow-wrap:anywhere;margin:12px 0}"
+            ".provider-key-editor summary{cursor:pointer}.provider-key-editor form{margin-top:12px}.provider-key-editor label{display:block;margin-bottom:6px}"
+            ".provider-key-input-row{display:flex;flex-wrap:wrap;gap:8px}.provider-key-input-row input{min-width:0;flex:1 1 180px;width:auto}"
+            ".provider-key-input-row button{flex:0 0 auto}.provider-key-section{margin:24px 0}</style>"
+            + "".join("<section class='provider-key-section'><h2>" + heading + "</h2><div class='provider-key-grid'>"
+                      + "".join(cards) + "</div></section>" for heading, cards in groups.items())
+            + "<details><summary>Storage and job access</summary><p class='note'>"
+            "Hosted keys are stored in <code>~/.ura_env</code> (mode 600) and used by new jobs. "
+            "Only their last four characters are shown. Hugging Face access is process-only, "
+            "never saved to that file, and supplied only to model/corpus acquisition workers. "
+            "No key is written to the database, backups or logs. Configure budgets and model routes separately.</p></details>"
         )
         return _page("Provider API keys", body, active="Config")
 
