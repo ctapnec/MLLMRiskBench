@@ -484,6 +484,15 @@ with their original weighting, while a newly written report identifies the
 input-balanced method explicitly. This correction does not enlarge the
 selected cohort or turn repeated requests into independent experimental units.
 
+Prospective hosted extensions reconstruct the original input-only source prefix
+and expand it by complete source clusters. Physical calls are then selected by
+the ordinary provider request body, excluding all predecessor request hashes.
+The extended input plan retains every source membership alongside one generation
+representative per new request. Its separate replay version preserves original
+dialogues and content-verified media; it cannot be relabelled as a legacy replay.
+Materialization remains a no-call operation. Counted monetary funding, local
+scoring and matched hosted judging are separate execution requirements.
+
 After verified target teardown, the judge performs its own hardware-fit
 selection and may use one or both GPUs. The target phase does not reserve a
 fraction of another device for later scoring, so target utilization and memory

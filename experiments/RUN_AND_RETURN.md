@@ -1872,6 +1872,16 @@ and recomputes only the statistical summary and method metadata. Publish the
 new report separately as `judge_comparison`; do not overwrite the predecessor
 or imply that a separate coverage extension has been added to its contrasts.
 
+For a prospective distinct-input extension, use
+`hosted_retained_inputs.build_distinct_plan` with the complete validated local
+candidates, the exact predecessor plan descriptor, an expanded whole-source
+prefix cap, a physical request cap and `provider_request_builder`. The resolver
+reconstructs the predecessor and extension before materialization. The resulting
+input plan and replay use their explicit new versions; legacy artifacts stay
+unchanged. Request groups retain source aliases for later scoring and reporting,
+but only their representative triggers generation. This preparation alone never
+authorizes provider calls or supplies a monetary allocation.
+
 Each hosted measured lane must use `--judges rules,guardrail`, the exact sealed
 Llama Guard revision, and a judge-call ceiling covering its selected answered
 rows. The Runner checkpoints the paid response before judging. A completed

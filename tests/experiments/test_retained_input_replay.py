@@ -110,6 +110,44 @@ class _RecordingMock(MockTarget):
         return super().generate(dialog, seed=seed)
 
 
+@pytest.mark.parametrize("image", [False, True])
+def test_distinct_plan_materializes_and_legacy_replay_cannot_masquerade_as_it(tmp_path, image):
+    points, cell, _full, bindings, _legacy, _config = _fixture(tmp_path, adaptive=True, image=image)
+    second = points[0].model_copy(update={"id": "input1", "payload_text": "A different retained question.",
+                                         "meta": {**points[0].meta, "source_cluster_id": "cluster1"}})
+    points = [*points, second]
+    cell["manifest"]["dataset_hashes"]["corpus"] = canonical_converted_corpus_sha256(points)
+    cell["attempts"]["original-1"]["datapoint_id"] = second.id
+    cell["attempts"]["original-1"]["params"]["source_cluster_id"] = "cluster1"
+    cell["attempts"]["original-1"]["rendered_input"][-1]["content"] = second.payload_text
+    candidates = materializer.candidates_from_cells([cell])
+    predecessor = materializer.build_plan(candidates=candidates, target=TARGET, call_cap=1, **bindings)
+    predecessor_path = tmp_path / "original-plan.json"
+    materializer._write_new(predecessor_path, predecessor)
+    def builder(row):
+        return {"messages": row["rendered_input"], "model": TARGET}
+    plan = materializer.build_distinct_plan(
+        candidates=candidates, predecessor=predecessor,
+        predecessor_descriptor=materializer._descriptor(predecessor_path),
+        source_prefix_cap=2, call_cap=1, request_builder=builder, **bindings,
+    )
+    replay = materializer.materialize_replay(
+        plan, cells=[cell], source_corpora={"local-run": points}, corpus="retained-corpus",
+        request_builder=builder, **bindings,
+    )
+    path = tmp_path / "distinct-replay.json"
+    materializer._write_new(path, replay)
+    attacker = ReplayAttacker(replay_artifact=str(path), replay_artifact_sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+    assert len(attacker._selected_entries) == 1
+    assert attacker._retained["schema"] == "ura-retained-input-replay/2"
+    replay["schema"] = "ura-retained-input-replay/1"
+    replay["replay_id"] = "retained-replay-" + materializer._sha({key: value for key, value in replay.items() if key != "replay_id"})[:24]
+    wrong = tmp_path / "wrong-version.json"
+    materializer._write_new(wrong, replay)
+    with pytest.raises(ValueError, match="input selection plan differs"):
+        ReplayAttacker(replay_artifact=str(wrong), replay_artifact_sha256=hashlib.sha256(wrong.read_bytes()).hexdigest())
+
+
 class _InterruptingRule(RuleJudge):
     def __init__(self, fail=False):
         self._fail = fail

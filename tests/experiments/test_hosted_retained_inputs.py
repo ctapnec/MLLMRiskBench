@@ -229,6 +229,58 @@ def test_distinct_request_identity_keeps_generation_controls_and_rejects_changed
         build(512)
 
 
+def test_distinct_continuation_rebuilds_full_prefix_and_keeps_aliases(tmp_path):
+    first = _cell(tmp_path, count=8)
+    second = copy.deepcopy(first)
+    second["run_id"] = "recovered"
+    second["manifest"]["dataset_hashes"]["corpus"] = "c" * 64
+    candidates = subject.candidates_from_cells([first, second])
+    predecessor = _plan(candidates, cap=2)
+    path = tmp_path / "predecessor.json"
+    subject._write_new(path, predecessor)
+    previous_bytes = path.read_bytes()
+    def builder(row):
+        return {"model": TARGET, "messages": row["rendered_input"], "max_tokens": 2048}
+
+    plan = subject.build_distinct_plan(
+        candidates=candidates, predecessor=predecessor,
+        predecessor_descriptor=subject._descriptor(path), source_prefix_cap=len(candidates),
+        call_cap=20, request_builder=builder, **_bindings(),
+    )
+    assert plan["schema"] == subject.DISTINCT_SCHEMA
+    groups = plan["selection"]["request_groups"]
+    assert len({row["request_sha256"] for row in groups}) == len(groups) == len(plan["selected"])
+    assert not {row["request_sha256"] for row in groups} & set(plan["selection"]["previous_request_sha256"])
+    assert any(len(group["source_input_ids"]) > 1 for group in groups)
+    resolved = subject.resolve_inputs(plan, candidates=candidates, request_builder=builder, **_bindings())
+    assert {row["input_identity_sha256"] for row in resolved} == {row["representative_input_sha256"] for row in groups}
+    assert path.read_bytes() == previous_bytes
+    assert _plan(candidates, cap=2) == predecessor
+    changed = copy.deepcopy(plan)
+    changed["selection"]["request_groups"][0]["source_input_ids"].pop()
+    changed["plan_id"] = "hosted-inputs-" + subject._sha({key: value for key, value in changed.items() if key != "plan_id"})[:24]
+    with pytest.raises(ValueError, match="membership changed"):
+        subject.resolve_inputs(changed, candidates=candidates, request_builder=builder, **_bindings())
+    with pytest.raises(ValueError, match="offline provider request builder"):
+        subject.resolve_inputs(plan, candidates=candidates, **_bindings())
+
+
+def test_distinct_continuation_refuses_changed_predecessor_and_nonextension(tmp_path):
+    candidates = subject.candidates_from_cells([_cell(tmp_path, count=8)])
+    predecessor = _plan(candidates, cap=2)
+    path = tmp_path / "predecessor.json"
+    subject._write_new(path, predecessor)
+    descriptor = subject._descriptor(path)
+    kwargs = dict(candidates=candidates, predecessor=predecessor,
+                  predecessor_descriptor=descriptor, call_cap=4,
+                  request_builder=lambda row: {"messages": row["rendered_input"]}, **_bindings())
+    with pytest.raises(ValueError, match="larger whole-source prefix"):
+        subject.build_distinct_plan(source_prefix_cap=2, **kwargs)
+    path.write_text("{}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="predecessor artifact changed"):
+        subject.build_distinct_plan(source_prefix_cap=8, **kwargs)
+
+
 @pytest.mark.parametrize("cap", [0, -1, True, 21])
 def test_budget_cap_cannot_expand(tmp_path: Path, cap) -> None:
     with pytest.raises(ValueError, match="global input cap"):

@@ -30,6 +30,7 @@ from experiments.retained_artifact_reader import load_cells
 
 
 SCHEMA = "ura-hosted-retained-input-plan/1"
+DISTINCT_SCHEMA = "ura-hosted-retained-input-plan/2"
 ALGORITHM = "seeded_balanced_whole_cluster_retained_input_prefix_v1"
 _DIMENSIONS = ("corpus", "source", "framework", "modality", "risk", "expected_behavior")
 
@@ -358,15 +359,102 @@ def build_plan(*, candidates: list[dict], budget: dict, budget_descriptor: dict,
     return value
 
 
-def resolve_inputs(plan: dict, *, candidates: list[dict], **bindings: Any) -> list[dict]:
+def provider_request_builder(target: Any, media_index: Mapping[str, str]) -> Callable[[dict], Mapping[str, Any]]:
+    """Use the ordinary offline provider payload with content-verified local media."""
+    from ura.adapters.replay import retained_dialog
+
+    def build(row: dict) -> Mapping[str, Any]:
+        delivered = copy.deepcopy(row["rendered_input"])
+        for binding in _media_bindings(delivered, media_index):
+            if binding["storage"] == "local":
+                delivered[binding["turn_index"]]["media"][binding["media_index"]]["path"] = binding["path"]
+        return target.build_request(retained_dialog(delivered), seed=0)
+
+    return build
+
+
+def build_distinct_plan(
+    *, candidates: list[dict], predecessor: dict, predecessor_descriptor: dict,
+    source_prefix_cap: int, call_cap: int, request_builder: Callable[[dict], Mapping[str, Any]],
+    **bindings: Any,
+) -> dict:
+    """Extend an original source prefix, funding only new distinct provider requests.
+
+    Source-prefix size and request cap are independent input-only bounds. All
+    source memberships survive in the request groups; a representative controls
+    physical generation only and does not erase other grading contexts.
+    """
+    if predecessor.get("schema") != SCHEMA:
+        raise ValueError("distinct continuation requires an original retained input plan")
+    if _descriptor(Path(predecessor_descriptor["path"])) != predecessor_descriptor:
+        raise ValueError("distinct predecessor artifact changed")
+    saved, _ = load_bound_json(Path(predecessor_descriptor["path"]), predecessor_descriptor["sha256"])
+    if saved != predecessor:
+        raise ValueError("distinct predecessor content differs")
+    resolve_inputs(predecessor, candidates=candidates, **bindings)
+    previous_rows = predecessor["selected"]
+    if type(source_prefix_cap) is not int or source_prefix_cap <= len(previous_rows):
+        raise ValueError("distinct continuation requires a larger whole-source prefix")
+    target = predecessor["target_condition"]["target_spec"]
+    modalities = bindings["api_config"][target]["modalities"]
+    expanded, _population = _select(candidates, modalities=modalities, cap=source_prefix_cap)
+    if [row["input_identity_sha256"] for row in expanded[:len(previous_rows)]] != [
+        row["input_identity_sha256"] for row in previous_rows
+    ]:
+        raise ValueError("distinct continuation changed its original source prefix")
+    by_id = {row["input_identity_sha256"]: row for row in candidates}
+    previous_requests = [_sha(dict(request_builder(copy.deepcopy(by_id[row["input_identity_sha256"]]))))
+                         for row in previous_rows]
+    distinct = select_distinct_requests(
+        expanded[len(previous_rows):], modalities=modalities, cap=call_cap,
+        request_builder=request_builder, previous_request_sha256=previous_requests,
+    )
+    representatives = [by_id[group["representative_input_sha256"]] for group in distinct["selected"]]
+    if not representatives:
+        raise ValueError("distinct continuation contains no new provider requests")
+    value = build_plan(candidates=representatives, target=target, call_cap=call_cap, **bindings)
+    value.pop("plan_id")
+    value["schema"] = DISTINCT_SCHEMA
+    value["sources"]["predecessor_input_plan"] = copy.deepcopy(predecessor_descriptor)
+    value["selection"].update(
+        algorithm="seed0_whole_source_prefix_distinct_provider_request_extension_v1",
+        candidate_input_ids_sha256=_sha(sorted(by_id)), source_prefix_cap=source_prefix_cap,
+        previous_request_sha256=sorted(set(previous_requests)),
+        request_groups=[{
+            "request_sha256": group["request_sha256"],
+            "representative_input_sha256": group["representative_input_sha256"],
+            "source_input_ids": [row["input_identity_sha256"] for row in group["source_inputs"]],
+        } for group in distinct["selected"]],
+        source_memberships_are_not_independent_generations=True,
+    )
+    value["population"] = distinct["population"]
+    value["plan_id"] = "hosted-inputs-" + _sha(value)[:24]
+    return value
+
+
+def resolve_inputs(plan: dict, *, candidates: list[dict],
+                   request_builder: Callable[[dict], Mapping[str, Any]] | None = None,
+                   **bindings: Any) -> list[dict]:
     """Rebuild selection from validated sources before returning unchanged dialogues.
 
     This is still a no-call handoff. It never constructs an attacker or target.
     A later executor must use the returned media bindings to resolve portable
     locators and must retain the original input digest beside the delivered one.
     """
-    expected = build_plan(candidates=candidates, target=plan["target_condition"]["target_spec"],
-                          call_cap=plan["target_condition"]["selected_global_call_cap"], **bindings)
+    if plan.get("schema") == DISTINCT_SCHEMA:
+        if request_builder is None:
+            raise ValueError("distinct input resolution requires the offline provider request builder")
+        descriptor = plan["sources"]["predecessor_input_plan"]
+        predecessor, _ = load_bound_json(Path(descriptor["path"]), descriptor["sha256"])
+        expected = build_distinct_plan(
+            candidates=candidates, predecessor=predecessor, predecessor_descriptor=descriptor,
+            source_prefix_cap=plan["selection"]["source_prefix_cap"],
+            call_cap=plan["target_condition"]["selected_global_call_cap"],
+            request_builder=request_builder, **bindings,
+        )
+    else:
+        expected = build_plan(candidates=candidates, target=plan["target_condition"]["target_spec"],
+                              call_cap=plan["target_condition"]["selected_global_call_cap"], **bindings)
     if expected != plan:
         raise ValueError("retained hosted selection or source membership changed")
     checked = set()
@@ -396,7 +484,8 @@ def materialize_replay(
     an answer or from a source evaluator's judgment.
     """
     from ura.adapters.replay import (
-        RETAINED_REPLAY_SCHEMA, retained_dialog, retained_dialog_sha256, validate_retained_origin,
+        RETAINED_REPLAY_SCHEMA, DISTINCT_RETAINED_REPLAY_SCHEMA,
+        retained_dialog, retained_dialog_sha256, validate_retained_origin,
     )
     from ura.converters._common import canonical_converted_corpus_sha256
     from ura.data_models import DataPoint
@@ -449,7 +538,8 @@ def materialize_replay(
                         "rendered_input": [turn.model_dump(mode="json") for turn in dialog]})
     if not entries:
         raise ValueError("retained replay arm has no selected inputs")
-    value = {"schema": RETAINED_REPLAY_SCHEMA, "status": "no_call_materialized",
+    schema = DISTINCT_RETAINED_REPLAY_SCHEMA if plan["schema"] == DISTINCT_SCHEMA else RETAINED_REPLAY_SCHEMA
+    value = {"schema": schema, "status": "no_call_materialized",
              "corpus": corpus, "plan": copy.deepcopy(plan), "entries": entries}
     value["replay_id"] = "retained-replay-" + _sha(value)[:24]
     return value

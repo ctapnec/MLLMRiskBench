@@ -29,6 +29,7 @@ from .base import AttackBudget, BaseAttacker
 
 
 RETAINED_REPLAY_SCHEMA = "ura-retained-input-replay/1"
+DISTINCT_RETAINED_REPLAY_SCHEMA = "ura-retained-input-replay/2"
 
 
 def retained_sha256(value: object) -> str:
@@ -121,14 +122,17 @@ class ReplayAttacker(BaseAttacker):
         value = strict_json_loads(raw, max_nodes=4_000_000)
         if (not isinstance(value, dict) or set(value) != {
             "schema", "status", "corpus", "plan", "entries", "replay_id",
-        } or value["schema"] != RETAINED_REPLAY_SCHEMA
+        } or value["schema"] not in {RETAINED_REPLAY_SCHEMA, DISTINCT_RETAINED_REPLAY_SCHEMA}
             or value["status"] != "no_call_materialized"
             or not isinstance(value["entries"], list) or not value["entries"]
             or value["replay_id"] != "retained-replay-" + retained_sha256({
                 key: item for key, item in value.items() if key != "replay_id"})[:24]):
             raise ValueError("retained replay materialization contract differs")
         plan = value["plan"]
-        if (plan.get("schema") != "ura-hosted-retained-input-plan/1"
+        plan_schema = ("ura-hosted-retained-input-plan/2"
+                       if value["schema"] == DISTINCT_RETAINED_REPLAY_SCHEMA
+                       else "ura-hosted-retained-input-plan/1")
+        if (plan.get("schema") != plan_schema
             or plan.get("status") != "no_call_selection_only"
             or plan["authority"]["paid_execution_authorized"] is not False
             or plan["plan_id"] != "hosted-inputs-" + retained_sha256({
