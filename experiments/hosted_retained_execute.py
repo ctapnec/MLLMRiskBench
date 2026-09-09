@@ -63,6 +63,10 @@ def _validate_input_budget(program: Mapping[str, Any], route: Mapping[str, Any])
     elif program.get("schema") != SCHEMA or "input_budget_policy" in program:
         raise ValueError("hosted input allocation schema differs")
     requests = program["requests"].values()
+    if "maximum_priced_input_tokens" in route and any(
+        row["input_tokens"] > route["maximum_priced_input_tokens"] for row in requests
+    ):
+        raise ValueError("selected request exceeds the bound pricing tier")
     if not counted and any(
         row["input_tokens"] > route["maximum_input_tokens_per_call"] for row in requests
     ):
@@ -772,6 +776,7 @@ def _validated_jobs(program: dict, budget: AttemptBudget, *, local_context: tupl
         api_config=values["api_config"], pricing=values["pricing"], budgets=values["budgets"],
         descriptors={"api_config": descriptors["api_config"], "pricing_config": descriptors["pricing"],
                      "budgets": descriptors["budgets"]}, pricing_as_of=program["pricing_as_of"],
+        route_configuration=values["budget_projection"].get("route_configuration"),
     )
     if values["budget_projection"] != expected_projection or expected_projection["status"] != "budget_fit":
         raise ValueError("hosted program budget or effective-dated pricing projection changed")
@@ -818,7 +823,7 @@ def _validated_jobs(program: dict, budget: AttemptBudget, *, local_context: tupl
     if not isinstance(jobs, list) or not jobs:
         raise ValueError("retained program has no fixed pilot/measured partition")
     prices, _why = projection.rate_for(values["pricing"], route["provider"], route["model"],
-                                       on_date=program["pricing_as_of"])
+        on_date=program["pricing_as_of"])
     prices = {
         **prices["per_million_tokens"],
         "reservation_input": route["reserved_input_usd_per_million_tokens"],

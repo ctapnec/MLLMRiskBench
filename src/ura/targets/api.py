@@ -230,6 +230,7 @@ _MODEL_ADAPTER_MODALITIES: dict[tuple[str, str], tuple[str, ...]] = {
     # physical-media part types. Keep aliases explicit so preview drift cannot
     # silently change the experiment.
     ("google", "gemini-3.1-pro-preview"): ("text", "image", "audio", "video"),
+    ("google", "gemini-3.8-flash"): ("text", "image", "audio", "video"),
     ("google", "gemini-3.6-flash"): ("text", "image", "audio", "video"),
     ("google", "gemini-3.5-flash"): ("text", "image", "audio", "video"),
     ("google", "gemini-3.5-flash-lite"): ("text", "image", "audio", "video"),
@@ -2856,11 +2857,16 @@ class GeminiTarget(BaseTarget):
             raise ValueError("GeminiTarget requires at least one non-system message")
         return system, contents
 
-    def generate(
+    def build_request(
         self, dialog: list[DialogTurn], *, seed: int | None = None
-    ) -> Response:
-        client = self._get_client()
+    ) -> dict[str, Any]:
+        """Return the JSON-compatible body shared by counting and generation."""
         system, contents = self._to_contents(dialog)
+        for content in contents:
+            for part in content["parts"]:
+                if "inline_data" in part:
+                    blob = part["inline_data"]
+                    blob["data"] = base64.b64encode(blob["data"]).decode("ascii")
         config: dict[str, Any] = {
             "max_output_tokens": self.max_tokens,
         }
@@ -2870,15 +2876,18 @@ class GeminiTarget(BaseTarget):
             config["system_instruction"] = system
         if seed is not None and self.supports_seed:
             config["seed"] = int(seed)
+        return {"model": self.model, "contents": contents, "config": config}
+
+    def generate(
+        self, dialog: list[DialogTurn], *, seed: int | None = None
+    ) -> Response:
+        client = self._get_client()
+        request = self.build_request(dialog, seed=seed)
 
         start = time.perf_counter()
         resp, transport_attempts = _call_with_retry(
             client.models.generate_content,
-            {
-                "model": self.model,
-                "contents": contents,
-                "config": config or None,
-            },
+            request,
             provider=self.provider,
             max_retries=self.max_retries,
         )

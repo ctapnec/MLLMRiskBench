@@ -133,6 +133,7 @@ def _validated_projection(
             "budgets": _portable(sources["budgets"]),
         },
         pricing_as_of=request["pricing_as_of"],
+        route_configuration=values["budget_projection"].get("route_configuration"),
     )
     if values["budget_projection"] != expected or expected["status"] != "budget_fit":
         raise ValueError("hosted budget projection is stale or no longer fits")

@@ -22,6 +22,7 @@ from urllib.parse import unquote_to_bytes
 
 from experiments.hosted_campaign_budget import (
     SCHEMA as BUDGET_SCHEMA,
+    CONFIGURED_SCHEMA as CONFIGURED_BUDGET_SCHEMA,
     _sha,
     _write_new,
     load_bound_json,
@@ -310,7 +311,7 @@ def build_plan(*, candidates: list[dict], budget: dict, budget_descriptor: dict,
             raise ValueError("retained input identity changed or was duplicated")
         seen.add(row["input_identity_sha256"])
     material = {key: value for key, value in budget.items() if key != "projection_id"}
-    if (budget.get("schema") != BUDGET_SCHEMA or budget.get("status") != "budget_fit"
+    if (budget.get("schema") not in {BUDGET_SCHEMA, CONFIGURED_BUDGET_SCHEMA} or budget.get("status") != "budget_fit"
             or budget.get("projection_id") != "hosted-budget-" + _sha(material)[:24]):
         raise ValueError("hosted selection requires an unchanged fitting budget projection")
     if budget["sources"]["api_config"] != api_descriptor:

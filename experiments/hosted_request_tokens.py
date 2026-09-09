@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from ura.targets.api import (
-    AnthropicTarget, OpenAICompatibleTarget, OpenAIResponsesTarget, OpenAITarget,
+    AnthropicTarget, GeminiTarget, OpenAICompatibleTarget, OpenAIResponsesTarget, OpenAITarget,
 )
 
 
@@ -45,6 +45,8 @@ def request_sha256(request: Mapping) -> str:
 
 def _has_media(value):
     if isinstance(value, dict):
+        if "inline_data" in value or "file_data" in value:
+            return True
         if value.get("type") in {"image", "image_url", "input_image", "input_audio", "input_file",
                                 "document", "video", "file"}:
             return True
@@ -55,7 +57,7 @@ def _has_media(value):
 def _checked_request(target, request):
     if not isinstance(request, Mapping) or request.get("model") != target.model:
         raise ValueError("token count request differs from the exact target model")
-    if not isinstance(target, (AnthropicTarget, OpenAITarget)):
+    if not isinstance(target, (AnthropicTarget, OpenAITarget, GeminiTarget)):
         raise TokenCountUnavailable("this target has no hosted request-count method")
     return json.loads(_canonical(dict(request)))
 
@@ -105,6 +107,26 @@ def _count_plan(target, request, *, network):
         if _has_media(request):
             raise TokenCountUnavailable("offline byte estimates cannot count physical media")
         return "local_estimate", _LOCAL_METHOD, request, "no_network"
+    if isinstance(target, GeminiTarget):
+        body = _pick(request, {"model", "contents", "config"}, set())
+        config = body["config"]
+        if not isinstance(config, dict) or set(config) - {"system_instruction", "max_output_tokens", "temperature", "seed"}:
+            raise TokenCountUnavailable("Gemini counting cannot drop generation configuration")
+        # Developer API countTokens supports the complete GenerateContentRequest;
+        # the installed SDK's count_tokens helper cannot carry system instructions.
+        def camel(value):
+            if isinstance(value, list):
+                return [camel(item) for item in value]
+            if isinstance(value, dict):
+                return {key.split('_')[0] + ''.join(part.title() for part in key.split('_')[1:]):
+                        camel(item) for key, item in value.items()}
+            return value
+        generated = {"model": "models/" + body["model"], "contents": camel(body["contents"]),
+                     "generationConfig": camel({key: value for key, value in config.items()
+                                                if key != "system_instruction"})}
+        if "system_instruction" in config:
+            generated["systemInstruction"] = {"parts": [{"text": config["system_instruction"]}]}
+        return "provider_exact", "gemini_generate_content_count_tokens_v1", {"generateContentRequest": generated}, "unspecified"
     if isinstance(target, AnthropicTarget):
         return ("provider_estimate", "anthropic_messages_count_tokens_v1",
                 _pick(request, _ANTHROPIC_INPUT, _GENERATION_ONLY), "free_documented")
@@ -143,6 +165,13 @@ def count_request(target, request: Mapping, *, allow_network: bool = False) -> d
                "count_http_attempts": 0 if method == "local_estimate" else 1, "count_fee_status": fee}
     if method == "local_estimate":
         tokens = len(_canonical(counted)) + 256
+    elif isinstance(target, GeminiTarget):
+        from google.genai import types
+        response = target._get_client()._api_client.request(
+            "post", "models/" + target.model + ":countTokens", counted,
+            types.HttpOptions(timeout=int(min(30.0, target.timeout) * 1000),
+                              retry_options=types.HttpRetryOptions(attempts=1)))
+        tokens = json.loads(response.body).get("totalTokens")
     else:
         client = target._get_client().with_options(max_retries=0, timeout=min(30.0, target.timeout))
         if method_id == "anthropic_messages_count_tokens_v1":

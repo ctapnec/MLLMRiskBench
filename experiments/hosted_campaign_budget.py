@@ -27,6 +27,7 @@ from ura.targets.api import (
 
 
 SCHEMA = "ura-hosted-campaign-budget-projection/4"
+CONFIGURED_SCHEMA = "ura-hosted-campaign-budget-projection/5"
 EXPECTED_INPUT_TOKENS = 4_000
 MAX_INPUT_TOKENS = 4_000
 JUDGE_EXPECTED_INPUT_TOKENS = 8_192
@@ -313,6 +314,8 @@ def _priced_row(
         "maximum_http_attempts": calls * (DEFAULT_HOSTED_HTTP_ERROR_RETRIES + 1),
         "expected_input_tokens_per_call": EXPECTED_INPUT_TOKENS,
         "maximum_input_tokens_per_call": MAX_INPUT_TOKENS,
+        **({"maximum_priced_input_tokens": route["maximum_priced_input_tokens"]}
+           if "maximum_priced_input_tokens" in route else {}),
         "expected_output_tokens_per_call": expected_output,
         "maximum_output_tokens_per_call": maximum_output,
         "expected_total_input_tokens": calls * EXPECTED_INPUT_TOKENS,
@@ -349,51 +352,77 @@ def build_projection(
     budgets: Mapping[str, Any],
     descriptors: Mapping[str, Mapping[str, Any]],
     pricing_as_of: str,
+    route_configuration: Sequence[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    routes = ROUTES if route_configuration is None else route_configuration
+    if route_configuration is not None:
+        required = {"label", "spec", "provider", "model", "call_cap", "max_output_tokens"}
+        optional = {"reasoning_effort", "maximum_priced_input_tokens"}
+        if not isinstance(routes, (list, tuple)) or not routes:
+            raise ValueError("configured routes must be a nonempty list")
+        seen = set()
+        for route in routes:
+            if (not isinstance(route, Mapping) or not required <= set(route) <= required | optional
+                or any(not isinstance(route[k], str) or not route[k].strip()
+                       for k in ("label", "spec", "provider", "model"))
+                or route["spec"] != route["provider"] + ":" + route["model"]
+                or route["spec"] in seen
+                or any(type(route[k]) is not int or route[k] <= 0 for k in
+                       ("call_cap", "max_output_tokens"))
+                or ("maximum_priced_input_tokens" in route and
+                    (type(route["maximum_priced_input_tokens"]) is not int or route["maximum_priced_input_tokens"] <= 0))):
+                raise ValueError("configured route identity, limits or fields differ")
+            seen.add(route["spec"])
+    judge_call_cap = JUDGE_CALL_CAP if route_configuration is None else 2 * sum(route["call_cap"] for route in routes)
     if pricing.get("schema") != "ura-console-pricing/1":
         raise ValueError("pricing config schema changed")
     try:
         __import__("datetime").date.fromisoformat(pricing_as_of)
     except (TypeError, ValueError) as exc:
         raise ValueError("pricing as-of date must be ISO YYYY-MM-DD") from exc
-    for route in ROUTES:
+    for route in routes:
         _route_config(route, api_config)
     rows = [
-        _priced_row(route, pricing=pricing, as_of=pricing_as_of) for route in ROUTES
+        _priced_row(route, pricing=pricing, as_of=pricing_as_of) for route in routes
     ]
     budget_rows = _provider_budgets(budgets)
-    haiku = next(row for row in rows if row["model"] == JUDGE_MODEL)
+    haiku = next((row for row in rows if row["model"] == JUDGE_MODEL), None)
+    if haiku is None:
+        haiku = _priced_row({"label": "Haiku judge", "spec": "anthropic:" + JUDGE_MODEL,
+                            "provider": "anthropic", "model": JUDGE_MODEL,
+                            "call_cap": judge_call_cap, "max_output_tokens": JUDGE_MAX_OUTPUT_TOKENS},
+                           pricing=pricing, as_of=pricing_as_of)
     judge_input_rate = Decimal(haiku["input_usd_per_million_tokens"])
     judge_output_rate = Decimal(haiku["output_usd_per_million_tokens"])
     judge = {
         "provider": "anthropic",
         "model": JUDGE_MODEL,
-        "paid_call_cap": JUDGE_CALL_CAP,
-        "selected_pair_cap": JUDGE_CALL_CAP // 2,
+        "paid_call_cap": judge_call_cap,
+        "selected_pair_cap": judge_call_cap // 2,
         "target_calls": 0,
         "answer_retries": 0,
         "transport_retries": DEFAULT_HOSTED_HTTP_ERROR_RETRIES,
-        "maximum_http_attempts": JUDGE_CALL_CAP
+        "maximum_http_attempts": judge_call_cap
         * (DEFAULT_HOSTED_HTTP_ERROR_RETRIES + 1),
         "expected_input_tokens_per_call": JUDGE_EXPECTED_INPUT_TOKENS,
         "maximum_input_tokens_per_call": JUDGE_MAX_INPUT_TOKENS,
         "expected_output_tokens_per_call": JUDGE_EXPECTED_OUTPUT_TOKENS,
         "maximum_output_tokens_per_call": JUDGE_MAX_OUTPUT_TOKENS,
-        "expected_total_input_tokens": JUDGE_CALL_CAP * JUDGE_EXPECTED_INPUT_TOKENS,
-        "maximum_total_input_tokens": JUDGE_CALL_CAP * JUDGE_MAX_INPUT_TOKENS,
-        "expected_total_output_tokens": JUDGE_CALL_CAP * JUDGE_EXPECTED_OUTPUT_TOKENS,
-        "maximum_total_output_tokens": JUDGE_CALL_CAP * JUDGE_MAX_OUTPUT_TOKENS,
+        "expected_total_input_tokens": judge_call_cap * JUDGE_EXPECTED_INPUT_TOKENS,
+        "maximum_total_input_tokens": judge_call_cap * JUDGE_MAX_INPUT_TOKENS,
+        "expected_total_output_tokens": judge_call_cap * JUDGE_EXPECTED_OUTPUT_TOKENS,
+        "maximum_total_output_tokens": judge_call_cap * JUDGE_MAX_OUTPUT_TOKENS,
         "input_usd_per_million_tokens": str(judge_input_rate),
         "output_usd_per_million_tokens": str(judge_output_rate),
         "expected_cost_microusd": _cost_microusd(
-            calls=JUDGE_CALL_CAP,
+            calls=judge_call_cap,
             input_tokens=JUDGE_EXPECTED_INPUT_TOKENS,
             output_tokens=JUDGE_EXPECTED_OUTPUT_TOKENS,
             input_rate=judge_input_rate,
             output_rate=judge_output_rate,
         ),
         "maximum_cost_microusd": _cost_microusd(
-            calls=JUDGE_CALL_CAP,
+            calls=judge_call_cap,
             input_tokens=JUDGE_MAX_INPUT_TOKENS,
             output_tokens=JUDGE_MAX_OUTPUT_TOKENS,
             input_rate=judge_input_rate,
@@ -401,7 +430,7 @@ def build_projection(
         ),
     }
     providers: list[dict[str, Any]] = []
-    for provider in sorted({str(row["provider"]) for row in rows}):
+    for provider in sorted({str(row["provider"]) for row in rows} | {"anthropic"}):
         budget = budget_rows.get(provider)
         if budget is None:
             raise ValueError(f"configured budget is unavailable for {provider!r}")
@@ -440,7 +469,8 @@ def build_projection(
         int(row["maximum_total_output_tokens"]) for row in rows
     )
     value: dict[str, Any] = {
-        "schema": SCHEMA,
+        "schema": SCHEMA if route_configuration is None else CONFIGURED_SCHEMA,
+        **({"route_configuration": [dict(route) for route in routes]} if route_configuration is not None else {}),
         "status": (
             "budget_fit" if all(row["fits_campaign_cap"] for row in providers)
             else "blocked_budget"
@@ -465,7 +495,7 @@ def build_projection(
         "providers": providers,
         "totals": {
             "target_paid_call_cap": sum(int(row["paid_call_cap"]) for row in rows),
-            "judge_paid_call_cap": JUDGE_CALL_CAP,
+            "judge_paid_call_cap": judge_call_cap,
             "target_expected_input_tokens": target_expected_input,
             "target_maximum_input_tokens": target_maximum_input,
             "target_expected_output_tokens": target_expected_output,
@@ -524,6 +554,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--budgets", type=Path, required=True)
     parser.add_argument("--budgets-sha256", required=True)
     parser.add_argument("--pricing-as-of", required=True)
+    parser.add_argument("--route-configuration", type=Path)
+    parser.add_argument("--route-configuration-sha256")
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)
     api_config, api_descriptor = load_bound_json(
@@ -533,6 +565,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.pricing_config, args.pricing_config_sha256
     )
     budgets, budget_descriptor = load_bound_json(args.budgets, args.budgets_sha256)
+    routes = None
+    if bool(args.route_configuration) != bool(args.route_configuration_sha256):
+        parser.error("route configuration requires its SHA-256")
+    if args.route_configuration:
+        routes, _ = load_bound_json(args.route_configuration, args.route_configuration_sha256)
     projection = build_projection(
         api_config=api_config,
         pricing=pricing,
@@ -543,6 +580,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "budgets": budget_descriptor,
         },
         pricing_as_of=args.pricing_as_of,
+        route_configuration=routes,
     )
     print(_write_new(args.out, projection))
     return 0 if projection["status"] == "budget_fit" else 2
