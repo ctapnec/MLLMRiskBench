@@ -136,6 +136,41 @@ request counts and per-provider funding checks. No assessed increase is silently
 added to the current dispatch set.
 The historical unknown-cost holds remain unchanged and cannot be written off.
 
+### Larger allocation under assessment
+
+The operator subsequently requested substantially more Kimi, DeepSeek, Haiku,
+Sonnet, Luna and Terra inputs, with smaller increases for Fable, Opus, Astra and
+Sol. The intermediate 676-request preview preserves all 394 counted requests
+but is not the final allocation: it still gives too much of the increase to
+expensive routes. Neither preview changes the dispatched population or funds
+new target calls.
+
+Assess 500 additional distinct DeepSeek requests as the next planning target,
+not as an already funded count. Inspection of the retained 143-request DeepSeek
+continuation found 142 responses with token usage and 142 settled attempts,
+accounting for USD 0.745551 at the campaign's conservative peak rates. Two
+other attempts retain unknown usage and their existing holds. The observed
+mean is about USD 0.00525 per settled response: 500 similarly distributed
+responses would therefore account for approximately USD 2.63 in generation,
+not including judging. This is an empirical planning estimate, not a guaranteed
+price for a longer or differently composed input prefix.
+
+For comparison, the inspected Kimi program has 79 responses with 71,924 input
+and 38,462 output tokens. Applying its retained uncached rates gives an indicative
+USD 0.792702, about USD 0.0100 per response. Its 79 attempt costs remain unknown
+in the historical ledger; this arithmetic does not settle or erase them.
+Kimi can also support a materially larger assessment than a few dozen calls,
+but its actual funding must respect its separate reported balance.
+
+Freeze larger input-only prefixes before execution. If their combined
+maximum-token reservations do not fit at once, fund deterministic batches
+from reconciled remaining balances rather than reducing output allowances,
+discarding unknown charges or pretending every response reaches the maximum.
+The execution path must support this before such batches are dispatched.
+Protect the full matching Haiku scope, including eligible existing local
+answers to the same inputs; target affordability alone is not sufficient.
+Do not extend a cohort selectively because previous answers were favorable.
+
 The rig preview completed at 15:07 UTC. The next complete AirBench cluster
 contained 148 source records, so extending Sonnet and Haiku to include it
 initially yielded 1,135 prospective assignments. The subsequent actual-input
