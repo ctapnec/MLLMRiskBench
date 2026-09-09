@@ -239,8 +239,20 @@ def test_distinct_continuation_rebuilds_full_prefix_and_keeps_aliases(tmp_path):
     path = tmp_path / "predecessor.json"
     subject._write_new(path, predecessor)
     previous_bytes = path.read_bytes()
+    by_id = {row["input_identity_sha256"]: row for row in candidates}
+    old_questions = {by_id[row["input_identity_sha256"]]["rendered_input"][0]["content"]
+                     for row in predecessor["selected"]}
+    old_question = sorted(old_questions)[0]
+    alias_question = next(row["rendered_input"][0]["content"] for row in candidates
+                          if row["rendered_input"][0]["content"] not in old_questions)
     def builder(row):
-        return {"model": TARGET, "messages": row["rendered_input"], "max_tokens": 2048}
+        messages = copy.deepcopy(row["rendered_input"])
+        # A later source condition can produce an already-issued API request.
+        # Corpus-subset aliases alone would all be inside the previous prefix
+        # and would not exercise exclusion across old and new selections.
+        if messages[0]["content"] == alias_question:
+            messages[0]["content"] = old_question
+        return {"model": TARGET, "messages": messages, "max_tokens": 2048}
 
     plan = subject.build_distinct_plan(
         candidates=candidates, predecessor=predecessor,
