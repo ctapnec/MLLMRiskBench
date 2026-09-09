@@ -6,6 +6,39 @@ responds to the operator's checked account balances and request for additional
 inputs. It is a new, non-overlapping cohort, not a restart of completed work.
 No supplemental target, token-count or judge request has been sent.
 
+Judging requirement clarified by the operator on 9 September: use exactly the
+same input identities in local and hosted Haiku assessment. Judge all eligible
+existing local answers to the selected hosted inputs, reusing completed verdicts
+only for their exact original answers. Different model rosters need not yield
+equal answer counts. Do not generate new local answers, duplicate observations,
+or select replacement inputs to force equal totals. Invalid verdicts remain
+unscored in their fixed cohorts. This local-coverage extension precedes the
+additional API batch below, and its actual charges reduce that batch's available
+Anthropic funding.
+
+Capacity result, 9 September at 14:25 UTC: the 743 hosted answers cover 81
+distinct matched input identities. The validated local view contains 304
+eligible distinct answers for those same inputs, with 259 already assessed by
+Haiku. Completing all existing same-input local coverage therefore requires 45
+additional local judgments. Every hosted input already has at least one judged
+local counterpart. The operator explicitly confirmed that these existing local
+generations, not an artificially equal count of answers, are the intended
+comparison. The 45-answer local-only judging worker started at 14:31 UTC under
+`engineering/haiku-local-input-coverage-20260909/`. It preserves all 259 earlier
+local and 743 hosted judgments and makes no target or hosted-answer judge calls.
+The capacity proof is
+`engineering/haiku-equal-coverage-preview-20260909/result.json`.
+
+The extension completed at 14:45:31 UTC: 45 new local judge calls, all valid,
+47,933 input tokens, 1,125 output tokens and USD 0.053558. All 1,002 earlier
+judgment artifacts remain unchanged. The complete same-input cohort now has
+304 local assessments (302 valid, two invalid) and 743 API assessments (740
+valid, three invalid). Its combined known judging cost is USD 1.221041, with
+the previous USD 0.014848 unknown-usage hold unchanged. No new target call was
+made. Deduct the extension charge from the reported Anthropic balance when
+funding the supplement; this gives an indicative USD 84.086442 balance before
+other or delayed charges, not a newly checked provider balance.
+
 ## Funds and first-batch scope
 
 The operator reported these account balances after the original judging run.
@@ -47,12 +80,14 @@ maximum-token calculations, not expected charges or measured affordability
 of an as-yet-unselected population. No output allowance or reasoning setting
 is changed to make this new cohort appear cheaper or more stable.
 
-At most 2,216 distinct Haiku requests would cover one new local counterpart
+The initial arithmetic allowed 2,216 Haiku requests for one local counterpart
 and one hosted answer per additional input. At 12,288 input and 512 output
-tokens, that conditional reservation is USD 32.903168. Deduplicate shared local
-answers before final funding, and identify already-judged local answers for
-validated reuse rather than automatically paying to judge them again.
-The conditional combined reservation is USD 99.589306. Anthropic accounts for
+tokens, that conditional reservation is USD 32.903168. This is not a bound for
+the clarified all-local-answers-on-the-same-inputs requirement: resolve the
+actual local answer inventory, deduplicate it, and exclude exact completed
+judgments before funding. Reduce target allocations if the actual judging
+requirement exceeds the available reservation. The initial conditional combined
+reservation is USD 99.589306. Anthropic accounts for
 USD 61.648768 including judging, OpenAI for USD 25.755680, Kimi for USD
 5.395200 and DeepSeek for USD 6.789658. This leaves USD 10.049924 inside the
 additional headroom for counting differences, retry exposure and delayed old
@@ -90,7 +125,10 @@ budget, responses, local judgments and Haiku artifacts remain unchanged.
    applicable retained API answer. Then apply Haiku to eligible hosted answers
    and matching selected local answers, retaining invalid judge verdicts as
    unscored and unknown usage as unknown. Reuse completed local judgments only
-   with exact answer, input, judge-configuration and evidence identity.
+   with exact answer, input, judge-configuration and evidence identity. Include
+   all eligible existing local answers on those same input identities. Resolve
+   this inventory before funding additional API inputs, and report input
+   coverage, per-model answer counts and invalid-verdict counts separately.
 8. Publish the supplemental cohort separately, with exact selection coverage,
    local/hosted model, framework, corpus, arm, input and generation counts,
    local/Haiku labels, token conditions, truncation and failed-output categories.

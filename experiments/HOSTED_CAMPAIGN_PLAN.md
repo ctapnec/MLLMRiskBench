@@ -31,6 +31,25 @@ generation-condition charts passed verification. Browser visual QA is not
 claimed. RA-408 records the focused invalid-verdict fix; RA-409 records the
 publication note correction. Neither handoff made any model call.
 
+Same-input coverage extension, 9 September: the operator confirmed that Haiku
+must assess the existing local answers to exactly the hosted cohort's inputs,
+not generate additional local answers to equalize counts. The 743 API answers
+cover 81 distinct input identities and 304 eligible local answers. Preserve
+the 259 completed local and 743 completed API judgments; assess only the 45
+remaining local answers. The original matched report remains immutable. Publish
+the expanded local coverage separately, with per-model counts, invalid verdicts
+and additional charges explicit. The first worker stopped before any paid call
+because its population summary used the wrong field names. The corrected plan
+passes the actual-data regression and reproduces the original rejection; the
+continuation runs in tmux without changing any provider ceiling or judge reserve.
+
+The extension completed at 14:45:31 UTC with all 45 additional verdicts valid.
+It used 47,933 input and 1,125 output tokens, costing USD 0.053558. The combined
+same-input cohort now contains 304 local assessments (302 valid, two invalid)
+and 743 hosted assessments (740 valid, three invalid). Known Haiku judging
+usage totals USD 1.221041; the existing USD 0.014848 unknown-usage hold remains.
+All 1,002 earlier artifacts are unchanged and no target generation was repeated.
+
 The operator then supplied checked account balances and requested additional
 inputs. The prospective, non-overlapping batch is in
 [`HOSTED_SUPPLEMENT_PLAN.md`](HOSTED_SUPPLEMENT_PLAN.md). It preserves the

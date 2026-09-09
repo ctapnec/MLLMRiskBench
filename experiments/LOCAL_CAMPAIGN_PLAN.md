@@ -67,6 +67,18 @@ requested additional hosted inputs under the separately documented
 local generation. Human-only audit and thesis evidence synthesis remain
 outside this completed generation and judging sequence.
 
+Same-input coverage clarification, 9 September: the 743 eligible API answers
+cover 81 distinct inputs with 304 eligible existing local answers. The initial
+259-answer local selection covered every input but omitted 45 other local
+answers to those inputs. Complete those 45 Haiku assessments without new local
+generation or repeated completed judgments. Comparability requires the same
+input identities, not equal answer counts across unequal model rosters. The
+extension completed at 14:45:31 UTC: all 45 additional verdicts are valid, at a
+cost of USD 0.053558. Local Haiku coverage is now 304 assessments, with 302
+valid and two previously retained invalid verdicts. The hosted side is unchanged
+at 743 assessments, with 740 valid and three invalid verdicts. Full costs and
+the preserved unknown-usage hold are recorded in the hosted follow-on plan.
+
 Execution status, 5 September 2026. Gates 0 through 5 are met. The measured
 primary-model recovery inventory is terminal; the four current-policy GraySwan
 RR lanes remain unfinished. Its existing readiness profile passes 10/10 text
