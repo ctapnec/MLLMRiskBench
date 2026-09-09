@@ -2393,6 +2393,13 @@ diagnostic may supply a corrected transport probe without changing measured
 input membership. Keep active workers on their validated source revision while
 preparing a corrected route in an isolated checkout.
 
+`publish_target_execution` writes one create-only terminal accounting record.
+Operator controllers must call it once when their execution ends, not at startup
+or after each job. Keep intermediate progress in per-job records. If publication
+fails after completed jobs, reconcile their retained responses and resume only
+unfinished jobs under the same validated source; no new model preparation or
+target replay is needed merely to repair controller accounting.
+
 ```bash
 python -m experiments.hosted_retained_execute \
   --program /resolved/path/hosted-program.json \
