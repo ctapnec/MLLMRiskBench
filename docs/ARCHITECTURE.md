@@ -313,8 +313,12 @@ Runner policy. A hosted target instead requires zero answer retries; its first
 retained failed output or target transport/network failure opens the global
 `paid_provider` circuit before another paid call.
 
-Network and HTTP failures retain an explicit pending transport-retry state,
-separate from unusable model-generated content. The common response boundary
+Network and HTTP failures retain a transport-retry state separate from unusable
+model-generated content: `pending`, `not_retryable`, `exhausted`, or
+`needs_review` when eligibility cannot be established. HTTP 400 is not
+automatically retried; inspect its retained error code before attributing its
+cause. Retry exhaustion uses the lifetime physical-attempt ordinal, including
+attempts from earlier invocations. The common response boundary
 validates that this state belongs only to a typed transport failure. It does
 not assert that the provider generated an empty answer, that a retry worker
 is running, or that a retry is already authorized by the monetary ledger.
