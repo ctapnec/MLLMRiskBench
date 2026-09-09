@@ -571,13 +571,16 @@ def test_boundary_scores_either_original_worker_on_gpu0_only(boundary_fixture, m
         assert signals == [(10, recovery.signal.SIGSTOP), (10, recovery.signal.SIGCONT)]
 
 
+@pytest.mark.parametrize("original_judge_observations", [True, False])
 def test_report_scopes_keep_original_and_recovered_judging_separate(
-    completed_scoring, retained_source,
+    completed_scoring, retained_source, original_judge_observations,
 ):
     from experiments import level2_report
     from experiments.local_campaign import rr_retained_judging_analysis as analysis
 
     work, project, root, completion = completed_scoring
+    if not original_judge_observations:
+        retained_source.manifest.config["realized_identities"]["judges"] = []
     original_manifest = retained_source.manifest.model_dump(mode="json")
     manifest_path = recovery.Path(retained_source.state["result_root"]) / "fixture.manifest.json"
     manifest_path.write_text(json.dumps(original_manifest))
@@ -586,6 +589,7 @@ def test_report_scopes_keep_original_and_recovered_judging_separate(
     assert len(reports["input_cell"]["responses"]) == 2
     assert reports["input_cell"]["aggregate_results"] == []
     assert len(reports["joined"][1]) == 2
+    assert len(reports["joined"][3]["judge_configuration_binding"]["defining_fields"]["realized_judges"]) == 2
     original, recovered = reports["metric_cells"].values()
     assert set(original["responses"]).isdisjoint(recovered["responses"])
     assert set(original["responses"]) | set(recovered["responses"]) == set(view["records"])

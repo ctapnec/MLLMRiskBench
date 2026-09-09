@@ -854,6 +854,11 @@ def _judge_configuration_binding(cells: list[dict[str, Any]]) -> dict[str, Any]:
         config = manifest.get("config")
         components = config.get("components") if isinstance(config, dict) else None
         realized = config.get("realized_identities") if isinstance(config, dict) else None
+        if cell.get("integrity_mode") == "source_validated_generation_separate_completed_scoring":
+            # The original failed generation manifest can predate every judge
+            # call. This reader derives identities from strictly restored
+            # scoring trails; do not attribute them to the original manifest.
+            realized = cell.get("realized_identities")
         realized_judges = realized.get("judges") if isinstance(realized, dict) else None
         if (
             not isinstance(judges, list)

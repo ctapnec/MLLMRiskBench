@@ -83,3 +83,20 @@ def test_judging_revision_rechecks_both_paths_in_retained_checkout(tmp_path, mon
     assert calls == [(tmp_path / "receipt.json", "a" * 64, project / "experiments/run_matrix.py", {
         "recheck_checkout": True, "harness_module_path": project / "src/ura/runner.py",
     })]
+
+
+@pytest.mark.parametrize("realized", [None, {"judges": []}, {
+    "judges": [{"stage": 1, "judge": "rules", "snapshot": {"judge": "rules"}}],
+}])
+def test_separate_scoring_cannot_fall_back_to_original_judge_identity(realized):
+    from experiments import human_audit
+
+    cell = {"integrity_mode": "source_validated_generation_separate_completed_scoring",
+            "realized_identities": realized,
+            "manifest": {"judges": ["rules"], "config": {
+                "components": {"judge_cascade": {}}, "realized_identities": {
+                    "judges": [{"stage": 0, "judge": "rules", "snapshot": {"judge": "rules"}}],
+                },
+            }}}
+    with pytest.raises(ValueError, match="judge configuration|judge identity"):
+        human_audit._judge_configuration_binding([cell])
