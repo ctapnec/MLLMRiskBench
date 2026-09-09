@@ -140,19 +140,22 @@ def _validated_projection(
     return expected
 
 
-def _pilot_ids(plan: Mapping[str, Any]) -> list[str]:
+def _pilot_ids(plan: Mapping[str, Any], *, policy_evaluable_ids: set[str] | None = None) -> list[str]:
     selected = plan.get("selected")
     if not isinstance(selected, list) or not selected:
         raise ValueError("retained selection has no inputs")
-    text = [row["input_identity_sha256"] for row in selected if row.get("modality") == "text"]
+    eligible = [row for row in selected if policy_evaluable_ids is None or row["input_identity_sha256"] in policy_evaluable_ids]
+    text = [row["input_identity_sha256"] for row in eligible if row.get("modality") == "text"]
     image = [
         row["input_identity_sha256"]
-        for row in selected
+        for row in eligible
         if "image" in row.get("required_modalities", [])
     ]
     result = [*text[:3], *image[:2]]
     if not result:
-        result = [selected[0]["input_identity_sha256"]]
+        if not eligible:
+            raise ValueError("hosted pilot selection has no policy-evaluable input")
+        result = [eligible[0]["input_identity_sha256"]]
     if len(selected) < 2:
         raise ValueError("hosted selection must leave at least one measured input")
     result = result[: len(selected) - 1]
@@ -161,7 +164,7 @@ def _pilot_ids(plan: Mapping[str, Any]) -> list[str]:
     return result
 
 
-def _pilot_groups(plan: Mapping[str, Any]) -> list[list[str]]:
+def _pilot_groups(plan: Mapping[str, Any], *, policy_evaluable_ids: set[str] | None = None) -> list[list[str]]:
     """Keep multi-record source clusters intact without conflating retained turns."""
     selected = plan["selected"]
     cluster_points: dict[tuple[str, str, str], set[str]] = {}
@@ -183,9 +186,17 @@ def _pilot_groups(plan: Mapping[str, Any]) -> list[list[str]]:
         raise ValueError("hosted selection must leave a whole source cluster for measurement")
     chosen = []
     seen = set()
-    for identity in _pilot_ids(plan):
+    for identity in _pilot_ids(plan, policy_evaluable_ids=policy_evaluable_ids):
         key = keys[identity]
         if key not in seen and len(seen) < len(groups) - 1:
+            if policy_evaluable_ids is not None:
+                proposed = {item for group in chosen for item in group} | set(groups[key])
+                remaining = {row["input_identity_sha256"] for row in selected
+                             if row["corpus"] == key[0]} - proposed
+                # Setup turns remain in the measured arm as unscored context.
+                # Do not remove that arm's last scoring-capable input as a pilot.
+                if remaining and not remaining & policy_evaluable_ids:
+                    continue
             chosen.append(groups[key])
             seen.add(key)
     return chosen
@@ -506,7 +517,8 @@ def prepare_campaign(
             )
 
         slug = _slug(target_spec)
-        pilot = _pilot_groups(plan)
+        pilot = _pilot_groups(plan, policy_evaluable_ids={identity for identity, (_replay, entry) in entries.items()
+            if entry["origin"]["original_attempt"]["params"]["policy_evaluable_turn"]})
         pilot_set = {identity for group in pilot for identity in group}
         jobs: list[dict[str, Any]] = []
         config_rows: list[tuple[str, dict, list[str], bool]] = []
