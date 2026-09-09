@@ -9,12 +9,13 @@ import argparse
 import hashlib
 from pathlib import Path
 import stat
+import tempfile
 
 from experiments import level1_evidence, run_matrix
 from experiments.local_campaign import rr_retained_judging as scoring
 from experiments.local_campaign.rr_retained_judging_analysis import _report_views
 from experiments.local_campaign.rr_parallel_analysis import _merge_judge_views
-from experiments.retained_response_judge_execute import _read_regular, _write_new
+from experiments.retained_response_judge_execute import _read_regular, _strict_json, _write_new
 from ura.adapters.base import AttackBudget
 from ura.adapters.replay import ReplayAttacker
 from ura.data_models import RunManifest
@@ -52,6 +53,25 @@ class _Source(scoring.RetainedUnit):
         # An interrupted cell legitimately retains empty judgment exports.
         for item in self.source["files"]:
             _require(_descriptor(Path(item["path"])) == item, "original scoring source changed")
+
+
+def _restore_nonresponse_prefix(reader, inputs, responses, completed, run_id):
+    """Keep typed nonresponse records; never replace an existing answer verdict."""
+    restored = {}
+    for key, record in completed.items():
+        saved = responses.get(key)
+        _require(saved is not None and key in inputs
+                 and record["response"] == saved["response"]
+                 and saved["response"]["raw"].get("model_stability_status") == "failed_output",
+                 "separate scoring cannot replace original completed answer judgments")
+        restored[key] = reader._restore_record(*inputs[key], record, run_id)
+    return restored
+
+
+def _jsonl_rows(path):
+    _descriptor(path)
+    return [_strict_json(line, label="retained original judgment export")
+            for line in path.read_bytes().splitlines() if line.strip()]
 
 
 def _source(part: dict, *, project: Path) -> _Source:
@@ -110,12 +130,13 @@ def _source(part: dict, *, project: Path) -> _Source:
     ledger = _bound(_descriptor(scoring._one_file(root, "*.budget.json", label="original target budget")))
     run_matrix._response_checkpoint_budget_snapshots(root, ledger)
     reader.call_budget = GlobalCallBudget(budget_id=ledger["budget_id"])
-    _require(not [p for p in root.glob("*.checkpoint.jsonl") if p != checkpoint and p.stat().st_size],
-             "separate scoring cannot replace original completed judgments")
     stem = str(checkpoint).removesuffix(".responses.checkpoint.jsonl")
-    _require(Path(stem + ".jsonl").stat().st_size == Path(stem + ".trails.jsonl").stat().st_size == 0,
-             "separate scoring cannot replace original judgment exports")
-    inputs, usable, checked = {}, {}, set()
+    original_checkpoint = Path(stem + ".checkpoint.jsonl")
+    _require(not [p for p in root.glob("*.checkpoint.jsonl")
+                  if p not in {checkpoint, original_checkpoint} and p.stat().st_size],
+             "separate scoring has an unrelated completed checkpoint")
+    completed = Runner.load_checkpoint(original_checkpoint, expected_run_id=manifest.run_id)
+    inputs, all_inputs, usable, checked = {}, {}, {}, set()
     for point in corpus:
         for index, proposed in enumerate(attacker.generate(point, AttackBudget(**manifest.config["budget"]))):
             attempt = reader._prepare_attempt(proposed, dp=point, seed=0, logical_turn=index,
@@ -127,6 +148,7 @@ def _source(part: dict, *, project: Path) -> _Source:
             _require(_portable_attempt_dump(attempt) == record["attempt"], "saved target input changed")
             response = reader._restore_response(attempt, record, manifest.run_id)
             checked.add(attempt.id)
+            all_inputs[attempt.id] = (point, attempt)
             if response.raw.get("model_stability_status") == "failed_output":
                 continue
             _require(response.raw.get("target_input_status") != "incompatible"
@@ -135,6 +157,16 @@ def _source(part: dict, *, project: Path) -> _Source:
             inputs[attempt.id], usable[attempt.id] = (point, attempt), record
     _require(checked == set(records) and len(usable) == part["pending_judgments"] and usable,
              "scoring source omits or adds a saved response")
+    prefix = _restore_nonresponse_prefix(reader, all_inputs, records, completed, manifest.run_id)
+    _require(_jsonl_rows(Path(stem + ".jsonl")) == [value[1].model_dump(mode="json") for value in prefix.values()],
+             "separate scoring cannot replace original judgment exports")
+    with tempfile.TemporaryDirectory(prefix="ura-nonresponse-trail-") as scratch:
+        trail_path = Path(scratch).resolve() / "trails.jsonl"
+        reader.trails = {key: value[2] for key, value in prefix.items()}
+        reader.trail_meta = {key: value[3] for key, value in prefix.items()}
+        reader.save_trails(trail_path)
+        _require(_jsonl_rows(Path(stem + ".trails.jsonl")) == _jsonl_rows(trail_path),
+                 "separate scoring cannot replace original judgment trails")
     reader.call_budget = None  # Original target accounting was validated above.
     source = _Source(manifest, {"result_root": str(root), "selected_records": len(usable)},
                      part["source"], reader, inputs, usable, {})

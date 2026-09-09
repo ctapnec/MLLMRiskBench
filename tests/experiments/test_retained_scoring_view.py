@@ -68,6 +68,32 @@ def test_read_view_rejects_unknown_contract_before_loading_any_source(tmp_path):
         subject.read_view(tmp_path)
 
 
+@pytest.mark.parametrize("mutation", [None, "usable", "changed_response", "missing_response", "missing_input"])
+def test_separate_scoring_preserves_only_exact_completed_nonresponses(mutation):
+    response = {"raw": {"model_stability_status": "failed_output"}, "output_turns": []}
+    completed = {"failed": {"response": copy.deepcopy(response)}}
+    responses = {"failed": {"response": copy.deepcopy(response)}}
+    inputs = {"failed": ("point", "attempt")}
+    if mutation == "usable":
+        completed["failed"]["response"]["raw"]["model_stability_status"] = "usable_output"
+        responses = copy.deepcopy(completed)
+    elif mutation == "changed_response":
+        completed["failed"]["response"]["raw"]["invented"] = True
+    elif mutation == "missing_response":
+        responses.clear()
+    elif mutation == "missing_input":
+        inputs.clear()
+    calls = []
+    reader = SimpleNamespace(_restore_record=lambda *args: calls.append(args) or "strictly-restored")
+    if mutation:
+        with pytest.raises(ValueError, match="original completed answer judgments"):
+            subject._restore_nonresponse_prefix(reader, inputs, responses, completed, "run")
+        assert calls == []
+    else:
+        assert subject._restore_nonresponse_prefix(reader, inputs, responses, completed, "run") == {"failed": "strictly-restored"}
+        assert calls == [("point", "attempt", completed["failed"], "run")]
+
+
 def test_judging_revision_rechecks_both_paths_in_retained_checkout(tmp_path, monkeypatch):
     project = tmp_path / "retained-scoring-checkout"
     receipt = {"path": str(tmp_path / "receipt.json"), "sha256": "a" * 64}
