@@ -153,8 +153,15 @@ This is a separate campaign, not a local-campaign phase and not product
 semantics. It compares bounded hosted-model conditions on content-bound subsets
 of inputs already used by the local campaign, then applies one selected Haiku
 judge condition to hosted and local retained outputs. Every hosted lane uses
-the sealed local `rules,guardrail` cascade during its measured Runner execution,
-so the hosted member of every later Haiku pair already has its local judgment.
+the sealed local `rules,guardrail` cascade during its measured Runner execution.
+Before forming a Haiku pair, verify that its hosted response actually has a
+local judgment. A paid-output stop can occur after usable responses have been
+saved but before the deferred local judging stage begins. Score these retained
+answers separately with the original cascade and sealed judge model, without
+calling the target again or marking the failed generation grid complete.
+Bind the new scoring provenance to the unchanged original responses. Existing
+local judgments are reused, not repeated; undecidable or invalid judgments
+remain explicit coverage gaps.
 
 For the local judging side, compose the historical and RR native response
 views with `experiments.retained_response_view`, explicitly selecting the seven

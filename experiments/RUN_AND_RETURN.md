@@ -1833,10 +1833,17 @@ whole-cluster bootstrap intervals, with no interval for fewer than two clusters.
 
 Each hosted measured lane must use `--judges rules,guardrail`, the exact sealed
 Llama Guard revision, and a judge-call ceiling covering its selected answered
-rows. The Runner checkpoints the paid response and its local cascade trail in
-the same retained cell. Consequently the Haiku selector above must bind the
-existing local trail on every selected hosted member by retained-row digest; it
-must not rerun either the target or the local judge. Each funded hosted input
+rows. The Runner checkpoints the paid response before judging. A completed
+cell also retains its local cascade trail, but a stopped response-collection
+stage can leave usable answers without that trail. Audit this difference
+before preparing the matched comparison. Recover only missing local judgments
+from exact saved responses, using the original cascade and sealed model bytes
+with target execution disabled. Keep separate scoring provenance; do not
+rewrite or promote the failed generation grid. An invalid classifier output
+remains an explicit missing verdict, not an invented decision.
+The Haiku selector must bind the existing or separately recovered local trail
+on every selected hosted member by retained-row digest. It must not repeat
+either a completed target answer or an existing local judgment. Each funded hosted input
 permits at most one rule evaluation and one Llama Guard call, with
 no additional provider cost. Analysis reports local decision coverage and
 abstentions before agreement because the guardrail safe/violation labels cannot
