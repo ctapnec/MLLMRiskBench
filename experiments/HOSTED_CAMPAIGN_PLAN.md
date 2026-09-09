@@ -1,8 +1,43 @@
 # Hosted subset and Haiku re-adjudication campaign plan
 
-Status: hosted target collection terminal; matched Haiku judging queued, revised 9 September 2026. This document authorizes no
+Status: original hosted target collection, matched Haiku judging and comparison
+publication complete, revised 9 September 2026. This document authorizes no
 paid call. Start only after the all-local campaign seals its Phase 7 inventory.
 Run every controller on the rig in a named tmux session.
+
+Judging completion, 9 September at 14:00 UTC: all 1,002 selected outputs were
+attempted exactly once. The 259 distinct local answers yielded 257 valid
+verdicts and two unscored invalid verdicts; the 743 API answers yielded 740
+valid verdicts and three unscored invalid verdicts. These support 743 matched
+comparison links, not 743 independent local observations. The shared local
+answers retain one judgment each. Known usage totals 1,036,873 input tokens,
+26,122 output tokens and USD 1.167483. The one historical lost judge reply has
+unknown usage and retains its full USD 0.014848 monetary hold. Neither invalid
+verdicts nor unknown usage are imputed as safe labels or zero-cost calls.
+The USD 29.992960 protected judge allocation has USD 28.810629 remaining after
+known charges and that hold; unused prospective slots remain commitments,
+not automatic authorization to expand this completed selection.
+The complete 941-input coverage audit accounts for 743 visible common-security
+answers, 33 explicit provider refusals without text, 22 source-authoritative
+classification outputs, 48 non-evaluable setup turns, 93 readiness/diagnostic
+inputs and two failed target outputs. No category was silently dropped or
+claimed to have a Haiku verdict where the rubric does not apply. Local scoring
+records cover every measured response in the final comparison source view.
+The comparison was published at 14:08 UTC at
+`/stats/job/hosted-haiku-outcome-recovery-20260909`. Console-only deployment
+completed at 14:06 UTC under `d2a2b15`, without runtime installs or repeated
+full-suite tests. The actual report, registration, both judges' charts and
+generation-condition charts passed verification. Browser visual QA is not
+claimed. RA-408 records the focused invalid-verdict fix; RA-409 records the
+publication note correction. Neither handoff made any model call.
+
+The operator then supplied checked account balances and requested additional
+inputs. The prospective, non-overlapping batch is in
+[`HOSTED_SUPPLEMENT_PLAN.md`](HOSTED_SUPPLEMENT_PLAN.md). It preserves the
+original results and reserves, and has not yet made a paid call.
+
+Earlier dated execution observations follow; their pending work is superseded
+by the completion above, not additional work to repeat.
 
 Latest target reconciliation, 9 September at 12:49 UTC: 939 usable outcomes,
 two retained failed inputs and zero unstarted inputs out of 941. Luna completed all 148
@@ -42,8 +77,9 @@ are queued after the complete saved-data handoff.
 
 Completion order: finish hosted generation, verify local-cascade and source-task
 decisions, execute funded Haiku judging of the selected local and hosted
-answers, and publish comparison coverage and diagrams. Then ask the user what
-to continue with; do not automatically expand into another campaign or thesis
+answers, and publish comparison coverage and diagrams. That original sequence
+is complete. The operator's subsequent 9 September request explicitly places
+the non-overlapping supplement next; it does not authorize an automatic thesis
 rewrite. All assigned API inputs remain in execution coverage, including
 missing outputs, diagnostic/setup turns and source-task-only rows; do not
 claim an ineligible row received a common-security Haiku verdict.

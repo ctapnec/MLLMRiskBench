@@ -51,6 +51,22 @@ requirements remain outstanding.
 The following dated observations are retained history, not additional queued
 model work.
 
+Matched judging follow-on, 9 September at 14:00 UTC. The separate hosted
+campaign has attempted its complete 941-input assignment. Haiku has now
+attempted all 259 selected local answers and all 743 eligible hosted answers
+on the same matched input identities. Reused local answers are judged once,
+not once per hosted counterpart. Local answers retain 257 valid and two
+invalid judge verdicts; hosted answers retain 740 valid and three invalid
+verdicts. Invalid verdicts remain unscored, and this selected comparison must
+not be presented as full-corpus independent human judgment. The original local
+generation, local scoring and published historical/corrected conditions are
+unchanged. Comparison publication completed at 14:08 UTC at
+`/stats/job/hosted-haiku-outcome-recovery-20260909`. The operator subsequently
+requested additional hosted inputs under the separately documented
+[`HOSTED_SUPPLEMENT_PLAN.md`](HOSTED_SUPPLEMENT_PLAN.md). This does not restart
+local generation. Human-only audit and thesis evidence synthesis remain
+outside this completed generation and judging sequence.
+
 Execution status, 5 September 2026. Gates 0 through 5 are met. The measured
 primary-model recovery inventory is terminal; the four current-policy GraySwan
 RR lanes remain unfinished. Its existing readiness profile passes 10/10 text
