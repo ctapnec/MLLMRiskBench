@@ -185,6 +185,42 @@ def test_distinct_funding_does_not_require_new_balance_for_unselected_registry_p
         subject.executor._additional_funding(changed, configured)
 
 
+@pytest.mark.parametrize("change", [None, "new_output", "different_model", "hosted_verdict", "wrong_artifact"])
+def test_distinct_already_judged_local_outputs_are_reused_only_by_exact_answer(tmp_path, monkeypatch, change):
+    request, old, _ledger = _distinct_request(tmp_path, monkeypatch)
+    funding = json.loads(Path(request["sources"]["additional_funding"]["path"]).read_text())
+    row = {"retained_row_sha256": "e" * 64, "exact_model": "ollama:local-example",
+           "run_id": "local-run", "attempt_id": "local-attempt", "input_identity_sha256": "a" * 64}
+    record = {**row, "cohort": "local", "judgment_artifact": _save(tmp_path / "verdict.json",
+              {"retained_row_sha256": "f" * 64 if change == "wrong_artifact" else row["retained_row_sha256"]})}
+    if change == "new_output":
+        row["retained_row_sha256"] = "b" * 64  # Same input, different generated answer.
+    elif change == "different_model":
+        row["exact_model"] = "google:gemini-example"
+    elif change == "hosted_verdict":
+        record["cohort"] = "hosted"
+    inventory = {"unjudged_rows": [], "all_matching_rows": [row],
+                 "reused_judgments": _save(tmp_path / "prior-judgments.json", {"records": [record]})}
+    funding["judging_inventory"] = _save(tmp_path / "matched-local.json", inventory)
+    descriptor = _save(tmp_path / "reused-local-funding.json", funding)
+    configured = {key: {"configured_budget_microusd": amount}
+                  for key, amount in old["provider_budgets_microusd"].items()}
+    if change:
+        with pytest.raises(ValueError, match="different output|exact selected model output"):
+            subject.executor._additional_funding(descriptor, configured)
+    else:
+        assert subject.executor._additional_funding(descriptor, configured) == funding
+        request["sources"]["additional_funding"] = descriptor
+        receipt = subject.prepare_campaign(request=request, request_descriptor={}, out_root=tmp_path / "prepared",
+                                           allow_network_counts=False)
+        budget = subject.AttemptBudget(tmp_path / "prepared/budget", receipt["budget"]["sha256"])
+        program = json.loads(Path(receipt["programs"][0]["path"]).read_text())
+        assert len(subject.executor._validated_jobs(program, budget)) >= 2
+        slots = json.loads((budget.root / "plan.json").read_text())["planned_calls"]
+        assert not any(slot["call_id"].startswith("judge-local-") for slot in slots)
+        assert sum(slot["call_id"].startswith("judge-hosted-") for slot in slots) == len(program["requests"])
+
+
 def test_distinct_selected_provider_cannot_be_omitted_before_token_counting(tmp_path, monkeypatch):
     request, _old, _ledger = _distinct_request(tmp_path, monkeypatch)
     funding = json.loads(Path(request["sources"]["additional_funding"]["path"]).read_text())

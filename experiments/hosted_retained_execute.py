@@ -708,8 +708,32 @@ def _additional_funding(descriptor: Mapping, configured: Mapping, *, budget_plan
             raise ValueError("additional funding would consume protected or unavailable credits")
     inventory, _ = _bound(value["judging_inventory"])
     rows = inventory.get("unjudged_rows")
-    if not isinstance(rows, list) or not rows:
+    if not isinstance(rows, list):
         raise ValueError("additional funding needs its exact existing local judge population")
+    if not rows:
+        # A new target still needs fresh hosted judgments. Only unchanged local
+        # answers may already have been adjudicated in a previous comparison.
+        matching = inventory.get("all_matching_rows")
+        if not isinstance(matching, list) or not matching:
+            raise ValueError("empty new local judging needs its existing answer inventory")
+        reused, _ = _bound(inventory.get("reused_judgments", {}))
+        records = reused.get("records")
+        if not isinstance(records, list):
+            raise ValueError("reused local judgment records are missing")
+        by_output = {row["retained_row_sha256"]: row for row in records
+                     if isinstance(row, dict) and row.get("cohort") == "local"}
+        seen = set()
+        for row in matching:
+            key = row.get("retained_row_sha256") if isinstance(row, dict) else None
+            prior = by_output.get(key)
+            if (key in seen or prior is None
+                or any(prior.get(field) != row.get(field) for field in
+                       ("exact_model", "run_id", "attempt_id", "input_identity_sha256"))):
+                raise ValueError("reused local verdict is not for the exact selected model output")
+            artifact, _ = _bound(prior.get("judgment_artifact", {}))
+            if artifact.get("retained_row_sha256") != key:
+                raise ValueError("reused judgment artifact names a different output")
+            seen.add(key)
     keys = [row.get("retained_row_sha256") for row in rows if isinstance(row, dict)]
     if (len(keys) != len(rows) or len(set(keys)) != len(keys)
         or any(not isinstance(key, str) or not re.fullmatch(r"[0-9a-f]{64}", key) for key in keys)):
