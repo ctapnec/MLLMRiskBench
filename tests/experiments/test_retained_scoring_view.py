@@ -94,6 +94,20 @@ def test_separate_scoring_preserves_only_exact_completed_nonresponses(mutation):
         assert calls == [("point", "attempt", completed["failed"], "run")]
 
 
+def test_explicit_readjudging_preserves_and_strictly_restores_existing_answer_verdict():
+    records = {"answer": {"response": {"raw": {}, "output_turns": [{"content": "Saved answer"}]}}}
+    inputs = {"answer": ("point", "attempt")}
+    calls = []
+    reader = SimpleNamespace(_restore_record=lambda *args: calls.append(args) or "original-verdict")
+    assert subject._restore_nonresponse_prefix(reader, inputs, records, records, "run", allow_readjudging=True) == {
+        "answer": "original-verdict"}
+    assert calls == [("point", "attempt", records["answer"], "run")]
+    changed = copy.deepcopy(records)
+    changed["answer"]["response"]["output_turns"][0]["content"] = "Changed answer"
+    with pytest.raises(ValueError, match="original completed answer judgments"):
+        subject._restore_nonresponse_prefix(reader, inputs, records, changed, "run", allow_readjudging=True)
+
+
 def test_judging_revision_rechecks_both_paths_in_retained_checkout(tmp_path, monkeypatch):
     project = tmp_path / "retained-scoring-checkout"
     receipt = {"path": str(tmp_path / "receipt.json"), "sha256": "a" * 64}

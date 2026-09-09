@@ -23,6 +23,7 @@ from ura.project_revision import load_project_revision_file, project_revision_bi
 from ura.runner import GlobalCallBudget, Runner, _component_config, _portable_attempt_dump
 
 SCHEMA = "ura-retained-scoring-view/1"
+READJUDGED_SCHEMA = "ura-retained-scoring-view/2"
 FILE = "retained-scoring-view.json"
 
 
@@ -55,14 +56,15 @@ class _Source(scoring.RetainedUnit):
             _require(_descriptor(Path(item["path"])) == item, "original scoring source changed")
 
 
-def _restore_nonresponse_prefix(reader, inputs, responses, completed, run_id):
-    """Keep typed nonresponse records; never replace an existing answer verdict."""
+def _restore_nonresponse_prefix(reader, inputs, responses, completed, run_id, *, allow_readjudging=False):
+    """Validate original records before separately attributed re-adjudication."""
     restored = {}
     for key, record in completed.items():
         saved = responses.get(key)
         _require(saved is not None and key in inputs
                  and record["response"] == saved["response"]
-                 and saved["response"]["raw"].get("model_stability_status") == "failed_output",
+                 and (saved["response"]["raw"].get("model_stability_status") == "failed_output"
+                      or allow_readjudging is True),
                  "separate scoring cannot replace original completed answer judgments")
         restored[key] = reader._restore_record(*inputs[key], record, run_id)
     return restored
@@ -74,7 +76,7 @@ def _jsonl_rows(path):
             for line in path.read_bytes().splitlines() if line.strip()]
 
 
-def _source(part: dict, *, project: Path) -> _Source:
+def _source(part: dict, *, project: Path, allow_readjudging: bool = False) -> _Source:
     files = part["source"]["files"]
     _require(isinstance(files, list) and len(files) >= 3, "scoring source inventory is incomplete")
     for item in files:
@@ -157,7 +159,8 @@ def _source(part: dict, *, project: Path) -> _Source:
             inputs[attempt.id], usable[attempt.id] = (point, attempt), record
     _require(checked == set(records) and len(usable) == part["pending_judgments"] and usable,
              "scoring source omits or adds a saved response")
-    prefix = _restore_nonresponse_prefix(reader, all_inputs, records, completed, manifest.run_id)
+    prefix = _restore_nonresponse_prefix(reader, all_inputs, records, completed, manifest.run_id,
+                                        allow_readjudging=allow_readjudging)
     _require(_jsonl_rows(Path(stem + ".jsonl")) == [value[1].model_dump(mode="json") for value in prefix.values()],
              "separate scoring cannot replace original judgment exports")
     with tempfile.TemporaryDirectory(prefix="ura-nonresponse-trail-") as scratch:
@@ -195,7 +198,7 @@ def _judging_revision(receipt: dict, project: Path):
 
 def _load(value: dict):
     _require(set(value) == {"schema", "launch", "result", "judging_repository", "project_revision"}
-             and value["schema"] == SCHEMA, "retained scoring view fields changed")
+             and value["schema"] in {SCHEMA, READJUDGED_SCHEMA}, "retained scoring view fields changed")
     launch, result = _bound(value["launch"]), _bound(value["result"])
     root = Path(value["launch"]["path"]).parent
     _require(Path(value["result"]["path"]) == root / "result.json"
@@ -220,13 +223,13 @@ def _load(value: dict):
         checkpoint = Path(item["checkpoint"]["path"])
         _require(checkpoint.parent == root and _descriptor(checkpoint) == item["checkpoint"],
                  "completed scoring checkpoint changed")
-        source = _source(part, project=project)
+        source = _source(part, project=project, allow_readjudging=value["schema"] == READJUDGED_SCHEMA)
         records = _records(source, checkpoint)
         _require(len(records) == item["new_judgments"], "scoring unit count changed")
         # The existing strict lossless join accepts separate scoring provenance.
         # The result remains a generation foreign key, never a promoted grid.
         joined = _report_views(source, records, {
-            "schema": SCHEMA, "launch": value["launch"], "invocation": value["result"],
+            "schema": value["schema"], "launch": value["launch"], "invocation": value["result"],
             "checkpoint": item["checkpoint"], "judging_revision": judging_revision,
         }, joined=True, completion_path=Path(value["result"]["path"]))
         _predictors, metadata, judgments, audit = joined["joined"]
@@ -238,10 +241,12 @@ def _load(value: dict):
 
 
 def create_view(*, scoring_root: Path, judging_repository: Path, project_revision: Path,
-                project_revision_sha256: str, out: Path):
+                project_revision_sha256: str, out: Path, allow_completed_answer_readjudging: bool = False):
     _require(not out.exists() and out.is_absolute() and out.parent.resolve(strict=True) / out.name == out,
              "scoring view needs a fresh canonical directory")
-    value = {"schema": SCHEMA, "launch": _descriptor(scoring_root / "launch.json"),
+    _require(type(allow_completed_answer_readjudging) is bool, "re-adjudication choice must be boolean")
+    value = {"schema": READJUDGED_SCHEMA if allow_completed_answer_readjudging else SCHEMA,
+             "launch": _descriptor(scoring_root / "launch.json"),
              "result": _descriptor(scoring_root / "result.json"),
              "judging_repository": str(judging_repository.resolve(strict=True)),
              "project_revision": _descriptor(project_revision)}
