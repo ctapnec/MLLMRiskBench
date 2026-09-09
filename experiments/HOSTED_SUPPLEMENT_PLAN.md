@@ -1,5 +1,63 @@
 # Additional hosted inputs from the retained local campaign
 
+## Current execution and required Google extension
+
+Update, 9 September 2026 at 20:00 UTC: the 676-request, eleven-model
+supplement is funded; both execution queues are preparing their first jobs.
+The first additional local Haiku batch completed all 236 selected answers for
+USD 0.396163, with four invalid verdicts retained as unscored. The other
+236-answer batch is continuing. The no-call statements below describe earlier
+snapshots, not the current judging state. Started workers and funding do not
+constitute completed target collection.
+
+Google is a required part of this plan. The operator reported USD 24.47 in
+Google AI credit and authorized approximately USD 15-17 for Flash and Pro
+inference. Target USD 16 of useful, distinct-input collection with a hard USD
+17 Google ceiling, including probes and transport retries. Preserve at least
+USD 7.47 of the reported balance. Do not spend merely to reach a dollar target
+when no further comparable input is available. Report actual billed usage,
+reserved worst-case cost and the reported account balance separately.
+
+The authenticated rig catalog confirms `gemini-3.8-flash` and
+`gemini-3.1-pro-preview`, both supporting text/image generation and token
+counting. Use `GEMINI_API_KEY` from the private rig environment without printing
+it. Do not use the stale, unpriced `gemini-3.6-pro` registry entry. Current
+standard prices per million tokens are USD 0.75 input / 3.75 output for Flash
+through 31 December 2026 and USD 2 input / 12 output for Pro at prompts of at
+most 200,000 tokens. Count complete requests before funding; larger Pro prompts
+need the higher tariff. See [Google pricing](https://ai.google.dev/gemini-api/docs/pricing),
+[Flash](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash) and
+[Pro](https://ai.google.dev/gemini-api/docs/models/gemini-3.1-pro-preview).
+
+Use a shared, input-only selected cohort from the retained local campaign:
+the same questions, image bytes, attack prompts, seeds, source and framework
+conditions, with physical-request deduplication. Prefer identical Flash/Pro
+inputs for paired comparison. Any larger Flash-only extension is a separate
+cohort. Reuse existing local generations and exact-answer judgments; do not
+substitute unrelated questions or treat source aliases as independent inputs.
+
+Both judging stages are mandatory: the same local judge used for other hosted
+results, plus Haiku on eligible Google answers and existing local answers to
+exactly those input identities. Reserve Haiku from Anthropic separately from
+the USD 17 Google ceiling, without allocating funds already committed to the
+active eleven-model supplement. API answer retries remain zero; the existing
+three HTTP/network retries are budgeted physical attempts. Investigate a truly
+empty final answer before further paid generation. Retain usable length-ended
+text with explicit truncation rather than discarding it.
+
+Publish Google in Stats with model, modality, framework/arm/corpus and judge
+views: assigned inputs, attempts, usable/missing responses, output allowance,
+token usage, truncation, verdict coverage, costs and diagrams. Keep unmatched
+or differently configured cohorts separate. Completion requires generation,
+both judging stages and publication, not just planning or adapter tests.
+
+Implementation in progress: Gemini exists as an adapter, but was omitted from
+complete-request preview/counting and the funded replay routes. The live
+catalog is retained at `engineering/google-catalog-20260909.json`. No Google
+generation has yet been made in this supplement.
+
+## Earlier assessment snapshots
+
 Status: revised no-call assessment, 9 September 2026, after the exact-input
 audit. The original 941 hosted generation assignments and their matched judging
 are complete and published, but those assignments represent only 488 distinct

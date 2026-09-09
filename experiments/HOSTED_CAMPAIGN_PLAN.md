@@ -1,5 +1,12 @@
 # Hosted subset and Haiku re-adjudication campaign plan
 
+Required follow-on: [the supplemental plan](HOSTED_SUPPLEMENT_PLAN.md) includes
+Gemini 3.8 Flash and Gemini 3.1 Pro Preview on retained local inputs, both local
+and Haiku judging, and comparable Stats publication. The operator reported a
+USD 24.47 Google balance and authorized USD 15-17 of Google target usage, with
+a hard USD 17 ceiling including probes and transport retries. Haiku funding is
+separate and must not double-allocate the active supplement's Anthropic funds.
+
 Status: original hosted target collection, matched Haiku judging and comparison
 publication complete, revised 9 September 2026. This document authorizes no
 paid call. Start only after the all-local campaign seals its Phase 7 inventory.
