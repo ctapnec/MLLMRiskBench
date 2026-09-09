@@ -18,11 +18,11 @@ from experiments.retained_response_judge_execute import _read_regular, _write_ne
 from ura.adapters.base import AttackBudget
 from ura.adapters.replay import ReplayAttacker
 from ura.data_models import RunManifest
+from ura.project_revision import load_project_revision_file, project_revision_binding
 from ura.runner import GlobalCallBudget, Runner, _component_config, _portable_attempt_dump
 
 SCHEMA = "ura-retained-scoring-view/1"
 FILE = "retained-scoring-view.json"
-_REPOSITORY = Path(__file__).resolve().parents[1]
 
 
 def _require(condition, message):
@@ -151,6 +151,16 @@ def _records(source, path: Path):
     return records
 
 
+def _judging_revision(receipt: dict, project: Path):
+    # This is retained scoring attribution, not the currently imported reader.
+    # Recheck both source paths against the exact judging checkout and receipt.
+    value, descriptor = load_project_revision_file(
+        Path(receipt["path"]), receipt["sha256"], project / "experiments/run_matrix.py",
+        recheck_checkout=True, harness_module_path=project / "src/ura/runner.py",
+    )
+    return project_revision_binding(value, descriptor)
+
+
 def _load(value: dict):
     _require(set(value) == {"schema", "launch", "result", "judging_repository", "project_revision"}
              and value["schema"] == SCHEMA, "retained scoring view fields changed")
@@ -165,7 +175,7 @@ def _load(value: dict):
     project = Path(value["judging_repository"]).resolve(strict=True)
     receipt = value["project_revision"]
     _bound(receipt)
-    judging_revision = scoring._revision(Path(receipt["path"]), receipt["sha256"], project)
+    judging_revision = _judging_revision(receipt, project)
     _require(judging_revision["expected_commit"] == launch["judging_commit"], "scoring code identity changed")
     parts, seen, total = [], set(), 0
     _require(len(launch["sources"]) == len(result["routes"]), "scoring unit inventory changed")

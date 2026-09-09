@@ -66,3 +66,20 @@ def test_read_view_rejects_unknown_contract_before_loading_any_source(tmp_path):
     (tmp_path / subject.FILE).write_text(json.dumps({"schema": "unrecognized"}))
     with pytest.raises(ValueError, match="view fields changed"):
         subject.read_view(tmp_path)
+
+
+def test_judging_revision_rechecks_both_paths_in_retained_checkout(tmp_path, monkeypatch):
+    project = tmp_path / "retained-scoring-checkout"
+    receipt = {"path": str(tmp_path / "receipt.json"), "sha256": "a" * 64}
+    calls = []
+    def load(path, digest, driver, **kwargs):
+        calls.append((path, digest, driver, kwargs))
+        return {"receipt": "retained"}, {"descriptor": "verified"}
+    monkeypatch.setattr(subject, "load_project_revision_file", load)
+    monkeypatch.setattr(subject, "project_revision_binding", lambda value, descriptor: (value, descriptor))
+    assert subject._judging_revision(receipt, project) == (
+        {"receipt": "retained"}, {"descriptor": "verified"},
+    )
+    assert calls == [(tmp_path / "receipt.json", "a" * 64, project / "experiments/run_matrix.py", {
+        "recheck_checkout": True, "harness_module_path": project / "src/ura/runner.py",
+    })]
