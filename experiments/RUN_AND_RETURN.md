@@ -36,6 +36,16 @@ reply is still a missing visible answer; never present reasoning as the final
 answer. Changing effort defines a new generation condition and does not revise
 already funded request hashes or historical observations.
 
+Retained verdicts identify exact outputs, not merely matching inputs. A new
+hosted answer requires its own local and Haiku judgments even when a local
+model answered the same question. If every selected local counterpart already
+has a saved Haiku outcome, supplemental funding may use an empty
+`unjudged_rows` list only with the complete `all_matching_rows` inventory and
+a content-bound `reused_judgments` publication. Model, run, attempt, output
+identity and the saved judgment artifact must agree. This eliminates duplicate
+judging of unchanged local answers without reusing their verdicts for new
+hosted answers. Invalid saved verdicts remain unscored, not valid decisions.
+
 This is the operator path from a clean Linux GPU machine to the evidence bundle
 for the thesis. It covers the broad hosted and local model roster, all twenty-five source converters, the runner-safe external attack bridges, and nine complete
 source-native evaluators. Experiments and the human audit are still pending.

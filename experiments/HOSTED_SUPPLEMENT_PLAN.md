@@ -30,12 +30,35 @@ cause this failure. Preserve its unknown billing entry and reserved exposure.
 Explicit low reasoning effort is implemented and rig-tested at `290a08c` for
 a subsequent condition, without changing the existing funded requests.
 
+The two declared DeepSeek configuration diagnostics completed at 21:13 UTC.
+On the same retained input, default effort with 16,384 allowed output tokens
+returned an untruncated answer after 10,851 output tokens and 117.7 seconds;
+low effort with 8,192 allowed tokens returned an untruncated answer after
+1,936 output tokens and 21.0 seconds. The original failed request contained
+only 158 reported input tokens. These observations support output-budget
+exhaustion during reasoning, not exhaustion of the input context. One input
+does not establish an optimum or comparative security performance. Both
+diagnostics remain outside measured campaign results, with a combined USD
+0.20 physical-attempt ceiling and no judgment calls. The 55 unstarted DeepSeek
+requests still need prospective configuration and funding before continuation;
+do not relabel or repeat the 47 completed answers or overwrite the failure.
+
 The local judging inventory is published at
 `/stats/job/haiku-supplement-local-publication-20260909`: 750 answers to 190
 input identities, 742 valid verdicts and eight invalid, including two reused
 invalid verdicts. The new assessments still contribute six invalid verdicts
 and USD 0.758727. Server-rendered coverage charts and HTTP 200 were checked.
 This is complete local judging, not a completed supplemental API comparison.
+
+Judgment reuse is output-specific, never input-only. An existing local Haiku
+verdict remains attached to that exact local model answer and its source
+condition. Every newly generated hosted answer receives a fresh local-judge
+decision and a fresh Haiku assessment when eligible. Matching question/image
+identities permit comparison; they do not permit transferring verdicts across
+models or generated outputs. The preparer now accepts a fully adjudicated
+local counterpart inventory only when its exact output identities and saved
+judgment artifacts match. It still funds fresh hosted judgment slots. This
+passed 28 focused rig tests, lint and two reversed-fix checks at `1d93a9d`.
 
 Google is a required part of this plan. The operator reported USD 24.47 in
 Google AI credit and authorized approximately USD 15-17 for Flash and Pro
@@ -81,8 +104,10 @@ both judging stages and publication, not just planning or adapter tests.
 Implementation: complete-request preview/counting, configurable provider
 routes, explicit thinking configuration and billing of thinking tokens are
 implemented and rig-tested. The live catalog is retained at
-`engineering/google-catalog-20260909.json`. Matched input preparation is
-running; no Google generation has yet been made in this supplement. Google
+`engineering/google-catalog-20260909.json`. Matched input preparation has
+counted 162 inputs for each model, 324 requests in total. Their maximum
+first-attempt target reservations are USD 2.551136 for Flash and USD 8.129976
+for Pro. No Google generation has yet been made in this supplement. Google
 funding must leave existing Anthropic commitments intact, and completion still
 requires target collection, both judges and published comparisons.
 
