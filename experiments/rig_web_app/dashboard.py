@@ -1945,12 +1945,24 @@ class DashboardMixin:
             evidence_tone = "amber"
             evidence_label = "not established"
         available = campaign["reports"]
-        selected = (
-            [available[report_index]] if report_index is not None
-            else [report for report in available if report.get("kind") in {
+        rendered: dict[int, str] = {}
+
+        def report_card(index: int) -> str:
+            if index not in rendered:
+                rendered[index] = self._stats_report_card(available[index])
+            return rendered[index]
+
+        if report_index is not None:
+            selected = [report_index]
+        else:
+            selected = [index for index, report in enumerate(available) if report.get("kind") in {
                 "terminal_inventory", "execution_accounting",
-            }] or available[:1]
-        )
+            }]
+            if not selected and available:
+                # A diagrams link must not default to a table-only lifecycle
+                # report when this campaign has a validated outcome chart.
+                selected = [next((index for index in range(len(available))
+                                  if "class='barchart'" in report_card(index)), 0)]
         report_navigation = ""
         if len(available) > 1:
             detail_url = "/stats/job/" + quote(str(campaign["job_id"]))
@@ -1971,7 +1983,7 @@ class DashboardMixin:
                 "<p class='note'>Choose a report to view its tables and diagrams.</p><ul>"
                 + "".join(links) + "</ul></nav>"
             )
-        reports = "".join(self._stats_report_card(report) for report in selected)
+        reports = "".join(report_card(index) for index in selected)
         if not reports:
             reports = (
                 "<div class='card'><p class='note'>No validated Level-1/Level-2 "

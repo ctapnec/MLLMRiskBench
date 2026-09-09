@@ -716,6 +716,32 @@ def test_report_navigation_renders_only_the_requested_report(tmp_path: Path) -> 
         app.close()
 
 
+def test_stats_overview_prefers_data_charts_to_first_table_only_report(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    root = app.results_root / "thesis" / "table-before-outcomes"
+    _write_completed_cell(root, run_id="run-overview", target="target-overview")
+    _record_run(app, tmp_path, job_id="job-overview", out=root, extra=[])
+    table = app.results_root / "thesis" / "analysis" / "00-table.json"
+    chart = app.results_root / "thesis" / "analysis" / "01-outcomes.json"
+    _write_empty_level2(table)
+    _write_level2(chart, run_id="run-overview", model="target-overview", metric="overview_metric")
+    for index, path in enumerate((table, chart)):
+        _record_analysis_job(app, tmp_path, job_id=f"overview-report-{index}", results=root, report=path)
+    try:
+        # Default detail must show real chart markup, not an SVG icon or just
+        # navigation links promising diagrams in a different report.
+        status, _, response = app.handle("GET", "/stats/job/job-overview?fragment=1")
+        text = response.decode()
+        assert status == 200 and "overview_metric" in text
+        assert "<svg class='barchart'" in text
+        explicit_table = app.handle("GET", "/stats/job/job-overview?report=0&fragment=1")[2].decode()
+        assert "overview_metric" not in explicit_table and "<svg class='barchart'" not in explicit_table
+        explicit_chart = app.handle("GET", "/stats/job/job-overview?report=1&fragment=1")[2].decode()
+        assert "overview_metric" in explicit_chart and "<svg class='barchart'" in explicit_chart
+    finally:
+        app.close()
+
+
 def test_missing_and_malformed_job_evidence_fails_closed(tmp_path: Path) -> None:
     app = _app(tmp_path)
     missing = app.results_root / "thesis" / "missing"
