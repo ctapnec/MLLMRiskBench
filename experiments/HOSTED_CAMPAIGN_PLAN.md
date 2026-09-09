@@ -1,14 +1,14 @@
 # Hosted subset and Haiku re-adjudication campaign plan
 
-Status: hosted target collection partial, revised 9 September 2026. This document authorizes no
+Status: hosted target collection terminal; matched Haiku judging queued, revised 9 September 2026. This document authorizes no
 paid call. Start only after the all-local campaign seals its Phase 7 inventory.
 Run every controller on the rig in a named tmux session.
 
-Latest aggregate, 9 September at 12:19 UTC: 937 usable outcomes, two retained
-failed inputs and two unstarted inputs out of 941. Luna completed all 148
+Latest target reconciliation, 9 September at 12:49 UTC: 939 usable outcomes,
+two retained failed inputs and zero unstarted inputs out of 941. Luna completed all 148
 assigned inputs at 10:51:45 UTC; its published reports separate 139 measured
-inputs from nine setup/diagnostic inputs. The remaining assignments are two
-Sol inputs. DeepSeek completed its 75-input continuation with 75 usable outputs
+inputs from nine setup/diagnostic inputs. Sol's final two assigned inputs both
+produced saved answers and completed separate local judging. DeepSeek completed its 75-input continuation with 75 usable outputs
 and zero truncations; its whole assignment retains 142 usable outputs and one
 earlier missing response. The continuation reports are published. Haiku
 re-adjudication has not started.
@@ -24,8 +24,21 @@ inputs. Its saved answer and historical HTTP 400 remain unchanged, and the
 unknown historical machine code cannot be inferred from another route.
 The first continuation wrapper assumed three assigned inputs; the real unit
 has four, including the saved answer. It stopped before any paid call, and the
-corrected four-input/two-checkpoint continuation is active. RA-406 records this
-operator error. The two unstarted inputs remain assigned and funded.
+corrected four-input/two-checkpoint continuation completed both missing calls.
+RA-406 records this operator error. The original unit still retains its failed
+grid because the historical HTTP failure stopped its original scoring stage.
+Three saved answers have separately attributed local judgments; their derived
+view preserves the original judgments and replaces the older one-answer view
+without duplicating target responses. RA-407 records the tested reader fix.
+
+The first completed Haiku count preparation covered 741 matched pairs and
+1,000 distinct grading requests, with 1,039,180 counted input tokens and a
+USD 3.599180 first-attempt ceiling at 512 output tokens per request. This is
+not expenditure and predates the two final Sol answers. Final preparation
+reuses those cached counts and the unchanged USD 29.992960 protected judge
+pool. All 11 funded route validations are complete for the original 941 inputs.
+No Haiku re-adjudication call has yet been claimed; execution and publication
+are queued after the complete saved-data handoff.
 
 Completion order: finish hosted generation, verify local-cascade and source-task
 decisions, execute funded Haiku judging of the selected local and hosted
