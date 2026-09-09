@@ -20,6 +20,23 @@ and Fable are preserved, and completed Sonnet probes are reused. Product
 preparation now checks scoring-capable pilot partitions before token counting;
 the focused and reversed-fix rig checks pass at `c27e861`.
 
+At 20:58 UTC, 51 of 676 supplemental requests have started: 50 usable
+responses and one retained failure. DeepSeek's failing response reports 8,192
+reasoning tokens, no visible answer and a length stop, not a transport error.
+Pause that generation condition for review; do not retry the answer or spend
+against an unreviewed empty response. Other providers continue. The operator
+has refreshed DeepSeek's account balance to USD 9.41; credit exhaustion did not
+cause this failure. Preserve its unknown billing entry and reserved exposure.
+Explicit low reasoning effort is implemented and rig-tested at `290a08c` for
+a subsequent condition, without changing the existing funded requests.
+
+The local judging inventory is published at
+`/stats/job/haiku-supplement-local-publication-20260909`: 750 answers to 190
+input identities, 742 valid verdicts and eight invalid, including two reused
+invalid verdicts. The new assessments still contribute six invalid verdicts
+and USD 0.758727. Server-rendered coverage charts and HTTP 200 were checked.
+This is complete local judging, not a completed supplemental API comparison.
+
 Google is a required part of this plan. The operator reported USD 24.47 in
 Google AI credit and authorized approximately USD 15-17 for Flash and Pro
 inference. Target USD 16 of useful, distinct-input collection with a hard USD
