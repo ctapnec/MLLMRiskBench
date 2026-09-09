@@ -5,6 +5,26 @@ publication complete, revised 9 September 2026. This document authorizes no
 paid call. Start only after the all-local campaign seals its Phase 7 inventory.
 Run every controller on the rig in a named tmux session.
 
+Input multiplicity correction, 9 September at 15:37 UTC: the 941 completed
+generation assignments represent 488 distinct model-input conditions, including
+framework and source labels. Another 453
+assignments sent an identical provider request under a different retained
+source-subset identity. The exact request hashes agree within every repeated
+group. Preserve all responses and charges, but do not report the assignment
+count as the number of independent inputs. Existing judgments remain valid
+assessments of their individual saved answers; multiplicity-aware comparison
+and the prospective distinct-input selector correction remain pending.
+The separate supplement preview removes 740 such aliases before any new call,
+leaving 395 new model-input conditions in its first cohort. These are call
+ceilings, pending exact provider-request deduplication before funding. The
+original population contains 464 distinct model/provider-request pairs because
+some payloads recur across different framework or source conditions too.
+The counts and diagrams are published at
+`/stats/job/hosted-input-multiplicity-r3-20260909`. See
+[`HOSTED_SUPPLEMENT_PLAN.md`](HOSTED_SUPPLEMENT_PLAN.md) and RA-412. The
+15:18 completion audit establishes attempted-assignment and judging coverage,
+not distinct-input coverage or independent-sample validity.
+
 Judging completion, 9 September at 14:00 UTC: all 1,002 selected outputs were
 attempted exactly once. The 259 distinct local answers yielded 257 valid
 verdicts and two unscored invalid verdicts; the 743 API answers yielded 740

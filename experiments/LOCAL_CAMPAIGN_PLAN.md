@@ -13,6 +13,17 @@ only on content-bound compatible subsets of inputs already used here and may
 select retained local outputs for bounded Haiku re-adjudication. That follow-on
 is not another local phase, cannot change any local selection or result, and
 has independent provider-budget and transfer gates.
+
+Follow-on input audit, 9 September: the hosted supplement must collapse source
+aliases before applying new paid-call limits. Identical local inputs can occur
+in different historical or recovery subsets with different whole-subset hashes.
+Retain those source identities for provenance; do not count them as distinct
+hosted questions. All 35 Gemma answers initially reported missing by the
+supplement membership diagnostic already exist in corrected local runs. Exact
+input matching validates them without regeneration. The local generation
+campaign is not reopened by that diagnostic. RA-412 and the separate
+[`HOSTED_SUPPLEMENT_PLAN.md`](HOSTED_SUPPLEMENT_PLAN.md) record the corrected
+judging join, prospective deduplication and remaining hosted analysis work.
 The forward runtime inventory was amended on 25 August 2026 to admit T3MP3ST
 at an exact source commit, increasing the managed inventory from 15 to 16. The
 dated readiness snapshot below remains a historical record of what was found on

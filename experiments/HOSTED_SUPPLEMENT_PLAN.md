@@ -1,10 +1,19 @@
 # Additional hosted inputs from the retained local campaign
 
-Status: no-call assessment, 9 September 2026. The original 941-input hosted
-assignment and its matched judging are complete and published. This supplement
+Status: revised no-call assessment, 9 September 2026, after the exact-input
+audit. The original 941 hosted generation assignments and their matched judging
+are complete and published, but those assignments represent only 488 distinct
+model-input conditions, including framework and source labels. The remaining
+453 assignments repeat the same provider
+request under different retained source-subset records. They remain retained
+observations, not additional independent inputs. Counting exact provider request
+bodies gives 464 distinct model/request pairs, because some payloads also recur
+across different framework or source conditions. This supplement
 responds to the operator's checked account balances and request for additional
 inputs. It is a new, non-overlapping cohort, not a restart of completed work.
-No supplemental target, token-count or judge request has been sent.
+No supplemental target, token-count or judge request has been sent. The initial
+1,108-call arithmetic and later 1,135-assignment preview are superseded below;
+neither is an admissible distinct-input allocation.
 
 Judging requirement clarified by the operator on 9 September: use exactly the
 same input identities in local and hosted Haiku assessment. Judge all eligible
@@ -59,26 +68,28 @@ new funding; do not rewrite unknown historical usage as zero.
 | DeepSeek | 9.61 | 2.00 | 7.61 |
 
 The combined headroom is USD 109.63923. It is not an instruction to spend the
-entire amount. The first additional batch has the following prospective caps.
-Final quantities may be lower because source clusters remain whole and full
-request token counts replace the 4,000-input-token planning assumption.
+entire amount. The first additional cohort below contains distinct model-input
+conditions, not source-membership aliases. It is an upper bound on new calls:
+exact provider-request deduplication within and against the previous assignment
+is still required before funding. Full request token counts must replace
+the 4,000-input-token planning assumption before funding.
 After deducting the completed 45-answer extension, indicative headroom is
 USD 109.585672 before any other or delayed charges.
 
-| Target | Additional input cap | Unchanged maximum output tokens | Conditional target reservation, USD |
+| Target | Additional input conditions / call ceiling | Unchanged maximum output tokens | Conditional target reservation, USD |
 |---|---:|---:|---:|
-| GPT-6 Astra | 18 | 8,192 | 8.272800 |
-| Claude Fable 5.1 | 20 | 8,192 | 8.992000 |
-| Claude Opus 5 | 60 | 6,144 | 10.416000 |
-| Claude Sonnet 5 | 150 | 4,096 | 7.344000 |
-| Claude Haiku 4.5 | 140 | 2,048 | 1.993600 |
-| GPT-5.6 Sol | 30 | 8,192 | 5.515200 |
-| GPT-5.6 Terra | 50 | 6,144 | 4.186400 |
-| GPT-5.6 Luna | 400 | 4,096 | 2.366080 |
-| GPT-5.5 | 20 | 8,192 | 5.415200 |
-| Kimi K3 | 40 | 8,192 | 5.395200 |
-| DeepSeek V4-Pro | 180 | 8,192 | 6.789658 |
-| Total targets | 1,108 | Model-specific | 66.686138 |
+| GPT-6 Astra | 6 | 8,192 | 2.757600 |
+| Claude Fable 5.1 | 6 | 8,192 | 2.697600 |
+| Claude Opus 5 | 24 | 6,144 | 4.166400 |
+| Claude Sonnet 5 | 56 | 4,096 | 2.741760 |
+| Claude Haiku 4.5 | 31 | 2,048 | 0.441440 |
+| GPT-5.6 Sol | 15 | 8,192 | 2.757600 |
+| GPT-5.6 Terra | 23 | 6,144 | 1.925744 |
+| GPT-5.6 Luna | 150 | 4,096 | 0.887280 |
+| GPT-5.5 | 6 | 8,192 | 1.624560 |
+| Kimi K3 | 24 | 8,192 | 3.237120 |
+| DeepSeek V4-Pro | 54 | 8,192 | 2.036898 |
+| Total targets | 395 | Model-specific | 25.274002 |
 
 Reservations use retained effective-dated prices, the existing conservative
 OpenAI input allowance and DeepSeek's peak tariff. These are conditional
@@ -86,44 +97,69 @@ maximum-token calculations, not expected charges or measured affordability
 of an as-yet-unselected population. No output allowance or reasoning setting
 is changed to make this new cohort appear cheaper or more stable.
 
-The initial arithmetic allowed 2,216 Haiku requests for one local counterpart
-and one hosted answer per additional input. At 12,288 input and 512 output
-tokens, that conditional reservation is USD 32.903168. This is not a bound for
-the clarified all-local-answers-on-the-same-inputs requirement: resolve the
-actual local answer inventory, deduplicate it, and exclude exact completed
-judgments before funding. Reduce target allocations if the actual judging
-requirement exceeds the available reservation. The initial conditional combined
-reservation is USD 99.589306. Anthropic accounts for
-USD 61.648768 including judging, OpenAI for USD 25.755680, Kimi for USD
-5.395200 and DeepSeek for USD 6.789658. This leaves USD 10.049924 inside the
-additional headroom for counting differences, retry exposure and delayed old
-charges, in addition to the untouched original reserves.
-After the 45-answer extension charge, that indicative margin is USD 9.996366.
-Neither figure establishes affordability until the actual selected requests
-and all same-input local judging requests have been counted.
+The selected inputs have 687 eligible existing local answers on 181 common
+judging input identities. Reuse 215 already completed exact-answer Haiku
+assessments and assess the other 472. Reserve at most 395 new hosted-answer
+judgments before their actual eligibility is known. This makes at most 867
+new Haiku calls, with a conditional USD 12.873216 reservation at 12,288 input
+and 512 output tokens per judgment. Source-specific and setup turns must not
+be given a common-security verdict merely to equalize counts.
 
-The no-call prefix and local-counterpart preview is running on the rig under
-`engineering/hosted-supplement-selection-preview-r2-20260909/`. It checks that
-every original target assignment is the unchanged prefix, selects only the new
-whole-cluster tail and counts eligible local counterparts before new API outputs
-exist. It neither funds nor sends a paid request. An initial launcher import
-error failed before source analysis; the corrected preview imports the existing
-artifact writer directly, without changing product code or any admission rule.
+The resulting conditional total is USD 38.147218. By provider, this comprises
+USD 9.952784 OpenAI, USD 22.920416 Anthropic including judging, USD 3.237120
+Kimi and USD 2.036898 DeepSeek. Indicative margin is USD 71.438454 before
+unposted charges, in addition to the unchanged original USD 31 reserves.
+This is a conservative first distinct-input cohort, not a maximum-budget
+allocation or an expected invoice. More inputs can be considered after the
+selector enforces distinct request identity and exact counts establish room.
+The historical unknown-cost holds remain unchanged and cannot be written off.
 
-The no-call arithmetic is retained on the rig under
-`engineering/hosted-supplement-assessment-20260909/result.json`. The original
-budget, responses, local judgments and Haiku artifacts remain unchanged.
+The rig preview completed at 15:07 UTC. The next complete AirBench cluster
+contained 148 source records, so extending Sonnet and Haiku to include it
+initially yielded 1,135 prospective assignments. The subsequent actual-input
+audit found 740 repeated inputs within that proposal and zero overlap with
+the original target-input pairs. Removing only repeated input aliases leaves
+the 395 new conditions above. No selection used generated answers or labels.
+All unique inputs in the chosen source clusters remain represented; deleting
+duplicate membership records is not sampling part of a source cluster.
+
+The same audit found that 35 supposedly missing Gemma counterparts were old
+empty responses from the 512-token condition. All 35 already have corrected
+Gemma answers in the retained source. Their recovery runs have different
+corpus-subset hashes, which the original membership-only coverage diagnostic
+failed to join. The production exact-input comparison identity finds them
+without changing their source admission or generating anything. The full
+validated comparison at 15:37 UTC reproduces all 33,388 usable candidate
+identities; the 687-answer inventory and 472 new-judgment count remain unchanged
+because those corrected answers were already included through other aliases.
+
+Evidence is retained under
+`engineering/hosted-supplement-selection-preview-r2-20260909/`:
+`actual-input-overlap-r2.json` verifies identical provider-request hashes for
+the historical repeated inputs; `same-input-counterparts.json` validates the
+complete local comparison; `unique-input-budget.json` records this revised
+arithmetic. Earlier previews remain historical and are not paid admission.
+The product selector still needs a prospective distinct-input contract and
+regression before this supplement can be funded. Do not mutate the original
+selection contract, reset historical budgets or send the uncorrected proposal.
+The historical multiplicity counts and diagrams are published at
+`/stats/job/hosted-input-multiplicity-r3-20260909`. Its 941 assignments, 488
+input conditions and 464 distinct provider requests are separate quantities.
 
 ## Selection and execution requirements
 
-1. Freeze the completed assignment by exact target condition and input identity.
+1. Freeze the completed assignment by exact target condition and actual input
+   identity, retaining all source memberships separately. A different converted
+   corpus-subset hash must not make an identical request a new paid input.
    Exclude every earlier assigned pair, including failed inputs and diagnostic
    probes. Do not retry a policy rejection or choose replacements based on a
    favorable or unfavorable answer.
-2. Extend the existing seed-0, balanced whole-source-cluster ordering. Prove the
-   previous assignment is the corresponding prefix, then select only its new
-   tail. Preserve cross-model nested inputs where modalities are compatible.
-   Stop at a whole-cluster boundary if the next cluster exceeds the new cap.
+2. Extend the existing seed-0, balanced whole-source-cluster ordering. Preserve
+   the historical source selection, but apply new call caps to distinct actual
+   inputs, after collapsing their source aliases and excluding earlier assigned
+   target-input pairs. Preserve every unique input in an admitted cluster and
+   cross-model nested inputs where modalities are compatible. Prove that no
+   duplicate provider request is funded within the new target condition.
 3. Resolve every new prompt, image and recorded framework trajectory to its
    retained local source. Do not regenerate frameworks, resample images, use
    retired model outputs as counterparts or change generation parameters.
@@ -143,7 +179,8 @@ budget, responses, local judgments and Haiku artifacts remain unchanged.
    and matching selected local answers, retaining invalid judge verdicts as
    unscored and unknown usage as unknown. Reuse completed local judgments only
    with exact answer, input, judge-configuration and evidence identity. Include
-   all eligible existing local answers on those same input identities. Resolve
+   all eligible existing local answers on those same input identities, including
+   corrected runs with different source-subset hashes. Resolve
    this inventory before funding additional API inputs, and report input
    coverage, per-model answer counts and invalid-verdict counts separately.
 8. Publish the supplemental cohort separately, with exact selection coverage,
