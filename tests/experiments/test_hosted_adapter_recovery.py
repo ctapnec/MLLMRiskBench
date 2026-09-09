@@ -47,7 +47,7 @@ def _prefix(tmp_path, monkeypatch, provider, *, tight=False):
         target._client = SimpleNamespace(responses=SimpleNamespace(create=create))
     bound = 500000
     money = create_budget(tmp_path / 'money', provider_budgets_microusd={
-        'anthropic': 3000000 if tight else 90000000,
+        'anthropic': 90000000,
         'openai': 1250000 if tight else 40000000}, planned_calls=[
             {'call_id': key, 'provider': provider, 'pool': 'target', 'bound_microusd': bound} for key in ids])
     budget = AttemptBudget(tmp_path / 'money', money['sha256'])
