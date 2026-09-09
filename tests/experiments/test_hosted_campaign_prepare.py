@@ -156,6 +156,47 @@ def test_distinct_preparation_funds_all_local_answers_and_preserves_old_accounti
         subject.executor._validated_jobs(changed, budget)
 
 
+def test_distinct_funding_does_not_require_new_balance_for_unselected_registry_provider(tmp_path, monkeypatch):
+    request, old_plan, _ledger = _distinct_request(tmp_path, monkeypatch)
+    funding = json.loads(Path(request["sources"]["additional_funding"]["path"]).read_text())
+    configured = {key: {"configured_budget_microusd": amount}
+                  for key, amount in old_plan["provider_budgets_microusd"].items()}
+    configured["google"] = {"configured_budget_microusd": 25000000}
+    old_root = tmp_path / "old-registry-including-google"
+    subject.create_budget(old_root,
+        provider_budgets_microusd={**old_plan["provider_budgets_microusd"], "google": 25000000},
+        planned_calls=old_plan["planned_calls"], protected_haiku_microusd=old_plan["protected_haiku_microusd"])
+    for field, name in [("previous_budget_plan", "plan.json"), ("previous_budget_ledger", "ledger.json")]:
+        path = old_root / name
+        funding[field] = {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                          "bytes": path.stat().st_size}
+    source = _save(tmp_path / "active-provider-funding.json", funding)
+    before = (old_root / "ledger.json").read_bytes()
+    result = subject.executor._additional_funding(source, configured)
+    assert "google" not in result["provider_budgets_microusd"]
+    assert "google" not in result["balances_microusd"]
+    assert (old_root / "ledger.json").read_bytes() == before
+    for field in ["provider_budgets_microusd", "balances_microusd", "known_new_charges_microusd",
+                  "minimum_reserves_microusd", "unposted_margin_microusd"]:
+        funding[field]["unconfigured"] = funding[field].pop("kimi")
+    changed = _save(tmp_path / "unconfigured-provider-funding.json", funding)
+    with pytest.raises(ValueError, match="provider inventory"):
+        subject.executor._additional_funding(changed, configured)
+
+
+def test_distinct_selected_provider_cannot_be_omitted_before_token_counting(tmp_path, monkeypatch):
+    request, _old, _ledger = _distinct_request(tmp_path, monkeypatch)
+    funding = json.loads(Path(request["sources"]["additional_funding"]["path"]).read_text())
+    for field in ["provider_budgets_microusd", "balances_microusd", "known_new_charges_microusd",
+                  "minimum_reserves_microusd", "unposted_margin_microusd"]:
+        del funding[field]["openai"]
+    request["sources"]["additional_funding"] = _save(tmp_path / "unfunded-selected-provider.json", funding)
+    monkeypatch.setattr(subject, "count_request", lambda *a, **k: pytest.fail("counter reached"))
+    with pytest.raises(ValueError, match="selected target and judge providers"):
+        subject.prepare_campaign(request=request, request_descriptor={}, out_root=tmp_path / "prepared",
+                                 allow_network_counts=True)
+
+
 @pytest.mark.parametrize("change", ["reserve", "balance", "margin", "old_ledger", "duplicates"])
 def test_distinct_funding_refuses_unavailable_money_or_changed_sources_before_counting(tmp_path, monkeypatch, change):
     request, _old, _ledger = _distinct_request(tmp_path, monkeypatch)

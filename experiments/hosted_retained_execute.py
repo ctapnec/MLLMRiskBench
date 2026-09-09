@@ -680,11 +680,17 @@ def _additional_funding(descriptor: Mapping, configured: Mapping, *, budget_plan
     old = AttemptBudget(Path(value["previous_budget_plan"]["path"]).parent, old_ledger["plan_sha256"])
     if any(pool["unresolved_attempts"] for pool in old.snapshot()["pools"].values()):
         raise ValueError("additional funding cannot overlap an unresolved predecessor attempt")
+    providers = value["provider_budgets_microusd"]
+    if (not isinstance(providers, dict) or not providers or not set(providers) <= set(configured)
+        or old_plan["provider_budgets_microusd"] != {
+            key: row["configured_budget_microusd"] for key, row in configured.items()}):
+        raise ValueError("additional funding provider inventory differs")
     for field in ("balances_microusd", "known_new_charges_microusd", "minimum_reserves_microusd",
                   "provider_budgets_microusd", "unposted_margin_microusd"):
-        if not isinstance(value[field], dict) or set(value[field]) != set(configured):
+        if not isinstance(value[field], dict) or set(value[field]) != set(providers):
             raise ValueError("additional funding provider inventory differs")
-    for provider, original in configured.items():
+    for provider in providers:
+        original = configured[provider]
         balance = _integer(value["balances_microusd"][provider], "reported remaining balance")
         charges = _integer(value["known_new_charges_microusd"][provider], "known later charges", zero=True)
         reserve = _integer(value["minimum_reserves_microusd"][provider], "protected original reserve", zero=True)

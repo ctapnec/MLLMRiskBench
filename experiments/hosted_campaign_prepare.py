@@ -360,6 +360,10 @@ def prepare_campaign(
     routes = _replay_inventory(request["routes"], distinct=distinct)
     funding = (executor._additional_funding(sources["additional_funding"],
                 projection._provider_budgets(values["budgets"])) if distinct else None)
+    if funding is not None:
+        selected_providers = {executor._billing_provider(route["target"].split(":", 1)[0]) for route in routes}
+        if not selected_providers | {"anthropic"} <= set(funding["provider_budgets_microusd"]):
+            raise ValueError("selected target and judge providers must have supplemental funding")
 
     skeleton = {
         "results_root": request["results_root"],
