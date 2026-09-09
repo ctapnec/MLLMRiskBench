@@ -15,6 +15,15 @@ No supplemental target, token-count or judge request has been sent. The initial
 1,108-call arithmetic and later 1,135-assignment preview are superseded below;
 neither is an admissible distinct-input allocation.
 
+Update at 16:37 UTC: the exact provider-request audit passed on the rig.
+The proposal contains 394 distinct new requests, representing all 395 selected
+source/framework-qualified conditions. Luna has 149 distinct requests rather
+than 150; every other model's quantity in the table is unchanged. All 941
+original request hashes were reproduced as controls, and none overlaps the new
+selection. The table retains the earlier conservative 395-call reservation
+ceiling until exact token counts replace the planning assumptions. No freed
+slot is automatically filled with a replacement input.
+
 Judging requirement clarified by the operator on 9 September: use exactly the
 same input identities in local and hosted Haiku assessment. Judge all eligible
 existing local answers to the selected hosted inputs, reusing completed verdicts
@@ -71,7 +80,8 @@ The combined headroom is USD 109.63923. It is not an instruction to spend the
 entire amount. The first additional cohort below contains distinct model-input
 conditions, not source-membership aliases. It is an upper bound on new calls:
 exact provider-request deduplication within and against the previous assignment
-is still required before funding. Full request token counts must replace
+has now verified 394 new requests. An executable continuation still needs to
+bind this distinct-request selection and its source memberships. Full request token counts must replace
 the 4,000-input-token planning assumption before funding.
 After deducting the completed 45-answer extension, indicative headroom is
 USD 109.585672 before any other or delayed charges.
@@ -139,8 +149,9 @@ Evidence is retained under
 the historical repeated inputs; `same-input-counterparts.json` validates the
 complete local comparison; `unique-input-budget.json` records this revised
 arithmetic. Earlier previews remain historical and are not paid admission.
-The product selector still needs a prospective distinct-input contract and
-regression before this supplement can be funded. Do not mutate the original
+The no-call product selector at `de30f2f` passed 23 focused rig tests, lint,
+two reversed-fix checks and the actual-request audit. The executable preparation
+path still needs to bind this selection before this supplement can be funded. Do not mutate the original
 selection contract, reset historical budgets or send the uncorrected proposal.
 The historical multiplicity counts and diagrams are published at
 `/stats/job/hosted-input-multiplicity-r3-20260909`. Its 941 assignments, 488
@@ -149,10 +160,22 @@ input conditions and 464 distinct provider requests are separate quantities.
 The corresponding input-balanced comparison correction is implemented at
 `53624e9` and passed focused rig tests, reversed-fix checks and validation
 against the completed comparison. It preserves the original answers and
-charges. Its publication worker was launched; completion remains unverified
-after SSH timeouts. The prospective duplicate-request selector is still under
-development and is not yet an executable, funded supplement. Neither change
-permits additional calls before exact request counting and funding are complete.
+charges. Publication completed at 16:25:50 UTC at
+`/stats/job/hosted-input-balanced-comparison-r2-20260909`; the comparison and
+complete judging inventory are separate report tabs, both verified with HTTP
+200. The first publisher checked the overview instead of the comparison tab;
+its retained failure did not change any experimental report or require calls.
+
+The prospective request audit is retained at
+`engineering/hosted-distinct-requests-audit-r3-de30f2f/result.json`. Five
+additional image files were located in the existing corpora and matched by
+their retained SHA-256 digests; the separate supplemental media index preserves
+the original index. No downloads were needed. All 1,135 source memberships are
+represented in the 394-request selection. This is not yet an executable,
+funded supplement. Counting and funding must also preserve sufficient judging
+slots for distinct source-specific grading contexts: identical target request
+bodies alone do not prove that two grading tasks are interchangeable. The
+conservative ceiling of 395 hosted Haiku judgments therefore remains in place.
 
 ## Selection and execution requirements
 
