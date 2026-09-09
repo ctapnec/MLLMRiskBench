@@ -2383,6 +2383,16 @@ original ledger. Keep the predecessor failure for aggregate accounting and
 retain unknown charges until actual usage can be reconciled. Do not launch
 an old controller that assumes zero prior attempts or an obsolete checkout.
 
+For compatible API endpoints, the grid, eligibility plan and model-acquisition
+plan must bind the same portable API configuration. Hash the endpoint identity
+used in persisted artifacts, not the private launch-time `base_url`. A digest
+mismatch after a completed probe is a harness bookkeeping failure, not a model
+failure. Preserve that response and its original artifacts; do not edit their
+digests or pay to regenerate a completed input. An unstarted, already-funded
+diagnostic may supply a corrected transport probe without changing measured
+input membership. Keep active workers on their validated source revision while
+preparing a corrected route in an isolated checkout.
+
 ```bash
 python -m experiments.hosted_retained_execute \
   --program /resolved/path/hosted-program.json \

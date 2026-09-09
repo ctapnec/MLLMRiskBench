@@ -786,6 +786,13 @@ Unselected inventory entries are neither evidence nor requested cells. Secret
 values are environment-indirected and rejected from persisted configuration.
 The manifest keeps requested and realized target identities distinct.
 
+Runner's grid, eligibility plan and model-acquisition input bindings use the
+same portable API-configuration digest. Compatible endpoints contribute their
+`base_url_identity`; the raw launch-time `base_url` must not be hashed in one
+artifact while its portable identity is hashed in another. Cross-artifact
+validation still requires exact digest agreement. This consistency rule does
+not authorize rewriting retained artifacts from an earlier execution.
+
 ### Rig Web execution-config bundle and confirmation ticket
 
 Rig Web derives internal selected API, local, source, and prepared-attacker
