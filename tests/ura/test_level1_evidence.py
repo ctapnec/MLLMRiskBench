@@ -1141,6 +1141,42 @@ def test_completed_synthetic_grid_joins_exact_strata_and_decisions(
         build_level1_evidence([artifact], grids, errors)
 
 
+@pytest.mark.parametrize("spec", ["kimi:fixture", "deepseek:fixture", "openai:fixture"])
+def test_grid_and_eligibility_bind_the_same_portable_api_configuration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, spec: str,
+) -> None:
+    config = {"modalities": ["text"], "max_tokens": 64, "temperature": None}
+    if not spec.startswith("openai:"):
+        config["base_url"] = "https://operator-endpoint.example/compatible/v1"
+    config_path = tmp_path / "api.json"
+    config_path.write_text(json.dumps({spec: config}), encoding="utf-8")
+    loader = run_matrix._load_api_config
+    normalized, artifact = loader(
+        str(config_path), [spec], hashlib.sha256(config_path.read_bytes()).hexdigest(),
+    )
+    # Dry-run normally selects no paid configuration. Exercise the actual
+    # normalized endpoint representation while leaving every target mocked.
+    monkeypatch.setattr(run_matrix, "_load_api_config", lambda *a, **kw: (normalized, artifact))
+    root = tmp_path / "run"
+    assert run_matrix.main([
+        "--dry-run", "--corpora", "synth", "--limit", "1", "--seeds", "0",
+        "--attackers", "replay", "--judges", "rules,llm", "--judge-model", "mock",
+        "--max-queries", "1", "--max-turns", "1", "--out", str(root),
+    ]) == 0
+    grid = json.loads(next(root.glob("*.grid.json")).read_text(encoding="utf-8"))
+    plan_artifact = _plan_artifact(next(root.glob("*.eligibility.json")))
+    plan = plan_artifact[0]
+    assert plan["bindings"]["api_configs_sha256"] == canonical_json_sha256(grid["request"]["api_configs"])
+    if "base_url" in config:
+        assert "base_url" not in grid["request"]["api_configs"][spec]
+        assert "base_url_identity" in grid["request"]["api_configs"][spec]
+        assert plan["bindings"]["api_configs_sha256"] != canonical_json_sha256(normalized)
+    grids, errors = _load_results([root], {plan["plan_id"]: plan_artifact})
+    report = build_level1_evidence([plan_artifact], grids, errors)
+    assert report["counts"]["execution_units"]["completed"] == 1
+    assert report["scope"]["empirical_validity_established"] is False
+
+
 def test_level1_retains_model_nonresponse_as_explicit_missingness(
     tmp_path: Path,
 ) -> None:

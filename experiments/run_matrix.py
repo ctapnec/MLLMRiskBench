@@ -6245,7 +6245,7 @@ def _main(argv=None) -> int:
                 "source_instances_sha256": _sha256_json(source_instances),
                 "attacker_configs_sha256": _sha256_json(portable_attacker_configs),
                 "attacker_input_plan": attacker_input_plan_projection,
-                "api_configs_sha256": _sha256_json(api_configs),
+                "api_configs_sha256": _sha256_json(portable_api_configs),
                 "local_configs_sha256": _sha256_json({
                     persisted_model_specs[spec]: local_configs[spec]
                     for spec in local_specs
