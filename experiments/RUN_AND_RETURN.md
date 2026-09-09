@@ -909,6 +909,11 @@ accounting. Select a report to load that report's tables and diagrams inside
 the modal, or use its standalone link. All registered reports and their JSON
 artifacts remain accessible. Rendering one selected report avoids loading every
 metric stratum into the overview at once; report validation is unchanged.
+When no terminal or execution overview exists, the default selects the first
+validated report containing data charts, rather than an earlier table-only
+lifecycle report. Explicit report selection is unchanged. UI checks must
+identify labeled `svg.barchart` data plots; counting every SVG also counts
+decorative navigation icons and is not evidence that diagrams are present.
 
 Keep the population total separate from the retained-strata forecast. The
 planned chain predicts 46,537 selected input identities and 49,537 initial
