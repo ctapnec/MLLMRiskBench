@@ -2400,6 +2400,15 @@ fails after completed jobs, reconcile their retained responses and resume only
 unfinished jobs under the same validated source; no new model preparation or
 target replay is needed merely to repair controller accounting.
 
+An explicit, validated provider refusal is an observed target outcome even when
+there are no ordinary text turns. Preserve its refusal category and usage;
+neither paid settlement nor Jobs accounting may treat it as an empty response.
+For OpenAI Responses, retain reasoning items when supplied, but do not require
+one to accompany every valid final message or refusal. Effective request
+settings, item validity, continuation state and usage still require validation.
+Missing or unusable responses remain distinct and still stop paid continuation
+for investigation; neither correction adds answer-quality retries.
+
 ```bash
 python -m experiments.hosted_retained_execute \
   --program /resolved/path/hosted-program.json \
