@@ -1,0 +1,68 @@
+from __future__ import annotations
+
+import copy
+import json
+from types import SimpleNamespace
+
+import pytest
+
+from experiments import retained_response_judge as judge
+from experiments import retained_scoring_view as subject
+
+
+@pytest.mark.parametrize("mutation", [None, "missing", "extra", "response"])
+def test_separate_scoring_restores_only_exact_retained_answers(tmp_path, monkeypatch, mutation):
+    original = {"one": {"response": {"answer": "Retained answer."}}}
+    saved = copy.deepcopy(original)
+    if mutation == "missing":
+        saved.clear()
+    elif mutation == "extra":
+        saved["two"] = copy.deepcopy(saved["one"])
+    elif mutation == "response":
+        saved["one"]["response"]["answer"] = "Replacement answer."
+    restored = []
+    source = SimpleNamespace(
+        manifest=SimpleNamespace(run_id="original-generation"), responses=original,
+        inputs={"one": ("original-point", "original-attempt")},
+        runner=SimpleNamespace(_restore_record=lambda *args: restored.append(args)),
+    )
+    monkeypatch.setattr(subject.Runner, "load_checkpoint", lambda *args, **kwargs: saved)
+    if mutation:
+        with pytest.raises(ValueError, match="retained answer"):
+            subject._records(source, tmp_path / "judgments.jsonl")
+        assert restored == []
+    else:
+        assert subject._records(source, tmp_path / "judgments.jsonl") == original
+        assert restored == [("original-point", "original-attempt", saved["one"], "original-generation")]
+
+
+def test_native_reader_dispatches_separate_scoring_without_promoting_a_grid(tmp_path, monkeypatch):
+    (tmp_path / subject.FILE).write_text("{}")
+    expected = ([{"run_id": "old"}], {}, {}, {"policy_evaluable_samples": 0})
+    calls = []
+    def read(root):
+        calls.append(root)
+        return expected
+    monkeypatch.setattr(subject, "read_view", read)
+    def forbidden(*args, **kwargs):
+        raise AssertionError("separate scoring must not be interpreted as a completed generation grid")
+    monkeypatch.setattr(judge, "_joined_artifacts", forbidden)
+    assert judge._read_native_view(tmp_path) is expected
+    assert calls == [tmp_path]
+
+
+def test_source_descriptor_binds_empty_files_without_ignoring_their_content(tmp_path):
+    path = tmp_path / "judgments.jsonl"
+    path.touch()
+    item = subject._descriptor(path)
+    source = SimpleNamespace(source={"files": [item]})
+    subject._Source.validate_unchanged(source)
+    path.write_text(json.dumps({"invented": "verdict"}))
+    with pytest.raises(ValueError, match="original scoring source changed"):
+        subject._Source.validate_unchanged(source)
+
+
+def test_read_view_rejects_unknown_contract_before_loading_any_source(tmp_path):
+    (tmp_path / subject.FILE).write_text(json.dumps({"schema": "unrecognized"}))
+    with pytest.raises(ValueError, match="view fields changed"):
+        subject.read_view(tmp_path)

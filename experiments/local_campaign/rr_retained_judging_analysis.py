@@ -88,7 +88,8 @@ def _completed_view(path: Path, *, work: Path, project: Path) -> dict:
     }
 
 
-def _report_views(source, records: dict, completion: dict, *, joined: bool) -> dict:
+def _report_views(source, records: dict, completion: dict, *, joined: bool,
+                  completion_path: Path | None = None) -> dict:
     """Derive read-only metric scopes; the original generation manifest is unchanged."""
     from experiments import human_audit
     from experiments.local_campaign.vllm_stability_phase6 import _sha256_json
@@ -103,7 +104,7 @@ def _report_views(source, records: dict, completion: dict, *, joined: bool) -> d
         persisted.append(completion["checkpoint"])
     artifacts = {f"source_{index:03}": Path(item["path"]) for index, item in enumerate(persisted)}
     checkpoint_root = Path(completion["launch"]["path"]).parent
-    completion_path = checkpoint_root / "completion.json"
+    completion_path = completion_path or checkpoint_root / "completion.json"
     artifacts["scoring_completion"] = completion_path
     original_ids = list(source.judgments)
     failures = (recovery.load_failures(checkpoint_root / "evaluator-failures", source)

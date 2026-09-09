@@ -450,6 +450,9 @@ def _read_view(root: Path) -> tuple[list[dict], dict, dict, dict]:
 
 
 def _read_native_view(root: Path) -> tuple[list[dict], dict, dict, dict]:
+    if (root / "retained-scoring-view.json").exists():
+        from experiments.retained_scoring_view import read_view
+        return read_view(root)
     from experiments.retained_artifact_reader import grid_partitions, read_partitions
     from experiments.local_campaign.rr_parallel_analysis import SCHEMA, load_judge_view
     from experiments.local_campaign.vllm_stability_phase6 import _load_json

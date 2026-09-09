@@ -1849,6 +1849,16 @@ no additional provider cost. Analysis reports local decision coverage and
 abstentions before agreement because the guardrail safe/violation labels cannot
 decide every benign over-refusal row.
 
+Completed separate scoring of a hosted prefix can be exposed to the same
+candidate and paired-judge readers with `experiments.retained_scoring_view`.
+Supply its scoring result root, the exact retained judging checkout and that
+checkout's project-revision receipt. The reader revalidates the original
+generation inputs and budget checkpoints, restores every separate judgment
+against its unchanged response, and preserves non-evaluable turns. It makes
+no model calls and never promotes the failed generation grid. Its resulting
+view can be composed with completed native views using
+`experiments.retained_response_view`; duplicate run identities are rejected.
+
 The planner imports no target-under-test or Runner factory and stores only
 content hashes. It binds the exact effective-dated pricing file and refuses a
 rate other than the funded USD 1 input / USD 5 output per million-token
