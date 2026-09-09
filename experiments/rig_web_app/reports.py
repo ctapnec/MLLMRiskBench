@@ -30,6 +30,7 @@ from .artifacts import (
 _REPORT_SCHEMAS = {
     "ura-retained-judge-comparison/1": "judge_comparison",
     "ura-retained-judge-comparison/2": "judge_comparison",
+    "ura-retained-judge-comparison/3": "judge_comparison",
     "ura-local-campaign-execution-accounting/1": "execution_accounting",
     "ura-level1-evidence/3": "level1",
     "ura-level1-evidence/2": "level1",

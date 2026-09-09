@@ -6,6 +6,7 @@ decisions and source-population coverage remain different observations.
 from __future__ import annotations
 
 import argparse
+import copy
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -30,6 +31,12 @@ from ura.metrics import equal_cluster_bootstrap_ci, equal_cluster_mean
 
 SCHEMA = "ura-retained-judge-comparison/1"
 OUTCOME_SCHEMA = "ura-retained-judge-comparison/2"
+INPUT_BALANCED_SCHEMA = "ura-retained-judge-comparison/3"
+INPUT_WEIGHTING = "equal_input_within_equal_source_cluster"
+INPUT_LIMITATIONS = [
+    "Repeated outputs are averaged within each exact input before equal source-cluster weighting; they are not independent questions.",
+    "Matched contrasts average distinct saved outputs on each side of an input; repeated comparison links never multiply a saved output's weight.",
+]
 LABELS = ("safe", "violation", "refusal", "over_refusal")
 DIMENSIONS = (
     "cohort", "exact_model", "framework", "corpus", "source", "modality",
@@ -74,7 +81,40 @@ def _cluster(row: Mapping[str, Any]) -> tuple:
     return row["source"], row["corpus"], row["source_cluster_id"]
 
 
-def summarize(plan: dict, observations: list[dict]) -> dict:
+def _input_rate(values: list[float], rows: list[dict]) -> dict:
+    groups: dict[str, list[float]] = defaultdict(list)
+    clusters = {}
+    for value, row in zip(values, rows, strict=True):
+        identity, cluster = row["input_identity_sha256"], _cluster(row)
+        if identity in clusters and clusters[identity] != cluster:
+            raise ValueError("one comparison input has conflicting source clusters")
+        clusters[identity] = cluster
+        groups[identity].append(value)
+    ordered = sorted(groups)
+    result = _rate([sum(groups[key]) / len(groups[key]) for key in ordered],
+                   [clusters[key] for key in ordered])
+    return {**result, "n_records": len(values), "n_inputs": len(ordered)}
+
+
+def _input_contrast(members: list[tuple[dict, dict, dict]], judge: str, event: str) -> dict:
+    groups: dict[str, tuple[dict, dict, dict]] = {}
+    for row, local, hosted in members:
+        identity = row["input_identity_sha256"]
+        original, left, right = groups.setdefault(identity, (row, {}, {}))
+        if _cluster(original) != _cluster(row):
+            raise ValueError("one contrast input has conflicting source clusters")
+        left[local["retained_row_sha256"]] = float(local[judge + "_label"] == event)
+        right[hosted["retained_row_sha256"]] = float(hosted[judge + "_label"] == event)
+    rows, differences = [], []
+    for identity in sorted(groups):
+        row, left, right = groups[identity]
+        rows.append(row)
+        differences.append(sum(right.values()) / len(right) - sum(left.values()) / len(left))
+    result = _input_rate(differences, rows)
+    return {**result, "n_records": len(members)}
+
+
+def summarize(plan: dict, observations: list[dict], *, input_balanced: bool = False) -> dict:
     by_id = {row["retained_row_sha256"]: (row, obs)
              for row, obs in zip(plan["selected"], observations, strict=True)}
     groups: dict[tuple, list[tuple[dict, dict]]] = defaultdict(list)
@@ -85,18 +125,22 @@ def summarize(plan: dict, observations: list[dict]) -> dict:
     for key, members in sorted(groups.items()):
         identity = dict(zip((*DIMENSIONS, "cascade_configuration_sha256"), key, strict=True))
         result = {"condition": identity, "selected_outputs": len(members)}
+        if input_balanced:
+            result["distinct_inputs"] = len({r["input_identity_sha256"] for r, _ in members})
         for judge in ("cascade", "haiku"):
             decided = [(r, o) for r, o in members if o[judge + "_label"] is not None]
             clusters = [_cluster(r) for r, _ in decided]
             result[judge] = {
                 "decided": len(decided), "abstained": len(members) - len(decided),
                 "labels": {label: sum(o[judge + "_label"] == label for _, o in decided) for label in LABELS},
-                "rates": {label: _rate([float(o[judge + "_label"] == label) for _, o in decided], clusters)
+                "rates": {label: (_input_rate([float(o[judge + "_label"] == label) for _, o in decided], [r for r, _ in decided])
+                                  if input_balanced else _rate([float(o[judge + "_label"] == label) for _, o in decided], clusters))
                           for label in LABELS},
             }
         shared = [(r, o) for r, o in members if o["cascade_label"] is not None and o["haiku_label"] is not None]
-        result["agreement"] = _rate([float(o["cascade_label"] == o["haiku_label"]) for _, o in shared],
-                                    [_cluster(r) for r, _ in shared])
+        agreement = [float(o["cascade_label"] == o["haiku_label"]) for _, o in shared]
+        result["agreement"] = (_input_rate(agreement, [r for r, _ in shared]) if input_balanced
+                               else _rate(agreement, [_cluster(r) for r, _ in shared]))
         result["agreement"]["excluded_abstentions"] = len(members) - len(shared)
         strata.append(result)
 
@@ -121,14 +165,33 @@ def summarize(plan: dict, observations: list[dict]) -> dict:
                   "pairs": len(members), "event": event, "direction": "hosted_minus_local"}
         for judge in ("cascade", "haiku"):
             comparable = [(r, a, b) for r, a, b in members if a[judge + "_label"] is not None and b[judge + "_label"] is not None]
-            result[judge] = _rate([float(b[judge + "_label"] == event) - float(a[judge + "_label"] == event)
-                                   for _, a, b in comparable], [_cluster(r) for r, _, _ in comparable])
+            result[judge] = (_input_contrast(comparable, judge, event) if input_balanced else
+                            _rate([float(b[judge + "_label"] == event) - float(a[judge + "_label"] == event)
+                                   for _, a, b in comparable], [_cluster(r) for r, _, _ in comparable]))
             result[judge]["excluded_abstentions"] = len(members) - len(comparable)
         contrasts.append(result)
-    return {"strata": strata, "contrasts": contrasts,
+    result = {"strata": strata, "contrasts": contrasts,
             "selected_outputs": len(observations), "comparison_pairs": len(plan["pairs"]),
             "cohorts": {cohort: sum(row["cohort"] == cohort for row in plan["selected"])
                         for cohort in ("local", "hosted")}}
+    if input_balanced:
+        result["input_weighting"] = INPUT_WEIGHTING
+        result["distinct_inputs"] = len({row["input_identity_sha256"] for row in plan["selected"]})
+    return result
+
+
+def input_balanced_report(report: dict) -> dict:
+    """Derive a new analysis from a validated completed report, without any calls."""
+    validate_report(report)
+    value = copy.deepcopy(report)
+    value["schema"] = INPUT_BALANCED_SCHEMA
+    value["summary"] = summarize(value["plan"], value["observations"], input_balanced=True)
+    outcomes = value["execution"]["schema"] == OUTCOME_EXECUTION_SCHEMA
+    value["limitations"] = (OUTCOME_LIMITATIONS if outcomes else LIMITATIONS) + INPUT_LIMITATIONS
+    value["uncertainty"]["input_weighting"] = INPUT_WEIGHTING
+    value["report_id"] = "retained-judge-comparison-" + _sha({k: v for k, v in value.items() if k != "report_id"})[:24]
+    validate_report(value)
+    return value
 
 
 def _validated_views(local_root: Path, hosted_root: Path, plan: dict, source: dict) -> dict:
@@ -152,7 +215,7 @@ def _validated_views(local_root: Path, hosted_root: Path, plan: dict, source: di
 
 
 def build_report(*, plan_path: Path, execution_root: Path, local_runner_view: Path,
-                 hosted_runner_view: Path, source_receipt: Path) -> dict:
+                 hosted_runner_view: Path, source_receipt: Path, input_balanced: bool = True) -> dict:
     raw_plan, plan_descriptor = _read_regular(plan_path, label="judge plan", max_bytes=32 * 1024 * 1024)
     plan = validate_pair_plan(raw_plan)
     source = _regular_descriptor(source_receipt, plan["source"]["sha256"])
@@ -225,14 +288,14 @@ def build_report(*, plan_path: Path, execution_root: Path, local_runner_view: Pa
     }
     report["report_id"] = "retained-judge-comparison-" + _sha(report)[:24]
     validate_report(report)
-    return report
+    return input_balanced_report(report) if input_balanced else report
 
 
 def validate_report(value: object) -> None:
     if not isinstance(value, dict) or set(value) != {
         "schema", "status", "plan", "sources", "execution", "completion", "observations",
         "summary", "generation_conditions", "limitations", "uncertainty", "report_id",
-    } or value["schema"] not in {SCHEMA, OUTCOME_SCHEMA} or value["status"] != "complete":
+    } or value["schema"] not in {SCHEMA, OUTCOME_SCHEMA, INPUT_BALANCED_SCHEMA} or value["status"] != "complete":
         raise ValueError("invalid matched judge comparison report")
     plan = validate_pair_plan(value["plan"])
     sources = value["sources"]
@@ -248,8 +311,9 @@ def validate_report(value: object) -> None:
             or any(c not in "0123456789abcdef" for c in descriptor["sha256"])):
             raise ValueError("invalid matched comparison source descriptor")
     ledger = _validate_ledger(value["execution"], plan, sources["plan"]["sha256"])
-    outcomes = value["schema"] == OUTCOME_SCHEMA
-    if outcomes != (ledger["schema"] == OUTCOME_EXECUTION_SCHEMA):
+    balanced = value["schema"] == INPUT_BALANCED_SCHEMA
+    outcomes = ledger["schema"] == OUTCOME_EXECUTION_SCHEMA
+    if not balanced and outcomes != (value["schema"] == OUTCOME_SCHEMA):
         raise ValueError("judge outcome report and execution policies differ")
     if ledger["state"] != "complete":
         raise ValueError("matched comparison requires a completed execution")
@@ -298,22 +362,35 @@ def validate_report(value: object) -> None:
         expected_runs[row["run_id"]] += 1
     if actual_runs != expected_runs:
         raise ValueError("matched comparison generation population differs")
-    if (value["summary"] != summarize(plan, observations)
-        or value["limitations"] != (OUTCOME_LIMITATIONS if outcomes else LIMITATIONS)
+    if (value["summary"] != summarize(plan, observations, input_balanced=balanced)
+        or value["limitations"] != (OUTCOME_LIMITATIONS if outcomes else LIMITATIONS) + (INPUT_LIMITATIONS if balanced else [])
         or value["uncertainty"] != {"method": "equal_source_cluster_bootstrap", "resamples": 2000,
-                                   "seed": 0, "confidence": 0.95, "minimum_clusters": 2}
+                                   "seed": 0, "confidence": 0.95, "minimum_clusters": 2,
+                                   **({"input_weighting": INPUT_WEIGHTING} if balanced else {})}
         or value["report_id"] != "retained-judge-comparison-" + _sha({k: v for k, v in value.items() if k != "report_id"})[:24]):
         raise ValueError("matched comparison summaries or content identity differ")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    for argument in ("plan", "execution-root", "local-runner-view", "hosted-runner-view", "source-receipt", "out"):
-        parser.add_argument("--" + argument, type=Path, required=True)
+    parser.add_argument("--from-report", type=Path, help="Reweight a completed report without rereading or rerunning its source campaign")
+    parser.add_argument("--out", type=Path, required=True)
+    arguments = ("plan", "execution-root", "local-runner-view", "hosted-runner-view", "source-receipt")
+    for argument in arguments:
+        parser.add_argument("--" + argument, type=Path)
     args = parser.parse_args(argv)
-    report = build_report(plan_path=args.plan, execution_root=args.execution_root,
-                          local_runner_view=args.local_runner_view, hosted_runner_view=args.hosted_runner_view,
-                          source_receipt=args.source_receipt)
+    supplied = [getattr(args, key.replace("-", "_")) for key in arguments]
+    if args.from_report:
+        if any(supplied):
+            parser.error("--from-report cannot be combined with campaign source arguments")
+        previous, _ = _read_regular(args.from_report, label="completed comparison report", max_bytes=32 * 1024 * 1024)
+        report = input_balanced_report(previous)
+    else:
+        if not all(supplied):
+            parser.error("supply --from-report or all campaign source arguments")
+        report = build_report(plan_path=args.plan, execution_root=args.execution_root,
+                              local_runner_view=args.local_runner_view, hosted_runner_view=args.hosted_runner_view,
+                              source_receipt=args.source_receipt)
     _write_new(args.out, report)
     print(args.out)
     return 0

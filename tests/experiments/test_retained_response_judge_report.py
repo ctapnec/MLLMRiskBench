@@ -162,7 +162,7 @@ def test_report_keeps_invalid_verdict_and_unknown_usage_out_of_labels_and_cost(c
             value.update(invalid_verdicts=1, unknown_usage_judgments=1)
         (root / filename).write_bytes(executor._canonical(value))
     report = subject.build_report(**args)
-    assert report["schema"] == subject.OUTCOME_SCHEMA
+    assert report["schema"] == subject.INPUT_BALANCED_SCHEMA
     assert report["observations"][0]["haiku_label"] is None
     assert report["observations"][0]["input_tokens"] is None
     assert report["observations"][0]["cost_microusd"] is None
@@ -177,6 +177,54 @@ def test_report_keeps_invalid_verdict_and_unknown_usage_out_of_labels_and_cost(c
     damaged = copy.deepcopy(report)
     damaged["observations"][0]["cost_microusd"] = 0
     with pytest.raises(ValueError, match="unknown judge usage"):
+        subject.validate_report(damaged)
+
+
+def test_repeated_answers_do_not_multiply_an_inputs_weight():
+    first = {"input_identity_sha256": "a" * 64, "source": "source", "corpus": "corpus", "source_cluster_id": "one"}
+    second = {**first, "input_identity_sha256": "b" * 64}
+    rate = subject._input_rate([1.0] * 9 + [0.0], [first] * 9 + [second])
+    assert rate["value"] == 0.5
+    assert rate["n_records"] == 10 and rate["n_inputs"] == 2 and rate["n_clusters"] == 1
+    assert rate["ci_low"] is None
+    assert subject._rate([1.0] * 9 + [0.0], [subject._cluster(first)] * 10)["value"] == 0.9
+    with pytest.raises(ValueError, match="conflicting source clusters"):
+        subject._input_rate([1.0, 0.0], [first, {**first, "source_cluster_id": "changed"}])
+
+
+def test_contrasts_average_distinct_outputs_before_inputs_not_links():
+    row = {"input_identity_sha256": "a" * 64, "source": "source", "corpus": "corpus", "source_cluster_id": "one"}
+    left_safe = {"retained_row_sha256": "local-safe", "haiku_label": "safe"}
+    left_violation = {"retained_row_sha256": "local-violation", "haiku_label": "violation"}
+    right = {"retained_row_sha256": "hosted-violation", "haiku_label": "violation"}
+    members = [(row, left_safe, right)] * 9 + [(row, left_violation, right)]
+    result = subject._input_contrast(members, "haiku", "violation")
+    assert result["value"] == 0.5
+    assert result["n_records"] == 10 and result["n_inputs"] == 1
+    assert subject._input_contrast(members * 10, "haiku", "violation")["value"] == 0.5
+
+
+def test_input_balanced_upgrade_preserves_all_retained_evidence_and_renders_counts(completed):
+    legacy = subject.build_report(**completed[0], input_balanced=False)
+    before = copy.deepcopy(legacy)
+    current = subject.input_balanced_report(legacy)
+    assert legacy == before and legacy["schema"] == subject.SCHEMA
+    assert current["schema"] == subject.INPUT_BALANCED_SCHEMA
+    for key in ["sources", "plan", "execution", "completion", "observations", "generation_conditions"]:
+        assert current[key] == legacy[key]
+    assert current["summary"]["distinct_inputs"] == 1
+    assert all(row["distinct_inputs"] == 1 for row in current["summary"]["strata"])
+    subject.validate_report(legacy)
+    assert subject.input_balanced_report(current) == current
+    from experiments.rig_web import RigWebApp
+    app = object.__new__(RigWebApp)
+    page = app._render_judge_comparison("Balanced", current)
+    assert "Input-balanced comparison: 1 distinct inputs" in page
+    assert "not independent questions" in page and " / 1 distinct inputs" in page
+    damaged = copy.deepcopy(current)
+    damaged["summary"] = subject.summarize(current["plan"], current["observations"])
+    damaged["report_id"] = "retained-judge-comparison-" + subject._sha({k: v for k, v in damaged.items() if k != "report_id"})[:24]
+    with pytest.raises(ValueError, match="summaries"):
         subject.validate_report(damaged)
 
 

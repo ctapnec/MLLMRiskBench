@@ -1832,7 +1832,8 @@ class DashboardMixin:
                 return "No comparable decisions"
             ci = (f"95% CI {value['ci_low']:.3f} to {value['ci_high']:.3f}"
                   if value["ci_low"] is not None else "CI unavailable: fewer than two source clusters")
-            return f"{point:.3f}; {ci}; {value['n_records']} rows / {value['n_clusters']} clusters"
+            inputs = f" / {value['n_inputs']} distinct inputs" if "n_inputs" in value else ""
+            return f"{point:.3f}; {ci}; {value['n_records']} rows{inputs} / {value['n_clusters']} clusters"
 
         def condition_label(condition: Mapping[str, Any]) -> str:
             annotation = " [same-model Haiku judge]" if condition["same_model_judge"] else ""
@@ -1854,6 +1855,10 @@ class DashboardMixin:
                  f"token-priced usage USD {completion['actual_cost_microusd'] / 1e6:.6f} / "
                  f"plan ceiling USD {completion['max_cost_microusd'] / 1e6:.6f}.</p>",
                  "<details><summary>Source-view coverage before matched selection</summary>"]
+        if "input_weighting" in summary:
+            parts.insert(1, f"<p>Input-balanced comparison: {summary['distinct_inputs']} distinct inputs. "
+                         "Repeated outputs are averaged per input before equal source-cluster weighting; "
+                         "they are not independent questions.</p>")
         if "invalid_verdicts" in completion:
             parts.insert(-1, f"<p>Judge abstentions from invalid verdicts: {completion['invalid_verdicts']}; "
                          f"attempts with unknown usage: {completion['unknown_usage_judgments']}. "
