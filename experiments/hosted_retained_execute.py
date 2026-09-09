@@ -28,6 +28,7 @@ from ura.targets.api import provider_attempt_admission
 SCHEMA = "ura-hosted-retained-execution-plan/1"
 COUNTED_INPUT_SCHEMA = "ura-hosted-retained-execution-plan/2"
 TRANSPORT_RECOVERY_SCHEMA = "ura-hosted-retained-execution-plan/3"
+ADAPTER_RECOVERY_SCHEMA = "ura-hosted-retained-execution-plan/4"
 COUNTED_INPUT_POLICY = "counted_requests_within_route_reservation_v1"
 TOKEN_COUNT_POLICY = "surface_specific_counts_with_declared_estimates_v1"
 _HEX40 = re.compile(r"[0-9a-f]{40}\Z")
@@ -50,7 +51,7 @@ def _cost(input_tokens: int, output_tokens: int, prices: Mapping[str, Any]) -> i
 
 def _validate_input_budget(program: Mapping[str, Any], route: Mapping[str, Any]) -> None:
     """Keep the original per-call contract or fund the explicit counted successor."""
-    counted = program.get("schema") in {COUNTED_INPUT_SCHEMA, TRANSPORT_RECOVERY_SCHEMA}
+    counted = program.get("schema") in {COUNTED_INPUT_SCHEMA, TRANSPORT_RECOVERY_SCHEMA, ADAPTER_RECOVERY_SCHEMA}
     if counted:
         if program.get("input_budget_policy") != COUNTED_INPUT_POLICY:
             raise ValueError("counted input allocation policy differs")
@@ -115,6 +116,16 @@ class _Admission:
         for key in set(recovery) & set(self.requests):
             self.transport_recoveries[key] = _validate_transport_recovery(
                 recovery[key], program=program, entry=self.entries[key],
+                receipt=self.requests[key], budget=budget,
+            )
+        repairs = program.get("adapter_recoveries", {})
+        if repairs and program.get("schema") != ADAPTER_RECOVERY_SCHEMA:
+            raise ValueError("reviewed adapter recovery requires its explicit execution contract")
+        if not isinstance(repairs, dict) or not set(repairs) <= set(program.get("requests", self.requests)):
+            raise ValueError("reviewed adapter recovery names an unfunded input")
+        for key in set(repairs) & set(self.requests):
+            self.transport_recoveries[key] = _validate_adapter_recovery(
+                repairs[key], program=program, entry=self.entries[key],
                 receipt=self.requests[key], budget=budget,
             )
 
@@ -310,6 +321,64 @@ def _validate_transport_recovery(
         }
     if not retryable or budget.reserved_attempt_count(receipt["call_id"]) < prior:
         raise ValueError("transport recovery lacks a retryable funded failure prefix")
+    return prior
+
+
+def _validate_adapter_recovery(
+    value: object, *, program: Mapping[str, Any], entry: Mapping[str, Any],
+    receipt: Mapping[str, Any], budget: AttemptBudget,
+) -> int:
+    """Explicit post-fix replay of one parser failure, not an automatic answer retry."""
+    from ura.data_models import Attempt, Response
+    from ura.runner import Runner
+    from ura.targets import api
+
+    fields = {"checkpoint", "attempt_id", "prior_attempts", "request_sha256",
+              "repair_commit", "error_type", "error_reason"}
+    if not isinstance(value, dict) or set(value) != fields:
+        raise ValueError("reviewed adapter recovery fields differ")
+    prior = _integer(value["prior_attempts"], "prior adapter attempts")
+    if prior >= 4 or value["request_sha256"] != receipt["request_sha256"]:
+        raise ValueError("reviewed adapter recovery is exhausted or changed its request")
+    # The repaired target implementation itself must be the named clean revision,
+    # not merely an accounting module imported alongside an older adapter.
+    _validated_checkout(Path(api.__file__).resolve().parents[3], value["repair_commit"])
+    descriptor = value["checkpoint"]
+    if not isinstance(descriptor, dict) or set(descriptor) != {"path", "sha256", "bytes"}:
+        raise ValueError("reviewed adapter recovery checkpoint descriptor differs")
+    path = Path(descriptor["path"])
+    if (not path.is_absolute() or path.resolve(strict=True) != path
+        or not stat.S_ISREG(path.lstat().st_mode) or path.stat().st_size > 64 * 1024 * 1024):
+        raise ValueError("reviewed adapter recovery checkpoint must be one bounded regular file")
+    data = path.read_bytes()
+    if len(data) != descriptor["bytes"] or hashlib.sha256(data).hexdigest() != descriptor["sha256"]:
+        raise ValueError("reviewed adapter recovery checkpoint bytes changed")
+    record = Runner.load_response_checkpoint(path).get(value["attempt_id"])
+    if record is None:
+        raise ValueError("reviewed adapter recovery attempt is absent from its checkpoint")
+    attempt = Attempt.model_validate(record["attempt"])
+    response = Response.model_validate(record["response"])
+    raw = response.raw
+    origin = entry["origin"]
+    error_types = {"openai-responses": "OpenAIResponsesOutputError",
+                   "anthropic-fable": "AnthropicFableOutputError"}
+    expected_error = error_types.get(program["target"].split(":", 1)[0])
+    if (attempt.params.get("retained_origin") != origin
+        or retained_dialog_sha256(attempt.rendered_input) != origin["delivered_input_sha256"]
+        or response.attempt_id != attempt.id or response.target != program["target"]
+        or raw.get("model_stability_status") != "failed_output"
+        or raw.get("model_stability_category") != "unusable_output"
+        or expected_error is None or raw.get("model_stability_error_type") != expected_error
+        or value["error_type"] != expected_error
+        or not isinstance(value["error_reason"], str) or not value["error_reason"].strip()
+        or raw.get("model_stability_reason") != value["error_reason"]
+        or raw.get("logical_call_count") != 1 or raw.get("model_stability_retry_count") != 0
+        or response.output_turns or response.tokens is not None or raw.get("provider_refusal") is True):
+        raise ValueError("reviewed adapter recovery is not the exact retained parser failure")
+    # Older adapters retained a conservative upper bound here. Only the durable
+    # monetary ledger establishes how many physical calls have actually occurred.
+    if budget.reserved_attempt_count(receipt["call_id"]) < prior:
+        raise ValueError("reviewed adapter recovery lacks its funded attempt prefix")
     return prior
 
 
@@ -533,7 +602,7 @@ def build_matched_judge_requests(*, programs: Sequence[dict], budget: AttemptBud
 def _validated_jobs(program: dict, budget: AttemptBudget) -> list[_Admission]:
     """Rebuild fixed input selection from complete historical and RR evidence."""
     if (not isinstance(program, dict) or program.get("schema") not in {
-        SCHEMA, COUNTED_INPUT_SCHEMA, TRANSPORT_RECOVERY_SCHEMA,
+        SCHEMA, COUNTED_INPUT_SCHEMA, TRANSPORT_RECOVERY_SCHEMA, ADAPTER_RECOVERY_SCHEMA,
     }
         or program.get("budget_plan_sha256") != budget.expected_plan_sha256
         or program.get("token_count_policy") != TOKEN_COUNT_POLICY
@@ -545,6 +614,12 @@ def _validated_jobs(program: dict, budget: AttemptBudget) -> list[_Admission]:
             raise ValueError("transport recovery contract requires its retained failures")
     elif recovery is not None:
         raise ValueError("historical execution contracts cannot add transport recovery")
+    repairs = program.get("adapter_recoveries")
+    if program["schema"] == ADAPTER_RECOVERY_SCHEMA:
+        if not isinstance(repairs, dict) or not repairs:
+            raise ValueError("reviewed adapter recovery contract requires its retained failures")
+    elif repairs is not None:
+        raise ValueError("historical execution contracts cannot add reviewed adapter recovery")
     from experiments import hosted_campaign_budget as projection, hosted_retained_inputs as inputs
     from experiments.hosted_request_tokens import validate_receipt
     from experiments import run_matrix

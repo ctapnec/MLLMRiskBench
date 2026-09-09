@@ -126,8 +126,14 @@ counted request and original funded call, retain the old failed checkpoint,
 and continue with physical attempt two, not restart a four-attempt allowance.
 Only the remaining three transport attempts are available. A new successful
 output does not erase the earlier infrastructure failure or its unknown bill.
-The failed Fable parser response is a different incident and is not covered
-by this network-retry authorization.
+The failed Fable parser response is a different incident. Its separately
+requested post-fix recovery must identify the exact failed checkpoint and
+verified adapter revision; it is not a network retry or an automatic
+answer-quality retry. Sol's later parser failure follows the same procedure.
+Each recovery preserves the original request, failed record and unknown bill,
+continues the original funded physical-attempt ordinal, and leaves completed
+answers untouched. The old adapter's conservative attempt-count bound must
+not replace the actual monetary ledger when calculating remaining attempts.
 
 Haiku's actual-output matching completed at 21:14:54 UTC. All 176 eligible
 measured outputs have local counterparts across 81 distinct comparison inputs.

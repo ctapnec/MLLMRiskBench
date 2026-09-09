@@ -279,6 +279,16 @@ reported call count includes only calls made by the new invocation; the old
 checkpoint remains separately bound evidence. Unrelated inputs start at
 attempt one. This contract does not increase any target, judge or retry budget.
 
+Reviewed post-fix parser recovery uses `ura-hosted-retained-execution-plan/4`
+with a nonempty `adapter_recoveries` map, not a reinterpretation of version 3.
+Each entry has `checkpoint`, `attempt_id`, `prior_attempts`, `request_sha256`,
+`repair_commit`, `error_type` and `error_reason`. Checkpoint descriptors retain
+the same path, SHA-256 and byte-length fields. Admission requires the exact
+typed unusable-output error, no generated turns or token usage, unchanged
+source/request identity and the clean repaired target implementation. The
+monetary ledger, not an old conservative transport-count estimate, supplies
+the used physical-attempt prefix. Ordinary paid answer retries remain zero.
+
 ## Live route and transport attestation
 
 `python -m experiments.live_attestation` strictly revalidates one completed,

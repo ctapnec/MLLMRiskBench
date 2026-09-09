@@ -328,6 +328,12 @@ retain their complete monetary reservation before another attempt is admitted.
 Authentication, request-validation and arbitrary programming errors are not
 automatically retried. Exhausted transport stays pending for reviewed recovery.
 
+Explicit recovery after a verified adapter correction is separate from that
+transport loop. It binds the precise retained parser failure and repaired
+target revision, preserves the original failed record and unknown charge,
+and continues the same funded physical-attempt sequence. It cannot select a
+usable answer for regeneration or enable automatic answer-quality retries.
+
 Every Hugging Face model is admitted through one sealed acquisition boundary.
 `collect_run_requirements` projects the five supported roles (vLLM target,
 local vLLM LLM judge, scoring Guardrail, defense Guardrail, and NanoGCG

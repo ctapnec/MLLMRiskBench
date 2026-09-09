@@ -2409,6 +2409,16 @@ settings, item validity, continuation state and usage still require validation.
 Missing or unusable responses remain distinct and still stop paid continuation
 for investigation; neither correction adds answer-quality retries.
 
+After a verified adapter correction, a separately reviewed execution-plan
+version 4 may name exact failed inputs in `adapter_recoveries`. Each entry
+binds the original checkpoint, attempt, counted request, actual prior paid
+attempts, parser error type and reason, and the clean repaired adapter commit.
+This is explicit operator recovery, not an automatic retry for poor answers.
+Preserve the predecessor checkpoint and all completed answers. The original
+funded slot and unknown charge remain in force; recovery cannot restart its
+four-attempt lifetime allowance or consume another input's first reservation.
+The older transport-only contract continues to reject parser failures.
+
 ```bash
 python -m experiments.hosted_retained_execute \
   --program /resolved/path/hosted-program.json \
