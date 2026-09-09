@@ -1447,19 +1447,34 @@ def test_sol_pro_fails_closed_on_incomplete_empty_or_mismatched_results() -> Non
     with pytest.raises(OpenAIResponsesOutputError, match="max_output_tokens"):
         target.generate([DialogTurn(role="user", content="request")])
 
-    missing_reasoning = _responses_result()
-    missing_reasoning.output = missing_reasoning.output[1:]
-    target = OpenAIResponsesTarget()
-    _install_responses_fixture(target, missing_reasoning)
-    with pytest.raises(OpenAIResponsesOutputError, match="omitted its reasoning"):
-        target.generate([DialogTurn(role="user", content="request")])
-
     inconsistent_usage = _responses_result()
     inconsistent_usage.usage.total_tokens = 99
     target = OpenAIResponsesTarget()
     _install_responses_fixture(target, inconsistent_usage)
     with pytest.raises(OpenAIResponsesOutputError, match="usage total disagrees"):
         target.generate([DialogTurn(role="user", content="request")])
+
+
+@pytest.mark.parametrize("refusal", [False, True])
+def test_sol_pro_accepts_message_without_reasoning_output_item(refusal) -> None:
+    result = _responses_result(
+        text=None if refusal else "A complete answer.",
+        refusal="I cannot assist." if refusal else None,
+    )
+    result.output = result.output[1:]
+    result.usage.output_tokens_details.reasoning_tokens = 0
+    target = OpenAIResponsesTarget()
+    _install_responses_fixture(target, result)
+    response = target.generate([DialogTurn(role="user", content="request")])
+    assert response.raw["provider_refusal"] is refusal
+    assert response.tokens["reasoning"] == 0
+    if refusal:
+        assert response.output_turns == []
+    else:
+        assert response.output_turns[0].content == "A complete answer."
+        state = response.output_turns[0].provider_state
+        assert state is not None
+        assert [item["type"] for item in state.items] == ["message"]
 
 
 def _install_anthropic_fixture(target: AnthropicTarget, result) -> None:

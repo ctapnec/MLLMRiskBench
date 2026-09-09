@@ -130,6 +130,45 @@ def test_target_money_settles_after_checkpoint_and_resume_never_reissues(tmp_pat
     assert current_retained_execution_admission() is None
 
 
+def test_typed_provider_refusal_is_funded_observed_outcome_not_paid_stop(tmp_path):
+    points, attacker, target, calls, admission = _setup(tmp_path)
+    create = target._client.chat.completions.create
+
+    def refuse(**request):
+        result = create(**request)
+        result.choices[0].message.content = None
+        result.choices[0].message.refusal = "I cannot assist with that request."
+        return result
+
+    target._client.chat.completions.create = refuse
+    checkpoint = tmp_path / "refusals.responses.checkpoint.jsonl"
+    runner = _runner(attacker, target, admission)
+    runner.run(points, on_response=lambda row: Runner.append_checkpoint(checkpoint, row))
+    assert len(calls) == len(admission.requests)
+    assert all(r.raw["provider_refusal"] is True and r.output_turns == [] for r in runner.responses)
+    assert not (admission.budget.root / "paid-circuit.json").exists()
+    program = {"target": target.name, "requests": admission.requests,
+               "jobs": [{"argv": ["--out", str(tmp_path)]}]}
+    assert subject._retained_execution_counts(program, admission.budget) == (len(admission.requests), len(admission.requests))
+    before = len(calls)
+    _runner(attacker, target, admission).run(points, response_records=Runner.load_response_checkpoint(checkpoint))
+    assert len(calls) == before
+
+
+def test_malformed_refusal_cannot_be_counted_as_an_observed_outcome(tmp_path):
+    points, attacker, target, _calls, admission = _setup(tmp_path)
+    records = []
+    _runner(attacker, target, admission).run(points, on_response=records.append)
+    row = copy.deepcopy(records[0]["response"])
+    row["raw"].update(provider_refusal=True, provider_refusal_category="openai_refusal")
+    # A refusal cannot simultaneously contain ordinary generated text.
+    (tmp_path / "contradictory.responses.jsonl").write_text(json.dumps(row) + "\n")
+    program = {"target": target.name, "requests": admission.requests,
+               "jobs": [{"argv": ["--out", str(tmp_path)]}]}
+    with pytest.raises(ValueError, match="exactly one"):
+        subject._retained_execution_counts(program, admission.budget)
+
+
 @pytest.mark.parametrize("read_rate,write_rate,cached,written,expected_cost", [
     ("0.5", None, 0, 0, 88),
     ("0.5", None, 2, 0, 82),

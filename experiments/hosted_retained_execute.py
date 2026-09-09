@@ -65,6 +65,16 @@ def _validate_input_budget(program: Mapping[str, Any], route: Mapping[str, Any])
         raise ValueError("exact selected target requests exceed the route's funded projection")
 
 
+def _typed_provider_refusal(response: Any) -> bool:
+    """A validated provider refusal is an observed outcome, not a missing reply."""
+    if response.raw.get("provider_refusal") is not True:
+        return False
+    from ura.runner import validate_response_refusal_state
+
+    validate_response_refusal_state(response)
+    return True
+
+
 class _Admission:
     """One already-validated, immutable job inside the shared funded population."""
 
@@ -194,9 +204,11 @@ class _Admission:
         if type(count) is not int or not 1 <= count <= 4:
             self._circuit("target_usage_or_transport_unavailable", call_id)
             raise ValueError("durable target response lacks its actual funded physical-attempt prefix")
+        provider_refusal = _typed_provider_refusal(response)
         missing = (response.raw.get("model_stability_status") == "failed_output"
                    or response.raw.get("target_input_status") == "incompatible"
-                   or not any((turn.content or "").strip() for turn in response.output_turns))
+                   or (not provider_refusal
+                       and not any((turn.content or "").strip() for turn in response.output_turns)))
         tokens = response.tokens if isinstance(response.tokens, Mapping) else {}
         cost = None
         if not missing and all(type(tokens.get(key)) is int and tokens[key] >= 0
@@ -368,6 +380,7 @@ def _retained_execution_counts(program: Mapping[str, Any], budget: AttemptBudget
         response = Response.model_validate(payload)
         if response.target != program["target"]:
             raise ValueError("hosted controller response target changed")
+        _typed_provider_refusal(response)
         previous = responses.get(response.attempt_id)
         dumped = response.model_dump(mode="json")
         if previous is not None and previous != dumped:
@@ -390,7 +403,8 @@ def _retained_execution_counts(program: Mapping[str, Any], budget: AttemptBudget
     successful = sum(
         row.get("raw", {}).get("model_stability_status") != "failed_output"
         and row.get("raw", {}).get("target_input_status") != "incompatible"
-        and any((turn.get("content") or "").strip() for turn in row.get("output_turns", []))
+        and (row.get("raw", {}).get("provider_refusal") is True
+             or any((turn.get("content") or "").strip() for turn in row.get("output_turns", [])))
         for row in responses.values()
     )
     if len(responses) > attempted or successful > attempted:

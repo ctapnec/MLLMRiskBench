@@ -2273,10 +2273,8 @@ class OpenAIResponsesTarget(OpenAITarget):
                         f"type {part_type!r}"
                     )
 
-        if reasoning_item_count < 1:
-            raise OpenAIResponsesOutputError(
-                "OpenAI Responses Pro output omitted its reasoning item"
-            )
+        # Reasoning settings do not guarantee a reasoning output item. Keep
+        # every item supplied, but accept a valid message/refusal without one.
         if message_item_count != 1:
             raise OpenAIResponsesOutputError(
                 "OpenAI Responses Pro output must contain exactly one final message"
