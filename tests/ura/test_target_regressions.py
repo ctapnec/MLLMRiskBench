@@ -1599,13 +1599,14 @@ def test_budget_fable_and_sol_send_lower_allowances_without_mutating_legacy(limi
     assert OpenAIResponsesTarget().max_output_tokens == 25_000
 
 
-def test_kimi_explicit_reasoning_effort_reaches_request_and_evidence() -> None:
-    target = build_api_target("kimi:kimi-k3", config={
-        "modalities": ["text", "image"], "max_tokens": 8192,
+@pytest.mark.parametrize("spec", ["kimi:kimi-k3", "deepseek:deepseek-v4-pro", "deepseek:deepseek-v4-flash"])
+def test_compatible_explicit_reasoning_effort_reaches_request_and_evidence(spec) -> None:
+    target = build_api_target(spec, config={
+        "modalities": ["text"], "max_tokens": 8192,
         "temperature": None, "reasoning_effort": "low",
     })
     result = _chat_result()
-    result.model = "kimi-k3"
+    result.model = spec.split(":", 1)[1]
     captured = {}
 
     def create(**kwargs):

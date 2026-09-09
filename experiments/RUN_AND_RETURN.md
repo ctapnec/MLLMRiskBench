@@ -28,6 +28,14 @@ preparer checks this before provider token counting. Recovery may regroup
 unstarted inputs, but must preserve their original order, exact requests and
 source flags and must not repeat completed transport probes or answers.
 
+DeepSeek V4 supports explicit `reasoning_effort` values `low`, `high` and
+`max` in API configuration. Omission preserves the provider default, rather
+than silently selecting low effort. The same value appears in request preview,
+token counting, generation and retained metadata. A reasoning-only length-ended
+reply is still a missing visible answer; never present reasoning as the final
+answer. Changing effort defines a new generation condition and does not revise
+already funded request hashes or historical observations.
+
 This is the operator path from a clean Linux GPU machine to the evidence bundle
 for the thesis. It covers the broad hosted and local model roster, all twenty-five source converters, the runner-safe external attack bridges, and nine complete
 source-native evaluators. Experiments and the human audit are still pending.

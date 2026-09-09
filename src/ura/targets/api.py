@@ -1736,10 +1736,11 @@ class OpenAITarget(BaseTarget):
         reasoning_effort: str | None = None,
     ) -> None:
         if reasoning_effort is not None and (
-            canonical_provider_name(provider) != "kimi" or model != "kimi-k3"
+            (canonical_provider_name(provider), model) not in {
+                ("kimi", "kimi-k3"), ("deepseek", "deepseek-v4-pro"), ("deepseek", "deepseek-v4-flash")}
             or reasoning_effort not in {"low", "high", "max"}
         ):
-            raise ValueError("reasoning_effort currently supports Kimi K3 low/high/max only")
+            raise ValueError("reasoning_effort supports Kimi K3 and DeepSeek V4 low/high/max only")
         self.reasoning_effort = reasoning_effort
         self.model = model
         self.provider = provider
@@ -3340,11 +3341,12 @@ def normalize_api_target_config(
         raise ValueError(f"API config {spec!r} thinking_level is unsupported")
     reasoning_effort = config.get("reasoning_effort")
     if "reasoning_effort" in config and (
-        canonical_provider != "kimi" or selected_model != "kimi-k3"
+        (canonical_provider, selected_model) not in {
+            ("kimi", "kimi-k3"), ("deepseek", "deepseek-v4-pro"), ("deepseek", "deepseek-v4-flash")}
         or not isinstance(reasoning_effort, str)
         or reasoning_effort not in {"low", "high", "max"}
     ):
-        raise ValueError(f"API config {spec!r} reasoning_effort supports Kimi K3 low/high/max only")
+        raise ValueError(f"API config {spec!r} reasoning_effort supports Kimi K3 and DeepSeek V4 low/high/max only")
     documented_modalities = _MODEL_ADAPTER_MODALITIES.get(
         (canonical_provider, selected_model)
     )
