@@ -4,6 +4,37 @@ Status: hosted target collection partial, revised 9 September 2026. This documen
 paid call. Start only after the all-local campaign seals its Phase 7 inventory.
 Run every controller on the rig in a named tmux session.
 
+Latest aggregate, 9 September at 12:19 UTC: 937 usable outcomes, two retained
+failed inputs and two unstarted inputs out of 941. Luna completed all 148
+assigned inputs at 10:51:45 UTC; its published reports separate 139 measured
+inputs from nine setup/diagnostic inputs. The remaining assignments are two
+Sol inputs. DeepSeek completed its 75-input continuation with 75 usable outputs
+and zero truncations; its whole assignment retains 142 usable outputs and one
+earlier missing response. The continuation reports are published. Haiku
+re-adjudication has not started.
+The attempted DeepSeek continuation stopped before any paid call because its
+operator loaded the preparation program without the original controller's
+attached transport receipts. Reuse the already-retained attested program;
+do not repeat readiness probes, extend receipt age, change inputs or weaken
+transport admission. After action-specific user approval, the corrected
+continuation started and retained 53 new visible responses by 11:56 UTC,
+with no token-limit-ended response. The earlier pre-call failure is not a model outcome.
+The user subsequently explicitly directed execution of only Sol's two missing
+inputs. Its saved answer and historical HTTP 400 remain unchanged, and the
+unknown historical machine code cannot be inferred from another route.
+The first continuation wrapper assumed three assigned inputs; the real unit
+has four, including the saved answer. It stopped before any paid call, and the
+corrected four-input/two-checkpoint continuation is active. RA-406 records this
+operator error. The two unstarted inputs remain assigned and funded.
+
+Completion order: finish hosted generation, verify local-cascade and source-task
+decisions, execute funded Haiku judging of the selected local and hosted
+answers, and publish comparison coverage and diagrams. Then ask the user what
+to continue with; do not automatically expand into another campaign or thesis
+rewrite. All assigned API inputs remain in execution coverage, including
+missing outputs, diagnostic/setup turns and source-task-only rows; do not
+claim an ineligible row received a common-security Haiku verdict.
+
 Restart update, 9 September at 09:48 UTC. The original allocation now retains
 671 usable responses, three failed inputs and 267 unstarted inputs. Sol's
 previous parser-failed input has a valid recovered answer; a different input
