@@ -14,7 +14,7 @@ import json
 import os
 import re
 from collections.abc import Mapping, Sequence
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_CEILING
 from pathlib import Path
 from typing import Any
 
@@ -216,9 +216,9 @@ def _cost_microusd(
         Decimal(input_tokens) * input_rate
         + Decimal(output_tokens) * output_rate
     )
-    if value != value.to_integral_value():
-        raise ValueError("projection cost is not an integral number of micro-USD")
-    return int(value)
+    # Valid tariffs and odd-sized subsets can produce fractional microdollars.
+    # Reserve upward; projections that were already integral stay unchanged.
+    return int(value.to_integral_value(rounding=ROUND_CEILING))
 
 
 def _budget_microusd(value: object) -> int:

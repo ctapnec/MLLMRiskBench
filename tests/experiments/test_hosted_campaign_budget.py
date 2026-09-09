@@ -197,6 +197,16 @@ def test_deepseek_is_peak_funded_without_a_clock_window() -> None:
     assert provider["remaining_margin_microusd"] == 455_936
 
 
+def test_fractional_microdollar_route_cost_reserves_upward() -> None:
+    from decimal import Decimal
+    exact = Decimal(55) * (Decimal(4000) * Decimal('1.32') + Decimal(16384) * Decimal('3.96'))
+    result = subject._cost_microusd(calls=55, input_tokens=4000, output_tokens=16384,
+                                   input_rate=Decimal('1.32'), output_rate=Decimal('3.96'))
+    assert exact == Decimal('3858835.20')
+    assert result == 3858836
+    assert exact <= result < exact + 1
+
+
 def test_missing_or_non_usd_price_blocks_projection() -> None:
     pricing = _pricing()
     pricing["providers"]["kimi"]["models"]["kimi-k3"]["rates"][0][
