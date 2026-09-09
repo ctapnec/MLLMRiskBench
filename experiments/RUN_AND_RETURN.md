@@ -46,6 +46,28 @@ identity and the saved judgment artifact must agree. This eliminates duplicate
 judging of unchanged local answers without reusing their verdicts for new
 hosted answers. Invalid saved verdicts remain unscored, not valid decisions.
 
+For a changed hosted output allowance, preserve the paid prefix as its original
+condition and prepare the exact unstarted complement separately. The pending
+condition validator checks the old program, immutable paid history, unchanged
+delivered inputs, new counted requests and future judge reservations. Budget
+handoffs retain all started slots and close predecessor spending before new
+execution. Fractional microdollar projections round upward, never downward.
+
+`hosted_campaign_prepare --shared-budget-root PATH --shared-budget-sha256 SHA`
+prepares against an existing allocation instead of creating another one. Both
+options are required together. Allocation and pool checks precede token-count
+requests; every selected slot must match and remain unstarted. Preparation does
+not change the ledger. This supports adding providers without independently
+allocating the same Anthropic judge credits twice.
+
+An HTTP 400 with the explicit provider code `cyber_policy` is a provider-policy
+rejection, not evidence of a network outage or an invalid token parameter.
+Preserve its exact error and unknown billing hold, do not retry that input, and
+do not label it as a generated model answer. Reviewing such a terminal event
+must not cause unrelated completed answers to be repeated. A failed transport
+pilot does not attest the remaining lane; use an eligible unstarted assigned
+input for any replacement pilot, without increasing the campaign call budget.
+
 This is the operator path from a clean Linux GPU machine to the evidence bundle
 for the thesis. It covers the broad hosted and local model roster, all twenty-five source converters, the runner-safe external attack bridges, and nine complete
 source-native evaluators. Experiments and the human audit are still pending.

@@ -2,6 +2,32 @@
 
 ## Current execution and required Google extension
 
+Update, 9 September at 22:23 UTC: Sonnet and Haiku target routes and their
+post-hoc judging are complete. Together with the separately published 17
+DeepSeek measured answers, 187 supplemental hosted answers have received
+Haiku assessments: 186 valid, one invalid, with USD 0.191448 reported usage.
+These are fresh assessments of hosted outputs, separate from the 750 existing
+local-answer judgments. Remaining route collection and joint comparisons are
+not complete.
+
+Terra's first supplemental transport pilot returned HTTP 400 with the explicit
+code `cyber_policy`. Retain it as a provider-policy rejection with unknown
+billing, not a network retry, zero-cost event or generated answer. Its global
+paid-call stop also interrupted Luna. At 22:20 UTC the reviewed stop was
+archived with its paid history unchanged, and unaffected queues restarted.
+Luna must resume its saved answer checkpoint; Terra's unstarted assignments
+need another already-funded input as a transport pilot. Neither recovery may
+repeat completed answers or retry this policy-rejected input.
+
+The revised combined funding quote preserves Google's USD 17 ceiling and
+Anthropic's USD 64 ceiling, with USD 24 protected for judges. DeepSeek's ceiling
+is USD 7.16, retaining USD 2.00 plus a USD 0.25 unposted-charge margin from the
+reported USD 9.41 balance. The previous USD 7.20 ceiling exceeded that available
+amount by USD 0.04. All started slot bounds remain unchanged. Shared-budget
+preparation passed 31 focused rig tests and a reversed-fix check; real-input
+preparation remains in progress. A quote or offline budget copy is not active
+spending authority. Keep old workers and the exact ledger coordinated at handoff.
+
 Update, 9 September 2026 at 20:45 UTC: the 676-request, eleven-model
 supplement is funded and target collection is running. Both additional local
 Haiku batches are complete: 472 saved judgments, 466 valid and six invalid
