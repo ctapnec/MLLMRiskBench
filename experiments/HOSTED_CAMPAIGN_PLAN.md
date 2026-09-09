@@ -34,6 +34,16 @@ usage or provider billing supports settlement. Any verified saving remains
 inside the existing provider ceilings and does not consume the protected
 matched Haiku judging allocation.
 
+At 10:41 UTC Sol's two independent, previously unstarted R-Judge inputs
+completed under their original requests and funding. Its route now retains
+26 usable outcomes, one HTTP rejection and two unstarted inputs in the
+interrupted JailbreakBench unit. The rejection was not repeated or rephrased.
+Its newly recovered earlier answer also has its separate local judgment.
+Terra and Kimi's full measured reports are published; diagnostic inputs and
+different executed revisions remain separately accounted. Validated completed
+response views are staged for Haiku, but this is not final paid selection:
+Luna and any later resolved continuation must be reconciled before closure.
+
 Execution update, 9 September at 06:34 UTC. The original 941-input allocation
 retains 670 usable outcomes, three failed inputs and 268 unstarted inputs.
 Astra, Fable, Opus, Sonnet, Haiku and GPT-5.5 are complete. Kimi has completed
