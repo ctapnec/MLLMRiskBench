@@ -2,13 +2,23 @@
 
 ## Current execution and required Google extension
 
-Update, 9 September 2026 at 20:00 UTC: the 676-request, eleven-model
-supplement is funded; both execution queues are preparing their first jobs.
-The first additional local Haiku batch completed all 236 selected answers for
-USD 0.396163, with four invalid verdicts retained as unscored. The other
-236-answer batch is continuing. The no-call statements below describe earlier
-snapshots, not the current judging state. Started workers and funding do not
-constitute completed target collection.
+Update, 9 September 2026 at 20:45 UTC: the 676-request, eleven-model
+supplement is funded and target collection is running. Both additional local
+Haiku batches are complete: 472 saved judgments, 466 valid and six invalid
+verdicts retained as unscored, for USD 0.758727 in reported usage. Alongside
+278 exact prior judgments, these cover the 750 existing local answers in this
+selected cohort. The no-call statements below describe earlier snapshots, not
+the current judging state. Funding and started workers do not constitute
+completed target collection.
+
+The Sonnet queue stopped before a new paid call because two non-scoring
+Crescendo setup turns had been isolated as standalone security canaries.
+Recovery joins these unstarted inputs to the same arm's unstarted measured
+job and preserves their unscored status. The same correction applies to Luna,
+Kimi and Opus before execution. All 355 assigned requests across those models
+and Fable are preserved, and completed Sonnet probes are reused. Product
+preparation now checks scoring-capable pilot partitions before token counting;
+the focused and reversed-fix rig checks pass at `c27e861`.
 
 Google is a required part of this plan. The operator reported USD 24.47 in
 Google AI credit and authorized approximately USD 15-17 for Flash and Pro
@@ -51,10 +61,13 @@ token usage, truncation, verdict coverage, costs and diagrams. Keep unmatched
 or differently configured cohorts separate. Completion requires generation,
 both judging stages and publication, not just planning or adapter tests.
 
-Implementation in progress: Gemini exists as an adapter, but was omitted from
-complete-request preview/counting and the funded replay routes. The live
-catalog is retained at `engineering/google-catalog-20260909.json`. No Google
-generation has yet been made in this supplement.
+Implementation: complete-request preview/counting, configurable provider
+routes, explicit thinking configuration and billing of thinking tokens are
+implemented and rig-tested. The live catalog is retained at
+`engineering/google-catalog-20260909.json`. Matched input preparation is
+running; no Google generation has yet been made in this supplement. Google
+funding must leave existing Anthropic commitments intact, and completion still
+requires target collection, both judges and published comparisons.
 
 ## Earlier assessment snapshots
 

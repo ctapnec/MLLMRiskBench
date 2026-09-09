@@ -20,6 +20,14 @@ Google Flash/Pro matched-input collection, USD 17 Google ceiling and both judges
 The configuration page groups provider-key editors separately from acquisition
 credentials; saving a key proves neither credit nor model access.
 
+When partitioning retained attack conversations, a setup-only turn is not a
+standalone security canary. Choose a scoring-capable pilot without removing
+the last scoring-capable input from a measured arm that still contains setup
+turns. Preserve the setup turns as unscored observations in that arm. The
+preparer checks this before provider token counting. Recovery may regroup
+unstarted inputs, but must preserve their original order, exact requests and
+source flags and must not repeat completed transport probes or answers.
+
 This is the operator path from a clean Linux GPU machine to the evidence bundle
 for the thesis. It covers the broad hosted and local model roster, all twenty-five source converters, the runner-safe external attack bridges, and nine complete
 source-native evaluators. Experiments and the human audit are still pending.
