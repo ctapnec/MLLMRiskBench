@@ -25,6 +25,7 @@ def _save(path: Path, value: object) -> dict:
 
 
 def _request(tmp_path: Path, monkeypatch, **program_options) -> tuple[dict, Path]:
+    program_options.setdefault("scoring_probes", True)
     program, _budget = _program(tmp_path, monkeypatch, **program_options)
     config_path = Path(
         program["jobs"][0]["argv"][
@@ -441,7 +442,7 @@ def test_preparation_uses_the_grouped_partition_for_config_calls_and_measurement
     request, _execution_root = _request(tmp_path, monkeypatch)
     seen = []
 
-    def last_input_pilot(plan):
+    def last_input_pilot(plan, **kwargs):
         group = [plan["selected"][-1]["input_identity_sha256"]]
         seen.append(group)
         return [group]
@@ -459,7 +460,7 @@ def test_preparation_uses_the_grouped_partition_for_config_calls_and_measurement
 def test_unrunnable_cluster_partition_stops_before_counting(tmp_path, monkeypatch):
     request, _execution_root = _request(tmp_path, monkeypatch)
 
-    def invalid(plan):
+    def invalid(plan, **kwargs):
         raise ValueError("cannot partition whole source clusters")
 
     monkeypatch.setattr(subject, "_pilot_groups", invalid)

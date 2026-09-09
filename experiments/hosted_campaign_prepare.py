@@ -199,6 +199,8 @@ def _pilot_groups(plan: Mapping[str, Any], *, policy_evaluable_ids: set[str] | N
                     continue
             chosen.append(groups[key])
             seen.add(key)
+    if not chosen:
+        raise ValueError("hosted selection cannot separate a scoring-capable pilot and measured arm")
     return chosen
 
 
@@ -410,7 +412,13 @@ def prepare_campaign(
         inputs.resolve_inputs(plan, candidates=candidates,
             **({"request_builder": inputs.provider_request_builder(target, values["media_index"])} if distinct else {}),
             **bindings)
-        _pilot_groups(plan)  # Unrunnable partitions must fail before provider counting.
+        # Setup-only subsets cannot execute as security canaries. Check the
+        # retained source flags before contacting even a token-count endpoint.
+        _pilot_groups(plan, policy_evaluable_ids={
+            entry["origin"]["selection"]["input_identity_sha256"]
+            for replay in route["replays"] for entry in replay["entries"]
+            if entry["origin"]["original_attempt"]["params"]["policy_evaluable_turn"]
+        })
 
     route_budget = {row["target_spec"]: row for row in budget_projection["routes"]}
     programs: list[dict[str, Any]] = []

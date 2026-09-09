@@ -414,11 +414,21 @@ def _program(
     judge_rates=(1, 5),
     extra_points=0,
     source_capture=None,
+    scoring_probes=False,
 ):
     from test_hosted_campaign_budget import _api_config, _pricing, _budgets
     from experiments import hosted_campaign_budget as money, hosted_retained_inputs as materializer
     from experiments.hosted_request_tokens import count_request
     points, cell, _old_plan, _old_bindings, _value, _config = _fixture(tmp_path, adaptive=True)
+    if scoring_probes:
+        # Preparation needs a scoring-capable pilot AND measured population.
+        # The default fixture deliberately contains one Crescendo setup turn;
+        # here use two direct, independently evaluable replay probes instead.
+        for attempt in cell["attempts"].values():
+            attempt["attacker"] = "replay"
+            attempt["params"].update(policy_evaluable_turn=True,
+                turn_expected_behavior=points[0].expected_behavior, policy_challenge_index=0)
+        cell["artifacts"]["attempts"].write_text("\n".join(json.dumps(row) for row in cell["attempts"].values()) + "\n")
     if extra_points:
         from ura.converters._common import canonical_converted_corpus_sha256
         for number in range(extra_points):
