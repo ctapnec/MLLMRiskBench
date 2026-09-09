@@ -3026,6 +3026,11 @@ confirm its exact `requested_target_spec`, `resolved_target`,
 artifact/harness/driver hashes before approval. A text+image record does not
 cover text alone. A harness or driver source change requires a new probe.
 
+For compatible hosted endpoints, receipt production and measured admission
+both compare the persisted endpoint identity, not a raw URL on one side and
+its hash on the other. All other route settings remain included. Changing
+the endpoint or output allowance invalidates the old transport receipt.
+
 Every probe in this section scores through the rules stage only, so its single
 cell completes only when the target's reply matches a confident rule template
 (a refusal template, the harmful-compliance heuristic on the synthetic harmful

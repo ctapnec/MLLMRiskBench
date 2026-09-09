@@ -6309,7 +6309,7 @@ def _main(argv=None) -> int:
                 route_config=(
                     local_configs.get(spec)
                     if route_kind == "local_runtime"
-                    else api_configs.get(spec)
+                    else portable_api_configs.get(spec)
                 ),
             )
             if args.preflight_only:

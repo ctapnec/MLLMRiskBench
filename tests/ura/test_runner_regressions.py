@@ -1201,10 +1201,17 @@ def test_stale_or_route_mismatched_attestation_fails_before_generation(
     }
 
 
+@pytest.mark.parametrize(("target_spec", "endpoint"), [
+    ("openai:fixture-model", None),
+    ("kimi:kimi-k3", "https://api.moonshot.ai/v1"),
+    ("deepseek:deepseek-v4-pro", "https://api.deepseek.com/v1"),
+])
 def test_probe_producer_and_measured_run_bind_one_fake_live_route(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     project_revision_args,
+    target_spec,
+    endpoint,
 ) -> None:
     class StableLiveTarget(BaseTarget):
         name = "stable-live-target"
@@ -1229,8 +1236,12 @@ def test_probe_producer_and_measured_run_bind_one_fake_live_route(
 
     target = StableLiveTarget()
     monkeypatch.setattr(run_matrix, "build_target", lambda *_a, **_kw: target)
-    target_spec = "openai:fixture-model"
     api_args = _api_config_args(tmp_path, target_spec)
+    if endpoint is not None:
+        config_path = Path(api_args[1])
+        configs = json.loads(config_path.read_text(encoding="utf-8"))
+        configs[target_spec]["base_url"] = endpoint
+        config_path.write_text(json.dumps(configs), encoding="utf-8")
     probe_root = tmp_path / "probe"
     common = [
         "--api", target_spec, *api_args,
@@ -1294,6 +1305,24 @@ def test_probe_producer_and_measured_run_bind_one_fake_live_route(
         "target": target.name,
     }
     assert len(list(measured.glob("live-attestation-*.json"))) == 1
+
+    if endpoint is not None:
+        assert "base_url" not in grid["request"]["api_configs"][target_spec]
+        assert grid["request"]["api_configs"][target_spec]["base_url_identity"]
+        for field, value in [("base_url", "https://different.example/v1"), ("max_tokens", 128)]:
+            changed = copy.deepcopy(configs)
+            changed[target_spec][field] = value
+            config_path.write_text(json.dumps(changed), encoding="utf-8")
+            rejected = tmp_path / ("changed-" + field)
+            assert run_matrix.main([
+                *common, "--execution-scope-id", "test-scope",
+                "--live-attestation", str(receipt_path),
+                "--live-attestation-sha256", receipt_sha256,
+                "--live-attestation-max-age-hours", "1", "--out", str(rejected),
+            ]) == 1
+            error = json.loads((rejected / "live-attestation.error.json").read_text(encoding="utf-8"))
+            assert "route/config mismatch" in error["message"]
+            assert target.calls == 2
 
 
 @pytest.mark.parametrize("incompatible", ["--preflight-only", "--attestation-probe"])
