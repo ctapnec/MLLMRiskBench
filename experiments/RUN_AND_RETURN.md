@@ -10,6 +10,15 @@ bound. Default metadata/structure checks do not establish unchanged bytes in
 an externally edited candidate collection. Paid reservations are checked
 against the live ledger immediately before every physical request.
 
+Once a cohort's targets and all eligible retained-output judgments are complete,
+`AttemptBudget.close(reason=...)` retires its budget. It releases only unused
+first-judge reservations, not actual charges or unknown-usage exposure. The
+original plan and attempt ledger stay unchanged. Closure prevents further paid
+attempts, including from older executors; later usage settlement remains
+possible. Do not close a cohort with pending target inputs, active requests,
+unfinished intended judging or an unresolved paid-output stop. Freed capacity
+may fund a new shared-input selection only within the same cumulative ceilings.
+
 Hosted routes may run concurrently in isolated processes. Keep each job's
 exact input partition, checkpoint owner and shared monetary reservation;
 concurrency is not permission to repeat an already-paid response. The optional

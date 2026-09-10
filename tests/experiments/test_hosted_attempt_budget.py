@@ -38,6 +38,66 @@ def usage_bound(**changes):
             "response_sha256": "a" * 64, "pricing_sha256": "b" * 64, "bound_microusd": 5, **changes}
 
 
+def finish_targets(budget):
+    for call, provider in (("A", "anthropic"), ("B", "anthropic"), ("O", "openai")):
+        budget.reserve(call, 1, provider=provider)
+        budget.settle(call, 1, None if call == "O" else 2)
+
+
+def test_close_releases_only_unissued_judging_not_unknown_charges(budget):
+    finish_targets(budget)
+    before = {name: (budget.root / name).read_bytes() for name in ("plan.json", "ledger.json")}
+    closed = budget.close(reason="All eligible retained outputs have completed judgments")
+    assert closed["state"] == "closed"
+    assert closed["pools"]["anthropic:judge"]["released_unstarted_commitments_microusd"] == 30
+    assert closed["pools"]["anthropic:judge"]["liability_microusd"] == 0
+    assert closed["pools"]["openai:target"]["reserved_exposure_microusd"] == 10
+    assert closed["pools"]["openai:target"]["unknown_usage_attempts"] == 1
+    assert closed["pools"]["anthropic:target"]["settled_cost_microusd"] == 4
+    assert reopen(budget).snapshot() == closed
+    assert budget.close(reason="Repeated close") == closed
+    assert all((budget.root / name).read_bytes() == value for name, value in before.items())
+    for call, provider, number in (("J", "anthropic", 1), ("O", "openai", 2)):
+        with pytest.raises(mod.BudgetError, match="circuit is open"):
+            reopen(budget).reserve(call, number, provider=provider)
+
+
+def test_close_preserves_real_judgments_and_accepts_later_usage_settlement(budget):
+    finish_targets(budget)
+    budget.reserve("J", 1, provider="anthropic")
+    budget.settle("J", 1, 3)
+    closed = budget.close(reason="Finished selected outputs")
+    assert closed["pools"]["anthropic:judge"]["released_unstarted_commitments_microusd"] == 0
+    assert closed["pools"]["anthropic:judge"]["settled_cost_microusd"] == 3
+    budget.bound_reported_usage("O", 1, usage_bound())
+    assert budget.snapshot()["pools"]["openai:target"]["reserved_exposure_microusd"] == 5
+    budget.settle("O", 1, 4)
+    assert budget.snapshot()["state"] == "closed"
+    assert budget.snapshot()["pools"]["openai:target"]["settled_cost_microusd"] == 4
+
+
+@pytest.mark.parametrize("state", ["unstarted_target", "in_flight", "existing_stop"])
+def test_close_refuses_pending_or_stopped_work(budget, state):
+    if state == "in_flight":
+        budget.reserve("A", 1, provider="anthropic")
+    elif state == "existing_stop":
+        finish_targets(budget)
+        mod._write_new(budget.root / "paid-circuit.json", {"category": "missing_target_output"})
+    with pytest.raises(mod.BudgetError):
+        budget.close(reason="Cannot retire unfinished work")
+
+
+def test_close_rejects_a_changed_cancellation_inventory(budget):
+    finish_targets(budget)
+    budget.close(reason="Finished")
+    path = budget.root / "paid-circuit.json"
+    closure = json.loads(path.read_text())
+    closure["unstarted_judge_call_ids"] = []
+    mod._write_atomic(path, closure)
+    with pytest.raises(mod.BudgetError, match="closure differs"):
+        reopen(budget)
+
+
 def test_reported_token_bound_remains_unknown_not_an_invented_exact_bill(budget):
     budget.reserve("O", 1, provider="openai")
     budget.settle("O", 1, None)

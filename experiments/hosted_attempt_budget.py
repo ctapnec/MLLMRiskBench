@@ -314,8 +314,62 @@ class AttemptBudget:
     def snapshot(self) -> dict:
         """Return exposure and commitments without changing any retained state."""
         with _budget_lock(self.root):
-            plan, ledger, _calls = self._load()
-            return self._totals(plan, ledger)
+            plan, ledger, calls = self._load()
+            return self._closed_snapshot(plan, ledger, calls)
+
+    def _closed_snapshot(self, plan: dict, ledger: dict, calls: dict) -> dict:
+        totals = self._totals(plan, ledger)
+        marker = self.root / "paid-circuit.json"
+        if not marker.exists() and not marker.is_symlink():
+            return totals
+        closure, _ = _read_regular(marker, label="paid dispatch stop", max_bytes=_MAX_BYTES)
+        if not isinstance(closure, dict) or closure.get("category") != "completed_budget_closed":
+            return totals
+        unstarted = sorted(key for key in calls if key not in ledger["attempts"])
+        if (set(closure) != {"schema", "category", "budget_plan_sha256", "reason", "unstarted_judge_call_ids"}
+                or closure["schema"] != "ura-hosted-budget-close/1"
+                or closure["budget_plan_sha256"] != self.expected_plan_sha256
+                or closure["unstarted_judge_call_ids"] != unstarted
+                or any(calls[key]["pool"] != "judge" for key in unstarted)
+                or any(pool["unresolved_attempts"] for pool in totals["pools"].values())):
+            raise BudgetError("completed budget closure differs from retained attempts")
+        _name(closure["reason"], "budget closure reason")
+        for pool in totals["pools"].values():
+            released = pool["unstarted_first_commitments_microusd"]
+            pool["released_unstarted_commitments_microusd"] = released
+            pool["unstarted_first_commitments_microusd"] = 0
+            pool["liability_microusd"] -= released
+            pool["available_retry_margin_microusd"] = max(0, pool["cap_microusd"] - pool["liability_microusd"])
+        if totals["state"] == "active":
+            totals["state"] = "closed"
+        totals["closure"] = closure
+        return totals
+
+    def close(self, *, reason: str) -> dict:
+        """Retire a completed cohort, releasing only never-issued judge slots.
+
+        The caller must finish the intended judging population first. Target
+        attempts and outstanding charges remain untouched. The existing stop
+        filename also prevents older executors from spending this budget again.
+        """
+        reason = _name(reason, "budget closure reason")
+        with _budget_lock(self.root):
+            plan, ledger, calls = self._load()
+            totals = self._closed_snapshot(plan, ledger, calls)
+            if totals["state"] == "closed":
+                return totals
+            marker = self.root / "paid-circuit.json"
+            if marker.exists() or marker.is_symlink():
+                raise BudgetError("an existing paid stop must be resolved before budget closure")
+            if totals["state"] != "active" or any(pool["unresolved_attempts"] for pool in totals["pools"].values()):
+                raise BudgetError("cannot close in-flight or over-budget attempts")
+            unstarted = sorted(key for key in calls if key not in ledger["attempts"])
+            if any(calls[key]["pool"] != "judge" for key in unstarted):
+                raise BudgetError("cannot close a cohort with unstarted target inputs")
+            _write_new(marker, {"schema": "ura-hosted-budget-close/1", "category": "completed_budget_closed",
+                "budget_plan_sha256": self.expected_plan_sha256, "reason": reason,
+                "unstarted_judge_call_ids": unstarted})
+            return self._closed_snapshot(plan, ledger, calls)
 
     def call(self, call_id: str) -> dict:
         """The callback checks the provider/request allowance against this slot."""
