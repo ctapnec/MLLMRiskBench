@@ -13,6 +13,15 @@ from experiments import retained_artifact_reader as subject
 
 COMMIT = "a" * 40
 TREE = "b" * 40
+# Dispatch tests replace the entire source loader. The real checksum bridge is
+# exercised against file readers in test_artifact_checks, not these join stubs.
+CHECKSUM_REQUEST = {
+    "verify_artifact_sha256": False,
+    "artifact_check_bridge": (
+        "def _configure_historical_artifact_checks(verify):\n"
+        " return {'mode': 'metadata_and_records', 'unchanged_historical_full_checks': False}\n"
+    ),
+}
 
 
 def _grid(root: Path, *, commit: str = COMMIT) -> Path:
@@ -254,7 +263,7 @@ def test_joined_worker_dispatches_frame_after_exact_source_validation(
     }
     if frame is not None:
         request["frame"] = frame
-    monkeypatch.setattr(subject.sys, "stdin", io.StringIO(json.dumps(request)))
+    monkeypatch.setattr(subject.sys, "stdin", io.StringIO(json.dumps({**request, **CHECKSUM_REQUEST})))
     if changed:
         with pytest.raises(ValueError, match="exact validator checkout"):
             exec(subject._WORKER, {})
@@ -388,7 +397,7 @@ def test_grouped_worker_validates_full_grid_before_exact_disjoint_source_joins(
         "audit_join_bridge": bridge,
         "media_export_source": 'def _portable_media_references(turns): return "current exporter"',
     }
-    monkeypatch.setattr(subject.sys, "stdin", io.StringIO(json.dumps(request)))
+    monkeypatch.setattr(subject.sys, "stdin", io.StringIO(json.dumps({**request, **CHECKSUM_REQUEST})))
     if failure not in (None, "zero-results"):
         with pytest.raises(ValueError, match="full-grid validator|omit or add|join differs"):
             exec(subject._WORKER, {})
@@ -574,7 +583,7 @@ def test_level1_worker_validates_exact_source_even_for_request_only_failures(
     request = {"results": [str(tmp_path)], "plans": list(plans.values()),
                "eligibility_paths": [str(tmp_path / "plan.json")],
                "envelopes": envelopes, "commit": COMMIT, "tree": TREE}
-    monkeypatch.setattr(subject.sys, "stdin", io.StringIO(json.dumps(request)))
+    monkeypatch.setattr(subject.sys, "stdin", io.StringIO(json.dumps({**request, **CHECKSUM_REQUEST})))
     monkeypatch.setattr(level1_evidence, "_plan_artifact", lambda path: plans["plan"])
     monkeypatch.setattr(level1_evidence, "_discover_request_envelopes", lambda *args: envelopes)
     monkeypatch.setattr(level1_evidence, "_load_results", lambda *args: (grids, ["request-error"]))

@@ -2995,6 +2995,8 @@ def test_retained_worker_routes_only_eligibility_to_original_typed_loader(tmp_pa
     monkeypatch.setattr(figure_results, "_read_object", original)
     monkeypatch.setattr(retained_artifact_reader.sys, "stdin", io.StringIO(json.dumps({
         "results": str(tmp_path),
+        "verify_artifact_sha256": False,
+        "artifact_check_bridge": "def _configure_historical_artifact_checks(verify): return {'mode': 'metadata_and_records'}",
     })))
     prefix = retained_artifact_reader._WORKER.split("cells = _load_cells(root)", 1)[0]
     exec(prefix, {})
