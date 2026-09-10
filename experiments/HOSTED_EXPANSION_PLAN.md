@@ -1,20 +1,29 @@
 # Third hosted campaign: provider-scaled expansion
 
-Status, 10 September 2026: requested quantities and a full-pool input
-availability preview and a shared-input preview are verified on the rig.
-Shared-cohort preparation and credit-stop handling have passed focused rig tests.
-The first 128-input batch is complete, with local judging, output-specific
-Haiku judging of its 21 eligible measured answers and thirteen per-model Stats
-publications. Its twenty matching local answers also have valid Haiku verdicts.
-The next 224-input slice is funded; all 63 additional matching local answers
-have valid Haiku verdicts. Its target controllers stopped before any target
-call because their probe selector considered only the original canary jobs.
-The corrected selector passed all thirteen actual funded-route validations
-on the rig, while restoring the former selection fails on those same inputs.
-Both target queues and their analysis successor restarted at 12:38 UTC using
-suitable already-funded whole jobs. The complete input selection and failed
-controller history are preserved. Most of the requested expansion
-remains unexecuted. This is a separate cohort
+Status, 10 September 2026 at 19:42 UTC: the first three funded slices have
+finished target collection, covering 964 assigned inputs. The first two slices
+also have completed local and Haiku judging and analysis publications. The
+third slice's 624 selected existing local outputs have all received Haiku
+assessment, retaining five invalid verdicts explicitly. Its hosted
+output-specific Haiku judging and analysis are in progress. The recovered
+target and local-judge controllers preserved completed checkpoints instead of
+repeating their paid calls. Later slices remain unfunded; their simultaneous
+worst-case reservations must fit the unchanged cumulative provider and judge
+ceilings. Smaller financial slices may defer inputs to later prefixes, but do
+not remove them from the requested campaign or change generation settings.
+Historical preparation snapshots below are not current completion claims.
+At 19:55 UTC the fourth unfunded slice was partitioned into 587 current inputs
+and 68 deferred OpenAI inputs. It reuses the same questions, media, model
+settings and 587 exact token-count receipts, without network calls. The
+OpenAI maximum reservation falls from USD 14.152121 to USD 9.245201; deferred
+inputs retain their place in the final shared prefixes. Local Haiku inputs
+are restricted to matching answers for this slice. Previously prepared fifth
+through seventh slices must be rebased before funding so that no deferred
+input is skipped. This is scheduling within the original ceilings, not a
+reduction of the requested campaign.
+The Operational costs integration is scheduled after the interrupted hosted
+campaign finishes, as specified in the execution order below.
+This is a separate cohort
 after [the original campaign](HOSTED_CAMPAIGN_PLAN.md) and
 [the supplement, including Google](HOSTED_SUPPLEMENT_PLAN.md).
 
