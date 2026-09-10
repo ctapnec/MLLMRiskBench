@@ -2,6 +2,20 @@
 
 ## Current execution and required Google extension
 
+Update, 10 September at 03:40 UTC: both target queues resumed on `fcf231d`,
+which also serves the console. The live-identity regression now covers native
+pre-generation policy decisions: an exact HTTP 400 `cyber_policy` result on
+the attested provider/endpoint remains an outcome without inventing a served
+model. Ordinary identity mismatches still fail. Runtime, checkpoint restoration
+and completed-result validation use the same rule. Focused rig verification
+passed 87 tests plus five attestation controls, lint and two reversed-fix checks.
+The preceding failed Sol interpreter call lost its native response before
+checkpointing. Its unknown charge and execution error remain retained; it is
+not silently retried or given an invented verdict. All other unstarted inputs
+continue under unchanged requests and caps. The 03:30 snapshot has 264
+unstarted inputs, with 639/676 supplemental and 97/324 Google inputs started.
+Both earlier interrupted jobs recovered every saved response unchanged.
+
 Update, 10 September at 03:00 UTC: target collection stopped on an accounting
 shortfall, not a new output failure. Sol returned a valid, non-truncated answer
 with 8,161 output tokens under its 8,192 allowance. Its reported billed input
