@@ -24,6 +24,18 @@ continues the 70 unissued inputs from native checkpoints, without repeating
 saved responses or granting a fifth attempt to that exhausted request.
 An explicit policy-rejection HTTP 400 remains a different, legitimate outcome.
 
+Later quota diagnosis identified Gemini Pro's 250-request daily project limit.
+The provider supplied a 781-second retry delay in its RPC error body; the old
+adapter ignored that delay. The correction passed twenty focused rig tests,
+an actual retained-error check and a reversed-fix check. Three exhausted Google
+requests remain missing responses, with their charges still unknown. Only
+unissued inputs continue after the reported retry window. This is not a credit
+top-up or a retry of an exhausted request. The remaining non-Google routes run
+independently. A checkpoint-reader bookkeeping error after successful Opus,
+Kimi and DeepSeek jobs was also repaired from their finalized files, without
+repeating their calls. A further 225-input prospective slice is selected from
+the unchanged prefixes; it is not funded.
+
 Thirty-seven completed OpenAI responses released USD 3.457155 in excess
 maximum-output reservations using reported token totals and the already-funded
 cache-write tariff. These remain conservative bounds, not known provider bills.

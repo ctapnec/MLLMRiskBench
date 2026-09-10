@@ -37,8 +37,15 @@ concurrency is not permission to repeat an already-paid response. The optional
 `ura.hosted_scheduling.hosted_local_scoring_slot` scope acquires a shared GPU
 lock lazily at hosted post-generation scoring and holds it through Runner
 teardown. Ordinary local-target execution is unchanged. Hosted adapters honor
-valid provider `Retry-After` delays and use jittered exponential backoff when
-none is available. Funding errors remain distinct from transient throttling.
+valid provider `Retry-After` delays and Google's `google.rpc.RetryInfo` body
+delays, using the longer value when both are present. Without a valid provider
+delay they use jittered exponential backoff. A daily request-quota error is
+not proof of exhausted credit. Keep its response and any unreported charge;
+do not consume the transport retry allowance in a rapid loop before the
+reported retry window. A delay is a not-before time, not guaranteed renewed
+capacity. Funding errors remain distinct from transient throttling. See
+[Google's quota guidance](https://ai.google.dev/gemini-api/docs/rate-limits) and
+[RetryInfo semantics](https://docs.cloud.google.com/php/docs/reference/common-protos/latest/Rpc.RetryInfo).
 The expansion plan records the bounded provider-queue policy and unchanged
 local/Haiku judgment requirements.
 
