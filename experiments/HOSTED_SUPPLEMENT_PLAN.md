@@ -2,6 +2,19 @@
 
 ## Current execution and required Google extension
 
+Update, 10 September at 04:05 UTC: Flash and Sol are generating again on
+`fcf231d`. The first restart correctly rejected transport attestations from
+the preceding source revision before any paid call. The continuation therefore
+allocated one unpaid whole-cluster text input and one image input per model
+to fresh readiness checks within the same funded request population. All four
+checks passed; they are readiness evidence, not measured comparison rows.
+No saved response was repeated and no new input was added. Flash's next
+31-input JailbreakBench job completed with 25 answers and six explicit policy
+outcomes. Sol's six-input HoliSafe job completed with six answers. Both queues
+advanced without a policy-triggered stop. The 04:03 aggregate has 233 unstarted
+inputs across the supplement and Google extension; final judging remains
+queued behind completed routes. Existing local Haiku judgments are unchanged.
+
 Update, 10 September at 03:40 UTC: both target queues resumed on `fcf231d`,
 which also serves the console. The live-identity regression now covers native
 pre-generation policy decisions: an exact HTTP 400 `cyber_policy` result on
