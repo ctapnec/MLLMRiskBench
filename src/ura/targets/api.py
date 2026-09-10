@@ -2935,18 +2935,27 @@ class GeminiTarget(BaseTarget):
         )
         latency_ms = (time.perf_counter() - start) * 1000.0
 
-        response_id = _required_provider_string(
-            resp, "response_id", error=GeminiOutputError,
-            location="Gemini response",
-        )
-        resolved_model = _required_provider_string(
-            resp, "model_version", error=GeminiOutputError,
-            location="Gemini response",
-        )
-        if not _resolved_model_matches(self.model, resolved_model):
-            raise GeminiIntegrityError(
-                f"Gemini resolved unexpected model {resolved_model!r}"
-            )
+        try:
+            return self._normalize_response(resp, seed=seed, latency_ms=latency_ms,
+                                            transport_attempts=transport_attempts)
+        except GeminiOutputError as exc:
+            candidates = _provider_field(resp, "candidates")
+            candidate = candidates[0] if isinstance(candidates, (list, tuple)) and candidates else None
+            feedback = _provider_field(resp, "prompt_feedback")
+            exc.call_audit = {
+                "provider": self.provider, "operation": "generate", "logical_call_count": 1,
+                "transport_attempt_count": len(transport_attempts),
+                "provider_response_id": _provider_field(resp, "response_id"),
+                "resolved_model": _provider_field(resp, "model_version"),
+                "provider_error_code": _enum_name(_provider_field(feedback, "block_reason")),
+                "finish_reason": _enum_name(_provider_field(candidate, "finish_reason")),
+                "requested_output_tokens": self.max_tokens,
+                "error_type": type(exc).__name__,
+            }
+            raise
+
+    def _normalize_response(self, resp: Any, *, seed: int | None, latency_ms: float,
+                            transport_attempts: list[dict[str, Any]]) -> Response:
         prompt_feedback = _provider_field(resp, "prompt_feedback")
         prompt_block_reason = _enum_name(
             _provider_field(prompt_feedback, "block_reason")
@@ -2955,7 +2964,20 @@ class GeminiTarget(BaseTarget):
         prompt_blocked = prompt_block_reason not in {
             None, "", "BLOCK_REASON_UNSPECIFIED",
         }
+        identities = {}
+        for key in ("response_id", "model_version"):
+            value = _provider_field(resp, key)
+            if value is None and prompt_blocked:
+                identities[key] = None
+            else:
+                identities[key] = _required_provider_string(resp, key, error=GeminiOutputError,
+                                                           location="Gemini response")
+        response_id, resolved_model = identities["response_id"], identities["model_version"]
+        if resolved_model is not None and not _resolved_model_matches(self.model, resolved_model):
+            raise GeminiIntegrityError(f"Gemini resolved unexpected model {resolved_model!r}")
         candidates = _provider_field(resp, "candidates", [])
+        if candidates is None and prompt_blocked:
+            candidates = []
         if not isinstance(candidates, (list, tuple)):
             raise GeminiOutputError("Gemini response candidates is not a list")
         finish_reason: Optional[str] = None
@@ -2982,6 +3004,11 @@ class GeminiTarget(BaseTarget):
                 )
             candidate = candidates[0]
             finish_reason = _enum_name(_provider_field(candidate, "finish_reason"))
+            filtered_reasons = {
+                "SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT",
+                "SPII", "IMAGE_SAFETY", "IMAGE_PROHIBITED_CONTENT",
+                "IMAGE_RECITATION", "ESCALATION", "MODEL_ARMOR",
+            }
             finish_message_raw = _provider_field(candidate, "finish_message")
             if finish_message_raw is not None and not isinstance(finish_message_raw, str):
                 raise GeminiOutputError("Gemini finish_message is not text or null")
@@ -2989,6 +3016,8 @@ class GeminiTarget(BaseTarget):
             content = _provider_field(candidate, "content")
             role = _provider_field(content, "role") if content is not None else None
             parts = _provider_field(content, "parts", []) if content is not None else []
+            if parts is None and finish_reason in filtered_reasons:
+                parts = []
             if role not in {None, "model"}:
                 raise GeminiOutputError("Gemini candidate has a non-model role")
             if not isinstance(parts, (list, tuple)):
@@ -3015,11 +3044,6 @@ class GeminiTarget(BaseTarget):
             safety = _provider_field(candidate, "safety_ratings", [])
             if isinstance(safety, (list, tuple)):
                 safety_ratings = [str(item) for item in safety]
-            filtered_reasons = {
-                "SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT",
-                "SPII", "IMAGE_SAFETY", "IMAGE_PROHIBITED_CONTENT",
-                "IMAGE_RECITATION", "ESCALATION",
-            }
             provider_refusal = finish_reason in filtered_reasons
             if provider_refusal:
                 if text.strip():
@@ -3041,6 +3065,51 @@ class GeminiTarget(BaseTarget):
                     )
                 output_turns = [DialogTurn(role="assistant", content=text)]
         usage = _provider_field(resp, "usage_metadata")
+        tokens = self._usage_tokens(usage, provider_refusal=provider_refusal)
+
+        return Response(
+            attempt_id=_dialog_fingerprint(dialog),
+            target=self.name,
+            output_turns=output_turns,
+            latency_ms=latency_ms,
+            tokens=tokens,
+            raw={
+                "provider": self.provider,
+                "endpoint_identity": canonical_https_endpoint_identity(self.base_url),
+                "requested_spec": self.requested_spec,
+                "requested_model": self.model,
+                "resolved_model": resolved_model,
+                "response_id": response_id,
+                "finish_reason": finish_reason,
+                "output_truncated": finish_reason == "MAX_TOKENS",
+                "finish_message": finish_message,
+                "prompt_block_reason": prompt_block_reason,
+                **({"requested_thinking_level": self.thinking_level} if self.thinking_level is not None else {}),
+                "safety_ratings": safety_ratings,
+                "requested_seed": seed,
+                "target_sampling_control": "provider_seed_requested_best_effort" if seed is not None and self.supports_seed else "uncontrolled",
+                "provider_refusal": provider_refusal,
+                "provider_refusal_category": refusal_category,
+                "provider_refusal_reason": refusal_reason,
+                "usage_status": "reported" if tokens is not None else "unknown",
+                "transport_attempt_count": len(transport_attempts),
+                "transport_attempts": transport_attempts,
+                "generation": {"max_tokens": self.max_tokens,
+                    "temperature": self.temperature if self.temperature is not None else "omitted",
+                    "seed": seed if self.supports_seed else None, "max_retries": self.max_retries},
+            },
+        )
+
+    @staticmethod
+    def _usage_tokens(usage: Any, *, provider_refusal: bool) -> dict[str, int] | None:
+        # Blocked responses may omit usage fields. Unknown billing is not zero.
+        if provider_refusal:
+            for field in ("prompt_token_count", "candidates_token_count", "total_token_count", "thoughts_token_count"):
+                if _provider_field(usage, field) is not None:
+                    _required_nonnegative_int(usage, field, error=GeminiOutputError, location="Gemini usage")
+        if provider_refusal and any(_provider_field(usage, field) is None for field in
+                ("prompt_token_count", "candidates_token_count", "total_token_count")):
+            return None
         if usage is None:
             raise GeminiOutputError("Gemini response omitted usage provenance")
         input_tokens = _required_nonnegative_int(
@@ -3066,58 +3135,12 @@ class GeminiTarget(BaseTarget):
             raise GeminiOutputError(
                 "Gemini total tokens is smaller than prompt + candidate tokens"
             )
-        tokens = {
+        return {
             "input": input_tokens,
             "output": output_tokens,
             "total": total_tokens,
             **({"reasoning": thoughts, "visible_output": candidate_tokens} if thoughts is not None else {}),
         }
-
-        return Response(
-            attempt_id=_dialog_fingerprint(dialog),
-            target=self.name,
-            output_turns=output_turns,
-            latency_ms=latency_ms,
-            tokens=tokens,
-            raw={
-                "provider": self.provider,
-                "endpoint_identity": canonical_https_endpoint_identity(
-                    self.base_url
-                ),
-                "requested_spec": self.requested_spec,
-                "requested_model": self.model,
-                "resolved_model": resolved_model,
-                "response_id": response_id,
-                "finish_reason": finish_reason,
-                "output_truncated": finish_reason == "MAX_TOKENS",
-                "finish_message": finish_message,
-                "prompt_block_reason": prompt_block_reason,
-                **({"requested_thinking_level": self.thinking_level} if self.thinking_level is not None else {}),
-                "safety_ratings": safety_ratings,
-                "requested_seed": seed,
-                "target_sampling_control": (
-                    "provider_seed_requested_best_effort"
-                    if seed is not None and self.supports_seed
-                    else "uncontrolled"
-                ),
-                "provider_refusal": provider_refusal,
-                "provider_refusal_category": refusal_category,
-                "provider_refusal_reason": refusal_reason,
-                "transport_attempt_count": len(transport_attempts),
-                "transport_attempts": transport_attempts,
-                "generation": {
-                    "max_tokens": self.max_tokens,
-                    "temperature": (
-                        self.temperature
-                        if self.temperature is not None
-                        else "omitted"
-                    ),
-                    "seed": seed if self.supports_seed else None,
-                    "max_retries": self.max_retries,
-                },
-            },
-        )
-
 
 # --------------------------------------------------------------------------- #
 # Registry wiring

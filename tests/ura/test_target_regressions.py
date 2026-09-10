@@ -1751,6 +1751,66 @@ def _gemini_result(
     )
 
 
+@pytest.mark.parametrize("usage", [None, {"prompt_token_count": 7},
+    {"prompt_token_count": 7, "candidates_token_count": 0, "total_token_count": 7}])
+@pytest.mark.parametrize("identity_present", [False, True])
+def test_gemini_real_sdk_null_candidates_are_prompt_policy_outcomes(usage, identity_present):
+    types = pytest.importorskip("google.genai.types")
+    result = types.GenerateContentResponse(
+        response_id="blocked-1" if identity_present else None,
+        model_version="gemini-generic" if identity_present else None,
+        prompt_feedback=types.GenerateContentResponsePromptFeedback(block_reason="SAFETY"),
+        usage_metadata=usage,
+    )
+    assert result.candidates is None
+    target = GeminiTarget("gemini-generic")
+    calls = []
+    target._client = SimpleNamespace(models=SimpleNamespace(generate_content=lambda **body: (calls.append(body), result)[1]))
+    response = target.generate([DialogTurn(role="user", content="fixture")])
+    assert len(calls) == response.raw["transport_attempt_count"] == 1
+    assert response.raw["provider_refusal_category"] == "gemini_prompt_safety"
+    assert response.output_turns == []
+    assert response.raw["resolved_model"] == ("gemini-generic" if identity_present else None)
+    if usage is not None and "candidates_token_count" in usage:
+        assert response.tokens == {"input": 7, "output": 0, "total": 7}
+    else:
+        assert response.tokens is None and response.raw["usage_status"] == "unknown"
+
+
+def test_gemini_real_sdk_filtered_candidate_can_have_null_parts_and_usage():
+    types = pytest.importorskip("google.genai.types")
+    result = types.GenerateContentResponse(response_id="filtered-1", model_version="gemini-generic",
+        candidates=[types.Candidate(finish_reason="SAFETY", content=types.Content(role="model"))])
+    assert result.candidates[0].content.parts is None and result.usage_metadata is None
+    target = GeminiTarget("gemini-generic"); _install_gemini_fixture(target, result)
+    response = target.generate([DialogTurn(role="user", content="fixture")])
+    assert response.raw["provider_refusal_category"] == "gemini_finish_safety"
+    assert response.output_turns == [] and response.tokens is None
+
+
+def test_gemini_unexplained_null_candidates_preserve_one_actual_attempt_audit():
+    types = pytest.importorskip("google.genai.types")
+    result = types.GenerateContentResponse(response_id="malformed-1", model_version="gemini-generic")
+    target = GeminiTarget("gemini-generic"); _install_gemini_fixture(target, result)
+    with pytest.raises(GeminiOutputError, match="candidates is not a list") as caught:
+        target.generate([DialogTurn(role="user", content="fixture")])
+    assert caught.value.call_audit["transport_attempt_count"] == 1
+    assert caught.value.call_audit["provider_response_id"] == "malformed-1"
+    assert caught.value.call_audit["provider_error_code"] is None
+
+
+def test_gemini_prompt_policy_does_not_accept_conflicting_candidate_or_identity():
+    target = GeminiTarget("gemini-generic")
+    result = _gemini_result(prompt_block_reason="SAFETY")
+    result.candidates = _gemini_result().candidates
+    _install_gemini_fixture(target, result)
+    with pytest.raises(GeminiOutputError, match="unexpectedly returned"):
+        target.generate([DialogTurn(role="user", content="fixture")])
+    result.candidates = None; result.model_version = "a-different-model"
+    with pytest.raises(GeminiOutputError, match="unexpected model"):
+        target.generate([DialogTurn(role="user", content="fixture")])
+
+
 @pytest.mark.parametrize("route", [
     "anthropic", "fable", "fable51", "chat", "compatible", "responses", "gemini",
 ])
