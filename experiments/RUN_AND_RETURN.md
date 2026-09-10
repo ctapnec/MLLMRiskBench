@@ -635,10 +635,14 @@ only if its execution settings change. Never clear the paid circuit automaticall
 Explicit exhausted-credit or account-spending-limit errors are not transient
 429s. The provider adapter emits a small `provider_funding_status` machine
 reason; Runner preserves it in the response checkpoint and retained execution
-opens a `provider_funding_unavailable` circuit. Unknown charges remain held.
+records a provider-scoped `provider_funding_unavailable` stop. Unknown charges remain held.
 The campaign controller stops that provider, preserves its unstarted inputs
 and continues only independently funded work. It must not reinterpret a
-general Google `RESOURCE_EXHAUSTED` rate limit as an empty wallet. Google SDK
+general Google `RESOURCE_EXHAUSTED` rate limit as an empty wallet. Physical
+attempt reservation checks the provider stop before dispatch, including after
+controller restart. An Anthropic stop also blocks new targets whose promised
+Haiku judgments depend on that account. Unrelated provider stops do not clear
+or bypass an ordinary global paid-output circuit. Google SDK
 exceptions expose HTTP status as `code` and their error body as `details`;
 test those actual installed SDK objects, not only synthetic `status_code` fields.
 Runner 2.26 separately retains an exact deterministic target-input rejection as

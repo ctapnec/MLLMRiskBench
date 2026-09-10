@@ -135,8 +135,10 @@ Current pricing references, checked 10 September 2026:
 [Google](https://ai.google.dev/gemini-api/docs/pricing),
 [DeepSeek](https://api-docs.deepseek.com/quick_start/pricing/) and
 [Kimi](https://platform.kimi.ai/docs/pricing/chat-k3).
-Kimi's numeric rate table was not exposed in the retrieved page; the final
-quote must verify it rather than silently treating an older rate as current.
+Kimi's official page stores its numeric table in the rendered page component.
+Its source was checked directly: USD 3 input, USD 0.30 cache-hit input and
+USD 15 output per million tokens. Do not assume a cache-hit discount before
+the provider reports it.
 
 DeepSeek currently publishes peak/off-peak prices and announces that the
 V4 Pro alias will route to V4.1 Flash from 14 September 2026 at 04:00 UTC.
@@ -168,6 +170,15 @@ a source cluster or select inputs according to previous answers. Completed
 input slices are not replayed when the next batch is funded. Financial limits
 remain cumulative across batches; a fresh ledger is not a fresh spending
 allowance. The original plans and results remain immutable.
+
+The completed source assessment found 5,358 eligible existing local answers
+on 1,401 matching input identities. None has a reusable earlier Haiku verdict
+for this newly selected cohort. All 31 additional media files have been
+located and hash-verified without downloads. The first prepared batch contains
+ten inputs for each multimodal route and eight for DeepSeek: 128 target inputs,
+plus twenty matching local answers needing Haiku assessment. It has not yet
+made target or judge calls. Full request counting and funding follow exact
+materialization; this batch is not the full expansion.
 
 Use only inputs already executed by the local campaign. Preserve prompt,
 conversation, media bytes, seed, framework, arm, corpus and source-policy
