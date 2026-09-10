@@ -204,9 +204,13 @@ slice closed. Its 63 new judgments of exact existing local answers are complete
 and valid. The recovered target queues are executing under their existing
 allocation; no completed local judgment was repeated.
 Unknown charges and unused earlier judge commitments remain reserved, not
-reported as spent or released into the new allocation. Future batches use the cache
-usage preservation correction documented in RA-446; old unknown charges stay
-held and old responses are not repeated to recover missing billing metadata.
+reported as spent. Future batches use the cache-usage preservation correction
+documented in RA-446. Where complete cache-inclusive token totals exist but
+the exact cache split is missing, RA-449 permits a conservative maximum-tariff
+bound on the reported tokens, separately from an exact bill. Unreported token
+usage, HTTP failures and unpriced positive cache writes remain fully held.
+Closed historical responses can be reconciled without repeating any answer;
+active shared-ledger users must finish before the accounting upgrade.
 
 The third prospective financial slice increases throughput for the lower-cost
 routes while preserving the fixed shared prefixes and final per-model limits.
@@ -224,15 +228,25 @@ The fourth no-call selection extends the same shared prefixes by 655 target
 inputs and identifies 492 new existing local answers for Haiku assessment.
 Its selected counts are Fable 15, Opus 21, Sonnet 74, Haiku 149, Astra 15,
 Sol 15, Terra 17, Luna 96, GPT-5.5 15, Kimi 21, DeepSeek 69, Flash 74 and
-Pro 74. Materialization and prospective probe checks are complete, but counting
-stopped at one Haiku image whose base64 payload exceeds Anthropic's 10 MB limit.
-Lossless PNG packing has been verified in memory to retain the source format,
-dimensions and every pixel while reducing that payload below the limit; the
-adapter correction and exact unstarted-request rebinding remain pending rig
-verification. The slice is not yet funded. Its continuation
+Pro 74. Materialization, prospective probe checks and counting are complete.
+One oversized Haiku image required verified lossless PNG packing. Its source
+file, format, dimensions and every pixel remain unchanged. The corrected
+unstarted-request binding changes exactly one provider request hash while
+the other twelve route artifacts remain identical. Counting reused 249 saved
+receipts and required 337 additional count-endpoint requests. The slice is not
+yet funded. Its continuation
 must verify suitable transport probes within the unchanged inputs and wait
 for the preceding batches' target and judging costs to close. These figures
 do not change the requested provider totals or authorize new spending caps.
+
+At the 14:17 UTC execution snapshot, 352 inputs are funded in the first two
+batches, with 267 started and 266 usable outcomes. Another 1,267 inputs are
+selected and counted in batches three and four. These staged quantities do
+not reduce the requested 6,541 evaluations. The remaining 4,922 assignments
+include the 67 unresolved whole-cluster boundary gaps. The fifth slice is
+being prepared from the same fixed cohort. It prospectively appends the two
+verified VLBreakBench image directories to the campaign media roots; the
+existing root order, request contents and selected input identities stay fixed.
 
 Use only inputs already executed by the local campaign. Preserve prompt,
 conversation, media bytes, seed, framework, arm, corpus and source-policy
