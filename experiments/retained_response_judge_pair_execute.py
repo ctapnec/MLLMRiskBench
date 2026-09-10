@@ -7,6 +7,7 @@ import hashlib
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
+from ura.artifact_checks import artifact_verification_cli
 
 from experiments.retained_response_judge import load_pair_candidate_views
 from experiments.retained_response_judge_execute import (
@@ -132,6 +133,7 @@ def execute(
     )
 
 
+@artifact_verification_cli
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--plan", type=Path, required=True)
@@ -143,6 +145,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--ack-paid-execution", action="store_true")
     parser.add_argument("--retain-invalid-verdicts", action="store_true")
+    parser.add_argument("--verify-artifact-sha256", action="store_true",
+                        help="Opt in to full retained-file checksum revalidation")
     args = parser.parse_args(argv)
     if not args.ack_paid_execution:
         parser.error("--ack-paid-execution is required")

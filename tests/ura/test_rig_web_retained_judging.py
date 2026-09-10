@@ -39,9 +39,11 @@ def test_retained_judging_ui_can_keep_invalid_verdicts(tmp_path):
     values = {flag: str(tmp_path / flag[2:]) for flag in (
         "--plan", "--local-runner-view", "--hosted-runner-view", "--source-receipt",
         "--api-config", "--pricing-config", "--out")}
-    values.update({"--ack-paid-execution": "on", "--retain-invalid-verdicts": "on"})
+    values.update({"--ack-paid-execution": "on", "--retain-invalid-verdicts": "on",
+                   "--verify-artifact-sha256": "on"})
     argv = build_argv("retained_response_judge_pair_execute", values)
     assert "--retain-invalid-verdicts" in argv
+    assert "--verify-artifact-sha256" in argv
     # Parser accepts the UI option and stops on the missing plan, not an unknown flag.
     with pytest.raises((OSError, ValueError)):
         main(argv[argv.index("experiments.retained_response_judge_pair_execute") + 1:])

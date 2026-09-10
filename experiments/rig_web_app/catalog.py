@@ -1085,6 +1085,7 @@ def _commands() -> dict[str, Command]:
             "Execute one sealed matched local and hosted Haiku judging plan",
             (
                 CommandParam("--retain-invalid-verdicts", "flag"),
+                CommandParam("--verify-artifact-sha256", "flag"),
                 CommandParam("--plan", "path", required=True),
                 CommandParam("--local-runner-view", "path", required=True),
                 CommandParam("--hosted-runner-view", "path", required=True),

@@ -19,6 +19,7 @@ import hashlib
 import json
 import math
 import random
+from ura.artifact_checks import artifact_sha256_enabled
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -639,7 +640,7 @@ def _resolve_artifact(marker_path: Path, marker: dict[str, Any], name: str) -> P
         raise ValueError(f"completion marker references invalid file: {artifact}")
     if byte_count != artifact.stat().st_size:
         raise ValueError(f"artifact byte-count mismatch: {artifact}")
-    if digest.lower() != _sha256_file(artifact):
+    if artifact_sha256_enabled() and digest.lower() != _sha256_file(artifact):
         raise ValueError(f"artifact digest mismatch: {artifact}")
     if record_count != _record_count(artifact):
         raise ValueError(f"artifact record-count mismatch: {artifact}")

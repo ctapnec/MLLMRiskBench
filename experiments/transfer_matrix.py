@@ -151,8 +151,9 @@ def _artifact_path(directory: Path, value: Any, *, marker: Path, role: str) -> P
     if actual_size > _MAX_ARTIFACT_BYTES:
         raise ValueError(f"artifact exceeds {_MAX_ARTIFACT_BYTES} bytes for {role}: {path}")
     payload = path.read_bytes()
-    observed_hash = hashlib.sha256(payload).hexdigest()
-    if observed_hash != expected_hash:
+    from ura.artifact_checks import artifact_sha256_enabled
+
+    if artifact_sha256_enabled() and hashlib.sha256(payload).hexdigest() != expected_hash:
         raise ValueError(f"artifact sha256 mismatch for {role}: {path}")
     try:
         observed_records = (

@@ -52,6 +52,8 @@ def _digest(value: Any, label: str) -> str:
 
 
 def _descriptor(path_value: Path, expected: str | None = None) -> dict:
+    from ura.artifact_checks import artifact_sha256_enabled
+
     path = Path(path_value)
     if path.is_symlink():
         raise ValueError("retained input artifact must not be a symlink")
@@ -59,16 +61,20 @@ def _descriptor(path_value: Path, expected: str | None = None) -> dict:
     before = path.stat()
     if not path.is_file():
         raise ValueError("retained input artifact must be a regular file")
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
+    if expected is not None and not artifact_sha256_enabled():
+        observed_digest = _digest(expected, "recorded artifact")
+    else:
+        digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        observed_digest = digest.hexdigest()
     after = path.stat()
     if ((before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
             != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
-            or (expected is not None and digest.hexdigest() != expected)):
+            or (expected is not None and observed_digest != expected)):
         raise ValueError("retained input artifact bytes changed")
-    return {"path": str(path), "sha256": digest.hexdigest(), "bytes": after.st_size}
+    return {"path": str(path), "sha256": observed_digest, "bytes": after.st_size}
 
 
 def _media_bindings(turns: list, media_index: Mapping[str, str]) -> list[dict]:

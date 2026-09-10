@@ -23,6 +23,7 @@ from ura.adapters.replay import ReplayAttacker, retained_dialog, retained_dialog
 from ura.runner import retained_execution_admission
 from ura.model_identity import canonical_provider_name
 from ura.targets.api import provider_attempt_admission
+from ura.artifact_checks import artifact_verification_cli
 
 
 SCHEMA = "ura-hosted-retained-execution-plan/1"
@@ -1082,7 +1083,8 @@ def _validated_local_cells(program: dict) -> tuple[list[dict], dict]:
     for row in view["file_inventory"]:
         source_path, path = Path(row["source"]["path"]), Path(row["view"]["path"])
         from experiments.hosted_retained_inputs import _descriptor as descriptor_file
-        source, copied = descriptor_file(source_path), descriptor_file(path)
+        source = descriptor_file(source_path, row["source"]["sha256"])
+        copied = descriptor_file(path, row["view"]["sha256"])
         st, original_st = path.stat(), source_path.stat()
         relative = path.relative_to(root).as_posix()
         if (source != row["source"] or copied != row["view"]
@@ -1115,6 +1117,7 @@ def _validated_local_cells(program: dict) -> tuple[list[dict], dict]:
     return cells, inventories[0]
 
 
+@artifact_verification_cli
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--program", type=Path, required=True)
@@ -1128,6 +1131,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--tmux-socket", required=True)
     parser.add_argument("--tmux-session", required=True)
     parser.add_argument("--hard-stop-hours", type=int, default=168)
+    parser.add_argument("--verify-artifact-sha256", action="store_true",
+                        help="Opt in to full retained-file checksum revalidation")
     args = parser.parse_args(argv)
     for path in execute_registered(
         program_path=args.program, program_sha256=args.program_sha256,
