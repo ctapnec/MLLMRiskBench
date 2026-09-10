@@ -3219,12 +3219,19 @@ class GeminiTarget(BaseTarget):
             raise GeminiOutputError(
                 "Gemini total tokens is smaller than prompt + candidate tokens"
             )
-        return {
+        tokens = {
             "input": input_tokens,
             "output": output_tokens,
             "total": total_tokens,
             **({"reasoning": thoughts, "visible_output": candidate_tokens} if thoughts is not None else {}),
         }
+        if _provider_field(usage, "cached_content_token_count") is not None:
+            cached = _required_nonnegative_int(usage, "cached_content_token_count", error=GeminiOutputError,
+                                               location="Gemini usage")
+            if cached > input_tokens:
+                raise GeminiOutputError("Gemini cache usage exceeds prompt tokens")
+            tokens["cached_input"] = cached
+        return tokens
 
 # --------------------------------------------------------------------------- #
 # Registry wiring

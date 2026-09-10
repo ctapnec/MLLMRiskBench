@@ -1841,6 +1841,27 @@ def _gemini_result(
     )
 
 
+@pytest.mark.parametrize("cached", [0, 2, None])
+def test_gemini_retains_real_sdk_cached_input_without_inventing_missing_usage(cached):
+    types = pytest.importorskip("google.genai.types")
+    usage = types.GenerateContentResponseUsageMetadata(prompt_token_count=7,
+        candidates_token_count=3, total_token_count=10, cached_content_token_count=cached)
+    tokens = GeminiTarget._usage_tokens(usage, provider_refusal=False)
+    assert tokens["input"] == 7 and tokens["output"] == 3
+    if cached is None:
+        assert "cached_input" not in tokens
+    else:
+        assert tokens["cached_input"] == cached
+    assert "cache_write_input" not in tokens
+
+
+def test_gemini_cached_input_cannot_exceed_prompt_tokens():
+    usage = _gemini_result().usage_metadata
+    usage.cached_content_token_count = 8
+    with pytest.raises(GeminiOutputError, match="cache usage exceeds"):
+        GeminiTarget._usage_tokens(usage, provider_refusal=False)
+
+
 @pytest.mark.parametrize("usage", [None, {"prompt_token_count": 7},
     {"prompt_token_count": 7, "candidates_token_count": 0, "total_token_count": 7}])
 @pytest.mark.parametrize("identity_present", [False, True])
