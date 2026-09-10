@@ -2796,6 +2796,14 @@ operational execution counts. A terminal or empty-response circuit still
 publishes the durable attempted/successful counts; it never reports the funded
 reservation as execution. Do not register an unstarted job as measured work.
 
+If another worker opens the shared paid circuit before a judge request obtains
+its physical-attempt reservation, keep that input unstarted. The judging
+executor retains a shared-pause record and cancels only that unused logical
+reservation. It neither creates a missing verdict nor changes any paid charge.
+After the shared cause is resolved, rerun the same judging command: retained
+verdicts are restored and only the unstarted suffix reaches the provider.
+An actually issued or crash-ambiguous request is not covered by this rule.
+
 In the Build tab, one large role-aware model-picker modal serves both target and
 LLM-judge selection. Choose hosted or local, then use the hosted provider filter
 (`All` by default) or the local filtering surface. Target mode binds one or more
