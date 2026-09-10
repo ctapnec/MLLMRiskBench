@@ -2,6 +2,27 @@
 
 ## Current execution and required Google extension
 
+Update, 10 September at 04:30 UTC: Sol's 29-input pending route and Flash's
+162-input assignment are terminal. Sol retains 28 outcomes and one earlier
+lost outcome; Flash retains 161 outcomes, including provider-policy decisions,
+and one earlier lost outcome. All 16 eligible Sol answers and 105 eligible
+Flash answers in their completed measured views have valid Haiku verdicts,
+costing USD 0.042843 and USD 0.128335 respectively. Their original local
+judgments and revision-specific reports are preserved and published. The
+separate old Flash answer still requires its queued local and Haiku judgments.
+
+The remaining collection is 161 Pro inputs and 11 GPT-5.5 inputs. Expanded
+hosted judging has 568 outcomes, 566 valid; all 750 matched local answers
+remain judged, with 742 valid verdicts. Final comparison publication still
+waits for both remaining routes and the old Flash answer. All budget pools
+are within their unchanged ceilings. At 04:30 the available margin beyond
+commitments is USD 8.052876 for OpenAI, USD 6.318888 for Google and
+USD 15.538092 for Anthropic judging. These are ledger allowances, not live
+account credit balances. The actual GPT-5.5 interpreter job retained HTTP 400
+`cyber_policy` with no claimed model generation, completed its measured grid,
+and advanced. Policy decisions do not stop the campaign or trigger answer
+retries. No completed target input was repeated.
+
 Update, 10 September at 04:05 UTC: Flash and Sol are generating again on
 `fcf231d`. The first restart correctly rejected transport attestations from
 the preceding source revision before any paid call. The continuation therefore
