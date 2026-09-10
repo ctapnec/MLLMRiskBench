@@ -478,7 +478,8 @@ def build_cohort_plan(
     excluded_clusters = {cluster(row) for row in candidates if row["rendered_input_sha256"] in excluded_payloads}
     pool = [row for row in candidates if cluster(row) not in excluded_clusters]
     modalities = bindings["api_config"][target]["modalities"]
-    input_body = lambda row: {"rendered_input": row["rendered_input"]}
+    def input_body(row):
+        return {"rendered_input": row["rendered_input"]}
     full = select_distinct_requests(pool, modalities=modalities, cap=prefix_stop, request_builder=input_body)
     if prefix_start:
         previous = select_distinct_requests(pool, modalities=modalities, cap=prefix_start, request_builder=input_body)

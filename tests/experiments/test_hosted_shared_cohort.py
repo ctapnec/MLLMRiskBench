@@ -30,7 +30,8 @@ def test_same_inputs_across_model_controls_and_nested_batches(tmp_path):
     changed = copy.deepcopy(_bindings()["api_config"])
     changed[TARGET]["max_tokens"] = 8192
     other = _build(candidates, cohort, descriptor, api_config=changed)
-    payloads = lambda plan: set(plan["selection"]["selected_input_payload_sha256"])
+    def payloads(plan):
+        return set(plan["selection"]["selected_input_payload_sha256"])
     assert payloads(first) == payloads(other)
     assert not payloads(first) & payloads(second)
     assert payloads(first) | payloads(second) == payloads(full)
