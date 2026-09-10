@@ -2,8 +2,8 @@
 
 Status update, 10 September 2026 at 22:14 UTC: the requested program is
 expanded from 6,541 to 6,736 target evaluations by the additional frontier
-selection below. The added 195 evaluations have counted requests but are not
-yet funded or executed. The operator's latest reported balances and the
+selection below. The added 195 evaluations have counted requests and validated
+replay files but are not yet funded or executed. The operator's latest reported balances and the
 existing USD 114 cumulative ceiling are unchanged. Frontier coverage takes
 priority over adding further lower-cost groups.
 
@@ -18,8 +18,11 @@ this fifth slice, not removed from the campaign.
 
 The earlier 586-input, lower-cost-first sixth slice was paused before funding
 when the operator specified frontier-first execution. Its underlying 671-input
-selection and all request counts remain available. Replace that financial
-partition with affordable whole frontier groups before dispatch. Neither the
+selection and all request counts remain available. Its replacement is counted
+with 194 inputs: Fable 32, Opus 10, GPT-5.5 17, Gemini Pro 37, Kimi 28 and
+DeepSeek 70. Maximum target reservations are USD 14.955195 Anthropic,
+4.200633 OpenAI, 1.830200 Google, 3.470652 Kimi and 4.801825 DeepSeek.
+No new token-count requests or generations were used to make this partition. Neither the
 paused partition nor its 85 deferred inputs represents a reduced campaign
 target. Funding remains conditional on the fifth slice's terminal target and
 judging liabilities. Later prepared prefixes must be rebased before use so
@@ -145,6 +148,11 @@ ceilings or claim an unfunded remainder complete.
 Rig evidence: `engineering/hosted-frontier-extension-quote-b04f997-20260910-r-inputs/`.
 It retains the shared selection, 195 counted provider requests and their
 quotes, with zero target generations and zero judge calls during preparation.
+The matching replay files are prepared under
+`engineering/hosted-frontier-extension-materialized-6425380-20260910-r-cap/`.
+This step reused retained source records, not model outputs or verdicts, and
+made no network calls. Final funding must recheck which of the 125 identical
+local answers already has a Haiku judgment before reserving additional calls.
 
 ## Per-model reference allocation
 
