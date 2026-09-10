@@ -16,12 +16,12 @@ from test_retained_response_judge_pair import _candidate, _population
 
 
 @pytest.fixture
-def completed(tmp_path, monkeypatch):
+def completed(tmp_path, monkeypatch, request):
     prepared = _prepared(tmp_path, monkeypatch)
     config = json.loads(prepared["api_config"].read_bytes())
     config[JUDGE]["max_tokens"] = 512
     prepared["api_config"].write_bytes(executor._canonical(config))
-    local = [_candidate(0, cohort="local")]
+    local = [_candidate(i, cohort="local", input_index=0) for i in range(getattr(request, "param", 1))]
     hosted = [_candidate(i, cohort="hosted", input_index=0, model=JUDGE if i == 2 else "openai:model") for i in range(3)]
     metadata, judgments, cells = {}, {}, {}
     for cohort, candidates in (("local", local), ("hosted", hosted)):
@@ -43,22 +43,22 @@ def completed(tmp_path, monkeypatch):
     old_condition = prepared["plan"]["judge_condition"]
     pricing = {key: old_condition[key] for key in ("pricing_config_sha256", "pricing_as_of", "pricing_effective_date",
         "pricing_currency", "input_microusd_per_token", "output_microusd_per_token")}
-    plan = planner.build_pair_plan(local, hosted, local_population_audit=_population(1), hosted_population_audit=_population(3),
+    plan = planner.build_pair_plan(local, hosted, local_population_audit=_population(len(local)), hosted_population_audit=_population(3),
         source_descriptor=prepared["plan"]["source"], judge_model=JUDGE,
         api_config_sha256=hashlib.sha256(prepared["api_config"].read_bytes()).hexdigest(),
         pricing_condition=pricing, limit=3, share_local_judgments=True)
     prepared["plan_path"].write_bytes(executor._canonical(plan))
     hosted_view = tmp_path / "hosted"
     hosted_view.mkdir()
-    monkeypatch.setattr(paired, "load_pair_candidate_views", lambda *_: ((local, _population(1)), (hosted, _population(3)), metadata))
+    monkeypatch.setattr(paired, "load_pair_candidate_views", lambda *_: ((local, _population(len(local))), (hosted, _population(3)), metadata))
     fake = FakeHaiku()
     paired.execute(**{key: prepared[key] for key in ("plan_path", "source_receipt", "api_config", "pricing_config", "out")},
                    local_runner_view=prepared["runner_view"], hosted_runner_view=hosted_view, judge_factory=lambda *_: fake)
-    assert fake.calls == 4
+    assert fake.calls == len(plan["selected"])
     views = {cohort: (cells[cohort], metadata[cohort], judgments[cohort], {}) for cohort in ("local", "hosted")}
     monkeypatch.setattr(subject, "_read_view", lambda root: views["local" if root == prepared["runner_view"] else "hosted"])
     monkeypatch.setattr(subject, "_candidates_from_view", lambda cell_list, *_args, **_kwargs:
-                        (local, _population(1)) if cell_list is cells["local"] else (hosted, _population(3)))
+                        (local, _population(len(local))) if cell_list is cells["local"] else (hosted, _population(3)))
     monkeypatch.setattr(subject, "_judge_configuration_binding", lambda _: {"sha256": "c" * 64})
     monkeypatch.setattr(FakeHaiku, "generate", lambda *_args, **_kwargs: pytest.fail("report generated a provider call"))
     args = {"plan_path": prepared["plan_path"], "source_receipt": prepared["source_receipt"],

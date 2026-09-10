@@ -41,8 +41,8 @@ def independent_batches(completed, tmp_path):  # noqa: F811
     for cohort in ("local", "hosted"):
         directory = tmp_path / (cohort + "-batch")
         directory.mkdir()
-        population = [{k: r[k] for k in single._SELECTED_FIELDS - {"same_model_judge"}}
-                      for r in pair_plan["selected"] if r["cohort"] == cohort]
+        candidates, _ = reports._candidates_from_view(*views[cohort], include_match_identity=True)
+        population = [{**r, "cohort": cohort} for r in candidates]
         plan = single.build_plan(population, population_audit=pair_plan["population"][cohort],
             source_descriptor=pair_plan["source"], judge_model=condition["model"],
             api_config_sha256=condition["api_config_sha256"],
@@ -119,3 +119,47 @@ def test_report_revalidates_outputs_accounting_and_generation_conditions(indepen
     result["report_id"] = "retained-judge-comparison-" + reports._sha({k: v for k, v in result.items() if k != "report_id"})[:24]
     with pytest.raises(ValueError):
         reports.validate_report(result)
+
+
+@pytest.mark.parametrize("completed", [4], indirect=True)
+def test_all_counterparts_are_compared_once_without_sampling_or_new_calls(independent_batches, completed):
+    args = independent_batches
+    _, old_plan, views = completed
+    local, local_audit = reports._candidates_from_view(*views["local"], include_match_identity=True)
+    hosted, hosted_audit = reports._candidates_from_view(*views["hosted"], include_match_identity=True)
+    plan = subject.build_population_selection(local, hosted, local_population_audit=local_audit,
+        hosted_population_audit=hosted_audit, source_descriptor=old_plan["source"], judge_condition=old_plan["judge_condition"])
+    assert len(plan["pairs"]) == 12 and len(plan["selected"]) == 7
+    args["plan_path"].write_bytes(execute._canonical(plan))
+    result = subject.build_report(**args)
+    assert result["schema"] == subject.ALL_SCHEMA
+    assert result["summary"]["cohorts"] == {"local": 4, "hosted": 3}
+    assert result["summary"]["comparison_pairs"] == 12
+    assert result["summary"]["distinct_inputs"] == 1
+    assert result["completion"]["judge_calls"] == 7
+    assert result["completion"]["new_judge_calls"] == 0
+    assert result["completion"]["actual_cost_microusd"] == 7 * 160
+    reports.validate_report(result)
+    from experiments.rig_web import RigWebApp
+    page = object.__new__(RigWebApp)._render_judge_comparison("All counterparts", result)
+    assert "Selected verdicts: 7" in page and "no new judge calls" in page
+    # A valid-looking smaller selector must still fail against the complete views.
+    reduced = subject.build_population_selection(local[:-1], hosted, local_population_audit=local_audit,
+        hosted_population_audit=hosted_audit, source_descriptor=old_plan["source"], judge_condition=old_plan["judge_condition"])
+    args["plan_path"].write_bytes(execute._canonical(reduced))
+    with pytest.raises(ValueError, match="all matching source answers"):
+        subject.build_report(**args)
+
+
+@pytest.mark.parametrize("completed", [4], indirect=True)
+def test_all_counterpart_selection_rejects_dropped_or_repeated_links(independent_batches, completed):
+    _, old_plan, views = completed
+    local, local_audit = reports._candidates_from_view(*views["local"], include_match_identity=True)
+    hosted, hosted_audit = reports._candidates_from_view(*views["hosted"], include_match_identity=True)
+    plan = subject.build_population_selection(local, hosted, local_population_audit=local_audit,
+        hosted_population_audit=hosted_audit, source_descriptor=old_plan["source"], judge_condition=old_plan["judge_condition"])
+    for links in (plan["pairs"][:-1], plan["pairs"] + plan["pairs"][:1]):
+        changed = {**plan, "pairs": links}
+        changed["selection_id"] = "retained-judge-population-" + reports._sha({k: v for k, v in changed.items() if k != "selection_id"})[:24]
+        with pytest.raises(ValueError, match="dropped or changed"):
+            subject._comparison_plan(changed)

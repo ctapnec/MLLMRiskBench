@@ -18,6 +18,8 @@ from experiments.generation_conditions import build_generation_conditions, valid
 from experiments.human_audit import _judge_configuration_binding
 
 SCHEMA = "ura-retained-judge-comparison/4"
+ALL_SCHEMA = "ura-retained-judge-comparison/5"
+SELECTION_SCHEMA = "ura-retained-judge-population-selection/1"
 LIMITATIONS = reports.OUTCOME_LIMITATIONS + reports.INPUT_LIMITATIONS + [
     "Judgments come from separately completed source executions; this report creates no combined execution or spending authority.",
     "Usage covers the distinct selected verdicts only, not all outputs or reservations in their source batches.",
@@ -25,6 +27,78 @@ LIMITATIONS = reports.OUTCOME_LIMITATIONS + reports.INPUT_LIMITATIONS + [
 CONDITION_FIELDS = ("model", "api_config_sha256", "answer_retries", "transport_retries",
     "pricing_config_sha256", "pricing_as_of", "pricing_effective_date", "pricing_currency",
     "input_microusd_per_token", "output_microusd_per_token")
+ALL_LIMITATIONS = LIMITATIONS + [
+    "Every eligible saved answer in the supplied views on their shared input identities is included; comparison links do not add judge calls.",
+]
+
+
+def build_population_selection(local_candidates, hosted_candidates, *, local_population_audit,
+                               hosted_population_audit, source_descriptor, judge_condition):
+    """Select all same-input answers for reporting, without execution authority."""
+    edges, audit = paired._pair_edges(local_candidates, hosted_candidates, seed=0)
+    if not edges:
+        raise ValueError("population comparison has no shared input identities")
+    condition = {key: judge_condition[key] for key in CONDITION_FIELDS}
+    rows = {}
+    links = []
+    for edge in sorted(edges, key=lambda row: row["pair_id"]):
+        link = {key: edge[key] for key in ("pair_id", "input_identity_sha256", "pair_stratum_id")}
+        for cohort in ("local", "hosted"):
+            row = {**edge[cohort], "cohort": cohort,
+                   "same_model_judge": edge[cohort]["exact_model"] == condition["model"]}
+            key = row["retained_row_sha256"]
+            if key in rows and rows[key] != row:
+                raise ValueError("population comparison has conflicting saved-answer identities")
+            rows[key] = row
+            link[cohort + "_retained_row_sha256"] = key
+        links.append(link)
+    value = {"schema": SELECTION_SCHEMA, "source": dict(source_descriptor),
+        "judge_condition": condition, "selection": {"scope": "all_eligible_answers_on_shared_inputs",
+            "sample_seed": 0, "new_target_calls": 0, "new_judge_calls": 0},
+        "population": {"local": dict(local_population_audit), "hosted": dict(hosted_population_audit), **audit},
+        "selected": sorted(rows.values(), key=lambda row: (row["cohort"], row["retained_row_sha256"])),
+        "pairs": links}
+    value["selection_id"] = "retained-judge-population-" + reports._sha(value)[:24]
+    return value
+
+
+def _comparison_plan(value):
+    if not isinstance(value, dict) or value.get("schema") != SELECTION_SCHEMA:
+        return paired.validate_pair_plan(value)
+    if set(value) != {"schema", "source", "judge_condition", "selection", "population", "selected", "pairs", "selection_id"}:
+        raise ValueError("population comparison selection fields differ")
+    rows = value["selected"]
+    if (not isinstance(rows, list) or not rows or any(not isinstance(row, dict)
+        or set(row) != single._SELECTED_FIELDS for row in rows)):
+        raise ValueError("population comparison selected answers differ")
+    grouped = {cohort: [{key: row[key] for key in paired._BASE_ROW_FIELDS}
+                       for row in rows if row["cohort"] == cohort] for cohort in ("local", "hosted")}
+    rebuilt = build_population_selection(grouped["local"], grouped["hosted"],
+        local_population_audit=value["population"]["local"], hosted_population_audit=value["population"]["hosted"],
+        source_descriptor=value["source"], judge_condition=value["judge_condition"])
+    # Unmatched source inputs are outside this comparison, but stay in its frame audit.
+    for key in ("unmatched_local_distinct_input_identities", "unmatched_hosted_distinct_input_identities"):
+        count = value["population"].get(key)
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            raise ValueError("population comparison unmatched input count is invalid")
+        rebuilt["population"][key] = count
+    rebuilt["selection_id"] = "retained-judge-population-" + reports._sha({k: v for k, v in rebuilt.items() if k != "selection_id"})[:24]
+    if rebuilt != value:
+        raise ValueError("population comparison dropped or changed matched answers or links")
+    return value
+
+
+def _validated_views(local_root, hosted_root, plan, source):
+    if plan["schema"] != SELECTION_SCHEMA:
+        return reports._validated_views(local_root, hosted_root, plan, source)
+    local, hosted = reports._read_view(local_root.resolve(strict=True)), reports._read_view(hosted_root.resolve(strict=True))
+    local_rows, local_audit = reports._candidates_from_view(*local, include_match_identity=True)
+    hosted_rows, hosted_audit = reports._candidates_from_view(*hosted, include_match_identity=True, original_cells=local[0])
+    rebuilt = build_population_selection(local_rows, hosted_rows, local_population_audit=local_audit,
+        hosted_population_audit=hosted_audit, source_descriptor=source, judge_condition=plan["judge_condition"])
+    if rebuilt != plan:
+        raise ValueError("population comparison no longer includes all matching source answers")
+    return {"local": local, "hosted": hosted}
 
 
 def _plan(value):
@@ -132,11 +206,11 @@ def _verdict_fields(artifact: dict) -> dict:
 def build_report(*, plan_path: Path, partitions: list[dict], local_runner_view: Path,
                  hosted_runner_view: Path, source_receipt: Path) -> dict:
     plan, plan_desc = execute._read_regular(plan_path, label="comparison selection", max_bytes=32 * 1024 * 1024)
-    paired.validate_pair_plan(plan)
+    _comparison_plan(plan)
     source = single._regular_descriptor(source_receipt, plan["source"]["sha256"])
     if source != plan["source"]:
         raise ValueError("comparison source receipt differs from its selection")
-    views = reports._validated_views(local_runner_view, hosted_runner_view, plan, source)
+    views = _validated_views(local_runner_view, hosted_runner_view, plan, source)
     parts = [_read_partition(Path(p["plan_path"]), Path(p["execution_root"])) for p in partitions]
     artifacts = _joined_judgments(plan, parts)
     cells = {(cohort, c["run_id"]): c for cohort, view in views.items() for c in view[0]}
@@ -160,10 +234,11 @@ def build_report(*, plan_path: Path, partitions: list[dict], local_runner_view: 
         if not attempts <= cell["responses"].keys():
             raise ValueError("partitioned comparison selected a missing target output")
         generation.append({**cell, "responses": {key: cell["responses"][key] for key in sorted(attempts)}})
-    result = {"schema": SCHEMA, "status": "complete", "plan": plan, "plan_descriptor": plan_desc,
+    all_answers = plan["schema"] == SELECTION_SCHEMA
+    result = {"schema": ALL_SCHEMA if all_answers else SCHEMA, "status": "complete", "plan": plan, "plan_descriptor": plan_desc,
         "source_partitions": parts, "observations": observations, "completion": _accounting(observations),
         "summary": reports.summarize(plan, observations, input_balanced=True),
-        "generation_conditions": build_generation_conditions(generation), "limitations": copy.deepcopy(LIMITATIONS),
+        "generation_conditions": build_generation_conditions(generation), "limitations": copy.deepcopy(ALL_LIMITATIONS if all_answers else LIMITATIONS),
         "uncertainty": {"method": "equal_source_cluster_bootstrap", "resamples": 2000, "seed": 0,
             "confidence": 0.95, "minimum_clusters": 2, "input_weighting": reports.INPUT_WEIGHTING}}
     result["report_id"] = "retained-judge-comparison-" + reports._sha(result)[:24]
@@ -174,10 +249,13 @@ def build_report(*, plan_path: Path, partitions: list[dict], local_runner_view: 
 def validate_report(value: object) -> None:
     if (not isinstance(value, dict) or set(value) != {"schema", "status", "plan", "plan_descriptor", "source_partitions",
         "observations", "completion", "summary", "generation_conditions", "limitations", "uncertainty", "report_id"}
-        or value["schema"] != SCHEMA or value["status"] != "complete"
+        or value["schema"] not in {SCHEMA, ALL_SCHEMA} or value["status"] != "complete"
         or not isinstance(value["source_partitions"], list) or not value["source_partitions"]):
         raise ValueError("invalid partitioned judge comparison")
-    plan = paired.validate_pair_plan(value["plan"])
+    plan = _comparison_plan(value["plan"])
+    all_answers = plan["schema"] == SELECTION_SCHEMA
+    if (value["schema"] == ALL_SCHEMA) != all_answers:
+        raise ValueError("population comparison report and selection scope differ")
     _descriptor(plan, value["plan_descriptor"])
     artifacts = _joined_judgments(plan, value["source_partitions"])
     observations = value["observations"]
@@ -204,7 +282,7 @@ def validate_report(value: object) -> None:
         raise ValueError("partitioned comparison generation population differs")
     if (value["completion"] != _accounting(observations)
         or value["summary"] != reports.summarize(plan, observations, input_balanced=True)
-        or value["limitations"] != LIMITATIONS
+        or value["limitations"] != (ALL_LIMITATIONS if all_answers else LIMITATIONS)
         or value["uncertainty"] != {"method": "equal_source_cluster_bootstrap", "resamples": 2000, "seed": 0,
             "confidence": 0.95, "minimum_clusters": 2, "input_weighting": reports.INPUT_WEIGHTING}
         or value["report_id"] != "retained-judge-comparison-" + reports._sha({k: v for k, v in value.items() if k != "report_id"})[:24]):

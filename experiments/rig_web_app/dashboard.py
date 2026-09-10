@@ -1842,7 +1842,7 @@ class DashboardMixin:
             )) + annotation
 
         summary, completion = doc["summary"], doc["completion"]
-        if doc.get("schema") == "ura-retained-judge-comparison/4":
+        if doc.get("schema") in {"ura-retained-judge-comparison/4", "ura-retained-judge-comparison/5"}:
             usage = (f"<p>Completed source batches: {len(doc['source_partitions'])}; no new judge calls. "
                      f"Selected verdicts: {completion['judge_calls']}; {completion['http_attempts']} recorded HTTP attempts; "
                      f"{completion['input_tokens']:,} input / {completion['output_tokens']:,} output tokens; "
