@@ -247,6 +247,25 @@ def _select(candidates: list[dict], *, modalities: list[str], cap: int) -> tuple
                       "next_whole_cluster_size": blocked_size}
 
 
+def _check_candidate_identities(candidates: list[dict], *, label: str) -> None:
+    """Check digest shape/uniqueness; rehash retained payloads only on request."""
+    from ura.artifact_checks import artifact_sha256_enabled
+
+    verify = artifact_sha256_enabled()
+    seen = set()
+    for row in candidates:
+        key = _digest(row["input_identity_sha256"], "input identity")
+        _digest(row["rendered_input_sha256"], "rendered input identity")
+        if key in seen:
+            raise ValueError(f"{label} changed or was duplicated")
+        seen.add(key)
+        if verify:
+            identity = {field: value for field, value in row.items()
+                        if field not in {"input_identity_sha256", "rendered_input", "local_sources"}}
+            if key != _sha(identity) or row["rendered_input_sha256"] != _sha(row["rendered_input"]):
+                raise ValueError(f"{label} changed or was duplicated")
+
+
 def select_distinct_requests(
     candidates: list[dict], *, modalities: list[str], cap: int,
     request_builder: Callable[[dict], Mapping[str, Any]],
@@ -263,15 +282,7 @@ def select_distinct_requests(
     if type(cap) is not int or cap < 1:
         raise ValueError("distinct request cap must be a positive integer")
     previous = {_digest(value, "previous provider request") for value in previous_request_sha256}
-    seen_inputs = set()
-    for row in candidates:
-        identity = {key: value for key, value in row.items()
-                    if key not in {"input_identity_sha256", "rendered_input", "local_sources"}}
-        if (row["input_identity_sha256"] != _sha(identity)
-                or row["rendered_input_sha256"] != _sha(row["rendered_input"])
-                or row["input_identity_sha256"] in seen_inputs):
-            raise ValueError("distinct request source input identity changed or was duplicated")
-        seen_inputs.add(row["input_identity_sha256"])
+    _check_candidate_identities(candidates, label="distinct request source input identity")
     ordered, population = _select(candidates, modalities=modalities, cap=len(candidates))
 
     def cluster(row):
@@ -323,15 +334,7 @@ def build_plan(*, candidates: list[dict], budget: dict, budget_descriptor: dict,
                api_config: dict, api_descriptor: dict, target: str,
                media_index: Mapping[str, str], local_inventory_descriptor: dict,
                call_cap: int | None = None) -> dict:
-    seen = set()
-    for row in candidates:
-        identity = {key: value for key, value in row.items()
-                    if key not in {"input_identity_sha256", "rendered_input", "local_sources"}}
-        if (row["input_identity_sha256"] != _sha(identity)
-                or row["rendered_input_sha256"] != _sha(row["rendered_input"])
-                or row["input_identity_sha256"] in seen):
-            raise ValueError("retained input identity changed or was duplicated")
-        seen.add(row["input_identity_sha256"])
+    _check_candidate_identities(candidates, label="retained input identity")
     material = {key: value for key, value in budget.items() if key != "projection_id"}
     if (budget.get("schema") not in {BUDGET_SCHEMA, CONFIGURED_BUDGET_SCHEMA} or budget.get("status") != "budget_fit"
             or budget.get("projection_id") != "hosted-budget-" + _sha(material)[:24]):

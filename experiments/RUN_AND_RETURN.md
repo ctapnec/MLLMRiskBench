@@ -1,5 +1,15 @@
 # Run and return: broad thesis experiment program
 
+Retained input payload checksums follow the same optional artifact-checking
+setting as retained files. Ordinary selection checks digest syntax, duplicate
+identities, input grouping and budget relationships without rehashing every
+historical prompt. Enable `--verify-artifact-sha256` for a complete payload
+digest recheck. Newly created input and provider-request identifiers are still
+computed, so ordering, request deduplication and generation settings remain
+bound. Default metadata/structure checks do not establish unchanged bytes in
+an externally edited candidate collection. Paid reservations are checked
+against the live ledger immediately before every physical request.
+
 Hosted routes may run concurrently in isolated processes. Keep each job's
 exact input partition, checkpoint owner and shared monetary reservation;
 concurrency is not permission to repeat an already-paid response. The optional

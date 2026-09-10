@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from experiments import hosted_retained_inputs as subject
+from ura.artifact_checks import artifact_verification
 
 
 HEX_A = "a" * 64
@@ -247,8 +248,35 @@ def test_distinct_request_identity_keeps_generation_controls_and_rejects_changed
             request_builder=lambda row: {"messages": row["rendered_input"], "max_tokens": limit})
     assert build(512)["selected"][0]["request_sha256"] != build(4096)["selected"][0]["request_sha256"]
     candidates[0]["rendered_input"][0]["content"] = "Changed prompt"
-    with pytest.raises(ValueError, match="source input identity"):
+    with artifact_verification(verify_sha256=True), pytest.raises(ValueError, match="source input identity"):
         build(512)
+
+
+@pytest.mark.parametrize("distinct", [False, True])
+def test_retained_payload_rechecks_are_optional_without_changing_selection(tmp_path, monkeypatch, distinct):
+    candidates = subject.candidates_from_cells([_cell(tmp_path, count=2)])
+    def select():
+        if distinct:
+            return subject.select_distinct_requests(candidates, modalities=["text"], cap=1,
+                request_builder=lambda row: {"messages": row["rendered_input"]})
+        return _plan(candidates, 1)
+    with artifact_verification(verify_sha256=True):
+        expected = select()
+    original = subject._sha
+    payload_checks = []
+    def observed(value):
+        if any(value is row["rendered_input"] for row in candidates):
+            payload_checks.append(value)
+        return original(value)
+    monkeypatch.setattr(subject, "_sha", observed)
+    assert select() == expected
+    assert payload_checks == [], "unchanged retained prompts were rehashed by default"
+    with artifact_verification(verify_sha256=True):
+        assert select() == expected
+    assert len(payload_checks) == len(candidates)
+    candidates.append(copy.deepcopy(candidates[0]))
+    with pytest.raises(ValueError, match="duplicated"):
+        select()
 
 
 def test_distinct_continuation_rebuilds_full_prefix_and_keeps_aliases(tmp_path):
@@ -331,7 +359,7 @@ def test_retries_and_changed_input_never_silently_pass(tmp_path: Path) -> None:
         _plan(candidates, budget=budget)
     plan = _plan(candidates)
     candidates[0]["rendered_input"][0]["content"] = "Changed input"
-    with pytest.raises(ValueError, match="input identity changed"):
+    with artifact_verification(verify_sha256=True), pytest.raises(ValueError, match="input identity changed"):
         subject.resolve_inputs(plan, candidates=candidates, **_bindings())
 
 
