@@ -53,6 +53,43 @@ def test_past_http_date_uses_backoff(monkeypatch):
     assert api._transport_retry_delay(error, 1) == 0.75
 
 
+@pytest.mark.parametrize("header", [None, "15", "900"])
+def test_google_retry_info_waits_before_next_funded_attempt(monkeypatch, header):
+    errors = pytest.importorskip("google.genai.errors")
+    error = errors.ClientError(429, {"error": {
+        "code": 429, "status": "RESOURCE_EXHAUSTED", "message": "daily request quota",
+        "details": [{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "781s"}],
+    }})
+    error.response = SimpleNamespace(headers={} if header is None else {"retry-after": header})
+    events = []
+
+    def call(**request):
+        assert request == {"model": "same-model", "contents": "same-input"}
+        events.append("call")
+        if events.count("call") == 1:
+            raise error
+        return "answer"
+
+    monkeypatch.setattr(api.time, "sleep", lambda seconds: events.append(seconds))
+    with api.provider_attempt_admission(lambda *_: events.append("reserve")):
+        result, audit = api._call_with_retry(call, {"model": "same-model", "contents": "same-input"},
+                                           provider="google", max_retries=3)
+    assert result == "answer" and len(audit) == 2
+    assert events == ["reserve", "call", 900.0 if header == "900" else 781.0, "reserve", "call"]
+
+
+@pytest.mark.parametrize("duration,expected", [("1.125s", 1.125), ("0s", 0.5),
+                                               ("-3s", 0.75), ("NaNs", 0.75), ("2e3s", 0.75),
+                                               (None, 0.75)])
+def test_google_retry_info_duration_validation(monkeypatch, duration, expected):
+    errors = pytest.importorskip("google.genai.errors")
+    error = errors.ClientError(429, {"error": {
+        "details": [{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": duration}],
+    }})
+    monkeypatch.setattr(api.random, "uniform", lambda *_: 0.25)
+    assert api._transport_retry_delay(error, 1) == expected
+
+
 @pytest.mark.skipif(os.name != "posix", reason="rig GPU scheduler uses POSIX flock")
 def test_scoring_slot_is_lazy_exclusive_and_released_after_exception(tmp_path):
     path = tmp_path / "gpu-0.lock"

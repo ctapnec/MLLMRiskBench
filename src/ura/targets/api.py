@@ -463,7 +463,7 @@ def _retryable_transport_error(exc: BaseException, *, provider: str = "") -> boo
 
 
 def _transport_retry_delay(exc: BaseException, attempt_number: int) -> float:
-    """Respect provider Retry-After; spread clients when no delay is provided."""
+    """Respect HTTP and Google RPC retry delays before another paid attempt."""
     headers = getattr(getattr(exc, "response", None), "headers", None)
     if headers is None:
         headers = getattr(exc, "headers", {})
@@ -478,8 +478,20 @@ def _transport_retry_delay(exc: BaseException, attempt_number: int) -> float:
                     delay = parsedate_to_datetime(value).timestamp() - time.time()
                 except (ValueError, TypeError, OverflowError):
                     pass
-    if delay is not None and math.isfinite(delay) and delay >= 0:
-        return max(delay, 0.5 * (2 ** (attempt_number - 1)))
+    delays = [delay] if delay is not None and math.isfinite(delay) and delay >= 0 else []
+    if type(exc).__module__.startswith("google.genai.errors"):
+        details = _transport_error_body(exc).get("details")
+        for detail in details if isinstance(details, list) else []:
+            if not isinstance(detail, Mapping) or detail.get("@type") != "type.googleapis.com/google.rpc.RetryInfo":
+                continue
+            duration = detail.get("retryDelay")
+            if (isinstance(duration, str) and len(duration) <= 40
+                    and re.fullmatch(r"[0-9]+(?:\.[0-9]{1,9})?s", duration)):
+                seconds = float(duration[:-1])
+                if math.isfinite(seconds):
+                    delays.append(seconds)
+    if delays:
+        return max(*delays, 0.5 * (2 ** (attempt_number - 1)))
     return 0.5 * (2 ** (attempt_number - 1)) + random.uniform(0.0, 0.5)
 
 
