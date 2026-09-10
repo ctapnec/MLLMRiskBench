@@ -476,11 +476,22 @@ def _program(
     if scoring_probes:
         # Preparation needs a scoring-capable pilot AND measured population.
         # The default fixture deliberately contains one Crescendo setup turn;
-        # here use two direct, independently evaluable replay probes instead.
-        for attempt in cell["attempts"].values():
+        # here use two direct, independently evaluable source clusters instead.
+        from ura.converters._common import canonical_converted_corpus_sha256
+        second = points[0].model_copy(update={"id": "independent-input",
+            "payload_text": "A different retained source question",
+            "meta": {**points[0].meta, "source_cluster_id": "independent-cluster"}})
+        points.append(second)
+        cell["manifest"]["dataset_hashes"]["corpus"] = canonical_converted_corpus_sha256(points)
+        for index, attempt in enumerate(cell["attempts"].values()):
+            point = points[index]
             attempt["attacker"] = "replay"
+            attempt["datapoint_id"] = point.id
+            attempt["rendered_input"] = [attempt["rendered_input"][0],
+                {"role": "user", "content": point.payload_text, "media": []}]
             attempt["params"].update(policy_evaluable_turn=True,
-                turn_expected_behavior=points[0].expected_behavior, policy_challenge_index=0)
+                turn_expected_behavior=point.expected_behavior, policy_challenge_index=0,
+                source_cluster_id=point.meta["source_cluster_id"])
         cell["artifacts"]["attempts"].write_text("\n".join(json.dumps(row) for row in cell["attempts"].values()) + "\n")
     if extra_points:
         from ura.converters._common import canonical_converted_corpus_sha256
