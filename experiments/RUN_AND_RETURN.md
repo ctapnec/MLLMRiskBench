@@ -6103,8 +6103,9 @@ After a delivery correction, rebind the unstarted request and its count receipt;
 do not reuse a count for different encoded bytes or replay completed answers.
 
 An omitted cache counter is not zero cache usage. For OpenAI, Kimi and Google
-responses with complete cache-inclusive input and output totals and no priced
-cache-write category, monetary accounting may replace the original maximum
+responses with complete cache-inclusive input and output totals, no priced
+cache-write category and no reported positive cache writes, monetary accounting
+may replace the original maximum
 generation exposure with the reported token totals priced at the highest
 applicable input tariff and the output tariff. This remains an unknown exact
 bill with a conservative upper bound, not settled spending or an assumed

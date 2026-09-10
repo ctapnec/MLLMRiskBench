@@ -297,6 +297,7 @@ class _Admission:
         pricing_source = self.program.get("sources", {}).get("pricing", {})
         if (cost is None and not missing and self.program["provider"] in {"openai", "kimi", "google"}
                 and self.prices.get("cache_write") is None and pricing_source.get("sha256")
+                and type(tokens.get("cache_write_input", 0)) is int and tokens.get("cache_write_input", 0) == 0
                 and all(type(tokens.get(key)) is int and tokens[key] >= 0 for key in ("input", "output"))):
             input_price = str(max(Decimal(self.prices["input"]),
                                   Decimal(self.prices.get("cache_read") or "0")))
