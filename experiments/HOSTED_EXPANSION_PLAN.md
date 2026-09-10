@@ -1,7 +1,7 @@
 # Third hosted campaign: provider-scaled expansion
 
-Status, 10 September 2026: requested quantities verified against the rig's
-two completed target ledgers. Input selection, pricing and funding are pending;
+Status, 10 September 2026: requested quantities and a full-pool input
+availability preview are verified on the rig. Final selection, pricing and funding are pending;
 no third-campaign target or judge call has started. This is a separate cohort
 after [the original campaign](HOSTED_CAMPAIGN_PLAN.md) and
 [the supplement, including Google](HOSTED_SUPPLEMENT_PLAN.md).
@@ -57,6 +57,35 @@ substitute another model or lower the provider target.
 | Gemini 3.1 Pro Preview | 162 | 486 |
 | Kimi K3 | 113 | 565 |
 | DeepSeek V4 Pro | 246 | 1,230 |
+
+### Full-pool availability preview
+
+At 09:04 UTC the rig finished reading all 372 validated source cells and
+27,847 retained input candidates. Applying the proportional reference above
+to the existing whole-cluster prefixes selected 6,495 new input payloads:
+
+| Provider | Requested | Whole-cluster prefix preview | Unfilled allocation |
+| --- | ---: | ---: | ---: |
+| Anthropic | 2,253 | 2,242 | 11 |
+| OpenAI | 1,521 | 1,503 | 18 |
+| Google | 972 | 966 | 6 |
+| Kimi | 565 | 556 | 9 |
+| DeepSeek | 1,230 | 1,228 | 2 |
+| Total | 6,541 | 6,495 | 46 |
+
+This is a cluster-boundary effect, not exhaustion of the local input pool.
+For example, Kimi has nine slots left before a fifteen-request cluster and
+DeepSeek has two slots left before a four-request cluster. Do not silently
+replace the requested total with 6,495 or split those groups. Finalize and
+report any per-model reallocation and unavoidable provider-level shortfall
+before funding. The provider targets above remain the requested quantities.
+
+The preview excludes previous retained input payloads, uses no answer or
+verdict to select inputs and sends no API requests. Its 4,315 selected source
+memberships are not 4,315 independent questions or local Haiku calls. Exact
+provider-wire requests, expanded media resolution and matching output-specific
+judging counts remain to be validated. Evidence:
+`engineering/hosted-expansion-20260910/result.json` on the rig.
 
 ## Budget and generation conditions
 
@@ -157,7 +186,8 @@ separately from source aliases and matched comparison links.
 ## Execution order and reporting
 
 1. Verify the completed-family baseline - done, 10 September at 08:54 UTC.
-2. Select new retained inputs and count all matching local judging obligations.
+2. Finalize new retained inputs and count all matching local judging obligations;
+   the full-pool availability preview completed at 09:04 UTC.
 3. Quote actual requests, reconcile outstanding liabilities and fund the work.
 4. Execute target collection on the rig in tmux, preserving checkpoints.
 5. Complete local and Haiku judging, then publish the separate Stats report.
