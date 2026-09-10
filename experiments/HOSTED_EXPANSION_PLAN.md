@@ -1,13 +1,13 @@
 # Third hosted campaign: provider-scaled expansion
 
-Status update, 10 September 2026 at 23:24 UTC: the requested program is
+Status update, 10 September 2026 at 23:34 UTC: the requested program is
 expanded from 6,541 to 6,736 target evaluations by the additional frontier
 selection below. The added 195 evaluations have counted requests and validated
 replay files but are not yet funded or executed. The operator's latest reported balances and the
 existing USD 114 cumulative ceiling are unchanged. Frontier coverage takes
 priority over adding further lower-cost groups.
 
-The first five funded slices now have all 2,107 assigned target inputs
+The first five funded slices have all 2,107 assigned target inputs
 attempted and all required local and Haiku judging complete. They retain
 2,106 usable answers or explicit policy outcomes and one unclassified HTTP
 400. Its seven neighboring usable answers are included through separately
@@ -15,6 +15,14 @@ attributed scoring; the native partial grid remains partial. The sixth slice
 needs no new local Haiku calls because its exact matching local answers were
 already assessed; the funding handoff binds those existing verdicts. New
 hosted outputs still require their own local and Haiku judgments.
+
+The sixth slice has attempted 124 of 194 assignments. Gemini exhausted its
+three transport retries on HTTP 429; the shared paid stop then interrupted
+three unrelated provider routes. Its failed response and four physical
+attempts remain retained, with unknown charges still reserved. Recovery
+continues the 70 unissued inputs from native checkpoints, without repeating
+saved responses or granting a fifth attempt to that exhausted request.
+An explicit policy-rejection HTTP 400 remains a different, legitimate outcome.
 
 Thirty-seven completed OpenAI responses released USD 3.457155 in excess
 maximum-output reservations using reported token totals and the already-funded
@@ -44,10 +52,14 @@ target. This replacement was funded at 23:13 UTC after the fifth slice's target
 and judging work finished, and its independent provider routes are executing.
 Its 689 matching local answers reuse their exact retained Haiku assessments;
 new hosted answers receive new judgments. The next rebased slice has 211
-counted, materialized inputs: Astra 19, Fable 15, Opus 23, Gemini Pro 72,
-Kimi 15 and DeepSeek 67. It is not funded. Its allocation must fit the closed
-sixth-slice liabilities; an unfunded route must not be reported as executed or
-silently removed from the final prefixes.
+counted, materialized inputs. A subsequent financial partition retains 192:
+Fable 15, Opus 23, Gemini Pro 72, Kimi 15 and DeepSeek 67. Its funding controller
+is queued, not yet allocated. Astra's 19 inputs remain pending: the 15-input
+cluster exceeds current uncommitted OpenAI capacity, while its four-input
+predecessor alone cannot satisfy the preparation helper's separate pilot and
+measurement groups. This preparation limitation must not split a cluster or
+silently remove either group. The queued allocation must fit the closed
+sixth-slice liabilities.
 
 Completed-budget closure released USD 10.868736 of never-issued Haiku
 reservations from the first four slices. Actual charges and unknown-usage
