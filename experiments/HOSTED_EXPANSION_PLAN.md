@@ -1,13 +1,13 @@
 # Third hosted campaign: provider-scaled expansion
 
-Status, 10 September 2026 at 19:42 UTC: the first three funded slices have
-finished target collection, covering 964 assigned inputs. The first two slices
-also have completed local and Haiku judging and analysis publications. The
-third slice's 624 selected existing local outputs have all received Haiku
-assessment, retaining five invalid verdicts explicitly. Its hosted
-output-specific Haiku judging and analysis are in progress. The recovered
+Status, 10 September 2026 at 20:34 UTC: the first three funded slices have
+finished target collection, local and Haiku judging and per-model analysis,
+covering 964 assigned inputs. Across those slices, Haiku assessed 707 selected
+existing local answers and 548 eligible hosted answers. The fourth slice is
+funded and executing; the aggregate snapshot retains 1,180 attempted inputs
+out of 1,551 funded inputs, with 1,178 usable outcomes. The recovered
 target and local-judge controllers preserved completed checkpoints instead of
-repeating their paid calls. Later slices remain unfunded; their simultaneous
+repeating their paid calls. Slices after the fourth remain unfunded; their simultaneous
 worst-case reservations must fit the unchanged cumulative provider and judge
 ceilings. Smaller financial slices may defer inputs to later prefixes, but do
 not remove them from the requested campaign or change generation settings.
@@ -17,9 +17,11 @@ and 68 deferred OpenAI inputs. It reuses the same questions, media, model
 settings and 587 exact token-count receipts, without network calls. The
 OpenAI maximum reservation falls from USD 14.152121 to USD 9.245201; deferred
 inputs retain their place in the final shared prefixes. Local Haiku inputs
-are restricted to matching answers for this slice. Previously prepared fifth
-through seventh slices must be rebased before funding so that no deferred
-input is skipped. This is scheduling within the original ceilings, not a
+are restricted to matching answers for this slice. The fifth slice has since
+been rebased and its 560 request counts reused without network calls.
+Previously prepared sixth and seventh slices still require rebasing before
+funding so that no deferred input is skipped. This is scheduling within the
+original ceilings, not a
 reduction of the requested campaign.
 The Operational costs integration is scheduled after the interrupted hosted
 campaign finishes, as specified in the execution order below.
@@ -405,6 +407,10 @@ answers. Full model/artifact checksum revalidation is optional and disabled by
 default. Source-context reuse is invalidated by changes to its observed inputs;
 paid budgets are never reused from a cached authorization. Validate the shared
 source population once before dispatching compatible API workers, and keep
-their paid reservations independent. The maintained cache supports read-only
-inheritance by forked Linux workers; the older subprocess-based campaign
-controller still requires migration before cross-worker reuse can be claimed.
+their paid reservations independent. The active dispatcher validates one
+shared source context before forking Linux workers, which inherit its
+read-only cache. Independent routes retain their own error records; a failed
+transport-probe derivation must not discard a saved provider-policy outcome
+or prevent unrelated funded routes from completing. A replacement transport
+probe must use an unissued assigned input, preserve the original outcome and
+retain the same monetary reservation checks.
