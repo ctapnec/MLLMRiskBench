@@ -2,6 +2,38 @@
 
 ## Current execution and required Google extension
 
+Update, 10 September at 01:10 UTC: Kimi and Opus have completed all 34 and 53
+assigned inputs, respectively. Their fresh Haiku assessments are complete:
+24 Kimi and 16 Opus verdicts, all valid. Luna continues without repeating its
+saved prefix. The 01:00 aggregate records 493 of 676 supplemental inputs
+attempted: 490 usable answers, two provider-policy outcomes and one missing
+answer. These categories are distinct; a policy outcome is not an execution
+failure and must not stop subsequent requests.
+
+Fable's zero-call preflight exposed a split readiness cluster. The same
+unpaid selection issue was found in Terra, Astra, Sol, GPT-5.5 and both Google
+programs. Their corrected partitions preserve all 434 funded requests and
+keep source clusters together. Readiness uses already-funded singleton
+inputs, not additional calls. The second queue has restarted with Fable.
+A tmux handoff waits for Luna's completed route before replacing only
+Google Flash's unpaid program. Luna's 37 saved answers remain assigned to
+separate local and Haiku judging after the GPU queue finishes.
+
+The preparation correction passed 32 focused rig tests and a reversed-fix
+check at `bf037eb`; the fixture now uses genuinely independent source clusters.
+No runtime was installed and no full suite was repeated. The console is
+deployed at that revision without restarting active campaigns.
+
+The expanded comparison is published at
+`/stats/job/hosted-supplement-all-counterparts-bf037eb-20260910`. This fixed
+completed-route snapshot contains 261 hosted answers and all 622 existing
+local counterparts across 160 inputs. It reconciles 883 existing Haiku
+outcomes from nine completed executions, including eight invalid verdicts,
+and makes zero calls. Its 907 comparison links are not 907 independent
+observations. The full supplemental campaign and Google collection are not
+yet complete. HTTP and server-rendered diagrams passed; browser visual QA
+remains unavailable.
+
 Update, 10 September at 00:34 UTC: Kimi completed all 34 supplemental inputs
 with usable answers, and its queue moved to Luna. Its 32 measured answers
 include 24 eligible Haiku inputs, now in post-hoc judging. Opus's current image

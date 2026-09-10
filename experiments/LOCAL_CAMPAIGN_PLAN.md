@@ -28,6 +28,11 @@ The 9 September hosted continuation also retains Luna's 37 previously saved
 answers for separate local-cascade and Haiku scoring. They are hosted outputs,
 not missing local-model generations. The original local campaign is unchanged;
 no local target work is reopened to repair that hosted scoring handoff.
+The 10 September comparison correction includes every retained local answer
+matching each completed hosted input, not one sampled local model per input.
+The first expanded snapshot uses 622 existing local answers on its 160 inputs;
+the larger 750-answer, 190-input Haiku inventory remains available for the
+remaining hosted routes. Neither report requires local target regeneration.
 The forward runtime inventory was amended on 25 August 2026 to admit T3MP3ST
 at an exact source commit, increasing the managed inventory from 15 to 16. The
 dated readiness snapshot below remains a historical record of what was found on

@@ -5986,6 +5986,14 @@ suffix), remains process-memory only (legacy file entries are scrubbed), and is
 forwarded only to the acquisition children (`model_acquire` and
 `export_aggregators`); no other child receives it.
 
+Readiness and measured jobs must keep every unpaid funded source cluster
+together, including distinct retained requests for the same DataPoint.
+Grouping only by the number of DataPoints is insufficient: several prompts
+for one DataPoint can still split a funded cluster. Select an already-funded
+singleton when a transport probe requires exactly one request. Repartition
+only unpaid inputs, preserve request identities and reservations, and validate
+every new partition before its first paid call.
+
 Completed Haiku batches can be compared without executing the judge again.
 `retained_judge_partitioned_report.build_report` accepts a matched selection,
 its validated local and hosted views, and the original plan/execution directory
@@ -5996,7 +6004,12 @@ input-balanced comparisons. Source spending ledgers remain separate: the
 displayed selected usage is historical accounting, not a new budget or an
 invoice. Missing, changed or ambiguous judgments stop only report publication,
 not unrelated model collection. Report the selected paired sample separately
-from the full same-input local-answer inventory.
+from the full same-input local-answer inventory. For an exhaustive matched
+comparison, use `build_population_selection`: it includes every available
+local and hosted answer on the same inputs, then verifies that population
+again against the native views. Each saved verdict is counted once even when
+an answer participates in several model-comparison links. This read-only
+selection creates no new generation or judging authority.
 
 Transport probes must match the actual generation revision, not merely the
 same model name. Before reusing a completed probe in a continuation, compare
