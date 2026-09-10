@@ -92,6 +92,8 @@ class _Admission:
     def __init__(self, *, program: dict, job: dict, budget: AttemptBudget,
                  attacker: ReplayAttacker, requests: Mapping[str, dict], prices: dict):
         self.program = {key: program[key] for key in ("target", "provider", "max_output_tokens")}
+        if isinstance(program.get("sources"), dict) and "pricing" in program["sources"]:
+            self.program["sources"] = {"pricing": copy.deepcopy(program["sources"]["pricing"])}
         self.job = copy.deepcopy(job)
         self.budget = budget
         self.attacker = attacker

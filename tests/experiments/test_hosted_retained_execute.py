@@ -41,7 +41,8 @@ def _setup(tmp_path, *, adaptive=True, outputs=None, tight=False):
             usage=SimpleNamespace(prompt_tokens=7, completion_tokens=5, total_tokens=12))
 
     target._client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
-    program = {"target": target.name, "provider": "openai", "max_output_tokens": 128}
+    program = {"target": target.name, "provider": "openai", "max_output_tokens": 128,
+               "sources": {"pricing": {"sha256": "b" * 64}}}
     requests = {key: {"call_id": key, "request_sha256": subject._sha(target.build_request(
         retained_dialog(entry["rendered_input"]), seed=0)), "input_tokens": 32,
         "max_output_tokens": 128, "bound_microusd": 10000}
@@ -133,7 +134,7 @@ def test_target_money_settles_after_checkpoint_and_resume_never_reissues(tmp_pat
 def test_missing_cache_split_uses_reported_token_bound_without_answer_retry(tmp_path):
     points, attacker, target, calls, admission = _setup(tmp_path)
     admission.prices.update(cache_read="0.2", cache_write=None)
-    admission.program["sources"] = {"pricing": {"sha256": "b" * 64}}
+    assert admission.program["sources"]["pricing"]["sha256"] == "b" * 64
     checkpoint = tmp_path / "bounded.responses.checkpoint.jsonl"
     _runner(attacker, target, admission).run(points, on_response=lambda row: Runner.append_checkpoint(checkpoint, row))
     pool = admission.budget.snapshot()["pools"]["openai:target"]
