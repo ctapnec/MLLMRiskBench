@@ -22,6 +22,10 @@ the total prompt count. Do not discard the split, double-count Chat inputs or
 substitute zero for absent usage. Old responses lacking the split retain their
 unknown billing exposure; do not repeat an answer merely to recover accounting
 metadata. The cache-usage correction changes no generation request or input.
+Kimi reports cached tokens at the top level; Gemini may report a cached-content
+count. Preserve either when present. A read-only cache tariff does not require
+an invented write counter. A separately priced write category still needs its
+own usage, and a missing read count remains unknown.
 
 Hosted supplemental configuration: Gemini supports the same JSON-compatible
 request preview for token counting, physical-attempt reservation and generation.

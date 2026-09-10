@@ -344,6 +344,11 @@ reported uncached, cache-read and cache-write quantities; Chat's prompt total
 already includes its cache parts. Explicit zero counts are retained, whereas
 missing counts remain unknown. This metadata supports billing without changing
 the provider request, selected input, generated answer or historical charge.
+Kimi's top-level cache count and Gemini's optional cached-content count are
+also retained. A tariff that prices cache reads but has no separate cache-write
+category can settle reported cached input against the remaining ordinary
+input. A priced write category still requires its reported count; absent cache
+reads remain unknown. Billing normalization does not invent usage metadata.
 
 Every Hugging Face model is admitted through one sealed acquisition boundary.
 `collect_run_requirements` projects the five supported roles (vLLM target,
