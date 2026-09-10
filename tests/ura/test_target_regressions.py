@@ -1782,7 +1782,8 @@ def test_gemini_real_sdk_filtered_candidate_can_have_null_parts_and_usage():
     result = types.GenerateContentResponse(response_id="filtered-1", model_version="gemini-generic",
         candidates=[types.Candidate(finish_reason="SAFETY", content=types.Content(role="model"))])
     assert result.candidates[0].content.parts is None and result.usage_metadata is None
-    target = GeminiTarget("gemini-generic"); _install_gemini_fixture(target, result)
+    target = GeminiTarget("gemini-generic")
+    _install_gemini_fixture(target, result)
     response = target.generate([DialogTurn(role="user", content="fixture")])
     assert response.raw["provider_refusal_category"] == "gemini_finish_safety"
     assert response.output_turns == [] and response.tokens is None
@@ -1791,7 +1792,8 @@ def test_gemini_real_sdk_filtered_candidate_can_have_null_parts_and_usage():
 def test_gemini_unexplained_null_candidates_preserve_one_actual_attempt_audit():
     types = pytest.importorskip("google.genai.types")
     result = types.GenerateContentResponse(response_id="malformed-1", model_version="gemini-generic")
-    target = GeminiTarget("gemini-generic"); _install_gemini_fixture(target, result)
+    target = GeminiTarget("gemini-generic")
+    _install_gemini_fixture(target, result)
     with pytest.raises(GeminiOutputError, match="candidates is not a list") as caught:
         target.generate([DialogTurn(role="user", content="fixture")])
     assert caught.value.call_audit["transport_attempt_count"] == 1
@@ -1806,7 +1808,8 @@ def test_gemini_prompt_policy_does_not_accept_conflicting_candidate_or_identity(
     _install_gemini_fixture(target, result)
     with pytest.raises(GeminiOutputError, match="unexpectedly returned"):
         target.generate([DialogTurn(role="user", content="fixture")])
-    result.candidates = None; result.model_version = "a-different-model"
+    result.candidates = None
+    result.model_version = "a-different-model"
     with pytest.raises(GeminiOutputError, match="unexpected model"):
         target.generate([DialogTurn(role="user", content="fixture")])
 
