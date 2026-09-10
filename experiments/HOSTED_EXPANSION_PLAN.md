@@ -3,10 +3,17 @@
 Status, 10 September 2026: requested quantities and a full-pool input
 availability preview and a shared-input preview are verified on the rig.
 Shared-cohort preparation and credit-stop handling have passed focused rig tests.
-The first 128-input batch is funded and executing, with local judging,
-output-specific Haiku judging and per-model Stats publication. The next
-224-input slice is materialized and token-counted, awaiting closure and
-cumulative funding of the preceding work. Most of the requested expansion
+The first 128-input batch is complete, with local judging, output-specific
+Haiku judging of its 21 eligible measured answers and thirteen per-model Stats
+publications. Its twenty matching local answers also have valid Haiku verdicts.
+The next 224-input slice is funded; all 63 additional matching local answers
+have valid Haiku verdicts. Its target controllers stopped before any target
+call because their probe selector considered only the original canary jobs.
+The corrected selector passed all thirteen actual funded-route validations
+on the rig, while restoring the former selection fails on those same inputs.
+Both target queues and their analysis successor restarted at 12:38 UTC using
+suitable already-funded whole jobs. The complete input selection and failed
+controller history are preserved. Most of the requested expansion
 remains unexecuted. This is a separate cohort
 after [the original campaign](HOSTED_CAMPAIGN_PLAN.md) and
 [the supplement, including Google](HOSTED_SUPPLEMENT_PLAN.md).
