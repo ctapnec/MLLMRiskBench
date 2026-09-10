@@ -33,6 +33,38 @@ def reopen(budget):
     return mod.AttemptBudget(budget.root, budget.expected_plan_sha256)
 
 
+def test_exhausted_target_provider_preserves_hold_but_other_funded_provider_continues(budget):
+    budget.reserve("O", 1, provider="openai")
+    budget.settle("O", 1, None)
+    before = (budget.root / "ledger.json").read_bytes()
+    budget.stop_provider_funding("openai", "O")
+    assert (budget.root / "ledger.json").read_bytes() == before
+    current = reopen(budget)
+    assert current.provider_funding_stops()[0]["provider"] == "openai"
+    with pytest.raises(mod.BudgetError, match="funding is unavailable"):
+        current.reserve("O", 2, provider="openai")
+    current.reserve("A", 1, provider="anthropic")
+    assert current.snapshot()["pools"]["openai:target"]["reserved_exposure_microusd"] == 10
+
+
+def test_exhausted_haiku_account_also_stops_targets_owing_haiku_judgments(budget):
+    budget.reserve("A", 1, provider="anthropic")
+    budget.settle("A", 1, None)
+    budget.stop_provider_funding("anthropic", "A")
+    for call, provider in [("B", "anthropic"), ("J", "anthropic"), ("O", "openai")]:
+        with pytest.raises(mod.BudgetError, match="funding is unavailable"):
+            reopen(budget).reserve(call, 1, provider=provider)
+    assert budget.reserved_attempt_count("O") == 0
+
+
+def test_provider_stop_cannot_name_an_unstarted_or_other_accounts_call(budget):
+    with pytest.raises(mod.BudgetError, match="actual admitted attempt"):
+        budget.stop_provider_funding("openai", "O")
+    budget.reserve("O", 1, provider="openai")
+    with pytest.raises(mod.BudgetError, match="actual admitted attempt"):
+        budget.stop_provider_funding("anthropic", "O")
+
+
 def _hold_budget_lock(root, ready, release):
     with mod._exclusive_lock(root):
         ready.set()

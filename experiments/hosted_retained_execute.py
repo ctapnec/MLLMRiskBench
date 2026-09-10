@@ -201,6 +201,9 @@ class _Admission:
         return self.requests[identity]
 
     def _circuit(self, category: str, call_id: str) -> None:
+        if category == "provider_funding_unavailable":
+            self.budget.stop_provider_funding(self.program["provider"], call_id)
+            return
         with _budget_lock(self.budget.root):
             path = self.budget.root / "paid-circuit.json"
             if not path.exists():

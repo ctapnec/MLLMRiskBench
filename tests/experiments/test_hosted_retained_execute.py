@@ -303,7 +303,8 @@ def test_credit_exhaustion_preserves_checkpoint_and_unknown_charge_without_retry
     assert response["raw"]["call_audit"]["provider_funding_status"] == "credit_balance_exhausted"
     assert response["raw"]["transport_retry_status"] == "not_retryable"
     assert response["tokens"] is None and response["output_turns"] == []
-    assert json.loads((admission.budget.root / "paid-circuit.json").read_text())["category"] == "provider_funding_unavailable"
+    assert admission.budget.provider_funding_stops()[0]["category"] == "provider_funding_unavailable"
+    assert not (admission.budget.root / "paid-circuit.json").exists()
     assert admission.budget.snapshot()["pools"]["openai:target"]["unknown_usage_attempts"] == 1
 
 

@@ -308,6 +308,41 @@ class AttemptBudget:
                 raise BudgetError("call ID is outside the immutable funded plan")
             return len(ledger["attempts"].get(call_id, {}))
 
+    def _provider_stop_path(self, provider: str) -> Path:
+        return self.root / ("provider-funding-stop-" + hashlib.sha256(provider.encode()).hexdigest()[:24] + ".json")
+
+    def stop_provider_funding(self, provider: str, call_id: str) -> None:
+        """Stop one exhausted billing account without releasing any reservation."""
+        with _budget_lock(self.root):
+            _plan_value, ledger, calls = self._load()
+            if (call_id not in calls or calls[call_id]["provider"] != provider
+                    or not ledger["attempts"].get(call_id)):
+                raise BudgetError("provider funding stop needs its actual admitted attempt")
+            path = self._provider_stop_path(provider)
+            if not path.exists() and not path.is_symlink():
+                _write_new(path, {"schema": "ura-hosted-provider-funding-stop/1",
+                    "provider": provider, "call_id": call_id, "category": "provider_funding_unavailable",
+                    "budget_plan_sha256": self.expected_plan_sha256})
+
+    def provider_funding_stops(self) -> list[dict]:
+        """Read provider stops for controller scheduling and status reporting."""
+        with _budget_lock(self.root):
+            plan, _ledger, calls = self._load()
+            stopped = []
+            for provider in plan["provider_budgets_microusd"]:
+                path = self._provider_stop_path(provider)
+                if path.exists() or path.is_symlink():
+                    value, _ = _read_regular(path, label="provider funding stop", max_bytes=8192)
+                    if (value.get("schema") != "ura-hosted-provider-funding-stop/1"
+                            or value.get("provider") != provider
+                            or value.get("budget_plan_sha256") != self.expected_plan_sha256
+                            or value.get("category") != "provider_funding_unavailable"
+                            or value.get("call_id") not in calls
+                            or calls[value["call_id"]]["provider"] != provider):
+                        raise BudgetError("provider funding stop binding differs")
+                    stopped.append(value)
+            return stopped
+
     def reserve(self, call_id: str, attempt_number: int, *, provider: str) -> dict:
         """Fsync money before one SDK attempt. Repeated callbacks always refuse."""
         call_id, provider = _name(call_id, "call ID"), _name(provider, "provider")
@@ -318,6 +353,12 @@ class AttemptBudget:
             plan, ledger, calls = self._load()
             if call_id not in calls or calls[call_id]["provider"] != provider:
                 raise BudgetError("attempt provider or call ID differs from its funded slot")
+            required = {provider}
+            if calls[call_id]["pool"] == "target" and any(call["pool"] == "judge" for call in calls.values()):
+                required.add("anthropic")
+            if any(self._provider_stop_path(name).exists() or self._provider_stop_path(name).is_symlink()
+                   for name in required):
+                raise BudgetError("target or required judge provider funding is unavailable")
             current = self._totals(plan, ledger)
             if current["state"] != "active":
                 raise BudgetError("known above-bound usage blocks all new spending")
