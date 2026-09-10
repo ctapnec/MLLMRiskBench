@@ -20,7 +20,12 @@ unfinished intended judging or an unresolved paid-output stop. Freed capacity
 may fund a new shared-input selection only within the same cumulative ceilings.
 
 A completed source view can contain no answers eligible for the common Haiku
-rubric. Post-hoc orchestration may request `allow_empty=True` when constructing
+rubric. Retained hosted preparation preserves an explicitly enabled original
+local `--approximate-common-metrics` condition for source-specific inputs.
+It does not enable proxies for native-only local conditions, claim a native
+source metric, or change the provider request. Record that flag in the full
+Runner request before deriving its model-acquisition plan.
+Post-hoc orchestration may request `allow_empty=True` when constructing
 its candidate inventory, retain the exclusion counts, and record zero eligible
 judgments without making a judge call. The default positive-population check
 remains unchanged; invalid nonempty response context still raises. Do not

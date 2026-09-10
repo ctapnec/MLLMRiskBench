@@ -1,6 +1,13 @@
 # Third hosted campaign: provider-scaled expansion
 
-Status update, 10 September 2026 at 21:32 UTC: the first four funded slices
+Status update, 10 September 2026 at 22:14 UTC: the requested program is
+expanded from 6,541 to 6,736 target evaluations by the additional frontier
+selection below. The added 195 evaluations have counted requests but are not
+yet funded or executed. The operator's latest reported balances and the
+existing USD 114 cumulative ceiling are unchanged. Frontier coverage takes
+priority over adding further lower-cost groups.
+
+The first four funded slices
 have completed target collection and all eligible local and Haiku judging,
 covering 1,551 assigned inputs. The fifth slice contains 556 funded inputs;
 its controller correction preserves the original diagnostic/measured roles
@@ -9,30 +16,26 @@ at the unchanged target runtime, while funding and reporting use their
 separately verified maintained readers. Four Astra inputs were deferred from
 this fifth slice, not removed from the campaign.
 
-The sixth slice is prepared and counted with 586 inputs and 660 additional
-matching local answers for Haiku. Another 85 whole inputs from its initial
-selection remain deferred, including expensive frontier groups that cannot
-be reserved simultaneously within the current provider allocations. Its
-maximum target reservations are USD 7.286105 Anthropic, 1.764613 OpenAI,
-3.398225 Google, 3.470652 Kimi and 4.801825 DeepSeek. These are reservation
-ceilings, not predicted bills. Funding remains conditional on the fifth
-slice's terminal target and judging liabilities. The seventh prepared prefix
-must be rebased before use so that deferred inputs remain in scope.
+The earlier 586-input, lower-cost-first sixth slice was paused before funding
+when the operator specified frontier-first execution. Its underlying 671-input
+selection and all request counts remain available. Replace that financial
+partition with affordable whole frontier groups before dispatch. Neither the
+paused partition nor its 85 deferred inputs represents a reduced campaign
+target. Funding remains conditional on the fifth slice's terminal target and
+judging liabilities. Later prepared prefixes must be rebased before use so
+that deferred inputs remain in scope.
 
 Completed-budget closure released USD 10.868736 of never-issued Haiku
 reservations from the first four slices. Actual charges and unknown-usage
 holds remain unchanged. This is available judging capacity, not an increase
 to any provider ceiling or a transfer into target-generation funds.
 
-The operator requested assessment of further expansion without a budget
-increase. Quote an additional shared-input selection only after accounting
-for the unfinished 6,541-evaluation program and both judging stages. Favor
-additional comparable coverage on affordable routes, retain frontier
-coverage, and do not treat available account credit as uncommitted campaign
-funding. Every new eligible output requires its own local and Haiku verdict;
-an existing local answer's unchanged verdict can be reused, but a verdict
-cannot be reused for a newly generated answer. No additional quantity beyond
-the existing program is funded by this assessment note.
+The added selection is genuinely outside the original allocations of its
+five target models; it does not rename or repeat existing assignments. Every
+new eligible output requires its own local and Haiku verdict. An existing
+local answer's unchanged verdict can be reused, but a verdict cannot be
+reused for a newly generated answer. Account credit is not automatically
+uncommitted campaign funding, and counted requests are not funded calls.
 
 Historical status, 10 September 2026 at 20:34 UTC: the first three funded slices have
 finished target collection, local and Haiku judging and per-model analysis,
@@ -89,6 +92,59 @@ The historical baseline deliberately retains the original campaign's source
 aliases because the operator specified its queried quantities. This does not
 permit duplicate source aliases to inflate the new selection. New requests
 must exclude already attempted model/input conditions, including failures.
+
+## Additional frontier coverage
+
+The operator requested more frontier data without increasing any provider
+ceiling. Add the following identical block of 39 inputs to each of five
+models. The block contains 26 text and 13 image inputs, selected in the
+existing deterministic whole-cluster order without consulting answers or
+verdicts. It follows the original prefixes of all five routes, so these are
+195 new model-input assignments. Existing local collection supplies 125
+matching answers; no new local target generation is required for this block.
+
+| Model | Additional inputs | Retained output allowance | Maximum target reservation |
+| --- | ---: | ---: | ---: |
+| GPT-6 Astra | 39 | 8,192 | $16.148246 |
+| Fable 5.1 | 39 | 8,192 | $16.130520 |
+| Opus 5 | 39 | 6,144 | $6.068070 |
+| GPT-5.6 Sol | 39 | 8,192 | $6.459295 |
+| Gemini 3.1 Pro Preview | 39 | 4,096 | $1.949590 |
+| Total | 195 | - | $46.755721 |
+
+These are complete-request, maximum-output reservations, not expected bills.
+The separate Sol execution allowance adds USD 0.30 per input before its
+dispatch, from the same OpenAI pool. It is not included in the table.
+All output settings remain unchanged; no token reduction is assumed.
+
+Reserve up to USD 4.751360 for 320 Haiku assessments: one for each of the 195
+new hosted outputs and each of the 125 matching retained local answers.
+The final callable count excludes explicit outcomes with no answer text and
+reuses only an already-judged, identical local answer. Those exclusions must
+remain visible, not be reported as new verdicts. Each eligible hosted output
+also receives its own local judgment. The matched comparison reports this
+selection separately from the wider local population and includes per-model
+coverage and the exact common-input intersection.
+
+The revised requested provider totals are Anthropic 2,331, OpenAI 1,599,
+Google 1,011, Kimi 565 and DeepSeek 1,230: 6,736 in this expansion and 8,677
+assignments across all three hosted cohorts. These are assignments, not
+independent questions or guaranteed successful answers. The original 67
+whole-cluster allocation gaps remain unresolved and are not hidden by this
+addition.
+
+Execute affordable whole groups successively, prioritizing frontier routes
+within each provider. The added target and judge maxima total USD 51.507081
+before the Sol allowance; that amount cannot be reserved simultaneously
+alongside all unfinished work. Reconcile completed usage between slices,
+retain unknown exposure, and leave both judging obligations funded before
+dispatch. The requested quantity is now part of the plan, while complete
+funding remains conditional on actual cumulative capacity. Do not increase
+ceilings or claim an unfunded remainder complete.
+
+Rig evidence: `engineering/hosted-frontier-extension-quote-b04f997-20260910-r-inputs/`.
+It retains the shared selection, 195 counted provider requests and their
+quotes, with zero target generations and zero judge calls during preparation.
 
 ## Per-model reference allocation
 

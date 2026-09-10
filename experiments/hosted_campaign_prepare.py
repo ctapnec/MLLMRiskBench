@@ -122,6 +122,21 @@ def _portable(raw: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _source_scoring_argv(common: list[str], entries: list[dict], cells: Mapping[str, dict]) -> list[str]:
+    """Preserve an explicitly enabled local proxy for source-specific inputs."""
+    if "--approximate-common-metrics" in common:
+        return list(common)
+    source_specific = [entry for entry in entries
+        if entry["origin"]["original_attempt"]["params"].get("planning_common_metrics_eligible") is False]
+    if not source_specific:
+        return list(common)
+    enabled = [cells[entry["origin"]["source_membership"]["run_id"]]
+        ["manifest"].get("config", {}).get("run", {}).get("approximate_common_metrics") is True
+        for entry in source_specific]
+    # Do not silently opt a native-only source condition into approximate scoring.
+    return [*common, "--approximate-common-metrics"] if all(enabled) else list(common)
+
+
 def _validated_projection(
     *, request: Mapping[str, Any], sources: Mapping[str, dict], values: Mapping[str, dict]
 ) -> dict:
@@ -404,6 +419,7 @@ def prepare_campaign(
     if not cells:
         raise ValueError("finished local campaign has no retained cells")
     candidates = inputs.candidates_from_cells(cells)
+    cells_by_run = {cell["run_id"]: cell for cell in cells}
     bindings = {
         "budget": budget_projection,
         "budget_descriptor": _portable(sources["budget_projection"]),
@@ -579,7 +595,7 @@ def prepare_campaign(
                     "input_ids": ids,
                     "purpose": "diagnostic_canary" if is_pilot else "measured_run",
                     "argv": _job_argv(
-                        common=common,
+                        common=_source_scoring_argv(common, [entries[identity][1] for identity in ids], cells_by_run),
                         target=target_spec,
                         api_config=sources["api_config"],
                         corpus=replay["corpus"],

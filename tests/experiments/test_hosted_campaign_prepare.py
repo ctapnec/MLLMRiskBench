@@ -87,6 +87,35 @@ def test_preparation_creates_funded_disjoint_pilot_and_measured_program_without_
     assert len(budget["planned_calls"]) == 6
 
 
+@pytest.mark.parametrize("source_enabled,eligible,expected", [(True, False, True), (False, False, False),
+    (None, False, False), (True, True, False)])
+def test_retained_source_proxy_condition_is_preserved_without_native_opt_in(source_enabled, eligible, expected):
+    entry = {"origin": {"original_attempt": {"params": {"planning_common_metrics_eligible": eligible,
+        "planning_required_metric": "cyberseceval_prompt_injection_judge_question"}},
+        "source_membership": {"run_id": "original-local-run"}}}
+    cells = {"original-local-run": {"manifest": {"config": {"run": {"approximate_common_metrics": source_enabled}}}}}
+    common = ["--judges", "rules,guardrail"]
+    actual = subject._source_scoring_argv(common, [entry], cells)
+    assert ("--approximate-common-metrics" in actual) is expected
+    assert common == ["--judges", "rules,guardrail"]
+    assert subject._source_scoring_argv([*common, "--approximate-common-metrics"], [entry], cells).count("--approximate-common-metrics") == 1
+
+
+def test_preparation_applies_source_scoring_to_each_generated_job(tmp_path, monkeypatch):
+    request, _ = _request(tmp_path, monkeypatch)
+    calls = []
+    original = subject._source_scoring_argv
+
+    def observe(common, entries, cells):
+        calls.append([entry["origin"]["selection"]["input_identity_sha256"] for entry in entries])
+        return original(common, entries, cells)
+
+    monkeypatch.setattr(subject, "_source_scoring_argv", observe)
+    result = subject.prepare_campaign(request=request, request_descriptor={}, out_root=tmp_path / "prepared")
+    program = json.loads(Path(result["programs"][0]["path"]).read_text())
+    assert calls == [job["input_ids"] for job in program["jobs"]]
+
+
 def _distinct_request(tmp_path, monkeypatch, *, cohort=False, **program_options):
     from experiments import run_matrix
     capture = {}
