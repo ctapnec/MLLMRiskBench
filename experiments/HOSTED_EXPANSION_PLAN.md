@@ -1,13 +1,29 @@
 # Third hosted campaign: provider-scaled expansion
 
-Status update, 10 September 2026 at 22:14 UTC: the requested program is
+Status update, 10 September 2026 at 23:12 UTC: the requested program is
 expanded from 6,541 to 6,736 target evaluations by the additional frontier
 selection below. The added 195 evaluations have counted requests and validated
 replay files but are not yet funded or executed. The operator's latest reported balances and the
 existing USD 114 cumulative ceiling are unchanged. Frontier coverage takes
 priority over adding further lower-cost groups.
 
-The first four funded slices
+The first five funded slices now have all 2,107 assigned target inputs
+attempted and all required local and Haiku judging complete. They retain
+2,106 usable answers or explicit policy outcomes and one unclassified HTTP
+400. Its seven neighboring usable answers are included through separately
+attributed scoring; the native partial grid remains partial. The sixth slice
+needs no new local Haiku calls because its exact matching local answers were
+already assessed; the funding handoff binds those existing verdicts. New
+hosted outputs still require their own local and Haiku judgments.
+
+Seventeen completed OpenAI responses released USD 3.290385 in excess
+maximum-output reservations using reported token totals and the already-funded
+cache-write tariff. These remain conservative bounds, not known provider bills.
+Actual charges, unknown HTTP-error exposure and all ceilings are unchanged.
+The fractional-price correction is verified; its remaining reconciliation
+waits for the current funding handoff to finish reading predecessor ledgers.
+
+Historical fifth-slice status: the first four funded slices
 have completed target collection and all eligible local and Haiku judging,
 covering 1,551 assigned inputs. The fifth slice contains 556 funded inputs;
 its controller correction preserves the original diagnostic/measured roles
