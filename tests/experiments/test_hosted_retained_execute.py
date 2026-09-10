@@ -163,6 +163,10 @@ def test_policy_http_400_retains_unknown_charge_and_continues_next_input(tmp_pat
         body={'code': 'cyber_policy', 'type': 'invalid_request_error'})
     points, attacker, target, calls, admission = _setup(tmp_path, outputs=[denied, 'I cannot help with that.'])
     runner = _runner(attacker, target, admission)
+    from ura.targets.api import canonical_https_endpoint_identity
+    # Match actual measured lanes, not an unattested diagnostic fixture.
+    runner.expected_target_identity = {"provider": "openai", "resolved_model": target.model,
+        "endpoint_identity": canonical_https_endpoint_identity(target.base_url)}
     checkpoint = tmp_path / 'policy.responses.checkpoint.jsonl'
     runner.run(points, on_response=lambda row: Runner.append_checkpoint(checkpoint, row))
     assert len(calls) == len(runner.responses) == 2
@@ -173,6 +177,53 @@ def test_policy_http_400_retains_unknown_charge_and_continues_next_input(tmp_pat
     ledger = json.loads((admission.budget.root / 'ledger.json').read_text())
     first = admission.job['input_ids'][0]
     assert ledger['attempts'][first]['1'] == {'actual_cost_microusd': None, 'state': 'unknown'}
+    from ura.runner import validate_planned_realized_identities, realized_identity_summary
+    summary = realized_identity_summary(runner.responses, [])
+    validate_planned_realized_identities({'expected_target_identity':runner.expected_target_identity}, {}, runner.responses, [], summary)
+    resumed = _runner(attacker, target, admission)
+    resumed.expected_target_identity = runner.expected_target_identity
+    resumed.run(points, response_records=Runner.load_response_checkpoint(checkpoint))
+    assert len(calls) == 2
+    assert resumed.responses[0].raw['resolved_model'] is None
+
+
+@pytest.mark.parametrize('change', ['endpoint', 'provider', 'model', 'code', 'category', 'generation', 'output', 'usage'])
+def test_policy_http_400_does_not_hide_actual_identity_or_outcome_conflicts(tmp_path, change):
+    import httpx
+    import openai
+    from ura.runner import validate_planned_realized_identities
+    from ura.targets.api import canonical_https_endpoint_identity
+    denied = openai.BadRequestError('policy rejection', response=httpx.Response(400,
+        request=httpx.Request('POST', 'https://example.test')),
+        body={'code': 'cyber_policy', 'type': 'invalid_request_error'})
+    points, attacker, target, _calls, admission = _setup(tmp_path, outputs=[denied, 'I cannot help with that.'])
+    runner = _runner(attacker, target, admission)
+    records = []
+    runner.run(points, on_response=records.append)
+    response = runner.responses[0].model_copy(deep=True)
+    expected = {'provider':'openai', 'resolved_model':target.model,
+                'endpoint_identity':canonical_https_endpoint_identity(target.base_url)}
+    if change == 'endpoint':
+        response.raw['endpoint_identity'] = canonical_https_endpoint_identity('https://different.example/v1')
+    elif change == 'provider':
+        response.raw['provider'] = 'kimi'
+    elif change == 'model':
+        response.raw['resolved_model'] = 'wrong-model'
+    elif change == 'code':
+        response.raw['call_audit']['provider_error_code'] = 'invalid_parameter'
+    elif change == 'category':
+        response.raw['provider_refusal_category'] = 'unrecognized'
+    elif change == 'generation':
+        response.raw['provider_generation_observed'] = True
+    elif change == 'output':
+        response.output_turns = [DialogTurn(role='assistant', content='ordinary answer')]
+    else:
+        response.tokens = {'input':1, 'output':1}
+    runner.expected_target_identity = expected
+    with pytest.raises((ValueError, RuntimeError)):
+        runner._validate_attested_target_identity(response)
+    with pytest.raises(ValueError):
+        validate_planned_realized_identities({'expected_target_identity':expected}, {}, [response], [], {'judges':[]})
 
 
 def test_malformed_refusal_cannot_be_counted_as_an_observed_outcome(tmp_path):

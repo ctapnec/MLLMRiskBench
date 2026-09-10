@@ -34,6 +34,15 @@ retain available native feedback and the observed physical attempt count for
 investigation. Never infer the retry maximum was actually spent, and never
 infer a policy decision from HTTP status alone.
 
+An explicit OpenAI HTTP 400 `cyber_policy` denial may occur before any model
+generation. Such an outcome has an observed provider and endpoint but no served
+model identity. Runtime admission, checkpoint restoration and completed-result
+validation must accept the verified policy outcome on the same attested route
+without inventing a model identity. Actual returned-model mismatches, endpoint
+changes, other HTTP 400 codes and unexplained absent identity still fail their
+normal checks. Include an expected live identity in policy-outcome regressions;
+an unattested diagnostic fixture does not exercise measured execution.
+
 When reading results produced after an older retained reader was published,
 distinguish the reader implementation from the Git history it validates.
 `retained_artifact_reader.read_partitions` already accepts `code_repository`:

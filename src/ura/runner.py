@@ -2065,14 +2065,11 @@ class Runner:
             # nor contradicts the previously attested base route.
             return
         from .live_attestation import (
-            realized_identity_matches,
             stable_realized_target_identity,
         )
 
         observed_identity = _target_identity_snapshot(response)
-        if not realized_identity_matches(
-            self.expected_target_identity, observed_identity
-        ):
+        if not _attested_response_identity_matches(self.expected_target_identity, response):
             raise ExternalCallFailure(
                 "target_identity_attestation",
                 ValueError(
@@ -4365,6 +4362,40 @@ def _target_identity_snapshot(response: Response) -> dict[str, str]:
     return snapshot
 
 
+def _attested_response_identity_matches(expected: dict[str, str], response: Response) -> bool:
+    """A pre-generation native policy decision attests its route, not a model.
+
+    Ordinary responses still require every attested model field. An explicit
+    HTTP policy rejection cannot report a served model when none was observed.
+    Keep that absence rather than inventing the requested model as realized.
+    """
+    from .live_attestation import realized_identity_matches, stable_realized_target_identity
+
+    observed = _target_identity_snapshot(response)
+    if realized_identity_matches(expected, observed):
+        return True
+    raw = response.raw
+    audit = raw.get("call_audit", {})
+    if (raw.get("provider_refusal") is not True
+        or raw.get("provider_policy_rejection") is not True
+        or raw.get("provider_generation_observed") is not False
+        or raw.get("target_identity_observed") is not False
+        or raw.get("provider_refusal_category") != "openai_http400_cyber_policy"
+        or raw.get("provider_refusal_reason") != "cyber_policy"
+        or not isinstance(audit, dict) or audit.get("status_code") != 400
+        or audit.get("provider_error_code") != "cyber_policy"
+        or response.tokens is not None
+        or any(observed.get(key) is not None for key in
+               ("resolved_model", "model_revision", "model_digest", "model_identity"))):
+        return False
+    validate_response_refusal_state(response)
+    route = stable_realized_target_identity(observed)
+    admitted = stable_realized_target_identity(expected)
+    return (route.get("provider") == admitted.get("provider") == "openai"
+            and bool(route.get("endpoint_identity"))
+            and route["endpoint_identity"] == admitted.get("endpoint_identity"))
+
+
 def _judge_identity_snapshot(row: dict[str, Any]) -> dict[str, str]:
     """Normalize one realized judge-stage identity from a persisted trail row."""
     judge = row.get("judge")
@@ -5331,9 +5362,7 @@ def validate_planned_realized_identities(
                 or response.raw.get("target_input_status") == "incompatible"
             ):
                 continue
-            if not realized_identity_matches(
-                expected_target, _target_identity_snapshot(response)
-            ):
+            if not _attested_response_identity_matches(expected_target, response):
                 raise ValueError(
                     "completed target identity does not match the admitted "
                     "live-attestation snapshot"
