@@ -1842,6 +1842,17 @@ class DashboardMixin:
             )) + annotation
 
         summary, completion = doc["summary"], doc["completion"]
+        if doc.get("schema") == "ura-retained-judge-comparison/4":
+            usage = (f"<p>Completed source batches: {len(doc['source_partitions'])}; no new judge calls. "
+                     f"Selected verdicts: {completion['judge_calls']}; {completion['http_attempts']} recorded HTTP attempts; "
+                     f"{completion['input_tokens']:,} input / {completion['output_tokens']:,} output tokens; "
+                     f"token-priced selected usage USD {completion['actual_cost_microusd'] / 1e6:.6f}. "
+                     "Source spending ledgers remain separate.</p>")
+        else:
+            usage = (f"<p>Haiku: {completion['judge_calls']} logical calls; {completion['http_attempts']} HTTP attempts; "
+                     f"{completion['input_tokens']:,} input / {completion['output_tokens']:,} output tokens; "
+                     f"token-priced usage USD {completion['actual_cost_microusd'] / 1e6:.6f} / "
+                     f"plan ceiling USD {completion['max_cost_microusd'] / 1e6:.6f}.</p>")
         parts = [f"<div class='card'><h3>{html.escape(name)}</h3>",
                  "<p class='note'>Selected matched-output comparison. Counts precede rates; "
                  "shared local judgments are charged once.</p>",
@@ -1850,10 +1861,7 @@ class DashboardMixin:
                      ("Distinct hosted outputs judged", summary["cohorts"]["hosted"]),
                      ("Comparison links (not paid calls)", summary["comparison_pairs"]),
                  ], label="Unique judged outputs and comparison links"),
-                 f"<p>Haiku: {completion['judge_calls']} logical calls; {completion['http_attempts']} HTTP attempts; "
-                 f"{completion['input_tokens']:,} input / {completion['output_tokens']:,} output tokens; "
-                 f"token-priced usage USD {completion['actual_cost_microusd'] / 1e6:.6f} / "
-                 f"plan ceiling USD {completion['max_cost_microusd'] / 1e6:.6f}.</p>",
+                 usage,
                  "<details><summary>Source-view coverage before matched selection</summary>"]
         if "input_weighting" in summary:
             parts.insert(1, f"<p>Input-balanced comparison: {summary['distinct_inputs']} distinct inputs. "

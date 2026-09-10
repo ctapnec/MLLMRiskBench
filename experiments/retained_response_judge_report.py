@@ -292,6 +292,10 @@ def build_report(*, plan_path: Path, execution_root: Path, local_runner_view: Pa
 
 
 def validate_report(value: object) -> None:
+    if isinstance(value, dict) and value.get("schema") == "ura-retained-judge-comparison/4":
+        from experiments.retained_judge_partitioned_report import validate_report as validate_partitioned
+        validate_partitioned(value)
+        return
     if not isinstance(value, dict) or set(value) != {
         "schema", "status", "plan", "sources", "execution", "completion", "observations",
         "summary", "generation_conditions", "limitations", "uncertainty", "report_id",
