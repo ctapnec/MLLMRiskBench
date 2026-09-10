@@ -18,6 +18,14 @@ retain available native feedback and the observed physical attempt count for
 investigation. Never infer the retry maximum was actually spent, and never
 infer a policy decision from HTTP status alone.
 
+When reading results produced after an older retained reader was published,
+distinguish the reader implementation from the Git history it validates.
+`retained_artifact_reader.read_partitions` already accepts `code_repository`:
+point it to a clean trusted checkout containing every generation revision.
+Preserve the original reader's identity when an existing response view binds
+it. Do not relabel the reader, change old view digests or weaken revision
+ancestry checks merely to combine historical and newly collected results.
+
 For a separately selected provider cohort, `hosted_campaign_budget` accepts an
 explicit route-configuration file and SHA-256. This creates a new projection
 without changing the historical eleven-route default. The selected routes,
