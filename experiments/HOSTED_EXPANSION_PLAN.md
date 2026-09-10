@@ -1,7 +1,9 @@
 # Third hosted campaign: provider-scaled expansion
 
 Status, 10 September 2026: requested quantities and a full-pool input
-availability preview are verified on the rig. Final selection, pricing and funding are pending;
+availability preview and a shared-input preview are verified on the rig.
+Shared-cohort preparation and credit-stop handling have passed focused rig tests.
+Final pricing, cumulative batch funding and execution are pending;
 no third-campaign target or judge call has started. This is a separate cohort
 after [the original campaign](HOSTED_CAMPAIGN_PLAN.md) and
 [the supplement, including Google](HOSTED_SUPPLEMENT_PLAN.md).
@@ -144,6 +146,29 @@ condition. Off-peak savings are conditional, not guaranteed funding.
 
 ## Selection, judging and comparison
 
+Select the common input cohort before assigning it to models. Every provider
+uses that same fixed cohort, not independently sampled questions. Smaller
+allocations use a nested common core; larger allocations extend it in the same
+deterministic order. Compare all models only on their common text inputs and
+compare multimodal models on identical images and prompts. Show extra-input
+results separately and report the exact intersection for each comparison.
+
+The 09:22 UTC shared preview excludes every source cluster containing a
+previously queried input payload. It contains 6,474 prospective model-input
+evaluations, with 114 text inputs common to all thirteen routes and 141 inputs
+common to the twelve multimodal routes. These are input-only selection counts,
+not funded generation counts. The 67 whole-cluster boundary gaps do not replace
+the requested 6,541. Per-route preview counts are Fable 141, Opus 395, Sonnet 747,
+Haiku 956, Astra 141, Sol 171, Terra 171, Luna 889, GPT-5.5 141, Flash 480,
+Pro 480, Kimi 549 and DeepSeek 1,213. This shared preview supersedes the earlier
+independently extended route preview for prospective selection only.
+
+Funding batches are slices of this fixed input prefix. A batch cannot split
+a source cluster or select inputs according to previous answers. Completed
+input slices are not replayed when the next batch is funded. Financial limits
+remain cumulative across batches; a fresh ledger is not a fresh spending
+allowance. The original plans and results remain immutable.
+
 Use only inputs already executed by the local campaign. Preserve prompt,
 conversation, media bytes, seed, framework, arm, corpus and source-policy
 identity. These are retained-conversation transfers; adaptive attacks are not
@@ -177,6 +202,16 @@ network errors. Explicit provider-policy refusals, including HTTP 400 with
 Usable length-ended text is retained with truncation marked. Unexplained empty
 answers require investigation before further paid execution, not automatic
 answer retries. Invalid judge verdicts remain unscored.
+
+Monitor explicit exhausted-credit and account-spending-limit responses.
+These are not transient rate limits and must not consume the HTTP retry
+allowance. Retain the failed attempt, its machine-readable funding reason and
+any unknown charge. Stop further target dispatch to that provider and report
+the unstarted remainder; continue other independently funded providers. If
+Anthropic funding becomes unavailable, preserve outstanding Haiku obligations
+and stop any dispatch whose promised judging is no longer funded. Do not
+top up an account, clear a stopped paid circuit or infer zero cost automatically.
+Ordinary rate limits remain retryable under the existing bounded policy.
 
 Publish this third cohort separately in Stats, with local/Haiku comparisons,
 coverage, model stability, output allowance, actual token usage, truncation,

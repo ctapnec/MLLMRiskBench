@@ -621,7 +621,7 @@ across the retry. This can satisfy route attestation without turning the absent
 answer into policy evidence. The current local campaign pins
 one answer retry for vLLM and Ollama. The budget-fitted hosted campaign pins
 answer and provider SDK retries to 0. The harness permits three retries for
-HTTP 408, 409, 425, 429, and 5xx failures and typed transient connection/timeout
+HTTP 408, 409, 425, transient 429, and 5xx failures and typed connection/timeout
 errors, including statusless SDK connection failures. At most four physical
 attempts are separately reserved and audited per logical paid call. Build sets and locks
 the answer-retry field to 0 whenever a hosted target is selected, and server
@@ -632,6 +632,15 @@ provider-completed empty response separately from interrupted transport, resolve
 the cause and explicitly review the stopped input before continuation. Reuse
 the original input and remaining funded transport allowance; rebind the plan
 only if its execution settings change. Never clear the paid circuit automatically.
+Explicit exhausted-credit or account-spending-limit errors are not transient
+429s. The provider adapter emits a small `provider_funding_status` machine
+reason; Runner preserves it in the response checkpoint and retained execution
+opens a `provider_funding_unavailable` circuit. Unknown charges remain held.
+The campaign controller stops that provider, preserves its unstarted inputs
+and continues only independently funded work. It must not reinterpret a
+general Google `RESOURCE_EXHAUSTED` rate limit as an empty wallet. Google SDK
+exceptions expose HTTP status as `code` and their error body as `details`;
+test those actual installed SDK objects, not only synthetic `status_code` fields.
 Runner 2.26 separately retains an exact deterministic target-input rejection as
 `target_input_status=incompatible`. It makes no answer retry for the unchanged
 input, does not query the policy judge, records missing-response coverage, and

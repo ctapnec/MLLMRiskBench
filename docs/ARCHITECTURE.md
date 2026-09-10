@@ -972,6 +972,23 @@ not intrinsic model stability; transport loss is not a model-quality observation
 Historical Level-2 `/1` remains readable. Campaign-specific recovery orchestration
 stays outside this product reporting layer.
 
+### Shared retained-input cohorts
+
+Hosted model comparisons select one input-only cohort before generation.
+Smaller model allocations use nested prefixes, and larger allocations retain
+their exact common support. A provider-specific request body is constructed
+only after the prompt, conversation, image bytes, seed and source context have
+been selected. Request aliases remain traceable without counting them as
+independent generations. Different outputs always require separate judgments.
+
+`hosted_retained_inputs.build_shared_cohort` binds the candidate population and
+previous-input exclusions. `build_cohort_plan` creates whole-cluster funding
+slices without replaying completed slices. The prospective input-plan and
+replay contracts use version 3, preparation version 4 and execution version 7;
+earlier contracts retain their existing interpretation. Resolution rebuilds
+the fixed selection from validated sources and normal provider serialization.
+It does not waive media, pricing, source, transport or per-attempt admission.
+
 ### Retained judge failures
 
 A judge's malformed rubric is an evaluator failure, not a target safety label.
