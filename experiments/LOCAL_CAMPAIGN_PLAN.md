@@ -1,6 +1,8 @@
 # All-local test campaign plan: every corpus arm, every framework runtime, free models only
 
-Status: active operating plan, written 20 August 2026 after the readiness audit
+Status: automated execution and analysis are terminal; human audit and thesis
+evidence synthesis remain separate work. This operating plan was written
+20 August 2026 after the readiness audit
 of the big rig (Debian, 2x RTX 4090 24,564 MiB, 125 GiB RAM, /mnt/stor 7.1 TB
 free). It is an
 operating plan for the rig, not thesis evidence. It complements, and never
@@ -13,6 +15,21 @@ only on content-bound compatible subsets of inputs already used here and may
 select retained local outputs for bounded Haiku re-adjudication. That follow-on
 is not another local phase, cannot change any local selection or result, and
 has independent provider-budget and transfer gates.
+
+Final hosted comparison, 10 September 2026 at 06:11 UTC: the separate
+supplement and Google extension have completed target collection and both
+judging obligations. Their published comparison includes every one of the
+683 existing local answers matching 730 eligible hosted answers across the
+same 178 inputs. Local generations were not reopened. The broader local
+Haiku inventory retains all 750 assessments on 190 inputs, including eight
+invalid verdicts; 67 answers outside the final hosted comparison's input
+scope remain retained, not discarded or queued for regeneration. The final
+comparison retains ten invalid verdicts across both cohorts and does not
+treat its 2,750 comparison links as independent observations. See the
+[published comparison](http://localhost:8642/stats/job/hosted-supplement-final-comparison-2fb01af-r8-20260910)
+and [completed supplemental plan](HOSTED_SUPPLEMENT_PLAN.md). The automated
+campaign has no remaining target or judging worker. Gate 8's human evidence
+and the subsequent academic chapter synthesis remain explicitly outstanding.
 
 Follow-on input audit, 9 September: the hosted supplement must collapse source
 aliases before applying new paid-call limits. Identical local inputs can occur

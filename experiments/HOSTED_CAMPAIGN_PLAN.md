@@ -1,11 +1,19 @@
 # Hosted subset and Haiku re-adjudication campaign plan
 
-Required follow-on: [the supplemental plan](HOSTED_SUPPLEMENT_PLAN.md) includes
+Completed follow-on, 10 September 2026: [the supplemental plan](HOSTED_SUPPLEMENT_PLAN.md) includes
 Gemini 3.8 Flash and Gemini 3.1 Pro Preview on retained local inputs, both local
 and Haiku judging, and comparable Stats publication. The operator reported a
 USD 24.47 Google balance and authorized USD 15-17 of Google target usage, with
 a hard USD 17 ceiling including probes and transport retries. Haiku funding is
 separate and must not double-allocate the active supplement's Anthropic funds.
+
+All 676 supplemental and 324 Google target inputs are now attempted. Local
+and Haiku judging of the eligible saved answers is complete. The separate
+[final comparison](http://localhost:8642/stats/job/hosted-supplement-final-comparison-2fb01af-r8-20260910)
+contains 730 hosted and all 683 matching local answers on the same 178 inputs,
+with invalid judgments retained as unscored. It does not pool these results
+with the original cohort below or reinterpret source aliases as independent
+observations. Human calibration and thesis synthesis remain next work.
 
 Status: original hosted target collection, matched Haiku judging and comparison
 publication complete, revised 9 September 2026. This document authorizes no

@@ -1,6 +1,56 @@
 # Additional hosted inputs from the retained local campaign
 
-## Current execution and required Google extension
+## Completed collection, judging and comparison
+
+Completion, 10 September 2026 at 06:11 UTC: all thirteen target routes are
+terminal, including Gemini Flash and Pro. Every funded target input was
+attempted. Retained execution outcomes are:
+
+| Assignment | Attempted | Answers | Explicit policy outcomes | Missing/lost outcomes |
+| --- | ---: | ---: | ---: | ---: |
+| Eleven-model supplement | 676 / 676 | 623 | 51 | 2 |
+| Google extension | 324 / 324 | 282 | 41 | 1 |
+
+These are execution counts, including readiness and source-specific tasks,
+not independent common-security observations. Explicit HTTP 400
+`cyber_policy` outcomes are legitimate retained refusals: they neither stop
+the campaign nor trigger answer retries. Historical missing responses and
+unknown charges remain explicit. The original 941-assignment hosted campaign
+is a separate completed cohort, not included in this table.
+
+All 730 eligible supplemental hosted answers have local judgments and Haiku
+assessments; 727 Haiku verdicts are valid and three remain unscored. The wider
+matched-local inventory has 750 Haiku assessments, 742 valid and eight invalid.
+The final comparison includes all 683 existing local answers matching the
+730 eligible hosted answers on exactly the same 178 input identities. Its
+1,413 assessments contain ten invalid verdicts. The other 67 already judged
+local answers remain available outside this final comparison's input scope;
+they are not missing work. Its 2,750 comparison links are not independent
+observations. All 29 source-alias memberships have output-specific links to
+the same actual answer and identical judge request, never another model's
+answer.
+
+The [final matched comparison](http://localhost:8642/stats/job/hosted-supplement-final-comparison-2fb01af-r8-20260910)
+is published with local/Haiku decisions and generation-condition diagrams.
+The report SHA-256 is
+`253f863f88139530fdb9d3ca772b17b858984f4e8c5b55e5304b631e5d1d0062`.
+HTTP 200 and 1,284 server-rendered SVG elements are verified; browser visual
+QA is not claimed. Publication made zero target or judge calls. The selected
+judgments retain USD 2.023291 of recorded usage across their original
+executions, including reused judgments; that is not a new publication charge.
+
+At 06:00 UTC every shared budget pool was below its unchanged cap. Available
+margin after commitments and unknown-cost holds was USD 8.052876 OpenAI,
+USD 6.318888 Google, USD 24.082043 Anthropic targets, USD 17.748958 Anthropic
+judging, USD 1.478013 Kimi and USD 6.456556 DeepSeek. These are conservative
+ledger margins, not live account credit balances. Unused prospective judging
+reservations do not mean that another judgment is queued. The last target
+worker ended at 05:52 UTC; all judging is complete and both GPUs are released.
+No framework runtime was reinstalled or completed target answer repeated in
+this final continuation. Human calibration and thesis evidence synthesis are
+separate next work, not fabricated completions.
+
+## Execution history
 
 Update, 10 September at 04:55 UTC: GPT-5.5 completed all 18 assigned inputs,
 including its explicitly retained HTTP 400 policy outcome. All 676 inputs in
