@@ -338,6 +338,13 @@ target revision, preserves the original failed record and unknown charge,
 and continues the same funded physical-attempt sequence. It cannot select a
 usable answer for regeneration or enable automatic answer-quality retries.
 
+Hosted response accounting preserves provider-reported cache usage alongside
+normalized token totals. Anthropic's total input includes its separately
+reported uncached, cache-read and cache-write quantities; Chat's prompt total
+already includes its cache parts. Explicit zero counts are retained, whereas
+missing counts remain unknown. This metadata supports billing without changing
+the provider request, selected input, generated answer or historical charge.
+
 Every Hugging Face model is admitted through one sealed acquisition boundary.
 `collect_run_requirements` projects the five supported roles (vLLM target,
 local vLLM LLM judge, scoring Guardrail, defense Guardrail, and NanoGCG

@@ -16,6 +16,13 @@ contingency is an operational reservation, not a guaranteed provider token cap.
 See the official OpenAI reasoning-mode documentation:
 https://developers.openai.com/api/docs/guides/reasoning#reasoning-mode
 
+Retain reported cache-read and cache-write counts, including explicit zeros.
+Anthropic reports those separately from uncached input; Chat includes them in
+the total prompt count. Do not discard the split, double-count Chat inputs or
+substitute zero for absent usage. Old responses lacking the split retain their
+unknown billing exposure; do not repeat an answer merely to recover accounting
+metadata. The cache-usage correction changes no generation request or input.
+
 Hosted supplemental configuration: Gemini supports the same JSON-compatible
 request preview for token counting, physical-attempt reservation and generation.
 Its counter sends the full GenerateContentRequest through the existing sealed
