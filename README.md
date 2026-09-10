@@ -327,6 +327,21 @@ plan, receipt, and private managed-store locator
 and forces Hugging Face/Transformers/vLLM local-only offline policy. Explicit
 digest-sealed workstation checkpoints are the path-local exception and receive
 the same pre/post-load content check.
+
+Retained artifact rehashing is also opt-in. `hosted_retained_execute`,
+`retained_response_judge_pair_execute`, `figures` and `transfer_matrix` accept
+`--verify-artifact-sha256`; the corresponding analysis forms expose it.
+Console Reindex offers the same unchecked option, also available through
+`python -m experiments.rig_web --reindex --verify-artifact-sha256`.
+Routine Stats and startup recovery do not force checksum scans. Unchanged
+report validation and output accounting are reused; file replacement, edits,
+additions, deletions and changed configuration identities invalidate reuse.
+Hosted source contexts similarly retain their observed indirect dependencies.
+This is bounded, process-local metadata reuse, not a new content-integrity
+claim. Recently modified files are reread rather than reused across a possible
+filesystem timestamp collision. Full-check requests bypass this reuse.
+Live budget reservations and attempt accounting are never cached.
+
 An acquisition plan is required only when the selected condition actually has
 Hub-backed resources. A local Ollama target over an already-local R-Judge or
 GPTGeoChat source therefore omits the plan and receipt arguments; supplying a

@@ -862,6 +862,7 @@ def _commands() -> dict[str, Command]:
             "experiments.figures",
             "Render figure previews or measured focal figures",
             (
+                CommandParam("--verify-artifact-sha256", "flag"),
                 CommandParam("--synth", "flag"),
                 CommandParam("--results", "path"),
                 CommandParam("--left-model", "str"),
@@ -924,6 +925,7 @@ def _commands() -> dict[str, Command]:
             "experiments.transfer_matrix",
             "Support-qualified descriptive transfer analysis",
             (
+                CommandParam("--verify-artifact-sha256", "flag"),
                 CommandParam("--results", "path", required=True),
                 CommandParam("--attacker", "str"),
                 CommandParam("--corpus", "str"),

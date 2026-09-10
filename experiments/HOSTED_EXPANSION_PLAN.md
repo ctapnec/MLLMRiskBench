@@ -383,3 +383,12 @@ based on observed throughput. No generation ETA is established before launch.
 
 Audit evidence is retained on the rig and in the ignored thesis verification
 directory. Operational scripts and campaign data must not be committed to Git.
+
+Operational continuation must reuse unchanged source validation and retained
+answers. Full model/artifact checksum revalidation is optional and disabled by
+default. Source-context reuse is invalidated by changes to its observed inputs;
+paid budgets are never reused from a cached authorization. Validate the shared
+source population once before dispatching compatible API workers, and keep
+their paid reservations independent. The maintained cache supports read-only
+inheritance by forked Linux workers; the older subprocess-based campaign
+controller still requires migration before cross-worker reuse can be claimed.

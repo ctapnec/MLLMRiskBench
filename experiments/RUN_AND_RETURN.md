@@ -2679,6 +2679,36 @@ HTTP/network failure, cancelled submission or back-forward restoration releases
 the applicable wait. This is UI feedback, not a replacement for the command's
 ordinary validation, timeout or budget policy.
 
+Routine validation is change-driven, not a repeated full historical audit.
+Stats reuses decoded report validation and completed-output accounting until
+the observed file inventory, identity, size, modification or change timestamps
+differ. Indirect source files are included in hosted source-context reuse.
+Entries are bounded in memory; a single source population is shared read-only
+within the process. A Linux controller may validate before forking independent
+API workers to reuse that population; this requires the controller to use the
+fork path and is not a claim about older subprocess-based controllers.
+Recently changed files are reread without delaying the request. Reservations
+and paid-attempt accounting always consult the live budget immediately before
+each physical call; a cached source context cannot authorize spending.
+
+Full retained-file checksum revalidation is off by default. Add
+`--verify-artifact-sha256` to `hosted_retained_execute`,
+`retained_response_judge_pair_execute`, `figures` or `transfer_matrix` for an
+explicit check. The corresponding analysis forms expose the option. Reindex
+has an unchecked full-check box and an equivalent headless command:
+
+```sh
+python -m experiments.rig_web --reindex --verify-artifact-sha256
+```
+
+Without that option, routine file structure and record accounting are retained,
+but file bytes are not claimed to have been freshly checksum-verified. Frozen
+readers retain their original schema, semantic and accounting logic with the
+file-checksum policy applied separately and reported as such. Stored content
+identities, newly generated descriptors, request construction and monetary
+bindings are not replaced by invented digests. Model-file checks use their
+separate `--verify-model-sha256` option.
+
 After a reviewed transport interruption, use an execution-plan version 3
 successor with the exact failed checkpoint in `transport_recoveries`; never
 restart its funded attempt counter. Preserve the old output directory and use
