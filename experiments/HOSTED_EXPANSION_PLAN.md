@@ -200,6 +200,18 @@ reported as spent or released into the new allocation. Future batches use the ca
 usage preservation correction documented in RA-446; old unknown charges stay
 held and old responses are not repeated to recover missing billing metadata.
 
+The third prospective financial slice increases throughput for the lower-cost
+routes while preserving the fixed shared prefixes and final per-model limits.
+Its no-call selection contains 612 additional target inputs and 624 new saved
+local answers requiring Haiku assessment. The selected route counts are Fable
+15, Opus 30, Sonnet 51, Haiku 150, Astra 15, Sol 15, Terra 17, Luna 98, GPT-5.5
+15, Kimi 30, DeepSeek 74, Flash 51 and Pro 51. These are batch sizes, not revised
+campaign totals. Whole-cluster boundaries explain the unused nominal capacity.
+Materialization and exact request counting precede any funding decision; this
+slice has not been funded or executed. Token limits and reasoning settings
+are unchanged. Financial allocation must still leave both judging obligations
+covered and must not consume the earlier batches' retained exposure.
+
 Use only inputs already executed by the local campaign. Preserve prompt,
 conversation, media bytes, seed, framework, arm, corpus and source-policy
 identity. These are retained-conversation transfers; adaptive attacks are not
