@@ -1618,6 +1618,32 @@ def test_chat_cache_parts_cannot_exceed_reported_total_input():
         target.generate([DialogTurn(role="user", content="fixture")])
 
 
+@pytest.mark.parametrize("cached", [0, 2])
+def test_kimi_retains_documented_top_level_cached_tokens(cached):
+    types = pytest.importorskip("openai.types.completion_usage")
+    result = _chat_result()
+    result.usage = types.CompletionUsage(prompt_tokens=7, completion_tokens=3, total_tokens=10, cached_tokens=cached)
+    target = OpenAICompatibleTarget("gpt-generic", "https://api.moonshot.ai/v1", "MOONSHOT_API_KEY",
+                                    provider="kimi", requested_spec="kimi:gpt-generic")
+    _install_chat_fixture(target, result)
+    response = target.generate([DialogTurn(role="user", content="fixture")])
+    assert response.tokens["cached_input"] == cached
+    assert response.tokens["input"] == 7
+    assert "cache_write_input" not in response.tokens
+    assert response.raw["provider_usage"]["cached_tokens"] == cached
+
+
+def test_kimi_conflicting_cache_counters_cannot_settle_as_a_discount():
+    target = OpenAICompatibleTarget("gpt-generic", "https://api.moonshot.ai/v1", "MOONSHOT_API_KEY",
+                                    provider="kimi", requested_spec="kimi:gpt-generic")
+    result = _chat_result()
+    result.usage.cached_tokens = 2
+    result.usage.prompt_tokens_details = SimpleNamespace(cached_tokens=3)
+    _install_chat_fixture(target, result)
+    with pytest.raises(OpenAIChatOutputError, match="conflict"):
+        target.generate([DialogTurn(role="user", content="fixture")])
+
+
 def test_astra_sends_completion_budget_and_omits_sampling_options() -> None:
     target = build_api_target("openai:gpt-6-astra", config={
         "modalities": ["text", "image"],

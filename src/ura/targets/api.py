@@ -2074,6 +2074,12 @@ class OpenAITarget(BaseTarget):
                 if count > input_tokens:
                     raise OpenAIChatOutputError("OpenAI Chat cache usage exceeds input tokens")
                 tokens[normalized] = count
+        if canonical_provider_name(self.provider) == "kimi" and _provider_field(usage, "cached_tokens") is not None:
+            cached = _required_nonnegative_int(usage, "cached_tokens", error=OpenAIChatOutputError,
+                                               location="Kimi usage")
+            if cached > input_tokens or ("cached_input" in tokens and tokens["cached_input"] != cached):
+                raise OpenAIChatOutputError("Kimi cached token counters conflict with reported input usage")
+            tokens["cached_input"] = cached
         if tokens.get("cached_input", 0) + tokens.get("cache_write_input", 0) > input_tokens:
             raise OpenAIChatOutputError("OpenAI Chat combined cache usage exceeds input tokens")
 
@@ -2100,6 +2106,8 @@ class OpenAITarget(BaseTarget):
                     "prompt_tokens": input_tokens, "completion_tokens": output_tokens, "total_tokens": total_tokens,
                     "prompt_tokens_details": {name: _provider_field(input_details, name)
                         for name in ("cached_tokens", "cache_write_tokens")},
+                    **({"cached_tokens": _provider_field(usage, "cached_tokens")}
+                       if canonical_provider_name(self.provider) == "kimi" else {}),
                 },
                 **({"requested_reasoning_effort": self.reasoning_effort}
                    if self.reasoning_effort is not None else {}),

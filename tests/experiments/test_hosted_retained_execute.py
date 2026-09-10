@@ -240,6 +240,27 @@ def test_malformed_refusal_cannot_be_counted_as_an_observed_outcome(tmp_path):
         subject._retained_execution_counts(program, admission.budget)
 
 
+@pytest.mark.parametrize("cached,write_rate,expected_cost", [(0, None, 88), (2, None, 82), (0, "3", None)])
+def test_read_only_cache_tariff_does_not_require_unpriced_write_counter(tmp_path, monkeypatch, cached, write_rate, expected_cost):
+    points, attacker, target, calls, admission = _setup(tmp_path)
+    admission.prices.update(cache_read="0.5", cache_write=write_rate)
+    generate = target.generate
+    def with_cache_usage(dialog, *, seed=None):
+        response = generate(dialog, seed=seed)
+        response.tokens["cached_input"] = cached
+        assert "cache_write_input" not in response.tokens
+        return response
+    monkeypatch.setattr(target, "generate", with_cache_usage)
+    _runner(attacker, target, admission).run(points)
+    state = admission.budget.snapshot()["pools"]["openai:target"]
+    assert len(calls) == 2
+    if expected_cost is None:
+        assert state["unknown_usage_attempts"] == 2
+    else:
+        assert state["unknown_usage_attempts"] == 0
+        assert state["settled_cost_microusd"] == expected_cost
+
+
 @pytest.mark.parametrize("read_rate,write_rate,cached,written,expected_cost", [
     ("0.5", None, 0, 0, 88),
     ("0.5", None, 2, 0, 82),

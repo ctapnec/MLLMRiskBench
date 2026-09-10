@@ -272,8 +272,11 @@ class _Admission:
                 })
             elif self.prices.get("cache_read") is None and self.prices.get("cache_write") is None:
                 cost = _cost(tokens["input"], tokens["output"], self.prices)
-            elif "cached_input" in tokens and "cache_write_input" in tokens:
-                cached, written = tokens["cached_input"], tokens["cache_write_input"]
+            elif "cached_input" in tokens and ("cache_write_input" in tokens or self.prices.get("cache_write") is None):
+                # A read-only cache tariff partitions cached input from ordinary
+                # input; it does not require a separately priced write counter.
+                # A priced write category still needs explicit reported usage.
+                cached, written = tokens["cached_input"], tokens.get("cache_write_input", 0)
                 if (type(cached) is int and type(written) is int and min(cached, written) >= 0
                     and cached + written <= tokens["input"]
                     and (cached == 0 or self.prices.get("cache_read") is not None)
