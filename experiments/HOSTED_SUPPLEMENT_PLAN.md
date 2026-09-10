@@ -2,6 +2,22 @@
 
 ## Current execution and required Google extension
 
+Update, 10 September at 01:20 UTC: the output-specific source-alias audit
+links 14 of the 29 extra memberships to their actual saved generated answers
+and exactly identical Haiku requests. It verifies the executed request binding,
+original verdict and reported usage; changing the generated answer fails the
+request comparison. It neither creates a new verdict nor reuses one across
+different model outputs. Fifteen memberships remain pending, including all
+14 Google memberships. Their reserved funds are unchanged.
+
+The final comparison worker is waiting in tmux for every supplemental and
+Google post-hoc route plus Luna's separate 37-answer local/Haiku scoring
+completion. It will include all existing local counterparts on the measured
+eligible inputs, retain every original judging ledger, reconcile source aliases
+against actual outputs and publish the resulting diagrams. A waiting worker
+is not a completed final report. Any incomplete dependency prevents final
+publication without interrupting unrelated generation.
+
 Update, 10 September at 01:10 UTC: Kimi and Opus have completed all 34 and 53
 assigned inputs, respectively. Their fresh Haiku assessments are complete:
 24 Kimi and 16 Opus verdicts, all valid. Luna continues without repeating its
