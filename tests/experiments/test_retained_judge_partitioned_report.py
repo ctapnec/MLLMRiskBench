@@ -122,7 +122,7 @@ def test_report_revalidates_outputs_accounting_and_generation_conditions(indepen
 
 
 @pytest.mark.parametrize("completed", [4], indirect=True)
-def test_all_counterparts_are_compared_once_without_sampling_or_new_calls(independent_batches, completed):
+def test_all_counterparts_are_compared_once_without_sampling_or_new_calls(independent_batches, completed):  # noqa: F811
     args = independent_batches
     _, old_plan, views = completed
     local, local_audit = reports._candidates_from_view(*views["local"], include_match_identity=True)
@@ -152,7 +152,7 @@ def test_all_counterparts_are_compared_once_without_sampling_or_new_calls(indepe
 
 
 @pytest.mark.parametrize("completed", [4], indirect=True)
-def test_all_counterpart_selection_rejects_dropped_or_repeated_links(independent_batches, completed):
+def test_all_counterpart_selection_rejects_dropped_or_repeated_links(independent_batches, completed):  # noqa: F811
     _, old_plan, views = completed
     local, local_audit = reports._candidates_from_view(*views["local"], include_match_identity=True)
     hosted, hosted_audit = reports._candidates_from_view(*views["hosted"], include_match_identity=True)
