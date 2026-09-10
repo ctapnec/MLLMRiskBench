@@ -306,7 +306,7 @@ def test_hf_token_is_write_only_and_presence_only(
         page = app.handle("GET", "/config/secrets")[2].decode("utf-8")
         assert token not in page
         assert token[-4:] not in page
-        assert "never written to that file" in page
+        assert "Hugging Face access is process-only" in page
         app.clear_secret("HF_TOKEN")
         assert "HF_TOKEN" not in os.environ
         assert "OPENAI_API_KEY='keep-provider-key'" in app.env_file.read_text(
