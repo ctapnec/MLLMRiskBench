@@ -3,8 +3,11 @@
 Status, 10 September 2026: requested quantities and a full-pool input
 availability preview and a shared-input preview are verified on the rig.
 Shared-cohort preparation and credit-stop handling have passed focused rig tests.
-Final pricing, cumulative batch funding and execution are pending;
-no third-campaign target or judge call has started. This is a separate cohort
+The first 128-input batch is funded and executing, with local judging,
+output-specific Haiku judging and per-model Stats publication. The next
+224-input slice is materialized and token-counted, awaiting closure and
+cumulative funding of the preceding work. Most of the requested expansion
+remains unexecuted. This is a separate cohort
 after [the original campaign](HOSTED_CAMPAIGN_PLAN.md) and
 [the supplement, including Google](HOSTED_SUPPLEMENT_PLAN.md).
 
@@ -187,8 +190,13 @@ first-batch results, not completion of the expansion.
 
 The next disjoint input slice is prepared without a second spending allocation.
 It cannot dispatch while an earlier allocation can still consume the same
-provider or judge funds. Count and fund it only after reconciling the closed
-preceding work against the cumulative ceilings. Future batches use the cache
+provider or judge funds. Count-only preparation may proceed in parallel;
+funding follows reconciliation of the closed preceding work against the
+cumulative ceilings. The 224-input second slice needs 63 new judgments of
+exact existing local answers. Its tmux controller waits for predecessor target,
+local-judge and Haiku completion before allocating the remaining capacity.
+Unknown charges and unused earlier judge commitments remain reserved, not
+reported as spent or released into the new allocation. Future batches use the cache
 usage preservation correction documented in RA-446; old unknown charges stay
 held and old responses are not repeated to recover missing billing metadata.
 
