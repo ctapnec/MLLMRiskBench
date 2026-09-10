@@ -34,6 +34,25 @@ def _sha(value: object) -> str:
     return hashlib.sha256((payload + "\n").encode()).hexdigest()
 
 
+@pytest.mark.parametrize("missing", [0, 2])
+def test_explicit_empty_candidate_audit_preserves_exclusions(missing):
+    metadata = {str(index): {"prepared_response": " "} for index in range(missing)}
+    judgments = {key: {} for key in metadata}
+    audit = {"policy_evaluable_samples": missing, "common_ineligible_evaluable_rows_excluded": 5}
+    with pytest.raises(ValueError, match="no usable common"):
+        subject._candidates_from_view([], metadata, judgments, audit)
+    candidates, population = subject._candidates_from_view([], metadata, judgments, audit, allow_empty=True)
+    assert candidates == []
+    assert population == {"validated_joined_rows": missing, "eligible_usable_outputs": 0,
+                          "excluded_missing_outputs": missing, "excluded_source_authoritative_rows": 5}
+
+
+def test_empty_candidate_option_does_not_hide_invalid_usable_context():
+    with pytest.raises(ValueError, match="no validated cell context"):
+        subject._candidates_from_view([], {"sample": {"prepared_response": "An answer", "run_id": "absent"}},
+            {"sample": {}}, {}, allow_empty=True)
+
+
 def _candidate(index: int, *, model: str = "ollama:ministral-3:14b") -> dict:
     dimensions = {
         "exact_model": model,

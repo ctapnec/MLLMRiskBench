@@ -19,6 +19,13 @@ possible. Do not close a cohort with pending target inputs, active requests,
 unfinished intended judging or an unresolved paid-output stop. Freed capacity
 may fund a new shared-input selection only within the same cumulative ceilings.
 
+A completed source view can contain no answers eligible for the common Haiku
+rubric. Post-hoc orchestration may request `allow_empty=True` when constructing
+its candidate inventory, retain the exclusion counts, and record zero eligible
+judgments without making a judge call. The default positive-population check
+remains unchanged; invalid nonempty response context still raises. Do not
+invent a verdict for a setup turn, source-authoritative task or absent answer.
+
 Hosted routes may run concurrently in isolated processes. Keep each job's
 exact input partition, checkpoint owner and shared monetary reservation;
 concurrency is not permission to repeat an already-paid response. The optional

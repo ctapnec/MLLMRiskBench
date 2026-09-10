@@ -262,6 +262,7 @@ def _candidates_from_view(
     cells: Sequence[Mapping[str, Any]], metadata: Mapping[str, dict],
     judgments: Mapping[str, dict], audit: Mapping[str, Any], *, include_match_identity: bool = False,
     original_cells: Sequence[Mapping[str, Any]] = (),
+    allow_empty: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Construct the unchanged candidate contract after its source view validates."""
     contexts: dict[str, dict[str, str]] = {}
@@ -360,7 +361,7 @@ def _candidates_from_view(
         row["retained_row_sha256"] = _sha(material)
         row["stratum_id"] = _sha({field: row[field] for field in _DIMENSIONS})
         candidates.append(row)
-    if not candidates:
+    if not candidates and not allow_empty:
         raise ValueError("validated Runner view has no usable common retained outputs")
     return candidates, {
         "validated_joined_rows": int(audit["policy_evaluable_samples"]),
