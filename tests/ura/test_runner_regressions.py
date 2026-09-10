@@ -1184,6 +1184,7 @@ def test_stale_or_route_mismatched_attestation_fails_before_generation(
         "--corpora", "synth", "--limit", "1", "--sample-seed", "0",
         "--max-queries", "1", "--max-turns", "1",
         "--out", str(tmp_path / "measured"), *_finite_budget_args(),
+        "--target-answer-retries", "0",
         *project_revision_args,
     ]) == 1
     assert target.calls == 0
