@@ -147,6 +147,8 @@ def _canonical(value: object) -> bytes:
 
 
 def _stable_file(path: Path, *, label: str, max_bytes: int = 64 * 1024 * 1024) -> bytes:
+    from ura.validation_cache import observe_validation_path
+    observe_validation_path(path)
     if path.is_symlink() or not path.is_file() or path.resolve(strict=True) != path:
         raise ValueError(f"{label} is not one canonical regular file")
     size = path.stat().st_size

@@ -75,6 +75,8 @@ def _strict_json(payload: bytes, *, label: str) -> object:
 
 
 def _read_regular(path_value: Path, *, label: str, max_bytes: int) -> tuple[object, dict]:
+    from ura.validation_cache import observe_validation_path
+    observe_validation_path(path_value)
     unresolved = Path(path_value)
     if unresolved.is_symlink():
         raise ValueError(f"{label} must be a regular non-symlink file")

@@ -53,6 +53,8 @@ def _digest(value: Any, label: str) -> str:
 
 def _descriptor(path_value: Path, expected: str | None = None) -> dict:
     from ura.artifact_checks import artifact_sha256_enabled
+    from ura.validation_cache import observe_validation_path
+    observe_validation_path(path_value)
 
     path = Path(path_value)
     if path.is_symlink():

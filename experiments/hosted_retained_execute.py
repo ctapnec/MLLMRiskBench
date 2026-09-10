@@ -23,7 +23,8 @@ from ura.adapters.replay import ReplayAttacker, retained_dialog, retained_dialog
 from ura.runner import retained_execution_admission
 from ura.model_identity import canonical_provider_name
 from ura.targets.api import provider_attempt_admission
-from ura.artifact_checks import artifact_verification_cli
+from ura.artifact_checks import artifact_sha256_enabled, artifact_verification_cli
+from ura.validation_cache import ValidationCache
 
 
 SCHEMA = "ura-hosted-retained-execution-plan/1"
@@ -1058,7 +1059,25 @@ def _bound(raw: Mapping[str, Any]) -> tuple[dict, dict]:
     return value, observed
 
 
+_LOCAL_CONTEXT_CACHE = ValidationCache(entries=1, copy_results=False)
+
+
 def _validated_local_cells(program: dict) -> tuple[list[dict], dict]:
+    """Read-only source context, reused until any observed dependency changes.
+
+    Paid ledgers are deliberately outside this cache. A hosted controller may
+    prewarm it before forking its workers; source data are then shared read-only.
+    """
+    if artifact_sha256_enabled():
+        return _load_local_cells(program)
+    key = _sha({name: program[name] for name in ("results_root", "runner_view", "rr_analysis_root")}
+               | {"historical_result": program["sources"]["historical_result"]})
+    return _LOCAL_CONTEXT_CACHE.get(key, lambda: _load_local_cells(program),
+        paths=(Path(program["sources"]["historical_result"]["path"]),),
+        trees=(Path(program["runner_view"]), Path(program["rr_analysis_root"])))
+
+
+def _load_local_cells(program: dict) -> tuple[list[dict], dict]:
     from experiments.local_campaign.continuation_stats import retained_continuation_reports
     from experiments.local_campaign.execution_accounting import build_execution_accounting
     from experiments.local_campaign.rr_parallel_analysis import load_judge_view

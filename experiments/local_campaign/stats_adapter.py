@@ -493,6 +493,8 @@ def _descriptor_file(
     ):
         raise ValueError("invalid Phase 7 descriptor identity")
     path = Path(path_value)
+    from ura.validation_cache import observe_validation_path
+    observe_validation_path(path)
     if not path.is_absolute():
         raise ValueError("Phase 7 descriptor path is not absolute")
     resolved = path.resolve(strict=True)

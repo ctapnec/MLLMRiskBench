@@ -208,6 +208,8 @@ def _validate_descriptor(value: object, *, label: str) -> Path:
     ):
         raise ValueError(f"{label} descriptor fields are invalid")
     path = Path(raw_path)
+    from ura.validation_cache import observe_validation_path
+    observe_validation_path(path)
     if "file" in value and value.get("file") != path.name:
         raise ValueError(f"{label} descriptor filename does not match its path")
     from ura.artifact_checks import artifact_sha256_enabled

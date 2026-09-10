@@ -15,6 +15,7 @@ from urllib.parse import quote
 
 from ura.model_identity import canonical_provider_name
 from ura.strict_json import strict_json_loads
+from ura.validation_cache import ValidationCache
 
 from .catalog import _INVENTORY_MAX_ENTRIES, _INVENTORY_MAX_DEPTH
 
@@ -1002,7 +1003,20 @@ def failed_cell_usage_rows(
     return rows
 
 
+_USAGE_CACHE = ValidationCache(entries=32)
+
+
 def collect_usage(
+    root: Path, *, verify_sha: bool = False, excluded_roots: tuple[Path, ...] = (),
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """Reuse unchanged output accounting; explicit full checks bypass the cache."""
+    if verify_sha:
+        return _collect_usage(root, verify_sha=True, excluded_roots=excluded_roots)
+    key = (str(root.absolute()), tuple(str(path.absolute()) for path in excluded_roots))
+    return _USAGE_CACHE.get(key, lambda: _collect_usage(root, excluded_roots=excluded_roots), trees=(root,))
+
+
+def _collect_usage(
     root: Path,
     *,
     verify_sha: bool = False,

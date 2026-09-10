@@ -19,6 +19,7 @@ from typing import Mapping, Sequence
 
 from ura.strict_json import strict_json_loads
 from ura.artifact_checks import artifact_sha256_enabled
+from ura.validation_cache import ValidationCache
 
 from .external_measured import _write_create_only
 from .reports import _validate_report_document
@@ -33,6 +34,7 @@ _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 _MAX_REGISTRATION_BYTES = 256 * 1024
 _MAX_REPORT_BYTES = 64 * 1024 * 1024
 _MAX_REPORTS = 128
+_REPORT_CACHE = ValidationCache(entries=16)
 _MAX_LABEL = 256
 _FIELDS = {
     "schema",
@@ -232,28 +234,18 @@ def _validated_report(
     )
     if not _beneath(path, analysis_root):
         raise ValueError("external analysis report escapes its analysis root")
-    payload = _regular_bytes(path, maximum=_MAX_REPORT_BYTES)
-    if (
-        raw.get("bytes") != len(payload)
-        or _HEX64.fullmatch(str(raw.get("sha256"))) is None
-        or (artifact_sha256_enabled() and raw.get("sha256") != hashlib.sha256(payload).hexdigest())
-    ):
+    if type(raw.get("bytes")) is not int or _HEX64.fullmatch(str(raw.get("sha256"))) is None:
         raise ValueError("external analysis report identity differs")
-    try:
-        document = strict_json_loads(payload.decode("utf-8"))
-    except (UnicodeError, ValueError) as exc:
-        raise ValueError("external analysis report is not strict JSON") from exc
-    if not isinstance(document, dict):
-        raise ValueError("external analysis report is not an object")
-    _validate_report_document(str(kind), document)
-    return ExternalAnalysisReport(
+    report = ExternalAnalysisReport(
         path=path,
         artifact_relative=relative,
         display_name=_label(raw.get("display_name"), field="report display name"),
         kind=str(kind),
         sha256=str(raw["sha256"]),
-        bytes=len(payload),
+        bytes=raw["bytes"],
     )
+    _cached_report_document(report)
+    return report
 
 
 def load_external_analysis_report(
@@ -262,17 +254,26 @@ def load_external_analysis_report(
     """Revalidate one registered report immediately before rendering it."""
 
     try:
+        return _cached_report_document(report)
+    except (OSError, TypeError, UnicodeError, ValueError, RecursionError):
+        return None
+
+
+def _cached_report_document(report):
+    def parse():
         payload = _regular_bytes(report.path, maximum=_MAX_REPORT_BYTES)
         if (len(payload) != report.bytes
                 or (artifact_sha256_enabled() and hashlib.sha256(payload).hexdigest() != report.sha256)):
-            return None
+            raise ValueError("external analysis report identity differs")
         document = strict_json_loads(payload.decode("utf-8"))
         if not isinstance(document, dict):
-            return None
+            raise ValueError("external analysis report is not an object")
         _validate_report_document(report.kind, document)
         return document
-    except (OSError, TypeError, UnicodeError, ValueError, RecursionError):
-        return None
+    if artifact_sha256_enabled():
+        return parse()
+    key = (str(report.path), report.kind, report.bytes, report.sha256)
+    return _REPORT_CACHE.get(key, parse, paths=(report.path,))
 
 
 def _registry_root(results_root: Path, *, create: bool) -> Path:

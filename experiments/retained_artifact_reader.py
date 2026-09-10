@@ -21,6 +21,7 @@ from typing import Any, Mapping, Sequence
 
 from ura.strict_json import strict_json_loads
 from ura.artifact_checks import artifact_sha256_enabled
+from ura.validation_cache import observe_validation_path
 
 
 _COMMIT = re.compile(r"[0-9a-f]{40}")
@@ -322,6 +323,8 @@ def load_level1_results(
     separate strata; one source checkout validates the entire stratum at once.
     """
     revisions = [artifact[0]["bindings"]["project_revision"] for artifact in plans.values()]
+    for root in roots:
+        observe_validation_path(root, recursive=True)
     revisions.extend(item["envelope"]["bindings"]["project_revision"] for item in envelopes)
     identities = set()
     for revision in revisions:
@@ -392,6 +395,7 @@ def load_level1_results(
 def grid_partitions(root: Path) -> list[tuple[Path, str, str]]:
     """Find exact grid roots, rejecting orphan manifests and mixed revisions."""
     root = Path(root).resolve(strict=True)
+    observe_validation_path(root, recursive=True)
     if not root.is_dir():
         raise ValueError("retained analysis requires a directory")
     for pattern in ("*.grid.lock", "*.cell.lock", "*.error.json"):
