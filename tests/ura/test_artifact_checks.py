@@ -123,3 +123,15 @@ def test_console_reindex_checksum_option_is_explicit(tmp_path, monkeypatch):
         assert "name='verify_artifact_sha256' checked" not in page
     finally:
         app.close()
+
+
+@pytest.mark.parametrize("name", ["figures", "transfer_matrix"])
+def test_analysis_forms_and_cli_expose_explicit_artifact_checks(name, capsys):
+    import importlib
+    from experiments.rig_web_app.catalog import _commands
+    command = _commands()[name]
+    assert any(param.flag == "--verify-artifact-sha256" and param.kind == "flag" for param in command.params)
+    with pytest.raises(SystemExit) as stopped:
+        importlib.import_module(command.module).main(["--verify-artifact-sha256", "--help"])
+    assert stopped.value.code == 0
+    assert "--verify-artifact-sha256" in capsys.readouterr().out
