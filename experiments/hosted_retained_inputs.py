@@ -32,6 +32,8 @@ from experiments.retained_artifact_reader import load_cells
 
 SCHEMA = "ura-hosted-retained-input-plan/1"
 DISTINCT_SCHEMA = "ura-hosted-retained-input-plan/2"
+COHORT_SCHEMA = "ura-hosted-retained-input-plan/3"
+COHORT_SELECTION_SCHEMA = "ura-hosted-shared-input-cohort/1"
 ALGORITHM = "seeded_balanced_whole_cluster_retained_input_prefix_v1"
 _DIMENSIONS = ("corpus", "source", "framework", "modality", "risk", "expected_behavior")
 
@@ -433,6 +435,88 @@ def build_distinct_plan(
     return value
 
 
+def build_shared_cohort(*, candidates: list[dict], excluded_input_ids: Sequence[str]) -> dict:
+    """Freeze input-only exclusions once for every model, before new outcomes."""
+    by_id = {row["input_identity_sha256"]: row for row in candidates}
+    excluded = sorted(set(excluded_input_ids))
+    if len(by_id) != len(candidates) or not set(excluded) <= by_id.keys():
+        raise ValueError("shared cohort exclusions must name retained local inputs")
+    value = {
+        "schema": COHORT_SELECTION_SCHEMA,
+        "algorithm": "seed0_shared_whole_cluster_prefix_excluding_previous_payloads",
+        "candidate_input_ids_sha256": _sha(sorted(by_id)),
+        "excluded_input_ids": excluded,
+        "excluded_rendered_input_sha256": sorted({by_id[key]["rendered_input_sha256"] for key in excluded}),
+        "observed_output_used_for_selection": False,
+    }
+    value["cohort_id"] = "shared-inputs-" + _sha(value)[:24]
+    return value
+
+
+def build_cohort_plan(
+    *, candidates: list[dict], cohort: dict, cohort_descriptor: dict, target: str,
+    prefix_start: int, prefix_stop: int, call_cap: int,
+    request_builder: Callable[[dict], Mapping[str, Any]], **bindings: Any,
+) -> dict:
+    """Fund a whole-cluster slice of the same input prefix for every target.
+
+    The prefix is selected without provider serialization or model outcomes.
+    Physical request aliases are collapsed only after shared inputs are fixed.
+    Successive funding batches cannot change that preselected population.
+    """
+    saved, observed = load_bound_json(Path(cohort_descriptor["path"]), cohort_descriptor["sha256"])
+    if (saved != cohort or observed["bytes"] != cohort_descriptor["bytes"]
+            or cohort != build_shared_cohort(candidates=candidates, excluded_input_ids=cohort["excluded_input_ids"])):
+        raise ValueError("shared input cohort or local candidate population changed")
+    if (type(prefix_start) is not int or type(prefix_stop) is not int
+            or not 0 <= prefix_start < prefix_stop or type(call_cap) is not int or call_cap < 1):
+        raise ValueError("shared cohort needs an increasing whole-prefix interval")
+    def cluster(row):
+        return tuple(row[field] for field in
+                     ("corpus", "source", "framework", "source_cluster_id", "requested_seed"))
+    excluded_payloads = set(cohort["excluded_rendered_input_sha256"])
+    excluded_clusters = {cluster(row) for row in candidates if row["rendered_input_sha256"] in excluded_payloads}
+    pool = [row for row in candidates if cluster(row) not in excluded_clusters]
+    modalities = bindings["api_config"][target]["modalities"]
+    input_body = lambda row: {"rendered_input": row["rendered_input"]}
+    full = select_distinct_requests(pool, modalities=modalities, cap=prefix_stop, request_builder=input_body)
+    if prefix_start:
+        previous = select_distinct_requests(pool, modalities=modalities, cap=prefix_start, request_builder=input_body)
+        if len(previous["selected"]) != prefix_start:
+            raise ValueError("shared cohort batch start splits a whole source cluster")
+    chosen = full["selected"][prefix_start:]
+    if not chosen:
+        raise ValueError("shared cohort interval contains no complete new input cluster")
+    # A larger prefix can add source aliases to an earlier physical input.
+    # Those aliases remain in the cohort; they do not trigger another generation.
+    source_rows = [row for group in chosen for row in group["source_inputs"]]
+    distinct = select_distinct_requests(source_rows, modalities=modalities, cap=len(source_rows),
+                                        request_builder=request_builder)
+    if len(distinct["selected"]) > call_cap:
+        raise ValueError("shared input batch exceeds its funded physical request cap")
+    by_id = {row["input_identity_sha256"]: row for row in candidates}
+    representatives = [by_id[group["representative_input_sha256"]] for group in distinct["selected"]]
+    value = build_plan(candidates=representatives, target=target, call_cap=call_cap, **bindings)
+    value.pop("plan_id")
+    value["schema"] = COHORT_SCHEMA
+    value["sources"]["shared_input_cohort"] = copy.deepcopy(cohort_descriptor)
+    value["selection"].update(
+        algorithm="shared_input_prefix_batch_distinct_provider_requests_v1",
+        candidate_input_ids_sha256=_sha(sorted(by_id)), prefix_start=prefix_start, prefix_stop=prefix_stop,
+        selected_input_payload_sha256=[group["request_sha256"] for group in chosen],
+        request_groups=[{
+            "request_sha256": group["request_sha256"],
+            "representative_input_sha256": group["representative_input_sha256"],
+            "source_input_ids": [row["input_identity_sha256"] for row in group["source_inputs"]],
+        } for group in distinct["selected"]],
+        source_memberships_are_not_independent_generations=True,
+    )
+    value["population"] = {**distinct["population"], "input_prefix": full["population"],
+                           "selected_input_payloads": len(chosen)}
+    value["plan_id"] = "hosted-inputs-" + _sha(value)[:24]
+    return value
+
+
 def resolve_inputs(plan: dict, *, candidates: list[dict],
                    request_builder: Callable[[dict], Mapping[str, Any]] | None = None,
                    **bindings: Any) -> list[dict]:
@@ -442,7 +526,17 @@ def resolve_inputs(plan: dict, *, candidates: list[dict],
     A later executor must use the returned media bindings to resolve portable
     locators and must retain the original input digest beside the delivered one.
     """
-    if plan.get("schema") == DISTINCT_SCHEMA:
+    if plan.get("schema") == COHORT_SCHEMA:
+        if request_builder is None:
+            raise ValueError("shared cohort requires the offline provider request builder")
+        descriptor = plan["sources"]["shared_input_cohort"]
+        cohort, _ = load_bound_json(Path(descriptor["path"]), descriptor["sha256"])
+        expected = build_cohort_plan(
+            candidates=candidates, cohort=cohort, cohort_descriptor=descriptor,
+            target=plan["target_condition"]["target_spec"],
+            prefix_start=plan["selection"]["prefix_start"], prefix_stop=plan["selection"]["prefix_stop"],
+            call_cap=plan["target_condition"]["selected_global_call_cap"], request_builder=request_builder, **bindings)
+    elif plan.get("schema") == DISTINCT_SCHEMA:
         if request_builder is None:
             raise ValueError("distinct input resolution requires the offline provider request builder")
         descriptor = plan["sources"]["predecessor_input_plan"]
@@ -485,7 +579,7 @@ def materialize_replay(
     an answer or from a source evaluator's judgment.
     """
     from ura.adapters.replay import (
-        RETAINED_REPLAY_SCHEMA, DISTINCT_RETAINED_REPLAY_SCHEMA,
+        RETAINED_REPLAY_SCHEMA, DISTINCT_RETAINED_REPLAY_SCHEMA, COHORT_RETAINED_REPLAY_SCHEMA,
         retained_dialog, retained_dialog_sha256, validate_retained_origin,
     )
     from ura.converters._common import canonical_converted_corpus_sha256
@@ -539,7 +633,8 @@ def materialize_replay(
                         "rendered_input": [turn.model_dump(mode="json") for turn in dialog]})
     if not entries:
         raise ValueError("retained replay arm has no selected inputs")
-    schema = DISTINCT_RETAINED_REPLAY_SCHEMA if plan["schema"] == DISTINCT_SCHEMA else RETAINED_REPLAY_SCHEMA
+    schema = {COHORT_SCHEMA: COHORT_RETAINED_REPLAY_SCHEMA,
+              DISTINCT_SCHEMA: DISTINCT_RETAINED_REPLAY_SCHEMA}.get(plan["schema"], RETAINED_REPLAY_SCHEMA)
     value = {"schema": schema, "status": "no_call_materialized",
              "corpus": corpus, "plan": copy.deepcopy(plan), "entries": entries}
     value["replay_id"] = "retained-replay-" + _sha(value)[:24]

@@ -31,6 +31,7 @@ TRANSPORT_RECOVERY_SCHEMA = "ura-hosted-retained-execution-plan/3"
 ADAPTER_RECOVERY_SCHEMA = "ura-hosted-retained-execution-plan/4"
 ADAPTER_PREFIX_RECOVERY_SCHEMA = "ura-hosted-retained-execution-plan/5"
 DISTINCT_INPUT_SCHEMA = "ura-hosted-retained-execution-plan/6"
+COHORT_INPUT_SCHEMA = "ura-hosted-retained-execution-plan/7"
 COUNTED_INPUT_POLICY = "counted_requests_within_route_reservation_v1"
 TOKEN_COUNT_POLICY = "surface_specific_counts_with_declared_estimates_v1"
 _HEX40 = re.compile(r"[0-9a-f]{40}\Z")
@@ -55,7 +56,7 @@ def _validate_input_budget(program: Mapping[str, Any], route: Mapping[str, Any])
     """Keep the original per-call contract or fund the explicit counted successor."""
     counted = program.get("schema") in {
         COUNTED_INPUT_SCHEMA, TRANSPORT_RECOVERY_SCHEMA, ADAPTER_RECOVERY_SCHEMA, ADAPTER_PREFIX_RECOVERY_SCHEMA,
-        DISTINCT_INPUT_SCHEMA,
+        DISTINCT_INPUT_SCHEMA, COHORT_INPUT_SCHEMA,
     }
     if counted:
         if program.get("input_budget_policy") != COUNTED_INPUT_POLICY:
@@ -800,7 +801,7 @@ def _validated_jobs(program: dict, budget: AttemptBudget, *, local_context: tupl
         return hosted_pending_condition.validated_jobs(program, budget, local_context=local_context)
     if (not isinstance(program, dict) or program.get("schema") not in {
         SCHEMA, COUNTED_INPUT_SCHEMA, TRANSPORT_RECOVERY_SCHEMA, ADAPTER_RECOVERY_SCHEMA, ADAPTER_PREFIX_RECOVERY_SCHEMA,
-        DISTINCT_INPUT_SCHEMA,
+        DISTINCT_INPUT_SCHEMA, COHORT_INPUT_SCHEMA,
     }
         or program.get("budget_plan_sha256") != budget.expected_plan_sha256
         or program.get("token_count_policy") != TOKEN_COUNT_POLICY
@@ -839,7 +840,7 @@ def _validated_jobs(program: dict, budget: AttemptBudget, *, local_context: tupl
         raise ValueError("hosted program budget or effective-dated pricing projection changed")
     budget_plan, _descriptor = _read_regular(budget.root / "plan.json", label="funded program budget", max_bytes=64 * 1024 * 1024)
     configured = projection._provider_budgets(values["budgets"])
-    distinct = program["schema"] == DISTINCT_INPUT_SCHEMA
+    distinct = program["schema"] in {DISTINCT_INPUT_SCHEMA, COHORT_INPUT_SCHEMA}
     if distinct:
         funding = _additional_funding(sources["additional_funding"], configured, budget_plan=budget_plan)
         inventory, _ = _bound(funding["judging_inventory"])
@@ -924,7 +925,9 @@ def _validated_jobs(program: dict, budget: AttemptBudget, *, local_context: tupl
         if getattr(attacker, "retained_input_ids", None) != job["input_ids"]:
             raise ValueError("job changed its exact funded pilot/measured input IDs")
         plan = attacker._retained["plan"]
-        if (plan["schema"] == inputs.DISTINCT_SCHEMA) != distinct:
+        expected_plan_schema = {COHORT_INPUT_SCHEMA: inputs.COHORT_SCHEMA,
+                                DISTINCT_INPUT_SCHEMA: inputs.DISTINCT_SCHEMA}.get(program["schema"], inputs.SCHEMA)
+        if plan["schema"] != expected_plan_schema:
             raise ValueError("distinct retained inputs require their explicit execution contract")
         # Selection /1 was never paid admission. Its original descriptive
         # exact-count prerequisite is retained verbatim; only this prospective

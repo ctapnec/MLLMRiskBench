@@ -87,7 +87,7 @@ def test_preparation_creates_funded_disjoint_pilot_and_measured_program_without_
     assert len(budget["planned_calls"]) == 6
 
 
-def _distinct_request(tmp_path, monkeypatch, **program_options):
+def _distinct_request(tmp_path, monkeypatch, *, cohort=False, **program_options):
     from experiments import run_matrix
     capture = {}
     request, _ = _request(tmp_path, monkeypatch, extra_points=8, source_capture=capture, **program_options)
@@ -105,9 +105,17 @@ def _distinct_request(tmp_path, monkeypatch, **program_options):
                 "media_index": {}, "local_inventory_descriptor": subject._portable(inventory)}
     candidates = subject.inputs.candidates_from_cells(cells)
     builder = subject.inputs.provider_request_builder(target, {})
-    plan = subject.inputs.build_distinct_plan(candidates=candidates, predecessor=predecessor,
-        predecessor_descriptor=descriptor, source_prefix_cap=len(candidates), call_cap=5,
-        request_builder=builder, **bindings)
+    if cohort:
+        shared = subject.inputs.build_shared_cohort(candidates=candidates,
+            excluded_input_ids=[row["input_identity_sha256"] for row in predecessor["selected"]])
+        shared_descriptor = _save(tmp_path / "shared-cohort.json", shared)
+        plan = subject.inputs.build_cohort_plan(candidates=candidates, cohort=shared,
+            cohort_descriptor=shared_descriptor, target=target.name,
+            prefix_start=0, prefix_stop=5, call_cap=5, request_builder=builder, **bindings)
+    else:
+        plan = subject.inputs.build_distinct_plan(candidates=candidates, predecessor=predecessor,
+            predecessor_descriptor=descriptor, source_prefix_cap=len(candidates), call_cap=5,
+            request_builder=builder, **bindings)
     replay = subject.inputs.materialize_replay(plan, cells=cells,
         source_corpora={capture["cell"]["run_id"]: capture["points"]}, corpus="retained-corpus",
         request_builder=builder, **bindings)
@@ -132,7 +140,8 @@ def _distinct_request(tmp_path, monkeypatch, **program_options):
             {"retained_row_sha256": "e" * 64}, {"retained_row_sha256": "f" * 64}]}),
     }
     sources["additional_funding"] = _save(tmp_path / "funding.json", allocation)
-    request.update(schema=subject.DISTINCT_INPUT_REQUEST_SCHEMA, input_budget_policy=subject.executor.COUNTED_INPUT_POLICY)
+    request.update(schema=subject.COHORT_INPUT_REQUEST_SCHEMA if cohort else subject.DISTINCT_INPUT_REQUEST_SCHEMA,
+                   input_budget_policy=subject.executor.COUNTED_INPUT_POLICY)
     return request, old_plan, old_ledger
 
 

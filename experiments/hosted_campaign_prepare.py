@@ -29,6 +29,7 @@ from ura.adapters.replay import ReplayAttacker, retained_dialog
 REQUEST_SCHEMA = "ura-hosted-retained-campaign-request/1"
 COUNTED_INPUT_REQUEST_SCHEMA = "ura-hosted-retained-campaign-request/2"
 DISTINCT_INPUT_REQUEST_SCHEMA = "ura-hosted-retained-campaign-request/3"
+COHORT_INPUT_REQUEST_SCHEMA = "ura-hosted-retained-campaign-request/4"
 RECEIPT_SCHEMA = "ura-hosted-retained-campaign-preparation/1"
 CACHED_RECEIPT_SCHEMA = "ura-hosted-retained-campaign-preparation/2"
 _REPLAY_SCHEMA = "ura-retained-input-replay/1"
@@ -254,7 +255,7 @@ def _job_argv(
     return argv
 
 
-def _replay_inventory(raw_routes: object, *, distinct: bool = False) -> list[dict[str, Any]]:
+def _replay_inventory(raw_routes: object, *, distinct: bool = False, cohort: bool = False) -> list[dict[str, Any]]:
     if not isinstance(raw_routes, list) or not raw_routes:
         raise ValueError("hosted preparation requires target routes")
     routes: list[dict[str, Any]] = []
@@ -279,7 +280,8 @@ def _replay_inventory(raw_routes: object, *, distinct: bool = False) -> list[dic
             value, observed = _full_descriptor(descriptor, label="retained replay")
             corpus = value.get("corpus")
             if (
-                value.get("schema") != ("ura-retained-input-replay/2" if distinct else _REPLAY_SCHEMA)
+                value.get("schema") != ("ura-retained-input-replay/3" if cohort else
+                                        "ura-retained-input-replay/2" if distinct else _REPLAY_SCHEMA)
                 or value.get("status") != "no_call_materialized"
                 or not isinstance(corpus, str)
                 or not corpus
@@ -336,14 +338,16 @@ def prepare_campaign(
         "runner_common_argv",
         "execution_root",
     }
-    distinct = isinstance(request, Mapping) and request.get("schema") == DISTINCT_INPUT_REQUEST_SCHEMA
+    cohort = isinstance(request, Mapping) and request.get("schema") == COHORT_INPUT_REQUEST_SCHEMA
+    distinct = isinstance(request, Mapping) and request.get("schema") in {
+        DISTINCT_INPUT_REQUEST_SCHEMA, COHORT_INPUT_REQUEST_SCHEMA}
     counted_inputs = isinstance(request, Mapping) and request.get("schema") in {
-        COUNTED_INPUT_REQUEST_SCHEMA, DISTINCT_INPUT_REQUEST_SCHEMA,
+        COUNTED_INPUT_REQUEST_SCHEMA, DISTINCT_INPUT_REQUEST_SCHEMA, COHORT_INPUT_REQUEST_SCHEMA,
     }
     if counted_inputs:
         required.add("input_budget_policy")
     if (not isinstance(request, Mapping) or set(request) != required
-        or request["schema"] not in {REQUEST_SCHEMA, COUNTED_INPUT_REQUEST_SCHEMA, DISTINCT_INPUT_REQUEST_SCHEMA}
+        or request["schema"] not in {REQUEST_SCHEMA, COUNTED_INPUT_REQUEST_SCHEMA, DISTINCT_INPUT_REQUEST_SCHEMA, COHORT_INPUT_REQUEST_SCHEMA}
         or (counted_inputs and request["input_budget_policy"] != executor.COUNTED_INPUT_POLICY)):
         raise ValueError("hosted campaign preparation request fields differ")
     root = _canonical_new_root(out_root, label="hosted preparation root")
@@ -367,7 +371,7 @@ def prepare_campaign(
             request["sources"][name], label=name.replace("_", " ")
         )
     budget_projection = _validated_projection(request=request, sources=sources, values=values)
-    routes = _replay_inventory(request["routes"], distinct=distinct)
+    routes = _replay_inventory(request["routes"], distinct=distinct, cohort=cohort)
     funding = (executor._additional_funding(sources["additional_funding"],
                 projection._provider_budgets(values["budgets"])) if distinct else None)
     if funding is not None:
@@ -587,7 +591,7 @@ def prepare_campaign(
             )
         programs.append(
             {
-                "schema": (executor.DISTINCT_INPUT_SCHEMA if distinct else
+                "schema": (executor.COHORT_INPUT_SCHEMA if cohort else executor.DISTINCT_INPUT_SCHEMA if distinct else
                            executor.COUNTED_INPUT_SCHEMA if counted_inputs else executor.SCHEMA),
                 **({"input_budget_policy": executor.COUNTED_INPUT_POLICY} if counted_inputs else {}),
                 "sources": copy.deepcopy(sources),
