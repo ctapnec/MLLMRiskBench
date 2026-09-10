@@ -16,6 +16,13 @@ select retained local outputs for bounded Haiku re-adjudication. That follow-on
 is not another local phase, cannot change any local selection or result, and
 has independent provider-budget and transfer gates.
 
+New follow-on, 10 September 2026: the
+[third hosted expansion](HOSTED_EXPANSION_PLAN.md) requests 6,541 additional
+hosted evaluations from inputs already executed locally. Matching local
+outputs need Haiku assessment unless the exact output and judging condition
+already have one. This is new hosted/judging work, not a restart of completed
+local generation or a new local phase. Its selection and funding are pending.
+
 Final hosted comparison, 10 September 2026 at 06:11 UTC: the separate
 supplement and Google extension have completed target collection and both
 judging obligations. Their published comparison includes every one of the

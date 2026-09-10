@@ -1,5 +1,10 @@
 # Additional hosted inputs from the retained local campaign
 
+New work, 10 September 2026: the separately requested
+[third hosted campaign](HOSTED_EXPANSION_PLAN.md) targets 6,541 additional
+model-input evaluations using provider-level multipliers of the two completed
+campaigns. Its preparation does not reopen or change the completed cohort below.
+
 ## Completed collection, judging and comparison
 
 Completion, 10 September 2026 at 06:11 UTC: all thirteen target routes are
