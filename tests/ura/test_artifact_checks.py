@@ -69,9 +69,20 @@ def test_cli_flag_scopes_optional_checks_and_restores_default():
     assert artifact_sha256_enabled() is False
 
 
-def test_historical_readers_skip_only_hash_comparisons(tmp_path, monkeypatch):
+@pytest.mark.parametrize("legacy_assignment", [False, True])
+def test_historical_readers_skip_only_hash_comparisons(tmp_path, monkeypatch, legacy_assignment):
     from experiments import figure_results, transfer_matrix
     from experiments.retained_artifact_reader import _configure_historical_artifact_checks
+    if legacy_assignment:
+        # The real 31e8521 reader stored its computed digest in a local variable.
+        import inspect
+        original_source = inspect.getsource
+        function = transfer_matrix._artifact_path
+        source = original_source(function).replace(
+            "    if artifact_sha256_enabled() and hashlib.sha256(payload).hexdigest() != expected_hash:",
+            "    observed_hash = hashlib.sha256(payload).hexdigest()\n    if observed_hash != expected_hash:")
+        assert source != original_source(function)
+        monkeypatch.setattr(inspect, "getsource", lambda value: source if value is function else original_source(value))
 
     # Preserve module state even though the historical bridge is normally used
     # only inside a short-lived, isolated reader subprocess.

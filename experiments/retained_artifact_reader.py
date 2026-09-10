@@ -56,6 +56,10 @@ def _configure_historical_artifact_checks(verify_sha256):
             (transfer_matrix, "_artifact_path", "hashlib.sha256(payload).hexdigest() != expected_hash"),
         ):
             source = textwrap.dedent(inspect.getsource(getattr(module, name)))
+            legacy_assignment = "observed_hash = hashlib.sha256(payload).hexdigest()"
+            if name == "_artifact_path" and source.count(legacy_assignment) == 1:
+                source = source.replace(legacy_assignment, "# Optional bulk checksum revalidation is disabled.")
+                comparison = "observed_hash != expected_hash"
             if source.count(comparison) != 1:
                 raise ValueError(f"unsupported historical checksum comparison: {module.__name__}.{name}")
             exec(source.replace(comparison, "False"), vars(module))
