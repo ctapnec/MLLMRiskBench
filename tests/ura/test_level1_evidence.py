@@ -323,6 +323,7 @@ def _runtime_free_legacy_plan(plan: dict) -> dict:
 
 def _write_live_attestation(
     path: Path, *, route_kind: str = "hosted_api", modalities: tuple[str, ...] = ("text",),
+    endpoint_identity: str | None = None,
 ) -> tuple[dict, dict]:
     route_digest = route_config_sha256(
         route_kind=route_kind,
@@ -335,6 +336,8 @@ def _write_live_attestation(
         "provider": "openai",
         "resolved_model": "fixture-model-2026-08-01",
     }
+    if endpoint_identity is not None:
+        realized_identity["endpoint_identity"] = endpoint_identity
     if route_kind == "local_runtime":
         realized_identity["model_digest"] = "a" * 64
     manifest = build_live_attestation_manifest([{
@@ -906,6 +909,64 @@ def test_measured_level1_binds_exact_typed_attestation_at_grid_start(
     assert report["counts"]["execution_units"]["attested"] == 1
     assert report["availability"]["live_attestation"]["status"] == "validated"
     assert report["scope"]["empirical_validity_established"] is False
+
+
+@pytest.mark.parametrize("change", [None, "endpoint", "model", "code", "ordinary", "missing"])
+def test_level1_attestation_accepts_only_retained_native_policy_outcome(tmp_path, change):
+    from types import SimpleNamespace
+
+    import httpx
+    import openai
+
+    from ura.runner import _target_identity_snapshot
+    from ura.targets.api import OpenAITarget, canonical_https_endpoint_identity
+
+    target = OpenAITarget("fixture-model-2026-08-01", max_tokens=128)
+    calls = []
+
+    def deny(**request):
+        calls.append(request)
+        raise openai.BadRequestError("policy rejection", response=httpx.Response(
+            400, request=httpx.Request("POST", "https://api.openai.com/v1/chat/completions")),
+            body={"code": "cyber_policy", "type": "invalid_request_error"})
+
+    target._client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=deny)))
+    response = target.generate([DialogTurn(role="user", content="Fixture input")], seed=0)
+    assert len(calls) == 1 and response.raw["resolved_model"] is None
+    live_artifact, projection = _write_live_attestation(
+        tmp_path / "policy-live.json",
+        endpoint_identity=canonical_https_endpoint_identity(target.base_url),
+    )
+    if change == "endpoint":
+        response.raw["endpoint_identity"] = canonical_https_endpoint_identity("https://wrong.example/v1")
+    elif change == "model":
+        response.raw["resolved_model"] = "wrong-model"
+    elif change == "code":
+        response.raw["call_audit"]["provider_error_code"] = "invalid_parameter"
+    elif change == "ordinary":
+        response.raw = {k: response.raw[k] for k in ("provider", "endpoint_identity")}
+        response.output_turns = [DialogTurn(role="assistant", content="Ordinary answer")]
+    plan_path = tmp_path / "policy-plan.json"
+    plan = _write_plan(plan_path, dry_run=False, live_attestation=projection,
+                       corpus_size=1, whole_request_preflight_complete=True)
+    validated = {
+        "manifest": {"config": {"run": {"model_spec": "resolved-text"}}},
+        "realized_identities": {"target": {"snapshot": _target_identity_snapshot(response)}},
+        "responses": {} if change == "missing" else {response.attempt_id: response.model_dump(mode="json")},
+    }
+    grid = {"grid_id": "grid-policy", "grid_status": "complete", "started_at": "2026-08-12T12:00:00Z",
+            "request": {"dry_run": False, "attestation_probe": False, "live_attestation": projection,
+                        "harness_source": {"sha256": "1" * 64}, "driver_source": {"sha256": "2" * 64},
+                        "project_revision": _project_revision(dry_run=False),
+                        "target_execution_conditions": {"text-target": "3" * 64}},
+            "cells": {"policy": {"status": "complete", "validated_cell": validated}}}
+    args = ({plan["plan_id"]: grid}, {plan["plan_id"]: _plan_artifact(plan_path)}, [live_artifact])
+    if change is not None:
+        with pytest.raises(ValueError, match="realized target identity differs"):
+            _bind_live_attestations(*args)
+    else:
+        assert _bind_live_attestations(*args)["status"] == "validated"
+        assert response.raw["resolved_model"] is None and response.tokens is None
 
 
 @pytest.mark.parametrize("mode", ["image", "multiple", "missing_target_receipt"])

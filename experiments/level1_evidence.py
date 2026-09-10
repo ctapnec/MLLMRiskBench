@@ -35,7 +35,8 @@ from experiments.suite_summary import (  # noqa: E402
     _final_model_nonresponse,
     _load_eligibility_plan,
 )
-from ura.data_models import Attempt  # noqa: E402
+from ura.data_models import Attempt, Response  # noqa: E402
+from ura.runner import _attested_response_identity_matches  # noqa: E402
 from ura.adapters._engine_runtime import (  # noqa: E402
     validate_engine_runtime_selection_identity_descriptor,
 )
@@ -1147,10 +1148,21 @@ def _bind_live_attestations(
                     expected_identity_by_target[requested], observed_identity
                 )
             ):
-                raise ValueError(
-                    "completed cell realized target identity differs from its "
-                    "live attestation"
-                )
+                # A policy-only cell has an observed provider/endpoint but no
+                # served model. Validate its actual retained responses using
+                # Runner's rule, rather than inventing a model in the summary.
+                responses = validated["responses"]
+                if not responses or not all(
+                    _attested_response_identity_matches(
+                        expected_identity_by_target[requested],
+                        Response.model_validate(row),
+                    )
+                    for row in responses.values()
+                ):
+                    raise ValueError(
+                        "completed cell realized target identity differs from its "
+                        "live attestation"
+                    )
         references: dict[tuple[str, str, tuple[str, ...]], dict[str, Any]] = {}
         for key, record in matched.items():
             owners = [
