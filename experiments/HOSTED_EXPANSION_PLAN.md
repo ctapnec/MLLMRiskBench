@@ -248,6 +248,15 @@ being prepared from the same fixed cohort. It prospectively appends the two
 verified VLBreakBench image directories to the campaign media roots; the
 existing root order, request contents and selected input identities stay fixed.
 
+The fifth slice subsequently completed input preparation with 607 target
+evaluations and 317 additional existing local answers selected for Haiku
+assessment. Its materialization is in progress, not paid execution. Thus
+2,226 target evaluations are funded or prepared across the first five slices:
+352 funded, 1,267 further counted, and 607 prepared. The other 4,315 requested
+evaluations, including the 67 boundary gaps, remain pending. Judging calls are
+additional to these target-evaluation counts. Sixth-slice input preparation
+has started from the fifth slice's exact ending prefixes, without new funding.
+
 Use only inputs already executed by the local campaign. Preserve prompt,
 conversation, media bytes, seed, framework, arm, corpus and source-policy
 identity. These are retained-conversation transfers; adaptive attacks are not
