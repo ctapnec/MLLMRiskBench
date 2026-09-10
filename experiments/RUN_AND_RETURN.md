@@ -6102,6 +6102,19 @@ The same builder supplies token counting, CLI execution and console jobs.
 After a delivery correction, rebind the unstarted request and its count receipt;
 do not reuse a count for different encoded bytes or replay completed answers.
 
+An omitted cache counter is not zero cache usage. For OpenAI, Kimi and Google
+responses with complete cache-inclusive input and output totals and no priced
+cache-write category, monetary accounting may replace the original maximum
+generation exposure with the reported token totals priced at the highest
+applicable input tariff and the output tariff. This remains an unknown exact
+bill with a conservative upper bound, not settled spending or an assumed
+discount. The record binds the response and pricing identities. Missing token
+totals, network errors, unstarted requests and Anthropic's non-inclusive input
+counter retain their original exposure. Old ledger formats remain unchanged;
+bounded records use a new ledger format that older executors reject. Upgrade
+only after active users of that shared ledger have finished. Retained responses
+can be reconciled without issuing another target or judge call.
+
 Console-form to runbook-section mapping (the console builds the identical
 argument vectors; nothing below is console-only):
 

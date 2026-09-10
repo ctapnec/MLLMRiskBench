@@ -33,6 +33,72 @@ def reopen(budget):
     return mod.AttemptBudget(budget.root, budget.expected_plan_sha256)
 
 
+def usage_bound(**changes):
+    return {"input_tokens": 2, "output_tokens": 1, "input_unit_price": "1.5", "output_unit_price": "2",
+            "response_sha256": "a" * 64, "pricing_sha256": "b" * 64, "bound_microusd": 5, **changes}
+
+
+def test_reported_token_bound_remains_unknown_not_an_invented_exact_bill(budget):
+    budget.reserve("O", 1, provider="openai")
+    budget.settle("O", 1, None)
+    before = budget.snapshot()["pools"]["openai:target"]
+    budget.bound_reported_usage("O", 1, usage_bound())
+    current = reopen(budget)
+    after = current.snapshot()["pools"]["openai:target"]
+    assert before["reserved_exposure_microusd"] == 10
+    assert after["reserved_exposure_microusd"] == 5
+    assert after["settled_cost_microusd"] == after["settled_attempts"] == 0
+    assert after["unknown_usage_attempts"] == after["bounded_usage_attempts"] == 1
+    saved = (budget.root / "ledger.json").read_bytes()
+    current.bound_reported_usage("O", 1, usage_bound())
+    current.settle("O", 1, None)
+    assert (budget.root / "ledger.json").read_bytes() == saved
+    current.reserve("O", 2, provider="openai")
+    assert current.snapshot()["pools"]["openai:target"]["reserved_exposure_microusd"] == 15
+
+
+@pytest.mark.parametrize("evidence", [usage_bound(bound_microusd=4), usage_bound(input_tokens=True),
+    usage_bound(input_unit_price="NaN"), usage_bound(output_unit_price="-1"),
+    usage_bound(response_sha256="bad"), usage_bound(input_tokens=20, bound_microusd=32)])
+def test_reported_usage_bound_rejects_invalid_or_unfunded_evidence(budget, evidence):
+    budget.reserve("O", 1, provider="openai")
+    budget.settle("O", 1, None)
+    before = (budget.root / "ledger.json").read_bytes()
+    with pytest.raises(mod.BudgetError):
+        budget.bound_reported_usage("O", 1, evidence)
+    assert (budget.root / "ledger.json").read_bytes() == before
+
+
+def test_reported_bound_never_releases_unstarted_or_in_flight_requests(budget):
+    with pytest.raises(mod.BudgetError, match="completed unknown-cost"):
+        budget.bound_reported_usage("O", 1, usage_bound())
+    budget.reserve("O", 1, provider="openai")
+    with pytest.raises(mod.BudgetError, match="completed unknown-cost"):
+        budget.bound_reported_usage("O", 1, usage_bound())
+    budget.settle("O", 1, None)
+    budget.bound_reported_usage("O", 1, usage_bound())
+    with pytest.raises(mod.BudgetError, match="conflicting reported usage"):
+        budget.bound_reported_usage("O", 1, usage_bound(response_sha256="c" * 64))
+    current = json.loads((budget.root / "ledger.json").read_text())
+    current["schema"] = mod.ADJUSTED_LEDGER_SCHEMA
+    (budget.root / "ledger.json").write_text(json.dumps(current))
+    with pytest.raises(mod.BudgetError):
+        reopen(budget)
+
+
+def test_bound_survives_allowance_increase_and_later_exact_settlement(budget):
+    import hashlib
+    budget.reserve("O", 1, provider="openai")
+    budget.settle("O", 1, None)
+    budget.bound_reported_usage("O", 1, usage_bound())
+    budget.increase_allowances({"O": 12}, reason="test explicit allocation", expected_ledger_sha256=
+        hashlib.sha256((budget.root / "ledger.json").read_bytes()).hexdigest())
+    assert reopen(budget).snapshot()["pools"]["openai:target"]["reserved_exposure_microusd"] == 5
+    budget.settle("O", 1, 4)
+    pool = reopen(budget).snapshot()["pools"]["openai:target"]
+    assert pool["settled_cost_microusd"] == 4 and pool["reserved_exposure_microusd"] == 0
+
+
 def test_exhausted_target_provider_preserves_hold_but_other_funded_provider_continues(budget):
     budget.reserve("O", 1, provider="openai")
     budget.settle("O", 1, None)

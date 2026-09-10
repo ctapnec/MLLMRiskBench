@@ -10,6 +10,7 @@ import hashlib
 import time
 from collections.abc import Mapping, Sequence
 from contextlib import ExitStack, contextmanager
+from decimal import Decimal, InvalidOperation, ROUND_CEILING
 from pathlib import Path
 
 from experiments.retained_response_judge_execute import (
@@ -20,6 +21,7 @@ from experiments.retained_response_judge_execute import (
 PLAN_SCHEMA = "ura-hosted-attempt-budget-plan/1"
 LEDGER_SCHEMA = "ura-hosted-attempt-budget-ledger/1"
 ADJUSTED_LEDGER_SCHEMA = "ura-hosted-attempt-budget-ledger/2"
+USAGE_BOUNDED_LEDGER_SCHEMA = "ura-hosted-attempt-budget-ledger/3"
 MAX_HAIKU_MICROUSD = 33_000_000
 MAX_ATTEMPTS = 4
 _MAX_BYTES = 64 * 1024 * 1024
@@ -62,6 +64,35 @@ def _name(value: object, label: str) -> str:
     if not isinstance(value, str) or not value.strip() or "\0" in value:
         raise BudgetError(f"{label} must be a nonempty identifier")
     return value
+
+
+def _reported_usage_bound(value: object) -> int:
+    """A reported-token upper bound is not an exact cache-discounted bill."""
+    fields = {"input_tokens", "output_tokens", "input_unit_price", "output_unit_price",
+              "response_sha256", "pricing_sha256", "bound_microusd"}
+    if not isinstance(value, dict) or set(value) != fields:
+        raise BudgetError("reported usage bound fields differ")
+    for key in ("response_sha256", "pricing_sha256"):
+        digest = value[key]
+        if not isinstance(digest, str) or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+            raise BudgetError("reported usage bound needs response and pricing identities")
+    total = Decimal(0)
+    for kind in ("input", "output"):
+        count = _integer(value[kind + "_tokens"], "reported token count", zero=True)
+        rate = value[kind + "_unit_price"]
+        if not isinstance(rate, str):
+            raise BudgetError("reported usage price must be a finite decimal string")
+        try:
+            rate = Decimal(rate)
+        except InvalidOperation as exc:
+            raise BudgetError("reported usage price must be a finite decimal string") from exc
+        if not rate.is_finite() or rate < 0:
+            raise BudgetError("reported usage price must be finite and nonnegative")
+        total += count * rate
+    bound = _integer(value["bound_microusd"], "reported usage bound", zero=True)
+    if bound != int(total.to_integral_value(rounding=ROUND_CEILING)):
+        raise BudgetError("reported usage bound differs from its token and price evidence")
+    return bound
 
 
 def _plan(provider_budgets: Mapping[str, int], calls: Sequence[Mapping], protected: int) -> dict:
@@ -142,17 +173,18 @@ class AttemptBudget:
         if plan != expected:
             raise BudgetError("attempt budget derived caps or commitments changed")
         ledger, _ = _read_regular(self.root / "ledger.json", label="attempt budget ledger", max_bytes=_MAX_BYTES)
-        adjusted = isinstance(ledger, dict) and ledger.get("schema") == ADJUSTED_LEDGER_SCHEMA
+        usage_bounded = isinstance(ledger, dict) and ledger.get("schema") == USAGE_BOUNDED_LEDGER_SCHEMA
+        adjusted = isinstance(ledger, dict) and ledger.get("schema") in {ADJUSTED_LEDGER_SCHEMA, USAGE_BOUNDED_LEDGER_SCHEMA}
         fields = {"schema", "plan_sha256", "attempts"} | ({"allowance_adjustments"} if adjusted else set())
         if (not isinstance(ledger, dict) or set(ledger) != fields
-                or ledger["schema"] not in {LEDGER_SCHEMA, ADJUSTED_LEDGER_SCHEMA}
+                or ledger["schema"] not in {LEDGER_SCHEMA, ADJUSTED_LEDGER_SCHEMA, USAGE_BOUNDED_LEDGER_SCHEMA}
                 or ledger["plan_sha256"] != self.expected_plan_sha256
                 or not isinstance(ledger["attempts"], dict)):
             raise BudgetError("attempt budget ledger binding differs")
         calls = {call["call_id"]: call for call in plan["planned_calls"]}
         if adjusted:
             changes = ledger["allowance_adjustments"]
-            if not isinstance(changes, list) or not changes:
+            if not isinstance(changes, list) or (not changes and not usage_bounded):
                 raise BudgetError("adjusted ledger needs its allocation history")
             effective = {key: call["bound_microusd"] for key, call in calls.items()}
             for change in changes:
@@ -172,13 +204,18 @@ class AttemptBudget:
                     or len(attempts) > MAX_ATTEMPTS or set(attempts) != {str(n) for n in range(1, len(attempts) + 1)}):
                 raise BudgetError("attempt reservations are not a bounded sequential prefix")
             for number, attempt in attempts.items():
-                if (not isinstance(attempt, dict) or set(attempt) != {"state", "actual_cost_microusd"}
-                        or attempt["state"] not in {"reserved", "unknown", "settled"}):
+                bounded = isinstance(attempt, dict) and attempt.get("state") == "bounded_unknown"
+                attempt_fields = {"state", "actual_cost_microusd"} | ({"usage_bound"} if bounded else set())
+                if (not isinstance(attempt, dict) or set(attempt) != attempt_fields
+                        or attempt["state"] not in {"reserved", "unknown", "settled", "bounded_unknown"}
+                        or (bounded and not usage_bounded)):
                     raise BudgetError("attempt settlement fields differ")
                 if attempt["state"] == "settled":
                     _integer(attempt["actual_cost_microusd"], "settled cost", zero=True)
                 elif attempt["actual_cost_microusd"] is not None:
                     raise BudgetError("unresolved attempt cannot report a settled cost")
+                if bounded and _reported_usage_bound(attempt["usage_bound"]) > effective[call_id]:
+                    raise BudgetError("reported usage bound exceeds its funded attempt allowance")
                 if attempt["state"] == "reserved" and int(number) != len(attempts):
                     raise BudgetError("an unresolved attempt was automatically reissued")
         totals = self._totals(plan, ledger)
@@ -190,7 +227,8 @@ class AttemptBudget:
     def _totals(plan: dict, ledger: dict) -> dict:
         pools = {key: {"cap_microusd": cap, "unstarted_first_commitments_microusd": 0,
                        "reserved_exposure_microusd": 0, "settled_cost_microusd": 0,
-                       "unresolved_attempts": 0, "unknown_usage_attempts": 0, "settled_attempts": 0}
+                       "unresolved_attempts": 0, "unknown_usage_attempts": 0, "settled_attempts": 0,
+                       "bounded_usage_attempts": 0}
                  for key, cap in plan["pool_caps_microusd"].items()}
         overruns, unfunded = [], []
         allowances = {change["call_id"]: change["bound_microusd"]
@@ -213,8 +251,10 @@ class AttemptBudget:
                         unfunded.append({"call_id": call["call_id"], "attempt_number": int(number),
                                          "bound_microusd": bound, "actual_cost_microusd": actual})
                 else:
-                    pool["reserved_exposure_microusd"] += bound
-                    pool["unknown_usage_attempts" if attempt["state"] == "unknown" else "unresolved_attempts"] += 1
+                    bounded = attempt["state"] == "bounded_unknown"
+                    pool["reserved_exposure_microusd"] += _reported_usage_bound(attempt["usage_bound"]) if bounded else bound
+                    pool["bounded_usage_attempts"] += int(bounded)
+                    pool["unknown_usage_attempts" if attempt["state"] in {"unknown", "bounded_unknown"} else "unresolved_attempts"] += 1
         for pool in pools.values():
             liability = sum(pool[key] for key in ("unstarted_first_commitments_microusd",
                                                   "reserved_exposure_microusd", "settled_cost_microusd"))
@@ -255,7 +295,8 @@ class AttemptBudget:
             result = self._totals(plan, ledger)
             if any(pool["over_cap_microusd"] for pool in result["pools"].values()):
                 raise BudgetError("allowance adjustment exceeds its existing dedicated pool cap")
-            ledger["schema"] = ADJUSTED_LEDGER_SCHEMA
+            if ledger["schema"] != USAGE_BOUNDED_LEDGER_SCHEMA:
+                ledger["schema"] = ADJUSTED_LEDGER_SCHEMA
             _write_atomic(self.root / "ledger.json", ledger)
             return result
 
@@ -389,14 +430,45 @@ class AttemptBudget:
             attempt = ledger["attempts"].get(call_id, {}).get(number)
             if attempt is None:
                 raise BudgetError("cannot settle an attempt that was never reserved")
+            if attempt["state"] == "bounded_unknown" and actual_cost_microusd is None:
+                return self._totals(plan, ledger)
             state = "unknown" if actual_cost_microusd is None else "settled"
             changed = attempt != {"state": state, "actual_cost_microusd": actual_cost_microusd}
             if changed and attempt["state"] == "settled":
                 raise BudgetError("conflicting settlement cannot rewrite known billed usage")
             if changed:
+                attempt.pop("usage_bound", None)
                 attempt.update(state=state, actual_cost_microusd=actual_cost_microusd)
                 _write_atomic(self.root / "ledger.json", ledger)
             result = self._totals(plan, ledger)
             if result["state"] != "active":
                 raise BudgetError("known above-bound usage was durably retained; all new spending is blocked")
             return result
+
+    def bound_reported_usage(self, call_id: str, attempt_number: int, evidence: dict) -> dict:
+        """Refine an unknown bill using complete token totals and maximum tariffs.
+
+        The caller validates the durable response against its funded request.
+        Missing token usage, network errors and unstarted calls remain fully held.
+        """
+        call_id = _name(call_id, "call ID")
+        number = str(_integer(attempt_number, "physical attempt number"))
+        amount = _reported_usage_bound(evidence)
+        with _budget_lock(self.root):
+            plan, ledger, calls = self._load()
+            attempt = ledger["attempts"].get(call_id, {}).get(number)
+            if attempt is None or attempt["state"] not in {"unknown", "bounded_unknown"}:
+                raise BudgetError("reported usage needs a completed unknown-cost attempt")
+            allowance = next((change["bound_microusd"] for change in reversed(ledger.get("allowance_adjustments", []))
+                              if change["call_id"] == call_id), calls[call_id]["bound_microusd"])
+            if amount > allowance:
+                raise BudgetError("reported usage bound exceeds its funded attempt allowance")
+            if attempt["state"] == "bounded_unknown":
+                if attempt["usage_bound"] != evidence:
+                    raise BudgetError("conflicting reported usage cannot rewrite the retained bound")
+                return self._totals(plan, ledger)
+            attempt.update(state="bounded_unknown", usage_bound=copy.deepcopy(evidence))
+            ledger["schema"] = USAGE_BOUNDED_LEDGER_SCHEMA
+            ledger.setdefault("allowance_adjustments", [])
+            _write_atomic(self.root / "ledger.json", ledger)
+            return self._totals(plan, ledger)

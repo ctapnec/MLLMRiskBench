@@ -130,6 +130,46 @@ def test_target_money_settles_after_checkpoint_and_resume_never_reissues(tmp_pat
     assert current_retained_execution_admission() is None
 
 
+def test_missing_cache_split_uses_reported_token_bound_without_answer_retry(tmp_path):
+    points, attacker, target, calls, admission = _setup(tmp_path)
+    admission.prices.update(cache_read="0.2", cache_write=None)
+    admission.program["sources"] = {"pricing": {"sha256": "b" * 64}}
+    checkpoint = tmp_path / "bounded.responses.checkpoint.jsonl"
+    _runner(attacker, target, admission).run(points, on_response=lambda row: Runner.append_checkpoint(checkpoint, row))
+    pool = admission.budget.snapshot()["pools"]["openai:target"]
+    assert len(calls) == 2
+    assert pool["settled_cost_microusd"] == 0
+    assert pool["unknown_usage_attempts"] == pool["bounded_usage_attempts"] == 2
+    assert pool["reserved_exposure_microusd"] == 88
+    _runner(attacker, target, admission).run(points, response_records=Runner.load_response_checkpoint(checkpoint))
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("provider,write_rate", [("anthropic", None), ("openai", "3")])
+def test_cache_bound_does_not_assume_inclusive_anthropic_or_free_priced_writes(tmp_path, provider, write_rate):
+    points, attacker, target, calls, admission = _setup(tmp_path)
+    admission.prices.update(cache_read="0.2", cache_write=write_rate)
+    admission.program["sources"] = {"pricing": {"sha256": "b" * 64}}
+    if provider == "anthropic":
+        # Exercise the checkpoint hook only: its native input counter is not
+        # interchangeable with OpenAI's cache-inclusive prompt total.
+        admission.program.pop("sources")
+        records = []
+        original = _runner(attacker, target, admission)
+        original.run(points, on_response=records.append)
+        admission.program["provider"] = provider
+        admission.program["sources"] = {"pricing": {"sha256": "b" * 64}}
+        for record in records:
+            from ura.data_models import Attempt
+            admission.response_checkpointed(None, Attempt.model_validate(record["attempt"]),
+                                            Response.model_validate(record["response"]))
+    else:
+        _runner(attacker, target, admission).run(points)
+    pool = admission.budget.snapshot()["pools"]["openai:target"]
+    assert len(calls) == 2 and pool["settled_cost_microusd"] == 0
+    assert pool["bounded_usage_attempts"] == 0 and pool["reserved_exposure_microusd"] == 20000
+
+
 def test_typed_provider_refusal_is_funded_observed_outcome_not_paid_stop(tmp_path):
     points, attacker, target, calls, admission = _setup(tmp_path)
     create = target._client.chat.completions.create

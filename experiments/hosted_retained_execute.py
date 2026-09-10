@@ -289,6 +289,24 @@ class _Admission:
                              + Decimal(tokens["output"]) * Decimal(self.prices["output"]))
                     cost = int(total.to_integral_value(rounding=ROUND_CEILING))
         self.budget.settle(call_id, count, cost)
+        # These providers report total input inclusive of cached tokens. When
+        # only the cache split is missing, retain a maximum-tariff token bound,
+        # not the full generation allowance and not a fictitious exact bill.
+        pricing_source = self.program.get("sources", {}).get("pricing", {})
+        if (cost is None and not missing and self.program["provider"] in {"openai", "kimi", "google"}
+                and self.prices.get("cache_write") is None and pricing_source.get("sha256")
+                and all(type(tokens.get(key)) is int and tokens[key] >= 0 for key in ("input", "output"))):
+            input_price = str(max(Decimal(self.prices["input"]),
+                                  Decimal(self.prices.get("cache_read") or "0")))
+            output_price = str(Decimal(self.prices["output"]))
+            upper = _cost(tokens["input"], tokens["output"], {"input": input_price, "output": output_price})
+            if upper <= self.budget.attempt_bound(call_id):
+                self.budget.bound_reported_usage(call_id, count, {
+                    "input_tokens": tokens["input"], "output_tokens": tokens["output"],
+                    "input_unit_price": input_price, "output_unit_price": output_price,
+                    "response_sha256": _sha(response.model_dump(mode="json")),
+                    "pricing_sha256": pricing_source["sha256"], "bound_microusd": upper,
+                })
         if (cost is None and all(type(tokens.get(key)) is int and tokens[key] >= 0
                                  for key in ("input", "output"))
             and _cost(tokens["input"], tokens["output"], {
