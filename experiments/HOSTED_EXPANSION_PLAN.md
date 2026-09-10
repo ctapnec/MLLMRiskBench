@@ -9,6 +9,16 @@ at the unchanged target runtime, while funding and reporting use their
 separately verified maintained readers. Four Astra inputs were deferred from
 this fifth slice, not removed from the campaign.
 
+The sixth slice is prepared and counted with 586 inputs and 660 additional
+matching local answers for Haiku. Another 85 whole inputs from its initial
+selection remain deferred, including expensive frontier groups that cannot
+be reserved simultaneously within the current provider allocations. Its
+maximum target reservations are USD 7.286105 Anthropic, 1.764613 OpenAI,
+3.398225 Google, 3.470652 Kimi and 4.801825 DeepSeek. These are reservation
+ceilings, not predicted bills. Funding remains conditional on the fifth
+slice's terminal target and judging liabilities. The seventh prepared prefix
+must be rebased before use so that deferred inputs remain in scope.
+
 Completed-budget closure released USD 10.868736 of never-issued Haiku
 reservations from the first four slices. Actual charges and unknown-usage
 holds remain unchanged. This is available judging capacity, not an increase
