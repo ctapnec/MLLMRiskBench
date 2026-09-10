@@ -294,9 +294,12 @@ class _Admission:
             raise RuntimeError("durable target usage may exceed its funded exposure; billing review is required")
         if missing or (self.job["purpose"] != "measured_run" and response.raw.get("output_truncated") is True):
             transport = response.raw.get("model_stability_category") == "transport_failure"
+            funding_unavailable = response.raw.get("call_audit", {}).get("provider_funding_status")
             category = (("transport_retry_pending" if response.raw.get("transport_retry_status") == "pending"
                          else "terminal_transport_failure") if transport
                         else "missing_target_output" if missing else "pilot_output_truncated")
+            if funding_unavailable:
+                category = "provider_funding_unavailable"
             self._circuit(category, call_id)
             raise RuntimeError("paid target circuit opened after retaining its durable response")
 

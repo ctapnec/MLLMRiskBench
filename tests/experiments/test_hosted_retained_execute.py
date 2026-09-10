@@ -287,6 +287,26 @@ def test_peak_funded_route_does_not_release_an_assumed_off_peak_discount(tmp_pat
     assert state["settled_cost_microusd"] == 176
 
 
+def test_credit_exhaustion_preserves_checkpoint_and_unknown_charge_without_retry(tmp_path):
+    failure = RuntimeError("private provider error")
+    failure.status_code = 429
+    failure.body = {"error": {"code": "credit_balance_exhausted", "type": "insufficient_quota"}}
+    points, attacker, target, calls, admission = _setup(tmp_path, outputs=[failure, "must not run"])
+    checkpoint = tmp_path / "responses.jsonl"
+    with pytest.raises(RuntimeError, match="durable response"):
+        _runner(attacker, target, admission).run(
+            points, on_response=lambda row: Runner.append_checkpoint(checkpoint, row),
+        )
+    records = Runner.load_response_checkpoint(checkpoint)
+    assert len(records) == len(calls) == 1
+    response = next(iter(records.values()))["response"]
+    assert response["raw"]["call_audit"]["provider_funding_status"] == "credit_balance_exhausted"
+    assert response["raw"]["transport_retry_status"] == "not_retryable"
+    assert response["tokens"] is None and response["output_turns"] == []
+    assert json.loads((admission.budget.root / "paid-circuit.json").read_text())["category"] == "provider_funding_unavailable"
+    assert admission.budget.snapshot()["pools"]["openai:target"]["unknown_usage_attempts"] == 1
+
+
 def test_paid_empty_response_is_durable_then_opens_global_circuit_before_next_input(tmp_path):
     points, attacker, target, calls, admission = _setup(tmp_path, outputs=["", "must never run"])
     checkpoint = tmp_path / "responses.jsonl"

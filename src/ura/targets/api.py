@@ -356,12 +356,19 @@ class ProviderTransportError(TargetAnswerError):
             "provider_error_type": last.get("provider_error_type"),
             "transport_retryable": last.get("retryable"),
         }
+        if last.get("provider_funding_status"):
+            self.call_audit["provider_funding_status"] = last["provider_funding_status"]
 
 
 def _transport_status_code(exc: BaseException) -> int | None:
     value = getattr(exc, "status_code", None)
     if isinstance(value, int) and not isinstance(value, bool):
         return value
+    # google-genai exposes HTTP status as APIError.code, not status_code.
+    if type(exc).__module__.startswith("google.genai.errors"):
+        value = getattr(exc, "code", None)
+        if type(value) is int and 100 <= value <= 599:
+            return value
     response = getattr(exc, "response", None)
     value = getattr(response, "status_code", None)
     return value if isinstance(value, int) and not isinstance(value, bool) else None
@@ -375,14 +382,19 @@ def _transport_request_id(value: Any) -> str | None:
     return None
 
 
-def _transport_error_metadata(exc: BaseException) -> dict[str, str]:
-    """Keep SDK machine codes, never provider messages or echoed requests."""
+def _transport_error_body(exc: BaseException) -> Mapping[str, Any]:
     body = getattr(exc, "body", None)
+    if body is None and type(exc).__module__.startswith("google.genai.errors"):
+        body = getattr(exc, "response_json", None)
     if not isinstance(body, Mapping):
         return {}
     error = body.get("error", body)
-    if not isinstance(error, Mapping):
-        return {}
+    return error if isinstance(error, Mapping) else {}
+
+
+def _transport_error_metadata(exc: BaseException) -> dict[str, str]:
+    """Keep SDK machine codes, never provider messages or echoed requests."""
+    error = _transport_error_body(exc)
     result = {}
     for key in ("code", "type"):
         value = error.get(key)
@@ -393,7 +405,41 @@ def _transport_error_metadata(exc: BaseException) -> dict[str, str]:
     return result
 
 
-def _retryable_transport_error(exc: BaseException) -> bool:
+def _provider_funding_status(exc: BaseException, provider: str) -> str | None:
+    """Classify explicit billing failures without mistaking rate limits for credit loss."""
+    status = _transport_status_code(exc)
+    error = _transport_error_body(exc)
+    code, kind = error.get("code"), error.get("type")
+    if provider in {"openai", "openai-responses"} and status == 429:
+        reasons = {
+            "credit_balance_exhausted": "credit_balance_exhausted",
+            "organization_spend_limit_exceeded": "spend_limit_reached",
+            "project_spend_limit_exceeded": "spend_limit_reached",
+            "organization_usage_limit_exceeded": "usage_limit_reached",
+            "insufficient_quota": "funding_or_quota_unavailable",
+        }
+        if isinstance(code, str) and code in reasons:
+            return reasons[code]
+        if kind == "insufficient_quota":
+            return "funding_or_quota_unavailable"
+    if provider == "deepseek" and status == 402:
+        return "credit_balance_exhausted"
+    if provider in {"kimi", "moonshot"} and status == 429 and kind == "exceeded_current_quota_error":
+        return "funding_or_account_unavailable"
+    message = error.get("message")
+    message = message.strip().lower() if isinstance(message, str) else ""
+    if (provider in {"anthropic", "anthropic-fable"} and status == 400
+            and kind == "invalid_request_error" and message.startswith("your credit balance is too low")):
+        return "credit_balance_exhausted"
+    if (provider == "google" and status == 429
+            and message.startswith("your prepayment credits are depleted")):
+        return "credit_balance_exhausted"
+    return None
+
+
+def _retryable_transport_error(exc: BaseException, *, provider: str = "") -> bool:
+    if _provider_funding_status(exc, provider) is not None:
+        return False
     status = _transport_status_code(exc)
     if status is not None:
         return status in _RETRYABLE_HTTP_STATUS_CODES or 500 <= status <= 599
@@ -434,7 +480,8 @@ def _call_with_retry(
             result = call(**request)
         except Exception as exc:
             elapsed_ms = (time.perf_counter() - started) * 1000.0
-            retryable = _retryable_transport_error(exc)
+            retryable = _retryable_transport_error(exc, provider=provider)
+            funding_status = _provider_funding_status(exc, provider)
             audit.append({
                 "attempt": attempt_number,
                 "outcome": "error",
@@ -443,6 +490,7 @@ def _call_with_retry(
                 "request_id": _transport_request_id(exc),
                 "retryable": retryable,
                 **_transport_error_metadata(exc),
+                **({"provider_funding_status": funding_status} if funding_status else {}),
                 "latency_ms": elapsed_ms,
             })
             if not retryable or attempt_number > max_retries:
