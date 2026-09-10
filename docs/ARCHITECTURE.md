@@ -496,6 +496,23 @@ nor its UI registration constructs a target or judge or establishes human
 calibration. Source campaign reports retain missing-input and target-cost
 accounting outside the answered matched cohort.
 
+Registered hosted execution validates a source context once within that
+operation and executes the resulting admissions directly. Matched-judge plan
+construction likewise reuses one context for each distinct retained source
+view, rather than reconstructing it again for every target in that operation.
+Cross-process source preparation is separate work and is not yet shared.
+An explicitly configured retained-judge cohort ceiling is not capped by the
+default USD 7 value; the shared provider pool and each physical-attempt
+reservation still constrain execution. UI judging forwards the selected
+judge's credential and exposes the CLI's invalid-verdict retention option.
+
+The console uses one shared backend-wait guard for page navigation, all form
+submissions, programmatic reloads and Stats requests. It prevents duplicate
+activation without disabling fields that must remain in submitted form data.
+Stats releases the guard after rendering success or an HTTP/network error;
+cancelled navigation and back-forward restoration also release it. Switching
+already-rendered client-side panels makes no backend request and stays immediate.
+
 Current comparisons average repeated outputs within each exact input before
 averaging inputs within a source cluster and applying equal cluster weights.
 Contrasts first count each distinct retained answer once on each side of an

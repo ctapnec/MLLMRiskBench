@@ -2665,6 +2665,20 @@ An expired wait still refuses spending. Whole judgment-output directories
 retain their separate single-executor lock, and all monetary caps, immutable
 slots, duplicate-attempt checks and unknown-charge retention remain unchanged.
 
+Retained Haiku cohort plans default to USD 7 but accept an explicitly configured
+positive `--max-cost-microusd` above that default. This does not increase any
+shared provider ceiling or waive per-attempt funding. In the console, the paired
+judging command receives only the configured judge-provider credential; select
+`--retain-invalid-verdicts` to retain unscored parser outcomes and continue the
+funded selection, matching the CLI behavior.
+
+The console's loading guard covers every navigation/form backend wait and the
+Stats modal fetch, not only forms with a `data-busy` label. While it is visible,
+duplicate actions and automatic reloads are suppressed. Request completion,
+HTTP/network failure, cancelled submission or back-forward restoration releases
+the applicable wait. This is UI feedback, not a replacement for the command's
+ordinary validation, timeout or budget policy.
+
 After a reviewed transport interruption, use an execution-plan version 3
 successor with the exact failed checkpoint in `transport_recoveries`; never
 restart its funded attempt counter. Preserve the old output directory and use

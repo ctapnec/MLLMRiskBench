@@ -312,6 +312,11 @@ separately from source aliases and matched comparison links.
 
 The user requested independent provider queues on 10 September. Use up to
 eight active hosted model routes, with at most two routes per provider.
+Installed model reuse uses metadata checks by default, not full weight-file
+SHA reads. A full recheck requires `--verify-model-sha256`, also available as an
+unchecked Build option. Do not launch nested checksum pools during routine
+execution. Existing acquisition receipts may seed the installed verification
+record without downloading or reading all model weights again.
 OpenAI, Anthropic, Google, Kimi and DeepSeek need not wait for each other's
 responses. This does not change local-target scheduling. Each retained
 conversation, input partition, generation setting and paid slot stays fixed;
