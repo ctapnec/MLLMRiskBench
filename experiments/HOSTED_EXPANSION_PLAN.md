@@ -1,6 +1,6 @@
 # Third hosted campaign: provider-scaled expansion
 
-Status update, 10 September 2026 at 23:12 UTC: the requested program is
+Status update, 10 September 2026 at 23:24 UTC: the requested program is
 expanded from 6,541 to 6,736 target evaluations by the additional frontier
 selection below. The added 195 evaluations have counted requests and validated
 replay files but are not yet funded or executed. The operator's latest reported balances and the
@@ -16,12 +16,12 @@ needs no new local Haiku calls because its exact matching local answers were
 already assessed; the funding handoff binds those existing verdicts. New
 hosted outputs still require their own local and Haiku judgments.
 
-Seventeen completed OpenAI responses released USD 3.290385 in excess
+Thirty-seven completed OpenAI responses released USD 3.457155 in excess
 maximum-output reservations using reported token totals and the already-funded
 cache-write tariff. These remain conservative bounds, not known provider bills.
 Actual charges, unknown HTTP-error exposure and all ceilings are unchanged.
-The fractional-price correction is verified; its remaining reconciliation
-waits for the current funding handoff to finish reading predecessor ledgers.
+The fractional-price correction is verified, and its final reconciliation
+completed after the sixth funding handoff finished reading predecessor ledgers.
 
 Historical fifth-slice status: the first four funded slices
 have completed target collection and all eligible local and Haiku judging,
@@ -40,9 +40,14 @@ DeepSeek 70. Maximum target reservations are USD 14.955195 Anthropic,
 4.200633 OpenAI, 1.830200 Google, 3.470652 Kimi and 4.801825 DeepSeek.
 No new token-count requests or generations were used to make this partition. Neither the
 paused partition nor its 85 deferred inputs represents a reduced campaign
-target. Funding remains conditional on the fifth slice's terminal target and
-judging liabilities. Later prepared prefixes must be rebased before use so
-that deferred inputs remain in scope.
+target. This replacement was funded at 23:13 UTC after the fifth slice's target
+and judging work finished, and its independent provider routes are executing.
+Its 689 matching local answers reuse their exact retained Haiku assessments;
+new hosted answers receive new judgments. The next rebased slice has 211
+counted, materialized inputs: Astra 19, Fable 15, Opus 23, Gemini Pro 72,
+Kimi 15 and DeepSeek 67. It is not funded. Its allocation must fit the closed
+sixth-slice liabilities; an unfunded route must not be reported as executed or
+silently removed from the final prefixes.
 
 Completed-budget closure released USD 10.868736 of never-issued Haiku
 reservations from the first four slices. Actual charges and unknown-usage
