@@ -172,11 +172,11 @@ def test_cache_bound_does_not_assume_inclusive_anthropic_or_free_priced_writes(t
     assert pool["bounded_usage_attempts"] == 0 and pool["reserved_exposure_microusd"] == 20000
 
 
-@pytest.mark.parametrize("reserved,written,expected", [("2.5", 5, 96), ("2", 5, 20000),
-                                                       (None, 5, 20000), ("2.5", 8, 20000)])
-def test_openai_reported_writes_use_only_funded_cache_ceiling(tmp_path, monkeypatch, reserved, written, expected):
+@pytest.mark.parametrize("reserved,written,input_rate,expected", [("2.5", 5, "2", 96), ("2", 5, "2", 20000),
+    (None, 5, "2", 20000), ("2.5", 8, "2", 20000), ("0.25", 5, 0.2, 64)])
+def test_openai_reported_writes_use_only_funded_cache_ceiling(tmp_path, monkeypatch, reserved, written, input_rate, expected):
     points, attacker, target, calls, admission = _setup(tmp_path)
-    admission.prices.update(cache_read="0.2", cache_write=None)
+    admission.prices.update(input=input_rate, cache_read="0.2", cache_write=None)
     if reserved is not None:
         admission.prices["reservation_input"] = reserved
     generate = target.generate
@@ -192,7 +192,7 @@ def test_openai_reported_writes_use_only_funded_cache_ceiling(tmp_path, monkeypa
     pool = admission.budget.snapshot()["pools"]["openai:target"]
     assert pool["settled_cost_microusd"] == 0
     assert pool["unknown_usage_attempts"] == 2
-    assert pool["bounded_usage_attempts"] == (2 if expected == 96 else 0)
+    assert pool["bounded_usage_attempts"] == (0 if expected == 20000 else 2)
     assert pool["reserved_exposure_microusd"] == expected
     _runner(attacker, target, admission).run(points, response_records=Runner.load_response_checkpoint(checkpoint))
     assert len(calls) == 2

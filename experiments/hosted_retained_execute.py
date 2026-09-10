@@ -307,7 +307,7 @@ class _Admission:
             and type(tokens.get("input")) is int
             and type(written) is int and 0 < written <= tokens["input"]
             and "reservation_input" in self.prices
-            and Decimal(self.prices["reservation_input"]) >= Decimal(self.prices["input"]) * Decimal("1.25")
+            and Decimal(str(self.prices["reservation_input"])) >= Decimal(str(self.prices["input"])) * Decimal("1.25")
         )
         if (cost is None and not missing and self.program["provider"] in {"openai", "kimi", "google"}
                 and self.prices.get("cache_write") is None and pricing_source.get("sha256")
