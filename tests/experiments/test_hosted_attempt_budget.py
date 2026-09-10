@@ -285,12 +285,18 @@ def test_reopen_rejects_malformed_contingency_history(budget, change):
     path = budget.root / "ledger.json"
     value = json.loads(path.read_text())
     adjustment = value["allowance_adjustments"][0]
-    if change == "previous": adjustment["previous_bound_microusd"] = 11
-    elif change == "decrease": adjustment["bound_microusd"] = 9
-    elif change == "unknown": adjustment["call_id"] = "absent"
-    elif change == "boolean": adjustment["bound_microusd"] = True
-    elif change == "empty": value["allowance_adjustments"] = []
-    else: adjustment["override"] = True
+    if change == "previous":
+        adjustment["previous_bound_microusd"] = 11
+    elif change == "decrease":
+        adjustment["bound_microusd"] = 9
+    elif change == "unknown":
+        adjustment["call_id"] = "absent"
+    elif change == "boolean":
+        adjustment["bound_microusd"] = True
+    elif change == "empty":
+        value["allowance_adjustments"] = []
+    else:
+        adjustment["override"] = True
     path.write_text(json.dumps(value))
     with pytest.raises(mod.BudgetError):
         reopen(budget)
