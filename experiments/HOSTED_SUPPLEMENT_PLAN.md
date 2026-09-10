@@ -13,8 +13,9 @@ different model outputs. Fifteen memberships remain pending, including all
 The final comparison worker is waiting in tmux for every supplemental and
 Google post-hoc route plus Luna's separate 37-answer local/Haiku scoring
 completion. It will include all existing local counterparts on the measured
-eligible inputs, retain every original judging ledger, reconcile source aliases
-against actual outputs and publish the resulting diagrams. A waiting worker
+eligible inputs, retain every original judging ledger and publish the resulting
+diagrams. Its companion audit reconciles source aliases against actual outputs.
+A waiting worker
 is not a completed final report. Any incomplete dependency prevents final
 publication without interrupting unrelated generation.
 
