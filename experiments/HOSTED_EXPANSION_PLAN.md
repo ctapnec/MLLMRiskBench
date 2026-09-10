@@ -1,6 +1,30 @@
 # Third hosted campaign: provider-scaled expansion
 
-Status, 10 September 2026 at 20:34 UTC: the first three funded slices have
+Status update, 10 September 2026 at 21:32 UTC: the first four funded slices
+have completed target collection and all eligible local and Haiku judging,
+covering 1,551 assigned inputs. The fifth slice contains 556 funded inputs;
+its controller correction preserves the original diagnostic/measured roles
+and repeats no completed target call. Current transport receipts are reused
+at the unchanged target runtime, while funding and reporting use their
+separately verified maintained readers. Four Astra inputs were deferred from
+this fifth slice, not removed from the campaign.
+
+Completed-budget closure released USD 10.868736 of never-issued Haiku
+reservations from the first four slices. Actual charges and unknown-usage
+holds remain unchanged. This is available judging capacity, not an increase
+to any provider ceiling or a transfer into target-generation funds.
+
+The operator requested assessment of further expansion without a budget
+increase. Quote an additional shared-input selection only after accounting
+for the unfinished 6,541-evaluation program and both judging stages. Favor
+additional comparable coverage on affordable routes, retain frontier
+coverage, and do not treat available account credit as uncommitted campaign
+funding. Every new eligible output requires its own local and Haiku verdict;
+an existing local answer's unchanged verdict can be reused, but a verdict
+cannot be reused for a newly generated answer. No additional quantity beyond
+the existing program is funded by this assessment note.
+
+Historical status, 10 September 2026 at 20:34 UTC: the first three funded slices have
 finished target collection, local and Haiku judging and per-model analysis,
 covering 964 assigned inputs. Across those slices, Haiku assessed 707 selected
 existing local answers and 548 eligible hosted answers. The fourth slice is
@@ -214,7 +238,7 @@ cumulative ceilings. The 224-input second slice was funded after the first
 slice closed. Its 63 new judgments of exact existing local answers are complete
 and valid. The recovered target queues are executing under their existing
 allocation; no completed local judgment was repeated.
-Unknown charges and unused earlier judge commitments remain reserved, not
+At that historical snapshot, unknown charges and unused earlier judge commitments remained reserved, not
 reported as spent. Future batches use the cache-usage preservation correction
 documented in RA-446. Where complete cache-inclusive token totals exist but
 the exact cache split is missing, RA-449 permits a conservative maximum-tariff
