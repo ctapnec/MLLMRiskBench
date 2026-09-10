@@ -1,5 +1,16 @@
 # Run and return: broad thesis experiment program
 
+Hosted routes may run concurrently in isolated processes. Keep each job's
+exact input partition, checkpoint owner and shared monetary reservation;
+concurrency is not permission to repeat an already-paid response. The optional
+`ura.hosted_scheduling.hosted_local_scoring_slot` scope acquires a shared GPU
+lock lazily at hosted post-generation scoring and holds it through Runner
+teardown. Ordinary local-target execution is unchanged. Hosted adapters honor
+valid provider `Retry-After` delays and use jittered exponential backoff when
+none is available. Funding errors remain distinct from transient throttling.
+The expansion plan records the bounded provider-queue policy and unchanged
+local/Haiku judgment requirements.
+
 Counted request tokens are not necessarily a bound on billed model work.
 OpenAI Pro mode aggregates internal model work at the model's token rates.
 Preserve the request count, provider usage and actual charge separately. If

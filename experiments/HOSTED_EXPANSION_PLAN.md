@@ -308,6 +308,55 @@ separately from source aliases and matched comparison links.
 
 ## Execution order and reporting
 
+### Hosted-only parallel execution
+
+The user requested independent provider queues on 10 September. Use up to
+eight active hosted model routes, with at most two routes per provider.
+OpenAI, Anthropic, Google, Kimi and DeepSeek need not wait for each other's
+responses. This does not change local-target scheduling. Each retained
+conversation, input partition, generation setting and paid slot stays fixed;
+adaptive conversation steps are never dispatched out of dependency order.
+
+Local judging remains post-generation and output-specific. Concurrent hosted
+workers acquire one shared scoring slot for their assigned GPU before loading
+the local judge and release it after Runner teardown. Thus network waits do
+not occupy a GPU slot, and no more than two local judges run at once. Haiku
+judging shares Anthropic's account limits and its protected monetary pool.
+
+Honor valid `Retry-After` delays, including HTTP-date values. Otherwise use
+exponential backoff with jitter; preserve the three-retry transport maximum,
+per-attempt reservation and timeout evidence. Slow or rate-limited workers
+must not block other independently funded providers. Exhausted-credit errors
+remain provider funding stops, not ordinary HTTP 429 retries. When a paid
+circuit opens, stop new dispatch and retain responses already in flight.
+
+Published limits permit concurrency but are not proof of this account's
+current quota. Check provider/model limits and account response headers;
+lower dispatch concurrency when rate limiting persists. In particular,
+[OpenAI](https://developers.openai.com/api/docs/guides/rate-limits) can share
+limits across models; [Anthropic](https://platform.claude.com/docs/en/api/rate-limits)
+uses request, input-token and output-token rates;
+[Google](https://ai.google.dev/gemini-api/docs/rate-limits) applies project quotas;
+[Kimi](https://platform.kimi.ai/docs/introduction) shares account limits across
+models and accounts for the requested output allowance when rate limiting;
+[DeepSeek](https://api-docs.deepseek.com/quick_start/rate_limit/) documents
+account-level concurrency limits.
+
+The 332 saved early responses contained 4,449 seconds of summed generation
+latency. That is not total campaign duration: source validation, local model
+verification, judging and recovery also consume wall time. Do not simply
+divide the earlier full-campaign ETA by the worker count. Establish the new
+throughput from an actual funded parallel batch, without new benchmark-only
+calls or changed inputs.
+
+Carry the reviewed Sol Pro aggregate-work contingency into each future
+funding slice: USD 0.30 per unstarted Sol input, in addition to its counted
+request reservation, within the unchanged OpenAI ceiling. This is not a
+guaranteed bound on provider model work. Preserve unknown exact charges and
+the original paid outputs; do not retry an answer to repair accounting.
+
+### Campaign sequence
+
 1. Verify the completed-family baseline - done, 10 September at 08:54 UTC.
 2. Finalize new retained inputs and count all matching local judging obligations;
    the full-pool availability preview completed at 09:04 UTC.
