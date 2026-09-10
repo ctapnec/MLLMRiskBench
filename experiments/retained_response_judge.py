@@ -575,9 +575,9 @@ def build_plan(
     if (
         isinstance(max_cost_microusd, bool)
         or not isinstance(max_cost_microusd, int)
-        or not 1 <= max_cost_microusd <= 7_000_000
+        or max_cost_microusd <= 0
     ):
-        raise ValueError("one Haiku cohort cost ceiling must be positive and at most USD 7")
+        raise ValueError("Haiku cohort cost ceiling must be a positive integer in micro-USD")
     selected = _select(candidates, limit, seed)
     for row in selected:
         row["same_model_judge"] = row["exact_model"] == judge_model
@@ -677,8 +677,8 @@ def validate_plan(value: object) -> dict[str, Any]:
         or condition.get("output_microusd_per_token") != 5
         or _HEX64.fullmatch(str(condition.get("pricing_config_sha256", ""))) is None
         or condition.get("pricing_currency") != "USD"
-        or not isinstance(condition.get("max_cost_microusd"), int)
-        or not 1 <= condition["max_cost_microusd"] <= 7_000_000
+        or type(condition.get("max_cost_microusd")) is not int
+        or condition["max_cost_microusd"] <= 0
         or not str(condition.get("model", "")).startswith(
             "anthropic:claude-haiku-"
         )

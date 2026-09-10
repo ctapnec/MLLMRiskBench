@@ -767,7 +767,12 @@ def test_registered_execution_publishes_one_hosted_tmux_job(tmp_path, monkeypatc
     project.mkdir()
     outputs = [Path(job["argv"][job["argv"].index("--out") + 1]) for job in program["jobs"]]
     monkeypatch.setattr(subject, "_validated_checkout", lambda root, commit: project)
-    monkeypatch.setattr(subject, "execute", lambda **kwargs: outputs)
+    validations = []
+    validate = subject._validated_local_cells
+    monkeypatch.setattr(subject, "_validated_local_cells",
+                        lambda value: validations.append(value) or validate(value))
+    calls = []
+    monkeypatch.setattr(run_matrix, "main", lambda argv: calls.append(argv) or 0)
     monkeypatch.setattr(subject, "_retained_execution_counts", lambda value, money: (2, 2))
 
     observed = subject.execute_registered(
@@ -783,6 +788,8 @@ def test_registered_execution_publishes_one_hosted_tmux_job(tmp_path, monkeypatc
         tmux_session="hosted-gpt55",
     )
     assert observed == outputs
+    assert len(validations) == 1
+    assert calls == [job["argv"] for job in program["jobs"]]
     marker = json.loads((control / "ENGINEERING_ONLY.json").read_text())
     assert marker["hosted_calls_allowed"] is True
     assert marker["target_call_cap"] == 2
@@ -905,7 +912,8 @@ def _matched_funding(tmp_path, monkeypatch):
               {"policy_evaluable_samples": 3, "common_ineligible_evaluable_rows_excluded": 0})
     # Only the absent final campaign seal/read-only artifact boundary is
     # synthetic. Actual Runner Attempts, origin checks and paired join execute.
-    monkeypatch.setattr(subject, "_validated_jobs", lambda program, budget: admissions[program["target"]])
+    monkeypatch.setattr(subject, "_validated_local_cells", lambda program: ([original], {}))
+    monkeypatch.setattr(subject, "_validated_jobs", lambda program, budget, **kwargs: admissions[program["target"]])
     monkeypatch.setattr(retained, "_read_view", lambda path: hosted if path == hosted_view else local_view)
     (local_rows, local_audit), (hosted_rows, hosted_audit), _ = retained.load_pair_candidate_views(prepared["runner_view"], hosted_view)
     condition = prepared["plan"]["judge_condition"]
@@ -947,6 +955,19 @@ def test_actual_retained_pair_outputs_bind_four_unique_slots_and_resume_once(tmp
     pool = kwargs["budget"].snapshot()["pools"]["anthropic:judge"]
     assert pool["settled_attempts"] == 4
     assert pool["unstarted_first_commitments_microusd"] == 8 * 14848
+
+
+def test_matched_judging_validates_each_distinct_local_history_once(tmp_path, monkeypatch):
+    _prepared, _plan, _admissions, kwargs = _matched_funding(tmp_path, monkeypatch)
+    calls = []
+    monkeypatch.setattr(subject, "_validated_local_cells",
+                        lambda program: calls.append(program.get("runner_view")) or ([], {}))
+    subject.build_matched_judge_requests(**kwargs)
+    assert calls == [None]
+    calls.clear()
+    kwargs["programs"][-1]["runner_view"] = "different-retained-input-view"
+    subject.build_matched_judge_requests(**kwargs)
+    assert calls == [None, "different-retained-input-view"]
 
 
 @pytest.mark.parametrize("mutation", ["changed_origin", "missing_program", "duplicate_program", "underfunded_request"])

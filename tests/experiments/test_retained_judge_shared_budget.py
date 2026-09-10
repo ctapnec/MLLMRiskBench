@@ -142,6 +142,20 @@ def test_initial_subplan_overcommitment_refused_without_client(tmp_path, monkeyp
         subject.execute(**kwargs, judge_factory=lambda *_: pytest.fail("client constructed"))
 
 
+def test_explicit_larger_judge_cohort_uses_existing_shared_budget(tmp_path, monkeypatch):
+    prepared, kwargs, budget, config, _ = prepared_shared(
+        tmp_path, monkeypatch, max_cost=12_480_000)
+    assert prepared["plan"]["judge_condition"]["max_cost_microusd"] == 12_480_000
+    before = budget.snapshot()
+    fake = HookHaiku(config)
+    completion = subject.execute(**kwargs, judge_factory=lambda *_: fake)
+    assert completion.exists()
+    assert fake.http_calls == 2
+    after = budget.snapshot()
+    assert {k: v["cap_microusd"] for k, v in before["pools"].items()} == {
+        k: v["cap_microusd"] for k, v in after["pools"].items()}
+
+
 def test_actual_target_preview_must_match_before_any_generation(tmp_path, monkeypatch):
     _, kwargs, _, config, _ = prepared_shared(tmp_path, monkeypatch)
     fake = HookHaiku(config)

@@ -454,6 +454,11 @@ def execute(*, program_path: Path, program_sha256: str, budget_root: Path,
     program, _descriptor = load_bound_json(program_path, program_sha256)
     budget = AttemptBudget(budget_root, budget_plan_sha256)
     jobs = _validated_jobs(program, budget)
+    return _execute_admitted(jobs)
+
+
+def _execute_admitted(jobs: Sequence[_Admission]) -> list[Path]:
+    """Execute the already validated jobs without loading the same history again."""
     from experiments import run_matrix
 
     outputs = []
@@ -610,7 +615,7 @@ def execute_registered(
     _validated_checkout(project_root, expected_commit)
     program, _descriptor = load_bound_json(program_path, program_sha256)
     budget = AttemptBudget(budget_root, budget_plan_sha256)
-    _validated_jobs(program, budget)  # Final local seal and all no-call bindings first.
+    jobs = _validated_jobs(program, budget)  # Validate once, then use these exact admissions.
     call_cap = len(program["requests"])
     control = _fresh_control_root(work_root, control_root)
     start_child_controller(
@@ -621,10 +626,7 @@ def execute_registered(
         hosted_calls_allowed=True, target_call_cap=call_cap,
     )
     try:
-        outputs = execute(
-            program_path=program_path, program_sha256=program_sha256,
-            budget_root=budget_root, budget_plan_sha256=budget_plan_sha256,
-        )
+        outputs = _execute_admitted(jobs)
         attempted, successful = _retained_execution_counts(program, budget)
         if attempted != call_cap or successful != call_cap:
             raise RuntimeError("completed hosted program lacks its complete durable target population")
@@ -662,8 +664,17 @@ def build_matched_judge_requests(*, programs: Sequence[dict], budget: AttemptBud
     from experiments.retained_response_judge_pair_execute import _reconcile_pair_selection
 
     funded = {}
+    local_contexts = {}
     for program in programs:
-        for admission in _validated_jobs(program, budget):
+        source_key = _sha({
+            "results_root": program.get("results_root"),
+            "runner_view": program.get("runner_view"),
+            "rr_analysis_root": program.get("rr_analysis_root"),
+            "historical_result": program.get("sources", {}).get("historical_result"),
+        })
+        if source_key not in local_contexts:
+            local_contexts[source_key] = _validated_local_cells(program)
+        for admission in _validated_jobs(program, budget, local_context=local_contexts[source_key]):
             for key, entry in admission.entries.items():
                 identity = (program["target"], key)
                 if identity in funded:

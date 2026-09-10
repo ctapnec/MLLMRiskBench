@@ -324,7 +324,7 @@ def test_same_model_haiku_rows_are_annotated_per_row() -> None:
         ),
         (
             lambda plan: plan["judge_condition"].__setitem__(
-                "max_cost_microusd", 7_000_001
+                "max_cost_microusd", 0
             ),
             "call or cost contract",
         ),

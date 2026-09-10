@@ -1729,6 +1729,17 @@ class LifecycleMixin:
         """Minimal environment for every non-matrix allowlisted command."""
 
         allowed = set(self._MATRIX_BASE_ENV)
+        if command == "retained_response_judge_pair_execute":
+            plan = self._strict_config_document(str(values.get("--plan", "")))
+            condition = plan.get("judge_condition")
+            if not isinstance(condition, Mapping) or not isinstance(condition.get("model"), str):
+                raise ValueError("retained judging plan must identify its judge model")
+            allowed.update(self._selected_matrix_environment_names({
+                "--judges": "llm", "--judge-model": condition["model"],
+                "--api-config": str(values.get("--api-config", "")),
+                "--api-config-sha256": str(condition.get("api_config_sha256", "")),
+            }))
+            allowed.update(self._MATRIX_OPTIONAL_ENV)
         if command == "harmbench_capture":
             # The capture drives the same isolated runtime and resolves the
             # same environment bound when no --timeout-seconds is given.
