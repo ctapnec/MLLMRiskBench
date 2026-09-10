@@ -2,6 +2,16 @@
 
 ## Current execution and required Google extension
 
+Update, 10 September at 02:49 UTC: the expanded completed-route comparison is
+published at `/stats/job/hosted-completed-comparison-publication-0248-20260910`.
+It contains 436 hosted answers and all 680 existing local counterparts across
+177 inputs, joining 1,116 retained Haiku outcomes from 14 completed executions.
+Nine selected verdicts are invalid and remain unscored. Its 1,603 comparison
+links are not independent observations. The report adds no target or judge
+calls and does not reopen completed local generation. HTTP 200 and 1,005
+server-rendered diagrams are verified; no browser connection is available for
+visual QA. Google and the remaining OpenAI routes are still collecting.
+
 Update, 10 September at 02:25 UTC: Luna's 37 saved prefix answers now have
 37 local judgments and 37 valid Haiku verdicts, with no new target calls.
 Haiku charged USD 0.045468 for that batch. Terra's remaining inputs are
