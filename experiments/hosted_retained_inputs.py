@@ -28,6 +28,7 @@ from experiments.hosted_campaign_budget import (
     load_bound_json,
 )
 from experiments.retained_artifact_reader import load_cells
+from ura.artifact_checks import artifact_verification_cli
 
 
 SCHEMA = "ura-hosted-retained-input-plan/1"
@@ -665,8 +666,11 @@ def materialize_replay(
     return value
 
 
+@artifact_verification_cli
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--verify-artifact-sha256", action="store_true",
+                        help="Opt in to retained-file and input-payload checksum revalidation")
     parser.add_argument("--runner-view", type=Path, required=True)
     for name in ("budget", "api-config", "local-inventory"):
         parser.add_argument("--" + name, type=Path, required=True)

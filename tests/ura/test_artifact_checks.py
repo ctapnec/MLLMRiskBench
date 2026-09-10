@@ -69,6 +69,17 @@ def test_cli_flag_scopes_optional_checks_and_restores_default():
     assert artifact_sha256_enabled() is False
 
 
+@pytest.mark.parametrize("module", ["hosted_retained_inputs", "hosted_campaign_prepare"])
+def test_retained_preparation_cli_accepts_explicit_checks(module, capsys):
+    import importlib
+    command = importlib.import_module("experiments." + module)
+    with pytest.raises(SystemExit) as stopped:
+        command.main(["--verify-artifact-sha256", "--help"])
+    assert stopped.value.code == 0
+    assert "--verify-artifact-sha256" in capsys.readouterr().out
+    assert artifact_sha256_enabled() is False
+
+
 @pytest.mark.parametrize("legacy_assignment", [False, True])
 def test_historical_readers_skip_only_hash_comparisons(tmp_path, monkeypatch, legacy_assignment):
     from experiments import figure_results, transfer_matrix

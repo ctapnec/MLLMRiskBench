@@ -83,7 +83,8 @@ def test_changed_source_or_batch_refuses_before_any_call(tmp_path, change):
         plan["selection"]["prefix_stop"] += 1
     else:
         bindings["budget"]["routes"][0]["paid_call_cap"] = 1
-    with pytest.raises(ValueError):
+    from ura.artifact_checks import artifact_verification
+    with artifact_verification(verify_sha256=change == "input"), pytest.raises(ValueError):
         subject.resolve_inputs(plan, candidates=candidates,
             request_builder=lambda row: {"messages": row["rendered_input"]}, **bindings)
 

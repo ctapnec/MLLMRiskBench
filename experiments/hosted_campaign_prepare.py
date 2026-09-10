@@ -17,6 +17,7 @@ import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
+from ura.artifact_checks import artifact_verification_cli
 
 from experiments import hosted_campaign_budget as projection
 from experiments import hosted_retained_execute as executor, hosted_retained_inputs as inputs
@@ -681,8 +682,11 @@ def prepare_campaign(
     return receipt
 
 
+@artifact_verification_cli
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--verify-artifact-sha256", action="store_true",
+                        help="Opt in to retained-file and input-payload checksum revalidation")
     parser.add_argument("--request", type=Path, required=True)
     parser.add_argument("--request-sha256", required=True)
     parser.add_argument("--out-root", type=Path, required=True)
