@@ -251,7 +251,8 @@ def test_read_only_cache_tariff_does_not_require_unpriced_write_counter(tmp_path
         assert "cache_write_input" not in response.tokens
         return response
     monkeypatch.setattr(target, "generate", with_cache_usage)
-    _runner(attacker, target, admission).run(points)
+    checkpoint = tmp_path / "responses.jsonl"
+    _runner(attacker, target, admission).run(points, on_response=lambda row: Runner.append_checkpoint(checkpoint, row))
     state = admission.budget.snapshot()["pools"]["openai:target"]
     assert len(calls) == 2
     if expected_cost is None:
@@ -259,6 +260,8 @@ def test_read_only_cache_tariff_does_not_require_unpriced_write_counter(tmp_path
     else:
         assert state["unknown_usage_attempts"] == 0
         assert state["settled_cost_microusd"] == expected_cost
+    _runner(attacker, target, admission).run(points, response_records=Runner.load_response_checkpoint(checkpoint))
+    assert len(calls) == 2
 
 
 @pytest.mark.parametrize("read_rate,write_rate,cached,written,expected_cost", [
