@@ -164,7 +164,8 @@ def test_cache_bound_does_not_assume_inclusive_anthropic_or_free_priced_writes(t
             admission.response_checkpointed(None, Attempt.model_validate(record["attempt"]),
                                             Response.model_validate(record["response"]))
     else:
-        _runner(attacker, target, admission).run(points)
+        checkpoint = tmp_path / "unpriced.responses.checkpoint.jsonl"
+        _runner(attacker, target, admission).run(points, on_response=lambda row: Runner.append_checkpoint(checkpoint, row))
     pool = admission.budget.snapshot()["pools"]["openai:target"]
     assert len(calls) == 2 and pool["settled_cost_microusd"] == 0
     assert pool["bounded_usage_attempts"] == 0 and pool["reserved_exposure_microusd"] == 20000
