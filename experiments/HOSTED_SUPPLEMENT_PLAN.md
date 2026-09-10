@@ -2,6 +2,32 @@
 
 ## Current execution and required Google extension
 
+Update, 10 September at 02:25 UTC: Luna's 37 saved prefix answers now have
+37 local judgments and 37 valid Haiku verdicts, with no new target calls.
+Haiku charged USD 0.045468 for that batch. Terra's remaining inputs are
+complete and the OpenAI queue has advanced to Astra.
+
+Google Flash retained five paid inputs before an adapter error. One usable
+AdvBench answer awaits separate local and Haiku scoring; the other response
+lost its native feedback in the old adapter. Its cause cannot be reconstructed
+as a policy rejection from the HTTP success alone. Preserve that unknown
+outcome and its charge hold. Do not repeat either paid input automatically.
+
+The installed Gemini SDK represents some absent candidate lists and filtered
+content parts as null. Explicit prompt blocks and candidate filters now become
+provider outcomes, with absent usage retained as unknown. Unexplained missing
+candidates remain investigated errors, with the actual observed transport
+attempt count. The fix passed 24 focused rig tests, lint and three reversed-fix
+checks at `4ee469a`. Google continues on that checkout, selecting only the
+157 unpaid Flash inputs and all 162 Pro inputs. New readiness inputs are drawn
+from these same funded whole clusters. No runtimes were installed.
+
+The final comparison dependencies now include both the Luna prefix and the
+separately scored saved Google answer. Completed local answers and all earlier
+judging batches remain unchanged. Exact HTTP 400 `cyber_policy` outcomes remain
+legitimate observations: retain once and continue, without answer retries or
+a global campaign stop.
+
 Update, 10 September at 01:20 UTC: the output-specific source-alias audit
 links 14 of the 29 extra memberships to their actual saved generated answers
 and exactly identical Haiku requests. It verifies the executed request binding,

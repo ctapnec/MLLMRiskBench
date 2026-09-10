@@ -9,6 +9,15 @@ configuration. Counting cannot generate answers. Gemini configuration may set
 `thinking_level` explicitly; retained billed output includes reported thinking
 tokens as well as visible output, with both counts separately available.
 
+Gemini SDK responses can represent an absent candidate list or filtered
+candidate parts as null. An explicit prompt block or recognized candidate
+filter is a provider-policy outcome, not missing model output. Retain unknown
+usage as unknown, without inventing zero charges or a served-model identity.
+Missing candidates without explicit policy evidence remain response errors;
+retain available native feedback and the observed physical attempt count for
+investigation. Never infer the retry maximum was actually spent, and never
+infer a policy decision from HTTP status alone.
+
 For a separately selected provider cohort, `hosted_campaign_budget` accepts an
 explicit route-configuration file and SHA-256. This creates a new projection
 without changing the historical eleven-route default. The selected routes,

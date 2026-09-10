@@ -28,6 +28,10 @@ The 9 September hosted continuation also retains Luna's 37 previously saved
 answers for separate local-cascade and Haiku scoring. They are hosted outputs,
 not missing local-model generations. The original local campaign is unchanged;
 no local target work is reopened to repair that hosted scoring handoff.
+Those 37 hosted answers completed local and Haiku scoring on 10 September;
+all 37 Haiku verdicts were valid. Google's separately retained usable prefix
+answer has the same post-hoc obligation. Neither scoring recovery authorizes
+new local-model generations or the reuse of a verdict for a different answer.
 The 10 September comparison correction includes every retained local answer
 matching each completed hosted input, not one sampled local model per input.
 The first expanded snapshot uses 622 existing local answers on its 160 inputs;
