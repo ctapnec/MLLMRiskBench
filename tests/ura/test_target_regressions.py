@@ -1326,6 +1326,9 @@ def test_frontier_targets_disable_hidden_retries_and_audit_failure(
         "status_code": None,
         "error_type": "TimeoutError",
         "provider_request_id": None,
+        "provider_error_code": None,
+        "provider_error_type": None,
+        "transport_retryable": True,
     }
     assert caught.value.transport_attempts == [{
         "attempt": number,
