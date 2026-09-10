@@ -1,5 +1,21 @@
 # Run and return: broad thesis experiment program
 
+Counted request tokens are not necessarily a bound on billed model work.
+OpenAI Pro mode aggregates internal model work at the model's token rates.
+Preserve the request count, provider usage and actual charge separately. If
+reported usage exceeds its allowance, retain the response and investigate;
+do not repeat the successful generation or alter its charge.
+`AttemptBudget.increase_allowances` explicitly assigns unused money within
+the same existing provider/pool cap, against an exact reviewed ledger digest.
+It appends allocation history without modifying the original plan, requests,
+settlements or protected judging pool. The adjusted ledger requires a reader
+that understands those allocations. Future first attempts and unknown charges
+hold their enlarged allowance; retries need the same enlarged funding. An
+unfunded overrun or a paid-output circuit still stops new spending. A
+contingency is an operational reservation, not a guaranteed provider token cap.
+See the official OpenAI reasoning-mode documentation:
+https://developers.openai.com/api/docs/guides/reasoning#reasoning-mode
+
 Hosted supplemental configuration: Gemini supports the same JSON-compatible
 request preview for token counting, physical-attempt reservation and generation.
 Its counter sends the full GenerateContentRequest through the existing sealed

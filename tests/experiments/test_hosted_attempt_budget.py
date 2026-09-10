@@ -202,6 +202,100 @@ def test_known_above_bound_usage_is_durable_and_blocks_every_provider(budget):
         resumed.settle("A", 1, 100)
 
 
+def ledger_sha(budget):
+    import hashlib
+    return hashlib.sha256((budget.root / "ledger.json").read_bytes()).hexdigest()
+
+
+def test_explicit_contingency_preserves_plan_charge_and_original_overrun(budget):
+    original_plan = (budget.root / "plan.json").read_bytes()
+    original_slot = budget.call("A")
+    budget.reserve("A", 1, provider="anthropic")
+    with pytest.raises(mod.BudgetError, match="durably retained"):
+        budget.settle("A", 1, 23)
+    paid = json.loads((budget.root / "ledger.json").read_text())["attempts"]
+    result = budget.increase_allowances({"A": 25}, reason="Reviewed provider aggregate billing",
+                                       expected_ledger_sha256=ledger_sha(budget))
+    assert result["state"] == "active"
+    assert result["bound_exceeded_attempts"][0]["actual_cost_microusd"] == 23
+    assert result["unfunded_bound_exceeded_attempts"] == []
+    assert result["pools"]["anthropic:target"]["liability_microusd"] == 43
+    assert json.loads((budget.root / "ledger.json").read_text())["attempts"] == paid
+    assert (budget.root / "plan.json").read_bytes() == original_plan
+    assert reopen(budget).call("A") == original_slot
+    assert reopen(budget).attempt_bound("A") == 25
+    with pytest.raises(mod.BudgetError, match="conflicting settlement"):
+        budget.settle("A", 1, 20)
+    reopen(budget).reserve("O", 1, provider="openai")
+
+
+def test_future_contingency_is_committed_and_held_for_each_unknown_attempt(budget):
+    budget.increase_allowances({"O": 25}, reason="Prospective billing contingency",
+                              expected_ledger_sha256=ledger_sha(budget))
+    assert budget.snapshot()["pools"]["openai:target"]["unstarted_first_commitments_microusd"] == 25
+    assert budget.liability(["O"]) == 25
+    for number in range(1, 4):
+        assert budget.reserve("O", number, provider="openai")["bound_microusd"] == 25
+        budget.settle("O", number, None)
+    assert budget.liability(["O"]) == 75
+    with pytest.raises(mod.BudgetError, match="planned first attempts"):
+        budget.reserve("O", 4, provider="openai")
+
+
+@pytest.mark.parametrize("bounds,reason", [({"A": 28}, "over pool"), ({"A": 20}, "not increasing"),
+    ({"A": 19}, "decrease"), ({"absent": 1}, "outside plan"), ({"A": True}, "invalid"),
+    ({"A": 21}, ""), ({}, "empty")])
+def test_invalid_contingency_does_not_change_any_durable_file(budget, bounds, reason):
+    before = (budget.root / "ledger.json").read_bytes()
+    with pytest.raises(mod.BudgetError):
+        budget.increase_allowances(bounds, reason=reason, expected_ledger_sha256=ledger_sha(budget))
+    assert (budget.root / "ledger.json").read_bytes() == before
+
+
+def test_stale_review_and_pool_overage_cannot_be_waived(budget):
+    digest = ledger_sha(budget)
+    budget.reserve("A", 1, provider="anthropic")
+    with pytest.raises(mod.BudgetError, match="stale"):
+        budget.increase_allowances({"A": 21}, reason="stale review", expected_ledger_sha256=digest)
+    with pytest.raises(mod.BudgetError, match="durably retained"):
+        budget.settle("A", 1, 100)
+    before = (budget.root / "ledger.json").read_bytes()
+    with pytest.raises(mod.BudgetError, match="dedicated pool cap"):
+        budget.increase_allowances({"A": 100}, reason="cannot fund this", expected_ledger_sha256=ledger_sha(budget))
+    assert (budget.root / "ledger.json").read_bytes() == before
+
+
+def test_new_overrun_and_paid_circuit_still_stop_with_contingency(budget):
+    budget.increase_allowances({"O": 25}, reason="reviewed estimate", expected_ledger_sha256=ledger_sha(budget))
+    budget.reserve("O", 1, provider="openai")
+    with pytest.raises(mod.BudgetError, match="durably retained"):
+        budget.settle("O", 1, 26)
+    with pytest.raises(mod.BudgetError, match="blocks all new spending"):
+        budget.reserve("A", 1, provider="anthropic")
+    budget.increase_allowances({"O": 30}, reason="second reviewed allocation", expected_ledger_sha256=ledger_sha(budget))
+    assert len(reopen(budget).snapshot()["allowance_adjustments"]) == 2
+    (budget.root / "paid-circuit.json").write_text("{}")
+    with pytest.raises(mod.BudgetError, match="circuit is open"):
+        budget.reserve("A", 1, provider="anthropic")
+
+
+@pytest.mark.parametrize("change", ["previous", "decrease", "unknown", "boolean", "empty", "extra"])
+def test_reopen_rejects_malformed_contingency_history(budget, change):
+    budget.increase_allowances({"O": 25}, reason="reviewed estimate", expected_ledger_sha256=ledger_sha(budget))
+    path = budget.root / "ledger.json"
+    value = json.loads(path.read_text())
+    adjustment = value["allowance_adjustments"][0]
+    if change == "previous": adjustment["previous_bound_microusd"] = 11
+    elif change == "decrease": adjustment["bound_microusd"] = 9
+    elif change == "unknown": adjustment["call_id"] = "absent"
+    elif change == "boolean": adjustment["bound_microusd"] = True
+    elif change == "empty": value["allowance_adjustments"] = []
+    else: adjustment["override"] = True
+    path.write_text(json.dumps(value))
+    with pytest.raises(mod.BudgetError):
+        reopen(budget)
+
+
 def test_three_http_retries_each_hold_their_own_full_exposure(budget):
     for number in range(1, 5):
         budget.reserve("O", number, provider="openai")

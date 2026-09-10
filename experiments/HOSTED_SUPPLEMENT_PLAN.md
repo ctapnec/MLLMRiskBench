@@ -2,6 +2,20 @@
 
 ## Current execution and required Google extension
 
+Update, 10 September at 03:00 UTC: target collection stopped on an accounting
+shortfall, not a new output failure. Sol returned a valid, non-truncated answer
+with 8,161 output tokens under its 8,192 allowance. Its reported billed input
+was 26,733 tokens versus the preflight request count of 4,682. The request
+hash matches; OpenAI documents aggregate model-work billing in Pro mode. The
+recorded charge is USD 0.236464 against a USD 0.187250 reservation. All provider
+pools remain below their unchanged caps. Preserve that answer and charge;
+allocate explicit contingency from unused OpenAI funds before continuation.
+Do not count the accounting interruption as a model-stability failure.
+At this snapshot 635/676 supplemental and 83/324 Google inputs have started;
+282 remain unstarted. Local Haiku has 750 outcomes, eight invalid; supplemental
+hosted Haiku has 447 outcomes, two invalid. The old Google prefix still needs
+its own local and Haiku judgments. Recovery and final publication are pending.
+
 Update, 10 September at 02:49 UTC: the expanded completed-route comparison is
 published at `/stats/job/hosted-completed-comparison-publication-0248-20260910`.
 It contains 436 hosted answers and all 680 existing local counterparts across

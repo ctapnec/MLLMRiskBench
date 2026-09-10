@@ -19,6 +19,7 @@ from experiments.retained_response_judge_execute import (
 
 PLAN_SCHEMA = "ura-hosted-attempt-budget-plan/1"
 LEDGER_SCHEMA = "ura-hosted-attempt-budget-ledger/1"
+ADJUSTED_LEDGER_SCHEMA = "ura-hosted-attempt-budget-ledger/2"
 MAX_HAIKU_MICROUSD = 33_000_000
 MAX_ATTEMPTS = 4
 _MAX_BYTES = 64 * 1024 * 1024
@@ -141,11 +142,31 @@ class AttemptBudget:
         if plan != expected:
             raise BudgetError("attempt budget derived caps or commitments changed")
         ledger, _ = _read_regular(self.root / "ledger.json", label="attempt budget ledger", max_bytes=_MAX_BYTES)
-        if (not isinstance(ledger, dict) or set(ledger) != {"schema", "plan_sha256", "attempts"}
-                or ledger["schema"] != LEDGER_SCHEMA or ledger["plan_sha256"] != self.expected_plan_sha256
+        adjusted = isinstance(ledger, dict) and ledger.get("schema") == ADJUSTED_LEDGER_SCHEMA
+        fields = {"schema", "plan_sha256", "attempts"} | ({"allowance_adjustments"} if adjusted else set())
+        if (not isinstance(ledger, dict) or set(ledger) != fields
+                or ledger["schema"] not in {LEDGER_SCHEMA, ADJUSTED_LEDGER_SCHEMA}
+                or ledger["plan_sha256"] != self.expected_plan_sha256
                 or not isinstance(ledger["attempts"], dict)):
             raise BudgetError("attempt budget ledger binding differs")
         calls = {call["call_id"]: call for call in plan["planned_calls"]}
+        if adjusted:
+            changes = ledger["allowance_adjustments"]
+            if not isinstance(changes, list) or not changes:
+                raise BudgetError("adjusted ledger needs its allocation history")
+            effective = {key: call["bound_microusd"] for key, call in calls.items()}
+            for change in changes:
+                if (not isinstance(change, dict)
+                        or set(change) != {"call_id", "previous_bound_microusd", "bound_microusd", "reason"}
+                        or not isinstance(change["call_id"], str) or change["call_id"] not in calls):
+                    raise BudgetError("allowance adjustment fields or funded call differ")
+                key = change["call_id"]
+                previous = _integer(change["previous_bound_microusd"], "previous allowance")
+                bound = _integer(change["bound_microusd"], "adjusted allowance")
+                _name(change["reason"], "allowance adjustment reason")
+                if previous != effective[key] or bound <= previous:
+                    raise BudgetError("allowance history must preserve a strictly increasing bound")
+                effective[key] = bound
         for call_id, attempts in ledger["attempts"].items():
             if (call_id not in calls or not isinstance(attempts, dict) or not attempts
                     or len(attempts) > MAX_ATTEMPTS or set(attempts) != {str(n) for n in range(1, len(attempts) + 1)}):
@@ -171,12 +192,15 @@ class AttemptBudget:
                        "reserved_exposure_microusd": 0, "settled_cost_microusd": 0,
                        "unresolved_attempts": 0, "unknown_usage_attempts": 0, "settled_attempts": 0}
                  for key, cap in plan["pool_caps_microusd"].items()}
-        overruns = []
+        overruns, unfunded = [], []
+        allowances = {change["call_id"]: change["bound_microusd"]
+                      for change in ledger.get("allowance_adjustments", [])}
         for call in plan["planned_calls"]:
+            bound = allowances.get(call["call_id"], call["bound_microusd"])
             pool = pools[f"{call['provider']}:{call['pool']}"]
             attempts = ledger["attempts"].get(call["call_id"], {})
             if not attempts:
-                pool["unstarted_first_commitments_microusd"] += call["bound_microusd"]
+                pool["unstarted_first_commitments_microusd"] += bound
             for number, attempt in attempts.items():
                 if attempt["state"] == "settled":
                     actual = attempt["actual_cost_microusd"]
@@ -185,8 +209,11 @@ class AttemptBudget:
                     if actual > call["bound_microusd"]:
                         overruns.append({"call_id": call["call_id"], "attempt_number": int(number),
                                          "bound_microusd": call["bound_microusd"], "actual_cost_microusd": actual})
+                    if actual > bound:
+                        unfunded.append({"call_id": call["call_id"], "attempt_number": int(number),
+                                         "bound_microusd": bound, "actual_cost_microusd": actual})
                 else:
-                    pool["reserved_exposure_microusd"] += call["bound_microusd"]
+                    pool["reserved_exposure_microusd"] += bound
                     pool["unknown_usage_attempts" if attempt["state"] == "unknown" else "unresolved_attempts"] += 1
         for pool in pools.values():
             liability = sum(pool[key] for key in ("unstarted_first_commitments_microusd",
@@ -194,9 +221,54 @@ class AttemptBudget:
             pool.update(liability_microusd=liability,
                         available_retry_margin_microusd=max(0, pool["cap_microusd"] - liability),
                         over_cap_microusd=max(0, liability - pool["cap_microusd"]))
-        return {"state": "blocked_known_bound_exceeded" if overruns else "active",
+        over_cap = any(pool["over_cap_microusd"] for pool in pools.values())
+        return {"state": "blocked_known_bound_exceeded" if unfunded or over_cap else "active",
                 "pools": pools, "provider_ceilings_microusd": plan["provider_ceilings_microusd"],
-                "bound_exceeded_attempts": overruns, "planned_calls": len(plan["planned_calls"])}
+                "bound_exceeded_attempts": overruns, "planned_calls": len(plan["planned_calls"]),
+                "unfunded_bound_exceeded_attempts": unfunded,
+                "allowance_adjustments": copy.deepcopy(ledger.get("allowance_adjustments", []))}
+
+    def increase_allowances(self, bounds: Mapping[str, int], *, reason: str,
+                            expected_ledger_sha256: str) -> dict:
+        """Explicitly allocate existing pool margin; never revise a request or bill.
+
+        This is an operator transaction, not automatic forgiveness on settlement.
+        Earlier versions refuse the new ledger rather than overlook allocations.
+        """
+        reason = _name(reason, "allowance adjustment reason")
+        if not isinstance(bounds, Mapping) or not bounds:
+            raise BudgetError("allowance adjustment needs funded call bounds")
+        with _budget_lock(self.root):
+            plan, ledger, calls = self._load()
+            if hashlib.sha256((self.root / "ledger.json").read_bytes()).hexdigest() != expected_ledger_sha256:
+                raise BudgetError("allowance review paid history is stale")
+            changes = ledger.setdefault("allowance_adjustments", [])
+            effective = {key: call["bound_microusd"] for key, call in calls.items()}
+            effective.update({change["call_id"]: change["bound_microusd"] for change in changes})
+            for key, value in bounds.items():
+                key = _name(key, "allowance call ID")
+                bound = _integer(value, "adjusted allowance")
+                if key not in calls or bound <= effective[key]:
+                    raise BudgetError("allowance must increase an existing funded call")
+                changes.append({"call_id": key, "previous_bound_microusd": effective[key],
+                                "bound_microusd": bound, "reason": reason})
+            result = self._totals(plan, ledger)
+            if any(pool["over_cap_microusd"] for pool in result["pools"].values()):
+                raise BudgetError("allowance adjustment exceeds its existing dedicated pool cap")
+            ledger["schema"] = ADJUSTED_LEDGER_SCHEMA
+            _write_atomic(self.root / "ledger.json", ledger)
+            return result
+
+    def attempt_bound(self, call_id: str) -> int:
+        """Effective funded exposure, separate from the immutable request estimate."""
+        call_id = _name(call_id, "call ID")
+        with _budget_lock(self.root):
+            _plan_value, ledger, calls = self._load()
+            if call_id not in calls:
+                raise BudgetError("call ID is outside the immutable funded plan")
+            allowances = {change["call_id"]: change["bound_microusd"]
+                          for change in ledger.get("allowance_adjustments", [])}
+            return allowances.get(call_id, calls[call_id]["bound_microusd"])
 
     def snapshot(self) -> dict:
         """Return exposure and commitments without changing any retained state."""
@@ -255,13 +327,15 @@ class AttemptBudget:
             if attempts and attempts[str(number - 1)]["state"] == "reserved":
                 raise BudgetError("unresolved previous attempt cannot be automatically reissued")
             call = calls[call_id]
+            bound = next((change["bound_microusd"] for change in reversed(ledger.get("allowance_adjustments", []))
+                          if change["call_id"] == call_id), call["bound_microusd"])
             pool = current["pools"][f"{provider}:{call['pool']}"]
-            if number > 1 and pool["available_retry_margin_microusd"] < call["bound_microusd"]:
+            if number > 1 and pool["available_retry_margin_microusd"] < bound:
                 raise BudgetError("retry cannot consume other planned first attempts or another pool")
             ledger["attempts"].setdefault(call_id, {})[str(number)] = {"state": "reserved", "actual_cost_microusd": None}
             _write_atomic(self.root / "ledger.json", ledger)
             return {"call_id": call_id, "attempt_number": number, "provider": provider,
-                    "pool": call["pool"], "bound_microusd": call["bound_microusd"]}
+                    "pool": call["pool"], "bound_microusd": bound}
 
     def settle(self, call_id: str, attempt_number: int, actual_cost_microusd: int | None) -> dict:
         """Unknown stays fully held; reported overage is retained and stops spend."""
