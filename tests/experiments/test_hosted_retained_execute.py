@@ -172,6 +172,32 @@ def test_cache_bound_does_not_assume_inclusive_anthropic_or_free_priced_writes(t
     assert pool["bounded_usage_attempts"] == 0 and pool["reserved_exposure_microusd"] == 20000
 
 
+@pytest.mark.parametrize("reserved,written,expected", [("2.5", 5, 96), ("2", 5, 20000),
+                                                       (None, 5, 20000), ("2.5", 8, 20000)])
+def test_openai_reported_writes_use_only_funded_cache_ceiling(tmp_path, monkeypatch, reserved, written, expected):
+    points, attacker, target, calls, admission = _setup(tmp_path)
+    admission.prices.update(cache_read="0.2", cache_write=None)
+    if reserved is not None:
+        admission.prices["reservation_input"] = reserved
+    generate = target.generate
+
+    def with_writes(dialog, *, seed=None):
+        response = generate(dialog, seed=seed)
+        response.tokens.update(cached_input=0, cache_write_input=written)
+        return response
+
+    monkeypatch.setattr(target, "generate", with_writes)
+    checkpoint = tmp_path / "writes.responses.checkpoint.jsonl"
+    _runner(attacker, target, admission).run(points, on_response=lambda row: Runner.append_checkpoint(checkpoint, row))
+    pool = admission.budget.snapshot()["pools"]["openai:target"]
+    assert pool["settled_cost_microusd"] == 0
+    assert pool["unknown_usage_attempts"] == 2
+    assert pool["bounded_usage_attempts"] == (2 if expected == 96 else 0)
+    assert pool["reserved_exposure_microusd"] == expected
+    _runner(attacker, target, admission).run(points, response_records=Runner.load_response_checkpoint(checkpoint))
+    assert len(calls) == 2
+
+
 def test_typed_provider_refusal_is_funded_observed_outcome_not_paid_stop(tmp_path):
     points, attacker, target, calls, admission = _setup(tmp_path)
     create = target._client.chat.completions.create

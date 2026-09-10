@@ -6222,6 +6222,16 @@ bounded records use a new ledger format that older executors reject. Upgrade
 only after active users of that shared ledger have finished. Retained responses
 can be reconciled without issuing another target or judge call.
 
+For OpenAI, positive reported cache writes may also use this conservative bound
+when the already-funded input tariff covers at least 1.25 times the ordinary
+input rate. The write count must be valid and no larger than total input usage.
+The bound charges all reported input at that funded maximum, rather than
+inventing a missing cache discount or treating writes as free. This follows
+the [published OpenAI cache-write tariff](https://developers.openai.com/api/docs/guides/prompt-caching).
+An absent maximum tariff, invalid usage or a response without token totals
+does not qualify. In particular, a retained HTTP 400 does not become a
+zero-cost attempt merely because it produced no visible answer.
+
 Console-form to runbook-section mapping (the console builds the identical
 argument vectors; nothing below is console-only):
 

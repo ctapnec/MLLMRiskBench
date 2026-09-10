@@ -297,12 +297,25 @@ class _Admission:
         # only the cache split is missing, retain a maximum-tariff token bound,
         # not the full generation allowance and not a fictitious exact bill.
         pricing_source = self.program.get("sources", {}).get("pricing", {})
+        written = tokens.get("cache_write_input", 0)
+        # OpenAI's funded input tariff already includes its 1.25x cache-write
+        # ceiling. Positive reported writes can therefore retain a conservative
+        # token bound even when a historical price file lacks the write rate.
+        # This does not declare an exact bill or forgive missing usage/errors.
+        reserved_writes = (
+            self.program["provider"] == "openai"
+            and type(tokens.get("input")) is int
+            and type(written) is int and 0 < written <= tokens["input"]
+            and "reservation_input" in self.prices
+            and Decimal(self.prices["reservation_input"]) >= Decimal(self.prices["input"]) * Decimal("1.25")
+        )
         if (cost is None and not missing and self.program["provider"] in {"openai", "kimi", "google"}
                 and self.prices.get("cache_write") is None and pricing_source.get("sha256")
-                and type(tokens.get("cache_write_input", 0)) is int and tokens.get("cache_write_input", 0) == 0
+                and type(written) is int and (written == 0 or reserved_writes)
                 and all(type(tokens.get(key)) is int and tokens[key] >= 0 for key in ("input", "output"))):
             input_price = str(max(Decimal(self.prices["input"]),
-                                  Decimal(self.prices.get("cache_read") or "0")))
+                                  Decimal(self.prices.get("cache_read") or "0"),
+                                  Decimal(self.prices["reservation_input"]) if reserved_writes else Decimal(0)))
             output_price = str(Decimal(self.prices["output"]))
             upper = _cost(tokens["input"], tokens["output"], {"input": input_price, "output": output_price})
             if upper <= self.budget.attempt_bound(call_id):
