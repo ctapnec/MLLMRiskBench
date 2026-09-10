@@ -9,6 +9,7 @@ from copy import deepcopy
 import os
 from pathlib import Path
 from threading import RLock
+import time
 
 
 _OBSERVED = ContextVar("ura_validation_dependencies", default=None)
@@ -63,7 +64,12 @@ class ValidationCache:
             previous = self._values.get(key)
             if previous is not None:
                 value, observed = previous
-                if all(_metadata(*dependency) == stamp for dependency, stamp in observed.items()):
+                # Rapid same-size rewrites can share a filesystem clock tick.
+                # Do not reuse recently modified data; this never sleeps or
+                # delays a request, and old immutable history stays reusable.
+                settled = all(row[1] is None or max(row[-2:]) < time.time_ns() - 1_000_000_000
+                              for inventory in observed.values() for row in inventory)
+                if settled and all(_metadata(*dependency) == stamp for dependency, stamp in observed.items()):
                     self._values.move_to_end(key)
                     parent = _OBSERVED.get()
                     if parent is not None:

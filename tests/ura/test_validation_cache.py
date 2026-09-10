@@ -1,5 +1,6 @@
 import multiprocessing
 import os
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -10,6 +11,7 @@ from ura.validation_cache import ValidationCache, observe_validation_path
 def test_unchanged_inputs_reuse_validation_and_results_are_not_mutable_aliases(tmp_path):
     path = tmp_path / "input"
     path.write_text("old")
+    time.sleep(1.05)  # The cache deliberately rereads still-changing fresh files.
     calls = []
     cache = ValidationCache()
 
@@ -22,6 +24,7 @@ def test_unchanged_inputs_reuse_validation_and_results_are_not_mutable_aliases(t
     assert cache.get("key", read, paths=(path,)) == {"text": "old"}
     assert len(calls) == 1
     before = path.stat()
+    time.sleep(0.01)  # Advance the filesystem tick before a same-size rewrite.
     path.write_text("new")
     os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
     assert cache.get("key", read, paths=(path,)) == {"text": "new"}
@@ -35,6 +38,7 @@ def test_tree_additions_deletions_and_indirect_inputs_invalidate(tmp_path):
     root.mkdir()
     outside = tmp_path / "config"
     outside.write_text("1")
+    time.sleep(1.05)
     calls = []
     cache = ValidationCache()
 
@@ -58,6 +62,7 @@ def test_tree_additions_deletions_and_indirect_inputs_invalidate(tmp_path):
 def test_parallel_requests_validate_once_and_failed_validation_is_not_cached(tmp_path):
     path = tmp_path / "input"
     path.write_text("input")
+    time.sleep(1.05)
     cache = ValidationCache()
     calls = []
 
@@ -73,10 +78,23 @@ def test_parallel_requests_validate_once_and_failed_validation_is_not_cached(tmp
             cache.get("failed", lambda: (_ for _ in ()).throw(ValueError("invalid")), paths=(path,))
 
 
+def test_recent_same_tick_rewrite_is_not_hidden_by_reuse(tmp_path, monkeypatch):
+    from ura import validation_cache as module
+    path = tmp_path / "recent"
+    path.write_text("old")
+    shared_tick = module._metadata(path)
+    monkeypatch.setattr(module, "_metadata", lambda *a, **kw: shared_tick)
+    cache = ValidationCache()
+    assert cache.get("key", path.read_text, paths=(path,)) == "old"
+    path.write_text("new")
+    assert cache.get("key", path.read_text, paths=(path,)) == "new"
+
+
 @pytest.mark.skipif("fork" not in multiprocessing.get_all_start_methods(), reason="rig fork behavior")
 def test_controller_validation_is_reused_by_forked_workers(tmp_path):
     path = tmp_path / "source"
     path.write_text("retained")
+    time.sleep(1.05)
     context = multiprocessing.get_context("fork")
     calls = context.Value("i", 0)
     cache = ValidationCache(copy_results=False)
@@ -108,6 +126,7 @@ def test_stats_reuses_unchanged_accounting_but_explicit_hashing_bypasses(tmp_pat
     monkeypatch.setattr(artifacts, "_collect_usage", lambda *a, **kw: calls.append(kw) or ([], {"markers": 1}))
     path = tmp_path / "result"
     path.write_text("first")
+    time.sleep(1.05)
     artifacts.collect_usage(tmp_path)
     artifacts.collect_usage(tmp_path)
     assert len(calls) == 1
@@ -127,6 +146,7 @@ def test_hosted_context_reuses_sources_not_route_budgets(tmp_path, monkeypatch):
     source.write_text("history")
     indirect = tmp_path / "original-response"
     indirect.write_text("answer")
+    time.sleep(1.05)
     program = {"results_root": str(tmp_path), "runner_view": str(tmp_path / "view"),
                "rr_analysis_root": str(tmp_path / "rr"),
                "sources": {"historical_result": {"path": str(source), "sha256": "a" * 64}}}
