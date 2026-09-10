@@ -31,6 +31,7 @@ import time
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
+from io import BytesIO
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Optional
 from urllib.parse import unquote_to_bytes, urlsplit
@@ -663,6 +664,7 @@ def _require(module: str, feature: str):
             "anthropic": "anthropic",
             "openai": "openai",
             "google.genai": "google-genai",
+            "PIL.Image": "Pillow",
         }.get(module, module)
         raise RuntimeError(
             f"{pkg} is required for {feature}; pip install {pkg}"
@@ -848,6 +850,41 @@ def _encode_media(
             )
         return mime, "", media.uri
     raise ValueError("MediaRef has neither path nor uri to encode")
+
+
+_ANTHROPIC_MAX_ENCODED_IMAGE_BYTES = 10 * 1024 * 1024
+
+
+def _bounded_anthropic_image_payload(mime: str, data: str) -> str:
+    """Pack an oversized simple PNG without resizing, changing pixels or metadata.
+
+    Normal payloads remain byte-identical. Other oversized representations are
+    rejected before a paid request rather than silently changing image content.
+    """
+    if len(data) <= _ANTHROPIC_MAX_ENCODED_IMAGE_BYTES:
+        return data
+    if mime != "image/png":
+        raise ValueError("Anthropic image exceeds its 10 MB base64 limit; lossless PNG delivery is required")
+    image = _require("PIL.Image", "Oversized Anthropic PNG delivery")
+    raw = base64.b64decode(data, validate=True)
+    with image.open(BytesIO(raw)) as original:
+        original.load()
+        if (original.format != "PNG" or original.mode not in {"RGB", "RGBA"}
+            or getattr(original, "n_frames", 1) != 1 or original.info):
+            raise ValueError("Oversized PNG packing requires a single-frame RGB/RGBA image without metadata")
+        buffer = BytesIO()
+        original.save(buffer, format="PNG", optimize=True, compress_level=9)
+        packed = buffer.getvalue()
+        with image.open(BytesIO(packed)) as decoded:
+            decoded.load()
+            if (decoded.format != "PNG" or decoded.mode != original.mode
+                or decoded.size != original.size or decoded.info != original.info
+                or decoded.tobytes() != original.tobytes()):
+                raise ValueError("Lossless PNG packing changed image content")
+    encoded = base64.b64encode(packed).decode("ascii")
+    if len(encoded) > _ANTHROPIC_MAX_ENCODED_IMAGE_BYTES:
+        raise ValueError("Losslessly packed PNG still exceeds Anthropic's 10 MB base64 limit")
+    return encoded
 
 
 def _recorded_trace_text(turn: DialogTurn) -> list[str]:
@@ -1116,6 +1153,7 @@ class AnthropicTarget(BaseTarget):
                         {"type": "image", "source": {"type": "url", "url": url}}
                     )
                 else:
+                    data = _bounded_anthropic_image_payload(mime, data)
                     blocks.append(
                         {
                             "type": "image",

@@ -6091,6 +6091,17 @@ use an already-funded, unstarted whole input as a new diagnostic where the
 declared program allows it. Do not relabel a completed measured answer as a
 probe, rewrite a receipt or repeat an already paid request to repair bookkeeping.
 
+Anthropic's direct API limits an inline image to 10 MB after base64 encoding,
+not merely 10 MB on disk. The adapter leaves ordinary payloads unchanged. For
+an oversized, metadata-free, single-frame RGB/RGBA PNG, it uses Pillow's lossless
+PNG packing and verifies the decoded format, dimensions, mode and every pixel
+before accepting the smaller payload. It never changes the source file,
+resizes an image, removes metadata or uses lossy compression. Other oversized
+representations fail before a paid request and need an explicit delivery fix.
+The same builder supplies token counting, CLI execution and console jobs.
+After a delivery correction, rebind the unstarted request and its count receipt;
+do not reuse a count for different encoded bytes or replay completed answers.
+
 Console-form to runbook-section mapping (the console builds the identical
 argument vectors; nothing below is console-only):
 

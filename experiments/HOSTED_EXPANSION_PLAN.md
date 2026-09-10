@@ -195,13 +195,14 @@ measured judging population. All twenty matching saved local answers have
 valid Haiku verdicts, costing USD 0.026716 from reported token usage. These are
 first-batch results, not completion of the expansion.
 
-The next disjoint input slice is prepared without a second spending allocation.
-It cannot dispatch while an earlier allocation can still consume the same
+Later disjoint input slices may be prepared without allocating more spending.
+They cannot dispatch while an earlier allocation can still consume the same
 provider or judge funds. Count-only preparation may proceed in parallel;
 funding follows reconciliation of the closed preceding work against the
-cumulative ceilings. The 224-input second slice needs 63 new judgments of
-exact existing local answers. Its tmux controller waits for predecessor target,
-local-judge and Haiku completion before allocating the remaining capacity.
+cumulative ceilings. The 224-input second slice was funded after the first
+slice closed. Its 63 new judgments of exact existing local answers are complete
+and valid. The recovered target queues are executing under their existing
+allocation; no completed local judgment was repeated.
 Unknown charges and unused earlier judge commitments remain reserved, not
 reported as spent or released into the new allocation. Future batches use the cache
 usage preservation correction documented in RA-446; old unknown charges stay
@@ -214,10 +215,24 @@ local answers requiring Haiku assessment. The selected route counts are Fable
 15, Opus 30, Sonnet 51, Haiku 150, Astra 15, Sol 15, Terra 17, Luna 98, GPT-5.5
 15, Kimi 30, DeepSeek 74, Flash 51 and Pro 51. These are batch sizes, not revised
 campaign totals. Whole-cluster boundaries explain the unused nominal capacity.
-Materialization and exact request counting precede any funding decision; this
+Materialization and exact request counting are complete; this
 slice has not been funded or executed. Token limits and reasoning settings
 are unchanged. Financial allocation must still leave both judging obligations
 covered and must not consume the earlier batches' retained exposure.
+
+The fourth no-call selection extends the same shared prefixes by 655 target
+inputs and identifies 492 new existing local answers for Haiku assessment.
+Its selected counts are Fable 15, Opus 21, Sonnet 74, Haiku 149, Astra 15,
+Sol 15, Terra 17, Luna 96, GPT-5.5 15, Kimi 21, DeepSeek 69, Flash 74 and
+Pro 74. Materialization and prospective probe checks are complete, but counting
+stopped at one Haiku image whose base64 payload exceeds Anthropic's 10 MB limit.
+Lossless PNG packing has been verified in memory to retain the source format,
+dimensions and every pixel while reducing that payload below the limit; the
+adapter correction and exact unstarted-request rebinding remain pending rig
+verification. The slice is not yet funded. Its continuation
+must verify suitable transport probes within the unchanged inputs and wait
+for the preceding batches' target and judging costs to close. These figures
+do not change the requested provider totals or authorize new spending caps.
 
 Use only inputs already executed by the local campaign. Preserve prompt,
 conversation, media bytes, seed, framework, arm, corpus and source-policy

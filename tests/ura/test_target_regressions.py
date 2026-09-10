@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -297,6 +298,71 @@ def test_inline_media_requires_hash_and_remote_uri_requires_https() -> None:
         _encode_media(MediaRef(modality="image", uri=uri))
     with pytest.raises(ValueError, match="HTTPS"):
         _encode_media(MediaRef(modality="image", uri="file:///etc/passwd"))
+
+
+@pytest.mark.parametrize("fable", [False, True])
+@pytest.mark.parametrize("inline", [False, True])
+def test_anthropic_oversized_png_is_losslessly_packed(tmp_path, monkeypatch, fable, inline):
+    image = pytest.importorskip("PIL.Image")
+    original = image.new("RGBA", (96, 96), (17, 39, 87, 0))
+    stream = BytesIO()
+    original.save(stream, format="PNG", compress_level=0)
+    raw = stream.getvalue()
+    media = _media(tmp_path / "large.png", raw)
+    if inline:
+        media = MediaRef(modality="image", mime="image/png", sha256=media.sha256,
+            uri="data:image/png;base64," + base64.b64encode(raw).decode())
+    monkeypatch.setattr(api_module, "_ANTHROPIC_MAX_ENCODED_IMAGE_BYTES", 1024)
+    target = (AnthropicFableTarget("claude-fable-5-1", media_roots=[tmp_path]) if fable
+              else AnthropicTarget("claude-haiku-4-5-20251001", media_roots=[tmp_path]))
+    request = target.build_request([DialogTurn(role="user", content="Describe the image.", media=[media])])
+    source = request["messages"][0]["content"][1]["source"]
+    assert source["media_type"] == "image/png" and len(source["data"]) <= 1024
+    with image.open(BytesIO(base64.b64decode(source["data"]))) as actual:
+        assert actual.mode == original.mode and actual.size == original.size
+        assert actual.tobytes() == original.tobytes()
+    assert (tmp_path / "large.png").read_bytes() == raw
+    assert target._client is None
+
+
+def test_anthropic_png_packing_preserves_normal_payload_and_refuses_loss(tmp_path, monkeypatch):
+    image = pytest.importorskip("PIL.Image")
+    png = pytest.importorskip("PIL.PngImagePlugin")
+    original = image.new("RGB", (64, 64), (19, 29, 39))
+    stream = BytesIO()
+    metadata = png.PngInfo()
+    metadata.add_text("description", "must not be silently removed")
+    original.save(stream, format="PNG", compress_level=0, pnginfo=metadata)
+    encoded = base64.b64encode(stream.getvalue()).decode()
+    assert api_module._bounded_anthropic_image_payload("image/png", encoded) == encoded
+    monkeypatch.setattr(api_module, "_ANTHROPIC_MAX_ENCODED_IMAGE_BYTES", 1024)
+    with pytest.raises(ValueError, match="without metadata"):
+        api_module._bounded_anthropic_image_payload("image/png", encoded)
+    with pytest.raises(ValueError, match="lossless PNG delivery"):
+        api_module._bounded_anthropic_image_payload("image/jpeg", encoded)
+    stream = BytesIO()
+    original.save(stream, format="PNG", compress_level=0)
+    encoded = base64.b64encode(stream.getvalue()).decode()
+    monkeypatch.setattr(api_module, "_ANTHROPIC_MAX_ENCODED_IMAGE_BYTES", 1)
+    with pytest.raises(ValueError, match="still exceeds"):
+        api_module._bounded_anthropic_image_payload("image/png", encoded)
+
+
+def test_anthropic_png_packing_rejects_changed_pixels(monkeypatch):
+    image = pytest.importorskip("PIL.Image")
+    original = image.new("RGB", (64, 64), (19, 29, 39))
+    stream = BytesIO()
+    original.save(stream, format="PNG", compress_level=0)
+    encoded = base64.b64encode(stream.getvalue()).decode()
+    real_save = image.Image.save
+    def corrupt(self, destination, *args, **kwargs):
+        replacement = self.copy()
+        replacement.putpixel((0, 0), (1, 2, 3))
+        return real_save(replacement, destination, *args, **kwargs)
+    monkeypatch.setattr(image.Image, "save", corrupt)
+    monkeypatch.setattr(api_module, "_ANTHROPIC_MAX_ENCODED_IMAGE_BYTES", 1024)
+    with pytest.raises(ValueError, match="changed image content"):
+        api_module._bounded_anthropic_image_payload("image/png", encoded)
 
 
 def test_hosted_renderer_rejects_unhandled_media_instead_of_dropping_it() -> None:

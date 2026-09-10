@@ -1,5 +1,8 @@
 """Full real-adapter request previews; count services are mocked, never generation."""
 import copy
+import base64
+import hashlib
+from io import BytesIO
 import json
 import runpy
 from pathlib import Path
@@ -11,12 +14,32 @@ import pytest
 from experiments.hosted_request_tokens import (
     TokenCountUnavailable, cached_count_request, count_request, request_sha256, validate_receipt,
 )
-from ura.data_models import DialogTurn
-from ura.targets.api import OpenAICompatibleTarget
+from ura.data_models import DialogTurn, MediaRef
+from ura.targets.api import AnthropicTarget, OpenAICompatibleTarget
 
 
 _PREVIEWS = runpy.run_path(str(Path(__file__).parents[1] / "ura" / "test_provider_request_preview.py"))
 KINDS, _dialog, _target = (_PREVIEWS[key] for key in ("KINDS", "_dialog", "_target"))
+
+
+def test_anthropic_count_and_generation_share_losslessly_packed_image(monkeypatch):
+    import ura.targets.api as api
+    image = pytest.importorskip("PIL.Image")
+    buffer = BytesIO()
+    image.new("RGB", (96, 96), (20, 30, 40)).save(buffer, format="PNG", compress_level=0)
+    original = buffer.getvalue()
+    media = MediaRef(modality="image", mime="image/png", sha256=hashlib.sha256(original).hexdigest(),
+        uri="data:image/png;base64," + base64.b64encode(original).decode())
+    monkeypatch.setattr(api, "_ANTHROPIC_MAX_ENCODED_IMAGE_BYTES", 1024)
+    target = AnthropicTarget("claude-haiku-4-5-20251001")
+    dialog = [DialogTurn(role="user", content="Describe this image.", media=[media])]
+    request = target.build_request(dialog, seed=0)
+    observed, _ = _client(target, monkeypatch)
+    receipt = count_request(target, request, allow_network=True)
+    assert observed[0]["messages"] == request["messages"]
+    assert len(request["messages"][0]["content"][1]["source"]["data"]) <= 1024
+    assert target.build_request(dialog, seed=0) == request
+    validate_receipt(target, request, receipt)
 
 
 def _client(target, monkeypatch, result=None, error=None):
