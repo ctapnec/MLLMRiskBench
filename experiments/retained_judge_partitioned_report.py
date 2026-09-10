@@ -69,7 +69,7 @@ def _comparison_plan(value):
         raise ValueError("population comparison selection fields differ")
     rows = value["selected"]
     if (not isinstance(rows, list) or not rows or any(not isinstance(row, dict)
-        or set(row) != single._SELECTED_FIELDS for row in rows)):
+        or set(row) != paired._BASE_ROW_FIELDS | {"cohort", "same_model_judge"} for row in rows)):
         raise ValueError("population comparison selected answers differ")
     grouped = {cohort: [{key: row[key] for key in paired._BASE_ROW_FIELDS}
                        for row in rows if row["cohort"] == cohort] for cohort in ("local", "hosted")}

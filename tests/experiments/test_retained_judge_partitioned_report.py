@@ -42,7 +42,8 @@ def independent_batches(completed, tmp_path):  # noqa: F811
         directory = tmp_path / (cohort + "-batch")
         directory.mkdir()
         candidates, _ = reports._candidates_from_view(*views[cohort], include_match_identity=True)
-        population = [{**r, "cohort": cohort} for r in candidates]
+        population = [{**{k: r[k] for k in single._SELECTED_FIELDS - {"same_model_judge", "cohort"}},
+                       "cohort": cohort} for r in candidates]
         plan = single.build_plan(population, population_audit=pair_plan["population"][cohort],
             source_descriptor=pair_plan["source"], judge_model=condition["model"],
             api_config_sha256=condition["api_config_sha256"],
