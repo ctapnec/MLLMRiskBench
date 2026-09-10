@@ -111,7 +111,7 @@ def test_preparation_applies_source_scoring_to_each_generated_job(tmp_path, monk
         return original(common, entries, cells)
 
     monkeypatch.setattr(subject, "_source_scoring_argv", observe)
-    result = subject.prepare_campaign(request=request, request_descriptor={}, out_root=tmp_path / "prepared")
+    result = subject.prepare_campaign(request=request, request_descriptor={}, out_root=tmp_path / "prepared", allow_network_counts=False)
     program = json.loads(Path(result["programs"][0]["path"]).read_text())
     assert calls == [job["input_ids"] for job in program["jobs"]]
 
