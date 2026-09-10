@@ -851,6 +851,70 @@ def _utc_timestamp(value: dt.datetime | None = None) -> str:
     return current.astimezone(dt.timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def retain_snapshot_verification(
+    root: Path | str, evidence: SnapshotSeal, *, upstream_manifest: Mapping[str, Any]
+) -> None:
+    """Retain a verified content identity for inexpensive reuse of installed bytes."""
+    snapshot = _checked_snapshot_root(root)
+    manifest = validate_upstream_manifest(dict(upstream_manifest))
+    if not isinstance(evidence, SnapshotSeal):
+        raise ModelAcquisitionError("saved verification must be a snapshot seal")
+    for key in ("tree_sha256", "inventory_sha256"):
+        _validated_sha256(getattr(evidence, key), label="saved " + key)
+    if (evidence.file_count != len(manifest["files"])
+            or evidence.total_bytes != manifest["total_bytes"]):
+        raise ModelAcquisitionError("saved verification does not match the complete manifest")
+    value = {"schema": "ura-installed-model-verification/1",
+        "manifest_sha256": upstream_manifest_sha256(manifest),
+        "seal": {key: getattr(evidence, key) for key in
+                 ("tree_sha256", "inventory_sha256", "file_count", "total_bytes")}}
+    raw = _canonical_bytes(value)
+    path = snapshot.parent / "snapshot-verification.json"
+    if path.exists():
+        if _read_contained_regular_file(path, parent=snapshot.parent, label="saved model verification") == raw:
+            return
+    temporary = snapshot.parent / (".snapshot-verification-" + secrets.token_hex(8) + ".tmp")
+    try:
+        with temporary.open("xb") as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def reuse_snapshot_verification(
+    root: Path | str, *, upstream_manifest: Mapping[str, Any],
+    cancelled: Callable[[], bool] | None = None,
+) -> SnapshotSeal:
+    """Check saved identity and current metadata; do not claim a fresh byte hash."""
+    snapshot = _checked_snapshot_root(root)
+    manifest = validate_upstream_manifest(dict(upstream_manifest))
+    try:
+        raw = _read_contained_regular_file(snapshot.parent / "snapshot-verification.json",
+            parent=snapshot.parent, label="saved model verification")
+    except ModelAcquisitionError as exc:
+        raise ModelAcquisitionError(
+            "installed model has no saved verification; reuse its acquisition receipt "
+            "or opt in to --verify-model-sha256 once") from exc
+    value = strict_json_bytes(raw)
+    if (not isinstance(value, dict) or set(value) != {"schema", "manifest_sha256", "seal"}
+            or value["schema"] != "ura-installed-model-verification/1"
+            or value["manifest_sha256"] != upstream_manifest_sha256(manifest)):
+        raise ModelAcquisitionError("saved model verification manifest differs")
+    seal = value["seal"]
+    if not isinstance(seal, dict) or set(seal) != {"tree_sha256", "inventory_sha256", "file_count", "total_bytes"}:
+        raise ModelAcquisitionError("saved model verification fields differ")
+    for key in ("tree_sha256", "inventory_sha256"):
+        _validated_sha256(seal[key], label="saved " + key)
+    current = seal_snapshot(snapshot, full_content=False, cancelled=cancelled)
+    if (any(getattr(current, key) != seal[key] for key in ("inventory_sha256", "file_count", "total_bytes"))
+            or current.file_count != len(manifest["files"]) or current.total_bytes != manifest["total_bytes"]):
+        raise ModelAcquisitionError("installed model metadata changed since verification")
+    return SnapshotSeal(**seal)
+
+
 def build_receipt(
     plan: Mapping[str, Any],
     *,
@@ -860,8 +924,9 @@ def build_receipt(
     max_files: int = MAX_SNAPSHOT_FILES,
     max_bytes: int = MAX_SNAPSHOT_BYTES,
     cancelled: Callable[[], bool] | None = None,
+    verified_snapshots: Mapping[str, SnapshotSeal] | None = None,
 ) -> dict[str, Any]:
-    """Seal all plan resources into a content-addressed completion receipt."""
+    """Record acquired content identities, reusing supplied verified snapshots."""
 
     canonical = validate_plan(dict(plan))
     expected_ids = {resource["resource_id"] for resource in canonical["resources"]}
@@ -877,13 +942,23 @@ def build_receipt(
             or manifest["file_policy"] != resource["file_policy"]
         ):
             raise ModelAcquisitionError("upstream manifest does not match the plan resource")
-        evidence = seal_snapshot(
-            snapshots[resource_id],
-            max_files=max_files,
-            max_bytes=max_bytes,
-            cancelled=cancelled,
-            upstream_manifest=manifest,
-        )
+        if verified_snapshots is None:
+            evidence = seal_snapshot(
+                snapshots[resource_id], max_files=max_files, max_bytes=max_bytes,
+                cancelled=cancelled, upstream_manifest=manifest,
+            )
+        else:
+            evidence = verified_snapshots.get(resource_id)
+            if not isinstance(evidence, SnapshotSeal):
+                raise ModelAcquisitionError("verified snapshot is missing")
+            current = seal_snapshot(
+                snapshots[resource_id], full_content=False, max_files=max_files,
+                max_bytes=max_bytes, cancelled=cancelled,
+            )
+            if any(getattr(current, key) != getattr(evidence, key) for key in
+                   ("inventory_sha256", "file_count", "total_bytes")):
+                raise ModelAcquisitionError("snapshot metadata changed before receipt publication")
+            _validated_sha256(evidence.tree_sha256, label="verified tree SHA-256")
         if (
             evidence.file_count != len(manifest["files"])
             or evidence.total_bytes != manifest["total_bytes"]
@@ -1035,15 +1110,19 @@ def verify_receipt_snapshots(
     max_files: int = MAX_SNAPSHOT_FILES,
     max_bytes: int = MAX_SNAPSHOT_BYTES,
     cancelled: Callable[[], bool] | None = None,
+    verify_sha256: bool = False,
 ) -> dict[str, Path]:
     """Resolve every receipted snapshot from the managed offline store.
 
-    Normal admission re-hashes every byte.  A stat inventory is retained as a
-    useful early corruption check, but it is never authoritative because size
-    and timestamps can be restored after an in-place modification.
+    Normal reuse checks the installed file inventory against the retained
+    receipt without rereading weights. Full content verification is opt-in.
+    Inventory checking does not claim to detect same-size modifications whose
+    timestamps have also been restored.
     """
 
     canonical_plan = validate_plan(dict(plan))
+    if type(verify_sha256) is not bool:
+        raise ModelAcquisitionError("model SHA verification option must be boolean")
     canonical_receipt = validate_receipt(dict(receipt), plan=canonical_plan)
     store = _checked_snapshot_root(managed_store)
     resolved: dict[str, Path] = {}
@@ -1087,6 +1166,7 @@ def verify_receipt_snapshots(
             max_files=max_files,
             max_bytes=max_bytes,
             cancelled=cancelled,
+            full_content=verify_sha256,
         )
         resource_after, resource_identity_after = _checked_direct_child_directory(
             store,
@@ -1121,13 +1201,34 @@ def verify_receipt_snapshots(
             evidence.inventory_sha256 != resource["inventory_sha256"]
             or evidence.file_count != resource["file_count"]
             or evidence.total_bytes != resource["total_bytes"]
-            or evidence.tree_sha256 != resource["tree_sha256"]
+            or (verify_sha256 and evidence.tree_sha256 != resource["tree_sha256"])
         ):
             raise ModelAcquisitionError(
                 f"receipted snapshot {resource_id} changed after acquisition"
             )
         resolved[resource_id] = path
     return resolved
+
+
+def retain_receipt_verification(
+    plan: Mapping[str, Any], receipt: Mapping[str, Any], *, managed_store: Path | str,
+) -> None:
+    """Migrate a retained acquisition receipt to the installed-model cache.
+
+    Existing content hashes remain historical evidence. Current file metadata
+    must still match; this operation neither downloads nor hashes model bytes.
+    """
+    canonical = validate_receipt(dict(receipt), plan=plan)
+    resolved = verify_receipt_snapshots(plan, canonical, managed_store=managed_store)
+    for resource in canonical["resources"]:
+        snapshot = resolved[resource["resource_id"]]
+        manifest = strict_json_bytes(_read_contained_regular_file(
+            snapshot.parent / (resource["upstream_manifest_id"] + ".upstream-manifest.json"),
+            parent=snapshot.parent, label="managed upstream manifest",
+        ))
+        evidence = SnapshotSeal(**{key: resource[key] for key in
+            ("tree_sha256", "inventory_sha256", "file_count", "total_bytes")})
+        retain_snapshot_verification(snapshot, evidence, upstream_manifest=manifest)
 
 
 def write_document_create_only(

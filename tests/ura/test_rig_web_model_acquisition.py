@@ -29,6 +29,32 @@ def _app(tmp_path: Path) -> RigWebApp:
     )
 
 
+@pytest.mark.parametrize("full_sha", [False, True])
+def test_builder_full_model_sha_is_optional_and_composes_real_cli(tmp_path, full_sha):
+    from experiments import model_acquire, run_matrix
+
+    app = _app(tmp_path)
+    try:
+        form = {"mode": "dry_run", "corpora": "synth", "attackers": "replay",
+                "judges": "rules", "out": "runs/sha-option"}
+        if full_sha:
+            form["verify_model_sha256"] = "on"
+        command, values, params = app._compose_from_builder(form)
+        argv = build_argv(command, values)
+        assert ("--verify-model-sha256" in argv) is full_sha
+        assert run_matrix.build_parser().parse_args(
+            ["--verify-model-sha256"] if full_sha else []).verify_model_sha256 is full_sha
+        assert model_acquire._parser().parse_args(
+            ["--verify-model-sha256"] if full_sha else []).verify_model_sha256 is full_sha
+        assert params.get("verify_model_sha256", "") == ("on" if full_sha else "")
+        page = app._build_page(prefill=form).decode()
+        assert ("name='verify_model_sha256' checked" in page) is full_sha
+        assert "Full model SHA verification (slow, optional)" in page
+        assert "Off by default" in page
+    finally:
+        app.close()
+
+
 def _write_workflow_documents(
     workflow: dict[str, object],
 ) -> tuple[Path, Path]:
@@ -485,9 +511,11 @@ def test_builder_hub_preflight_starts_plan_not_unreceipted_preflight(
         app.close()
 
 
+@pytest.mark.parametrize("full_sha", [False, True])
 def test_reviewed_plan_download_and_receipted_run_are_one_shot(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    full_sha: bool,
 ) -> None:
     app = _app(tmp_path)
     workflow_id = "f" * 32
@@ -498,6 +526,7 @@ def test_reviewed_plan_download_and_receipted_run_are_one_shot(
         "attackers": "replay",
         "judges": "rules",
         "out": "runs/measured",
+        "verify_model_sha256": "on" if full_sha else "",
     })
     params = app._bind_execution_config_bundle_identity(params)
     bundle = params["_execution_config_bundle_sha256"]
@@ -567,6 +596,7 @@ def test_reviewed_plan_download_and_receipted_run_are_one_shot(
         acquisition = app._start_model_acquisition_download(plan_job.job_id)
         assert launches[0][0] == "model_acquire"
         acquire_values = launches[0][1]
+        assert (acquire_values.get("--verify-model-sha256") == "on") is full_sha
         assert acquire_values["--plan"] == str(plan_path)
         assert acquire_values["--activity-job-id"] == acquisition.job_id
         assert launches[0][2]["reserved_job_id"] == acquisition.job_id

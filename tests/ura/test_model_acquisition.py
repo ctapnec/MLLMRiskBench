@@ -335,7 +335,89 @@ def test_receipt_detects_same_size_tamper_with_restored_mtime(tmp_path: Path) ->
             plan,
             receipt,
             managed_store=(tmp_path / "store").resolve(),
+            verify_sha256=True,
         )
+
+
+@pytest.mark.parametrize("full_sha", [False, True])
+def test_installed_model_reuse_hashes_only_when_requested(tmp_path, monkeypatch, full_sha):
+    plan = _fixture_plan()
+    store = (tmp_path / "store").resolve()
+    backend = _FakeBackend(tmp_path, cached=True)
+    options = dict(store=store, max_download_bytes=0, min_free_bytes=0,
+                   deadline_seconds=30, backend=backend,
+                   disk_usage=lambda _path: SimpleNamespace(free=10**9))
+    import experiments.model_acquire as cli
+    original = acquisition_module.seal_snapshot
+    full_checks = []
+
+    def observe(*args, **kwargs):
+        if kwargs.get("full_content", True):
+            full_checks.append(str(args[0]))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(cli, "seal_snapshot", observe)
+    monkeypatch.setattr(acquisition_module, "seal_snapshot", observe)
+    first = acquire(plan, receipts_dir=(tmp_path / "first").resolve(), **options)
+    assert len(full_checks) == 1  # One publication check, not a second receipt hash.
+    full_checks.clear()
+    second = acquire(plan, receipts_dir=(tmp_path / "second").resolve(),
+                     verify_model_sha256=full_sha, **options)
+    assert len(full_checks) == int(full_sha)
+    assert second.downloaded_bytes == 0
+    assert json.loads(first.receipt_path.read_text())["resources"] == json.loads(
+        second.receipt_path.read_text())["resources"]
+
+
+def test_default_receipt_check_does_not_open_model_bytes(tmp_path, monkeypatch):
+    plan, manifest, snapshot, _ = _fixture_snapshot(tmp_path)
+    resource_id = plan["resources"][0]["resource_id"]
+    receipt = build_receipt(plan, snapshots={resource_id: snapshot},
+                            manifests={resource_id: manifest})
+    original_open = os.open
+
+    def prohibit_weight_open(path, *args, **kwargs):
+        if Path(path).is_relative_to(snapshot):
+            pytest.fail("default verification read a model file")
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", prohibit_weight_open)
+    assert verify_receipt_snapshots(plan, receipt, managed_store=tmp_path / "store")
+
+
+@pytest.mark.parametrize("mutation", ["missing", "added", "changed"])
+def test_metadata_reuse_detects_changed_installation(tmp_path, mutation):
+    plan, manifest, snapshot, _ = _fixture_snapshot(tmp_path)
+    resource_id = plan["resources"][0]["resource_id"]
+    receipt = build_receipt(plan, snapshots={resource_id: snapshot},
+                            manifests={resource_id: manifest})
+    acquisition_module.retain_receipt_verification(plan, receipt, managed_store=tmp_path / "store")
+    if mutation == "missing":
+        (snapshot / "model.safetensors").unlink()
+    elif mutation == "added":
+        (snapshot / "unexpected.txt").write_text("unexpected")
+    else:
+        (snapshot / "model.safetensors").write_bytes(b"changed")
+    with pytest.raises(ModelAcquisitionError, match="metadata changed"):
+        acquisition_module.reuse_snapshot_verification(snapshot, upstream_manifest=manifest)
+
+
+def test_retained_receipt_migration_never_rehashes_or_changes_identity(tmp_path, monkeypatch):
+    plan, manifest, snapshot, _ = _fixture_snapshot(tmp_path)
+    resource_id = plan["resources"][0]["resource_id"]
+    receipt = build_receipt(plan, snapshots={resource_id: snapshot},
+                            manifests={resource_id: manifest})
+    original = acquisition_module.seal_snapshot
+
+    def metadata_only(*args, **kwargs):
+        assert kwargs.get("full_content") is False
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(acquisition_module, "seal_snapshot", metadata_only)
+    acquisition_module.retain_receipt_verification(plan, receipt, managed_store=tmp_path / "store")
+    evidence = acquisition_module.reuse_snapshot_verification(snapshot, upstream_manifest=manifest)
+    assert evidence.tree_sha256 == receipt["resources"][0]["tree_sha256"]
+    assert evidence.inventory_sha256 == receipt["resources"][0]["inventory_sha256"]
 
 
 def test_receipt_is_bound_to_exact_config_digest(tmp_path: Path) -> None:

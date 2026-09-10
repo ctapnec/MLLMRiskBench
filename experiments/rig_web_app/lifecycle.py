@@ -2905,6 +2905,8 @@ class LifecycleMixin:
             "--activity-event": str(activity_event),
             "--activity-job-id": job_id,
         }
+        if _rebound.get("verify_model_sha256") == "on":
+            acquire_values["--verify-model-sha256"] = "on"
         workflow["acquisition_job_id"] = job_id
         self._persist_model_acquisition_workflow(workflow)
         self._write_workflow_activity_token(workflow, activity_token)

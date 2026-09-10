@@ -4587,6 +4587,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=os.environ.get("URA_MODEL_ACQUISITION_RECEIPT_SHA256", ""),
         help="exact byte digest paired with --model-acquisition-receipt",
     )
+    ap.add_argument("--verify-model-sha256", action="store_true",
+                    help="Rehash installed local model weights before use (slow; off by default).")
     ap.add_argument(
         "--model-acquisition-store",
         default=os.environ.get("URA_MODEL_ACQUISITION_STORE", ""),
@@ -5753,7 +5755,12 @@ def _main(argv=None) -> int:
                     receipt_path=args.model_acquisition_receipt,
                     receipt_sha256=args.model_acquisition_receipt_sha256,
                     managed_store=args.model_acquisition_store,
+                    verify_model_sha256=args.verify_model_sha256,
                 )
+            )
+            # Operational provenance: this does not change the selected inputs.
+            run_env["model_file_verification"] = (
+                "full_sha256" if args.verify_model_sha256 else "metadata_only"
             )
             admitted_plan = load_plan(
                 args.model_acquisition_plan,

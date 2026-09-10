@@ -1890,6 +1890,8 @@ class BuilderValidationMixin:
                 "standalone dry run; probes, canaries, preflights, and measured "
                 "lanes must retain every selected cluster row"
             )
+        if params.get("verify_model_sha256", "") not in {"", "on"}:
+            errors["verify_model_sha256"] = "full model SHA verification must be an explicit checkbox"
         reset_open_circuits = params.get("reset_open_circuits", "")
         if reset_open_circuits not in {"", "on"}:
             errors["reset_open_circuits"] = (

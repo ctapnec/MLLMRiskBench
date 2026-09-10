@@ -2371,9 +2371,9 @@ def private_model_execution(
 class ManagedModelRuntime:
     """Private plan/receipt/store handles for zero-network model construction.
 
-    ``admit`` is the normal preflight gate. ``construct`` is the stronger engine
-    boundary: it holds a shared lock for every planned resource across complete
-    pre-verification, loader construction, and complete post-verification.  The
+    ``admit`` checks receipt identity and installed metadata. ``construct`` holds
+    a shared lock across pre-checks, loader construction and post-checks. Full
+    model-byte SHA verification is explicitly opt-in. The
     loaded object is returned only after the post-check succeeds, so callers
     cannot issue a target, judge, guard, or surrogate call beforehand.
     """
@@ -2387,6 +2387,7 @@ class ManagedModelRuntime:
         receipt_path: Path | str,
         receipt_sha256: str,
         managed_store: Path | str,
+        verify_model_sha256: bool = False,
     ) -> None:
         if not isinstance(selection, RuntimeSelection) or not selection.requirements:
             raise ModelAcquisitionError("managed runtime needs a non-empty selection")
@@ -2399,6 +2400,9 @@ class ManagedModelRuntime:
             label="receipt SHA-256",
         )
         self._managed_store = _validated_store(managed_store)
+        if type(verify_model_sha256) is not bool:
+            raise ModelAcquisitionError("model SHA verification option must be boolean")
+        self.verify_model_sha256 = verify_model_sha256
         self._expected_plan = build_runtime_plan(selection)
         self._receipt_id: str | None = None
 
@@ -2423,12 +2427,13 @@ class ManagedModelRuntime:
             plan,
             receipt,
             managed_store=self._managed_store,
+            verify_sha256=self.verify_model_sha256,
         )
         self._receipt_id = receipt["receipt_id"]
         return receipt, resolved
 
     def admit(self) -> dict[str, Any]:
-        """Perform a call-free, full-content plan/receipt admission check."""
+        """Perform call-free admission with the selected file-check policy."""
 
         with self._resource_locks():
             receipt, _resolved = self._load_and_verify()
@@ -2460,11 +2465,11 @@ class ManagedModelRuntime:
         *,
         cleanup: Callable[[_T], None] | None = None,
     ) -> _T:
-        """Construct one model under a full pre/post verification lease.
+        """Construct one model under the selected pre/post verification lease.
 
         ``constructor`` must only construct/load the engine.  It must not issue a
         model inference or judge call; the object is intentionally unavailable
-        to its caller until the post-load full-content verification completes.
+        to its caller until the post-load check completes.
         """
 
         if not callable(constructor):
@@ -2597,6 +2602,7 @@ def admit_managed_model_runtime(
     receipt_path: Path | str,
     receipt_sha256: str,
     managed_store: Path | str,
+    verify_model_sha256: bool = False,
 ) -> tuple[ManagedModelRuntime, dict[str, Any]]:
     """Build and fully admit a private runtime in one call-free operation."""
 
@@ -2607,6 +2613,7 @@ def admit_managed_model_runtime(
         receipt_path=receipt_path,
         receipt_sha256=receipt_sha256,
         managed_store=managed_store,
+        verify_model_sha256=verify_model_sha256,
     )
     return runtime, runtime.admit()
 

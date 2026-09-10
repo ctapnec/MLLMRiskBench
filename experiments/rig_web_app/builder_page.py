@@ -2616,7 +2616,14 @@ class BuilderPageMixin:
                 kind="number",
             )
             + "</div></div>"
-            "<div class='card'><h2>" + _icon("disk") + "Local serving (vLLM)</h2>"
+            "<div class='card'><h2>" + _icon("disk") + "Local model serving</h2>"
+            + err("verify_model_sha256")
+            + "<label class='checkrow'><input type='checkbox' name='verify_model_sha256'"
+            + (" checked" if prefill.get("verify_model_sha256") == "on" else "")
+            + "><span><strong>Full model SHA verification (slow, optional)</strong>"
+            "<br>Off by default. Reuse installed models after checking file metadata; "
+            "enable to reread and hash every model file. New downloads are validated once."
+            "</span></label>"
             "<p class='muted'>A model without an explicit context cap uses its native "
             "context. Curated caps are visible in the model picker and remain part of "
             "the bound execution condition.</p><div class='cols'>"

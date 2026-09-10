@@ -415,7 +415,7 @@ def test_manually_staled_selection_digest_is_rejected() -> None:
         build_runtime_plan(stale)
 
 
-def test_admission_full_hashes_every_resource_and_descriptor_has_no_paths(
+def test_admission_checks_every_resource_without_rehash_and_descriptor_has_no_paths(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -428,6 +428,7 @@ def test_admission_full_hashes_every_resource_and_descriptor_has_no_paths(
     def observe(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
         nonlocal calls
         calls += 1
+        assert kwargs["verify_sha256"] is False
         return original(*args, **kwargs)
 
     monkeypatch.setattr(runtime_module, "verify_receipt_snapshots", observe)

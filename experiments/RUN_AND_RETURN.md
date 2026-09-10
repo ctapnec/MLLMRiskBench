@@ -2296,7 +2296,19 @@ python -m experiments.run_matrix "${EXACT_LANE_ARGS[@]}" \
 ```
 
 Each `--model-acquisition-*` flag defaults to the matching environment
-variable when the flag is omitted: `URA_MODEL_ACQUISITION_PLAN_DIR`,
+variable. Full model SHA verification is separate and **off by default**:
+installed models use their saved identity and current file metadata, with no
+weight-byte scan. Add `--verify-model-sha256` to `model_acquire` and/or
+`run_matrix` only when a full recheck is wanted. Build offers the same optional
+checkbox, retained through acquisition and execution. New downloads are
+validated once. For an older installation without the small verification cache,
+reuse its existing plan and receipt through `retain_receipt_verification`;
+that migration checks metadata and requires neither download nor weight hashing.
+Metadata checks are not a fresh SHA proof and cannot detect same-size edits
+whose timestamps were restored.
+
+The acquisition environment variables are
+`URA_MODEL_ACQUISITION_PLAN_DIR`,
 `URA_MODEL_ACQUISITION_PLAN`, `URA_MODEL_ACQUISITION_PLAN_SHA256`,
 `URA_MODEL_ACQUISITION_RECEIPT`, `URA_MODEL_ACQUISITION_RECEIPT_SHA256`, and
 `URA_MODEL_ACQUISITION_STORE`. A lane may export them once instead of

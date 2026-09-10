@@ -367,14 +367,25 @@ dedicated `experiments.model_acquire` controller may contact the fixed Hugging
 Face endpoint or receive `HF_TOKEN`. It resolves the complete upstream file
 inventory, transfers only missing bytes under cross-process locks and bounded
 byte/free-space/deadline limits, seals each immutable snapshot, and writes a
-path/token-free receipt. A cache hit is fully reverified and emits no download
+path/token-free receipt. A cache hit checks the saved manifest and file inventory,
+reuses its historical content hash, and emits no download
 activity. Normal and preflight processes require the exact plan/receipt/store
 triple, remove Hub tokens, set Hugging Face/Transformers/vLLM offline and
 telemetry-disabled variables before optional imports, and pass only private
 managed snapshot locators to constructors. One shared resource lease spans the
-full pre-load hash, construction, and full post-load hash; post-load drift
+pre-load metadata check, construction, and post-load metadata check; post-load drift
 drops the object and no target, judge, guard, or surrogate call may occur.
 Explicit local checkpoint directories use the same pre/post content seal.
+
+Full installed-model byte verification is optional, off by default, and selected
+with `--verify-model-sha256` in acquisition and Runner or the matching Build
+checkbox. Runner records the selected check policy in execution environment
+provenance without changing input selection. Newly acquired bytes are checked
+once before publication, not hashed again for the receipt. Existing installations
+can seed the small verification cache from their validated retained acquisition
+receipts through `retain_receipt_verification`; migration checks current metadata
+and never downloads or rehashes weights. Metadata reuse does not detect same-size
+modification with restored timestamps and is not represented as a fresh hash.
 
 The result tree retains create-only canonical plan and receipt copies and a
 strict `ura-model-acquisition-runtime/1` provenance descriptor. Scientific

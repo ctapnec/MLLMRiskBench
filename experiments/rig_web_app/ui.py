@@ -940,6 +940,7 @@ parts.push('--sampling-policy '+samplingPolicy);}
 var grp=namedValue('group','');if(grp){parts.push('--group '+grp);}
 if(checkedName('exclude_tool_conditioned')){parts.push('--exclude-tool-conditioned');}
 if(checkedName('reset_open_circuits')&&mode==='measured'){parts.push('--reset-open-circuits');}
+if(checkedName('verify_model_sha256')){parts.push('--verify-model-sha256');}
 var stale=namedValue('lock_stale_seconds','');if(stale){parts.push('--lock-stale-seconds '+stale);}
 var mods=checked('.modbox','data-mod');var targets=api.concat(loc);
 setBuildSummary('build-summary-composition',mode+'; modalities: '+
@@ -997,6 +998,7 @@ form.querySelectorAll(".modelbox[data-kind='local'][data-target-selected='true']
 row.querySelector('.modelquant select');if(precision){localPrecisions.push(
 (input.getAttribute('data-model')||'local')+': '+precision.value);}});
 setBuildSummary('build-summary-local','dtype: '+namedValue('dtype','auto')+
+'; model file checks: '+(checkedName('verify_model_sha256')?'full SHA (slow)':'metadata (no weight hashing)')+
 '; default quantization: '+namedValue('quantization','auto')+
 (localPrecisions.length?'; selected model: '+localPrecisions.join(', '):''));
 setBuildSummary('build-summary-output',namedValue('out','not set'));

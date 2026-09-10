@@ -46,6 +46,9 @@ from ura.model_acquisition import (  # noqa: E402
     build_upstream_manifest,
     load_plan,
     seal_snapshot,
+    retain_snapshot_verification,
+    reuse_snapshot_verification,
+    SnapshotSeal,
     strict_json_bytes,
     validate_plan,
     validate_repo_filename,
@@ -578,7 +581,8 @@ def _load_managed_manifest(
     resource: Mapping[str, Any],
     *,
     cancelled: Callable[[], bool],
-) -> tuple[dict[str, Any], Path]:
+    verify_model_sha256: bool = False,
+) -> tuple[dict[str, Any], Path, SnapshotSeal]:
     resource_root, resource_identity = _core_checked_direct_child_directory(
         store,
         str(resource["resource_id"]),
@@ -616,14 +620,14 @@ def _load_managed_manifest(
         or manifest["file_policy"] != resource["file_policy"]
     ):
         raise ModelAcquisitionError("managed resource belongs to another plan resource")
-    # A cache hit is claimed only after the same complete-content proof used by
-    # receipt admission. Re-resolve both directories after hashing to close
+    # Reuse the installed identity after the selected metadata or full-byte
+    # check. Re-resolve both directories after checking to close
     # junction/rename swaps before the controller skips network acquisition.
-    seal_snapshot(
-        snapshot,
-        upstream_manifest=manifest,
-        cancelled=cancelled,
-    )
+    if verify_model_sha256:
+        evidence = seal_snapshot(snapshot, upstream_manifest=manifest, cancelled=cancelled)
+        retain_snapshot_verification(snapshot, evidence, upstream_manifest=manifest)
+    else:
+        evidence = reuse_snapshot_verification(snapshot, upstream_manifest=manifest, cancelled=cancelled)
     resource_after, resource_identity_after = _core_checked_direct_child_directory(
         store,
         str(resource["resource_id"]),
@@ -641,7 +645,7 @@ def _load_managed_manifest(
         or snapshot_identity_after != snapshot_identity
     ):
         raise ModelAcquisitionError("managed resource changed during cache-hit proof")
-    return manifest, snapshot
+    return manifest, snapshot, evidence
 
 
 def acquire(
@@ -657,8 +661,12 @@ def acquire(
     cancelled: Callable[[], bool] = lambda: False,
     monotonic: Callable[[], float] = time.monotonic,
     disk_usage: Callable[[Path], Any] = shutil.disk_usage,
+    verify_model_sha256: bool = False,
 ) -> AcquisitionResult:
     """Acquire all missing plan resources and publish one exact receipt."""
+
+    if type(verify_model_sha256) is not bool:
+        raise ModelAcquisitionError("model SHA verification option must be boolean")
 
     canonical = validate_plan(dict(plan))
     if (
@@ -678,6 +686,7 @@ def acquire(
     downloaded_bytes = 0
     snapshots: dict[str, Path] = {}
     manifests: dict[str, dict[str, Any]] = {}
+    verified_snapshots: dict[str, SnapshotSeal] = {}
 
     for resource in canonical["resources"]:
         _check_cancelled(cancelled)
@@ -700,13 +709,15 @@ def acquire(
             if published and not final_exists:
                 raise ModelAcquisitionError("managed resource disappeared while waiting")
             if final_exists:
-                manifest, snapshot = _load_managed_manifest(
+                manifest, snapshot, evidence = _load_managed_manifest(
                     checked_store,
                     resource,
                     cancelled=cancelled,
+                    verify_model_sha256=verify_model_sha256,
                 )
                 manifests[resource_id] = manifest
                 snapshots[resource_id] = snapshot
+                verified_snapshots[resource_id] = evidence
                 continue
 
             manifest = validate_upstream_manifest(
@@ -802,7 +813,7 @@ def acquire(
                 # Promotion is completion, not merely the end of transport.
                 # Prove the complete official sibling set and every Git/LFS
                 # content identity while the tree is still disposable.
-                seal_snapshot(
+                evidence = seal_snapshot(
                     snapshot,
                     upstream_manifest=manifest,
                     cancelled=cancelled,
@@ -826,6 +837,8 @@ def acquire(
                 raise
             manifests[resource_id] = manifest
             snapshots[resource_id] = final_root / "snapshot"
+            verified_snapshots[resource_id] = evidence
+            retain_snapshot_verification(final_root / "snapshot", evidence, upstream_manifest=manifest)
 
     _check_cancelled(cancelled)
     _remaining(deadline, monotonic)
@@ -834,6 +847,7 @@ def acquire(
         snapshots=snapshots,
         manifests=manifests,
         cancelled=cancelled,
+        verified_snapshots=verified_snapshots,
     )
     receipt_path, receipt_digest = write_document_create_only(
         checked_receipts,
@@ -1113,6 +1127,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-download-bytes", type=int)
     parser.add_argument("--min-free-bytes", type=int)
     parser.add_argument("--deadline-seconds", type=float)
+    parser.add_argument("--verify-model-sha256", action="store_true",
+        help="Rehash existing installed model files (slow; off by default). New downloads are validated once.")
     parser.add_argument("--activity-event")
     parser.add_argument("--activity-job-id")
     parser.add_argument("--worker-manifest", action="store_true", help=argparse.SUPPRESS)
@@ -1183,6 +1199,7 @@ def main(argv: list[str] | None = None) -> int:
             backend=HuggingFaceBackend(transport_cache=checked_transport),
             activity=reporter,
             cancelled=cancellation,
+            verify_model_sha256=args.verify_model_sha256,
         )
     except (InterruptedError, ModelAcquisitionError, TimeoutError, ValueError) as exc:
         print(f"model acquisition failed: {exc}", file=sys.stderr)

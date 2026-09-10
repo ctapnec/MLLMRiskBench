@@ -52,6 +52,7 @@ class BuilderCaptureMixin:
         "group",
         "exclude_tool_conditioned",
         "reset_open_circuits",
+        "verify_model_sha256",
         "lock_stale_seconds",
         "cap_target",
         "cap_judge",
@@ -632,6 +633,8 @@ class BuilderCaptureMixin:
                 values[flag] = raw
         if params.get("exclude_tool_conditioned") == "on":
             values["--exclude-tool-conditioned"] = "on"
+        if params.get("verify_model_sha256") == "on":
+            values["--verify-model-sha256"] = "on"
         if params.get("reset_open_circuits") == "on" and mode == "measured":
             # A measured-lane resume control only (validation rejects it for
             # dry runs, probes, and canaries); never composed by default.

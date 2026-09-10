@@ -633,6 +633,7 @@ _MATRIX_PARAMS = (
     CommandParam("--engine-runtime-config", "path"),
     CommandParam("--engine-runtime-config-sha256", "str"),
     CommandParam("--reset-open-circuits", "flag"),
+    CommandParam("--verify-model-sha256", "flag"),
     CommandParam("--model-acquisition-plan-only", "flag"),
     CommandParam("--model-acquisition-plan-dir", "path"),
     CommandParam("--model-acquisition-plan", "path"),
@@ -1111,6 +1112,7 @@ def _commands() -> dict[str, Command]:
             "experiments.model_acquire",
             "Acquire one reviewed immutable Hugging Face model plan",
             (
+                CommandParam("--verify-model-sha256", "flag"),
                 CommandParam("--plan", "path", required=True),
                 CommandParam("--plan-sha256", "str", required=True),
                 CommandParam("--store", "path", required=True),

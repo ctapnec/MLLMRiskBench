@@ -314,10 +314,16 @@ project, source, attestation and request-envelope copies. A create-only
 controller therefore checks that child is absent immediately before planning,
 then accepts only the directory materialized by its own successful plan call;
 it does not misclassify that controlled materialization as a pre-existing run.
-The dedicated `experiments.model_acquire` controller verifies or transfers the
-planned bytes and writes a sealed receipt. The subsequent preflight, canary or
-measured process accepts only that exact plan, receipt, and private managed-store
-locator, rehashes every snapshot immediately around model construction,
+The dedicated `experiments.model_acquire` controller transfers missing bytes,
+validates each newly installed snapshot once, and writes a sealed receipt.
+Installed snapshots reuse their recorded content identity after file-metadata
+checks; normal acquisition and model construction do not reread weight files.
+`--verify-model-sha256` opts into full model-byte verification in both
+`model_acquire` and `run_matrix`. Build exposes the same unchecked-by-default
+option and preserves it through acquisition and execution. Metadata checking
+cannot detect same-size edits with restored timestamps; it is not a fresh SHA
+check. The subsequent preflight, canary or measured process accepts the exact
+plan, receipt, and private managed-store locator
 and forces Hugging Face/Transformers/vLLM local-only offline policy. Explicit
 digest-sealed workstation checkpoints are the path-local exception and receive
 the same pre/post-load content check.
