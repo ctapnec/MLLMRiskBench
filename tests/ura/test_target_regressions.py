@@ -1554,6 +1554,67 @@ def _chat_result(
     )
 
 
+@pytest.mark.parametrize("cached,written", [(0, 0), (2, 3)])
+def test_anthropic_retains_real_sdk_cache_usage_for_billing(cached, written):
+    types = pytest.importorskip("anthropic.types")
+    result = _anthropic_result()
+    result.usage = types.Usage(input_tokens=7, output_tokens=3,
+        cache_read_input_tokens=cached, cache_creation_input_tokens=written)
+    target = AnthropicTarget("claude-generic")
+    _install_anthropic_fixture(target, result)
+    response = target.generate([DialogTurn(role="user", content="fixture")])
+    assert response.tokens == {"input": 7 + cached + written, "output": 3,
+        "total": 10 + cached + written, "cached_input": cached, "cache_write_input": written}
+    assert response.raw["provider_usage"]["input_tokens"] == 7
+    assert response.raw["provider_usage"]["cache_creation_input_tokens"] == written
+
+
+@pytest.mark.parametrize("cached,written", [(0, 0), (2, 3)])
+def test_chat_retains_real_sdk_cache_usage_for_billing(cached, written):
+    types = pytest.importorskip("openai.types.completion_usage")
+    result = _chat_result()
+    result.usage = types.CompletionUsage(prompt_tokens=7, completion_tokens=3, total_tokens=10,
+        prompt_tokens_details={"cached_tokens": cached, "cache_write_tokens": written})
+    target = OpenAITarget("gpt-generic")
+    _install_chat_fixture(target, result)
+    response = target.generate([DialogTurn(role="user", content="fixture")])
+    assert response.tokens == {"input": 7, "output": 3, "total": 10,
+        "cached_input": cached, "cache_write_input": written}
+    assert response.raw["provider_usage"]["prompt_tokens_details"] == {
+        "cached_tokens": cached, "cache_write_tokens": written}
+
+
+@pytest.mark.parametrize("provider", ["anthropic", "openai"])
+def test_optional_cache_usage_is_not_invented_when_absent(provider):
+    target = AnthropicTarget("claude-generic") if provider == "anthropic" else OpenAITarget("gpt-generic")
+    install = _install_anthropic_fixture if provider == "anthropic" else _install_chat_fixture
+    install(target, _anthropic_result() if provider == "anthropic" else _chat_result())
+    response = target.generate([DialogTurn(role="user", content="fixture")])
+    assert response.tokens == {"input": 7, "output": 3, "total": 10}
+
+
+@pytest.mark.parametrize("provider", ["anthropic", "openai"])
+@pytest.mark.parametrize("bad", [-1, True, "0"])
+def test_invalid_reported_cache_usage_is_not_used_for_billing(provider, bad):
+    if provider == "anthropic":
+        target, result, install, error = AnthropicTarget("claude-generic"), _anthropic_result(), _install_anthropic_fixture, AnthropicOutputError
+        result.usage.cache_read_input_tokens = bad
+    else:
+        target, result, install, error = OpenAITarget("gpt-generic"), _chat_result(), _install_chat_fixture, OpenAIChatOutputError
+        result.usage.prompt_tokens_details = SimpleNamespace(cached_tokens=bad)
+    install(target, result)
+    with pytest.raises(error):
+        target.generate([DialogTurn(role="user", content="fixture")])
+
+
+def test_chat_cache_parts_cannot_exceed_reported_total_input():
+    target, result = OpenAITarget("gpt-generic"), _chat_result()
+    result.usage.prompt_tokens_details = SimpleNamespace(cached_tokens=5, cache_write_tokens=4)
+    _install_chat_fixture(target, result)
+    with pytest.raises(OpenAIChatOutputError, match="combined cache usage"):
+        target.generate([DialogTurn(role="user", content="fixture")])
+
+
 def test_astra_sends_completion_budget_and_omits_sampling_options() -> None:
     target = build_api_target("openai:gpt-6-astra", config={
         "modalities": ["text", "image"],

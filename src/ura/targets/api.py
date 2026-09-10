@@ -1267,6 +1267,16 @@ class AnthropicTarget(BaseTarget):
             "output": output_tokens,
             "total": input_tokens + output_tokens,
         }
+        # Anthropic input_tokens excludes cache reads and cache creation.
+        # Preserve explicit zero values too; omitted fields remain unknown.
+        for native, normalized in (("cache_read_input_tokens", "cached_input"),
+                                   ("cache_creation_input_tokens", "cache_write_input")):
+            if _provider_field(usage, native) is not None:
+                count = _required_nonnegative_int(usage, native, error=AnthropicOutputError,
+                                                  location="Anthropic usage")
+                tokens[normalized] = count
+                tokens["input"] += count
+                tokens["total"] += count
 
         return Response(
             attempt_id=_dialog_fingerprint(dialog),
@@ -1287,6 +1297,8 @@ class AnthropicTarget(BaseTarget):
                 "requested_model": self.model,
                 "resolved_model": resolved_model,
                 "stop_reason": stop_reason,
+                "provider_usage": {name: _provider_field(usage, name) for name in (
+                    "input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")},
                 "output_truncated": stop_reason == "max_tokens",
                 "stop_sequence": _provider_field(resp, "stop_sequence"),
                 "requested_seed": seed,
@@ -2053,6 +2065,17 @@ class OpenAITarget(BaseTarget):
             "output": output_tokens,
             "total": total_tokens,
         }
+        input_details = _provider_field(usage, "prompt_tokens_details")
+        for native, normalized in (("cached_tokens", "cached_input"),
+                                   ("cache_write_tokens", "cache_write_input")):
+            if _provider_field(input_details, native) is not None:
+                count = _required_nonnegative_int(input_details, native, error=OpenAIChatOutputError,
+                                                  location="OpenAI Chat usage.prompt_tokens_details")
+                if count > input_tokens:
+                    raise OpenAIChatOutputError("OpenAI Chat cache usage exceeds input tokens")
+                tokens[normalized] = count
+        if tokens.get("cached_input", 0) + tokens.get("cache_write_input", 0) > input_tokens:
+            raise OpenAIChatOutputError("OpenAI Chat combined cache usage exceeds input tokens")
 
         return Response(
             attempt_id=_dialog_fingerprint(dialog),
@@ -2073,6 +2096,11 @@ class OpenAITarget(BaseTarget):
                 "requested_model": self.model,
                 "resolved_model": resolved_model,
                 "system_fingerprint": _provider_field(resp, "system_fingerprint"),
+                "provider_usage": {
+                    "prompt_tokens": input_tokens, "completion_tokens": output_tokens, "total_tokens": total_tokens,
+                    "prompt_tokens_details": {name: _provider_field(input_details, name)
+                        for name in ("cached_tokens", "cache_write_tokens")},
+                },
                 **({"requested_reasoning_effort": self.reasoning_effort}
                    if self.reasoning_effort is not None else {}),
                 "finish_reason": finish_reason,
