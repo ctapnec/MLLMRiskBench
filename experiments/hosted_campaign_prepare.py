@@ -167,19 +167,14 @@ def _pilot_ids(plan: Mapping[str, Any], *, policy_evaluable_ids: set[str] | None
 def _pilot_groups(plan: Mapping[str, Any], *, policy_evaluable_ids: set[str] | None = None) -> list[list[str]]:
     """Keep multi-record source clusters intact without conflating retained turns."""
     selected = plan["selected"]
-    cluster_points: dict[tuple[str, str, str], set[str]] = {}
-    for row in selected:
-        cluster = (row["corpus"], row["source"], row["source_cluster_id"])
-        cluster_points.setdefault(cluster, set()).add(row["datapoint_id"])
     groups: dict[tuple[str, ...], list[str]] = {}
     keys = {}
     for row in selected:
         cluster = (row["corpus"], row["source"], row["source_cluster_id"])
         identity = row["input_identity_sha256"]
-        # Several retained conversations for one datapoint can remain separate
-        # jobs: each still contains the whole original one-record cluster.
-        # A shared-image cluster with several datapoints cannot be split this way.
-        key = cluster if len(cluster_points[cluster]) > 1 else (*cluster, identity)
+        # Distinct retained requests for one datapoint still belong to the same
+        # funded source cluster. Readiness must not split them from measurement.
+        key = cluster
         groups.setdefault(key, []).append(identity)
         keys[identity] = key
     if len(groups) < 2:

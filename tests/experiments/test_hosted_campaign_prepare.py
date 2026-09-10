@@ -558,3 +558,15 @@ def test_single_multirecord_cluster_cannot_be_split_into_pilot_and_measurement()
                 for index in range(2)]
     with pytest.raises(ValueError, match="whole source cluster"):
         subject._pilot_groups({"selected": selected})
+
+
+def test_single_datapoint_request_variants_stay_in_one_funded_pilot_cluster():
+    selected = [{"input_identity_sha256": str(index), "corpus": "jailbreakbench_harmful",
+                 "source": "jailbreakbench", "source_cluster_id": "jailbreakbench:harmful:1",
+                 "datapoint_id": "jailbreakbench:harmful:1", "modality": "text", "required_modalities": ["text"]}
+                for index in range(4)]
+    selected.append({**selected[0], "input_identity_sha256": "measured", "source_cluster_id": "other",
+                     "datapoint_id": "other"})
+    assert subject._pilot_groups({"selected": selected}) == [["0", "1", "2", "3"]]
+    with pytest.raises(ValueError, match="whole source cluster"):
+        subject._pilot_groups({"selected": selected[:-1]})
