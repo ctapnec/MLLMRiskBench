@@ -1225,8 +1225,8 @@ pending.add(token);message.textContent=text||'Loading...';
 return function(){if(!pending.delete(token)){return;}if(!busy()){restore();}};}
 function reset(){pending.clear();navigationEnd=null;restore();}
 function navigate(text){if(!navigationEnd){navigationEnd=begin(text);}}
-function cancelled(event){queueMicrotask(function(){if(event.defaultPrevented&&navigationEnd){
-var end=navigationEnd;navigationEnd=null;end();}});}
+function cancelled(event){setTimeout(function(){if(event.defaultPrevented&&navigationEnd){
+var end=navigationEnd;navigationEnd=null;end();}},0);}
 function block(event){event.preventDefault();event.stopImmediatePropagation();}
 window.uraBusy={begin:begin,isBusy:busy,reset:reset,reload:function(){
 if(busy()){return false;}navigate('Refreshing...');window.location.reload();return true;}};

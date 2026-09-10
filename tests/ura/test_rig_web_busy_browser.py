@@ -49,16 +49,20 @@ def console_page(browser):
 
 
 def _burst(page, selector):
-    page.evaluate("selector => { for(let i=0;i<1000;i++) document.querySelector(selector).click(); }", selector)
+    state = page.evaluate("""selector => {
+        for(let i=0;i<1000;i++) document.querySelector(selector).click();
+        return {visible: getComputedStyle(document.getElementById('busy-overlay')).display === 'flex',
+                inert: document.querySelector('main').inert};
+    }""", selector)
     page.wait_for_timeout(80)
+    return state
 
 
 def test_navigation_blocks_duplicate_requests_and_new_page_clears_spinner(console_page):
     page, requests, content = console_page
-    _burst(page, "#navigate")
+    state = _burst(page, "#navigate")
     assert len(requests) == 1
-    assert page.locator("#busy-overlay").is_visible()
-    assert page.locator("main").evaluate("node => node.inert")
+    assert state == {"visible": True, "inert": True}
     requests[0].fulfill(status=200, content_type="text/html", body=content)
     page.wait_for_url("http://ui.test/next")
     page.wait_for_function("!window.uraBusy.isBusy()")
@@ -67,11 +71,11 @@ def test_navigation_blocks_duplicate_requests_and_new_page_clears_spinner(consol
 
 def test_all_forms_are_guarded_without_disabling_submitted_fields(console_page):
     page, requests, content = console_page
-    _burst(page, "#save")
+    state = _burst(page, "#save")
     assert len(requests) == 1
     assert requests[0].request.method == "POST"
     assert requests[0].request.post_data == "answer=kept"
-    assert page.locator("#busy-overlay").is_visible()
+    assert state == {"visible": True, "inert": True}
     requests[0].fulfill(status=500, content_type="text/html", body=content)
     page.wait_for_url("http://ui.test/save")
     page.wait_for_function("!window.uraBusy.isBusy()")
