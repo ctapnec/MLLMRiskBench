@@ -2,6 +2,22 @@
 
 ## Current execution and required Google extension
 
+Update, 10 September at 00:34 UTC: Kimi completed all 34 supplemental inputs
+with usable answers, and its queue moved to Luna. Its 32 measured answers
+include 24 eligible Haiku inputs, now in post-hoc judging. Opus's current image
+probe passed and its remaining measured jobs are continuing. All inherited
+completed inputs remain untouched.
+
+The comparison join is verified on actual retained data and deployed at
+`c1ad488`. The first completed-route comparison is published at
+`/stats/job/hosted-supplement-comparison-deepseek-c1ad488-20260910`: 50 DeepSeek
+answers and 50 source-stratified local counterparts on 50 matching inputs.
+It reads 100 existing judgments from five completed executions, including
+three invalid local verdicts, and makes zero new calls. Historical selected
+usage is USD 0.152922, not a new charge. The full 750-answer local inventory
+remains a separate report. HTTP and server-rendered charts passed; visual
+browser QA was unavailable because no browser connection was exposed.
+
 Update, 10 September at 00:22 UTC: 31 Opus inputs are retained. Its next image
 job stopped in preflight, before a paid request, because the reused image
 probe named the older experiment driver. The scoped successor preserves all
