@@ -7141,6 +7141,11 @@ def _main(argv=None) -> int:
 
     def preflight_scoring_phase() -> None:
         call_budget.raise_if_deadline_reached()
+        if api_specs and not local_specs:
+            from ura.hosted_scheduling import acquire_hosted_local_scoring_slot
+
+            acquire_hosted_local_scoring_slot()
+            call_budget.raise_if_deadline_reached()
         if prebuilt_judge_target is not None:
             base_preflight = getattr(
                 prebuilt_judge_target, "preflight_base", None

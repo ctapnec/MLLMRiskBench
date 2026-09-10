@@ -26,8 +26,10 @@ import re
 import math
 import mimetypes
 import os
+import random
 import ssl
 import time
+from email.utils import parsedate_to_datetime
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -460,6 +462,27 @@ def _retryable_transport_error(exc: BaseException, *, provider: str = "") -> boo
     )
 
 
+def _transport_retry_delay(exc: BaseException, attempt_number: int) -> float:
+    """Respect provider Retry-After; spread clients when no delay is provided."""
+    headers = getattr(getattr(exc, "response", None), "headers", None)
+    if headers is None:
+        headers = getattr(exc, "headers", {})
+    delay = None
+    if hasattr(headers, "get"):
+        value = headers.get("retry-after", headers.get("Retry-After"))
+        if isinstance(value, str):
+            try:
+                delay = float(value)
+            except ValueError:
+                try:
+                    delay = parsedate_to_datetime(value).timestamp() - time.time()
+                except (ValueError, TypeError, OverflowError):
+                    pass
+    if delay is not None and math.isfinite(delay) and delay >= 0:
+        return max(delay, 0.5 * (2 ** (attempt_number - 1)))
+    return 0.5 * (2 ** (attempt_number - 1)) + random.uniform(0.0, 0.5)
+
+
 def _call_with_retry(
     call: Any,
     request: dict[str, Any],
@@ -501,7 +524,7 @@ def _call_with_retry(
                     provider=provider,
                     transport_attempts=audit,
                 ) from exc
-            time.sleep(0.5 * (2 ** (attempt_number - 1)))
+            time.sleep(_transport_retry_delay(exc, attempt_number))
             continue
         elapsed_ms = (time.perf_counter() - started) * 1000.0
         audit.append({
