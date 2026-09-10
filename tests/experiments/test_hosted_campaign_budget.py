@@ -127,6 +127,24 @@ def test_projection_binds_expected_and_maximum_token_costs() -> None:
     assert anthropic["campaign_cap_microusd"] == 72_000_000
 
 
+def test_configured_batch_keeps_exact_fable_and_sol_generation_identities():
+    routes = [{**row, "call_cap": 2} for row in subject.ROUTES]
+    result = _projection(route_configuration=routes)
+    assert result["status"] == "budget_fit"
+    fixed = [row for row in routes if row.get("inherent_config")]
+    assert len(fixed) == 2
+    for row in fixed:
+        observed = next(value for value in result["routes"] if value["target_spec"] == row["spec"])
+        assert observed["maximum_output_tokens_per_call"] == row["max_output_tokens"] == 8192
+        assert observed["paid_call_cap"] == 2
+    for field, value in [("max_output_tokens", 4096), ("provider", "kimi"), ("model", "other"),
+                         ("inherent_config", False)]:
+        changed = copy.deepcopy(routes)
+        next(row for row in changed if row.get("inherent_config"))[field] = value
+        with pytest.raises(ValueError, match="configured route identity"):
+            _projection(route_configuration=changed)
+
+
 def test_api_config_maximum_is_not_a_prose_only_assumption() -> None:
     config = _api_config()
     config["openai:gpt-5.5"]["max_tokens"] = 25_000

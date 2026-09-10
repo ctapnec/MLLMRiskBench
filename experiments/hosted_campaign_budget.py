@@ -358,15 +358,21 @@ def build_projection(
     if route_configuration is not None:
         required = {"label", "spec", "provider", "model", "call_cap", "max_output_tokens"}
         optional = {"reasoning_effort", "maximum_priced_input_tokens",
-                    "reservation_rate_multiplier", "reservation_price_condition"}
+                    "reservation_rate_multiplier", "reservation_price_condition", "inherent_config"}
         if not isinstance(routes, (list, tuple)) or not routes:
             raise ValueError("configured routes must be a nonempty list")
         seen = set()
         for route in routes:
+            inherent = isinstance(route, Mapping) and route.get("inherent_config") is True
+            fixed = next((row for row in ROUTES if row.get("inherent_config") is True
+                          and isinstance(route, Mapping) and row["spec"] == route.get("spec")), None)
+            fixed_identity = inherent and fixed is not None and all(
+                route.get(key) == fixed[key] for key in ("spec", "provider", "model", "max_output_tokens"))
             if (not isinstance(route, Mapping) or not required <= set(route) <= required | optional
                 or any(not isinstance(route[k], str) or not route[k].strip()
                        for k in ("label", "spec", "provider", "model"))
-                or route["spec"] != route["provider"] + ":" + route["model"]
+                or (not fixed_identity and route["spec"] != route["provider"] + ":" + route["model"])
+                or ("inherent_config" in route and not fixed_identity)
                 or route["spec"] in seen
                 or any(type(route[k]) is not int or route[k] <= 0 for k in
                        ("call_cap", "max_output_tokens"))
