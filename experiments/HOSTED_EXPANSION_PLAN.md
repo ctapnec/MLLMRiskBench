@@ -351,7 +351,12 @@ calls or changed inputs.
 
 Carry the reviewed Sol Pro aggregate-work contingency into each future
 funding slice: USD 0.30 per unstarted Sol input, in addition to its counted
-request reservation, within the unchanged OpenAI ceiling. This is not a
+request reservation, within the unchanged OpenAI ceiling. Allocate this
+contingency before the Sol route is dispatched. Other already-funded OpenAI
+routes may run first and release unused exposure through their retained usage
+records; a pending Sol allocation must not idle the other providers. Do not
+dispatch Sol if its contingency still cannot fit, release an unknown charge,
+or enlarge the provider ceiling. This is not a
 guaranteed bound on provider model work. Preserve unknown exact charges and
 the original paid outputs; do not retry an answer to repair accounting.
 
