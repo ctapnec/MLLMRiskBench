@@ -2936,7 +2936,7 @@ class GeminiTarget(BaseTarget):
         latency_ms = (time.perf_counter() - start) * 1000.0
 
         try:
-            return self._normalize_response(resp, seed=seed, latency_ms=latency_ms,
+            return self._normalize_response(resp, dialog, seed=seed, latency_ms=latency_ms,
                                             transport_attempts=transport_attempts)
         except GeminiOutputError as exc:
             candidates = _provider_field(resp, "candidates")
@@ -2954,7 +2954,7 @@ class GeminiTarget(BaseTarget):
             }
             raise
 
-    def _normalize_response(self, resp: Any, *, seed: int | None, latency_ms: float,
+    def _normalize_response(self, resp: Any, dialog: list[DialogTurn], *, seed: int | None, latency_ms: float,
                             transport_attempts: list[dict[str, Any]]) -> Response:
         prompt_feedback = _provider_field(resp, "prompt_feedback")
         prompt_block_reason = _enum_name(
