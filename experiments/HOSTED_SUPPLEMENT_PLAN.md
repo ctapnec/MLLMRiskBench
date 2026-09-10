@@ -2,6 +2,28 @@
 
 ## Current execution and required Google extension
 
+Update, 10 September at 00:22 UTC: 31 Opus inputs are retained. Its next image
+job stopped in preflight, before a paid request, because the reused image
+probe named the older experiment driver. The scoped successor preserves all
+31 inputs and allocates one of the remaining 22 already-funded inputs to a
+current image transport probe. No completed input is repeated and the old
+failed job remains separate. Kimi continues independently. Post-hoc analysis
+follows the recorded successor and preserves completed Haiku batches.
+
+The additional-context audit covers all 29 reserved source aliases: 15 in the
+eleven-model supplement and 14 in Google. All have the same prompt, modality,
+risk, expected behavior, source policy and seed as their representative;
+24 differ in DataPoint identity and five in framework membership. This audit
+alone authorizes no verdict reuse. Any alias link must also bind the exact
+same generated output and effective judging request. A new model output
+always requires its own assessment. Source aliases are not additional
+independent observations and their unused reservations remain conservative.
+
+The read-only comparison join now accepts separately completed judging
+batches without constructing a combined execution ledger or making calls.
+Its focused rig and reversed-fix checks pass at `c1ad488`. Actual retained-data
+publication is being checked separately; this is not a completed comparison.
+
 Update, 9 September at 23:50 UTC: DeepSeek's 55-input, 16k continuation is
 complete. The earlier 8k condition, including its missing final answer, remains
 separate. Opus retained its completed image probe; a text probe that split an

@@ -5986,6 +5986,26 @@ suffix), remains process-memory only (legacy file entries are scrubbed), and is
 forwarded only to the acquisition children (`model_acquire` and
 `export_aggregators`); no other child receives it.
 
+Completed Haiku batches can be compared without executing the judge again.
+`retained_judge_partitioned_report.build_report` accepts a matched selection,
+its validated local and hosted views, and the original plan/execution directory
+for each completed source batch. Each selected answer must resolve to an
+unambiguous judgment under the same judge configuration. The reader checks
+source artifact identities, completion and per-batch usage before calculating
+input-balanced comparisons. Source spending ledgers remain separate: the
+displayed selected usage is historical accounting, not a new budget or an
+invoice. Missing, changed or ambiguous judgments stop only report publication,
+not unrelated model collection. Report the selected paired sample separately
+from the full same-input local-answer inventory.
+
+Transport probes must match the actual generation revision, not merely the
+same model name. Before reusing a completed probe in a continuation, compare
+its harness, experiment driver, project revision, route, modality, scope and
+age. If a software correction changed the driver, preserve the old probe and
+use an already-funded, unstarted whole input as a new diagnostic where the
+declared program allows it. Do not relabel a completed measured answer as a
+probe, rewrite a receipt or repeat an already paid request to repair bookkeeping.
+
 Console-form to runbook-section mapping (the console builds the identical
 argument vectors; nothing below is console-only):
 
