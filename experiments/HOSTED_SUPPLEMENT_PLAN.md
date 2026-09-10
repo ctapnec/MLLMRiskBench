@@ -21,6 +21,8 @@ attempt count. The fix passed 24 focused rig tests, lint and three reversed-fix
 checks at `4ee469a`. Google continues on that checkout, selecting only the
 157 unpaid Flash inputs and all 162 Pro inputs. New readiness inputs are drawn
 from these same funded whole clusters. No runtimes were installed.
+The console is also deployed at `4ee469a`; existing Stats diagrams and HTTP
+responses pass without restarting any active campaign.
 
 The final comparison dependencies now include both the Luna prefix and the
 separately scored saved Google answer. Completed local answers and all earlier
