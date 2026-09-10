@@ -108,6 +108,30 @@ def test_shared_judgments_settle_after_checkpoint_and_resume_without_calls(tmp_p
         subject.execute(**{k: v for k, v in kwargs.items() if not k.startswith("shared_")}, judge_factory=lambda *_: fake)
 
 
+def test_shared_pause_before_http_keeps_input_pending_and_resumes_prefix(tmp_path, monkeypatch):
+    prepared, kwargs, budget, config, _ = prepared_shared(tmp_path, monkeypatch)
+    fake = HookHaiku(config)
+    original = budget.reserve
+    with monkeypatch.context() as patch:
+        def paused(call_id, number, *, provider):
+            if call_id == 'judge-1':
+                (budget.root / 'paid-circuit.json').write_text('{}')
+            return original(call_id, number, provider=provider)
+        patch.setattr(budget, 'reserve', paused)
+        with pytest.raises(RuntimeError, match='input remains unstarted'):
+            subject.execute(**kwargs, judge_factory=lambda *_: fake)
+    ledger = json.loads((prepared['out'] / 'execution.json').read_text())
+    assert ledger['completed_judgments'] == ledger['judge_calls_reserved'] == 1
+    assert ledger['http_attempts_reserved'] == 4 and ledger['http_attempts_observed'] == 1
+    assert ledger['state'] == 'active' and not (prepared['out'] / 'circuit.json').exists()
+    assert budget.reserved_attempt_count('judge-1') == 0
+    assert fake.http_calls == 1
+    (budget.root / 'paid-circuit.json').unlink()
+    completed = subject.execute(**kwargs, judge_factory=lambda *_: fake)
+    assert json.loads(completed.read_text())['judge_calls'] == 2
+    assert fake.http_calls == 2  # The saved first verdict was not requested again.
+
+
 @pytest.mark.parametrize("change", ["request_sha256", "input_tokens_estimate", "max_output_tokens", "call_id", "extra"])
 def test_request_or_funding_mismatch_refused_before_client_factory(tmp_path, monkeypatch, change):
     _, kwargs, _, _, _ = prepared_shared(tmp_path, monkeypatch)

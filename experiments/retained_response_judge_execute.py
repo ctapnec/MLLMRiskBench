@@ -982,6 +982,26 @@ def execute(
                     finally:
                         os.close(directory_fd)
             except Exception as exc:
+                from experiments.hosted_attempt_budget import BudgetError
+                if (shared_binding is not None and isinstance(exc, BudgetError)
+                    and str(exc) == "shared paid-provider circuit is open"
+                    and physical["last_reserved"] == 0
+                    and shared_budget.reserved_attempt_count(
+                        shared_requests[row["retained_row_sha256"]]["call_id"]) == 0):
+                    # Another worker paused the shared campaign before this
+                    # request reached HTTP. Keep its input pending, not billed
+                    # or misclassified as an ambiguous failed judge response.
+                    _write_atomic(root / f"shared-pause-{index:06d}.json", {
+                        "status": "waiting_on_shared_budget", "plan_id": plan["plan_id"],
+                        "selection_index": index, "retained_row_sha256": row["retained_row_sha256"],
+                        "physical_http_attempts": 0, "completed_judgments": ledger["completed_judgments"],
+                    })
+                    ledger["judge_calls_reserved"] -= 1
+                    ledger["http_attempts_reserved"] -= DEFAULT_HOSTED_HTTP_ERROR_RETRIES + 1
+                    ledger["state"] = "active"
+                    ledger["current_reservation"] = None
+                    _write_atomic(ledger_path, ledger)
+                    raise RuntimeError("shared campaign paused before judge HTTP; input remains unstarted") from exc
                 if shared_binding is not None:
                     _open_shared_circuit(shared_budget, row, exc)
                     if physical["last_reserved"]:
