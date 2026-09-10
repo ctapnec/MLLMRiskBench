@@ -132,11 +132,11 @@ def candidates_from_cells(cells: Sequence[Mapping[str, Any]]) -> list[dict]:
         if not str(cell["model"]).startswith(("ollama:", "vllm:")):
             raise ValueError("hosted subset source must be a local target")
         corpus_sha = _digest(manifest["dataset_hashes"].get("corpus"), "converted corpus")
-        recorded = {}
-        if cell.get("complete_path") is not None:
+        recorded = cell.get("artifact_descriptors", {})
+        if not recorded and cell.get("complete_path") is not None:
             from ura.strict_json import strict_json_loads
             marker_path = Path(cell["complete_path"])
-            recorded = strict_json_loads(marker_path.read_text(encoding="utf-8"))["artifacts"]
+            recorded = strict_json_loads(marker_path.read_text(encoding="utf-8")).get("artifacts", {})
         artifacts = {}
         for key, path in sorted(cell["artifacts"].items()):
             prior = recorded.get(key)

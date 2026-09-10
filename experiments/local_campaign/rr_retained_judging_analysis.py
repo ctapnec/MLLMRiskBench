@@ -103,9 +103,14 @@ def _report_views(source, records: dict, completion: dict, *, joined: bool,
     if completion["checkpoint"] is not None:
         persisted.append(completion["checkpoint"])
     artifacts = {f"source_{index:03}": Path(item["path"]) for index, item in enumerate(persisted)}
+    artifact_descriptors = {f"source_{index:03}": {"file": Path(item["path"]).name,
+        "sha256": item["sha256"], "bytes": item["bytes"]} for index, item in enumerate(persisted)}
     checkpoint_root = Path(completion["launch"]["path"]).parent
     completion_path = completion_path or checkpoint_root / "completion.json"
     artifacts["scoring_completion"] = completion_path
+    completion_descriptor = _descriptor(completion_path, label="RR scoring completion")
+    artifact_descriptors["scoring_completion"] = {"file": completion_path.name,
+        "sha256": completion_descriptor["sha256"], "bytes": completion_descriptor["bytes"]}
     original_ids = list(source.judgments)
     failures = (recovery.load_failures(checkpoint_root / "evaluator-failures", source)
                 if completion["schema"] == "ura-rr-retained-judging-completion/2" else {})
@@ -143,7 +148,7 @@ def _report_views(source, records: dict, completion: dict, *, joined: bool,
             cell = {
                 "run_id": source.manifest.run_id, "model": source.manifest.models[0],
                 "manifest": manifest, "manifest_path": manifest_path, "complete_path": completion_path,
-                "artifacts": artifacts,
+                "artifacts": artifacts, "artifact_descriptors": artifact_descriptors,
                 "attempts": {attempt.id: _portable_attempt_dump(attempt) for attempt in runner.attempts},
                 # Input stamps come from the exactly reconstructed corpus, not
                 # from whether a classifier produced a usable safety verdict.

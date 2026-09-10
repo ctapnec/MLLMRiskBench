@@ -45,6 +45,27 @@ def _cell(tmp_path: Path, *, count: int = 8, model: str = "ollama:retained-model
             "judgments": judgments, "responses": {ident: {"output_turns": []} for ident in attempts}}
 
 
+def test_separate_scoring_completion_reuses_source_descriptors(tmp_path, monkeypatch):
+    cell = _cell(tmp_path, count=2)
+    expected = subject.candidates_from_cells([cell])
+    artifact = cell['artifacts']['attempts']
+    cell['artifact_descriptors'] = {'attempts': {
+        'file': artifact.name, 'sha256': hashlib.sha256(artifact.read_bytes()).hexdigest(),
+        'bytes': artifact.stat().st_size}}
+    marker = tmp_path / 'completion.json'
+    marker.write_text(json.dumps({'schema': 'ura-rr-retained-judging-completion/2',
+                                  'retained_responses': 2}))
+    cell['complete_path'] = marker
+    original_read = Path.read_bytes
+
+    def no_artifact_reread(path):
+        assert path != artifact, 'unchanged retained artifact was rehashed'
+        return original_read(path)
+
+    monkeypatch.setattr(Path, 'read_bytes', no_artifact_reread)
+    assert subject.candidates_from_cells([cell]) == expected
+
+
 def _budget() -> dict:
     value = {"schema": subject.BUDGET_SCHEMA, "status": "budget_fit",
              "sources": {"api_config": DESCRIPTOR}, "routes": [{

@@ -373,6 +373,13 @@ the original paid outputs; do not retry an answer to repair accounting.
 3. Quote actual requests, reconcile outstanding liabilities and fund the work.
 4. Execute target collection on the rig in tmux, preserving checkpoints.
 5. Complete local and Haiku judging, then publish the separate Stats report.
+6. After the interrupted hosted collection finishes, reconcile the console's
+   Operational costs tab with the retained target and judging ledgers. Show
+   reported spending, unknown charges, reserved exposure and remaining budget
+   separately. Missing cost integration must not appear as zero spending.
+   Include all campaign cohorts without double-counting resumed jobs or source
+   aliases; verify the UI totals against the same billing records, with no new
+   paid calls.
 
 Reuse installed runtimes and the tested deployed adapters. Do not repeat
 Windows tests, framework installations or completed readiness work. Register
