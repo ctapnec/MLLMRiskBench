@@ -2272,10 +2272,12 @@ active=true;lastFocus=opener||document.activeElement;modal.classList.add('is-ope
 modal.setAttribute('aria-modal','true');document.body.classList.add(
 'stats-modal-open');var nodes=focusable(modal);(nodes[0]||modal).focus();}
 function load(href){
+var release=window.uraBusy.begin('Loading campaign statistics...');
+var controller=new AbortController(),timer=setTimeout(function(){controller.abort();},90000);
 var current=++requestId;body.setAttribute('aria-busy','true');
 body.innerHTML="<p class='note'>Loading " +
 "validated campaign statistics...</p>";var separator=href.indexOf('?')>=0?'&':'?';
-fetch(href+separator+'fragment=1',{credentials:'same-origin',headers:{
+fetch(href+separator+'fragment=1',{credentials:'same-origin',signal:controller.signal,headers:{
 'X-Requested-With':'ura-stats-modal'}}).then(function(response){
 if(!response.ok){throw new Error('detail request failed');}return response.text();})
 .then(function(markup){if(active&&current===requestId){body.innerHTML=markup;
@@ -2283,7 +2285,7 @@ body.removeAttribute('aria-busy');}})
 .catch(function(){if(active&&current===requestId){body.innerHTML=
 "<div class='notice red'>Campaign details could not be loaded. <a href='"+
 href+"'>Open the standalone detail page</a>.</div>";
-body.removeAttribute('aria-busy');}});}
+body.removeAttribute('aria-busy');}}).finally(function(){clearTimeout(timer);release();});}
 document.querySelectorAll('[data-stats-job]').forEach(function(trigger){
 trigger.addEventListener('click',function(event){event.preventDefault();
 open(trigger);if(title){title.textContent=trigger.getAttribute('data-stats-job')||

@@ -1192,47 +1192,75 @@ def _page(title: str, body: str, active: str = "") -> bytes:
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
         f"<title>{html.escape(title)}</title>"
         "<link rel='icon' type='image/svg+xml' href='/static/favicon.svg'>"
-        "<link rel='stylesheet' href='/static/style.css'></head><body>"
+        "<link rel='stylesheet' href='/static/style.css'></head><body>" + _BUSY_OVERLAY +
         f"<nav><span class='brand'>{_icon('logo', size=21)}URA rig console"
         f"</span>{links}</nav>"
         f"<main>{body}"
         "<footer class='note'>The CLI and filesystem artifacts remain "
         "authoritative. This console never reinterprets experiment "
         "semantics; diagnostic evidence never authorizes a campaign."
-        "</footer></main>" + _PAGE_TABS_SCRIPT + _BUSY_OVERLAY + "</body></html>"
+        "</footer></main>" + _PAGE_TABS_SCRIPT + "</body></html>"
     ).encode("utf-8")
 
 
-#: A modal busy overlay shown while a slow POST (a pricing fetch, a reindex) is
-#: in flight, so the operator sees progress and cannot double-submit.  A form
-#: opts in with ``data-busy="<message>"``; the overlay is dismissed if the page
-#: is restored from the back/forward cache.
+# Every backend wait uses one shared guard. Form data-busy only customizes text.
+_BUSY_SCRIPT = """(function(){
+var overlay=document.getElementById('busy-overlay'),message=document.getElementById('busy-msg');
+var pending=new Set(),blocked=[],lastFocus=null,navigationEnd=null;
+function busy(){return pending.size>0;}
+function restore(){
+overlay.classList.remove('on');overlay.setAttribute('aria-hidden','true');
+document.documentElement.removeAttribute('aria-busy');
+blocked.forEach(function(item){item.node.inert=item.inert;});blocked=[];
+if(lastFocus&&lastFocus.isConnected&&lastFocus.focus){lastFocus.focus();}lastFocus=null;
+}
+function begin(text){var token={};
+if(!busy()){
+lastFocus=document.activeElement;
+blocked=Array.prototype.map.call(document.querySelectorAll('body > nav,body > main'),
+function(node){var previous=Boolean(node.inert);node.inert=true;return {node:node,inert:previous};});
+overlay.classList.add('on');overlay.setAttribute('aria-hidden','false');
+document.documentElement.setAttribute('aria-busy','true');overlay.focus();}
+pending.add(token);message.textContent=text||'Loading...';
+return function(){if(!pending.delete(token)){return;}if(!busy()){restore();}};}
+function reset(){pending.clear();navigationEnd=null;restore();}
+function navigate(text){if(!navigationEnd){navigationEnd=begin(text);}}
+function cancelled(event){queueMicrotask(function(){if(event.defaultPrevented&&navigationEnd){
+var end=navigationEnd;navigationEnd=null;end();}});}
+function block(event){event.preventDefault();event.stopImmediatePropagation();}
+window.uraBusy={begin:begin,isBusy:busy,reset:reset,reload:function(){
+if(busy()){return false;}navigate('Refreshing...');window.location.reload();return true;}};
+document.addEventListener('click',function(event){
+if(busy()){block(event);return;}
+if(event.defaultPrevented||event.button!==0||event.ctrlKey||event.metaKey||event.shiftKey||event.altKey){return;}
+var link=event.target.closest&&event.target.closest('a[href]');
+if(!link||link.hasAttribute('download')||(link.target&&link.target!=='_self')||
+link.matches('[data-stats-job],[data-stats-report]')){return;}
+var raw=link.getAttribute('href');if(!raw||raw.charAt(0)==='#'){return;}
+var url=new URL(link.href,window.location.href);
+if(url.origin!==window.location.origin||!/^https?:$/.test(url.protocol)){return;}
+if(url.hash&&url.pathname===window.location.pathname&&url.search===window.location.search){return;}
+navigate(link.getAttribute('data-busy')||'Loading page...');cancelled(event);
+},true);
+document.addEventListener('submit',function(event){
+if(busy()){block(event);return;}if(event.defaultPrevented){return;}
+var form=event.target,target=(event.submitter&&event.submitter.formTarget)||form.target;
+if((target&&target!=='_self')||form.method==='dialog'){return;}
+navigate(form.getAttribute('data-busy')||'Submitting...');cancelled(event);
+},true);
+['keydown','change','input'].forEach(function(name){document.addEventListener(name,function(event){
+if(busy()){block(event);}},true);});
+window.addEventListener('beforeunload',function(event){navigate('Loading page...');cancelled(event);});
+window.addEventListener('pageshow',reset);
+})();"""
+
 _BUSY_OVERLAY = (
-    "<div id='busy-overlay' role='alert' aria-live='assertive'>"
+    "<div id='busy-overlay' role='status' aria-live='polite' aria-hidden='true' tabindex='-1'>"
     "<div class='box'><div class='spin'></div>"
     "<div class='msg' id='busy-msg'>Working...</div>"
-    "<div class='sub'>This can take up to a minute. Keep this tab open.</div>"
+    "<div class='sub'>Waiting for the server. Please wait before trying again.</div>"
     "</div></div>"
-    "<script>(function(){"
-    "var ov=document.getElementById('busy-overlay');"
-    "var msg=document.getElementById('busy-msg');"
-    "document.addEventListener('submit',function(e){"
-    "var f=e.target;"
-    "if(!f||!f.hasAttribute('data-busy'))return;"
-    "if(f.dataset.busyGo){e.preventDefault();return;}"  # block double-submit
-    "f.dataset.busyGo='1';"
-    "msg.textContent=f.getAttribute('data-busy')||'Working...';"
-    "ov.classList.add('on');"
-    "var b=f.querySelector('button[type=submit],button:not([type])');"
-    "if(b)b.classList.add('is-busy');"
-    "},true);"
-    "window.addEventListener('pageshow',function(ev){"
-    "if(!ev.persisted)return;"
-    "ov.classList.remove('on');"
-    "document.querySelectorAll('form[data-busy]').forEach(function(f){"
-    "delete f.dataset.busyGo;"
-    "var b=f.querySelector('button');if(b)b.classList.remove('is-busy');});"
-    "});})();</script>"
+    "<script>" + _BUSY_SCRIPT + "</script>"
 )
 
 

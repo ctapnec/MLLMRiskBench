@@ -386,6 +386,25 @@ def test_paid_empty_response_is_durable_then_opens_global_circuit_before_next_in
     assert admission.budget.snapshot()["pools"]["openai:target"]["unknown_usage_attempts"] == 1
 
 
+@pytest.mark.parametrize("purpose", ["attestation_probe", "diagnostic_canary", "measured_run"])
+def test_usable_truncated_response_never_opens_paid_circuit(tmp_path, purpose):
+    points, attacker, target, calls, admission = _setup(tmp_path)
+    admission.job["purpose"] = purpose
+    create = target._client.chat.completions.create
+
+    def truncated(**request):
+        result = create(**request)
+        result.choices[0].finish_reason = "length"
+        return result
+
+    target._client.chat.completions.create = truncated
+    records = []
+    _runner(attacker, target, admission).run(points, on_response=records.append)
+    assert len(records) == len(calls) == 2
+    assert all(row["response"]["raw"]["output_truncated"] is True for row in records)
+    assert not (admission.budget.root / "paid-circuit.json").exists()
+
+
 def test_paid_target_cannot_call_without_response_checkpoint(tmp_path):
     points, attacker, target, calls, admission = _setup(tmp_path)
     with pytest.raises(ValueError, match="durable response checkpoint"):

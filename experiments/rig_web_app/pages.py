@@ -559,7 +559,7 @@ class PagesMixin:
             )
         stage_files = "".join(stage_sections)
         refresh = (
-            "<script>setTimeout(function(){location.reload();}, 10000);</script>"
+            "<script>setTimeout(function(){window.uraBusy.reload();}, 10000);</script>"
             if running_rows
             else ""
         )
@@ -1291,14 +1291,14 @@ class PagesMixin:
             "'.chip[data-state=\"\"]');if(all){all.classList.add('on');}}"
             "if(box){box.addEventListener('input',function(){syncFilters();apply();});}"
             "fromBox.addEventListener('change',function(){explicitFrom=true;"
-            "syncFilters();location.reload();});"
+            "syncFilters();window.uraBusy.reload();});"
             "toBox.addEventListener('change',function(){explicitTo=true;"
-            "syncFilters();location.reload();});"
-            "syncFilters();if(needsServerWindow){location.reload();return;}apply();"
+            "syncFilters();window.uraBusy.reload();});"
+            "syncFilters();if(needsServerWindow){window.uraBusy.reload();return;}apply();"
             "})();</script>"
         )
         refresh = (
-            "<script>setTimeout(function(){location.reload();}, 5000);</script>"
+            "<script>setTimeout(function(){window.uraBusy.reload();}, 5000);</script>"
             if tallies.get("running", 0)
             else ""
         )
@@ -1552,7 +1552,7 @@ class PagesMixin:
             else ""
         )
         refresh = (
-            "<script>setTimeout(function(){location.reload();}, 5000);</script>"
+            "<script>setTimeout(function(){window.uraBusy.reload();}, 5000);</script>"
             if campaign.state == "running"
             else ""
         )
@@ -1653,7 +1653,7 @@ class PagesMixin:
             + quote(job.artifact_relative)
             + "'>Browse exact output artifacts</a></p></div>"
             + (
-                "<script>setTimeout(function(){location.reload();}, 5000);</script>"
+                "<script>setTimeout(function(){window.uraBusy.reload();}, 5000);</script>"
                 if job.state == "running"
                 else ""
             )
@@ -1673,7 +1673,7 @@ class PagesMixin:
             else ""
         )
         refresh = (
-            "<script>setTimeout(function(){location.reload();}, 2000);</script>"
+            "<script>setTimeout(function(){window.uraBusy.reload();}, 2000);</script>"
             if state == "running"
             else ""
         )
