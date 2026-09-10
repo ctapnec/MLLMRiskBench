@@ -385,7 +385,7 @@ def _transport_request_id(value: Any) -> str | None:
 def _transport_error_body(exc: BaseException) -> Mapping[str, Any]:
     body = getattr(exc, "body", None)
     if body is None and type(exc).__module__.startswith("google.genai.errors"):
-        body = getattr(exc, "response_json", None)
+        body = getattr(exc, "details", None)
     if not isinstance(body, Mapping):
         return {}
     error = body.get("error", body)

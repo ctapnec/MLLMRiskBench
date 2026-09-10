@@ -6549,7 +6549,7 @@ def _safe_call_audit(value: Any) -> dict[str, Any]:
         "transport_attempt_count", "logical_call_count", "provider",
         "operation", "resolved_model", "status_code", "error_type",
         "provider_request_id", "provider_response_id",
-        "provider_error_code", "provider_error_type", "transport_retryable",
+        "provider_error_code", "provider_error_type", "transport_retryable", "provider_funding_status",
         "finish_reason", "requested_output_tokens", "reported_input_tokens",
         "reported_output_tokens", "reported_total_tokens", "reported_reasoning_tokens",
     }

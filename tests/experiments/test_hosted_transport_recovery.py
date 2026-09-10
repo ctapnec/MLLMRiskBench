@@ -23,7 +23,7 @@ def _failed_prefix(tmp_path, monkeypatch, *, tight=False):
     checkpoint = tmp_path / "original.responses.checkpoint.jsonl"
     # Reproduce the old installed behavior: one network exception was terminal.
     with monkeypatch.context() as patch:
-        patch.setattr(api, "_retryable_transport_error", lambda exc: False)
+        patch.setattr(api, "_retryable_transport_error", lambda exc, **kwargs: False)
         with pytest.raises(RuntimeError, match="durable response"):
             _runner(attacker, target, original).run(
                 points, on_response=lambda row: Runner.append_checkpoint(checkpoint, row),
