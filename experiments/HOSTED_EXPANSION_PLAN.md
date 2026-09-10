@@ -176,9 +176,21 @@ on 1,401 matching input identities. None has a reusable earlier Haiku verdict
 for this newly selected cohort. All 31 additional media files have been
 located and hash-verified without downloads. The first prepared batch contains
 ten inputs for each multimodal route and eight for DeepSeek: 128 target inputs,
-plus twenty matching local answers needing Haiku assessment. It has not yet
-made target or judge calls. Full request counting and funding follow exact
-materialization; this batch is not the full expansion.
+plus twenty matching local answers needing Haiku assessment. Counting produced
+128 request receipts using 120 count-endpoint requests, and this batch is now
+funded. By 10:28 UTC, Sonnet's ten assignments and DeepSeek's eight assignments
+were complete. Their three eligible measured outputs have separate Haiku
+assessments; diagnostic and source-ineligible outcomes remain outside that
+measured judging population. All twenty matching saved local answers have
+valid Haiku verdicts, costing USD 0.026716 from reported token usage. These are
+first-batch results, not completion of the expansion.
+
+The next disjoint input slice is prepared without a second spending allocation.
+It cannot dispatch while an earlier allocation can still consume the same
+provider or judge funds. Count and fund it only after reconciling the closed
+preceding work against the cumulative ceilings. Future batches use the cache
+usage preservation correction documented in RA-446; old unknown charges stay
+held and old responses are not repeated to recover missing billing metadata.
 
 Use only inputs already executed by the local campaign. Preserve prompt,
 conversation, media bytes, seed, framework, arm, corpus and source-policy
