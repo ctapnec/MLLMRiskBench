@@ -20,7 +20,16 @@ _FAKE_GENERATE = FakeHaiku.generate
 def independent_batches(completed, tmp_path):  # noqa: F811
     args, pair_plan, views = completed
     sources = []
-    api = args["plan_path"].parent / "api.json"
+    # Unlike the predecessor report fixture, exercise the real cascade binding.
+    for cells, *_ in views.values():
+        for cell in cells:
+            cell["manifest"]["judges"] = ["rules"]
+            cell["manifest"]["config"].update({
+                "components": {"judge_cascade": {"judges": ["rules"]}},
+                "realized_identities": {"judges": [
+                    {"stage": 0, "judge": "rules", "snapshot": {"judge": "rules"}},
+                ]},
+            })
     # Reuse the real executor fixture's exact API/pricing files.
     candidates = list(args["plan_path"].parent.iterdir())
     api = next(p for p in candidates if p.is_file() and p.suffix == ".json"
