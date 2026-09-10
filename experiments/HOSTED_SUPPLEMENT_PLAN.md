@@ -16,6 +16,19 @@ At this snapshot 635/676 supplemental and 83/324 Google inputs have started;
 hosted Haiku has 447 outcomes, two invalid. The old Google prefix still needs
 its own local and Haiku judgments. Recovery and final publication are pending.
 
+The correction at `c6ee49d` passes 141 focused rig tests, lint and two
+reversed-fix checks. The reviewed allocation preserves the exact paid ledger
+and original budget plan, covers the recorded Sol shortfall, and reserves an
+additional USD 0.30 for each of the 23 unstarted Sol inputs. This USD 6.90
+contingency leaves USD 1.314641 OpenAI margin beyond commitments, within the
+unchanged USD 28 pool cap. It is not a guarantee of maximum provider usage.
+Both queue continuations restarted at 03:17 UTC; their original Runner
+revisions and checkpoint identities are preserved, while the separately
+identified monetary controller uses the corrected allocation code. Neither
+input text nor output allowance changes. The saved partial responses are
+restored through Runner checkpoints, not sent again. Judging and final-report
+waiters have separately registered successor jobs.
+
 Update, 10 September at 02:49 UTC: the expanded completed-route comparison is
 published at `/stats/job/hosted-completed-comparison-publication-0248-20260910`.
 It contains 436 hosted answers and all 680 existing local counterparts across
