@@ -2,6 +2,22 @@
 
 ## Current execution and required Google extension
 
+Update, 10 September at 04:55 UTC: GPT-5.5 completed all 18 assigned inputs,
+including its explicitly retained HTTP 400 policy outcome. All 676 inputs in
+the eleven-model supplement have now been attempted. Pro is the sole remaining
+target route. GPT-5.5 analysis then exposed an older summary-only identity
+comparison in Level-1: a policy-only cell has no served-model identity. The
+reader correction at `2fb01af` passes 125 focused rig tests, lint, a reversed-fix
+regression and readback of the exact completed GPT-5.5 files; reverting the
+fix also reproduces the rejection on those real files. A verification-launcher
+argument omission was corrected without repeating passed tests.
+
+The stopped analysis and final-comparison workers have separate successors.
+The failed zero-call analysis preparation is preserved. Previously completed
+judgments and target files are unchanged; Pro continues on its original
+running process. GPT-5.5 judging, the historical Flash answer, Pro collection
+and judging, and final publication remain open until their actual completions.
+
 Update, 10 September at 04:30 UTC: Sol's 29-input pending route and Flash's
 162-input assignment are terminal. Sol retains 28 outcomes and one earlier
 lost outcome; Flash retains 161 outcomes, including provider-policy decisions,

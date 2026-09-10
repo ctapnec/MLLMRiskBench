@@ -42,6 +42,12 @@ without inventing a model identity. Actual returned-model mismatches, endpoint
 changes, other HTTP 400 codes and unexplained absent identity still fail their
 normal checks. Include an expected live identity in policy-outcome regressions;
 an unattested diagnostic fixture does not exercise measured execution.
+Coverage analysis must apply the same response-level rule when a completed
+cell contains only pre-generation policy decisions. Its summary legitimately
+lacks a served model. Keep the actual outcome and validate its observed route;
+do not fabricate a model name to satisfy summary-level comparison. Analysis
+regressions must contain completed cells and retained responses, not only an
+empty grid with otherwise valid transport receipts.
 
 When reading results produced after an older retained reader was published,
 distinguish the reader implementation from the Git history it validates.
