@@ -1152,7 +1152,7 @@ class DashboardMixin:
                 )
                 usage_rows, observed = collect_usage(
                     output_root,
-                    verify_sha=True,
+                    verify_sha=False,
                     excluded_roots=excluded_roots,
                 )
                 evidence.update(
@@ -1487,7 +1487,7 @@ class DashboardMixin:
                 if descriptor is None:
                     continue
                 result_path = _marker_artifact_path(
-                    marker_path, descriptor, verify_sha=True
+                    marker_path, descriptor, verify_sha=False
                 )
                 if result_path.stat().st_size > self._STATS_RUNNER_RESULT_FILE_BYTES_MAX:
                     raise ValueError("Runner results artifact exceeds the Stats byte cap")

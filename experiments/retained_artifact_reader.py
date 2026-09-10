@@ -2,8 +2,8 @@
 
 This is analysis-only: no target, judge or installer is constructed. One private
 temporary worktree is reused across revision partitions and removed afterwards.
-The current media exporter only decodes locators; historical integrity checks
-remain those of the source revision that produced each grid.
+The source revision retains its schema, accounting and semantic checks. Bulk
+artifact checksum revalidation is optional; its actual mode is reported.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ import tempfile
 from typing import Any, Mapping, Sequence
 
 from ura.strict_json import strict_json_loads
+from ura.artifact_checks import artifact_sha256_enabled
 
 
 _COMMIT = re.compile(r"[0-9a-f]{40}")
@@ -29,6 +30,36 @@ _REPOSITORY = Path(__file__).resolve().parents[1]
 # validator's per-artifact node/depth limits or strict JSON ambiguity checks.
 _MAX_VALIDATOR_IPC_BYTES = 512 * 1024 * 1024
 _MAX_VALIDATOR_IPC_NODES = 32_000_000
+
+
+def _configure_historical_artifact_checks(verify_sha256):
+    """Apply only the three known file-checksum comparisons in frozen readers.
+
+    Never replace hashing itself: input identities, new descriptors and source
+    revisions still need their real digests. The bridge changes no files and
+    reports that the historical full-check validator was not run unchanged.
+    """
+    import inspect
+    import textwrap
+    from experiments import figure_results, transfer_matrix
+
+    if type(verify_sha256) is not bool:
+        raise ValueError("historical checksum option must be boolean")
+    for module in (figure_results, transfer_matrix):
+        # Current readers already expose the option. Frozen predecessors do not.
+        module.artifact_sha256_enabled = lambda: verify_sha256
+    if not verify_sha256:
+        for module, name, comparison in (
+            (figure_results, "_resolve_artifact", "digest.lower() != _sha256_file(artifact)"),
+            (figure_results, "_grid_allowlist", 'eligibility_descriptor.get("sha256") != _sha256_file(eligibility_path)'),
+            (transfer_matrix, "_artifact_path", "hashlib.sha256(payload).hexdigest() != expected_hash"),
+        ):
+            source = textwrap.dedent(inspect.getsource(getattr(module, name)))
+            if source.count(comparison) != 1:
+                raise ValueError(f"unsupported historical checksum comparison: {module.__name__}.{name}")
+            exec(source.replace(comparison, "False"), vars(module))
+    return {"mode": "sha256" if verify_sha256 else "metadata_and_records",
+            "unchanged_historical_full_checks": verify_sha256}
 
 _WORKER = r'''
 import hashlib, inspect, json, sys
@@ -40,6 +71,8 @@ from experiments import human_audit
 from ura.runner import _harness_source_identity
 
 request = json.load(sys.stdin)
+exec(request["artifact_check_bridge"], globals())
+artifact_checks = _configure_historical_artifact_checks(request["verify_artifact_sha256"])
 root = Path(request["results"])
 # Older figure readers routed eligibility through their generic 4 MiB loader.
 # Reuse THIS exact source revision's existing typed 16 MiB eligibility loader;
@@ -61,7 +94,10 @@ for cell in cells:
         or revision["harness_source_sha256"] != harness
         or revision["driver_source_sha256"] != driver):
         raise ValueError("retained source does not match its exact validator checkout")
-result = {"cells": cells, "validator_commit": request["commit"]}
+for cell in cells:
+    cell["artifact_verification"] = artifact_checks["mode"]
+result = {"cells": cells, "validator_commit": request["commit"],
+          "artifact_checks": artifact_checks}
 if request["joined"]:
     frame = request.get("frame", "common")
     if frame not in {"common", "source_task"}:
@@ -134,6 +170,8 @@ if request["joined"]:
         # Preserve the ORIGINAL auxiliary validator's cohort signatures. The
         # current postprocessors must not recompute historical conditions.
         result["analysis_cells"] = validated_cells
+        for cell in validated_cells:
+            cell["artifact_verification"] = artifact_checks["mode"]
         groups = {}
         expected_keys = set()
         for cell in validated_cells:
@@ -204,6 +242,8 @@ from experiments import level1_evidence as source
 from ura.runner import _harness_source_identity
 
 request = json.load(sys.stdin)
+exec(request["artifact_check_bridge"], globals())
+artifact_checks = _configure_historical_artifact_checks(request["verify_artifact_sha256"])
 roots = [Path(path) for path in request["results"]]
 paths = [Path(path) for path in request["eligibility_paths"]]
 artifacts = [source._plan_artifact(path) for path in paths]
@@ -233,6 +273,7 @@ for grid in grids.values():
     require_source(grid["request"]["project_revision"])
     for cell in grid["cells"].values():
         if "validated_cell" in cell:
+            cell["validated_cell"]["artifact_verification"] = artifact_checks["mode"]
             require_source(cell["validated_cell"]["manifest"]["config"]["run"]["project_revision"])
     grid["cells"] = [[list(key), cell] for key, cell in grid["cells"].items()]
 def json_default(value):
@@ -315,6 +356,8 @@ def load_level1_results(
                 "eligibility_paths": [str(Path(path).resolve()) for path in eligibility_paths],
                 "plans": list(plans.values()), "envelopes": envelopes,
                 "commit": commit, "tree": tree,
+                "verify_artifact_sha256": artifact_sha256_enabled(),
+                "artifact_check_bridge": inspect.getsource(_configure_historical_artifact_checks),
             }
             result = subprocess.run(
                 [sys.executable, "-c", _LEVEL1_WORKER], cwd=worktree, env=environment,
@@ -434,6 +477,8 @@ def read_partitions(
                     "results": str(grid_root), "commit": commit, "tree": tree,
                     "joined": joined, "media_export_source": export_source,
                     "frame": frame,
+                    "verify_artifact_sha256": artifact_sha256_enabled(),
+                    "artifact_check_bridge": inspect.getsource(_configure_historical_artifact_checks),
                 }
                 if separate_judge_configurations:
                     request["separate_judge_configurations"] = True
@@ -507,6 +552,7 @@ def load_analysis_cells(root: Path, *, code_repository: Path = _REPOSITORY) -> l
                 "validator_commit": partition["validator_commit"],
                 "original_figure_grid_validation": "passed",
                 "auxiliary_compatibility": partition.get("audit_join_compatibility"),
+                "artifact_checks": partition["artifact_checks"],
             }
             cells.append(cell)
     return cells

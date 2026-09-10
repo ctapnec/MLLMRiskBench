@@ -158,7 +158,8 @@ def test_selected_media_bytes_are_required_and_rechecked(tmp_path: Path) -> None
     plan = _plan(candidates, 1, media_index={digest: str(asset)})
     assert plan["selected"][0]["media_bindings"][0]["sha256"] == digest
     asset.write_bytes(b"different image bytes")
-    with pytest.raises(ValueError, match="bytes changed"):
+    from ura.artifact_checks import artifact_verification
+    with artifact_verification(verify_sha256=True), pytest.raises(ValueError, match="bytes changed"):
         subject.resolve_inputs(plan, candidates=candidates,
                                **_bindings(media_index={digest: str(asset)}))
 
@@ -336,5 +337,6 @@ def test_resolver_rechecks_retained_artifact_bytes(tmp_path: Path) -> None:
     candidates = subject.candidates_from_cells([cell])
     plan = _plan(candidates)
     cell["artifacts"]["attempts"].write_text("changed source bytes", encoding="utf-8")
-    with pytest.raises(ValueError, match="bytes changed"):
+    from ura.artifact_checks import artifact_verification
+    with artifact_verification(verify_sha256=True), pytest.raises(ValueError, match="bytes changed"):
         subject.resolve_inputs(plan, candidates=candidates, **_bindings())

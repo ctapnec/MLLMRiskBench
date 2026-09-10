@@ -477,7 +477,8 @@ def _grid_allowlist(
             eligibility_records = sum(1 for line in handle if line.strip())
         if (
             eligibility_descriptor.get("bytes") != eligibility_path.stat().st_size
-            or eligibility_descriptor.get("sha256") != _sha256_file(eligibility_path)
+            or (artifact_sha256_enabled()
+                and eligibility_descriptor.get("sha256") != _sha256_file(eligibility_path))
             or eligibility_descriptor.get("records") != eligibility_records
         ):
             raise ValueError(f"grid eligibility descriptor mismatch: {grid_path}")
@@ -1115,6 +1116,7 @@ def _validate_cell(
         "trails": trails_raw,
         "aggregate_results": results_raw,
         "integrity_mode": "v2_content_addressed_grid_allowlisted",
+        "artifact_verification": "sha256" if artifact_sha256_enabled() else "metadata_and_records",
         "source_identity_validated": True,
         "realized_identities": identity_summary,
         "grid_audit": {

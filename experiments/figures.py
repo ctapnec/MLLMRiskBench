@@ -27,6 +27,7 @@ for _bootstrap in (str(_ROOT), str(_ROOT / "src")):
         sys.path.insert(0, _bootstrap)
 
 from experiments.figure_results import load_postrun_results  # noqa: E402
+from ura.artifact_checks import artifact_verification_cli  # noqa: E402
 
 _ACCENT = "#2a78d6"
 _INK_2 = "#52514e"
@@ -336,11 +337,14 @@ def render_all(data: dict[str, Any], out: Path) -> list[Path]:
     return [out / filename for filename in _FIGURE_NAMES]
 
 
+@artifact_verification_cli
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Render paired, corpus-faceted Chapter V figures and provenance."
     )
     mode = parser.add_mutually_exclusive_group(required=True)
+    parser.add_argument("--verify-artifact-sha256", action="store_true",
+                        help="add full-file checksum revalidation (default: off)")
     mode.add_argument("--synth", action="store_true", help="render three layout placeholders")
     mode.add_argument("--results", type=Path, help="common parent of completed run grids")
     parser.add_argument(

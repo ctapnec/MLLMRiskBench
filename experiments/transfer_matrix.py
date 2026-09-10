@@ -56,6 +56,7 @@ from ura.runner import (  # noqa: E402
     validate_planned_realized_identities,
 )
 from ura.strict_json import strict_json_loads  # noqa: E402
+from ura.artifact_checks import artifact_sha256_enabled, artifact_verification_cli  # noqa: E402
 
 
 _MAX_JSON_BYTES = 4 * 1024 * 1024
@@ -151,8 +152,6 @@ def _artifact_path(directory: Path, value: Any, *, marker: Path, role: str) -> P
     if actual_size > _MAX_ARTIFACT_BYTES:
         raise ValueError(f"artifact exceeds {_MAX_ARTIFACT_BYTES} bytes for {role}: {path}")
     payload = path.read_bytes()
-    from ura.artifact_checks import artifact_sha256_enabled
-
     if artifact_sha256_enabled() and hashlib.sha256(payload).hexdigest() != expected_hash:
         raise ValueError(f"artifact sha256 mismatch for {role}: {path}")
     try:
@@ -617,6 +616,7 @@ def _completed_cell(path: Path) -> dict[str, Any]:
         "cohort_signature": signature,
         "cohort_payload": signature_payload,
         "integrity_mode": "v2_sha256_bytes_records",
+        "artifact_verification": "sha256" if artifact_sha256_enabled() else "metadata_and_records",
         "source_identity_validated": True,
         "realized_identities": identity_summary,
         "model_acquisition_execution": acquisition_execution,
@@ -1191,6 +1191,10 @@ def _load_validated_cells(
             cell["model"]: cell["integrity_mode"]
             for cell in sorted(cells, key=lambda value: value["model"])
         },
+        "artifact_verification": {
+            cell["model"]: cell.get("artifact_verification", "sha256")
+            for cell in cells
+        },
         "facet": {
             "attacker": attacker,
             "corpus": effective_corpus,
@@ -1646,8 +1650,11 @@ def _print_matrix(result: dict[str, Any], *, corpus: str) -> None:
         print(f"{source[:10]:>10}  " + "  ".join(rendered))
 
 
+@artifact_verification_cli
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Exact-input transferability matrix")
+    parser.add_argument("--verify-artifact-sha256", action="store_true",
+                        help="add full-file checksum revalidation (default: off)")
     parser.add_argument("--results", type=Path, required=True)
     parser.add_argument("--historical-code-repository", type=Path)
     parser.add_argument("--bootstrap", type=int, default=2000)

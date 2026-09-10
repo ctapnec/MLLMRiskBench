@@ -18,6 +18,7 @@ from pathlib import Path, PurePosixPath
 from typing import Mapping, Sequence
 
 from ura.strict_json import strict_json_loads
+from ura.artifact_checks import artifact_sha256_enabled
 
 from .external_measured import _write_create_only
 from .reports import _validate_report_document
@@ -235,7 +236,7 @@ def _validated_report(
     if (
         raw.get("bytes") != len(payload)
         or _HEX64.fullmatch(str(raw.get("sha256"))) is None
-        or raw.get("sha256") != hashlib.sha256(payload).hexdigest()
+        or (artifact_sha256_enabled() and raw.get("sha256") != hashlib.sha256(payload).hexdigest())
     ):
         raise ValueError("external analysis report identity differs")
     try:
@@ -262,7 +263,8 @@ def load_external_analysis_report(
 
     try:
         payload = _regular_bytes(report.path, maximum=_MAX_REPORT_BYTES)
-        if len(payload) != report.bytes or hashlib.sha256(payload).hexdigest() != report.sha256:
+        if (len(payload) != report.bytes
+                or (artifact_sha256_enabled() and hashlib.sha256(payload).hexdigest() != report.sha256)):
             return None
         document = strict_json_loads(payload.decode("utf-8"))
         if not isinstance(document, dict):

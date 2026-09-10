@@ -767,7 +767,7 @@ def test_jobs_and_stats_merge_external_read_only_job_without_database_import(
     assert "external / read-only" in card
     assert "1 target / 1 judge" in card
     assert "href='/jobs/external/external-measured-example'" in card
-    assert observed and all(root == output.resolve() and verified for root, verified in observed)
+    assert observed and all(root == output.resolve() and not verified for root, verified in observed)
     stats_detail = app.handle(
         "GET", "/stats/job/external-measured-example?fragment=1"
     )[2].decode("utf-8")

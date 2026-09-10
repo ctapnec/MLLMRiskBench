@@ -189,6 +189,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--state-dir", type=Path, default=Path("runs") / "rig-web")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8642)
+    parser.add_argument("--verify-artifact-sha256", action="store_true",
+                        help="with --reindex: additionally hash retained files (default: off)")
     parser.add_argument(
         "--reindex",
         action="store_true",
@@ -209,6 +211,8 @@ def main(argv: list[str] | None = None) -> int:
         help="UI diagnostic only: sleep this many seconds and exit",
     )
     args = parser.parse_args(argv)
+    if args.verify_artifact_sha256 and not args.reindex:
+        parser.error("--verify-artifact-sha256 requires --reindex")
     if args.selftest_sleep is not None:
         time.sleep(args.selftest_sleep)
         print("rig-web selftest complete")
@@ -223,7 +227,7 @@ def main(argv: list[str] | None = None) -> int:
         app.state_dir.mkdir(parents=True, exist_ok=True)
         try:
             if args.reindex:
-                print(json.dumps(app.reindex_all(), sort_keys=True))
+                print(json.dumps(app.reindex_all(verify_sha=args.verify_artifact_sha256), sort_keys=True))
             if args.usage_report:
                 totals = app.db.usage_totals() or {}
                 pricing = load_pricing(app.repo_root)

@@ -67,3 +67,48 @@ def test_cli_flag_scopes_optional_checks_and_restores_default():
     assert command([]) is False
     assert command(["--verify-artifact-sha256"]) is True
     assert artifact_sha256_enabled() is False
+
+
+def test_historical_readers_skip_only_hash_comparisons(tmp_path, monkeypatch):
+    from experiments import figure_results, transfer_matrix
+    from experiments.retained_artifact_reader import _configure_historical_artifact_checks
+
+    # Preserve module state even though the historical bridge is normally used
+    # only inside a short-lived, isolated reader subprocess.
+    for module, names in ((figure_results, ("_resolve_artifact", "_grid_allowlist")),
+                          (transfer_matrix, ("_artifact_path",))):
+        for name in (*names, "artifact_sha256_enabled"):
+            monkeypatch.setattr(module, name, getattr(module, name))
+    artifact = tmp_path / "result.jsonl"
+    artifact.write_bytes(b"{}\n")
+    descriptor = {"file": artifact.name, "sha256": "a" * 64, "bytes": 3, "records": 1}
+    marker = tmp_path / "cell.complete.json"
+    with artifact_verification(verify_sha256=True):
+        with pytest.raises(ValueError, match="digest mismatch"):
+            figure_results._resolve_artifact(marker, {"artifacts": {"results": descriptor}}, "results")
+    report = _configure_historical_artifact_checks(False)
+    monkeypatch.setattr(figure_results, "_sha256_file", lambda *a: pytest.fail("historical file hash"))
+    assert figure_results._resolve_artifact(marker, {"artifacts": {"results": descriptor}}, "results") == artifact
+    assert transfer_matrix._artifact_path(tmp_path, descriptor, marker=marker, role="results") == artifact
+    assert report == {"mode": "metadata_and_records", "unchanged_historical_full_checks": False}
+    with pytest.raises(ValueError, match="record-count mismatch"):
+        figure_results._resolve_artifact(marker, {"artifacts": {"results": {**descriptor, "records": 2}}}, "results")
+    with pytest.raises(ValueError, match="byte-count mismatch"):
+        figure_results._resolve_artifact(marker, {"artifacts": {"results": {**descriptor, "bytes": 4}}}, "results")
+
+
+def test_console_reindex_checksum_option_is_explicit(tmp_path, monkeypatch):
+    from experiments.rig_web import RigWebApp
+
+    app = RigWebApp(repo_root=tmp_path, results_root=tmp_path / "runs", state_dir=tmp_path / "state")
+    try:
+        modes = []
+        monkeypatch.setattr(app, "reindex_all", lambda **kw: modes.append(kw["verify_sha"]) or {})
+        assert app.handle("POST", "/db/reindex", {})[0] == 303
+        assert app.handle("POST", "/db/reindex", {"verify_artifact_sha256": "on"})[0] == 303
+        assert modes == [False, True]
+        page = app._db_card("")
+        assert "name='verify_artifact_sha256'" in page
+        assert "name='verify_artifact_sha256' checked" not in page
+    finally:
+        app.close()

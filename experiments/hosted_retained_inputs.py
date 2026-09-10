@@ -130,7 +130,19 @@ def candidates_from_cells(cells: Sequence[Mapping[str, Any]]) -> list[dict]:
         if not str(cell["model"]).startswith(("ollama:", "vllm:")):
             raise ValueError("hosted subset source must be a local target")
         corpus_sha = _digest(manifest["dataset_hashes"].get("corpus"), "converted corpus")
-        artifacts = {key: _descriptor(path) for key, path in sorted(cell["artifacts"].items())}
+        recorded = {}
+        if cell.get("complete_path") is not None:
+            from ura.strict_json import strict_json_loads
+            marker_path = Path(cell["complete_path"])
+            recorded = strict_json_loads(marker_path.read_text(encoding="utf-8"))["artifacts"]
+        artifacts = {}
+        for key, path in sorted(cell["artifacts"].items()):
+            prior = recorded.get(key)
+            if recorded and (not isinstance(prior, dict) or prior.get("file") != Path(path).name):
+                raise ValueError("retained source artifact differs from its completion marker")
+            artifacts[key] = _descriptor(path, prior["sha256"] if prior else None)
+            if prior and artifacts[key]["bytes"] != prior["bytes"]:
+                raise ValueError("retained source artifact size differs from its completion marker")
         source = {"run_id": cell["run_id"], "local_model": cell["model"],
                   "artifacts_sha256": _sha(artifacts), "artifacts": artifacts,
                   "project_revision": copy.deepcopy(run["project_revision"])}

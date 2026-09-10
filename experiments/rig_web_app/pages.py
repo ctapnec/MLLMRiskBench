@@ -226,6 +226,8 @@ class PagesMixin:
             f"schema v{health['schema_version']} - {html.escape(count_text)}"
             "</p>" + error + "<form method='post' action='/db/reindex' "
             "data-busy='Rebuilding the index from retained artifacts...'>"
+            "<label><input type='checkbox' name='verify_artifact_sha256'> "
+            "Also verify file checksums (slow; off by default)</label> "
             "<button type='submit' class='small'>Reindex from artifacts"
             "</button></form>"
             "<p class='note'>Operational state only (jobs, runs, recorded "

@@ -499,7 +499,8 @@ def _descriptor_file(
     if not _beneath(resolved, allowed_root):
         raise ValueError("Phase 7 descriptor escapes its owned root")
     payload = _regular_bytes(resolved, maximum=maximum)
-    if len(payload) != size or hashlib.sha256(payload).hexdigest() != digest:
+    from ura.artifact_checks import artifact_sha256_enabled
+    if len(payload) != size or (artifact_sha256_enabled() and hashlib.sha256(payload).hexdigest() != digest):
         raise ValueError("Phase 7 descriptor bytes differ")
     return resolved, payload
 

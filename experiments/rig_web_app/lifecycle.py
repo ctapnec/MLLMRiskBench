@@ -350,10 +350,9 @@ class LifecycleMixin:
             markers = 0
             if out_dir:
                 try:
-                    # Startup recovery verifies artifact digests, exactly as
-                    # reindex does, so a tampered/changed artifact is not
-                    # silently counted.
-                    usage_rows, stats = collect_usage(self.repo_root / out_dir, verify_sha=True)
+                    # Routine recovery checks descriptors and accounting. Full
+                    # file hashing is an explicit reindex option, not a page cost.
+                    usage_rows, stats = collect_usage(self.repo_root / out_dir)
                     markers = stats.get("markers", 0)
                 except OSError:
                     usage_rows, markers = [], 0
@@ -474,7 +473,7 @@ class LifecycleMixin:
             if out_dir and run_kind(job.command, job.argv) is not None:
                 try:
                     # Normal completion indexing verifies artifact digests too.
-                    usage_rows, _stats = collect_usage(self.repo_root / out_dir, verify_sha=True)
+                    usage_rows, _stats = collect_usage(self.repo_root / out_dir)
                 except OSError:
                     usage_rows = []
             if self.db.record_terminal(job, job.pin, usage_rows, state=state, exit_code=code):
@@ -3603,7 +3602,7 @@ class LifecycleMixin:
             self._reconcile_locked()
             return job
 
-    def reindex_all(self) -> dict[str, Any]:
+    def reindex_all(self, *, verify_sha: bool = False) -> dict[str, Any]:
         """Rebuild the derived usage and report indexes from retained artifacts.
 
         Serialized with reconcile/start/stop under the application lock so it
@@ -3615,7 +3614,9 @@ class LifecycleMixin:
         fixtures that merely resemble campaign evidence.
         """
 
-        with self._app_lock:
+        from ura.artifact_checks import artifact_verification
+
+        with self._app_lock, artifact_verification(verify_sha256=verify_sha):
             roots: dict[str, Path] = {}
             runs = self.db.list_run_owners(limit=10_001)
             report_jobs = self.db.load_report_jobs(limit=10_001)
@@ -3677,7 +3678,7 @@ class LifecycleMixin:
                     excluded_roots.append(candidate)
                 rows, stats = collect_usage(
                     root,
-                    verify_sha=True,
+                    verify_sha=verify_sha,
                     excluded_roots=tuple(excluded_roots),
                 )
                 for key in merged:
@@ -3717,6 +3718,7 @@ class LifecycleMixin:
                 "roots": len(roots),
                 "usage_rows": len(usage_rows),
                 "reports": len(report_rows),
+                "artifact_verification": "sha256" if verify_sha else "metadata_and_records",
                 **merged,
             }
 
@@ -4256,7 +4258,7 @@ class LifecycleMixin:
                 )
                 return 303, f"/jobs/{job.job_id}", b""
             if method == "POST" and path == "/db/reindex":
-                summary = self.reindex_all()
+                summary = self.reindex_all(verify_sha=(form or {}).get("verify_artifact_sha256") == "on")
                 return 303, f"/?reindexed={quote(json.dumps(summary, sort_keys=True))}", b""
             if method == "GET" and path == "/config/secrets":
                 return (

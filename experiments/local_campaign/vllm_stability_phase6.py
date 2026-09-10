@@ -210,9 +210,15 @@ def _validate_descriptor(value: object, *, label: str) -> Path:
     path = Path(raw_path)
     if "file" in value and value.get("file") != path.name:
         raise ValueError(f"{label} descriptor filename does not match its path")
-    payload = _stable_file(path, label=label)
-    if len(payload) != size or hashlib.sha256(payload).hexdigest() != digest:
+    from ura.artifact_checks import artifact_sha256_enabled
+    if path.is_symlink() or not path.is_file() or path.resolve(strict=True) != path:
+        raise ValueError(f"{label} is not one canonical regular file")
+    if path.stat().st_size != size or size > 64 * 1024 * 1024:
         raise ValueError(f"{label} content identity changed")
+    if artifact_sha256_enabled():
+        payload = _stable_file(path, label=label)
+        if hashlib.sha256(payload).hexdigest() != digest:
+            raise ValueError(f"{label} content identity changed")
     return path
 
 
