@@ -157,7 +157,7 @@ def test_continuous_capacity_shortage_does_not_open_global_paid_stop(tmp_path):
     admission.budget.reserve(keys[1], 1, provider='openai')
     admission.budget.settle(keys[1], 1, None)
     with pytest.raises(Exception, match='available provider pool capacity'):
-        _runner(attacker, target, admission).run(points)
+        _runner(attacker, target, admission).run(points, on_response=lambda row: None)
     assert calls == []
     assert not (admission.budget.root / 'paid-circuit.json').exists()
     assert admission.budget.reserved_attempt_count(keys[0]) == 0

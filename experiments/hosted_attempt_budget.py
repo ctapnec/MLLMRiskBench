@@ -181,6 +181,15 @@ class AttemptBudget:
         self._immutable_plan_cache = ValidationCache(entries=1, copy_results=False)
         self.snapshot()  # Refuse missing/partial or incompatible retained state.
 
+    def __getstate__(self):
+        # The cache owns a thread lock. Spawned workers reconstruct it locally.
+        return {key: value for key, value in vars(self).items() if key != '_immutable_plan_cache'}
+
+    def __setstate__(self, state):
+        vars(self).update(state)
+        self._immutable_plan_cache = ValidationCache(entries=1, copy_results=False)
+        self.snapshot()
+
     def _load_plan(self) -> tuple[dict, dict]:
         return self._immutable_plan_cache.get(self.expected_plan_sha256, self._read_plan,
                                              paths=(self.root / "plan.json",))
