@@ -63,7 +63,7 @@ def test_runner_retains_failed_sdk_reply_without_promoting_it(tmp_path):
                     target_answer_retries=0, execution_stage="responses")
     point = DataPoint(id="fixture", source="fixture", modalities=["text"],
                       payload_text="Explain the color blue.", risk_category="jailbreak",
-                      expected_behavior="comply")
+                      expected_behavior="safe_answer")
     checkpoint = tmp_path / "responses.jsonl"
     runner.run([point], on_response=lambda row: Runner.append_checkpoint(checkpoint, row))
     rows = list(Runner.load_response_checkpoint(checkpoint).values())
