@@ -237,7 +237,11 @@ target identities and rejects non-null identity drift within a cell or across
 resume.
 
 Generic account-visible routes are described by `--api-config`; fixed
-provider-specific routes retain their dedicated adapters. Exact identifiers and
+provider-specific routes retain their dedicated adapters. The shared CLI/Build
+validator requires a positive integer output allowance and enforces implemented
+model-specific ceilings without imposing a universal 25,000-token maximum.
+Configured defaults, provider admission and campaign cost checks are separate;
+accepting a larger explicit allowance does not increase them. Exact identifiers and
 capabilities are provisional until a bounded non-dry probe yields a strict
 `ura-live-attestation/2` receipt. The receipt binds its producer grid/completion
 digests, operator-declared non-secret execution scope, requested and base-resolved

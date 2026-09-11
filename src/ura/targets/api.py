@@ -3621,19 +3621,23 @@ def normalize_api_target_config(
             )
 
     max_tokens = config["max_tokens"]
-    # DeepSeek documents 384K as 393216 tokens, not the old cross-provider
-    # 25000-token configuration restriction. This is a ceiling, not a default.
+    # Enforce a documented model ceiling, not an invented cross-provider limit.
+    # Unknown account-visible models still require a positive explicit allowance;
+    # provider admission and campaign cost checks remain independent.
     # https://api-docs.deepseek.com/api/create-chat-completion/
     max_output = (393_216 if (canonical_provider, selected_model) in {
         ("deepseek", "deepseek-v4-pro"), ("deepseek", "deepseek-v4-flash")
-    } else 25_000)
+    } else None)
     if (
         isinstance(max_tokens, bool)
         or not isinstance(max_tokens, int)
-        or not 1 <= max_tokens <= max_output
+        or max_tokens < 1
+        or (max_output is not None and max_tokens > max_output)
     ):
         raise ValueError(
-            f"API config {spec!r} max_tokens must be an integer in 1..{max_output}"
+            f"API config {spec!r} max_tokens must be "
+            + (f"an integer in 1..{max_output}" if max_output is not None
+               else "a positive integer")
         )
     temperature = config["temperature"]
     if temperature is not None and (

@@ -48,6 +48,48 @@ def _load_config(
     )
 
 
+@pytest.mark.parametrize('provider', ['openai', 'anthropic', 'google', 'kimi', 'deepseek'])
+@pytest.mark.parametrize('limit', [32768, 65536])
+def test_generic_api_output_has_no_invented_shared_ceiling(tmp_path, provider, limit):
+    spec = provider + ':account-visible-output-model'
+    config = {'modalities': ['text'], 'max_tokens': limit, 'temperature': None}
+    path = _write_config(tmp_path / 'api.json', spec, config)
+    normalized, _ = _load_config(path, [spec])
+    target = build_api_target(spec, config=normalized[spec])
+    assert target.max_tokens == limit
+    request = target.build_request([DialogTurn(role='user', content='Hello')], seed=0)
+    actual = request['config']['max_output_tokens'] if provider == 'google' else request['max_tokens']
+    assert actual == limit
+    assert normalize_api_target_config(spec, {**config, 'max_tokens': 4096})['max_tokens'] == 4096
+
+
+@pytest.mark.parametrize('limit', [True, False, None, 0, -1, 32768.0, '32768'])
+def test_generic_api_output_still_requires_positive_integer(limit):
+    with pytest.raises(ValueError, match='positive integer'):
+        normalize_api_target_config('openai:account-visible-output-model', {
+            'modalities': ['text'], 'max_tokens': limit, 'temperature': None,
+        })
+
+
+@pytest.mark.parametrize('spec', ['deepseek:deepseek-v4-pro', 'openai:account-visible-output-model'])
+def test_builder_preserves_explicit_large_api_output_allowance(tmp_path, spec):
+    from experiments.rig_web import RigWebApp
+
+    repo = tmp_path / 'repo'
+    (repo / 'experiments').mkdir(parents=True)
+    _write_config(repo / 'experiments/api-targets.json', spec, {
+        'modalities': ['text'], 'max_tokens': 32768, 'temperature': None,
+    })
+    app = RigWebApp(repo_root=repo, results_root=tmp_path / 'runs',
+        state_dir=tmp_path / 'state', gpu_hardware={}, system_hardware={})
+    try:
+        snapshot, _, _, configs = app._selected_api_config_snapshot({'api': spec, 'mode': 'measured'})
+        assert configs[spec]['max_tokens'] == 32768
+        assert snapshot['routes'][0]['config']['max_tokens'] == 32768
+    finally:
+        app.close()
+
+
 def test_api_config_is_exact_normalized_and_constructs_declared_target(
     tmp_path: Path,
 ) -> None:

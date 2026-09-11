@@ -284,6 +284,15 @@ reply is still a missing visible answer; never present reasoning as the final
 answer. Changing effort defines a new generation condition and does not revise
 already funded request hashes or historical observations.
 
+Hosted `max_tokens` is an explicit positive integer, not a universal 25,000-token
+ceiling. The shared CLI/Build validator applies documented model-specific limits
+where implemented; an unrecognized account-visible model is not assigned an
+invented maximum. Provider capability admission and campaign cost checks still
+apply. DeepSeek V4 accepts up to 393,216, but this does not raise any default or
+authorize maximum-length requests. A changed allowance requires a separately
+recorded generation condition and updated cost forecast within the same campaign
+ceiling. Fixed historical route identities retain their original allowances.
+
 Retained verdicts identify exact outputs, not merely matching inputs. A new
 hosted answer requires its own local and Haiku judgments even when a local
 model answered the same question. If every selected local counterpart already
