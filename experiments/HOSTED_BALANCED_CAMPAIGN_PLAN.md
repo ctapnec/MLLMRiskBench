@@ -1,9 +1,10 @@
 # Fourth hosted campaign: balanced matched coverage
 
-Status: requested on 11 September 2026; allocation and exact request quotes in
+Status: requested on 11 September 2026; the allocation below was fixed before
+selection. Exact whole-cluster selection, media resolution and quotes are in
 preparation. No fourth-campaign target call is claimed. The third campaign,
-its remaining Google work, its 79-input completion and all outstanding judging
-continue independently.
+its remaining Google work, its corrected 81-input completion and outstanding
+judging continue independently.
 
 ## Available credit and obligations
 
@@ -49,7 +50,7 @@ its judging, not every available corpus row regardless of cost.
 
 1. Reconcile the finished and already-assigned distinct inputs for all thirteen
    existing API model routes. Keep the 267 pending Google Pro assignments and
-   the 79-input third-campaign completion separate from genuinely new work.
+   the 81-input third-campaign completion separate from genuinely new work.
 2. Use actual retained input/output usage and configured effective-dated prices
    to estimate cost by model. Report mean usage, a conservative usage scenario
    and maximum output allowance separately. Do not quote a short average answer
@@ -77,5 +78,42 @@ counts separately; account credits separately from campaign-attributed costs;
 remaining judging work; and an ETA based on observed throughput and actual
 quota waits. Do not wait for the next report to recover a genuine interruption.
 
-The first allocation table is pending the retained-usage calculation. No new
-amount has yet been assigned from the USD 88.71 account snapshot.
+## Initial input allocation, 11 September 2026
+
+The requested caps below total 3,760 new model-input assignments. Whole-cluster
+selection may yield fewer inputs. These are prospective quantities, not issued
+calls. The exact selection and quote must be retained before paid dispatch.
+
+| Model | Additional input cap | Unchanged output allowance |
+| --- | ---: | ---: |
+| Fable 5.1 | 240 | 8,192 |
+| Opus 5 | 120 | 6,144 |
+| Sonnet 5 | 300 | 4,096 |
+| Haiku 4.5 | 500 | 2,048 |
+| Astra | 110 | 8,192 |
+| Sol | 80 | 8,192 |
+| Terra | 140 | 6,144 |
+| GPT-5.5 | 120 | 8,192 |
+| Luna | 400 | 4,096 |
+| Kimi K3 | 300 | 8,192 |
+| DeepSeek V4-Pro | 250 | 16,384 |
+| Gemini Flash 3.8 | 1,200 | 4,096 |
+
+Google Pro retains its 267 already-assigned quota-pending inputs. It does not
+block new work for Flash or other providers. All new eligible hosted outputs
+receive both local and Haiku judgments. Existing local answers to the selected
+inputs receive Haiku judgments unless the exact same output and judging
+condition already has a retained verdict.
+
+Freeze a fresh common cohort by excluding previously assigned input payloads
+and their source clusters, including the 81-input completion. Select nested
+prefixes of this one cohort for compatible models. This creates genuinely new
+matched coverage while avoiding paid repetition of completed model-input pairs.
+Keep earlier-cohort comparisons separately selectable; do not merge different
+input populations into a purported equal-support comparison.
+
+The retained snapshot contains 8,784 previously scheduled but unstarted Haiku
+slots. Their expenditure and the new local/hosted judging must be included in
+the same Anthropic account calculation. Observed mean costs guide this initial
+allocation; they are not guaranteed bills. The exact new judging population and
+the costed execution table remain pending materialization and request counting.

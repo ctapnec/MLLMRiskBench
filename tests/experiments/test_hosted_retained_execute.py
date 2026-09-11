@@ -479,6 +479,32 @@ def test_usable_truncated_response_never_opens_paid_circuit(tmp_path, purpose):
     assert not (admission.budget.root / "paid-circuit.json").exists()
 
 
+def test_restored_missing_paid_output_can_finish_judging_without_reopening_target_calls(tmp_path):
+    points, attacker, target, calls, admission = _setup(tmp_path, outputs=["", "must never run"])
+    checkpoint = tmp_path / "responses.jsonl"
+    with pytest.raises(RuntimeError, match="durable response"):
+        _runner(attacker, target, admission).run(
+            points, on_response=lambda row: Runner.append_checkpoint(checkpoint, row))
+    records = Runner.load_response_checkpoint(checkpoint)
+    before = (admission.budget.root / "ledger.json").read_bytes()
+    pause_path = subject.target_pause_path(admission.budget, target.name)
+    pause = pause_path.read_bytes()
+    # Restore just the retained attempt; no new answer or judge classification
+    # is appropriate for an empty output. The original paid stop stays in force.
+    first = next(iter(records.values()))
+    from ura.data_models import Attempt
+    attempt = Attempt.model_validate(first["attempt"])
+    response = Response.model_validate(first["response"])
+    resumed = _runner(attacker, target, admission)
+    resumed.execution_stage = "judgments"
+    restored = resumed._execute_or_restore(points[0], attempt, response.run_id, None, None,
+                                          response_record=first)
+    assert restored == response
+    assert len(calls) == 1
+    assert pause_path.read_bytes() == pause
+    assert (admission.budget.root / "ledger.json").read_bytes() == before
+
+
 def test_paid_target_cannot_call_without_response_checkpoint(tmp_path):
     points, attacker, target, calls, admission = _setup(tmp_path)
     with pytest.raises(ValueError, match="durable response checkpoint"):
@@ -672,7 +698,7 @@ def test_scoped_cli_uses_exact_nonprefix_inputs_and_seals_one_mock_response(tmp_
     admission = SimpleNamespace(validate_cli=lambda argv, args: None,
                                 validate_runner=lambda runner: None,
                                 attempt=lambda runner, attempt: nullcontext(),
-                                response_checkpointed=lambda runner, attempt, response: None)
+                                response_checkpointed=lambda runner, attempt, response, **kwargs: None)
     monkeypatch.setattr(run_matrix, "build_target", lambda spec, **kwargs: RecordingTarget())
     out = tmp_path / "mock-run"
     with retained_execution_admission(admission):

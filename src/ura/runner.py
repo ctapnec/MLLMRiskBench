@@ -717,7 +717,7 @@ class Runner:
                 datapoint, attempt, record, run_id
             )
             if self._retained_admission is not None:
-                self._retained_admission.response_checkpointed(self, attempt, response)
+                self._retained_admission.response_checkpointed(self, attempt, response, restored=True)
         else:
             evaluation_datapoint = self._evaluation_datapoint(datapoint, attempt)
             approximate_proxy = bool(
@@ -758,7 +758,10 @@ class Runner:
                 # Both fresh and restored responses settle only after their
                 # durable checkpoint; empty output stops before the next call,
                 # including the response-only stage before local judging.
-                self._retained_admission.response_checkpointed(self, attempt, response)
+                if response_record is None:
+                    self._retained_admission.response_checkpointed(self, attempt, response)
+                else:
+                    self._retained_admission.response_checkpointed(self, attempt, response, restored=True)
             if self.execution_stage == "responses":
                 self.attempts.append(attempt)
                 self.responses.append(response)

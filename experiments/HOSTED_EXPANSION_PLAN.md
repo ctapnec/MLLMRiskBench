@@ -1253,11 +1253,15 @@ or prevent unrelated funded routes from completing. A replacement transport
 probe must use an unissued assigned input, preserve the original outcome and
 retain the same cumulative spending checks.
 
-The current 79-input whole-cluster gap selection is materialized and counted,
-but preparation stopped before generation because a selected arm left no whole
-source cluster for measurement. Its count receipts remain reusable; neither
-target nor judge calls have run for this addition. Do not include it in completed
-collection or charge the fourth-campaign plan as independent new account credit.
+The initial 79-input gap selection stopped before generation because the Kimi
+and DeepSeek selections each contained only one source cluster. Extending each
+by one retained input fixed that allocation without relaxing the measurement
+requirement. The corrected 81-input addition is prepared and collecting across
+independent providers, reusing the previous request counts and completed
+transport observations. It includes Opus 18, Astra 11, Flash 14, Kimi 19 and
+DeepSeek 19 inputs. Both local and output-specific Haiku judging remain required.
+The fourth-campaign allocation is in HOSTED_BALANCED_CAMPAIGN_PLAN.md and uses
+the same remaining account credit, not independent new funds.
 
 ### UI execution and publication
 

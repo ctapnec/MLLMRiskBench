@@ -308,7 +308,7 @@ class _Admission:
                 self._circuit("terminal_target_call_failure", call_id)
             raise
 
-    def response_checkpointed(self, runner: Any, attempt: Any, response: Any) -> None:
+    def response_checkpointed(self, runner: Any, attempt: Any, response: Any, *, restored: bool = False) -> None:
         receipt = self._receipt(attempt)
         call_id = receipt["call_id"]
         count = self.budget.reserved_attempt_count(call_id)
@@ -393,7 +393,7 @@ class _Admission:
             > self.budget.attempt_bound(call_id)):
             self._circuit("reported_usage_requires_above_reservation_billing_review", call_id)
             raise RuntimeError("durable target usage may exceed its funded exposure; billing review is required")
-        if missing:
+        if missing and not restored:
             transport = response.raw.get("model_stability_category") == "transport_failure"
             funding_unavailable = response.raw.get("call_audit", {}).get("provider_funding_status")
             category = (("transport_retry_pending" if response.raw.get("transport_retry_status") == "pending"
