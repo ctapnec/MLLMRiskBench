@@ -57,7 +57,7 @@ def test_local_separate_judging_keeps_checkpoint_tail_and_invalid_verdict(tmp_pa
 
     save(run_id+".manifest.json", {"config": {"run": {
         "corpus": "example", "execution_purpose": "measured_run", "model_spec": model}}})
-    save(run_id+".attempts.jsonl", attempts, lines=True)
+    save(run_id+".attempts.jsonl", attempts[:1], lines=True)
     save(run_id+".responses.jsonl", responses[:1], lines=True)
     save(run_id+".jsonl", verdicts[:1], lines=True)
     save(run_id+".responses.checkpoint.jsonl", [dict(attempt=a, response=r)

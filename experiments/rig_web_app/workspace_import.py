@@ -208,8 +208,6 @@ def local_run_rows(source: dict, selections: dict[str, dict]) -> dict:
     manifest = json.loads(artifacts["manifest"].read_text(encoding="utf-8"))
     run = manifest["config"]["run"]
     attempts = {row["id"]: row for _, row in _jsonl(artifacts["attempts"])}
-    if not selections.keys() <= attempts.keys():
-        raise ValueError("Local selection has no native attempt")
     responses = {}
     for number, row in _jsonl(artifacts["responses"]):
         if row["run_id"] != run_id or row["target"] != model or row["attempt_id"] not in attempts:
@@ -223,11 +221,15 @@ def local_run_rows(source: dict, selections: dict[str, dict]) -> dict:
             key = row["attempt_id"]
             if (row["run_id"] != run_id or row["target"] != model
                     or (attempt["run_id"], attempt["id"]) != (run_id, key)
-                    or attempt != attempts.get(key)):
+                    or attempt["target"] != model
+                    or (key in attempts and attempt != attempts[key])):
                 raise ValueError("Native local response checkpoint ownership differs")
+            attempts.setdefault(key, attempt)
             if key in responses and responses[key][0] != row:
                 raise ValueError("Local final output differs from its checkpoint")
             responses.setdefault(key, (row, f"{artifacts['response_checkpoint']}:{number}"))
+    if not selections.keys() <= attempts.keys():
+        raise ValueError("Local selection has no native attempt")
     settings = {key: run.get(key) for key in (
         "model_spec", "local_identity", "dtype", "resolved_quantization", "target_answer_retries",
         "project_revision", "engine_runtime")}
