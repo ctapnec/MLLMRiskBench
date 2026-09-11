@@ -48,10 +48,10 @@ unchanged. In-flight calls can settle after a spending stop, so the tracking
 policy is not a worst-case hard spending guarantee.
 
 The implementation at ff9cb53 passed 185 focused rig tests in 14.12 seconds,
-lint and a reversed-fix check. At 09:00 UTC the successor is waiting in tmux
-for the six already-active jobs to finish. Only the predecessor dispatch loop
-was interrupted; those paid workers were not signaled. It will reuse their
-responses and continue the full prepared queue, with judging afterwards.
+lint and a reversed-fix check. The handoff stopped at the next saved response,
+not at the end of each long corpus. In-flight workers were not signaled.
+Precalculated spending was enabled at 09:10:55 UTC. The successor reuses
+responses and continues the full prepared queue, with judging afterwards.
 The descriptions of maximum-cost reservation below record the earlier policy.
 
 Current instruction, 11 September 2026: collect all remaining targets through
@@ -66,10 +66,10 @@ At 06:54:36 UTC the unstarted fund-013, prepare-flow-014 and deferred-posthoc-00
 controllers were retired without interrupting an in-flight call. Existing
 Google target continuations retain their ownership and accounting.
 
-The 08:34 aggregate records 6,669 selected assignments, 2,803 starts and 2,795
-usable outcomes, gaining 42 starts and 41 usable outcomes in thirty minutes.
+The 09:04 aggregate records 6,669 selected assignments, 2,944 starts and 2,934
+usable outcomes, gaining 141 starts and 139 usable outcomes in thirty minutes.
 Haiku totals remain 2,217 local and 1,508 hosted assessments, with USD 5.308997
-reported cost. Console HTTP is 200. Next aggregate: 09:04 UTC. A revised ETA
+reported cost. Console HTTP is 200. Next aggregate: 09:34 UTC. A revised ETA
 requires sustained continuous-dispatch throughput; the serial-batch estimate
 is obsolete. No account credit-exhaustion outcome was reported in this snapshot.
 
