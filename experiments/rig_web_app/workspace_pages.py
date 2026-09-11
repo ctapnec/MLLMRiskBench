@@ -31,7 +31,7 @@ class WorkspacePagesMixin:
             views.append(("all", "All jobs and tools"))
         else:
             views.append(("legacy", "Earlier reports"))
-        return "<nav class='page-tablist' aria-label='" + context.title() + " scope'>" + "".join(
+        return "<nav class='page-tablist server-tablist' aria-label='" + context.title() + " scope'>" + "".join(
             "<a class='page-tab' href='/" + context + "?view=" + value + "'"
             + (" aria-current='page'" if value == selected else "") + ">" + label + "</a>"
             for value, label in views
@@ -187,7 +187,7 @@ class WorkspacePagesMixin:
         if section not in sections:
             raise ValueError("Unknown campaign section")
         base = "/campaigns/" + campaign_id
-        navigation = "<nav class='page-tablist' aria-label='Campaign sections'>" + "".join(
+        navigation = "<nav class='page-tablist server-tablist' aria-label='Campaign sections'>" + "".join(
             "<a class='page-tab' href='" + base + "?section=" + tab + "'"
             + (" aria-current='page'" if tab == section else "") + ">"
             + tab.title() + "</a>" for tab in sections

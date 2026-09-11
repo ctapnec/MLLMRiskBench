@@ -70,7 +70,7 @@ h2 .ic { color:var(--muted); }
 .campaign-actions { display:flex; flex-wrap:wrap; align-items:center; gap:.75rem; padding-top:1rem; border-top:1px solid var(--line); }
 .work-kind-choices { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr)); gap:1rem; margin:1rem 0 1.5rem; }
 .work-kind-choice { display:flex; align-items:flex-start; gap:.75rem; padding:1rem; border:1px solid var(--line); border-radius:10px; cursor:pointer; min-width:0; }
-.work-kind-choice:has(input:checked) { border-color:var(--accent); background:var(--surface2); }
+.work-kind-choice:has(input:checked) { border-color:var(--accent); background:var(--soft); }
 .work-kind-choice input { flex:0 0 auto; margin-top:.2rem; }
 .work-kind-choice > span { display:grid; gap:.4rem; }
 .work-kind-choice > span > span { font-size:.9rem; color:var(--muted); line-height:1.5; }
@@ -159,7 +159,7 @@ form.inline { display:inline; margin:0; }
 .chip.on { background:var(--accent); color:var(--accent-ink);
   border-color:var(--accent); }
 .page-tablist { display:none; }
-.page-tabs.tabs-ready .page-tablist { display:flex; align-items:center; gap:.25rem;
+.page-tabs.tabs-ready .page-tablist, .page-tablist.server-tablist { display:flex; align-items:center; gap:.25rem;
   overflow-x:auto; margin:.2rem 0 .9rem; padding:.28rem;
   background:var(--card); border:1px solid var(--line); border-radius:11px;
   box-shadow:var(--shadow); scrollbar-width:thin; }
@@ -167,7 +167,7 @@ form.inline { display:inline; margin:0; }
   padding:.46rem .85rem; background:transparent; color:var(--muted);
   font-size:.86rem; white-space:nowrap; }
 .page-tab:hover { filter:none; color:var(--ink); background:var(--soft); }
-.page-tab[aria-selected=true] { color:var(--accent); background:var(--soft);
+.page-tab[aria-selected=true], .page-tab[aria-current=page] { color:var(--accent); background:var(--soft);
   border-color:color-mix(in srgb, var(--accent) 22%, var(--line)); }
 .page-tab:focus-visible { outline:2px solid
   color-mix(in srgb, var(--accent) 55%, transparent); outline-offset:1px; }

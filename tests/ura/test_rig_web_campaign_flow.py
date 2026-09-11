@@ -44,7 +44,7 @@ def test_editing_draft_does_not_change_reviewed_launch_or_projection(tmp_path):
     app = app_at(tmp_path)
     try:
         old = app._save_build_campaign(app._builder_params({"work_kind": "campaign", "campaign_name": "A",
-            "mode": "dry_run", "seeds": "0", "corpora": "advbench_harmful"}))
+            "mode": "dry_run", "seeds": "0", "corpora": "synth"}))
         token = app._new_launch_ticket(old)
         app._save_build_campaign({**old, "seeds": "17"})
         reviewed, _ = app._consume_launch_ticket(token)
@@ -120,5 +120,8 @@ def test_standalone_stats_filters_before_pagination_and_keeps_deep_links(tmp_pat
         assert "Standalone runs" in page and "Earlier reports" in page
         assert b"Many runs" in app.handle("GET", "/stats")[2]
         assert b"Build a single run" in app.handle("GET", "/campaigns")[2]
+        style = app.handle("GET", "/static/style.css")[2].decode()
+        assert ".page-tablist.server-tablist { display:flex" in style
+        assert "page-tablist server-tablist" in page
     finally:
         app.close()

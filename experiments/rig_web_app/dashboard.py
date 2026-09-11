@@ -2275,10 +2275,10 @@ class DashboardMixin:
             )
         page_links = "<nav class='stats-pagination' aria-label='Campaign pages'>"
         if page > 1:
-            page_links += f"<a class='button ghost' href='/stats?page={page - 1}'>Newer</a>"
+            page_links += f"<a class='button ghost' href='/stats?view=legacy&amp;page={page - 1}'>Newer</a>"
         page_links += f"<span>Page {page}</span>"
         if has_more:
-            page_links += f"<a class='button ghost' href='/stats?page={page + 1}'>Older</a>"
+            page_links += f"<a class='button ghost' href='/stats?view=legacy&amp;page={page + 1}'>Older</a>"
         page_links += "</nav>"
         reusable_modal = (
             "<section class='stats-modal' id='campaign-stats-modal' data-stats-modal "
@@ -3124,16 +3124,17 @@ else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();f
             + results
         )
         stats_tabs = (
-            ("stats-campaigns", "Campaigns"),
+            ("stats-campaigns", "Executions"),
             ("stats-operational", "Operational cost"),
             ("stats-unlinked", "Unlinked reports"),
         )
         body = (
             "<h1>"
             + _icon("chart", size=22)
-            + "Campaign statistics</h1>"
+            + "Earlier run reports</h1>"
             + self._health_banner()
-            + "<div class='notice blue'><strong>Campaign-first evidence view.</strong>"
+            + self._work_view_tabs("stats", "legacy")
+            + "<div class='notice blue'><strong>Earlier report publications.</strong>"
             "<p class='note'>Each card is one retained console Job/run. Calls, "
             "tokens, costs, coverage, and diagrams stay bound to that job; "
             "non-authoritative diagnostics are never blended into thesis "

@@ -82,7 +82,7 @@ def test_shared_page_tabs_are_accessible_and_progressive(tmp_path: Path) -> None
     panel_tags = re.findall(r"<section[^>]+data-page-panel='[^']+'[^>]*>", dashboard)
     assert panel_tags and all(" hidden" not in tag for tag in panel_tags)
     assert ".page-tablist { display:none; }" in style
-    assert ".page-tabs.tabs-ready .page-tablist { display:flex" in style
+    assert ".page-tabs.tabs-ready .page-tablist, .page-tablist.server-tablist { display:flex" in style
     assert ".page-tabpanel[hidden] { display:none; }" in style
 
 

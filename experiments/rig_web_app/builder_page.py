@@ -2301,6 +2301,9 @@ class BuilderPageMixin:
             "<p class='fieldlabel'>High-level composition preview "
             "<span class='fieldhint'>(not the final reviewed command)</span></p>"
             "<code id='buildpreview'>run_matrix (initializing current choices)</code>"
+            "<div class='campaign-actions'><button form='builder' type='submit' class='ghost' data-save-campaign "
+            "formaction='/build/save'>Save campaign</button>"
+            "<button form='builder' type='submit'>Compose &amp; review</button></div>"
             "</div>"
         )
         force_default = (
@@ -2648,7 +2651,7 @@ class BuilderPageMixin:
                 default="runs/thesis/lane",
             )
             + "</div></div>"
-            + "<div class='buildbar'><button type='submit' class='ghost' id='save-campaign' formaction='/build/save'>Save campaign</button>"
+            + "<div class='buildbar'><button type='submit' class='ghost' data-save-campaign formaction='/build/save'>Save campaign</button>"
             "<button type='submit'>"
             + _icon("play", size=15)
             + "Compose &amp; review</button></div>"
@@ -2660,7 +2663,7 @@ class BuilderPageMixin:
             "function update(){const campaign=document.querySelector('[name=work_kind]:checked').value==='campaign';"
             "fields.hidden=!campaign;c.disabled=!campaign;name.disabled=!campaign||!!c.value;name.required=campaign&&!c.value;"
             "document.getElementById('build-campaign-name').hidden=!!c.value;"
-            "document.getElementById('save-campaign').hidden=!campaign;"
+            "document.querySelectorAll('[data-save-campaign]').forEach(e=>{e.hidden=!campaign;});"
             "document.querySelectorAll('[data-builder-campaign]').forEach(e=>{e.value=campaign?c.value:'';});}"
             "document.querySelectorAll('[name=work_kind]').forEach(e=>e.addEventListener('change',update));"
             "c.addEventListener('change',()=>{window.location.assign(c.value?'/build?campaign_id='+encodeURIComponent(c.value)"

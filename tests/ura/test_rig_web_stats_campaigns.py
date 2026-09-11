@@ -414,7 +414,7 @@ def test_stats_lists_real_jobs_with_distinct_authority_and_one_lazy_modal(
         extra=["--preflight-only"],
     )
 
-    text = app.handle("GET", "/stats")[2].decode("utf-8")
+    text = app.handle("GET", "/stats?view=legacy")[2].decode("utf-8")
     assert "data-authority='thesis-measured'" in text
     assert "data-authority='synthetic'" in text
     assert "data-authority='diagnostic'" in text
@@ -459,7 +459,7 @@ def test_stats_lists_model_campaigns_first_and_collapses_resolvable_engineering_
         extra=["--diagnostic-canary", "--api", "mock"],
     )
 
-    text = app.handle("GET", "/stats")[2].decode("utf-8")
+    text = app.handle("GET", "/stats?view=legacy")[2].decode("utf-8")
     model_heading = text.index("<h2>Model campaign runs</h2>")
     model_card = text.index("data-job-id='job-older-diagnostic'")
     disclosure = text.index("<details class='stats-engineering-disclosure'>")
@@ -520,7 +520,7 @@ def test_stats_cta_promises_diagrams_only_for_chart_renderable_bound_report(
         report=table_report,
     )
 
-    index = app.handle("GET", "/stats")[2].decode("utf-8")
+    index = app.handle("GET", "/stats?view=legacy")[2].decode("utf-8")
     chart_card = index.split("data-job-id='job-chart'", 1)[1].split("</article>", 1)[0]
     table_card = index.split("data-job-id='job-table'", 1)[1].split("</article>", 1)[0]
     assert "Statistics &amp; diagrams" in chart_card
@@ -563,7 +563,7 @@ def test_stats_renders_digest_bound_runner_aggregate_diagram_without_linked_anal
         ],
     )
 
-    index = app.handle("GET", "/stats")[2].decode("utf-8")
+    index = app.handle("GET", "/stats?view=legacy")[2].decode("utf-8")
     card = index.split("data-job-id='job-direct-chart'", 1)[1].split(
         "</article>", 1
     )[0]
@@ -608,7 +608,7 @@ def test_stats_renders_digest_bound_runner_aggregate_diagram_without_linked_anal
             "strongreject_official",
         ],
     )
-    quarantined_index = app.handle("GET", "/stats")[2].decode("utf-8")
+    quarantined_index = app.handle("GET", "/stats?view=legacy")[2].decode("utf-8")
     quarantined_card = quarantined_index.split(
         "data-job-id='job-quarantined-chart'", 1
     )[1].split("</article>", 1)[0]
@@ -668,7 +668,7 @@ def test_lazy_job_detail_binds_only_the_selected_job_report(tmp_path: Path) -> N
             report=report,
         )
 
-    index = app.handle("GET", "/stats")[2].decode("utf-8")
+    index = app.handle("GET", "/stats?view=legacy")[2].decode("utf-8")
     assert "metric_a" not in index and "metric_b" not in index
     assert "class='barchart'" not in index
     status, content_type, fragment = app.handle("GET", "/stats/job/job-a?fragment=1")
@@ -822,7 +822,7 @@ def test_engineering_fixture_rows_are_hidden_then_pruned_by_safe_reindex(
     )
     assert app.db.list_reports() == []
     assert app.db.usage_totals() == {}
-    text = app.handle("GET", "/stats")[2].decode("utf-8")
+    text = app.handle("GET", "/stats?view=legacy")[2].decode("utf-8")
     assert "fixture_metric" not in text and "fixture-model" not in text
 
     summary = app.reindex_all()
@@ -873,7 +873,7 @@ def test_explicit_engineering_boundary_blocks_ordinary_in_root_lane(
         report=report,
     )
 
-    index = app.handle("GET", "/stats")[2].decode("utf-8")
+    index = app.handle("GET", "/stats?view=legacy")[2].decode("utf-8")
     card = index.split("data-job-id='job-engineering-boundary'", 1)[1].split(
         "</article>", 1
     )[0]
@@ -939,7 +939,7 @@ def test_unlinked_panel_rejects_suite_and_canary_schemas(tmp_path: Path) -> None
         ],
     )
     assert app._report_index() == []
-    text = app.handle("GET", "/stats")[2].decode("utf-8")
+    text = app.handle("GET", "/stats?view=legacy")[2].decode("utf-8")
     assert "misc/suite.json" not in text
     assert "misc/canary.json" not in text
     for path, kind in (("misc/suite.json", "suite"), ("misc/canary.json", "canary")):
@@ -959,12 +959,12 @@ def test_stats_campaign_index_is_paginated_with_all_jobs_reachable(tmp_path: Pat
             out=app.results_root / f"lane-{index:02d}",
             extra=["--preflight-only"],
         )
-    first = app.handle("GET", "/stats")[2].decode("utf-8")
-    second = app.handle("GET", "/stats?page=2")[2].decode("utf-8")
+    first = app.handle("GET", "/stats?view=legacy")[2].decode("utf-8")
+    second = app.handle("GET", "/stats?view=legacy&page=2")[2].decode("utf-8")
     assert first.count("data-stats-job=") == 24
-    assert "href='/stats?page=2'>Older</a>" in first
+    assert "href='/stats?view=legacy&amp;page=2'>Older</a>" in first
     assert second.count("data-stats-job=") == 2
-    assert "href='/stats?page=1'>Newer</a>" in second
+    assert "href='/stats?view=legacy&amp;page=1'>Newer</a>" in second
     assert "Page 2" in second
     app.close()
 
@@ -988,8 +988,8 @@ def test_stats_engineering_campaigns_are_not_repeated_on_history_pages(
             extra=["--preflight-only"],
         )
 
-    first = app.handle("GET", "/stats")[2].decode("utf-8")
-    second = app.handle("GET", "/stats?page=2")[2].decode("utf-8")
+    first = app.handle("GET", "/stats?view=legacy")[2].decode("utf-8")
+    second = app.handle("GET", "/stats?view=legacy&page=2")[2].decode("utf-8")
 
     disclosure = first.index("<details class='stats-engineering-disclosure'>")
     disclosure_tag = first[disclosure : first.index(">", disclosure) + 1]
@@ -999,7 +999,7 @@ def test_stats_engineering_campaigns_are_not_repeated_on_history_pages(
     assert "Engineering campaigns" not in second
     assert "stats-engineering-disclosure" not in second
     assert f"/jobs/campaign/{campaign_id}" not in second
-    assert "href='/stats?page=1'>Newer</a>" in second
+    assert "href='/stats?view=legacy&amp;page=1'>Newer</a>" in second
     app.close()
 
 
@@ -1035,7 +1035,7 @@ def test_stats_includes_active_run_kind_job_in_card_and_detail_only(
             extra=["support-only"],
         )
 
-    status, _headers, body = app.handle("GET", "/stats")
+    status, _headers, body = app.handle("GET", "/stats?view=legacy")
     assert status == 200
     index = body.decode("utf-8")
     card = index.split("data-job-id='job-running-measured'", 1)[1].split(
@@ -1084,7 +1084,7 @@ def test_stats_orphaned_run_without_end_time_never_says_running(
     app.close()
 
     restarted = _app(tmp_path)
-    index = restarted.handle("GET", "/stats")[2].decode("utf-8")
+    index = restarted.handle("GET", "/stats?view=legacy")[2].decode("utf-8")
     card = index.split("data-job-id='job-orphaned'", 1)[1].split(
         "</article>", 1
     )[0]
@@ -1114,8 +1114,8 @@ def test_stats_active_job_participates_in_pagination_and_run_row_wins(
         started_at=time.time() + 60,
     )
 
-    first = app.handle("GET", "/stats")[2].decode("utf-8")
-    second = app.handle("GET", "/stats?page=2")[2].decode("utf-8")
+    first = app.handle("GET", "/stats?view=legacy")[2].decode("utf-8")
+    second = app.handle("GET", "/stats?view=legacy&page=2")[2].decode("utf-8")
     assert first.count("data-stats-job=") == 24
     assert "job-active-newest" in first and "job-active-newest" not in second
     assert second.count("data-stats-job=") == 1
@@ -1211,7 +1211,7 @@ def test_stats_scans_exact_external_run_but_never_links_unowned_report(
         report=stale_report,
     )
 
-    index = app.handle("GET", "/stats")[2].decode("utf-8")
+    index = app.handle("GET", "/stats?view=legacy")[2].decode("utf-8")
     assert "job-external" in index and "1 target / 1 judge" in index
     assert "data-authority='thesis-measured'" in index
     detail = app.handle("GET", "/stats/job/job-external?fragment=1")[2].decode("utf-8")
@@ -1372,7 +1372,7 @@ def test_stats_real_http_navigation_resolves_retained_job_and_artifact_links(
             connection.close()
 
     try:
-        status, content_type, index = get("/stats")
+        status, content_type, index = get("/stats?view=legacy")
         assert status == 200 and content_type == "text/html; charset=utf-8"
         assert "job-http" in index and "1 target / 1 judge" in index
         assert "http_metric" not in index and "global_unlinked_metric" not in index
@@ -1453,7 +1453,7 @@ def test_nested_run_usage_and_report_have_one_most_specific_owner(tmp_path: Path
     assert "No completion-bound model usage" in parent_detail
     assert "0 complete cells" in parent_detail
     assert "child" in child_detail and "1 complete cell" in child_detail
-    index = app.handle("GET", "/stats")[2].decode("utf-8")
+    index = app.handle("GET", "/stats?view=legacy")[2].decode("utf-8")
     parent_card = index.split("data-job-id='job-parent'", 1)[1].split(
         "</article>", 1
     )[0]
