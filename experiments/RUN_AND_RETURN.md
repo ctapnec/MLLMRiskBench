@@ -12,6 +12,22 @@ scope for judging, without repeating target calls. It is a scheduling handoff,
 not a completed scored grid. Independent providers may collect concurrently;
 provider backoff, four-attempt transport limits and budget reservations remain.
 
+Temporary pool capacity is not provider credit exhaustion. When another call
+in the same pool is still in flight, wait for its settlement before trying
+the monetary reservation again; do not send HTTP or hold a spending lock while
+waiting. A persistent shortage pauses that funded work, not unrelated providers.
+Preserve this distinction when Runner wraps callback exceptions. A controller
+restart must skip completed target jobs and reuse retained response checkpoints.
+An interrupted transport attempt with no saved response needs continuation of
+its existing physical-attempt prefix, not a fresh answer retry or reset counter.
+Immutable budget caches are process-local: omit their locks when transferring
+a budget object to a spawned worker and recreate the cache in that worker.
+
+Account balances form an append-only dated history. Keep earlier reports and
+calculate the net decrease between snapshots, separately from per-call campaign
+costs and reservations. Account movement can include unrelated use, delayed
+billing, top-ups or refunds; it cannot silently settle unknown per-call charges.
+
 Materialize multiple corpora with `hosted_retained_inputs.materialize_replays`
 so the same complete selection is resolved once, not once per corpus or entry.
 Attempt budgets cache immutable plan and slot mappings with file-change

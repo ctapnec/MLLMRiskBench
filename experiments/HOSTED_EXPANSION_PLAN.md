@@ -1,5 +1,45 @@
 # Third hosted campaign: provider-scaled expansion
 
+## Current account balances
+
+Operator-reported update on 11 September 2026. Retain every earlier dated
+snapshot; this update adds to the balance history rather than replacing it.
+
+| Provider | Remaining account credit (USD) |
+| --- | ---: |
+| Anthropic | 59.61 |
+| OpenAI | 25.06 |
+| Google | 18.47 |
+| Kimi | 7.19 |
+| DeepSeek | 6.53 |
+| Total | 116.86 |
+
+Change since the balances used to plan this expansion on 10 September:
+
+| Provider | Earlier credit (USD) | Updated credit (USD) | Net decrease (USD) |
+| --- | ---: | ---: | ---: |
+| Anthropic | 78.43 | 59.61 | 18.82 |
+| OpenAI | 32.17 | 25.06 | 7.11 |
+| Google | 22.12 | 18.47 | 3.65 |
+| Kimi | 9.10 | 7.19 | 1.91 |
+| DeepSeek | 9.24 | 6.53 | 2.71 |
+| Total | 151.06 | 116.86 | 34.20 |
+
+The net decrease estimates account consumption when there were no intervening
+top-ups, refunds or credit adjustments. It is not automatically campaign-only
+spending: other projects and delayed billing can affect the same accounts.
+Retain the per-call campaign accounting alongside this independent comparison.
+
+These are account credits, not new campaign allocations or measured campaign
+costs. The existing cumulative provider ceilings and protected Haiku allocation
+remain unchanged. Preserve outstanding reservations and uncertain charges;
+do not subtract already-posted historical charges twice from these balances.
+Reconcile spending after this snapshot and unposted liabilities before using
+the balances to fund further requests. Both local and Haiku judging remain
+required after target collection.
+
+## Continuous execution
+
 Current instruction, 11 September 2026: collect all remaining targets through
 one continuous provider-parallel queue, then perform local and Haiku judging.
 The financial slices below are historical. No new slice may wait for preceding
@@ -12,12 +52,12 @@ At 06:54:36 UTC the unstarted fund-013, prepare-flow-014 and deferred-posthoc-00
 controllers were retired without interrupting an in-flight call. Existing
 Google target continuations retain their ownership and accounting.
 
-The 07:04 aggregate records 2,839 funded inputs, 2,761 starts and 2,754 usable
-outcomes. All 27 twelfth-slice targets and judging are complete. Haiku totals
-are 2,217 local and 1,508 hosted assessments, with USD 5.308997 reported cost.
-Six failures, one unsettled Google request and 78 unstarted Google inputs remain.
-Console HTTP is 200. Next aggregate: 07:34 UTC. A revised ETA requires observed
-continuous-dispatch throughput; the previous serial-batch estimate is obsolete.
+The 08:34 aggregate records 6,669 selected assignments, 2,803 starts and 2,795
+usable outcomes, gaining 42 starts and 41 usable outcomes in thirty minutes.
+Haiku totals remain 2,217 local and 1,508 hosted assessments, with USD 5.308997
+reported cost. Console HTTP is 200. Next aggregate: 09:04 UTC. A revised ETA
+requires sustained continuous-dispatch throughput; the serial-batch estimate
+is obsolete. No account credit-exhaustion outcome was reported in this snapshot.
 
 Per-attempt money reservation and its preparation/execution integration passed
 96 and 162 focused rig tests respectively, plus targeted reversed-fix checks.
@@ -27,9 +67,14 @@ The separate hosted response-collection scope pauses before local judge load.
 Materialization of all 3,830 remaining fixed inputs completed at approximately
 07:43 UTC. It retained 79 already completed replay files through the handoff.
 Counting resumed at 07:55 UTC across all five providers, with two workers per
-provider and reuse of saved count receipts. The continuous target controller
-is running in tmux and waits only for this counted inventory, not judging.
-Paid dispatch has not restarted. The older 67-input whole-cluster
+provider and reuse of saved count receipts. All sixteen programs are prepared.
+Continuous collection issued 42 requests and saved 41 usable outcomes before
+a temporary OpenAI reservation shortage incorrectly opened a shared stop.
+The provider-scoped correction and checkpoint reuse passed focused rig checks.
+The controller restarted in tmux at 08:50 UTC, retaining nine complete jobs and
+all saved responses. One interrupted DeepSeek transport prefix remains separate
+pending recovery; it does not block independent jobs. Local and Haiku judging
+follow target collection. The older 67-input whole-cluster
 allocation shortfall remains open, not silently discarded or counted complete.
 
 The full-inventory path now resolves a selection once across its corpora and
@@ -624,7 +669,8 @@ judging counts remain to be validated. Evidence:
 
 ## Budget and generation conditions
 
-The latest operator-reported balances total USD 151.06. Preserve the earlier
+The 10 September planning balances totaled USD 151.06; retain them as the
+baseline for the dated updates above. Preserve the earlier
 absolute buffers as well as the 80 percent spending limit. A working envelope
 is below; it is a prospective allocation, not a cost estimate or funded ledger.
 
