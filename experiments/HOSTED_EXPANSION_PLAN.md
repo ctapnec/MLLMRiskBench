@@ -1,28 +1,30 @@
 # Third hosted campaign: provider-scaled expansion
 
-Status update, 11 September 2026 at 06:04 UTC: the requested program is
+Status update, 11 September 2026 at 06:34 UTC: the requested program is
 expanded from 6,541 to 6,736 target evaluations by the additional frontier
 selection below. The added 195 evaluations have counted requests and validated
-replay files. Twenty Fable evaluations and their judging are now complete;
-the other 175 additional assignments remain unfunded. The operator's latest reported balances and the
+replay files. Twenty Fable evaluations and their judging are complete;
+another 27 additional assignments are funded, and 148 remain unfunded.
+The operator's latest reported balances and the
 existing USD 114 cumulative ceiling are unchanged. Frontier coverage takes
 priority over adding further lower-cost groups.
 
-The 06:04 aggregate records 2,711 started assignments and 2,703 usable
-outcomes from 2,812 funded inputs, gaining 55 starts and 54 usable outcomes in
-thirty minutes. Six failures, two unsettled requests and 101 unstarted inputs
-remain: 23 DeepSeek and 78 Google inputs. Haiku totals are 2,045 local and
-1,458 hosted assessments, including eighteen and seven invalid verdicts
-respectively, with USD 4.992498 reported cost. Console availability is HTTP
-200; no shared stop or provider credit-exhaustion marker is present. The next
-aggregate is due at 06:34 UTC. The ninth slice is complete: 95 usable outcomes
+The 06:34 aggregate records 2,734 started assignments and 2,727 usable
+outcomes from its 2,812-input funded snapshot, gaining 23 starts and 24 usable
+outcomes in thirty minutes. Six failures, one unsettled Google request and
+78 unstarted Google inputs remain in that snapshot. Haiku totals are 2,198
+local and 1,492 hosted assessments, including eighteen and seven invalid
+verdicts respectively, with USD 5.272464 reported cost. Console availability
+is HTTP 200; no shared stop or provider credit-exhaustion marker is present.
+The next aggregate is due at 07:04 UTC. The ninth slice is complete: 95 usable outcomes
 and one exhausted Opus overload outcome, with 73 eligible hosted Haiku
 assessments and 201 new matching-local assessments. The tenth slice's twenty
 additional Fable targets and judging completed by 05:42, including 55 new
-local assessments with one invalid verdict. The eleventh slice is funded for
-78 inputs and 153 new matching-local judging assignments. Opus and Kimi
-targets are complete; DeepSeek collection and the subsequent judging remain
-active. The full requested expansion still depends on quota and subsequent
+local assessments with one invalid verdict. The eleventh slice's 78 targets
+and both judging stages are complete, including 153 new matching-local Haiku
+assessments. Twelfth funding completed at 06:34:01 UTC, just after the aggregate
+selected its sources, adding 27 frontier inputs for 2,839 funded assignments.
+The full requested expansion still depends on quota and subsequent
 funding; the unfunded remainder is not claimed complete.
 
 The ninth interruption was an Opus HTTP 529 `overloaded_error` after four
@@ -89,7 +91,8 @@ selection, with prospective caps of Opus 30, Kimi 19 and DeepSeek 40.
 Whole-cluster selection, request counting and cumulative funding still apply;
 those caps are not executed quantities. At 05:46:35 UTC the resulting eleventh
 slice was funded for Opus 23, Kimi 16 and DeepSeek 39, with 153 new matching-local
-Haiku assignments. Its controllers are running. The independent additional
+Haiku assignments. Its targets and both judging stages subsequently completed.
+The independent additional
 Fable prefix must not move the original model-input prefixes. The queue uses
 the existing preparation, materialization, counting and funding commands,
 including local and Haiku judging, without altering requests already issued.
@@ -109,8 +112,10 @@ pending Google slices. Each new hosted output needs its own local and Haiku
 judgment; only judgments of identical retained local answers can be reused.
 The twelfth preparation completed by 05:49 UTC for all 27 unchanged requests.
 They match sixty retained local answers, of which nineteen need new Haiku
-assessments. Its funding controller is queued behind the eleventh targets and
-both judging stages. The original program's unfunded inputs remain pending.
+assessments. Its funding completed at 06:34:01 UTC after the eleventh targets
+and both judging stages. The dispatcher and judging controllers are live;
+funding alone is not a generation count. The original program's unfunded
+inputs remain pending.
 
 At 06:09 UTC a thirteenth preparation was queued for 39 extra Opus inputs,
 using the same 26 text and thirteen image inputs as the extra Fable block.
@@ -121,6 +126,10 @@ No thirteenth call is funded or issued by this queue. Local-answer reuse must
 be verified from that preceding selection, while every new eligible Opus
 output requires its own local and Haiku assessment. This queue changes neither
 the 6,736 requested assignments nor the cumulative provider ceilings.
+Preparation completed at 06:34 for all 39 unchanged requests, matching 125
+existing local answers with zero newly assigned local Haiku slots. Their
+completed judgments must still be verified at funding after the twelfth
+judging stage. The thirteenth funding controller is live and waiting.
 
 A following original-input preparation is queued as slice fourteen, behind
 thirteenth funding, with prospective caps of Opus 30, Kimi 19 and DeepSeek 40.
