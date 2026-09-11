@@ -842,7 +842,7 @@ class PagesMixin:
             "form.addEventListener('change',function(){syncHumanAudit(form);});});"
             "})();</script>"
         )
-        return _page("Run a command", body, active="Run")
+        return _page("Run a command", body, active="Tools")
 
     @staticmethod
     def _jobs_history_bound(
@@ -871,8 +871,14 @@ class PagesMixin:
         return default
 
     def _jobs_page(self, query: Mapping[str, str] | None = None) -> bytes:
+        if (query or {}).get("view") == "campaigns":
+            return self._workspaces_page(context="jobs")
         self._reconcile()
         filters = dict(query or {})
+        scope = filters.get("view", "all")
+        campaign_id = filters.get("campaign_id", "")
+        if campaign_id:
+            self.db.require_workspace(campaign_id)
         now = time.time()
         started_from = self._jobs_history_bound(
             filters,
@@ -973,6 +979,21 @@ class PagesMixin:
             for job in scanned_external_jobs
             if in_window(job.started_at) or job.state == "running"
         ]
+        if scope == "standalone" or campaign_id:
+            owners = self.db.workspace_member_owners(
+                [("job", j.job_id) for j in history_jobs]
+                + [("external", j.job_id) for j in external_jobs]
+                + [("controller", c.route_id) for c in campaigns]
+            )
+            def selected(kind, key):
+                owner = owners.get((kind, key), "")
+                return owner == campaign_id if campaign_id else not owner
+            history_jobs = [j for j in history_jobs if selected("job", j.job_id)
+                and (campaign_id or j.command in {"run_matrix", "hosted_retained_execute"})]
+            external_jobs = [j for j in external_jobs if selected("external", j.job_id)]
+            campaigns = [c for c in campaigns if campaign_id and selected("controller", c.route_id)]
+            pinned_console_ids.intersection_update(j.job_id for j in history_jobs)
+            pinned_campaign_ids.intersection_update(c.route_id for c in campaigns)
         pinned_external_ids = {
             job.job_id
             for job in external_jobs
@@ -1379,6 +1400,9 @@ class PagesMixin:
             "<h1>"
             + _icon("pulse", size=22)
             + "Jobs</h1>"
+            + self._work_view_tabs("jobs", "campaigns" if campaign_id else scope)
+            + (self._campaign_banner(campaign_id) if campaign_id else "")
+            + ("<p>Standalone runs exclude campaign-owned jobs and administrative tools.</p>" if scope == "standalone" else "")
             + self._health_banner()
             + (
                 "<div class='notice amber'>" + html.escape(campaign_scan_note) + "</div>"

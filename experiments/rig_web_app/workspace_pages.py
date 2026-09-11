@@ -12,6 +12,84 @@ from .workspace_charts import coverage_html, coverage_svg, quality_svg, model_co
 
 
 class WorkspacePagesMixin:
+    def _save_build_campaign(self, params: dict[str, str]) -> dict[str, str]:
+        if params.get("work_kind") != "campaign" and not params.get("campaign_id"):
+            return params
+        result = dict(params)
+        campaign_id = result.get("campaign_id")
+        if not campaign_id:
+            campaign_id = self.db.create_workspace(result["campaign_name"], "mixed")
+        result.update(campaign_id=campaign_id, work_kind="campaign")
+        result.pop("campaign_name", None)
+        self.db.save_workspace_definition(campaign_id, self._durable_builder_params(result))
+        return result
+
+    @staticmethod
+    def _work_view_tabs(context: str, selected: str) -> str:
+        views = [("campaigns", "Campaigns"), ("standalone", "Standalone runs")]
+        if context == "jobs":
+            views.append(("all", "All jobs and tools"))
+        else:
+            views.append(("legacy", "Earlier reports"))
+        return "<nav class='page-tablist' aria-label='" + context.title() + " scope'>" + "".join(
+            "<a class='page-tab' href='/" + context + "?view=" + value + "'"
+            + (" aria-current='page'" if value == selected else "") + ">" + label + "</a>"
+            for value, label in views
+        ) + "</nav>"
+
+    def _build_work_choice(self, params: dict[str, str]) -> str:
+        selected = params.get("campaign_id", "")
+        campaign_mode = params.get("work_kind", "campaign" if selected else "run") == "campaign"
+        rows = self.db.workspaces()
+        if rows is None:
+            return "<p class='notice red'>Campaign index unavailable.</p>"
+        options = "<option value=''>New campaign</option>" + "".join(
+            "<option value='" + r["campaign_id"] + "'" + (" selected" if selected == r["campaign_id"] else "")
+            + ">" + html.escape(r["name"]) + "</option>" for r in rows
+        )
+        return (
+            "<section class='card build-purpose'><h2>What are you building?</h2>"
+            "<div class='work-kind-choices'>" + "".join(
+                "<label class='work-kind-choice'><input type='radio' name='work_kind' form='builder' value='"
+                + value + "'" + (" checked" if enabled else "") + "><span><strong>" + label
+                + "</strong><span>" + description + "</span></span></label>"
+                for value, label, description, enabled in (
+                    ("campaign", "Campaign", "Coordinate arms, corpora and frameworks across a set of models.", campaign_mode),
+                    ("run", "Single run", "Execute one independent job with the selected pipeline.", not campaign_mode),
+                )
+            ) + "</div><div id='build-campaign-fields' class='campaign-ownership-row'>"
+            "<label class='campaign-field'>Campaign <select name='campaign_id' form='builder'>" + options + "</select></label>"
+            "<label class='campaign-field' id='build-campaign-name'>New campaign name "
+            "<input name='campaign_name' form='builder' maxlength='120' value='"
+            + html.escape(params.get("campaign_name", ""), quote=True) + "'></label>"
+            + ("<a class='button ghost' href='/campaigns/" + selected + "'>Open campaign</a>" if selected else "")
+            + "</div><p class='note'>Choose models once below. Local, API or mixed follows from your model selection. "
+            "Campaign drafts do not change jobs that are already running.</p></section>"
+        )
+
+    def _standalone_results_page(self, query: dict[str, str]) -> bytes:
+        page = max(0, int(query.get("page", "0")))
+        rows = self.db.standalone_runs(offset=page * 50)
+        if rows is None:
+            content = "<p class='notice red'>Run result index unavailable.</p>"
+        elif not rows:
+            content = "<p>No indexed standalone runs on this page.</p>"
+        else:
+            content = "<div class='scroll'><table><tr><th>Run</th><th>Command</th><th>Status</th><th>Results</th></tr>" + "".join(
+                "<tr><td><a href='/jobs/" + quote(row['job_id'], safe='') + "'>" + html.escape(row['job_id']) + "</a></td>"
+                "<td>" + html.escape(row['command'] or '') + "</td><td>" + html.escape(row['state'] or 'unknown')
+                + "</td><td><a href='/stats/job/" + quote(row['job_id'], safe='') + "'>Results and diagrams</a></td></tr>"
+                for row in rows[:50]
+            ) + "</table></div>"
+            if page:
+                content += f"<a href='/stats?view=standalone&amp;page={page - 1}'>Previous</a> "
+            if len(rows) > 50:
+                content += f"<a href='/stats?view=standalone&amp;page={page + 1}'>Next</a>"
+        return _page("Standalone run statistics", "<h1>Stats</h1>"
+            + self._work_view_tabs("stats", "standalone")
+            + "<section class='card'><h2>Standalone runs</h2><p>Independent executions, excluding campaign-owned runs. "
+            "Unindexed external reports remain available under Earlier reports.</p>" + content + "</section>", active="Stats")
+
     def _workspace_export(self, campaign_id: str, name: str, query: dict[str, str]) -> tuple[int, str, bytes]:
         self.db.require_workspace(campaign_id)
         page = max(0, int(query.get("page", "0")))
@@ -80,42 +158,32 @@ class WorkspacePagesMixin:
             + html.escape(campaign["name"]) + "</a></p>"
         )
 
-    def _workspaces_page(self) -> bytes:
+    def _workspaces_page(self, *, context: str = "campaigns") -> bytes:
         rows = self.db.workspaces()
         cards = "<p class='notice red'>Campaign index unavailable.</p>" if rows is None else "".join(
             "<article class='card campaign-card'><h2><a href='/campaigns/" + row["campaign_id"] + "'>"
             + html.escape(row["name"]) + "</a></h2>"
-            "<a class='button' href='/build?campaign_id=" + row["campaign_id"]
-            + "'>Continue in Build</a></article>" for row in rows
+            "<div class='campaign-actions'><a class='button' href='/build?campaign_id=" + row["campaign_id"]
+            + "'>Edit in Build</a><a class='button ghost' href='/jobs?campaign_id=" + row["campaign_id"]
+            + "'>Jobs</a><a class='button ghost' href='/campaigns/" + row["campaign_id"]
+            + "?section=overview'>Stats</a></div></article>" for row in rows
         )
         if rows == []:
             cards = "<p>No campaigns created yet. Existing standalone jobs are unchanged.</p>"
         return _page(
-            "Campaigns", "<h1>Campaigns</h1>"
-            "<p>Keep related collection, judging and analysis together. Configure work in Build.</p>"
-            "<p><a class='button' href='/campaigns/new'>Create campaign</a></p>"
-            + "<div class='campaign-grid'>" + cards + "</div>"
-            + "<p class='campaign-secondary'><a href='/stats?view=legacy'>Standalone jobs and earlier report publications</a></p>",
-            active="Stats",
-        )
-
-    def _new_workspace_page(self) -> bytes:
-        return _page(
-            "Create campaign", "<h1>Create campaign</h1>"
-            "<p>A campaign groups related jobs, results and judging. "
-            "Choose its models and execution settings next, in Build.</p>"
-            "<section class='card campaign-create-card'><form class='campaign-create-form' method='post' action='/campaigns' data-busy>"
-            "<label class='campaign-field'>Campaign name <input type='text' name='name' required maxlength='120' autofocus></label>"
-            "<input type='hidden' name='creation_flow' value='name_then_build'>"
-            "<div class='campaign-actions'><button>Create and open Build</button>"
-            "<a class='button ghost' href='/campaigns'>Cancel</a></div></form></section>", active="Stats",
+            context.title(), "<h1>" + context.title() + "</h1>"
+            + (self._work_view_tabs(context, "campaigns") if context in {"jobs", "stats"} else "")
+            + "<p>Campaigns evaluate arms, corpora and frameworks across model sets. Define them in Build.</p>"
+            "<p><a class='button' href='/build?work_kind=campaign#build-general'>Build a campaign</a> "
+            "<a class='button ghost' href='/build?work_kind=run#build-general'>Build a single run</a></p>"
+            + "<div class='campaign-grid'>" + cards + "</div>", active=context.title(),
         )
 
     def _workspace_page(self, campaign_id: str, query: dict[str, str]) -> bytes:
         self.db.require_workspace(campaign_id)
         campaign = self.db.workspace(campaign_id)
         section = query.get("section", "overview")
-        sections = ("overview", "results", "judging", "costs", "activity")
+        sections = ("overview", "definition", "results", "judging", "costs", "activity")
         if section not in sections:
             raise ValueError("Unknown campaign section")
         base = "/campaigns/" + campaign_id
@@ -124,7 +192,17 @@ class WorkspacePagesMixin:
             + (" aria-current='page'" if tab == section else "") + ">"
             + tab.title() + "</a>" for tab in sections
         ) + "</nav>"
-        if section == "activity":
+        if section == "definition":
+            definition = self.db.workspace_definition(campaign_id)
+            content = "<p>No Build definition has been saved for this retained campaign. Its existing jobs are unchanged.</p>"
+            if definition:
+                content = "<p>Saved configuration for future runs. Each launched job retains its own reviewed settings.</p><dl class='builder-summary'>" + "".join(
+                    "<div><dt>" + label + "</dt><dd>" + html.escape(definition.get(key) or "Not set") + "</dd></div>"
+                    for key, label in (("local", "Local models"), ("api", "API models"), ("corpora", "Arms / corpora"),
+                        ("attackers", "Frameworks / attacks"), ("seeds", "Seeds"), ("sampling_policy", "Sampling"),
+                        ("limit", "Per-arm limit"), ("judges", "Judges"), ("judge_model", "Judge model"), ("out", "Output"))
+                ) + "</dl>"
+        elif section == "activity":
             offset = max(0, int(query.get("page", "0"))) * 50
             rows = self.db.workspace_activity(campaign_id, offset=offset)
             if rows is None:
@@ -152,9 +230,10 @@ class WorkspacePagesMixin:
         return _page(
             campaign["name"], "<h1>" + html.escape(campaign["name"]) + "</h1>"
             "<p><a class='button' href='/build?campaign_id=" + campaign_id + "'>Configure in Build</a> "
+            "<a class='button ghost' href='/jobs?campaign_id=" + campaign_id + "'>Campaign jobs</a> "
             "<a class='button ghost' href='/commands?campaign_id=" + campaign_id + "'>Run tools</a></p>"
             + navigation + "<section class='card'><h2>" + section.title() + "</h2>" + content + "</section>",
-            active="Stats",
+            active="Campaigns" if section in {"definition", "activity"} else "Stats",
         )
 
     def _workspace_results(self, campaign_id: str, section: str, query: dict[str, str]) -> str:

@@ -60,7 +60,7 @@ h2 .ic { color:var(--muted); }
 .campaign-ownership-row { display:flex; flex-wrap:wrap; align-items:flex-end; gap:1rem; }
 .campaign-field { display:grid; gap:.5rem; min-width:0; font-weight:600; font-size:.9rem; }
 .campaign-ownership-row .campaign-field { flex:1 1 280px; max-width:36rem; }
-.campaign-field select, .campaign-field input[type=text] { box-sizing:border-box; width:100%; min-width:0; min-height:2.65rem; margin:0;
+.campaign-field select, .campaign-field input { box-sizing:border-box; width:100%; min-width:0; min-height:2.65rem; margin:0;
   padding:.65rem .8rem; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--ink); font:inherit; font-weight:400; }
 .campaign-field select { padding-right:2.2rem; }
 .campaign-field input:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
@@ -68,6 +68,13 @@ h2 .ic { color:var(--muted); }
 .campaign-create-card { max-width:44rem; padding:1.5rem; margin:1.5rem 0; }
 .campaign-create-form { display:grid; gap:1.5rem; margin:0; }
 .campaign-actions { display:flex; flex-wrap:wrap; align-items:center; gap:.75rem; padding-top:1rem; border-top:1px solid var(--line); }
+.work-kind-choices { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr)); gap:1rem; margin:1rem 0 1.5rem; }
+.work-kind-choice { display:flex; align-items:flex-start; gap:.75rem; padding:1rem; border:1px solid var(--line); border-radius:10px; cursor:pointer; min-width:0; }
+.work-kind-choice:has(input:checked) { border-color:var(--accent); background:var(--surface2); }
+.work-kind-choice input { flex:0 0 auto; margin-top:.2rem; }
+.work-kind-choice > span { display:grid; gap:.4rem; }
+.work-kind-choice > span > span { font-size:.9rem; color:var(--muted); line-height:1.5; }
+.build-purpose [hidden] { display:none !important; }
 .campaign-secondary { margin-top:1.5rem; }
 @media (max-width:540px) {
   .campaign-create-card, .campaign-grid .campaign-card { padding:1rem; }
@@ -1102,7 +1109,8 @@ refresh();
 _NAV_LINKS = (
     ("/", "grid", "Dashboard"),
     ("/build", "flask", "Build"),
-    ("/commands", "terminal", "Run"),
+    ("/campaigns", "book", "Campaigns"),
+    ("/commands", "terminal", "Tools"),
     ("/jobs", "pulse", "Jobs"),
     ("/stats", "chart", "Stats"),
     ("/config", "sliders", "Config"),

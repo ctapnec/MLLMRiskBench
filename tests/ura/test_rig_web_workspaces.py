@@ -84,25 +84,24 @@ def test_create_returns_to_existing_build_and_selector_belongs_to_its_form(tmp_p
         app.close()
 
 
-def test_create_page_is_neutral_and_does_not_repeat_model_type_selection(tmp_path):
+def test_create_redirects_into_build_without_a_second_creation_wizard(tmp_path):
     app = _app(tmp_path)
     try:
         existing = app.db.create_workspace("API campaign", "api")
-        code, _, body = app.handle("GET", "/campaigns/new")
+        code, location, body = app.handle("GET", "/campaigns/new")
+        assert code == 303 and location == "/build?work_kind=campaign#build-general"
+        code, _, body = app.handle("GET", location)
         page = body.decode()
         assert code == 200
-        assert "<h1>Create campaign</h1>" in page
-        assert "API campaign" not in page
         assert "name='kind'" not in page
-        assert "name='campaign_id'" not in page
-        assert "action='/campaigns'" in page
-        assert "class='card campaign-create-card'" in page
-        assert "class='campaign-create-form'" in page
-        assert "class='campaign-actions'" in page
-        code, location, _ = app.handle("POST", "/campaigns", {
-            "name": "Fresh comparison", "creation_flow": "name_then_build"})
-        assert code == 303 and location.endswith("#build-general")
-        new = location.split("=", 1)[1].split("#", 1)[0]
+        assert "name='work_kind' form='builder' value='campaign' checked" in page
+        assert "name='campaign_name' form='builder'" in page
+        assert "action='/campaigns'" not in page
+        assert "formaction='/build/save'" in page
+        code, location, _ = app.handle("POST", "/build/save", {
+            "campaign_name": "Fresh comparison", "work_kind": "campaign"})
+        assert code == 303 and location.endswith("?section=definition")
+        new = location.split("/campaigns/", 1)[1].split("?", 1)[0]
         assert new != existing
         assert app.db.workspace(new)["name"] == "Fresh comparison"
         assert app.db.workspace(new)["kind"] == "mixed"
@@ -113,7 +112,7 @@ def test_create_page_is_neutral_and_does_not_repeat_model_type_selection(tmp_pat
         app.close()
 
 
-def test_campaign_ownership_selector_links_to_separate_creation(tmp_path):
+def test_tool_ownership_selector_links_to_build_creation_alias(tmp_path):
     app = _app(tmp_path)
     try:
         campaign = app.db.create_workspace("API campaign", "api")

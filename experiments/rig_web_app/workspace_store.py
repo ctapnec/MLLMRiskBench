@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import json
 import sqlite3
 import time
 import uuid
@@ -24,6 +25,66 @@ class WorkspaceStoreMixin:
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS campaign_members_owner "
             "ON campaign_members(campaign_id, registered_at)"
+        )
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS campaign_definitions ("
+            "campaign_id TEXT PRIMARY KEY, builder_params TEXT NOT NULL, updated_at REAL NOT NULL)"
+        )
+
+    def save_workspace_definition(self, campaign_id: str, params: dict[str, str]) -> None:
+        """Save an editable definition; launched jobs keep their own snapshots."""
+        self.require_workspace(campaign_id)
+        if params.get("campaign_id") != campaign_id or not all(
+            isinstance(k, str) and isinstance(v, str) for k, v in params.items()
+        ):
+            raise ValueError("Invalid campaign definition")
+        with self._lock:
+            if self._conn is None:
+                raise ValueError("Campaign database is unavailable")
+            try:
+                with self._conn:
+                    self._conn.execute(
+                        "INSERT INTO campaign_definitions VALUES(?,?,?) "
+                        "ON CONFLICT(campaign_id) DO UPDATE SET "
+                        "builder_params=excluded.builder_params,updated_at=excluded.updated_at",
+                        (campaign_id, json.dumps(params, sort_keys=True), time.time()),
+                    )
+            except sqlite3.Error as exc:
+                self._fail(exc)
+                raise ValueError("Campaign definition could not be saved") from exc
+
+    def workspace_definition(self, campaign_id: str) -> dict[str, str]:
+        self.require_workspace(campaign_id)
+        rows = self._query(
+            "SELECT builder_params FROM campaign_definitions WHERE campaign_id=?", (campaign_id,)
+        )
+        if rows is None:
+            raise ValueError("Campaign definition index unavailable")
+        return json.loads(rows[0]["builder_params"]) if rows else {}
+
+    def workspace_member_owners(self, members: list[tuple[str, str]]) -> dict[tuple[str, str], str]:
+        owners = {}
+        # Query only the displayed records, not every historical campaign row.
+        for offset in range(0, len(members), 200):
+            chunk = members[offset:offset + 200]
+            rows = self._query(
+                "SELECT member_kind,member_id,campaign_id FROM campaign_members WHERE "
+                + " OR ".join("(member_kind=? AND member_id=?)" for _ in chunk),
+                tuple(value for pair in chunk for value in pair),
+            )
+            if rows is None:
+                raise ValueError("Campaign ownership index unavailable")
+            owners.update({(row["member_kind"], row["member_id"]): row["campaign_id"] for row in rows})
+        return owners
+
+    def standalone_runs(self, *, offset: int = 0) -> list[sqlite3.Row] | None:
+        if offset < 0:
+            raise ValueError("Invalid standalone results page")
+        return self._query(
+            "SELECT r.* FROM (" + self._CAMPAIGN_ROWS + ") r WHERE NOT EXISTS ("
+            "SELECT 1 FROM campaign_members m WHERE m.member_kind IN ('job','external') "
+            "AND m.member_id=r.job_id) ORDER BY r.created_at DESC,r.job_id LIMIT 51 OFFSET ?",
+            (offset,),
         )
 
     def create_workspace(self, name: str, kind: str) -> str:

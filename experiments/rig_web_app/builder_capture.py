@@ -19,6 +19,8 @@ from .ui import _page
 class BuilderCaptureMixin:
     _BUILDER_FIELDS = frozenset({
         "campaign_id",
+        "work_kind",
+        "campaign_name",
         "mode",
         "canary_dry",
         "corpora",
@@ -541,6 +543,16 @@ class BuilderCaptureMixin:
                 and str(value).strip()
             )
         }
+        work_kind = params.get("work_kind", "campaign" if params.get("campaign_id") else "run")
+        if work_kind not in {"run", "campaign"}:
+            raise ValueError("Choose Campaign or Single run")
+        if work_kind == "run":
+            params.pop("campaign_id", None)
+            params.pop("campaign_name", None)
+        elif not params.get("campaign_id"):
+            name = params.get("campaign_name", "")
+            if not name or len(name) > 120 or any(ord(c) < 32 for c in name):
+                raise ValueError("Enter a campaign name or select an existing campaign")
         attackers = set(self._split_list(params.get("attackers", "")))
         if "t3mp3st" not in attackers:
             params.pop("t3_artifact", None)

@@ -1,5 +1,95 @@
 # Campaign workspaces and the reproducible UI workflow
 
+## Campaign and run contract - whole-flow reassessment
+
+The user-facing distinction is **Campaign** versus **Single run**, not local
+versus API. A campaign applies a defined selection of arms, corpora and attack
+frameworks to a set of models. It owns the resulting collection runs, preparation,
+judging, recoveries and analyses. A single run is one independently executable
+Runner job; it is not one question and can contain multiple inputs. A campaign
+can contain one or many runs without changing that definition.
+
+Build is the only experiment editor. Its first choice is Campaign or Single run.
+Campaign creation includes the name in Build, alongside the existing pipeline
+controls; it must not send the user to a second creation wizard. An existing
+campaign reopens its saved definition. Models are selected once in the existing
+model picker. Local, API or mixed is a description derived from that selection,
+never a required preliminary campaign category.
+
+The complete navigation contract is:
+
+| Section | Purpose | Main content and actions |
+| --- | --- | --- |
+| Build | Define and review an experiment | Campaign / Single run; models; arms and corpora; frameworks; sampling; generation; judging; resources and costs; save and review |
+| Campaigns | Manage coordinated experiments | Named campaigns; saved definition; collection and judging progress; constituent runs; continue in Build |
+| Jobs | Observe execution | Campaigns and Standalone runs as distinct views; drill into a campaign's real jobs; logs, retry state and supported stop/resume actions |
+| Stats | Examine results | Campaigns and Standalone runs as distinct views; model/input/framework breakdowns, output-specific judgments, usage, costs and exports |
+| Tools | Advanced operations | Existing typed preparation, judging and analysis commands, with explicit campaign ownership when applicable |
+
+Normal flow: **Build -> Campaign or Single run -> configure -> review ->
+execute -> Jobs -> Stats**. Opening an existing campaign instead returns to its
+saved Build definition or its Jobs/Stats views. A standalone run must not be
+silently wrapped in an API-named campaign. A campaign's jobs must not reappear in
+the standalone list. Unassigned historical controller/report records remain
+explicitly unassigned, not inferred to be standalone experiments or campaigns.
+
+Saving a definition makes no calls. Reviewing a definition shows the actual
+models, arms/corpora/frameworks, seeds and selection, generation settings, judging
+stages, workload and forecast. The reviewed launch keeps those choices and its
+campaign owner even if another tab edits the draft. Editing a draft never changes
+an already running job or its historical results. A saved draft alone is not a
+running, completed or fully scheduled campaign.
+
+The audit found four connected gaps, not just bad labels: campaign records had
+no saved experiment definition; creation duplicated model-category choice;
+Jobs mixed campaign controllers and standalone runs; and Stats used a conditional
+landing page and called individual executions campaigns. Result publication and
+the retained-input provider-parallel scheduler also remain incompletely connected
+to UI launches. They must be finished using their existing execution paths, not a
+second scheduler or another pipeline editor. This section is the intended
+end-to-end contract, not a claim that all of it is already deployed.
+
+Acceptance includes creating both kinds from Build, saving and reopening a
+multi-model/multi-arm campaign without losing selections, reviewing and launching
+without changing CLI semantics, separating membership in Jobs and Stats, and
+opening a completed run's real results. Also verify narrow layouts, keyboard
+navigation, readable spacing and the common busy guard on every backend request.
+Campaign completion requires all assigned collection and requested judging work,
+not merely a successful child process. Existing experimental jobs continue during
+this UI work.
+
+### Active and historical campaign integration
+
+The same workflow must support the currently running campaign and a campaign
+created manually in Build. The UI must expose the actual retained-input selector,
+per-model generation settings, per-provider concurrency and retry policy, shared
+spending forecast and ceilings, local resource plan, and requested local/hosted
+judging stages. An opaque script path is not a substitute for these controls.
+Collection must use the existing provider-parallel executor without waiting for
+unrelated judging batches. Changes apply to future work or explicit continuations,
+not to already collected answers.
+
+Import completed and active campaigns from explicit inventories and program
+references. Preserve their real process ownership, original timestamps, pending
+assignments, outputs, physical attempts, costs, output-specific judgments and
+recovery links. Publication must update on durable new data, not only after an
+entire campaign ends. Page navigation reads SQLite; it must not recursively scan,
+rehash or reconstruct the experimental corpus. A last-published time and pending
+publication state distinguish stale indexes from idle execution.
+
+Management actions include reviewing remaining work, changing future settings,
+resuming eligible missing/transport-failed work, selecting a retained successor,
+and judging retained outputs without regenerating them. Imported tmux workers are
+read-only until a real control adapter owns their stop/resume lifecycle. Never
+show a functional-looking control that cannot operate the underlying job.
+Original outputs remain usable for new comparisons or re-judging after settings
+change; historical and corrected generation conditions stay distinct.
+
+The definition and scope changes alone do not fulfill this integration. Remaining
+acceptance must exercise the current real campaign, a new UI-created campaign and
+a standalone run through configuration, execution, ongoing publication, judging,
+continuation and Stats. Both local and hosted paths are required.
+
 Status: Build ownership, compact result/judgment indexes, model coverage views
 and figure/table exports implemented; complete workflow still in progress,
 11 September 2026. The console is deployed at `54fbc07`; production pages
@@ -87,23 +177,11 @@ The real-data index proof uses one diagnostic Sol response in an isolated
 console database. It is not a full campaign import or measured publication.
 Unindexed costs and results explicitly remain unknown, not zero.
 
-Build remains the single configuration and launch interface. Campaign creation
-only names the workspace and target category, then returns to Build. There is
-no second pipeline builder in Campaigns. Existing typed Run tools additionally
-carry explicit campaign selection. Neither selection changes Runner arguments
-or invalidates an otherwise identical no-call projection.
-
-Implemented creation flow: **Build -> New campaign -> name and Local/API/Mixed
--> Create and open Build**. Configure the existing Build controls, then
-**Compose & review** and launch. The review shows the parent campaign. Creating
-the parent makes no target or judge calls. Select the same campaign for later
-collection, recovery and judging operations; running jobs do not change owners
-when another browser tab changes its selection.
-
-Stats is the primary results navigation item. Once campaign parents exist,
-`/stats` opens their landing page; **Standalone jobs and earlier report
-publications** preserves access to the legacy view. There is no extra primary
-Campaigns tab competing with Build or Stats.
+The deployed predecessor used **Build -> New campaign -> name and
+Local/API/Mixed -> Build** and conditionally replaced Stats with a campaign list.
+That flow is superseded by the contract above. Explicit ownership already stays
+with each reviewed launch and does not change Runner arguments or invalidate an
+otherwise identical no-call projection. This behavior must be preserved.
 
 ## The user-facing result
 
@@ -357,7 +435,7 @@ Do not infer background worker ownership from a browser-wide mutable selection.
 
 ### Local
 
-1. **Build -> New campaign -> Local**: name it and open Build; choose its
+1. **Build -> Campaign**: name it and select local models; choose its
    output location using Build's existing output control.
 2. **Build -> Runtimes**: reuse installed framework environments and models.
    Run installation only for missing or broken dependencies. Use **Run ->
@@ -386,7 +464,7 @@ Do not infer background worker ownership from a browser-wide mutable selection.
 
 ### API
 
-1. **Campaigns -> New -> API -> Use inputs from Local campaign**. Select an
+1. **Build -> Campaign -> Use inputs from Local campaign**. Select API models and an
    existing local input inventory. Review capability exclusions and the common
    input intersection; do not independently resample questions for each model.
 2. Select provider/model routes and per-model output allowances. Use the

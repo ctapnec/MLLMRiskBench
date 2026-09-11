@@ -3817,7 +3817,7 @@ class LifecycleMixin:
             if method == "GET" and path == "/campaigns":
                 return 200, "text/html; charset=utf-8", self._workspaces_page()
             if method == "GET" and path == "/campaigns/new":
-                return 200, "text/html; charset=utf-8", self._new_workspace_page()
+                return 303, "/build?work_kind=campaign#build-general", b""
             if method == "POST" and path == "/campaigns":
                 data = dict(form or {})
                 campaign_id = self.db.create_workspace(data.get("name", ""), data.get("kind", "mixed"))
@@ -4014,15 +4014,21 @@ class LifecycleMixin:
                     return 404, "text/plain; charset=utf-8", b"unknown campaign job"
                 return 200, "text/html; charset=utf-8", detail
             if method == "GET" and path == "/stats":
-                if query.get("view") != "legacy" and self.db.workspaces():
-                    return 200, "text/html; charset=utf-8", self._workspaces_page()
+                if query.get("view") == "standalone":
+                    return 200, "text/html; charset=utf-8", self._standalone_results_page(query)
+                if query.get("view") != "legacy":
+                    return 200, "text/html; charset=utf-8", self._workspaces_page(context="stats")
                 return 200, "text/html; charset=utf-8", self._stats_page(query)
             if method == "GET" and path == "/build":
+                campaign_id = query.get("campaign_id", "")
+                prefill = self.db.workspace_definition(campaign_id) if campaign_id else {}
+                prefill.update(campaign_id=campaign_id,
+                    work_kind=query.get("work_kind", "campaign" if campaign_id else "run"))
                 return (
                     200,
                     "text/html; charset=utf-8",
                     self._build_page(
-                        prefill={"campaign_id": query.get("campaign_id", "")},
+                        prefill=prefill,
                         ollama_state=query.get("ollama_state", ""),
                         ollama_error=query.get("ollama_error", ""),
                         framework_runtime_state=query.get(
@@ -4030,6 +4036,17 @@ class LifecycleMixin:
                         ),
                     ),
                 )
+            if method == "POST" and path == "/build/save":
+                params = self._builder_params(form or {})
+                if params.get("work_kind") != "campaign" and not params.get("campaign_id"):
+                    raise ValueError("Select Campaign to save a campaign definition")
+                params = self._save_build_campaign(params)
+                return 303, "/campaigns/" + params["campaign_id"] + "?section=definition", b""
+            if method == "POST" and path == "/build/edit":
+                ticket = self._consume_launch_ticket((form or {}).get("edit_ticket", ""), purpose="build-edit")
+                if ticket is None:
+                    raise ValueError("This edit link expired; reopen the saved campaign in Build")
+                return 200, "text/html; charset=utf-8", self._build_page(prefill=ticket[0])
             if method == "POST" and path == "/build/framework-runtimes":
                 try:
                     framework, action = runtime_action_form(dict(form or {}))
@@ -4195,6 +4212,8 @@ class LifecycleMixin:
                             errors=errors,
                         ),
                     )
+                if not confirmed:
+                    params = self._save_build_campaign(params)
                 try:
                     command, values, params = self._compose_from_builder(
                         params,

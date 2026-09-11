@@ -2669,7 +2669,7 @@ class BuilderValidationMixin:
             start_extra = "<input type='hidden' name='confirm' value='yes'>"
             acquisition_notice = ""
             preflight_label = "Run no-call preflight (projection, no calls)"
-            start_label = "Start this job"
+            start_label = "Start campaign run" if params.get("campaign_id") else "Start single run"
         # A "Run no-call preflight" action composes the SAME grid with
         # --preflight-only (no calls) so the operator can produce the projection
         # this page reads and compares against.
@@ -2694,13 +2694,19 @@ class BuilderValidationMixin:
             + "Start blocked: run preflight / cover its projection</button>"
         )
         body = (
-            "<h1>" + _icon("play", size=22) + "Confirm paid execution</h1>"
-            "<div class='notice amber'><strong>This mode spends real "
-            "money.</strong><p class='note'>Mode: "
+            "<h1>" + _icon("play", size=22) + "Review execution</h1>"
+            "<div class='notice amber'><strong>This execution makes real model calls. "
+            "API calls may incur charges.</strong><p class='note'>Mode: "
             f"<code>{html.escape(mode)}</code>. Review the exact command and "
             "ceilings below; nothing has started yet.</p></div>"
             + acquisition_notice
             + self._campaign_banner(params.get("campaign_id", ""))
+            + "<section class='card'><h2>Experiment</h2><dl class='builder-summary'>" + "".join(
+                "<div><dt>" + label + "</dt><dd>" + html.escape(params.get(key) or "Not set") + "</dd></div>"
+                for key, label in (("local", "Local models"), ("api", "API models"), ("corpora", "Arms / corpora"),
+                    ("attackers", "Frameworks / attacks"), ("seeds", "Seeds"), ("sampling_policy", "Sampling"),
+                    ("limit", "Per-arm limit"), ("judges", "Judges"), ("judge_model", "Judge model"))
+            ) + "</dl></section>"
             + "<div class='card'><h2>"
             + _icon("terminal")
             + "Durable command identity</h2>"
@@ -2716,7 +2722,9 @@ class BuilderValidationMixin:
             + start_extra
             + "<div class='buildbar'>"
             + start_button
-            + "<a href='/build'><button type='button' class='ghost'>Back to "
-            "builder</button></a></div></form>"
+            + "</div></form><form method='post' action='/build/edit'>"
+            "<input type='hidden' name='edit_ticket' value='"
+            + self._new_launch_ticket(params, purpose="build-edit")
+            + "'><button class='ghost'>Edit configuration</button></form>"
         )
         return _page("Confirm execution", body, active="Build")

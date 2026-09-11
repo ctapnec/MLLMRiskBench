@@ -1401,6 +1401,8 @@ class BuilderModelsMixin:
     #: no-call preflight stays valid when only they change.
     _PROJECTION_OPERATIONAL_FIELDS = frozenset({
         "campaign_id",
+        "work_kind",
+        "campaign_name",
         "verify_model_sha256",
         "reset_open_circuits",
         "lock_stale_seconds",

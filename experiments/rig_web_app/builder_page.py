@@ -2220,6 +2220,7 @@ class BuilderPageMixin:
         build_default = "build-general"
         error_fields = set(errors)
         error_panel_fields = (
+            ("build-general", {"work_kind", "campaign_name", "campaign_id"}),
             (
                 "build-pipeline",
                 {
@@ -2276,9 +2277,7 @@ class BuilderPageMixin:
         elif framework_runtime_state or framework_runtime_error:
             build_default = "build-runtimes"
         general_panel = (
-            hardware_card
-            + ollama_card
-            + "<div class='card'><h2>"
+            "<div class='card'><h2>"
             + _icon("flask")
             + "Current pipeline</h2>"
             "<p class='note'>A live summary of the controls across every builder "
@@ -2310,22 +2309,17 @@ class BuilderPageMixin:
             else ""
         )
         body = (
-            "<h1>" + _icon("flask", size=22) + "Campaign builder</h1>"
-            "<p class='note'>Compose a lane by choosing modalities, target "
-            "models, and attack frameworks. On build it opens as a "
-            "<code>run_matrix</code> job through the same typed, validated "
-            "path - nothing here bypasses the allowlist. Paid modes show the "
-            "exact command and its call ceilings for confirmation before "
-            "anything starts.</p>"
+            "<h1>" + _icon("flask", size=22) + "Build</h1>"
+            "<p>Define a campaign or an independent run. Select your models, "
+            "inputs and frameworks, then review the workload and execution settings.</p>"
             + error_summary
-            + "<div class='card'>"
-            + self._campaign_selector((prefill or {}).get("campaign_id", ""), form_id="builder")
-            + "</div>"
-            + "<div class='page-tabs' data-page-tabs data-tab-key='build' "
+            + self._build_work_choice(dict(prefill))
+            + "<div class='page-tabs' data-page-tabs data-tab-key='build-"
+            + html.escape(prefill.get("campaign_id") or prefill.get("work_kind", "run"), quote=True) + "' "
             + f"data-default-tab='{build_default}'{force_default}>"
             + _page_tablist("Builder sections", build_tabs, default=build_default)
             + _page_tabpanel("build-general", general_panel)
-            + _page_tabpanel("build-runtimes", framework_runtime_panel)
+            + _page_tabpanel("build-runtimes", hardware_card + ollama_card + framework_runtime_panel)
             + "<form method='post' action='/build' id='builder'>"
             # hidden composed fields
             "<input type='hidden' name='corpora'><input type='hidden' name='api'>"
@@ -2338,7 +2332,7 @@ class BuilderPageMixin:
             "<div class='card'><h2>" + _icon("play") + "Mode</h2>"
             "<div class='radios'>" + mode_html + "</div></div>"
             "<div class='card'><h2>" + _icon("grid") + "Modality scope</h2>"
-            "<p class='note'>The campaign's modalities - all enabled for a "
+            "<p class='note'>Input modalities - all enabled for a "
             "fresh build. Turn one off to hide the arms, target models, and "
             "frameworks that need it.</p>"
             "<div class='modscope'>"
@@ -2654,15 +2648,23 @@ class BuilderPageMixin:
                 default="runs/thesis/lane",
             )
             + "</div></div>"
-            + "<div class='buildbar'><button type='submit'>"
+            + "<div class='buildbar'><button type='submit' class='ghost' id='save-campaign' formaction='/build/save'>Save campaign</button>"
+            "<button type='submit'>"
             + _icon("play", size=15)
             + "Compose &amp; review</button></div>"
             "</section>"
             + model_picker_modal
             + "</form></div>"
             + "<script>(()=>{const c=document.querySelector('select[name=campaign_id][form=builder]');"
-            "if(c)c.addEventListener('change',()=>{document.querySelectorAll('[data-builder-campaign]')"
-            ".forEach(e=>{e.value=c.value;});});})();</script>"
+            "const name=document.querySelector('[name=campaign_name]');const fields=document.getElementById('build-campaign-fields');"
+            "function update(){const campaign=document.querySelector('[name=work_kind]:checked').value==='campaign';"
+            "fields.hidden=!campaign;c.disabled=!campaign;name.disabled=!campaign||!!c.value;name.required=campaign&&!c.value;"
+            "document.getElementById('build-campaign-name').hidden=!!c.value;"
+            "document.getElementById('save-campaign').hidden=!campaign;"
+            "document.querySelectorAll('[data-builder-campaign]').forEach(e=>{e.value=campaign?c.value:'';});}"
+            "document.querySelectorAll('[name=work_kind]').forEach(e=>e.addEventListener('change',update));"
+            "c.addEventListener('change',()=>{window.location.assign(c.value?'/build?campaign_id='+encodeURIComponent(c.value)"
+            "+'#build-general':'/build?work_kind=campaign#build-general');});update();})();</script>"
             "<script type='application/json' id='builder-prefill'>"
             + json.dumps(
                 {
