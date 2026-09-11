@@ -40,6 +40,20 @@ required after target collection.
 
 ## Continuous execution
 
+Instruction update at approximately 08:52 UTC: execute the pre-calculated
+inventory without per-request maximum-cost money holds. Track reported spending
+and provider credit-exhaustion responses; retain unknown billing data without
+calling it zero. The input selection, output limits and spending ceilings are
+unchanged. In-flight calls can settle after a spending stop, so the tracking
+policy is not a worst-case hard spending guarantee.
+
+The implementation at ff9cb53 passed 185 focused rig tests in 14.12 seconds,
+lint and a reversed-fix check. At 09:00 UTC the successor is waiting in tmux
+for the six already-active jobs to finish. Only the predecessor dispatch loop
+was interrupted; those paid workers were not signaled. It will reuse their
+responses and continue the full prepared queue, with judging afterwards.
+The descriptions of maximum-cost reservation below record the earlier policy.
+
 Current instruction, 11 September 2026: collect all remaining targets through
 one continuous provider-parallel queue, then perform local and Haiku judging.
 The financial slices below are historical. No new slice may wait for preceding

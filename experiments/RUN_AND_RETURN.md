@@ -1,6 +1,23 @@
 # Run and return: broad thesis experiment program
 
-Hosted continuous collection: use `hosted_campaign_budget --reservation-policy
+Current campaign execution uses pre-calculated quantities and reported-spend
+tracking, not maximum-cost money holds. For an existing prepared budget:
+
+```bash
+python -m experiments.hosted_attempt_budget --budget-root /absolute/budget \
+  --plan-sha256 EXISTING_PLAN_SHA --spending-policy precalculated
+```
+
+This records an execution setting without rewriting the input plan or spending
+history. Calls still have distinct physical-attempt records and bounded HTTP
+retries. Reported token-cost bounds count towards spending; unreported charges
+remain explicitly unknown. Stop new calls in a pool when tracked spending
+reaches its ceiling, or stop the affected provider when it reports exhausted
+credit. Independent providers keep running. Calls already in flight can finish
+after a ceiling is reached, so this is not a worst-case hard spending guarantee.
+Do not describe forecast exposure as money reserved in this mode.
+
+Optional conservative collection: use `hosted_campaign_budget --reservation-policy
 per_attempt` to retain the full input inventory with request-level money
 reservation. Preparation carries this policy into the shared attempt budget.
 Maximum-cost projections remain visible even when their aggregate exceeds the
@@ -12,7 +29,8 @@ scope for judging, without repeating target calls. It is a scheduling handoff,
 not a completed scored grid. Independent providers may collect concurrently;
 provider backoff, four-attempt transport limits and budget reservations remain.
 
-Temporary pool capacity is not provider credit exhaustion. When another call
+In the optional reservation mode, temporary pool capacity is not provider
+credit exhaustion. When another call
 in the same pool is still in flight, wait for its settlement before trying
 the monetary reservation again; do not send HTTP or hold a spending lock while
 waiting. A persistent shortage pauses that funded work, not unrelated providers.
