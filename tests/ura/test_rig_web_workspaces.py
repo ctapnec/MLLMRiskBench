@@ -88,7 +88,7 @@ def test_review_ticket_keeps_campaign_despite_another_tab(tmp_path):
     app = _app(tmp_path)
     try:
         a, b = (app.db.create_workspace(name, "local") for name in ("A", "B"))
-        params = {"mode": "dry_run", "api": "mock", "campaign_id": a}
+        params = {"mode": "dry_run", "campaign_id": a}
         token = app._new_launch_ticket(params)
         app.handle("GET", "/build?campaign_id=" + b)
         reviewed, _snapshot = app._consume_launch_ticket(token, purpose="build")
