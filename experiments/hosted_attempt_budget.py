@@ -1,7 +1,8 @@
-"""Durable money reservations, not hosted-call or semantic admission.
+"""Durable hosted-attempt accounting and selectable spending enforcement.
 
 The controller supplies immutable logical slots and conservative integer USD
-bounds. Each SDK attempt needs a fresh reservation. Unknown usage is never free.
+bounds. Precalculated execution records attempts without maximum-cost holds;
+reported spending and provider exhaustion govern continuation. Unknown is not free.
 """
 from __future__ import annotations
 
@@ -38,8 +39,9 @@ class BudgetError(ValueError):
 class BudgetCapacityUnavailable(BudgetError):
     """Valid request waiting for capacity, not a provider or model failure."""
 
-    def __init__(self, *, unresolved_attempts: int):
-        super().__init__('attempt maximum exceeds available provider pool capacity')
+    def __init__(self, *, unresolved_attempts: int,
+                 message: str = 'attempt maximum exceeds available provider pool capacity'):
+        super().__init__(message)
         self.unresolved_attempts = unresolved_attempts
 
 
@@ -254,16 +256,40 @@ class AttemptBudget:
                 if attempt["state"] == "reserved" and int(number) != len(attempts):
                     raise BudgetError("an unresolved attempt was automatically reissued")
         totals = self._totals(plan, ledger)
-        if any(pool["over_cap_microusd"] for pool in totals["pools"].values()) and not totals["bound_exceeded_attempts"]:
+        if (totals.get("spending_policy") != "precalculated"
+                and any(pool["over_cap_microusd"] for pool in totals["pools"].values())
+                and not totals["bound_exceeded_attempts"]):
             raise BudgetError("retained reservations exceed their funded pool")
         return plan, ledger, calls
 
-    @staticmethod
-    def _totals(plan: dict, ledger: dict) -> dict:
+    def spending_policy(self) -> str:
+        path = self.root / 'spending-policy.json'
+        if not path.exists():
+            return 'reserved_maximum'
+        value, _ = _read_regular(path, label='spending policy', max_bytes=4096)
+        if value != {'budget_plan_sha256': self.expected_plan_sha256, 'mode': 'precalculated'}:
+            raise BudgetError('spending policy does not match its campaign plan')
+        return value['mode']
+
+    def use_precalculated_spending(self) -> dict:
+        """Keep the plan/ledger; replace maximum holds with reported-spend stops.
+
+        Unknown amounts remain unknown, and in-flight calls may finish after
+        a cap is reached. This mode does not guarantee a worst-case spend cap.
+        """
+        with _budget_lock(self.root):
+            self._load()
+            value = {'budget_plan_sha256': self.expected_plan_sha256, 'mode': 'precalculated'}
+            if self.spending_policy() != 'precalculated':
+                _write_new(self.root / 'spending-policy.json', value)
+            return value
+
+    def _totals(self, plan: dict, ledger: dict) -> dict:
+        precalculated = self.spending_policy() == 'precalculated'
         pools = {key: {"cap_microusd": cap, "unstarted_first_commitments_microusd": 0,
                        "reserved_exposure_microusd": 0, "settled_cost_microusd": 0,
                        "unresolved_attempts": 0, "unknown_usage_attempts": 0, "settled_attempts": 0,
-                       "bounded_usage_attempts": 0}
+                       "bounded_usage_attempts": 0, "reported_usage_upper_bound_microusd": 0}
                  for key, cap in plan["pool_caps_microusd"].items()}
         overruns, unfunded = [], []
         allowances = {change["call_id"]: change["bound_microusd"]
@@ -287,6 +313,8 @@ class AttemptBudget:
                                          "bound_microusd": bound, "actual_cost_microusd": actual})
                 else:
                     bounded = attempt["state"] == "bounded_unknown"
+                    if bounded:
+                        pool['reported_usage_upper_bound_microusd'] += _reported_usage_bound(attempt['usage_bound'])
                     pool["reserved_exposure_microusd"] += _reported_usage_bound(attempt["usage_bound"]) if bounded else bound
                     pool["bounded_usage_attempts"] += int(bounded)
                     pool["unknown_usage_attempts" if attempt["state"] in {"unknown", "bounded_unknown"} else "unresolved_attempts"] += 1
@@ -296,8 +324,15 @@ class AttemptBudget:
             pool.update(liability_microusd=liability,
                         available_retry_margin_microusd=max(0, pool["cap_microusd"] - liability),
                         over_cap_microusd=max(0, liability - pool["cap_microusd"]))
+            if precalculated:
+                tracked = pool['settled_cost_microusd'] + pool['reported_usage_upper_bound_microusd']
+                pool.update(tracked_spend_microusd=tracked,
+                            available_tracked_spend_microusd=max(0, pool['cap_microusd'] - tracked),
+                            tracked_spend_over_cap_microusd=max(0, tracked - pool['cap_microusd']),
+                            maximum_exposure_is_reserved=False)
         over_cap = any(pool["over_cap_microusd"] for pool in pools.values())
-        return {"state": "blocked_known_bound_exceeded" if unfunded or over_cap else "active",
+        return {"state": "blocked_known_bound_exceeded" if not precalculated and (unfunded or over_cap) else "active",
+                **({'spending_policy': 'precalculated'} if precalculated else {}),
                 "pools": pools, "provider_ceilings_microusd": plan["provider_ceilings_microusd"],
                 "bound_exceeded_attempts": overruns, "planned_calls": len(plan["planned_calls"]),
                 "unfunded_bound_exceeded_attempts": unfunded,
@@ -539,7 +574,7 @@ class AttemptBudget:
             return stopped
 
     def reserve(self, call_id: str, attempt_number: int, *, provider: str) -> dict:
-        """Fsync money before one SDK attempt. Repeated callbacks always refuse."""
+        """Record one SDK attempt, enforcing the selected spending policy."""
         call_id, provider = _name(call_id, "call ID"), _name(provider, "provider")
         number = _integer(attempt_number, "physical attempt number")
         with _budget_lock(self.root):
@@ -549,7 +584,9 @@ class AttemptBudget:
             if call_id not in calls or calls[call_id]["provider"] != provider:
                 raise BudgetError("attempt provider or call ID differs from its funded slot")
             required = {provider}
-            if calls[call_id]["pool"] == "target" and any(call["pool"] == "judge" for call in calls.values()):
+            precalculated = self.spending_policy() == 'precalculated'
+            if (not precalculated and calls[call_id]["pool"] == "target"
+                    and any(call["pool"] == "judge" for call in calls.values())):
                 required.add("anthropic")
             if any(self._provider_stop_path(name).exists() or self._provider_stop_path(name).is_symlink()
                    for name in required):
@@ -566,7 +603,11 @@ class AttemptBudget:
             bound = next((change["bound_microusd"] for change in reversed(ledger.get("allowance_adjustments", []))
                           if change["call_id"] == call_id), call["bound_microusd"])
             pool = current["pools"][f"{provider}:{call['pool']}"]
-            if (number > 1 or plan.get("reservation_policy") == "per_attempt") and pool["available_retry_margin_microusd"] < bound:
+            if precalculated and pool['tracked_spend_microusd'] >= pool['cap_microusd']:
+                raise BudgetCapacityUnavailable(unresolved_attempts=0,
+                    message='reported spending reached the approved provider pool limit')
+            if (not precalculated and (number > 1 or plan.get("reservation_policy") == "per_attempt")
+                    and pool["available_retry_margin_microusd"] < bound):
                 if plan.get("reservation_policy") == "per_attempt":
                     raise BudgetCapacityUnavailable(unresolved_attempts=pool['unresolved_attempts'])
                 raise BudgetError("retry cannot consume other planned first attempts or another pool")
@@ -628,3 +669,23 @@ class AttemptBudget:
             ledger.setdefault("allowance_adjustments", [])
             _write_atomic(self.root / "ledger.json", ledger)
             return self._totals(plan, ledger)
+
+
+def main(argv=None) -> int:
+    import argparse
+    import json
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--budget-root', type=Path, required=True)
+    parser.add_argument('--plan-sha256', required=True)
+    parser.add_argument('--spending-policy', choices=('precalculated',))
+    args = parser.parse_args(argv)
+    money = AttemptBudget(args.budget_root, args.plan_sha256)
+    if args.spending_policy:
+        money.use_precalculated_spending()
+    print(json.dumps(money.snapshot(), sort_keys=True))
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

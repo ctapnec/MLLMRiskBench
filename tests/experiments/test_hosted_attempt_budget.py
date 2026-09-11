@@ -59,6 +59,70 @@ def test_continuous_inventory_does_not_need_financial_batches_or_completed_judgi
     money.settle("J", 1, 2)
 
 
+def test_precalculated_execution_does_not_hold_maximums_or_rewrite_history(tmp_path):
+    money = queued_budget(tmp_path)
+    money.reserve('T0', 1, provider='anthropic')
+    money.settle('T0', 1, None)
+    before = {name: (money.root / name).read_bytes() for name in ('plan.json', 'ledger.json')}
+    money.use_precalculated_spending()
+    assert all((money.root / name).read_bytes() == raw for name, raw in before.items())
+    for number in range(1, 10):
+        money = reopen(money)
+        money.reserve(f'T{number}', 1, provider='anthropic')
+        money.settle(f'T{number}', 1, 1)
+    pool = money.snapshot()['pools']['anthropic:target']
+    assert pool['tracked_spend_microusd'] == 9
+    assert pool['unknown_usage_attempts'] == 1
+    assert pool['maximum_exposure_is_reserved'] is False
+    assert json.loads((money.root / 'ledger.json').read_text())['attempts']['T0']['1']['actual_cost_microusd'] is None
+    assert money.reserved_attempt_count('J') == 0
+    with pytest.raises(mod.BudgetError, match='duplicated'):
+        money.reserve('T1', 1, provider='anthropic')
+
+
+def test_precalculated_inflight_maxima_do_not_block_dispatch_but_reported_cap_does(tmp_path):
+    money = queued_budget(tmp_path)
+    money.use_precalculated_spending()
+    for number in range(4):
+        money.reserve(f'T{number}', 1, provider='anthropic')
+    # Four maxima exceed the target pool; no money is being reserved.
+    assert reopen(money).snapshot()['pools']['anthropic:target']['unresolved_attempts'] == 4
+    money.settle('T0', 1, 20)
+    money.settle('T1', 1, 20)
+    money.settle('T2', 1, 7)
+    before = (money.root / 'ledger.json').read_bytes()
+    with pytest.raises(mod.BudgetCapacityUnavailable, match='reported spending'):
+        money.reserve('T4', 1, provider='anthropic')
+    assert (money.root / 'ledger.json').read_bytes() == before
+    # Finishing an already-issued call records its charge, including overshoot.
+    money.settle('T3', 1, 3)
+    assert money.snapshot()['pools']['anthropic:target']['tracked_spend_over_cap_microusd'] == 3
+    money.reserve('J', 1, provider='anthropic')
+
+
+def test_precalculated_policy_binding_and_cli_preserve_plan(tmp_path, capsys):
+    money = queued_budget(tmp_path)
+    before = (money.root / 'plan.json').read_bytes()
+    assert mod.main(['--budget-root', str(money.root), '--plan-sha256', money.expected_plan_sha256,
+                     '--spending-policy', 'precalculated']) == 0
+    assert json.loads(capsys.readouterr().out)['spending_policy'] == 'precalculated'
+    assert (money.root / 'plan.json').read_bytes() == before
+    path = money.root / 'spending-policy.json'
+    path.write_text(json.dumps({'budget_plan_sha256': '0' * 64, 'mode': 'precalculated'}))
+    with pytest.raises(mod.BudgetError, match='policy'):
+        reopen(money)
+
+
+def test_precalculated_provider_exhaustion_does_not_stop_independent_target(budget):
+    budget.use_precalculated_spending()
+    budget.reserve('A', 1, provider='anthropic')
+    budget.settle('A', 1, None)
+    budget.stop_provider_funding('anthropic', 'A')
+    budget.reserve('O', 1, provider='openai')
+    with pytest.raises(mod.BudgetError, match='funding'):
+        budget.reserve('B', 1, provider='anthropic')
+
+
 def test_immutable_slots_reuse_plan_but_reservations_read_live_ledger(tmp_path, monkeypatch):
     from ura import validation_cache
 
