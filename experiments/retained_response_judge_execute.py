@@ -7,6 +7,7 @@ import contextlib
 import hashlib
 import json
 import os
+import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -112,14 +113,10 @@ def _write_new(path: Path, value: object) -> None:
 
 
 def _write_atomic(path: Path, value: object) -> None:
-    temporary = path.with_name(f".{path.name}.tmp-{os.getpid()}")
-    if temporary.exists() or temporary.is_symlink():
-        raise ValueError("stale execution-ledger temporary file requires review")
-    descriptor = os.open(
-        temporary,
-        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-        0o600,
-    )
+    # Different threads in one provider share a PID. Each publication needs
+    # its own temporary file; the final replacement remains atomic.
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.tmp-", dir=path.parent)
+    temporary = Path(temporary_name)
     try:
         with os.fdopen(descriptor, "wb") as handle:
             handle.write(_canonical(value))

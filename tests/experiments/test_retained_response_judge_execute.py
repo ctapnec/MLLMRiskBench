@@ -16,6 +16,27 @@ HEX_A = "a" * 64
 HEX_B = "b" * 64
 
 
+def test_atomic_publication_from_two_threads_uses_distinct_temporary_files(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+
+    rendezvous = threading.Barrier(2)
+    original = subject._canonical
+
+    def synchronized(value):
+        rendezvous.wait(timeout=5)
+        return original(value)
+
+    monkeypatch.setattr(subject, "_canonical", synchronized)
+    path = tmp_path / "progress.json"
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(subject._write_atomic, path, {"worker": n}) for n in range(2)]
+        for future in futures:
+            future.result(timeout=10)
+    assert json.loads(path.read_text()) in ({"worker": 0}, {"worker": 1})
+    assert list(tmp_path.iterdir()) == [path]
+
+
 def _sha(value: object) -> str:
     payload = json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n"
     return hashlib.sha256(payload.encode()).hexdigest()
