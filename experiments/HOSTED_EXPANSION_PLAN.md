@@ -10,6 +10,25 @@ collection continues while it is prepared.
 
 ## Current account balances
 
+Operator-reported second update on 11 September 2026, received after the
+12:34 UTC observation. These are account credits, not campaign-only costs.
+
+| Provider | Previous credit (USD) | Latest credit (USD) | Net decrease (USD) |
+| --- | ---: | ---: | ---: |
+| Anthropic | 59.61 | 49.52 | 10.09 |
+| OpenAI | 25.06 | 14.83 | 10.23 |
+| Google | 18.47 | 17.79 | 0.68 |
+| Kimi | 7.19 | 4.23 | 2.96 |
+| DeepSeek | 6.53 | 4.88 | 1.65 |
+| Total | 116.86 | 91.25 | 25.61 |
+
+The earlier snapshots below remain unchanged. The update neither increases
+campaign ceilings nor settles unknown per-call charges. Both target work and
+output-specific local/Haiku judging remain within their existing allocations.
+Google account credit does not override a model's request quota.
+
+### Earlier balance updates
+
 Operator-reported update on 11 September 2026. Retain every earlier dated
 snapshot; this update adds to the balance history rather than replacing it.
 
@@ -47,6 +66,28 @@ the balances to fund further requests. Both local and Haiku judging remain
 required after target collection.
 
 ## Continuous execution
+
+12:34 UTC observation: 5,519 of 6,669 assignments attempted, with 5,503 usable
+outcomes, up 277 in thirty minutes. There are 1,150 unstarted assignments and
+the separate 67-input allocation gap. Haiku totals remain 2,217 local and
+1,508 hosted; these include 18 and seven invalid verdicts, respectively.
+Console HTTP is 200, with no provider credit-exhaustion marker. Luna has a
+new terminal-transport pause requiring inspection; its pending rows are not
+declared complete. The half-hour recorder saved this snapshot on schedule;
+delivery to the operator was late. The next saved observation is due at
+13:04 UTC.
+
+Google Pro's retained HTTP 429 identifies a per-project, per-model quota of
+250 requests per day, not exhausted account credit. At 12:33 UTC its existing
+worker was alive and sleeping until 00:00 UTC on 12 September. This is an
+observed controller timer, not a verified provider reset time: Google's
+[rate-limit documentation](https://ai.google.dev/gemini-api/docs/rate-limits)
+states midnight Pacific for daily quotas. The original error's short RetryInfo
+and the later long timer are distinct observations; the current in-flight
+error is not yet durably available. Do not claim guaranteed resumption at
+midnight UTC or restart the request merely to inspect it. Flash independently
+completed its 259 queued inputs. Remaining Pro inputs and their judging remain
+pending, so throughput alone cannot establish the full campaign finish time.
 
 12:04 UTC observation: 5,240 of 6,669 assignments attempted, retaining 5,226
 usable outcomes, up 458 in thirty minutes. There are 1,429 unstarted assignments
