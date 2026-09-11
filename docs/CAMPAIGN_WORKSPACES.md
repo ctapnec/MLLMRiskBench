@@ -49,10 +49,18 @@ outcomes and 112 HTTP attempts, preserving diagnostic/measured classes and
 policy decisions. Deployment backed up SQLite including its WAL, preserved
 existing rows and restarted only the console. Sixteen current hosted programs
 are published in the API campaign workspace with real cost rows and diagrams.
-The earlier cohorts, one Opus recovery-program import and output-specific
-judgments still need publication; this is not the complete combined campaign.
+The missing Opus program was subsequently published using its 19 explicitly
+retained pre-repair answers. All 213 current Opus inputs now reconcile in the
+workspace: 212 usable/policy outcomes and one exhausted transport failure.
+All seventeen current programs have an index, but the earlier cohorts and
+output-specific judgments still need publication; this is not the complete
+combined campaign. The import helper at `0c9a39f` passed eight focused tests,
+lint, a reversed-fix check and the actual 174-input recovery-program import.
 Evidence: workspace-import-54fbc07-20260911,
 workspace-import-deployment-54fbc07-20260911 and workspace-current-publication-20260911.
+The prefix proof and publication are workspace-prefix-0c9a39f-20260911 and
+workspace-opus-prefix-publication-20260911. They use the existing console schema;
+no console restart or source-output rewrite was necessary.
 
 Focused rig verification covers 32 ownership checks, six result-index checks,
 seven initial chart checks and two changed export/navigation checks. Four real

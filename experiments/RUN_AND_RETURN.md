@@ -38,6 +38,15 @@ Preserve this distinction when Runner wraps callback exceptions. A controller
 restart must skip completed target jobs and reuse retained response checkpoints.
 An interrupted transport attempt with no saved response needs continuation of
 its existing physical-attempt prefix, not a fresh answer retry or reset counter.
+`hosted_checkpoint_resume.resume_interrupted_transport` implements this inspected
+handoff for any hosted provider. Supply the input IDs actually found in retained
+response files and the unchanged native logical-reservation snapshot. It rejects
+retained answers/failed outputs, active or settled HTTP attempts, exhausted retry
+prefixes and changed logical counters. The next HTTP attempt still passes the
+original request-identity and funding checks. The already-held logical input
+slot is consumed once; earlier unknown charges are not refunded. This helper is
+not an automatic permission to retry a generated empty answer, and the caller
+must establish that the former worker is no longer active on this job.
 Immutable budget caches are process-local: omit their locks when transferring
 a budget object to a spawned worker and recreate the cache in that worker.
 
