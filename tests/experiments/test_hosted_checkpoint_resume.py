@@ -4,7 +4,7 @@ import pytest
 
 from experiments.hosted_checkpoint_resume import resume_interrupted_transport
 from test_hosted_retained_execute import _runner, _setup
-from ura.runner import GlobalCallBudget
+from ura.runner import GlobalCallBudget, Runner
 
 
 def setup(tmp_path):
@@ -24,7 +24,7 @@ def test_interrupted_http_reuses_logical_slot_but_reserves_next_paid_attempt(tmp
     assert proof["next_http_attempt"] == 2 and proof["maximum_total_http_attempts"] == 4
     runner = _runner(attacker,target,admission)
     runner.call_budget = logical
-    runner.run(points)
+    runner.run(points,on_response=lambda record: Runner.append_checkpoint(tmp_path/'responses.jsonl',record))
     assert len(calls) == len(runner.responses) == len(admission.requests)
     assert logical.target_calls == len(admission.requests)
     assert logical.http_attempts == 4*len(admission.requests)

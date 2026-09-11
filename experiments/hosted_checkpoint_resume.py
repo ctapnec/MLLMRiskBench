@@ -12,6 +12,7 @@ from experiments.hosted_attempt_budget import _budget_lock
 
 def resume_interrupted_transport(admission, *, input_id: str, retained_input_ids: set[str],
                                  held_snapshot: dict) -> dict:
+    held_snapshot = dict(held_snapshot)
     if not retained_input_ids <= admission.requests.keys() or input_id not in admission.requests:
         raise ValueError("Interrupted input is outside the admitted job")
     if input_id in retained_input_ids:
