@@ -31,6 +31,7 @@ from experiments.rig_web_app.external_analysis import (
     ExternalAnalysisReportSpec, publish_external_analysis_registration,
 )
 from ura.project_revision import load_project_revision_file, project_revision_binding
+from ura.artifact_checks import artifact_sha256_enabled
 
 SCHEMA = "ura-rr-parallel-analysis/1"
 PREFIX_SCOPE = "source_validated_closed_cell_in_interrupted_grid"
@@ -63,7 +64,9 @@ if request.get("worker_accounting"):
 print(json.dumps(result))
 '''
 
-# Every semantic check below is the ORIGINAL source function. The caller-bound
+# Every semantic check below is the ORIGINAL source function. Bulk artifact
+# checksum comparisons follow the caller's explicit option, as in other readers.
+# The caller-bound
 # reference describes membership in the original request, not an invented grid
 # status. In particular, neither the source grid nor its missing cell inventory
 # is rewritten or reported complete.
@@ -75,6 +78,8 @@ from experiments.figure_results import _GridReference, _validate_cell
 from ura.runner import _harness_source_identity
 
 request = json.load(sys.stdin)
+exec(request["artifact_check_bridge"], globals())
+artifact_checks = _configure_historical_artifact_checks(request["verify_artifact_sha256"])
 harness = _harness_source_identity()["sha256"]
 driver = hashlib.sha256(Path("experiments/run_matrix.py").read_bytes()).hexdigest()
 cells = []
@@ -113,8 +118,10 @@ for group in request["groups"]:
             or run["grid_id"] != grid["grid_id"]):
             raise ValueError("RR prefix cell is outside its original request")
         ref = _GridReference(grid["grid_id"], grid_path, original, membership, plan, grid.get("engine_runtime_close"))
-        cells.append(_validate_cell(marker, [ref]))
-result = {"validator_commit": request["commit"], "cells": cells}
+        cell = _validate_cell(marker, [ref])
+        cell["artifact_verification"] = artifact_checks["mode"]
+        cells.append(cell)
+result = {"validator_commit": request["commit"], "cells": cells, "artifact_checks": artifact_checks}
 if request.get("joined"):
     from experiments import human_audit
     exec(request["media_export_source"], human_audit.__dict__)
@@ -244,6 +251,8 @@ def _source_prefix_cells(snapshot: dict, *, project: Path, joined: bool = False)
             from experiments.human_audit import _portable_media_references
 
             request = {"groups": groups, "commit": commit, "tree": tree, "joined": joined,
+                       "verify_artifact_sha256": artifact_sha256_enabled(),
+                       "artifact_check_bridge": inspect.getsource(retained._configure_historical_artifact_checks),
                        "media_export_source": inspect.getsource(_portable_media_references) if joined else ""}
             result = subprocess.run([sys.executable, "-c", _PREFIX_WORKER], cwd=worktree, env=env,
                                     input=json.dumps(request),
@@ -253,11 +262,17 @@ def _source_prefix_cells(snapshot: dict, *, project: Path, joined: bool = False)
             value = retained._decode_validator_ipc(result.stdout)
             if value.get("validator_commit") != commit or len(value.get("cells", [])) != sum(len(g["markers"]) for g in groups):
                 raise ValueError("RR prefix validator changed its closed-cell inventory")
+            expected_checks = {"mode": "sha256" if request["verify_artifact_sha256"] else "metadata_and_records",
+                               "unchanged_historical_full_checks": request["verify_artifact_sha256"]}
+            if value.get("artifact_checks") != expected_checks:
+                raise ValueError("RR prefix validator changed its artifact-check option")
             cells = value["cells"]
             allowed = {name for group in groups for name in group["markers"]}
             if {cell["complete_path"] for cell in cells} != allowed:
                 raise ValueError("RR prefix validator returned an unbound marker")
             for cell in cells:
+                if cell.get("artifact_verification") != expected_checks["mode"]:
+                    raise ValueError("RR prefix cell lost its artifact-check mode")
                 retained._restore_cell_paths(cell)
                 cell["integrity_mode"] = PREFIX_SCOPE
                 cell["grid_audit"] = {"mode": PREFIX_SCOPE, "parent_grid_promoted": False,

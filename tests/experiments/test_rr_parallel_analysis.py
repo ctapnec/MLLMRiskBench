@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict
 import hashlib
 import io
+import inspect
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -66,8 +67,9 @@ def test_prefix_rejects_changed_bytes_or_unvalidated_or_duplicate_judgments(tmp_
 
 @pytest.mark.parametrize("change", [None, "source", "membership", "grid"])
 @pytest.mark.parametrize("joined", [False, True])
-def test_prefix_worker_reuses_complete_source_cell_checks_without_promoting_grid(tmp_path, monkeypatch, change, joined):
-    from experiments import figure_results, human_audit, level1_evidence
+@pytest.mark.parametrize("verify_sha256", [False, True])
+def test_prefix_worker_reuses_complete_source_cell_checks_without_promoting_grid(tmp_path, monkeypatch, change, joined, verify_sha256):
+    from experiments import figure_results, human_audit, level1_evidence, transfer_matrix
     from ura import runner
 
     commit, tree = "a" * 40, "b" * 40
@@ -83,6 +85,19 @@ def test_prefix_worker_reuses_complete_source_cell_checks_without_promoting_grid
     objects = {tmp_path / "grid-test.grid.json": grid, marker: marker_value,
                tmp_path / "cell.manifest.json": manifest}
     checked = []
+    for module, names in ((figure_results, ("_resolve_artifact", "_grid_allowlist")),
+                          (transfer_matrix, ("_artifact_path",))):
+        for name in (*names, "artifact_sha256_enabled"):
+            monkeypatch.setattr(module, name, getattr(module, name))
+    artifact = tmp_path / "results.jsonl"
+    artifact.write_bytes(b"{}\n")
+    descriptor = {"file": artifact.name, "sha256": hashlib.sha256(b"{}\n").hexdigest(), "bytes": 3, "records": 1}
+    hashes = []
+    def hash_file(path):
+        assert verify_sha256, "default prefix validation must not hash artifacts"
+        hashes.append(path)
+        return descriptor["sha256"]
+    monkeypatch.setattr(figure_results, "_sha256_file", hash_file)
     monkeypatch.setattr(level1_evidence, "_read_object", lambda path: objects[path])
     monkeypatch.setattr(level1_evidence, "_plan_artifact", lambda path: ({"bindings": {}},))
     monkeypatch.setattr(level1_evidence, "_plan_descriptor_matches", lambda *a: True)
@@ -96,6 +111,7 @@ def test_prefix_worker_reuses_complete_source_cell_checks_without_promoting_grid
         assert path == marker and len(refs) == 1
         assert refs[0].request is original and refs[0].grid_id == "grid-test"
         assert "status" not in refs[0].status  # No fabricated terminal status.
+        assert figure_results._resolve_artifact(marker, {"artifacts": {"results": descriptor}}, "results") == artifact
         checked.append("full_cell")
         return {"complete_path": marker, "artifacts": {
             role: tmp_path / f"cell.{role}" for role in
@@ -118,7 +134,10 @@ def test_prefix_worker_reuses_complete_source_cell_checks_without_promoting_grid
         revision["harness_source_sha256"] = "d" * 64
     elif change == "membership":
         manifest["config"]["run"]["corpus"] = "foreign"
-    request = {"commit": commit, "tree": tree, "joined": joined, "media_export_source": "", "groups": [{"grid": str(tmp_path / "grid-test.grid.json"),
+    request = {"commit": commit, "tree": tree, "joined": joined, "media_export_source": "",
+               "verify_artifact_sha256": verify_sha256,
+               "artifact_check_bridge": inspect.getsource(mod.retained._configure_historical_artifact_checks),
+               "groups": [{"grid": str(tmp_path / "grid-test.grid.json"),
                 "eligibility": str(tmp_path / "eligibility.json"), "markers": [str(marker)]}]}
     monkeypatch.setattr(mod.sys, "stdin", io.StringIO(json.dumps(request)))
     stdout = io.StringIO()
@@ -130,9 +149,48 @@ def test_prefix_worker_reuses_complete_source_cell_checks_without_promoting_grid
     else:
         exec(mod._PREFIX_WORKER, {})
         assert checked == ["plan", "acquisition", "full_cell", *(["lossless_join"] if joined else [])]
-        assert json.loads(stdout.getvalue())["validator_commit"] == commit
+        result = json.loads(stdout.getvalue())
+        assert result["validator_commit"] == commit
+        mode = "sha256" if verify_sha256 else "metadata_and_records"
+        assert result["artifact_checks"] == {"mode": mode, "unchanged_historical_full_checks": verify_sha256}
+        assert result["cells"][0]["artifact_verification"] == mode
+        assert hashes == ([artifact] if verify_sha256 else [])
     assert human_audit._validated_artifacts is inventory
     assert grid["status"] == "running" and grid["cells"] == []
+
+
+@pytest.mark.parametrize("verify_sha256", [False, True])
+@pytest.mark.parametrize("change", [None, "mode", "cell"])
+def test_prefix_reader_forwards_checksum_option_and_rejects_changed_worker_mode(tmp_path, monkeypatch, verify_sha256, change):
+    from ura.artifact_checks import artifact_verification
+
+    commit, tree = "a" * 40, "b" * 40
+    revision = write(tmp_path / "revision.json", {"repository": {"expected_commit": commit,
+        "observed_commit": commit, "head_tree": tree}})
+    launch = write(tmp_path / "launch.json", {"project_revision": revision, "expected_commit": commit})
+    marker = write(tmp_path / "cell.complete.json", {})
+    grid = write(tmp_path / "run.grid.json", {})
+    plan = write(tmp_path / "run.eligibility.json", {})
+    snapshot = {"launch": launch, "lanes": {"lane": {"result_root": str(tmp_path), "raw_files": [marker, grid, plan]}}}
+    monkeypatch.setattr(mod.retained, "_git", lambda project, *args: tree if args[-1].endswith("^{tree}") else commit)
+    def worker(args, **kwargs):
+        request = json.loads(kwargs["input"])
+        assert request["verify_artifact_sha256"] is verify_sha256
+        assert request["artifact_check_bridge"] == inspect.getsource(mod.retained._configure_historical_artifact_checks)
+        checks = {"mode": "sha256" if verify_sha256 else "metadata_and_records", "unchanged_historical_full_checks": verify_sha256}
+        item = {"complete_path": marker["path"], "manifest_path": str(tmp_path / "manifest.json"), "artifacts": {},
+            "artifact_verification": "wrong" if change == "cell" else checks["mode"]}
+        value = {"validator_commit": commit, "cells": [item], "artifact_checks": {} if change == "mode" else checks}
+        return SimpleNamespace(returncode=0, stdout=json.dumps(value))
+    monkeypatch.setattr(mod.subprocess, "run", worker)
+    with artifact_verification(verify_sha256=verify_sha256):
+        if change:
+            with pytest.raises(ValueError, match="artifact-check"):
+                mod._source_prefix_cells(snapshot, project=tmp_path)
+        else:
+            cells = mod._source_prefix_cells(snapshot, project=tmp_path)
+            assert cells[0]["grid_audit"]["parent_grid_promoted"] is False
+            assert cells[0]["artifact_verification"] == ("sha256" if verify_sha256 else "metadata_and_records")
 
 
 @pytest.fixture
