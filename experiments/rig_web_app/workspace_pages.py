@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import json
 from urllib.parse import quote
 
 from .ui import _page
@@ -109,10 +110,75 @@ class WorkspacePagesMixin:
         )
 
     def _workspace_results(self, campaign_id: str, section: str, query: dict[str, str]) -> str:
-        # Ownership alone is not an input inventory, a verdict or a bill. The
-        # result-publication index supplies these next; never sum job headers.
-        return (
+        unknown = (
             "<p class='notice amber'>Retained " + html.escape(section)
             + " data has not been indexed for this campaign yet. Totals are unknown, not zero.</p>"
             "<p>Build launches are associated automatically. Original jobs and reports remain accessible in Activity.</p>"
         )
+        if section == "costs":
+            return unknown  # no invented zero bill before cost attribution
+        page = max(0, int(query.get("page", "0")))
+        base = "/campaigns/" + campaign_id + "?section=" + section
+
+        def pagination(has_next):
+            return ((f"<a href='{base}&amp;page={page - 1}'>Previous</a> " if page else "")
+                    + (f"<a href='{base}&amp;page={page + 1}'>Next</a>" if has_next else ""))
+
+        def table(headers, rows):
+            return "<div class='scroll'><table><tr>" + "".join("<th>" + h + "</th>" for h in headers) + "</tr>" + "".join(
+                "<tr>" + "".join("<td>" + cell + "</td>" for cell in row) + "</tr>" for row in rows
+            ) + "</table></div>"
+
+        if section == "judging":
+            rows = self.db.workspace_judging_totals(campaign_id)
+            if not rows:
+                return unknown
+            return "<p>Verdicts for the explicitly selected outputs. Other historical judgments remain retained.</p>" + table(
+                ("Judge condition", "Status", "Verdicts"),
+                [[html.escape(row["judge_id"]), html.escape(row["status"]), str(row["count"])] for row in rows],
+            )
+        if section == "overview":
+            rows = self.db.workspace_model_totals(campaign_id, offset=page * 25)
+            if not rows:
+                return unknown
+            chart = self._count_bar_chart(
+                [(row["model"], int(row["usable"] or 0) + int(row["policy"] or 0)) for row in rows[:25]],
+                label="Retained usable and policy outcomes by model",
+            )
+            return (
+                "<p>Explicitly indexed assignments, not sums of overlapping job reports. "
+                "Pending means no selected retained outcome; it does not establish that no HTTP attempt occurred. "
+                "Truncation overlaps usable/missing outcomes and is not an additional outcome bucket. "
+                "Execution conditions remain distinct; these counts are not pooled safety rates.</p>"
+                + chart + table(
+                    ("Model", "Conditions", "Assigned", "Usable", "Policy", "Missing", "Retry pending", "Pending", "Truncated", "Truncation unknown"),
+                    [["<a href='/campaigns/" + campaign_id + "?section=results&amp;model=" + quote(row["model"], safe="") + "'>" + html.escape(row["model"]) + "</a>"]
+                     + [str(row[key] or 0) for key in ("conditions", "assigned", "usable", "policy", "missing", "retry_pending", "pending", "truncated", "truncation_unknown")]
+                     for row in rows[:25]],
+                ) + pagination(len(rows) > 25)
+            )
+        model = query.get("model", "")
+        if model:
+            base += "&amp;model=" + quote(model, safe="")
+        rows = self.db.workspace_result_rows(campaign_id, offset=page * 50, model=model)
+        if not rows:
+            return unknown
+        output = []
+        for row in rows[:50]:
+            details = json.loads(row["details"]) if row["details"] else {}
+            def value(key):
+                item = details.get(key)
+                return "unknown" if item is None else html.escape(str(item))
+            metadata = "<details><summary>Generation settings and usage</summary><dl>" + "".join(
+                "<dt>" + label + "</dt><dd>" + value(key) + "</dd>" for key, label in (
+                    ("context_tokens", "Effective context"), ("output_allowance", "Output allowance"),
+                    ("input_tokens", "Reported input tokens"), ("output_tokens", "Reported output tokens"),
+                    ("reasoning_tokens", "Reported reasoning tokens"), ("finish_reason", "Finish reason"),
+                    ("missing_category", "Missing-output category"))) + "</dl>"
+            metadata += "<p>Condition: " + html.escape(row["response_condition"] or row["condition_id"]) + "</p>"
+            metadata += "<p>Source: " + value("source_ref") + "</p></details>"
+            output.append([html.escape(row["model"]), html.escape(row["input_id"]),
+                           html.escape(row["modality"]), html.escape(row["framework"] + " / " + row["corpus"]),
+                           html.escape(row["outcome"] or "pending"),
+                           "unknown" if row["truncated"] is None else "yes" if row["truncated"] else "no", metadata])
+        return table(("Model", "Input", "Modality", "Framework / corpus", "Outcome", "Truncated", "Details"), output) + pagination(len(rows) > 50)

@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 from typing import Any
 from .workspace_store import WorkspaceStoreMixin
+from .workspace_results import WorkspaceResultsMixin
 
 
 from .artifacts import (
@@ -20,7 +21,7 @@ from .artifacts import (
 )
 
 
-class ConsoleDB(WorkspaceStoreMixin):
+class ConsoleDB(WorkspaceStoreMixin, WorkspaceResultsMixin):
     """Durable operational database for the console.
 
     Stdlib sqlite under the state directory: jobs (with their durable argv
@@ -37,7 +38,7 @@ class ConsoleDB(WorkspaceStoreMixin):
     unknown, shown as such) rather than a fabricated empty history.
     """
 
-    SCHEMA_VERSION = 5
+    SCHEMA_VERSION = 6
 
     def __init__(self, path: Path, *, repo_root: Path | None = None) -> None:
         self.path = path
@@ -154,6 +155,7 @@ class ConsoleDB(WorkspaceStoreMixin):
                 (str(self.SCHEMA_VERSION),),
             )
             self._create_workspaces()
+            self._create_workspace_results()
 
     def _create_runs(self) -> None:
         assert self._conn is not None
