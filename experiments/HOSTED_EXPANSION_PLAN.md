@@ -10,6 +10,33 @@ collection continues while it is prepared.
 
 ## Current account balances
 
+Operator-reported fifth update, recorded on 11 September 2026 at 23:11
+UTC (12 September locally). Earlier observations are retained below.
+
+| Provider | Previous credit (USD) | Latest credit (USD) | Net decrease (USD) |
+| --- | ---: | ---: | ---: |
+| Anthropic | 49.01 | 48.01 | 1.00 |
+| OpenAI | 14.50 | 14.36 | 0.14 |
+| Google | 17.46 | 17.14 | 0.32 |
+| Kimi | 4.23 | 4.11 | 0.12 |
+| DeepSeek | 3.51 | 3.43 | 0.08 |
+| Total | 88.71 | 87.05 | 1.66 |
+
+These account observations include posted consumption, not necessarily only
+this campaign's calls. They neither erase earlier snapshots nor settle unknown
+individual charges. Haiku judging and Anthropic target generations share the
+same USD 48.01 account credit; do not allocate it twice.
+
+Google daily request quotas reset at midnight Pacific time, not local midnight.
+For 12 September this is 07:00 UTC, or 10:00 Europe/Kyiv. Minute quotas and
+provider-supplied retry delays are separate. Keep the pending Pro selection
+and retry state, and confirm its actual quota response before resuming; credit
+availability alone does not establish request availability.
+[Google rate-limit documentation](https://ai.google.dev/gemini-api/docs/rate-limits)
+was checked on 12 September 2026.
+
+### Previous account observation
+
 Operator-reported fourth update on 11 September 2026, received around 15:09 UTC:
 
 | Provider | Previous credit (USD) | Latest credit (USD) | Net decrease (USD) |

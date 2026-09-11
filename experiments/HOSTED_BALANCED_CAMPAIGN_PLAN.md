@@ -20,8 +20,11 @@ again. Local-output Haiku preparation is written but its transfer did not finish
 
 ## Available credit and obligations
 
-The latest operator balances are Anthropic USD 49.01, OpenAI 14.50, Google
-17.46, Kimi 4.23 and DeepSeek 3.51: USD 88.71 total. These are shared remaining
+The allocation was prepared against operator balances of Anthropic USD 49.01,
+OpenAI 14.50, Google 17.46, Kimi 4.23 and DeepSeek 3.51: USD 88.71 total.
+The subsequent 12 September local-time observation is Anthropic USD 48.01,
+OpenAI 14.36, Google 17.14, Kimi 4.11 and DeepSeek 3.43: USD 87.05 total.
+These are shared remaining
 account credits, not fresh money on top of the previous campaign's allowances.
 Preserve the full dated balance history in HOSTED_EXPANSION_PLAN.md. Deduct
 post-snapshot reported spending and outstanding target/judging obligations
