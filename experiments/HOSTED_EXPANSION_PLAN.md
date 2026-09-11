@@ -1004,16 +1004,29 @@ divide the earlier full-campaign ETA by the worker count. Establish the new
 throughput from an actual funded parallel batch, without new benchmark-only
 calls or changed inputs.
 
-Carry the reviewed Sol Pro aggregate-work contingency into each future
-funding slice: USD 0.30 per unstarted Sol input, in addition to its counted
-request reservation, within the unchanged OpenAI ceiling. Allocate this
-contingency before the Sol route is dispatched. Other already-funded OpenAI
-routes may run first and release unused exposure through their retained usage
-records; a pending Sol allocation must not idle the other providers. Do not
-dispatch Sol if its contingency still cannot fit, release an unknown charge,
-or enlarge the provider ceiling. This is not a
-guaranteed bound on provider model work. Preserve unknown exact charges and
-the original paid outputs; do not retry an answer to repair accounting.
+Earlier preparations included a USD 0.30 Sol Pro aggregate-work contingency per
+unstarted input. Those recorded forecasts remain historical accounting; they
+are not new funding slices or maximum-cost holds. The remaining fixed inventory
+uses the one precomputed campaign ceiling and cumulative reported spending,
+including complete token-based cost bounds. Preserve unknown exact charges and
+the original paid outputs; do not retry an answer to repair accounting or enlarge
+the provider ceiling. A forecast is not a guaranteed bound on provider model work.
+
+Quota or output investigation on one model must not idle a distinct model with
+available capacity. In the current Google continuation, the existing Pro work
+occupies at most one provider worker; Flash may use the other. Once that Pro work
+is terminal, both worker slots may serve the remaining queue. This changes only
+scheduling, not inputs, generation settings, retry counts or the USD 17 Google
+ceiling. Check actual live ownership before replacing an idle dispatcher and
+never terminate a paid request merely to hand off its queue.
+
+A reviewed parser recovery keeps the original failed output and cost. It must
+use the repaired adapter, the identical delivered input and request controls,
+and the next actual physical-attempt ordinal. Completed responses are not
+repeated. The recovery preserves the shared input population and output-specific
+local/Haiku judging obligations; old cohort records are not rewritten. The
+explicit DeepSeek 32,768-token rerun is a separate output condition, not a parser
+repair or an automatic answer retry.
 
 ### Campaign sequence
 

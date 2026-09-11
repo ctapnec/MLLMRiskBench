@@ -293,6 +293,15 @@ authorize maximum-length requests. A changed allowance requires a separately
 recorded generation condition and updated cost forecast within the same campaign
 ceiling. Fixed historical route identities retain their original allowances.
 
+Reviewed native Anthropic parser failures use the same explicit recovery path as
+Fable/Sol. Shared-cohort recovery preserves the original source selection, exact
+requests, funded call IDs, usable checkpoint prefix and future judge slots. It
+requires the repaired clean adapter revision and the next durable physical-call
+ordinal; it never adds an automatic paid answer retry. A new recovery document
+is separate from the original cohort. Unstarted diagnostic inputs can establish
+the repaired adapter's transport without repeating successful probes or converting
+measured inputs into diagnostics. Installed model bytes are reused.
+
 Retained verdicts identify exact outputs, not merely matching inputs. A new
 hosted answer requires its own local and Haiku judgments even when a local
 model answered the same question. If every selected local counterpart already
