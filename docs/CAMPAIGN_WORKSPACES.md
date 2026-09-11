@@ -578,6 +578,14 @@ Record implementation proofs and deployment state in the development ledger.
 Describe the eventual design and experimental methods academically in the thesis;
 do not insert these click instructions or operational status notes in its prose.
 
+Local response publication preserves native provider metadata as well as common
+fields: Ollama context/output allowances and stop reasons, vLLM equivalents,
+and prompt/completion token-usage aliases. An explicit length stop remains
+truncation even when the answer is empty; missingness and truncation are separate
+dimensions. Native output allowance -1 means no fixed output cap, never negative
+token usage. Unknown historical values remain unknown. Correction metadata is
+derived from retained source records, not guessed from model names or token counts.
+
 Retained Haiku publication uses `workspace_judgments.retained_judge_rows`.
 It joins each saved verdict through the selected response's run and attempt
 identity, never by a shared question alone. The same API configuration identifies

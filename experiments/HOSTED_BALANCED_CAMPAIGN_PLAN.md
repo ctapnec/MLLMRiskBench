@@ -2,10 +2,27 @@
 
 Status: requested on 11 September 2026; the allocation below was fixed before
 selection. Exact whole-cluster selection and media materialization have retained
-3,719 assignments on 1,200 distinct inputs already used locally. Request counting
-and the final quote are in preparation. No fourth-campaign target call is claimed.
+3,719 assignments on 1,200 distinct inputs already used locally. All 3,719 exact
+request counts are retained. Final preparation is being completed with the
+existing budget and count cache; no fourth-campaign target call is yet claimed.
 The third campaign's 81-input addition is complete; remaining Google work and
 outstanding judging continue independently.
+
+12 September continuation: the new credit observation updates account history,
+not execution permission or the input selection. Local missing-output auditing
+and recovery must not pause funded hosted collection, its judging, or the
+thirty-minute aggregate reports. Give Fable, Opus, Astra and Sol scheduling
+priority without changing their fixed inputs. Other providers remain independent;
+Google Pro's older quota remainder must not block Flash. Fresh transport probes
+use untouched assigned inputs, count toward the campaign once, and are never
+repeated merely to repair a controller link.
+
+The matched judging population is output-owned: 5,049 retained local answers
+plus at most 3,719 new hosted outputs, not two verdicts per hosted assignment.
+The executor now checks that actual funded population rather than the earlier
+two-per-input approximation. This does not increase account balances, duplicate
+allowances, or remove per-call spending checks. Completed request counts are
+reused and no framework or model is downloaded during this continuation.
 
 Recovery observation, 11 September at 19:07 UTC: 2,864 of the 3,719 request
 counts survived the interruption. A focused longer-timeout diagnostic completed

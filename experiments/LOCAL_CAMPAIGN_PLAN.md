@@ -14,8 +14,27 @@ and complete UI execution/continuation controls remain open. These historical
 counts are not a pooled final-comparison population. No local generation was
 repeated by publication.
 
-Status: automated execution and analysis are terminal; human audit and thesis
-evidence synthesis remain separate work. This operating plan was written
+Status, 12 September: the earlier execution and analysis are terminal, but the
+newly requested all-model missing-output recovery is open. Audit every retained
+missing output, distinguish input-context overflow, output-length exhaustion,
+transport failure and unusable text, and reconcile existing correction checkpoints
+before issuing any new generation. Preserve predecessor outcomes. A larger
+window is a tested new execution condition, not a presumed cure for every miss.
+Each recovered answer requires its own local and Haiku verdict; a judgment of
+another output cannot be reused. Hosted collection continues independently.
+
+The 23:44 UTC audit inspected all 50,653 indexed response records. Of 6,103
+historical missing records, 3,263 have a normal-ended answer for the same model
+and exact input; 61 belong to the retired RWKV roster. The remaining selection
+contains 2,636 distinct current-roster inputs, pending reconciliation against
+other retained checkpoints before regeneration. This is an audit selection, not
+a count of lost files or completed recoveries. DeepSeek's early empty outputs
+include 512-token output allowances, whereas its later ten timeouts used a
+65,536-token context and native-maximum generation. Increasing context alone
+does not explain or repair both conditions. Test the affected configuration
+against the responsiveness/time requirements before starting its correction.
+
+Human audit and thesis evidence synthesis remain separate work. This plan was written
 20 August 2026 after the readiness audit
 of the big rig (Debian, 2x RTX 4090 24,564 MiB, 125 GiB RAM, /mnt/stor 7.1 TB
 free). It is an
