@@ -16,7 +16,10 @@ def retained(tmp_path):
     out.mkdir()
     choices = [dict(input_identity_sha256=str(i), modality="text", framework="replay", corpus="corpus") for i in range(4)]
     requests = {str(i): dict(call_id=f"call-{i}", request_sha256=f"request-{i}", max_output_tokens=4096) for i in range(4)}
-    program = dict(target="api:model", requests=requests, jobs=[dict(purpose="measured_run",
+    config = tmp_path / "api-config.json"
+    config.write_text(json.dumps({"api:model": dict(max_tokens=4096, temperature=0)}))
+    program = dict(target="api:model", max_output_tokens=4096, sources=dict(api_config=dict(path=str(config))),
+        requests=requests, jobs=[dict(purpose="measured_run",
         input_ids=list(requests), argv=["--out", str(out)])])
     records = []
     for i in range(3):
@@ -45,6 +48,7 @@ def test_full_assignment_denominator_policy_and_truncation_survive_republication
     for _ in range(2):
         assert publish_hosted_program(db, campaign, **args) == dict(assignments=4, responses=3, judgments=0, costs=3)
     total = db.workspace_model_totals(campaign)[0]
+    assert total["conditions"] == 1
     assert tuple(total[key] for key in ("assigned", "usable", "policy", "missing", "pending", "truncated")) == (4, 1, 1, 1, 1, 1)
     assert db.workspace_judging_totals(campaign) == []
     costs = db.workspace_cost_totals(campaign)[0]
@@ -126,3 +130,19 @@ def test_failed_predecessor_cannot_be_silently_selected_as_a_completed_prefix(re
     args["program"]["adapter_recoveries"] = {"0": dict(checkpoint=dict(path=str(prefix)))}
     with pytest.raises(ValueError, match="Failed predecessor"):
         publish_hosted_program(db, campaign, **args)
+
+
+def test_condition_tracks_settings_not_input_identity_file_location_or_credentials(retained, tmp_path):
+    from experiments.rig_web_app.workspace_import import generation_condition_id
+    _, _, args, _, _ = retained
+    program = args["program"]
+    original = generation_condition_id(program)
+    copy = tmp_path / "copied-config.json"
+    copy.write_text(json.dumps({"api:model": dict(temperature=0,max_tokens=4096,api_key="not-a-real-key")}))
+    program["sources"]["api_config"]["path"] = str(copy)
+    assert generation_condition_id(program) == original
+    copy.write_text(json.dumps({"api:model": dict(temperature=1,max_tokens=4096)}))
+    assert generation_condition_id(program) != original
+    copy.write_text(json.dumps({"api:model": dict(temperature=0,max_tokens=4096)}))
+    program["max_output_tokens"] = 8192
+    assert generation_condition_id(program) != original

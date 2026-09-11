@@ -6,10 +6,25 @@ corpora nor hashes model files, and makes no provider or judge calls.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
 from .workspace_costs import budget_attempt_rows
+
+
+def generation_condition_id(program: dict) -> str:
+    """Identify model settings, not the question or the config file's location."""
+    source = Path(program["sources"]["api_config"]["path"])
+    settings = json.loads(source.read_text(encoding="utf-8"))[program["target"]]
+    # Authentication is not a generation condition and must not enter this index.
+    settings = {key: value for key, value in settings.items()
+                if key not in {"api_key", "api_key_env", "key_env", "authorization", "token"}}
+    value = {"target": program["target"], "settings": settings,
+             "max_output_tokens": program["max_output_tokens"]}
+    identity = json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    # This is a small metadata identifier, not file-content verification.
+    return "generation-" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
 
 
 def _jsonl(path: Path):
@@ -93,6 +108,7 @@ def hosted_program_rows(program: dict, selections: list[dict], *, campaign_id: s
     """
     choices = {row["input_identity_sha256"]: row for row in selections}
     requests = program["requests"]
+    condition_id = generation_condition_id(program)
     if not requests.keys() <= choices.keys():
         raise ValueError("Input selection does not cover the retained program")
     assignments, responses, bindings = {}, [], {}
@@ -103,7 +119,7 @@ def hosted_program_rows(program: dict, selections: list[dict], *, campaign_id: s
                 raise ValueError("Input is assigned to multiple program jobs")
             request, choice = requests[input_id], choices[input_id]
             assignments[input_id] = dict(assignment_id=request["call_id"], model=program["target"],
-                input_id=input_id, condition_id=request["request_sha256"], modality=choice["modality"],
+                input_id=input_id, condition_id=condition_id, modality=choice["modality"],
                 framework=choice["framework"], corpus=choice["corpus"], response_id=None, evidence_class=evidence)
             bindings[request["call_id"]] = dict(campaign_id=campaign_id, assignment_id=request["call_id"],
                 model=program["target"], attempt_response_ids={}, attempt_usage={})
