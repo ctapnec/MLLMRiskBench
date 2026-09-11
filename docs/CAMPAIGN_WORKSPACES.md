@@ -1,9 +1,24 @@
 # Campaign workspaces and the reproducible UI workflow
 
-Status: implementation specification, 11 September 2026. The existing console
-does not yet provide the complete workflow below. Target collection continues
-independently; publication and UI deployment follow collection. This document
-must not be presented as verification of a deployed feature.
+Status: ownership foundation implemented, complete workflow still in progress,
+11 September 2026. Source bd036ca adds SQLite campaign metadata and explicit
+activity membership, a campaign selector linked to the existing Build form,
+review-bound launch ownership and an Activity page. Source acefbe5 corrects an
+ownership-test fixture. Focused rig verification passed all 32 selected checks
+(31 initially, then only the corrected failed check), lint and two reversed-fix
+checks. Evidence: ui-workspaces-bd036ca and ui-workspaces-acefbe5.
+
+These changes are not deployed yet. Retained-data import, model-level results,
+judging/cost indexes and the remaining execution actions below are not claimed
+implemented. Empty workspace result sections explicitly report unknown data,
+not zero outcomes. Target collection continues independently. Browser visual
+verification is pending; no browser connection was available for this check.
+
+Build remains the single configuration and launch interface. Campaign creation
+only names the workspace and target category, then returns to Build. There is
+no second pipeline builder in Campaigns. Existing typed Run tools additionally
+carry explicit campaign selection. Neither selection changes Runner arguments
+or invalidates an otherwise identical no-call projection.
 
 ## The user-facing result
 
@@ -117,10 +132,12 @@ rewriting that process as successful.
 
 ## Existing implementation and the actual gap
 
-`rig_web_app/storage.py` uses SQLite in `<state-dir>/console.db`. It currently
-stores `jobs`, `runs`, `usage` and `reports`, plus schema metadata. Its campaign
-query combines terminal runs with active run-kind jobs; there is no durable
-parent campaign or campaign membership relation.
+`rig_web_app/storage.py` uses SQLite in `<state-dir>/console.db`. Before the
+ownership change it stored `jobs`, `runs`, `usage` and `reports`, plus schema
+metadata. Its legacy Stats campaign query still combines terminal runs with
+active run-kind jobs. Schema version 5 additionally stores `campaigns` and
+`campaign_members`; these survive usage/report reindexing. The old query and
+deep links remain available during implementation of the grouped results view.
 
 External controllers, measured jobs and analysis publications already have
 readers in `campaigns.py`, `external_measured.py` and `external_analysis.py`.
