@@ -32,7 +32,7 @@ eligible new hosted-output assessments.
 Explicit OpenAI HTTP 400 `cyber_policy` remains an observed refusal that does
 not stop subsequent inputs. Other HTTP 400 causes are not inferred from it.
 
-The ninth prospective slice now retains 96 unchanged non-Google requests:
+The ninth slice was funded at 04:13:07 UTC for 96 unchanged non-Google requests:
 Opus 27, Kimi 19 and DeepSeek 50. Its 47 Google requests are deferred, not
 discarded or skipped by the next input prefix. The partition reused exact
 request counts without HTTP. Funding waits for eighth-slice target and both
@@ -46,8 +46,10 @@ dependency checks passed on the rig. No paid process was stopped by this
 queue handoff. The initial 56-request DeepSeek reservation exceeded remaining
 capacity by USD 0.216182. A no-call partition deferred six requests and their
 eighteen newly matching local judgments, preserving whole input clusters and
-the exact request contents. Funding of the corrected slice is running; it
-must not be counted as paid generation before actual execution starts.
+the exact request contents. Its protected plan reserves 96 target attempts,
+96 prospective hosted Haiku assessments and 201 new matching-local Haiku
+assessments. Dispatch and both judging controllers are live; funded starts
+must remain distinct from actual responses. Total funded inputs are now 2,714.
 
 The tenth slice is queued to prepare the first twenty extra Fable inputs:
 eleven text and nine image inputs, with USD 8.263490 maximum target exposure.
@@ -56,6 +58,14 @@ inputs pending. Preparation waits for the ninth selection to be funded;
 execution and both judging stages remain subject to cumulative capacity.
 Every new hosted output receives its own eligible local and Haiku assessment.
 Only judgments of the identical retained local answers may be reused.
+
+The following original-input slice is queued behind the tenth funded
+selection, with prospective caps of Opus 30, Kimi 19 and DeepSeek 40.
+Whole-cluster selection, request counting and cumulative funding still apply;
+these are not funded or executed quantities. The independent additional
+Fable prefix must not move the original model-input prefixes. The queue uses
+the existing preparation, materialization, counting and funding commands,
+including local and Haiku judging, without altering requests already issued.
 
 The historical RR prefix reader now forwards the optional artifact-checking
 mode to its original-source subprocess. Ninety-three focused rig tests, a

@@ -2816,10 +2816,16 @@ file-checksum policy applied separately and reported as such.
 The RR interrupted-grid prefix reader follows this option too, including its
 historical subprocess and closed-cell joins. It reports the actual checking
 mode without promoting the interrupted parent grid to a completed result.
-Stored content
-identities, newly generated descriptors, request construction and monetary
+Stored content identities, newly generated descriptors, request construction and monetary
 bindings are not replaced by invented digests. Model-file checks use their
 separate `--verify-model-sha256` option.
+
+Completion observers wait on route terminal records while a live provider
+worker is handling a documented quota delay. Do not expire the observer solely
+because that wait exceeds an arbitrary campaign timer. During the wait, read
+the small terminal records only; perform the final retained-row reconstruction
+once all routes are terminal. This neither restarts a request nor extends its
+transport retry allowance.
 
 After a reviewed transport interruption, use an execution-plan version 3
 successor with the exact failed checkpoint in `transport_recoveries`; never
