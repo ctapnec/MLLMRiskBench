@@ -278,3 +278,33 @@ def test_cached_count_audit_counts_one_http_request_for_repeated_references(tmp_
     assert cached_count_request(target, request, cache_root=cache, allow_network=True, audit=audit) == first
     assert len(observed) == 1
     assert audit == {"cache_hits": 1, "new_receipts": 1, "http_attempts": 1}
+
+
+def test_parallel_distinct_counts_and_identical_request_single_flight(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier, Lock
+    from experiments import hosted_request_tokens as counts
+
+    target = _target('haiku', tmp_path)
+    first = target.build_request(_dialog(tmp_path))
+    second = dict(first, max_tokens=17)
+    cache = tmp_path / 'counts'
+    cache.mkdir()
+    entered, access, calls = Barrier(2), Lock(), []
+    original = counts.count_request
+    _client(target, monkeypatch)
+
+    def simultaneous(target, request, **kwargs):
+        with access:
+            calls.append(request_sha256(request))
+        entered.wait(timeout=5)
+        return original(target, request, **kwargs)
+
+    monkeypatch.setattr(counts, 'count_request', simultaneous)
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        futures = [pool.submit(cached_count_request, target, request,
+                   cache_root=cache, allow_network=True) for request in (first, second, first)]
+        results = [future.result(timeout=10) for future in futures]
+    assert results[0] == results[2]
+    assert len(calls) == len(set(calls)) == 2
+    assert len(list(cache.glob('*.json'))) == 2

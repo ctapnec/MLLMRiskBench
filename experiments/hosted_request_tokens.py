@@ -6,6 +6,7 @@ not an exact count of OpenAI Chat serialization. No request setting is changed.
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 from collections.abc import Mapping
@@ -213,10 +214,25 @@ def validate_receipt(target, request: Mapping, receipt: Mapping) -> dict:
     return dict(receipt)
 
 
+@contextlib.contextmanager
+def _count_lock(root: Path, key: str):
+    """Only identical requests wait on each other; distinct counts run concurrently."""
+    import fcntl
+
+    locks = root / '.locks'
+    locks.mkdir(exist_ok=True, mode=0o700)
+    with (locks / (key + '.lock')).open('a+b') as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
 def cached_count_request(target, request: Mapping, *, cache_root: Path,
                          allow_network: bool = False, audit: dict | None = None) -> dict:
     """Persist each completed counter result; resume validates without recounting."""
-    from experiments.retained_response_judge_execute import _exclusive_lock, _read_regular, _write_new
+    from experiments.retained_response_judge_execute import _read_regular, _write_new
 
     if type(allow_network) is not bool:
         raise ValueError("allow_network must be an explicit boolean")
@@ -231,7 +247,9 @@ def cached_count_request(target, request: Mapping, *, cache_root: Path,
                               "method": method, "method_id": method_id})
         return root / f"{key}.json"
 
-    with _exclusive_lock(root):
+    lock_key = request_sha256({'request': body, 'target': target.requested_spec,
+                              'provider': target.provider, 'base_url': str(target.base_url)})
+    with _count_lock(root, lock_key):
         # Offline means no new HTTP call, not discarding an exact count already
         # retained for this full request. Building this lookup makes no call.
         if not allow_network:
