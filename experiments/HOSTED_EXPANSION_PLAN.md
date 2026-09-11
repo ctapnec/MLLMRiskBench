@@ -1,6 +1,6 @@
 # Third hosted campaign: provider-scaled expansion
 
-Status update, 11 September 2026 at 01:25 UTC: the requested program is
+Status update, 11 September 2026 at 01:34 UTC: the requested program is
 expanded from 6,541 to 6,736 target evaluations by the additional frontier
 selection below. The added 195 evaluations have counted requests and validated
 replay files but are not yet funded or executed. The operator's latest reported balances and the
@@ -21,6 +21,21 @@ started at 01:24:57 UTC and is preparing its shared source context; new target
 responses are not yet claimed. The slice's 510 exact local answers already
 have retained Haiku assessments, so its local assessment handoff is complete
 with zero new judge calls. New hosted outputs still need their own judgments.
+
+The first seventh-slice dispatch stopped its four non-Google workers before
+any paid reservation: the launcher compared the whole runtime-utility file
+with an older engineering checksum after unrelated helpers were added. The
+unchanged acquisition function was isolated, passed focused no-download and
+concurrency regressions, and the zero-call dispatcher was replaced at 01:34:20
+UTC. Existing model verification was not repeated. At the 01:34 aggregate,
+2,295 of 2,493 funded assignments had started, retaining 2,290 usable outcomes,
+four terminal failures and one unsettled Google request. There were 198 funded
+inputs still unstarted and no new response in the preceding half hour. After
+the new allocation and explicit pending-work holds, uncommitted target
+capacity is USD 5.326100 Anthropic, 5.232875 OpenAI, 7.173291 Google,
+2.301066 Kimi and 0.302763 DeepSeek; protected uncommitted Haiku capacity is
+USD 15.742326. These are conservative campaign allocations, not live credits.
+New paid execution remains to be confirmed after the corrected preparation.
 
 The first five funded slices have all 2,107 assigned target inputs
 attempted and all required local and Haiku judging complete. They retain
