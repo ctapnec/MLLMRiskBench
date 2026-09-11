@@ -6068,6 +6068,14 @@ diagnostics and cannot be promoted to thesis evidence.
 
 ## 18. Rig-local console and campaign builder
 
+The [campaign workspace and UI workflow specification](../docs/CAMPAIGN_WORKSPACES.md)
+describes the requested unified presentation and the precise local/API flow to
+implement. The current console has individual run records, not parent campaign
+workspaces. Reindex alone cannot group the retained thesis work or reproduce
+the continuous hosted queue. The specification separates existing controls from
+new controls; it applies equally to imported work and campaigns launched manually
+through the UI. New UI operations will inherit an explicitly selected campaign.
+
 A single-operator application starts, monitors, and stops the
 allowlisted experiment CLIs from typed forms, composes campaign lanes through
 a mode-aware builder (dry run, attestation probe, diagnostic canary, measured

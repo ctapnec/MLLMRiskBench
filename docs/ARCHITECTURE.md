@@ -916,13 +916,22 @@ state directory): jobs with their durable argv identities and builder
 parameters, the
 campaign-run registry, per-artifact recorded token usage, and a report
 index; it carries a schema version, a startup integrity check, transactional
-terminal-state commits, and a Reindex action that rebuilds every derived row
-from retained artifacts with digest verification. This database is
+terminal-state commits, and a Reindex action that rebuilds derived usage and
+report rows from retained artifacts. Full artifact digest verification is an
+explicit optional action, off by default. This database is
 operational state, never scientific evidence: usage rows are read only from
 completion-marker-bound artifacts, cost is calculated only from the
 operator-edited effective-dated pricing registry (missing data renders N/A,
 never zero), and the validated filesystem artifacts remain the sole
 measurement authority.
+
+The current run registry is not a durable parent-campaign model. The planned
+[campaign workspaces](CAMPAIGN_WORKSPACES.md) replace job-card-first presentation
+with unified local/API workspaces, automatically associate new UI-launched
+operations and import existing external work without inventing process ownership.
+Compact SQLite indexes support model-level coverage and matched comparisons;
+original outputs, execution conditions and verdicts remain retained artifacts.
+This extension and its full UI execution workflow are specified, not yet deployed.
 
 For an explicit workstation vLLM checkpoint, the raw filesystem locator is a
 launch-only input. The confirmation capability and raw builder selection are

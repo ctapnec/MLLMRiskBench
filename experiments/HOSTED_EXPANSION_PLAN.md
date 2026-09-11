@@ -1,5 +1,13 @@
 # Third hosted campaign: provider-scaled expansion
 
+UI publication requirement, 11 September 2026: original, supplemental, Google
+and expansion work will appear in one API campaign workspace, not as separate
+top-level campaigns or a long job list. Local/Haiku judging and costs belong to
+the outputs they assess. The [workspace specification](../docs/CAMPAIGN_WORKSPACES.md)
+also defines the future manual UI execution flow and its common-input comparison
+with the Local campaign. This is pending UI integration, not new target work;
+collection continues while it is prepared.
+
 ## Current account balances
 
 Operator-reported update on 11 September 2026. Retain every earlier dated
@@ -32,7 +40,7 @@ Retain the per-call campaign accounting alongside this independent comparison.
 
 These are account credits, not new campaign allocations or measured campaign
 costs. The existing cumulative provider ceilings and protected Haiku allocation
-remain unchanged. Preserve outstanding reservations and uncertain charges;
+remain unchanged. Preserve the historical accounting and uncertain charges;
 do not subtract already-posted historical charges twice from these balances.
 Reconcile spending after this snapshot and unposted liabilities before using
 the balances to fund further requests. Both local and Haiku judging remain

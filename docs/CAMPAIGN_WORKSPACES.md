@@ -1,0 +1,315 @@
+# Campaign workspaces and the reproducible UI workflow
+
+Status: implementation specification, 11 September 2026. The existing console
+does not yet provide the complete workflow below. Target collection continues
+independently; publication and UI deployment follow collection. This document
+must not be presented as verification of a deployed feature.
+
+## The user-facing result
+
+The campaign is the main object, not the process that happened to execute part
+of it. Present this thesis work as two workspaces:
+
+- **Local campaign**: all local targets, their original runs, corrections and
+  remaining-input recoveries, local judgments, selected Haiku judgments and
+  local analyses.
+- **API campaign**: the original hosted selection, supplements, Google
+  extension and current expansion, with local and Haiku judgments of each
+  selected output.
+
+These names are configuration, not two hard-coded campaign types or a permanent
+limit of two campaigns. Local-testing phase numbers and dated controller names
+do not become system concepts or primary navigation labels.
+
+The landing page has two compact summaries, with collection progress, judging
+progress, unresolved outcomes, spending and last update. Opening either summary
+shows the campaign itself, not another list of job cards.
+
+```text
+Campaigns
+  Local campaign                       API campaign
+    Overview                             Overview
+    Results                              Results
+    Judging                              Judging
+    Costs                                Costs
+    Activity                             Activity
+
+Compare campaigns: same-input Local / API comparison
+```
+
+Use horizontal tabs inside each workspace, consistent with the existing UI.
+The shared comparison is accessible from both workspaces and has one stable
+URL. Jobs remains an operations tool; it is not a competing results homepage.
+Existing job and report URLs remain usable as deep links.
+
+### Overview
+
+Show one model table, with modality filters and expandable framework, arm and
+corpus breakdowns. The default columns are model, assigned inputs, attempted
+inputs, usable answers, policy outcomes, missing outputs, truncated answers,
+local judging coverage and Haiku judging coverage. Show not-started and
+retry-pending counts separately. A generation can be usable and truncated, so
+truncation is a separate flag rather than an additive outcome bucket.
+
+Show a collection progress chart by model and a judging coverage chart. No
+timestamps, receipt names, script names or raw paths dominate the page.
+An active campaign needs a last-updated time and a stale-data notice; zero
+activity must not be inferred from an unavailable index.
+
+### Results and comparisons
+
+Results is a single filterable table, not one table per execution batch.
+Filters include model, modality, framework, arm, corpus, sampling selection,
+generation settings and judge. The model detail opens a bounded side panel or
+modal with its charts and a paginated input/output/judgment browser.
+
+Expose effective context, output allowance, reported input/output/reasoning
+tokens where available, finish reason, truncation and missing-output category.
+Do not infer token usage from an allowance or infer an actual context window
+from a model's advertised maximum. Unknown values remain unknown.
+
+The default corrected-results view resolves an original assignment to its
+explicitly designated retained successor. Historical responses remain available
+through a condition selector. A newer timestamp alone does not select a better
+answer. Different generation settings remain separately identifiable even when
+they are shown in one workspace. Do not choose an answer because it received a
+more favorable safety judgment.
+
+The comparison page uses the intersection of eligible retained input identities
+for the selected models and judge conditions. Match rendered text, images,
+source/arm identity, seed and attack condition, not an approximate question title
+or row number. Source aliases do not create independent observations. A live
+adaptive trajectory is not an identical input unless its actual replay is
+matched. Show eligible, excluded and unmatched counts before rates.
+
+Local and Haiku verdicts are bound to each distinct response. The same input
+does not make two model outputs interchangeable. Reuse an existing verdict only
+for the same retained output and judging condition. Equal inputs do not imply
+equal local/API answer totals when the model rosters differ.
+
+Charts compare per-model safety outcomes, missing outputs, truncation and judge
+agreement on their declared denominators. Show benign coverage beside
+over-refusal. Comparisons must not silently mix full local coverage with a
+smaller hosted subset, diagnostic probes with measured rows, or source-native
+metrics with approximate common metrics.
+
+### Judging, costs and activity
+
+Judging shows required, completed, invalid, missing and pending verdicts for the
+local judge and Haiku, with the same-input selection visible. Response failures
+remain in collection coverage even where no text is eligible for adjudication.
+Provider policy rejections are explicit outcomes, not transport failures or
+invented model text; indicate whether each outcome is eligible for a given judge.
+
+Costs shows physical HTTP attempts, reported tokens and paid usage, split by
+provider, model and target/judge role. Include local-judge work on API outputs
+and Haiku work on local outputs under the campaign whose output was judged.
+Split mixed judging runs by output ownership; do not charge the entire run to
+both campaigns. Account balance updates form a dated history, separate from
+attributed campaign costs. Unknown charges are not zero. Precalculated spending
+forecasts are not money reservations.
+
+Activity is the only default location for individual jobs, controllers,
+preparation tasks, retries, recoveries, logs and artifacts. Keep their real
+origins and timestamps. Group related operations under the affected model or
+stage. A historical failed process can have a completed recovery without
+rewriting that process as successful.
+
+## Existing implementation and the actual gap
+
+`rig_web_app/storage.py` uses SQLite in `<state-dir>/console.db`. It currently
+stores `jobs`, `runs`, `usage` and `reports`, plus schema metadata. Its campaign
+query combines terminal runs with active run-kind jobs; there is no durable
+parent campaign or campaign membership relation.
+
+External controllers, measured jobs and analysis publications already have
+readers in `campaigns.py`, `external_measured.py` and `external_analysis.py`.
+Some are discovered from retained artifacts rather than being SQLite Job rows.
+The current Stats page explicitly renders each retained Job/run as a campaign.
+Reindex rebuilds usage and report indexes; it does not assemble this requested
+two-campaign presentation. Running Reindex alone cannot implement the change.
+
+Build already exposes General, Runtimes, Pipeline, Evaluation, Admission and
+Execution. The Run page includes readiness profiling, hosted budget projection,
+matched retained-output judging and analysis forms. However, it does not expose
+the complete retained hosted preparation and continuous provider-parallel
+collection workflow. Do not describe the current console as already capable of
+reproducing the full campaign in a few clicks.
+
+## Minimal backend integration
+
+Keep SQLite as the operational index and the retained response/report files as
+the data source. Do not move image blobs, model files, entire response JSON
+documents or secrets into SQLite. Extend the existing database, not a second
+database or a new queue service.
+
+1. Add campaign metadata and explicit campaign membership. A member identifies
+   an existing job, external registration, published analysis or budget source,
+   together with its role and original locator. Reference external records
+   directly; do not synthesize console-owned jobs to make them fit `jobs`.
+2. Index compact logical-assignment and outcome references from the retained
+   selection and results. Include model, input identity, execution condition,
+   response reference, outcome and explicit recovery relationship. Assignment
+   identity and physical call identity are distinct. Repeated attempts change
+   cost/attempt counts, not the number of intended inputs.
+3. Index judging references by response identity and judge condition. Shared
+   comparisons refer to both campaigns, but do not own duplicate generations,
+   verdicts or costs. Reuse the existing paid-attempt accounting identity to
+   avoid charging copied artifacts twice.
+4. Update indexes on durable task/result publication. For imported historical
+   data, use an explicit selected-root import, then update only changed source
+   metadata. Render paginated SQL summaries; do not rescan all corpora or
+   reconstruct all historical rows on page navigation. Full-file checksums
+   remain optional and off by default.
+5. Persist campaign selection on a new UI launch and propagate it to child
+   tasks. Use the same backend execution paths for CLI and UI. Existing
+   console-owned jobs retain their normal lifecycle; importing a tmux task
+   does not claim ownership or make the console's Stop button its owner.
+
+Use normal migrations, a SQLite-consistent backup before historical import and
+transactional registration. Repeated import of unchanged sources is a no-op.
+Reindexing derived usage/reports must preserve campaign names, memberships and
+selection/recovery decisions. The two campaign memberships are explicit and
+reviewable, not guessed from a filename prefix such as `phase6` or a date.
+
+Do not sum all historical report headers to obtain the campaign totals. Some
+publications include overlapping responses. Count logical assignments from the
+selected inventory, outcomes from their retained records, and costs from unique
+physical attempts. Preparation and readiness are activities, not measured
+input completions. Report figures retain their scientific selection rules.
+
+## UI flow for this retained work
+
+The following labels specify the new controls to implement, not controls that
+have already been verified in the deployed UI.
+
+1. Open **Campaigns -> Import existing work**. Choose **Local campaign** and
+   select the retained local inventory, original runs, recovery relationships,
+   historical/RR analyses and local-output judging publications. Import from
+   these known sources, not from a recursive scan of the whole storage disk.
+2. Preview model/modalities, assignment counts, duplicate references, unresolved
+   links, historical/corrected conditions and existing judged outputs. A missing
+   result is shown as missing or pending; importing it makes no model call.
+3. Choose **Import**. Save one membership/index transaction and retain the
+   import report. Reopening this campaign shows model-level results and Activity
+   contains the original operations. No generation is rerun and no original job
+   start/end/status is rewritten.
+4. Repeat for **API campaign**, including original, supplemental, Google and
+   expansion selections. Attach both judging stages, budget/attempt sources and
+   the retained account-balance history. Until collection and judging finish,
+   the campaign remains visibly incomplete.
+5. Open **Compare campaigns**, choose these two campaigns and **Matched inputs**.
+   Inspect coverage by model and choose local or Haiku judging. Save the view
+   with its exact input selection and generation conditions. This creates a
+   comparison reference, not a third execution campaign.
+6. Use **Export table/figures** for the selected view. Export labels identify the
+   input subset, model, modality, framework/arm/corpus, generation settings,
+   judge, coverage and uncertainty. Activity/artifact links provide audit detail
+   without cluttering the presentation.
+
+## UI flow for a new reproducible campaign
+
+New campaign controls should reuse the current Build form rather than duplicate
+all its parameters. A selected campaign remains visible while configuring it.
+
+This is the normal workflow for manually operated UI campaigns, not an import
+feature. Creating/selecting a campaign establishes the ownership used by Build
+and the typed Run forms. Launching a model, adding another arm, resuming missing
+entries, running either judge or publishing analysis automatically attaches that
+operation to the selected campaign. The user does not manually import each job
+after it finishes. New inputs extend its retained selection history rather than
+creating another top-level campaign. Existing outcomes are not reassigned or
+silently re-executed when a campaign is extended.
+
+Show the campaign name on Compose & review and on every relevant launch form.
+An action reached outside a campaign must offer an existing campaign, a new
+campaign, or an explicitly standalone diagnostic; do not silently put measured
+work into a catch-all group. Once a task starts, its campaign ownership is
+durable and does not change when the user navigates to another workspace.
+Do not infer background worker ownership from a browser-wide mutable selection.
+
+### Local
+
+1. **Campaigns -> New -> Local**: name it and select its results location.
+2. **Build -> Runtimes**: reuse installed framework environments and models.
+   Run installation only for missing or broken dependencies. Use **Run ->
+   Targets and rosters -> local_model_readiness** for a missing or changed local
+   profile; reuse existing valid 10-text/5-image assessments otherwise.
+3. **Build -> Pipeline**: select local targets, modalities, source arms and
+   attackers. **Execution** sets sample policy, sample seed, whole-cluster limit,
+   call bounds and any local wall-time limit. A limit of zero retains the
+   supported full-corpus option. Persist the selected input list for comparison.
+4. Review hardware-fit context and readiness-approved response allowance for
+   every model. Preserve explicit campaign generation settings; do not apply a
+   newly discovered default retrospectively. Local bad-output retries default
+   to one retry after the first attempt. Missing or malformed answers remain
+   rows and do not discard the rest of an admitted model's assignment.
+5. **Evaluation** selects the local judge and optional approximate metrics.
+   Select **Collect responses first, judge afterwards** in the new campaign
+   execution controls. **Admission** uses the existing project/source/model
+   bindings. **Compose & review** shows the actual input counts, model settings
+   and resource plan before **Start campaign**.
+6. Follow **Overview** while collection runs. **Activity** provides logs and
+   bounded continuation actions. After collection, **Judging -> Run local judge**
+   processes retained outputs without generating targets again.
+7. **Judging -> Haiku -> Match API inputs** selects these models' retained outputs
+   for the API campaign's exact inputs. Preview token counts/costs, then execute
+   only judgments not already retained for that output and judging condition.
+
+### API
+
+1. **Campaigns -> New -> API -> Use inputs from Local campaign**. Select an
+   existing local input inventory. Review capability exclusions and the common
+   input intersection; do not independently resample questions for each model.
+2. Select provider/model routes and per-model output allowances. Use the
+   existing **Configuration** key/pricing/budget controls. The new campaign
+   preview counts requests and includes target, local-judge and Haiku work.
+   Keep account snapshots separate from planned and measured campaign costs.
+3. Set **Precalculated spending**, existing provider ceilings, two concurrent
+   network workers per provider, zero answer retries and at most four physical
+   HTTP attempts. Retry transport failures with backoff and provider-directed
+   rate-limit delays. Classify HTTP 400 by its actual reason; a documented
+   provider policy rejection is a retained outcome, not an automatic stop.
+   Unexpected empty content requires investigation before more paid work on
+   that route. Credit exhaustion stops that provider, not unrelated providers.
+4. **Compose & review -> Start collection** submits one fixed provider-parallel
+   queue. Independent providers run concurrently. Do not divide execution into
+   financial batches that wait for previous batches' judging. Show quota waits
+   and in-flight requests separately from completed responses.
+5. When collection is complete, **Judging -> Run local judge** and **Run Haiku**
+   adjudicate the retained API outputs. The same output is used for both judges.
+   Haiku judging of matching local outputs follows the same input selection,
+   but always evaluates the actual local response, not the API response.
+6. Publish the two campaign workspaces and shared matched comparison. Completed
+   collection is not reported as fully complete while required judgments or
+   selected-input reconciliation remain pending.
+
+## Implementation and acceptance order
+
+First implement campaign ownership, import and paginated grouped views. Then
+expose the retained-input selection, continuous collection and post-hoc judging
+actions through the existing typed command layer. Finally publish the retained
+data and verify the complete UI flow on the rig. Merely adding two headings or
+another hierarchy over the existing job-card lists does not satisfy this work.
+
+Required focused rig checks include:
+
+- Import twice, restart and reindex: the same two workspaces and counts remain,
+  no duplicate calls/costs appear, and original artifact contents are unchanged.
+- Interrupted and failed jobs with completed recoveries retain their history;
+  the model assignment counts each input once in the selected results view.
+- A copied report does not double observations or billing. A mixed local/API
+  judging run attributes each response's judgment to the right campaign.
+- Matching inputs with different outputs never share a verdict; changing a
+  generation condition remains visible and does not silently pool rates.
+- Unavailable records show unknown/pending, not zero or green completion.
+- All navigation and backend actions use the common busy guard; success,
+  failures and timeouts release it. Large tables paginate and do not trigger
+  corpus reconstruction, model loads or file hashing on repeated navigation.
+- A UI-created retained-input plan produces the same input identities and
+  execution arguments as its CLI equivalent. Grouping/import triggers zero
+  target and judge calls. Any execution regression uses the rig only.
+
+Record implementation proofs and deployment state in the development ledger.
+Describe the eventual design and experimental methods academically in the thesis;
+do not insert these click instructions or operational status notes in its prose.

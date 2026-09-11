@@ -1,5 +1,13 @@
 # All-local test campaign plan: every corpus arm, every framework runtime, free models only
 
+UI publication requirement, 11 September 2026: present all retained local work
+as one model-first Local campaign workspace, with recoveries and operational
+jobs under Activity, not a fragmented job-card list. The
+[workspace specification](../docs/CAMPAIGN_WORKSPACES.md) defines importing this
+work, automatic membership for future UI launches and the same-input comparison
+with the single API campaign. Grouping does not rerun completed generations or
+pool incompatible historical and corrected conditions. Implementation remains open.
+
 Status: automated execution and analysis are terminal; human audit and thesis
 evidence synthesis remain separate work. This operating plan was written
 20 August 2026 after the readiness audit
