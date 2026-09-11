@@ -24,6 +24,11 @@ class WorkspaceResultsMixin:
             "CREATE INDEX IF NOT EXISTS campaign_assignments_model "
             "ON campaign_assignments(campaign_id,model,modality)"
         )
+        columns = {row[1] for row in self._conn.execute("PRAGMA table_info(campaign_assignments)")}
+        if "evidence_class" not in columns:
+            self._conn.execute(
+                "ALTER TABLE campaign_assignments ADD COLUMN evidence_class TEXT NOT NULL DEFAULT 'unknown'"
+            )
         self._conn.execute(
             "CREATE TABLE IF NOT EXISTS campaign_responses ("
             "campaign_id TEXT NOT NULL, response_id TEXT NOT NULL, assignment_id TEXT NOT NULL, condition_id TEXT NOT NULL, "
@@ -56,10 +61,12 @@ class WorkspaceResultsMixin:
 
         prepared_assignments, prepared_responses, prepared_judgments = [], [], []
         for row in assignments:
+            if row.get("evidence_class") not in {"measured", "diagnostic", "preflight", "unknown"}:
+                raise ValueError("Assignment needs its explicit evidence class")
             identity = tuple(text(row, key) for key in (
                 "assignment_id", "model", "input_id", "condition_id", "modality", "framework", "corpus"))
             selected = text(row, "response_id") if row.get("response_id") is not None else None
-            prepared_assignments.append((campaign_id, *identity, selected, time.time()))
+            prepared_assignments.append((campaign_id, *identity, selected, time.time(), row["evidence_class"]))
         for row in responses:
             if row.get("outcome") not in {"usable", "policy", "missing", "retry_pending"}:
                 raise ValueError("Unknown campaign response outcome")
@@ -93,15 +100,16 @@ class WorkspaceResultsMixin:
                 with self._conn:
                     for row in prepared_assignments:
                         old = self._conn.execute(
-                            "SELECT model,input_id,condition_id,modality,framework,corpus "
+                            "SELECT model,input_id,condition_id,modality,framework,corpus,evidence_class "
                             "FROM campaign_assignments WHERE campaign_id=? AND assignment_id=?", row[:2],
                         ).fetchone()
-                        if old and tuple(old) != row[2:8]:
+                        if old and tuple(old) != (*row[2:8], row[10]):
                             raise ValueError("Existing assignment identity changed")
                         self._conn.execute(
-                            "INSERT INTO campaign_assignments VALUES(?,?,?,?,?,?,?,?,?,?) "
+                            "INSERT INTO campaign_assignments VALUES(?,?,?,?,?,?,?,?,?,?,?) "
                             "ON CONFLICT(campaign_id,assignment_id) DO UPDATE SET "
-                            "response_id=excluded.response_id,updated_at=excluded.updated_at", row,
+                            "response_id=excluded.response_id,updated_at=excluded.updated_at "
+                            "WHERE campaign_assignments.response_id IS NOT excluded.response_id", row,
                         )
                     for row in prepared_responses:
                         if not self._conn.execute(
@@ -143,14 +151,14 @@ class WorkspaceResultsMixin:
 
     def workspace_model_totals(self, campaign_id: str, *, offset: int = 0) -> list[sqlite3.Row] | None:
         return self._query(
-            "SELECT a.model,COUNT(*) AS assigned,COUNT(DISTINCT COALESCE(r.condition_id,a.condition_id)) AS conditions, "
+            "SELECT a.model,a.evidence_class,COUNT(*) AS assigned,COUNT(DISTINCT COALESCE(r.condition_id,a.condition_id)) AS conditions, "
             "SUM(r.outcome='usable') AS usable,SUM(r.outcome='policy') AS policy, "
             "SUM(r.outcome='missing') AS missing,SUM(r.outcome='retry_pending') AS retry_pending, "
             "SUM(r.truncated=1) AS truncated,SUM(r.truncated IS NULL AND r.response_id IS NOT NULL) AS truncation_unknown, "
             "SUM(r.response_id IS NULL) AS pending,MAX(a.updated_at) AS updated_at "
             "FROM campaign_assignments a LEFT JOIN campaign_responses r "
             "ON r.campaign_id=a.campaign_id AND r.response_id=a.response_id "
-            "WHERE a.campaign_id=? GROUP BY a.model ORDER BY a.model LIMIT 26 OFFSET ?",
+            "WHERE a.campaign_id=? GROUP BY a.model,a.evidence_class ORDER BY a.model,a.evidence_class LIMIT 26 OFFSET ?",
             (campaign_id, max(0, offset)),
         )
 

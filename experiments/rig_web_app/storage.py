@@ -38,7 +38,7 @@ class ConsoleDB(WorkspaceStoreMixin, WorkspaceResultsMixin):
     unknown, shown as such) rather than a fabricated empty history.
     """
 
-    SCHEMA_VERSION = 6
+    SCHEMA_VERSION = 7
 
     def __init__(self, path: Path, *, repo_root: Path | None = None) -> None:
         self.path = path

@@ -5,7 +5,7 @@ from experiments.rig_web import RigWebApp
 
 def assignment(model="local-model", key="a", response="r1"):
     return dict(assignment_id=key, model=model, input_id="same-input", condition_id="initial",
-                modality="text", framework="replay", corpus="corpus", response_id=response)
+                modality="text", framework="replay", corpus="corpus", response_id=response, evidence_class="measured")
 
 
 def response(key="r1", assigned="a", **extra):
@@ -25,7 +25,9 @@ def test_republication_and_recovery_do_not_duplicate_assignments_or_choose_newes
     owner = app.db.create_workspace("Local", "local")
     initial = dict(assignments=[assignment()], responses=[response()], judgments=[])
     app.db.publish_workspace_results(owner, **initial)
+    first_update = app.db.workspace_model_totals(owner)[0]["updated_at"]
     app.db.publish_workspace_results(owner, **initial)
+    assert app.db.workspace_model_totals(owner)[0]["updated_at"] == first_update
     corrected = {**response("r2"), "condition_id": "larger-output", "truncated": False, "output_allowance": 8192}
     app.db.publish_workspace_results(owner, assignments=[], responses=[corrected], judgments=[])
     assert app.db.workspace_model_totals(owner)[0]["truncated"] == 1  # no newest-wins
@@ -73,6 +75,7 @@ def test_missing_and_pending_remain_in_denominator_and_truncation_is_separate(ap
     assert "Effective context</dt><dd>unknown" in results
     assert "Reported output tokens</dt><dd>4096" in results
     assert "empty_answer" in results
+    assert "/artifacts?path=responses.jsonl" in results
     assert "not zero" in app.handle("GET", "/campaigns/" + owner + "?section=costs")[2].decode()
 
 
@@ -83,3 +86,14 @@ def test_retained_response_and_assignment_identity_cannot_be_overwritten(app):
         app.db.publish_workspace_results(owner, assignments=[], responses=[{**response(), "truncated": False}], judgments=[])
     with pytest.raises(ValueError, match="assignment identity changed"):
         app.db.publish_workspace_results(owner, assignments=[{**assignment(), "model": "another-model"}], responses=[], judgments=[])
+
+
+def test_diagnostics_do_not_pool_with_measured_assignments(app):
+    owner = app.db.create_workspace("API", "api")
+    app.db.publish_workspace_results(owner,
+        assignments=[assignment(), {**assignment(key="b", response="r2"), "evidence_class": "diagnostic"}],
+        responses=[response(), response("r2", "b")], judgments=[])
+    rows = app.db.workspace_model_totals(owner)
+    assert len(rows) == 2
+    assert {row["evidence_class"] for row in rows} == {"measured", "diagnostic"}
+    assert [row["assigned"] for row in rows] == [1, 1]

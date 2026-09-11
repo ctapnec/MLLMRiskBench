@@ -4,12 +4,26 @@ from __future__ import annotations
 
 import html
 import json
+from pathlib import Path
 from urllib.parse import quote
 
 from .ui import _page
 
 
 class WorkspacePagesMixin:
+    def _workspace_source_link(self, reference: str) -> str:
+        path, separator, row = reference.rpartition(":")
+        locator = path if separator and row.isdigit() else reference
+        candidate = Path(locator)
+        if not candidate.is_absolute():
+            candidate = self.results_root / candidate
+        try:
+            relative = candidate.resolve().relative_to(self.results_root.resolve()).as_posix()
+        except (OSError, ValueError, RuntimeError):
+            return html.escape(reference)
+        label = "Open retained artifact" + (f" (row {row})" if separator and row.isdigit() else "")
+        return "<a href='/artifacts?path=" + quote(relative, safe="") + "'>" + label + "</a>"
+
     def _campaign_selector(self, selected: str = "", *, form_id: str = "") -> str:
         if selected:
             self.db.require_workspace(selected)
@@ -142,7 +156,7 @@ class WorkspacePagesMixin:
             if not rows:
                 return unknown
             chart = self._count_bar_chart(
-                [(row["model"], int(row["usable"] or 0) + int(row["policy"] or 0)) for row in rows[:25]],
+                [(row["model"] + " / " + row["evidence_class"], int(row["usable"] or 0) + int(row["policy"] or 0)) for row in rows[:25]],
                 label="Retained usable and policy outcomes by model",
             )
             return (
@@ -151,8 +165,9 @@ class WorkspacePagesMixin:
                 "Truncation overlaps usable/missing outcomes and is not an additional outcome bucket. "
                 "Execution conditions remain distinct; these counts are not pooled safety rates.</p>"
                 + chart + table(
-                    ("Model", "Conditions", "Assigned", "Usable", "Policy", "Missing", "Retry pending", "Pending", "Truncated", "Truncation unknown"),
+                    ("Model", "Evidence", "Conditions", "Assigned", "Usable", "Policy", "Missing", "Retry pending", "Pending", "Truncated", "Truncation unknown"),
                     [["<a href='/campaigns/" + campaign_id + "?section=results&amp;model=" + quote(row["model"], safe="") + "'>" + html.escape(row["model"]) + "</a>"]
+                     + [html.escape(row["evidence_class"])]
                      + [str(row[key] or 0) for key in ("conditions", "assigned", "usable", "policy", "missing", "retry_pending", "pending", "truncated", "truncation_unknown")]
                      for row in rows[:25]],
                 ) + pagination(len(rows) > 25)
@@ -176,9 +191,9 @@ class WorkspacePagesMixin:
                     ("reasoning_tokens", "Reported reasoning tokens"), ("finish_reason", "Finish reason"),
                     ("missing_category", "Missing-output category"))) + "</dl>"
             metadata += "<p>Condition: " + html.escape(row["response_condition"] or row["condition_id"]) + "</p>"
-            metadata += "<p>Source: " + value("source_ref") + "</p></details>"
+            metadata += "<p>Source: " + (self._workspace_source_link(details["source_ref"]) if details.get("source_ref") else "unknown") + "</p></details>"
             output.append([html.escape(row["model"]), html.escape(row["input_id"]),
-                           html.escape(row["modality"]), html.escape(row["framework"] + " / " + row["corpus"]),
+                           html.escape(row["evidence_class"]), html.escape(row["modality"]), html.escape(row["framework"] + " / " + row["corpus"]),
                            html.escape(row["outcome"] or "pending"),
                            "unknown" if row["truncated"] is None else "yes" if row["truncated"] else "no", metadata])
-        return table(("Model", "Input", "Modality", "Framework / corpus", "Outcome", "Truncated", "Details"), output) + pagination(len(rows) > 50)
+        return table(("Model", "Input", "Evidence", "Modality", "Framework / corpus", "Outcome", "Truncated", "Details"), output) + pagination(len(rows) > 50)
