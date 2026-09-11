@@ -284,6 +284,24 @@ class AttemptBudget:
                 _write_new(self.root / 'spending-policy.json', value)
             return value
 
+    def use_campaign_spending(self, document: dict) -> dict:
+        """Use one precomputed campaign ceiling, preserving all old allocations."""
+        from experiments.hosted_campaign_spending import validate_scope, campaign_totals
+        with _budget_lock(self.root):
+            plan, ledger, _ = self._load()
+            validate_scope(document, self.root, self.expected_plan_sha256, plan['pool_caps_microusd'])
+            if self.spending_policy() != 'precalculated':
+                raise BudgetError('campaign spending requires precalculated mode')
+            result = campaign_totals(self, plan, ledger, document=document)
+            path = self.root / 'campaign-spending.json'
+            if path.exists():
+                value, _ = _read_regular(path, label='campaign spending', max_bytes=_MAX_BYTES)
+                if value != document:
+                    raise BudgetError('retained campaign spending configuration differs')
+            else:
+                _write_new(path, document)
+            return result
+
     def _totals(self, plan: dict, ledger: dict) -> dict:
         precalculated = self.spending_policy() == 'precalculated'
         pools = {key: {"cap_microusd": cap, "unstarted_first_commitments_microusd": 0,
@@ -385,7 +403,13 @@ class AttemptBudget:
         """Return exposure and commitments without changing any retained state."""
         with _budget_lock(self.root):
             plan, ledger, calls = self._load()
-            return self._closed_snapshot(plan, ledger, calls)
+            result = self._closed_snapshot(plan, ledger, calls)
+            if self.spending_policy() == 'precalculated':
+                from experiments.hosted_campaign_spending import campaign_totals
+                campaign = campaign_totals(self, plan, ledger)
+                if campaign is not None:
+                    result['campaign_spending'] = campaign
+            return result
 
     def continuation_liability(self, completed_call_ids: Sequence[str]) -> dict:
         """Reserve every remaining physical attempt for an unfinished cohort.
@@ -603,6 +627,11 @@ class AttemptBudget:
             bound = next((change["bound_microusd"] for change in reversed(ledger.get("allowance_adjustments", []))
                           if change["call_id"] == call_id), call["bound_microusd"])
             pool = current["pools"][f"{provider}:{call['pool']}"]
+            if precalculated:
+                from experiments.hosted_campaign_spending import campaign_totals
+                campaign = campaign_totals(self, plan, ledger)
+                if campaign is not None:
+                    pool = campaign['pools'][f"{provider}:{call['pool']}"]
             if precalculated and pool['tracked_spend_microusd'] >= pool['cap_microusd']:
                 raise BudgetCapacityUnavailable(unresolved_attempts=0,
                     message='reported spending reached the approved provider pool limit')
@@ -679,10 +708,14 @@ def main(argv=None) -> int:
     parser.add_argument('--budget-root', type=Path, required=True)
     parser.add_argument('--plan-sha256', required=True)
     parser.add_argument('--spending-policy', choices=('precalculated',))
+    parser.add_argument('--campaign-spending', type=Path,
+                        help='One precomputed campaign ceiling and all contributing budget ledgers')
     args = parser.parse_args(argv)
     money = AttemptBudget(args.budget_root, args.plan_sha256)
     if args.spending_policy:
         money.use_precalculated_spending()
+    if args.campaign_spending:
+        money.use_campaign_spending(json.loads(args.campaign_spending.read_text()))
     print(json.dumps(money.snapshot(), sort_keys=True))
     return 0
 
