@@ -4381,14 +4381,15 @@ def _attested_response_identity_matches(expected: dict[str, str], response: Resp
         return True
     raw = response.raw
     audit = raw.get("call_audit", {})
+    policy_code = audit.get("provider_error_code") if isinstance(audit, dict) else None
     if (raw.get("provider_refusal") is not True
         or raw.get("provider_policy_rejection") is not True
         or raw.get("provider_generation_observed") is not False
         or raw.get("target_identity_observed") is not False
-        or raw.get("provider_refusal_category") != "openai_http400_cyber_policy"
-        or raw.get("provider_refusal_reason") != "cyber_policy"
+        or policy_code not in ("cyber_policy", "bio_policy")
+        or raw.get("provider_refusal_category") != f"openai_http400_{policy_code}"
+        or raw.get("provider_refusal_reason") != policy_code
         or not isinstance(audit, dict) or audit.get("status_code") != 400
-        or audit.get("provider_error_code") != "cyber_policy"
         or response.tokens is not None
         or any(observed.get(key) is not None for key in
                ("resolved_model", "model_revision", "model_digest", "model_identity"))):

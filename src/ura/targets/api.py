@@ -2037,9 +2037,10 @@ class OpenAITarget(BaseTarget):
     ) -> Response:
         """Retain an explicit native policy denial without inventing a completion."""
         audit = error.call_audit
+        policy_code = audit.get("provider_error_code")
         if (canonical_provider_name(self.provider) != "openai"
             or audit.get("status_code") != 400
-            or audit.get("provider_error_code") != "cyber_policy"):
+            or policy_code not in ("cyber_policy", "bio_policy")):
             raise error
         return Response(
             attempt_id=_dialog_fingerprint(dialog), target=self.name,
@@ -2051,8 +2052,8 @@ class OpenAITarget(BaseTarget):
                 "requested_spec": self.requested_spec, "requested_model": self.model,
                 "resolved_model": None, "target_identity_observed": False,
                 "requested_seed": seed, "target_sampling_control": "not_observed_provider_policy_rejection",
-                "provider_refusal": True, "provider_refusal_category": "openai_http400_cyber_policy",
-                "provider_refusal_reason": "cyber_policy", "provider_request_id": audit.get("provider_request_id"),
+                "provider_refusal": True, "provider_refusal_category": f"openai_http400_{policy_code}",
+                "provider_refusal_reason": policy_code, "provider_request_id": audit.get("provider_request_id"),
                 "provider_policy_rejection": True, "provider_generation_observed": False,
                 "output_truncated": False, "call_audit": dict(audit),
                 "transport_attempt_count": len(error.transport_attempts),

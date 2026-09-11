@@ -341,7 +341,7 @@ requests; every selected slot must match and remain unstarted. Preparation does
 not change the ledger. This supports adding providers without independently
 allocating the same Anthropic judge credits twice.
 
-An HTTP 400 with the explicit provider code `cyber_policy` is a legitimate
+An OpenAI HTTP 400 with the explicit code `cyber_policy` or `bio_policy` is a legitimate
 observed provider outcome, not a network outage or an invalid token parameter.
 Preserve its exact error and unknown billing hold, do not retry that input, and
 continue to the next input without opening a campaign-wide stop. Do not label
@@ -349,6 +349,10 @@ it as generated answer text or fabricate a served-model identity. Reviewing
 such an outcome must not repeat completed answers. An outcome without observed
 model identity does not attest the remaining lane; use an eligible unstarted assigned
 input for any replacement pilot, without increasing the campaign call budget.
+Other HTTP 400 responses remain request errors unless their retained provider
+details establish a policy refusal. Do not turn invalid parameters, oversized
+requests or unknown causes into safety outcomes, and do not infer the expansion
+of an undocumented policy-code abbreviation.
 
 This is the operator path from a clean Linux GPU machine to the evidence bundle
 for the thesis. It covers the broad hosted and local model roster, all twenty-five source converters, the runner-safe external attack bridges, and nine complete

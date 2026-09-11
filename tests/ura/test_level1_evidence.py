@@ -912,7 +912,8 @@ def test_measured_level1_binds_exact_typed_attestation_at_grid_start(
 
 
 @pytest.mark.parametrize("change", [None, "endpoint", "model", "code", "ordinary", "missing"])
-def test_level1_attestation_accepts_only_retained_native_policy_outcome(tmp_path, change):
+@pytest.mark.parametrize("policy_code", ["cyber_policy", "bio_policy"])
+def test_level1_attestation_accepts_only_retained_native_policy_outcome(tmp_path, change, policy_code):
     from types import SimpleNamespace
 
     import httpx
@@ -928,7 +929,7 @@ def test_level1_attestation_accepts_only_retained_native_policy_outcome(tmp_path
         calls.append(request)
         raise openai.BadRequestError("policy rejection", response=httpx.Response(
             400, request=httpx.Request("POST", "https://api.openai.com/v1/chat/completions")),
-            body={"code": "cyber_policy", "type": "invalid_request_error"})
+            body={"code": policy_code, "type": "invalid_request_error"})
 
     target._client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=deny)))
     response = target.generate([DialogTurn(role="user", content="Fixture input")], seed=0)

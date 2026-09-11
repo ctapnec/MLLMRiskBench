@@ -255,12 +255,13 @@ def test_typed_provider_refusal_is_funded_observed_outcome_not_paid_stop(tmp_pat
     assert len(calls) == before
 
 
-def test_policy_http_400_retains_unknown_charge_and_continues_next_input(tmp_path):
+@pytest.mark.parametrize("policy_code", ["cyber_policy", "bio_policy"])
+def test_policy_http_400_retains_unknown_charge_and_continues_next_input(tmp_path, policy_code):
     import httpx
     import openai
     denied = openai.BadRequestError('policy rejection', response=httpx.Response(400,
         request=httpx.Request('POST', 'https://example.test')),
-        body={'code': 'cyber_policy', 'type': 'invalid_request_error'})
+        body={'code': policy_code, 'type': 'invalid_request_error'})
     points, attacker, target, calls, admission = _setup(tmp_path, outputs=[denied, 'I cannot help with that.'])
     runner = _runner(attacker, target, admission)
     from ura.targets.api import canonical_https_endpoint_identity
@@ -270,7 +271,7 @@ def test_policy_http_400_retains_unknown_charge_and_continues_next_input(tmp_pat
     checkpoint = tmp_path / 'policy.responses.checkpoint.jsonl'
     runner.run(points, on_response=lambda row: Runner.append_checkpoint(checkpoint, row))
     assert len(calls) == len(runner.responses) == 2
-    assert runner.responses[0].raw['provider_refusal_category'] == 'openai_http400_cyber_policy'
+    assert runner.responses[0].raw['provider_refusal_category'] == f'openai_http400_{policy_code}'
     assert runner.responses[0].output_turns == [] and runner.responses[0].tokens is None
     assert runner.responses[1].output_turns[0].content == 'I cannot help with that.'
     assert not (admission.budget.root / 'paid-circuit.json').exists()
