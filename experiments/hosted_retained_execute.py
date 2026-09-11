@@ -259,10 +259,13 @@ class _Admission:
                 self.budget.settle(call_id, ordinal, None)
             # Dedicated-pool capacity must not stop unrelated providers.
             raise
-        except BaseException:
+        except BaseException as exc:
             if ordinal:
                 self.budget.settle(call_id, ordinal, None)
-            self._circuit("terminal_target_call_failure", call_id)
+            # Runner wraps callback errors as ExternalCallFailure, preserving
+            # their cause. Capacity is still a scheduling condition there.
+            if not isinstance(exc.__cause__, BudgetCapacityUnavailable):
+                self._circuit("terminal_target_call_failure", call_id)
             raise
 
     def response_checkpointed(self, runner: Any, attempt: Any, response: Any) -> None:
