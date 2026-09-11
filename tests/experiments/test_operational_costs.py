@@ -89,7 +89,11 @@ def test_continuous_precalculated_costs_are_visible_without_claiming_money_holds
     page = DashboardMixin()._retained_spend_card(inventory)
     assert 'are not money holds' in page and 'Unsettled attempt exposure' in page
     assert '<th>Unsettled reservations</th>' not in page
-    save(path / 'spending-policy.json', {'budget_plan_sha256': 'b' * 64, 'mode': 'precalculated'})
+    # Match the application's atomic publication. Same-size in-place rewrites
+    # can share both timestamps on the rig's filesystem within one clock tick.
+    changed = path / 'replacement-policy.json'
+    save(changed, {'budget_plan_sha256': 'b' * 64, 'mode': 'precalculated'})
+    changed.replace(path / 'spending-policy.json')
     invalid = subject.campaign_costs(tmp_path)
     assert invalid['errors'] and not invalid['rows']
 
