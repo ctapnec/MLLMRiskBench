@@ -154,8 +154,6 @@ class WorkspacePagesMixin:
             + " data has not been indexed for this campaign yet. Totals are unknown, not zero.</p>"
             "<p>Build launches are associated automatically. Original jobs and reports remain accessible in Activity.</p>"
         )
-        if section == "costs":
-            return unknown  # no invented zero bill before cost attribution
         page = max(0, int(query.get("page", "0")))
         base = "/campaigns/" + campaign_id + "?section=" + section
 
@@ -168,6 +166,35 @@ class WorkspacePagesMixin:
                 "<tr>" + "".join("<td>" + cell + "</td>" for cell in row) + "</tr>" for row in rows
             ) + "</table></div>"
 
+        if section == "costs":
+            rows = self.db.workspace_cost_totals(campaign_id, offset=page * 25)
+            if not rows:
+                return unknown
+
+            def amount(value):
+                return "unknown" if value is None else f"${value / 1_000_000:,.6f}"
+
+            def tokens(row, name):
+                total = row[name + "_tokens"]
+                missing = row[name + "_unknown"]
+                return ("unknown" if total is None else f"{total:,}") + (f"; {missing:,} attempt(s) unknown" if missing else "")
+
+            return (
+                "<p>Physical attempts counted once, including retries and historical outcomes. "
+                "Judging costs belong to the campaign whose output was judged. "
+                "Recorded costs are not account balances; uncertain exposure is not a money hold. "
+                "Local work has no API charge; electricity and hardware costs are not estimated.</p>"
+                + table(("Provider / model", "Role", "HTTP attempts / local evaluations", "Recorded cost (USD)",
+                         "Uncertain charge exposure (USD)", "Reported tokens: input / output / reasoning"),
+                    [[html.escape(row["provider"] + " / " + row["model"]), html.escape(row["role"]),
+                      f"{row['http_attempts']:,} / {row['local_evaluations']:,}",
+                      ("No API charge" if row["provider"] == "local" else amount(row["cost_microusd"]))
+                      + f"<br>{row['settled_attempts']:,} settled; {row['unknown_attempts']:,} unknown; {row['unsettled_attempts']:,} in flight",
+                      amount(row["exposure_microusd"]) + (f"; {row['unknown_exposure_count']:,} without a bound" if row["unknown_exposure_count"] else ""),
+                      " / ".join(tokens(row, name) for name in ("input", "output", "reasoning"))]
+                     for row in rows[:25]])
+                + pagination(len(rows) > 25)
+            )
         if section == "judging":
             rows = self.db.workspace_judging_totals(campaign_id)
             if not rows:
