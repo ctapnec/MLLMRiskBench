@@ -1,11 +1,46 @@
 # Third hosted campaign: provider-scaled expansion
 
-Status update, 11 September 2026 at 03:12 UTC: the requested program is
+Status update, 11 September 2026 at 03:38 UTC: the requested program is
 expanded from 6,541 to 6,736 target evaluations by the additional frontier
 selection below. The added 195 evaluations have counted requests and validated
 replay files but are not yet funded or executed. The operator's latest reported balances and the
 existing USD 114 cumulative ceiling are unchanged. Frontier coverage takes
 priority over adding further lower-cost groups.
+
+The 03:34 aggregate records 2,516 started assignments and 2,510 usable
+outcomes from 2,618 funded inputs, gaining 57 durable outcomes in thirty
+minutes. Five failures, one unsettled Google request and 102 unstarted inputs
+remain. Haiku totals are 1,516 local and 1,314 hosted assessments, with
+USD 3.905620 reported cost. Console availability is HTTP 200; no provider
+reports exhausted credit. The next aggregate is due at 04:04 UTC.
+
+Fable, Opus and Kimi completed all 18, 29 and 19 eighth-slice inputs.
+DeepSeek retained 35 of 59 outcomes before one request exhausted its 16,384
+output tokens entirely on reasoning, leaving no visible answer. This is not
+HTTP 400, a transport failure or an explicit provider policy refusal. Its
+failed output, token usage and unknown-charge reservation remain retained.
+The reviewed continuation starts only the 24 unissued inputs, preserving the
+same generation condition and giving the failed answer no paid answer retry.
+It also resumes the interrupted output-specific and matching-local Haiku
+judging. New failures still use the ordinary investigation stop. The recovery
+process is running; resumed paid generation is not yet claimed at this update.
+Explicit OpenAI HTTP 400 `cyber_policy` remains an observed refusal that does
+not stop subsequent inputs. Other HTTP 400 causes are not inferred from it.
+
+The ninth prospective slice now retains 102 unchanged non-Google requests:
+Opus 27, Kimi 19 and DeepSeek 56. Its 47 Google requests are deferred, not
+discarded or skipped by the next input prefix. The partition reused exact
+request counts without HTTP. Funding waits for eighth-slice target and both
+judging terminals, then checks actual remaining capacity while still reserving
+the sixth and seventh pending work. It does not wait for Google's quota before
+considering independent providers. Earlier post-hoc judges now remain queued
+until their own Google outputs are ready and run one at a time. Ninth-slice
+hosted and matching-local judging run sequentially, maintaining at most two
+Anthropic requests including the older judge. Focused scheduling and reversed
+dependency checks passed on the rig. No paid process was stopped by this
+queue handoff. The ninth slice is still unfunded.
+
+Earlier 03:12 observations follow.
 
 The 03:04 aggregate records 2,459 started assignments and 2,453 usable
 outcomes from 2,618 funded inputs. The eighth Kimi route is complete for all

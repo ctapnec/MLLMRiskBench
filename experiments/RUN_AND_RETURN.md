@@ -70,6 +70,10 @@ slot. For an existing idle controller, first verify its completed output-specifi
 judgments, lack of in-flight judge requests and current process owner. Its
 successor must skip those completed judgments and wait for the current slot
 users to finish; simply ignoring a live worker in the slot count is unsafe.
+Keep a deferred judge queued until its own target outputs are available, not
+merely until unrelated workers finish. When older and newer cohorts overlap,
+serialize older judging controllers and sequence newer hosted/local judging
+where necessary so their combined runnable requests respect the provider cap.
 
 A completed source view can contain no answers eligible for the common Haiku
 rubric. Retained hosted preparation preserves an explicitly enabled original
@@ -107,6 +111,13 @@ not a missing generated answer: no answer retry and no campaign stop. Preserve
 the original error, absent generation and unknown usage without inventing a
 zero charge. An invalid-parameter HTTP 400 instead requires a configuration
 correction; an unclassified error must not be relabeled as a policy refusal.
+A reasoning-only response that exhausts the output allowance is a different
+outcome: retain missing visible output, truncation, reported reasoning usage
+and charge exposure separately. Once that exact stopped input is investigated,
+checkpoint continuation may restore it without repeating the paid answer and
+proceed with unstarted inputs under the unchanged condition. The reviewed
+restoration must not suppress investigation of a different or changed failure.
+Interrupted judging resumes its existing output-specific plans and checkpoints.
 
 Counted request tokens are not necessarily a bound on billed model work.
 OpenAI Pro mode aggregates internal model work at the model's token rates.
