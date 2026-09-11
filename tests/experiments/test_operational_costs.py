@@ -137,3 +137,19 @@ def test_no_registry_uses_legacy_view_and_outside_source_is_rejected(tmp_path):
     path = budget(tmp_path)
     with pytest.raises(ValueError):
         subject.register_budget(inside, path)
+
+
+def test_unknown_provider_usage_does_not_render_as_zero_spending(tmp_path):
+    path = budget(tmp_path)
+    ledger = json.loads((path / "ledger.json").read_text())
+    ledger["attempts"]["answer"]["1"] = {"state": "unknown", "actual_cost_microusd": None}
+    save(path / "ledger.json", ledger)
+    inventory = subject.campaign_costs(tmp_path)
+    page = DashboardMixin()._retained_spend_card(inventory)
+    openai_row = page.split("<tr><td>openai</td>")[1].split("</tr>")[0]
+    assert "<td>Not settled</td>" in openai_row
+    ledger["attempts"]["answer"]["1"] = {"state": "settled", "actual_cost_microusd": 0}
+    save(path / "ledger.json", ledger)
+    page = DashboardMixin()._retained_spend_card(subject.campaign_costs(tmp_path))
+    openai_row = page.split("<tr><td>openai</td>")[1].split("</tr>")[0]
+    assert "<td>$0.0000</td>" in openai_row and "Not settled" not in openai_row

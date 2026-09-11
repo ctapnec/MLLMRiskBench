@@ -537,14 +537,15 @@ class DashboardMixin:
 
             rows = []
             for row in inventory["rows"]:
+                settled = money(row, "reported_cost_microusd") if row["settled_attempts"] else "Not settled"
                 rows.append("<tr><td>" + html.escape(row["provider"]) + "</td><td>"
                     + html.escape(row["role"]) + f"</td><td>{row['http_attempts']:,}</td>"
-                    + f"<td>{money(row, 'reported_cost_microusd')}</td>"
+                    + f"<td>{settled}</td>"
                     + f"<td>{money(row, 'unknown_exposure_microusd')} ({row['unknown_attempts']:,} attempts)</td>"
                     + f"<td>{money(row, 'unsettled_exposure_microusd')} ({row['unsettled_attempts']:,} attempts)</td>"
                     + f"<td>{money(row, 'unstarted_commitments_microusd')}</td></tr>")
             content = ("<div class='scroll'><table><tr><th>Provider</th><th>Role</th>"
-                "<th>HTTP attempts</th><th>Reported-usage cost</th><th>Unknown-charge exposure</th>"
+                "<th>Request attempt records</th><th>Settled usage cost</th><th>Unknown-charge exposure</th>"
                 "<th>Unsettled reservations</th><th>Unissued commitments</th></tr>"
                 + "".join(rows) + "</table></div>")
         links = "".join("<li><a href='/artifacts?path=" + quote(source["budget"])
