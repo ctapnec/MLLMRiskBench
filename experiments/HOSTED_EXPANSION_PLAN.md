@@ -1,23 +1,27 @@
 # Third hosted campaign: provider-scaled expansion
 
-Status update, 11 September 2026 at 05:04 UTC: the requested program is
+Status update, 11 September 2026 at 05:34 UTC: the requested program is
 expanded from 6,541 to 6,736 target evaluations by the additional frontier
 selection below. The added 195 evaluations have counted requests and validated
 replay files but are not yet funded or executed. The operator's latest reported balances and the
 existing USD 114 cumulative ceiling are unchanged. Frontier coverage takes
 priority over adding further lower-cost groups.
 
-The 05:04 aggregate records 2,628 started assignments and 2,620 usable
-outcomes from 2,714 funded inputs, gaining 36 starts and 35 usable outcomes in
-thirty minutes. Six failures, two unsettled requests and 86 unstarted
-inputs remain. Haiku totals are 1,789 local and 1,397 hosted assessments,
-including sixteen and seven invalid verdicts respectively, with
-USD 4.575345 reported cost. Console availability is HTTP 200; no shared stop
+The 05:34 aggregate records 2,656 started assignments and 2,649 usable
+outcomes from 2,734 funded inputs, gaining 28 starts and 29 usable outcomes in
+thirty minutes. Six failures, one unsettled Google request and 78 unstarted
+Google inputs remain. Haiku totals are 1,990 local and 1,443 hosted assessments,
+including seventeen and seven invalid verdicts respectively, with
+USD 4.888609 reported cost. Console availability is HTTP 200; no shared stop
 or provider credit-exhaustion marker is present. The next aggregate is due at
-05:34 UTC. Opus and Kimi are complete in the ninth slice. DeepSeek has eight
-unstarted inputs and one in flight. Current non-Google target and judging
-completion is estimated at fifteen to thirty minutes from this snapshot;
-the full requested expansion still depends on quota and subsequent funding.
+06:04 UTC. The ninth slice is complete: 95 usable outcomes and one exhausted
+Opus overload outcome, with 73 eligible hosted Haiku assessments and 201 new
+matching-local assessments. The tenth slice's twenty additional Fable targets
+are complete. Its judging was still pending in this aggregate and subsequently
+completed by 05:42, including 55 new local assessments with one invalid verdict.
+The following slice has 78 counted inputs and 153 new matching-local judging
+assignments awaiting funding. The full requested expansion still depends on
+quota and subsequent funding; the unfunded remainder is not claimed complete.
 
 The ninth interruption was an Opus HTTP 529 `overloaded_error` after four
 transport attempts, not HTTP 400 or `cyber_policy`. Its missing output and
@@ -84,6 +88,20 @@ these are not funded or executed quantities. The independent additional
 Fable prefix must not move the original model-input prefixes. The queue uses
 the existing preparation, materialization, counting and funding commands,
 including local and Haiku judging, without altering requests already issued.
+
+The next extra-frontier preparation waits for that eleventh selection to be
+funded before binding its predecessor. It selects Fable's remaining nineteen
+inputs plus the same first four extra image inputs for Astra and Sol. Those
+four inputs already have Fable outputs and retained local counterparts. Exact
+whole-cluster cuts and separate measured jobs are available in this extra
+block; this does not skip or replace the unfunded original Astra prefix.
+The cached maximum quotes are USD 7.867030 for Fable and USD 2.359491 for the
+combined OpenAI targets, plus Sol's USD 1.20 execution allowance. All 27 request
+counts are reusable without HTTP. Preparation must verify no repeated
+model-input pair and preserve the independent original prefixes. Funding
+still waits for all preceding target and judging terminals and protects both
+pending Google slices. Each new hosted output needs its own local and Haiku
+judgment; only judgments of identical retained local answers can be reused.
 
 The historical RR prefix reader now forwards the optional artifact-checking
 mode to its original-source subprocess. Ninety-three focused rig tests, a
