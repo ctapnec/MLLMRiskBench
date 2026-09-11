@@ -1222,8 +1222,12 @@ def _load_local_cells(program: dict) -> tuple[list[dict], dict]:
         if (source != row["source"] or copied != row["view"]
             or any(source[key] != copied[key] for key in ("sha256", "bytes"))
             or relative != row["relative_path"] or relative in paths
-            or row["source_file_identity"] != {"device": original_st.st_dev, "inode": original_st.st_ino}
-            or row["view_file_identity"] != {"device": st.st_dev, "inode": st.st_ino}
+            # Device numbers can change when Linux enumerates disks after a
+            # reboot. Retain them as acquisition observations, not durable
+            # identity. Paths, inodes, independent copies and file descriptors
+            # remain checked; full content checks remain the explicit option.
+            or row["source_file_identity"]["inode"] != original_st.st_ino
+            or row["view_file_identity"]["inode"] != st.st_ino
             or source_path.samefile(path) or row["independent_copy"] is not True
             or row["source_view_samefile"] is not False or st.st_nlink != 1
             or row["view_link_count"] != 1 or row["view_mode"] != stat.S_IMODE(st.st_mode)

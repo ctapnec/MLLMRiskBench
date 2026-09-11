@@ -53,11 +53,8 @@ class ConsoleDB(WorkspaceStoreMixin, WorkspaceResultsMixin, WorkspaceCostsMixin)
             self._conn = sqlite3.connect(str(path), check_same_thread=False)
             self._conn.row_factory = sqlite3.Row
             self._conn.execute("PRAGMA journal_mode=WAL")
-            check = self._conn.execute("PRAGMA quick_check").fetchone()
-            if check is None or str(check[0]).lower() != "ok":
-                raise sqlite3.DatabaseError(
-                    f"integrity check failed: {check[0] if check else 'no result'}"
-                )
+            # Full database scans belong to explicit maintenance, not every
+            # page-server startup. SQLite still reports open/query failures.
             self._migrate()
             self.healthy = True
         except sqlite3.Error as exc:

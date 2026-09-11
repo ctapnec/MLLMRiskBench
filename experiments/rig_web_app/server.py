@@ -189,6 +189,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--state-dir", type=Path, default=Path("runs") / "rig-web")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8642)
+    parser.add_argument("--check-database", action="store_true",
+                        help="headless: explicitly scan the existing SQLite database and exit (default: off)")
     parser.add_argument("--verify-artifact-sha256", action="store_true",
                         help="with --reindex: additionally hash retained files (default: off)")
     parser.add_argument(
@@ -213,6 +215,20 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.verify_artifact_sha256 and not args.reindex:
         parser.error("--verify-artifact-sha256 requires --reindex")
+    if args.check_database:
+        import sqlite3
+        if args.reindex or args.usage_report or args.selftest_sleep is not None:
+            parser.error("--check-database cannot be combined with another headless action")
+        try:
+            database = (args.state_dir / "console.db").resolve(strict=True)
+            with sqlite3.connect(database.as_uri() + "?mode=ro", uri=True) as connection:
+                findings = [str(row[0]) for row in connection.execute("PRAGMA quick_check")]
+            healthy = findings == ["ok"]
+            print(json.dumps({"status": "ok" if healthy else "failed", "findings": findings}))
+            return 0 if healthy else 1
+        except (OSError, sqlite3.Error) as exc:
+            print(json.dumps({"status": "failed", "error": str(exc)}))
+            return 1
     if args.selftest_sleep is not None:
         time.sleep(args.selftest_sleep)
         print("rig-web selftest complete")

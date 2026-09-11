@@ -931,7 +931,7 @@ Console state persists in a stdlib-sqlite database (`console.db` under the
 state directory): jobs with their durable argv identities and builder
 parameters, the
 campaign-run registry, per-artifact recorded token usage, and a report
-index; it carries a schema version, a startup integrity check, transactional
+index; it carries a schema version, normal SQLite error reporting, transactional
 terminal-state commits, and a Reindex action that rebuilds derived usage and
 report rows from retained artifacts. Full artifact digest verification is an
 explicit optional action, off by default. This database is
@@ -939,7 +939,16 @@ operational state, never scientific evidence: usage rows are read only from
 completion-marker-bound artifacts, cost is calculated only from the
 operator-edited effective-dated pricing registry (missing data renders N/A,
 never zero), and the validated filesystem artifacts remain the sole
-measurement authority.
+measurement authority. Startup does not scan every database page. The explicit
+maintenance command `python -m experiments.rig_web --check-database` runs a
+read-only SQLite integrity scan and exits; it neither launches jobs nor rebuilds
+indexes.
+
+Retained source-copy receipts record the device number observed when copied.
+That number is not persistent across boots: Linux can rename the same mounted
+volume from `sdb3` to `sda3`. Admission therefore compares retained paths,
+inodes, sizes, copy independence and permissions without requiring the old
+device number. Optional full-content verification remains separately controlled.
 
 The [campaign workspace extension](CAMPAIGN_WORKSPACES.md) adds durable parent
 campaigns without duplicating Build. A reviewed launch records its parent

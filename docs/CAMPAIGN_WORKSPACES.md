@@ -380,6 +380,11 @@ judgments; version 8 adds output-owned physical-attempt costs. These survive
 usage/report reindexing. The old query and
 deep links remain available during implementation of the grouped results view.
 
+Normal console startup opens the database without a full-page integrity scan.
+Use `python -m experiments.rig_web --state-dir runs/rig-web --check-database`
+for an explicit read-only maintenance check. A reported database error remains
+visible; an unreadable history is never presented as an empty campaign.
+
 External controllers, measured jobs and analysis publications already have
 readers in `campaigns.py`, `external_measured.py` and `external_analysis.py`.
 Some are discovered from retained artifacts rather than being SQLite Job rows.
