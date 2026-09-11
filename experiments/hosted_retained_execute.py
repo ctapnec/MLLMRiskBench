@@ -11,12 +11,13 @@ import hashlib
 import re
 import stat
 import subprocess
+import time
 from contextlib import contextmanager
 from decimal import Decimal, ROUND_CEILING
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from experiments.hosted_attempt_budget import AttemptBudget, _budget_lock
+from experiments.hosted_attempt_budget import AttemptBudget, BudgetCapacityUnavailable, _budget_lock
 from experiments.hosted_campaign_budget import _sha, load_bound_json
 from experiments.retained_response_judge_execute import _write_new, _read_regular
 from ura.adapters.replay import ReplayAttacker, retained_dialog, retained_dialog_sha256
@@ -234,7 +235,16 @@ class _Admission:
                 # A subsequent SDK callback proves an admitted HTTP/network retry.
                 # The unsuccessful attempt's unknown bill remains fully held.
                 self.budget.settle(call_id, ordinal, None)
-            self.budget.reserve(call_id, number, provider=self.program["provider"])
+            while True:
+                try:
+                    self.budget.reserve(call_id, number, provider=self.program["provider"])
+                    break
+                except BudgetCapacityUnavailable as exc:
+                    if not exc.unresolved_attempts:
+                        raise
+                    # Another physical call may release its unused allowance.
+                    # Wait outside every budget/parent lock and before HTTP.
+                    time.sleep(0.5)
             ordinal = number
 
         try:
@@ -244,6 +254,11 @@ class _Admission:
                 yield
             if ordinal == prior:
                 raise ValueError("target bypassed its physical-attempt monetary reservation")
+        except BudgetCapacityUnavailable:
+            if ordinal:
+                self.budget.settle(call_id, ordinal, None)
+            # Dedicated-pool capacity must not stop unrelated providers.
+            raise
         except BaseException:
             if ordinal:
                 self.budget.settle(call_id, ordinal, None)

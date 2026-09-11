@@ -22,7 +22,7 @@ from ura.data_models import DialogTurn, Response
 from ura.targets.api import OpenAITarget
 
 
-def _setup(tmp_path, *, adaptive=True, outputs=None, tight=False):
+def _setup(tmp_path, *, adaptive=True, outputs=None, tight=False, continuous=False):
     points, _original, _plan, _bindings, value, config = _fixture(tmp_path, adaptive=adaptive)
     ids = [entry["origin"]["selection"]["input_identity_sha256"] for entry in value["entries"]]
     attacker = ReplayAttacker(**config, retained_input_ids=ids)
@@ -48,9 +48,9 @@ def _setup(tmp_path, *, adaptive=True, outputs=None, tight=False):
         "max_output_tokens": 128, "bound_microusd": 10000}
         for key, entry in zip(ids, value["entries"])}
     descriptor = create_budget(tmp_path / "money", provider_budgets_microusd={
-        "anthropic": 90000000, "openai": 12500 * len(ids) if tight else 40000000},
+        "anthropic": 90000000, "openai": 12550 if continuous else 12500 * len(ids) if tight else 40000000},
         planned_calls=[{"call_id": key, "provider": "openai", "pool": "target", "bound_microusd": 10000}
-                       for key in ids])
+                       for key in ids], reservation_policy='per_attempt' if continuous else 'first_attempts_upfront')
     budget = AttemptBudget(tmp_path / "money", descriptor["sha256"])
     admission = subject._Admission(program=program, job={"purpose": "measured_run", "input_ids": ids, "argv": []},
                                     budget=budget, attacker=attacker, requests=requests,
@@ -129,6 +129,38 @@ def test_target_money_settles_after_checkpoint_and_resume_never_reissues(tmp_pat
     second.run(points, response_records=Runner.load_response_checkpoint(checkpoint))
     assert len(calls) == len(second.responses) == 2
     assert current_retained_execution_admission() is None
+
+
+def test_continuous_capacity_waits_for_inflight_settlement_before_http(tmp_path, monkeypatch):
+    points, attacker, target, calls, admission = _setup(tmp_path, continuous=True)
+    keys = list(admission.requests)
+    # Another worker temporarily holds the whole pool for a different input.
+    admission.budget.reserve(keys[1], 1, provider='openai')
+    waits = []
+    def settle_other(_delay):
+        assert not calls
+        waits.append(True)
+        admission.budget.settle(keys[1], 1, 1)
+    monkeypatch.setattr(subject.time, 'sleep', settle_other)
+    records = []
+    with pytest.raises(Exception, match='transport continuation|response checkpoint|circuit|target_call'):
+        # The first request succeeds after the other reservation settles. The
+        # second input belongs to that other worker and cannot be repeated.
+        _runner(attacker, target, admission).run(points, on_response=records.append)
+    assert waits == [True] and len(calls) == 1 and len(records) == 1
+    assert admission.budget.reserved_attempt_count(keys[0]) == 1
+
+
+def test_continuous_capacity_shortage_does_not_open_global_paid_stop(tmp_path):
+    points, attacker, target, calls, admission = _setup(tmp_path, continuous=True)
+    keys = list(admission.requests)
+    admission.budget.reserve(keys[1], 1, provider='openai')
+    admission.budget.settle(keys[1], 1, None)
+    with pytest.raises(Exception, match='available provider pool capacity'):
+        _runner(attacker, target, admission).run(points)
+    assert calls == []
+    assert not (admission.budget.root / 'paid-circuit.json').exists()
+    assert admission.budget.reserved_attempt_count(keys[0]) == 0
 
 
 def test_missing_cache_split_uses_reported_token_bound_without_answer_retry(tmp_path):

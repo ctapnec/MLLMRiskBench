@@ -35,6 +35,14 @@ class BudgetError(ValueError):
     """No paid attempt may follow this failed monetary admission."""
 
 
+class BudgetCapacityUnavailable(BudgetError):
+    """Valid request waiting for capacity, not a provider or model failure."""
+
+    def __init__(self, *, unresolved_attempts: int):
+        super().__init__('attempt maximum exceeds available provider pool capacity')
+        self.unresolved_attempts = unresolved_attempts
+
+
 @contextmanager
 def _budget_lock(root: Path):
     """Serialize brief shared-ledger transactions, not whole model executions."""
@@ -551,7 +559,7 @@ class AttemptBudget:
             pool = current["pools"][f"{provider}:{call['pool']}"]
             if (number > 1 or plan.get("reservation_policy") == "per_attempt") and pool["available_retry_margin_microusd"] < bound:
                 if plan.get("reservation_policy") == "per_attempt":
-                    raise BudgetError("attempt maximum exceeds available provider pool capacity")
+                    raise BudgetCapacityUnavailable(unresolved_attempts=pool['unresolved_attempts'])
                 raise BudgetError("retry cannot consume other planned first attempts or another pool")
             ledger["attempts"].setdefault(call_id, {})[str(number)] = {"state": "reserved", "actual_cost_microusd": None}
             _write_atomic(self.root / "ledger.json", ledger)
