@@ -2,8 +2,9 @@
 
 The [third hosted expansion](HOSTED_EXPANSION_PLAN.md), requested on
 10 September 2026 and subsequently enlarged, separately targets 6,736
-additional evaluations with local and Haiku judging. It is executing funded
-subsets; its linked plan records completed work, remaining inputs and caps.
+additional evaluations with local and Haiku judging. Its remaining inputs use
+one continuous provider-parallel collection queue, followed by judging; its
+linked plan records completed work, remaining inputs and unchanged caps.
 The two earlier campaigns retain their completed status.
 
 Completed follow-on, 10 September 2026: [the supplemental plan](HOSTED_SUPPLEMENT_PLAN.md) includes

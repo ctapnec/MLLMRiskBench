@@ -12,6 +12,15 @@ scope for judging, without repeating target calls. It is a scheduling handoff,
 not a completed scored grid. Independent providers may collect concurrently;
 provider backoff, four-attempt transport limits and budget reservations remain.
 
+Materialize multiple corpora with `hosted_retained_inputs.materialize_replays`
+so the same complete selection is resolved once, not once per corpus or entry.
+Attempt budgets cache immutable plan and slot mappings with file-change
+invalidation; mutable ledger reservations are still checked immediately before
+spending. Request counting uses per-request cache locks: independent requests
+may run concurrently, while an identical request waits for its existing counter
+and reuses the saved receipt. Interrupted preparation resumes from those
+receipts, without repeating completed counters or target generations.
+
 Matched-judgment Stats reports show at most twenty detail conditions per
 section in the overview. Outcome conditions, matched contrasts and token
 windows have separate paged links, including inside the existing modal.

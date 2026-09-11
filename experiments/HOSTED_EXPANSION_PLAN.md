@@ -24,9 +24,20 @@ Per-attempt money reservation and its preparation/execution integration passed
 The complete queued inventory does not commit every maximum output upfront;
 each physical request still reserves its maximum cost immediately before HTTP.
 The separate hosted response-collection scope pauses before local judge load.
-Materialization of 3,830 remaining fixed inputs is running without provider
-calls. Paid dispatch has not restarted. The older 67-input whole-cluster
+Materialization of all 3,830 remaining fixed inputs completed at approximately
+07:43 UTC. It retained 79 already completed replay files through the handoff.
+Counting resumed at 07:55 UTC across all five providers, with two workers per
+provider and reuse of saved count receipts. The continuous target controller
+is running in tmux and waits only for this counted inventory, not judging.
+Paid dispatch has not restarted. The older 67-input whole-cluster
 allocation shortfall remains open, not silently discarded or counted complete.
+
+The full-inventory path now resolves a selection once across its corpora and
+reuses immutable budget-slot mappings. Mutable spending reservations remain
+current on each paid request. Token-count cache locks are per request: distinct
+requests can count concurrently, while identical requests share one saved
+result. These changes passed focused rig tests and reversed-fix checks
+(RA-490). They do not alter selected inputs, response limits or provider costs.
 
 ## Historical execution snapshots
 
