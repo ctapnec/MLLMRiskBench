@@ -20,6 +20,54 @@ def browser():
         instance.close()
 
 
+@pytest.mark.parametrize('outcome', ['success', 'http_error', 'network_error', 'timeout'])
+def test_campaign_export_guards_download_and_releases_on_every_terminal(browser, outcome):
+    from experiments.rig_web_app.workspace_charts import EXPORT_SCRIPT
+    body = """<div id='campaign-exports'>
+<a id='export' data-campaign-export download='campaign.csv' href='/export.csv'>Export counts</a>
+</div><p id='campaign-export-status' role='status'></p>"""
+    content = _page('Export', body + EXPORT_SCRIPT).decode()
+    content = content.replace("<link rel='stylesheet' href='/static/style.css'>", '<style>' + _STYLE + '</style>')
+    page = browser.new_page(accept_downloads=True)
+    requests, errors, downloads = [], [], []
+    page.on('pageerror', lambda error: errors.append(str(error)))
+    page.on('download', lambda download: downloads.append(download))
+    def route(request):
+        if request.request.url == 'http://ui.test/':
+            request.fulfill(status=200, content_type='text/html', body=content)
+        elif request.request.url.endswith('favicon.svg'):
+            request.fulfill(status=204)
+        else:
+            requests.append(request)
+    page.route('http://ui.test/**', route)
+    try:
+        page.goto('http://ui.test/')
+        if outcome == 'timeout':
+            page.evaluate("""() => { const original=window.setTimeout;
+                window.setTimeout=(fn,delay,...args)=>original(fn,delay===30000?200:delay,...args); }""")
+        state = _burst(page, '#export')
+        assert state == {'visible': True, 'inert': True}
+        assert len(requests) == 1
+        if outcome == 'success':
+            requests[0].fulfill(status=200, content_type='text/csv', body='model,count\nA,1\n')
+        elif outcome == 'http_error':
+            requests[0].fulfill(status=500, body='Failed')
+        elif outcome == 'network_error':
+            requests[0].abort('failed')
+        page.wait_for_function('!window.uraBusy.isBusy()')
+        assert not page.locator('#busy-overlay').is_visible()
+        assert not page.evaluate("document.querySelector('main').inert")
+        if outcome == 'success':
+            page.wait_for_function("document.getElementById('campaign-export-status').textContent==='Export prepared.'")
+            assert len(downloads) == 1
+        else:
+            assert not downloads
+            assert page.locator('#campaign-export-status').inner_text()
+        assert not errors
+    finally:
+        page.close()
+
+
 @pytest.fixture
 def console_page(browser):
     body = """<a id='navigate' href='/next'>Next section</a>

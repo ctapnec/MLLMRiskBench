@@ -8,7 +8,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from .ui import _page
-from .workspace_charts import coverage_html, coverage_svg, quality_svg, model_counts_csv
+from .workspace_charts import coverage_html, coverage_svg, quality_svg, model_counts_csv, EXPORT_SCRIPT
 
 
 class WorkspacePagesMixin:
@@ -93,12 +93,13 @@ class WorkspacePagesMixin:
             "Campaigns", "<h1>Campaigns</h1>"
             "<p>Keep related collection, judging and analysis together. Configure work in Build.</p>"
             + cards
+            + "<p><a href='/stats?view=legacy'>Standalone jobs and earlier report publications</a></p>"
             + "<section class='card' id='new-campaign'><h2>New campaign</h2>"
             "<form method='post' action='/campaigns' data-busy>"
             "<label>Name <input name='name' required maxlength='120'></label> "
             "<label>Targets <select name='kind'><option value='local'>Local</option>"
             "<option value='api'>API</option><option value='mixed'>Mixed</option></select></label> "
-            "<button>Create and open Build</button></form></section>", active="Campaigns",
+            "<button>Create and open Build</button></form></section>", active="Stats",
         )
 
     def _workspace_page(self, campaign_id: str, query: dict[str, str]) -> bytes:
@@ -144,7 +145,7 @@ class WorkspacePagesMixin:
             "<p><a class='button' href='/build?campaign_id=" + campaign_id + "'>Configure in Build</a> "
             "<a class='button ghost' href='/commands?campaign_id=" + campaign_id + "'>Run tools</a></p>"
             + navigation + "<section class='card'><h2>" + section.title() + "</h2>" + content + "</section>",
-            active="Campaigns",
+            active="Stats",
         )
 
     def _workspace_results(self, campaign_id: str, section: str, query: dict[str, str]) -> str:
@@ -180,12 +181,12 @@ class WorkspacePagesMixin:
             if not rows:
                 return unknown
             chart = coverage_html(rows[:25])
-            exports = "<p>" + " ".join(
-                "<a class='button ghost' download='campaign-" + name + "' href='/campaigns/" + campaign_id
+            exports = "<p id='campaign-exports'>" + " ".join(
+                "<a class='button ghost' data-campaign-export download='campaign-" + name + "' href='/campaigns/" + campaign_id
                 + "/figures/" + name + "?page=" + str(page) + "'>" + label + "</a>"
                 for name, label in (("coverage.svg", "Export coverage figure"), ("quality.svg", "Export missing/truncation figure"),
                                     ("model-counts.csv", "Export matching table"))
-            ) + "</p>"
+            ) + "</p><p id='campaign-export-status' role='status'></p>" + EXPORT_SCRIPT
             return (
                 "<p>Explicitly indexed assignments, not sums of overlapping job reports. "
                 "Pending means no selected retained outcome; it does not establish that no HTTP attempt occurred. "

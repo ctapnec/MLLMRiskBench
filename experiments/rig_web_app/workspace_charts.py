@@ -21,6 +21,25 @@ CHART_STYLE = """
 .campaign-figure .chart-value { font-weight:500; }
 """
 
+EXPORT_SCRIPT = """<script>(()=>{
+const root=document.getElementById('campaign-exports');if(!root)return;
+root.addEventListener('click',async event=>{
+const link=event.target.closest('a[data-campaign-export]');if(!link)return;
+event.preventDefault();if(window.uraBusy.isBusy())return;
+const end=window.uraBusy.begin('Preparing campaign export...');
+const status=document.getElementById('campaign-export-status');
+const abort=new AbortController();const timer=setTimeout(()=>abort.abort(),30000);
+try{
+status.textContent='';const response=await fetch(link.href,{signal:abort.signal});
+if(!response.ok)throw new Error('Export request failed (HTTP '+response.status+')');
+const blob=await response.blob();const url=URL.createObjectURL(blob);
+const save=document.createElement('a');save.href=url;save.download=link.download;
+end();save.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+status.textContent='Export prepared.';
+}catch(error){status.textContent=error.name==='AbortError'?'Export timed out. Please retry.':error.message;}
+finally{clearTimeout(timer);end();}
+});})();</script>"""
+
 
 def _count(row: Mapping, key: str) -> int:
     value = row[key]

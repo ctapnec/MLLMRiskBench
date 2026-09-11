@@ -4011,6 +4011,8 @@ class LifecycleMixin:
                     return 404, "text/plain; charset=utf-8", b"unknown campaign job"
                 return 200, "text/html; charset=utf-8", detail
             if method == "GET" and path == "/stats":
+                if query.get("view") != "legacy" and self.db.workspaces():
+                    return 200, "text/html; charset=utf-8", self._workspaces_page()
                 return 200, "text/html; charset=utf-8", self._stats_page(query)
             if method == "GET" and path == "/build":
                 return (

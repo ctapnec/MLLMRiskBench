@@ -6,7 +6,7 @@ import xml.etree.ElementTree as ET
 import pytest
 
 from experiments.rig_web import RigWebApp
-from experiments.rig_web_app.workspace_charts import coverage_html, coverage_svg, quality_svg, model_counts_csv
+from experiments.rig_web_app.workspace_charts import coverage_html, coverage_svg, quality_svg, model_counts_csv, EXPORT_SCRIPT
 
 
 def row(**changes):
@@ -70,6 +70,10 @@ def test_vector_and_table_exports_share_the_same_index_page(tmp_path):
     app = RigWebApp(results_root=tmp_path / "runs", state_dir=tmp_path / "state", repo_root=tmp_path)
     try:
         owner = app.db.create_workspace("API", "api")
+        landing = app.handle("GET", "/stats")[2].decode()
+        assert "Create and open Build" in landing
+        assert "href='/stats?view=legacy'" in landing
+        assert "href='/campaigns'" not in landing
         app.db.publish_workspace_results(owner,
             assignments=[dict(assignment_id="a", input_id="i", model="api", condition_id="c",
                               framework="replay", corpus="synth", modality="text", response_id=None, evidence_class="measured")],
@@ -86,3 +90,10 @@ def test_vector_and_table_exports_share_the_same_index_page(tmp_path):
         assert app.handle("GET", f"/campaigns/{owner}/figures/missing.svg")[0] == 404
     finally:
         app.close()
+
+
+def test_export_uses_shared_guard_and_releases_after_body_or_error():
+    assert "window.uraBusy.begin(" in EXPORT_SCRIPT
+    assert "await response.blob()" in EXPORT_SCRIPT
+    assert "finally{clearTimeout(timer);end();}" in EXPORT_SCRIPT
+    assert "AbortController" in EXPORT_SCRIPT
