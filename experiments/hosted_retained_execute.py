@@ -35,6 +35,7 @@ ADAPTER_RECOVERY_SCHEMA = "ura-hosted-retained-execution-plan/4"
 ADAPTER_PREFIX_RECOVERY_SCHEMA = "ura-hosted-retained-execution-plan/5"
 DISTINCT_INPUT_SCHEMA = "ura-hosted-retained-execution-plan/6"
 COHORT_INPUT_SCHEMA = "ura-hosted-retained-execution-plan/7"
+COHORT_ADAPTER_RECOVERY_SCHEMA = "ura-hosted-retained-execution-plan/8"
 COUNTED_INPUT_POLICY = "counted_requests_within_route_reservation_v1"
 TOKEN_COUNT_POLICY = "surface_specific_counts_with_declared_estimates_v1"
 _HEX40 = re.compile(r"[0-9a-f]{40}\Z")
@@ -84,7 +85,7 @@ def _validate_input_budget(program: Mapping[str, Any], route: Mapping[str, Any])
     """Keep the original per-call contract or fund the explicit counted successor."""
     counted = program.get("schema") in {
         COUNTED_INPUT_SCHEMA, TRANSPORT_RECOVERY_SCHEMA, ADAPTER_RECOVERY_SCHEMA, ADAPTER_PREFIX_RECOVERY_SCHEMA,
-        DISTINCT_INPUT_SCHEMA, COHORT_INPUT_SCHEMA,
+        DISTINCT_INPUT_SCHEMA, COHORT_INPUT_SCHEMA, COHORT_ADAPTER_RECOVERY_SCHEMA,
     }
     if counted:
         if program.get("input_budget_policy") != COUNTED_INPUT_POLICY:
@@ -160,7 +161,7 @@ class _Admission:
                 receipt=self.requests[key], budget=budget,
             )
         repairs = program.get("adapter_recoveries", {})
-        if repairs and program.get("schema") not in {ADAPTER_RECOVERY_SCHEMA, ADAPTER_PREFIX_RECOVERY_SCHEMA}:
+        if repairs and program.get("schema") not in {ADAPTER_RECOVERY_SCHEMA, ADAPTER_PREFIX_RECOVERY_SCHEMA, COHORT_ADAPTER_RECOVERY_SCHEMA}:
             raise ValueError("reviewed adapter recovery requires its explicit execution contract")
         if not isinstance(repairs, dict) or not set(repairs) <= set(program.get("requests", self.requests)):
             raise ValueError("reviewed adapter recovery names an unfunded input")
@@ -499,7 +500,8 @@ def _validate_adapter_recovery(
     raw = response.raw
     origin = entry["origin"]
     error_types = {"openai-responses": "OpenAIResponsesOutputError",
-                   "anthropic-fable": "AnthropicFableOutputError"}
+                   "anthropic-fable": "AnthropicFableOutputError",
+                   "anthropic": "AnthropicOutputError"}
     expected_error = error_types.get(program["target"].split(":", 1)[0])
     if (attempt.params.get("retained_origin") != origin
         or retained_dialog_sha256(attempt.rendered_input) != origin["delivered_input_sha256"]
@@ -577,7 +579,7 @@ def _fresh_control_root(work_root: Path, control_root: Path) -> Path:
 
 def _reviewed_completed_responses(program: Mapping[str, Any], budget: AttemptBudget) -> dict[str, dict]:
     """Retain usable native prefix records without regenerating or relabelling them."""
-    if program.get("schema") != ADAPTER_PREFIX_RECOVERY_SCHEMA:
+    if program.get("schema") not in {ADAPTER_PREFIX_RECOVERY_SCHEMA, COHORT_ADAPTER_RECOVERY_SCHEMA}:
         return {}
     from experiments import run_matrix
     from ura.data_models import Attempt, Response
@@ -911,7 +913,7 @@ def _validated_jobs(program: dict, budget: AttemptBudget, *, local_context: tupl
         return hosted_pending_condition.validated_jobs(program, budget, local_context=local_context)
     if (not isinstance(program, dict) or program.get("schema") not in {
         SCHEMA, COUNTED_INPUT_SCHEMA, TRANSPORT_RECOVERY_SCHEMA, ADAPTER_RECOVERY_SCHEMA, ADAPTER_PREFIX_RECOVERY_SCHEMA,
-        DISTINCT_INPUT_SCHEMA, COHORT_INPUT_SCHEMA,
+        DISTINCT_INPUT_SCHEMA, COHORT_INPUT_SCHEMA, COHORT_ADAPTER_RECOVERY_SCHEMA,
     }
         or program.get("budget_plan_sha256") != budget.expected_plan_sha256
         or program.get("token_count_policy") != TOKEN_COUNT_POLICY
@@ -924,7 +926,7 @@ def _validated_jobs(program: dict, budget: AttemptBudget, *, local_context: tupl
     elif recovery is not None:
         raise ValueError("historical execution contracts cannot add transport recovery")
     repairs = program.get("adapter_recoveries")
-    if program["schema"] in {ADAPTER_RECOVERY_SCHEMA, ADAPTER_PREFIX_RECOVERY_SCHEMA}:
+    if program["schema"] in {ADAPTER_RECOVERY_SCHEMA, ADAPTER_PREFIX_RECOVERY_SCHEMA, COHORT_ADAPTER_RECOVERY_SCHEMA}:
         if not isinstance(repairs, dict) or not repairs:
             raise ValueError("reviewed adapter recovery contract requires its retained failures")
     elif repairs is not None:
@@ -953,7 +955,7 @@ def _validated_jobs(program: dict, budget: AttemptBudget, *, local_context: tupl
     if budget_plan.get("reservation_policy", "first_attempts_upfront") != expected_projection.get("reservation_policy", "first_attempts_upfront"):
         raise ValueError("hosted reservation policy differs from its selected inventory")
     configured = projection._provider_budgets(values["budgets"])
-    distinct = program["schema"] in {DISTINCT_INPUT_SCHEMA, COHORT_INPUT_SCHEMA}
+    distinct = program["schema"] in {DISTINCT_INPUT_SCHEMA, COHORT_INPUT_SCHEMA, COHORT_ADAPTER_RECOVERY_SCHEMA}
     if distinct:
         funding = _additional_funding(sources["additional_funding"], configured, budget_plan=budget_plan)
         inventory, _ = _bound(funding["judging_inventory"])
@@ -1041,6 +1043,7 @@ def _validated_jobs(program: dict, budget: AttemptBudget, *, local_context: tupl
             raise ValueError("job changed its exact funded pilot/measured input IDs")
         plan = attacker._retained["plan"]
         expected_plan_schema = {COHORT_INPUT_SCHEMA: inputs.COHORT_SCHEMA,
+                                COHORT_ADAPTER_RECOVERY_SCHEMA: inputs.COHORT_SCHEMA,
                                 DISTINCT_INPUT_SCHEMA: inputs.DISTINCT_SCHEMA}.get(program["schema"], inputs.SCHEMA)
         if plan["schema"] != expected_plan_schema:
             raise ValueError("distinct retained inputs require their explicit execution contract")

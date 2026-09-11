@@ -20,11 +20,20 @@ from ura.targets import api
 
 
 def _prefix(tmp_path, monkeypatch, provider, *, tight=False, after_usable=False):
+    native_anthropic = provider == 'anthropic-native'
+    if native_anthropic:
+        provider = 'anthropic'
     fixtures = runpy.run_path(str(Path(__file__).parents[1] / 'ura/test_target_regressions.py'))
     points, _original, _plan, _bindings, value, config = _fixture(tmp_path, adaptive=True)
     ids = [row['origin']['selection']['input_identity_sha256'] for row in value['entries']]
     attacker = ReplayAttacker(**config, retained_input_ids=ids)
-    if provider == 'anthropic':
+    if native_anthropic:
+        target = api.AnthropicTarget('claude-opus-5', max_tokens=8192,
+            temperature=None, adaptive_thinking=True, effort='low')
+        result = fixtures['_anthropic_result']()
+        result.model = 'claude-opus-5'
+        error = api.AnthropicOutputError('Anthropic returned thinking after visible text')
+    elif provider == 'anthropic':
         target = api.AnthropicFableTarget('claude-fable-5-1')
         result = fixtures['_fable_result']()
         result.model = 'claude-fable-5-1'
@@ -108,7 +117,7 @@ def _admission(original, attacker, program):
         attacker=attacker, requests=original.requests, prices=original.prices)
 
 
-@pytest.mark.parametrize('provider', ['openai', 'anthropic'])
+@pytest.mark.parametrize('provider', ['openai', 'anthropic', 'anthropic-native'])
 def test_reviewed_parser_recovery_reuses_input_and_holds_old_charge(tmp_path, monkeypatch, provider):
     points, attacker, target, calls, original, program, prior, checked = _prefix(tmp_path, monkeypatch, provider)
     admission = _admission(original, attacker, program)
@@ -119,7 +128,7 @@ def test_reviewed_parser_recovery_reuses_input_and_holds_old_charge(tmp_path, mo
     assert len(calls) == 3 and calls[0] == calls[1]
     assert runner.responses[0].raw['transport_attempts'][0]['attempt'] == 2
     assert all(r.raw.get('model_stability_retry_count', 0) == 0 for r in runner.responses)
-    pool = original.budget.snapshot()['pools'][provider + ':target']
+    pool = original.budget.snapshot()['pools'][original.program['provider'] + ':target']
     assert pool['unknown_usage_attempts'] == 1 and pool['reserved_exposure_microusd'] == 500000
     assert (tmp_path / 'original.responses.checkpoint.jsonl').read_bytes() == prior
     _runner(attacker, target, _admission(original, attacker, program)).run(

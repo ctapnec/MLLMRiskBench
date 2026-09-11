@@ -101,3 +101,35 @@ def test_shared_cohort_executes_through_real_preparation_and_runner_admission(tm
     budget = prepare.AttemptBudget(tmp_path / "prepared-cohort/budget", result["budget"]["sha256"])
     assert prepare.executor._validated_jobs(program, budget)
     assert result["target_calls"] == result["judge_calls"] == 0
+
+
+def test_shared_cohort_parser_recovery_preserves_existing_selection_and_funding(tmp_path, monkeypatch):
+    from experiments import hosted_campaign_prepare as prepare
+    from test_hosted_campaign_prepare import _distinct_request
+
+    request, _, _ = _distinct_request(tmp_path, monkeypatch, cohort=True)
+    result = prepare.prepare_campaign(request=request, request_descriptor={},
+        out_root=tmp_path / 'cohort-recovery', allow_network_counts=False)
+    execute = prepare.executor
+    program = execute._bound({key: result['programs'][0][key] for key in ('path', 'sha256', 'bytes')})[0]
+    original = copy.deepcopy(program)
+    budget = prepare.AttemptBudget(tmp_path / 'cohort-recovery/budget', result['budget']['sha256'])
+    key = program['jobs'][-1]['input_ids'][0]
+    program.update(schema=execute.COHORT_ADAPTER_RECOVERY_SCHEMA,
+        adapter_recoveries={key: {'fixture': 'independently tested native parser checkpoint'}})
+    reviewed = []
+    monkeypatch.setattr(execute, '_validate_adapter_recovery',
+        lambda value, **kwargs: reviewed.append(kwargs['entry']['origin']['selection']['input_identity_sha256']) or 1)
+    monkeypatch.setattr(execute, '_reviewed_completed_responses', lambda *_: {})
+    admissions = execute._validated_jobs(program, budget)
+    assert reviewed == [key]
+    assert {k for a in admissions for k in a.entries} == set(original['requests'])
+    assert all(a.funded_cluster_population for a in admissions)
+    assert program['sources'] == original['sources'] and program['requests'] == original['requests']
+    assert not any(budget.reserved_attempt_count(r['call_id']) for r in program['requests'].values())
+    legacy = {**program, 'schema': execute.COHORT_INPUT_SCHEMA}
+    with pytest.raises(ValueError, match='cannot add reviewed adapter recovery'):
+        execute._validated_jobs(legacy, budget)
+    missing = {k: v for k, v in program.items() if k != 'adapter_recoveries'}
+    with pytest.raises(ValueError, match='requires its retained failures'):
+        execute._validated_jobs(missing, budget)
