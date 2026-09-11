@@ -54,7 +54,7 @@ class WorkspacePagesMixin:
         rows = self.db.workspaces()
         if rows is None:
             return "<p class='notice red'>Campaign index unavailable. No ownership was inferred.</p>"
-        options = "<option value=''>Standalone work (no campaign)</option>" + "".join(
+        options = "<option value=''>No campaign - standalone job</option>" + "".join(
             "<option value='" + row["campaign_id"] + "'"
             + (" selected" if row["campaign_id"] == selected else "")
             + ">" + html.escape(row["name"]) + "</option>"
@@ -62,10 +62,12 @@ class WorkspacePagesMixin:
         )
         association = f" form='{html.escape(form_id)}'" if form_id else ""
         return (
-            "<label>Campaign <select name='campaign_id'" + association + ">"
-            + options + "</select></label> "
-            "<a href='/campaigns#new-campaign'>New campaign</a>"
-            "<p class='note'>Saved with this launch. Changing another tab does not move running work.</p>"
+            "<div class='campaign-ownership'><div class='campaign-ownership-row'>"
+            "<label class='campaign-field'>Save under campaign <select name='campaign_id'" + association + ">"
+            + options + "</select></label>"
+            "<a class='button ghost' href='/campaigns/new'>Create campaign</a></div>"
+            "<p class='note'>Groups this job and its results. Choose models in Build. "
+            "Changing this selection does not move running jobs.</p></div>"
         )
 
     def _campaign_banner(self, campaign_id: str) -> str:
@@ -81,9 +83,8 @@ class WorkspacePagesMixin:
     def _workspaces_page(self) -> bytes:
         rows = self.db.workspaces()
         cards = "<p class='notice red'>Campaign index unavailable.</p>" if rows is None else "".join(
-            "<article class='card'><h2><a href='/campaigns/" + row["campaign_id"] + "'>"
-            + html.escape(row["name"]) + "</a></h2><p>"
-            + html.escape(row["kind"].upper()) + " campaign</p>"
+            "<article class='card campaign-card'><h2><a href='/campaigns/" + row["campaign_id"] + "'>"
+            + html.escape(row["name"]) + "</a></h2>"
             "<a class='button' href='/build?campaign_id=" + row["campaign_id"]
             + "'>Continue in Build</a></article>" for row in rows
         )
@@ -92,14 +93,22 @@ class WorkspacePagesMixin:
         return _page(
             "Campaigns", "<h1>Campaigns</h1>"
             "<p>Keep related collection, judging and analysis together. Configure work in Build.</p>"
-            + cards
-            + "<p><a href='/stats?view=legacy'>Standalone jobs and earlier report publications</a></p>"
-            + "<section class='card' id='new-campaign'><h2>New campaign</h2>"
-            "<form method='post' action='/campaigns' data-busy>"
-            "<label>Name <input name='name' required maxlength='120'></label> "
-            "<label>Targets <select name='kind'><option value='local'>Local</option>"
-            "<option value='api'>API</option><option value='mixed'>Mixed</option></select></label> "
-            "<button>Create and open Build</button></form></section>", active="Stats",
+            "<p><a class='button' href='/campaigns/new'>Create campaign</a></p>"
+            + "<div class='campaign-grid'>" + cards + "</div>"
+            + "<p class='campaign-secondary'><a href='/stats?view=legacy'>Standalone jobs and earlier report publications</a></p>",
+            active="Stats",
+        )
+
+    def _new_workspace_page(self) -> bytes:
+        return _page(
+            "Create campaign", "<h1>Create campaign</h1>"
+            "<p>A campaign groups related jobs, results and judging. "
+            "Choose its models and execution settings next, in Build.</p>"
+            "<section class='card campaign-create-card'><form class='campaign-create-form' method='post' action='/campaigns' data-busy>"
+            "<label class='campaign-field'>Campaign name <input type='text' name='name' required maxlength='120' autofocus></label>"
+            "<input type='hidden' name='creation_flow' value='name_then_build'>"
+            "<div class='campaign-actions'><button>Create and open Build</button>"
+            "<a class='button ghost' href='/campaigns'>Cancel</a></div></form></section>", active="Stats",
         )
 
     def _workspace_page(self, campaign_id: str, query: dict[str, str]) -> bytes:

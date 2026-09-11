@@ -3816,10 +3816,13 @@ class LifecycleMixin:
         try:
             if method == "GET" and path == "/campaigns":
                 return 200, "text/html; charset=utf-8", self._workspaces_page()
+            if method == "GET" and path == "/campaigns/new":
+                return 200, "text/html; charset=utf-8", self._new_workspace_page()
             if method == "POST" and path == "/campaigns":
                 data = dict(form or {})
-                campaign_id = self.db.create_workspace(data.get("name", ""), data.get("kind", ""))
-                return 303, f"/build?campaign_id={campaign_id}", b""
+                campaign_id = self.db.create_workspace(data.get("name", ""), data.get("kind", "mixed"))
+                section = "#build-general" if data.get("creation_flow") == "name_then_build" else ""
+                return 303, f"/build?campaign_id={campaign_id}{section}", b""
             if method == "GET" and path.startswith("/campaigns/"):
                 parts = path.removeprefix("/campaigns/").split("/")
                 if len(parts) == 3 and parts[1] == "figures":

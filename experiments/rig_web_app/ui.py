@@ -52,6 +52,29 @@ h2 .ic { color:var(--muted); }
 .cols { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr));
   gap:.9rem; }
 .cols .card { margin:0; }
+.campaign-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr)); gap:1rem; margin:1.25rem 0; }
+.campaign-grid .campaign-card { margin:0; padding:1.35rem; min-width:0; }
+.campaign-card h2 { margin-bottom:1.25rem; overflow-wrap:anywhere; }
+.campaign-card > .button { align-self:flex-start; }
+.campaign-ownership { display:grid; gap:.65rem; }
+.campaign-ownership-row { display:flex; flex-wrap:wrap; align-items:flex-end; gap:1rem; }
+.campaign-field { display:grid; gap:.5rem; min-width:0; font-weight:600; font-size:.9rem; }
+.campaign-ownership-row .campaign-field { flex:1 1 280px; max-width:36rem; }
+.campaign-field select, .campaign-field input[type=text] { box-sizing:border-box; width:100%; min-width:0; min-height:2.65rem; margin:0;
+  padding:.65rem .8rem; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--ink); font:inherit; font-weight:400; }
+.campaign-field select { padding-right:2.2rem; }
+.campaign-field input:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.campaign-ownership > .note { margin:0; line-height:1.55; }
+.campaign-create-card { max-width:44rem; padding:1.5rem; margin:1.5rem 0; }
+.campaign-create-form { display:grid; gap:1.5rem; margin:0; }
+.campaign-actions { display:flex; flex-wrap:wrap; align-items:center; gap:.75rem; padding-top:1rem; border-top:1px solid var(--line); }
+.campaign-secondary { margin-top:1.5rem; }
+@media (max-width:540px) {
+  .campaign-create-card, .campaign-grid .campaign-card { padding:1rem; }
+  .campaign-ownership-row { align-items:stretch; }
+  .campaign-ownership-row .campaign-field { flex-basis:100%; max-width:none; }
+  .campaign-actions > *, .campaign-ownership-row > .button { justify-content:center; min-height:2.65rem; }
+}
 .stat { display:flex; flex-direction:column; gap:.15rem; }
 .stat .value { font-size:1.35rem; font-weight:700; }
 .stat .label { color:var(--muted); font-size:.82rem; }
