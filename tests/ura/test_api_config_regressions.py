@@ -26,6 +26,20 @@ def _write_config(path: Path, spec: str, value: dict[str, object]) -> Path:
     return path
 
 
+@pytest.mark.parametrize('model', ['deepseek-v4-pro', 'deepseek-v4-flash'])
+@pytest.mark.parametrize('limit', [32768, 393216])
+def test_deepseek_explicit_output_uses_documented_model_ceiling(tmp_path, model, limit):
+    spec = 'deepseek:' + model
+    config = {'modalities': ['text'], 'max_tokens': limit, 'temperature': None}
+    path = _write_config(tmp_path / 'api.json', spec, config)
+    normalized, _ = _load_config(path, [spec])
+    target = build_api_target(spec, config=normalized[spec])
+    assert target.build_request([DialogTurn(role='user', content='Hello')], seed=0)['max_tokens'] == limit
+    with pytest.raises(ValueError, match='393216'):
+        normalize_api_target_config(spec, {**config, 'max_tokens': 393217})
+    assert normalize_api_target_config(spec, {**config, 'max_tokens': 4096})['max_tokens'] == 4096
+
+
 def _load_config(
     path: Path, specs: list[str]
 ) -> tuple[dict[str, dict[str, object]], dict[str, object] | None]:
