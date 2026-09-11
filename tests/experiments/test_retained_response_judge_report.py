@@ -313,3 +313,29 @@ def test_stats_comparison_paging_query_reaches_fragment_renderer(tmp_path, monke
         app.close()
     assert status == 200 and body == b"paged comparison"
     assert seen == [("example", {"report": "2", "fragment": True, "detail_section": "tokens", "detail_page": "1"})]
+
+
+def test_stats_registered_comparison_reuses_validation_but_rejects_changed_file(completed, tmp_path, monkeypatch):
+    from experiments.rig_web import RigWebApp
+    from experiments.rig_web_app import dashboard
+    from experiments.rig_web_app.external_analysis import _validated_report
+    report = subject.build_report(**completed[0])
+    path = tmp_path / "comparison.json"
+    payload = executor._canonical(report)
+    path.write_bytes(payload)
+    registered = _validated_report(tmp_path, tmp_path, {"path": "comparison.json", "kind": "judge_comparison",
+        "display_name": "Matched judges", "bytes": len(payload), "sha256": hashlib.sha256(payload).hexdigest()})
+    app = object.__new__(RigWebApp)
+    app.results_root = tmp_path
+    card = {"path": "comparison.json", "kind": "judge_comparison", "display_name": "Matched judges",
+        "_external_analysis_report": registered}
+    monkeypatch.setattr(dashboard, "_validate_report_document",
+        lambda *_: pytest.fail("registered report was redundantly validated during rendering"))
+    for section in ("overview", "outcomes", "contrasts", "tokens"):
+        page = app._stats_report_card(card, detail_section=section)
+        assert "<svg" in page and "invalid</span>" not in page
+    # The reader must still notice changed bytes instead of blessing an old
+    # cached document merely because the presentation skips a duplicate check.
+    path.write_text("{}")
+    changed = app._stats_report_card(card)
+    assert "missing or malformed" in changed and "class='barchart'" not in changed

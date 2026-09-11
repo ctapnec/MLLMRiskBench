@@ -92,8 +92,13 @@ It contains 1,370 hosted and 1,547 matching local outputs on 418 distinct inputs
 with 4,566 comparison links. The two unfinished Google routes remain explicitly
 excluded. No target or judge was called by publication. HTTP 200 and chart markup
 were verified; the browser connector has no available browser, so visual QA is
-not claimed. The actual page is 7.4 MB with 12,698 table rows; its bounded
-presentation needs correction before final UI deployment.
+not claimed. The actual page is 7.4 MB with 12,698 table rows. The bounded
+presentation correction at a833b50 passed thirty focused rig tests, a
+reversed-fix check and actual-report rendering. The comparison fragment falls
+from 7,385,885 to 147,085 bytes, with all outcome, contrast and token details
+available through separate paged links. Full-population aggregates and the
+retained report are unchanged. This correction is queued with operational costs
+for post-collection deployment; the currently served page remains unchanged.
 
 Earlier 03:12 observations follow.
 

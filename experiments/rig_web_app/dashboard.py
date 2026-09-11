@@ -1837,7 +1837,12 @@ class DashboardMixin:
                 "no chart is rendered.</p></div>"
             )
         try:
-            _validate_report_document(kind, doc)
+            # The registered reader already validates this exact kind and
+            # invalidates its cache when file metadata changes. Do not rebuild
+            # the same scientific summary again on every pagination request.
+            if not (isinstance(registered_report, ExternalAnalysisReport)
+                    and registered_report.kind == kind):
+                _validate_report_document(kind, doc)
         except ValueError as exc:
             return (
                 "<div class='card'><h3>"
