@@ -48,6 +48,22 @@ required after target collection.
 
 ## Continuous execution
 
+09:34 UTC observation: 3,286 of 6,669 selected assignments started, with 3,277
+usable outcomes. Thirty-minute gains are 342 starts and 343 usable outcomes.
+The 3,383 unstarted assignments and separate 67-input allocation gap remain.
+Haiku counts and cost are unchanged at 2,217 local, 1,508 hosted and USD 5.308997.
+No provider credit-exhaustion response was reported; console HTTP is 200.
+Next aggregate: 10:04 UTC.
+
+An Opus parser error at 09:29 rejected thinking after visible text and opened
+the shared stop. Source 383ba71 scopes output/transport investigation pauses to
+the affected target rather than unrelated models. All 124 affected rig tests,
+lint and the reversed-fix check passed. The successor launched at 09:41:47 UTC,
+retaining completed work and all paid history. Opus remains separately paused
+for the parser/data-retention investigation and exact recovery. Its saved error
+lacks the original block sequence, stop reason and usage, so it is not called
+an intrinsic model failure. Further judging still follows target collection.
+
 Instruction update at approximately 08:52 UTC: execute the pre-calculated
 inventory without per-request maximum-cost money holds. Track reported spending
 and provider credit-exhaustion responses; retain unknown billing data without
@@ -69,6 +85,8 @@ judgments. Preserve the full 6,736 requested evaluations, existing provider
 ceilings, protected Haiku allocation, unknown charges and completed answers.
 Use bounded concurrency per provider, not thousands of simultaneous HTTP calls.
 Quota or exhausted credits on one provider must not idle independent providers.
+Likewise, missing output or terminal transport investigation pauses its target
+route, not other models sharing the program or billing provider.
 
 At 06:54:36 UTC the unstarted fund-013, prepare-flow-014 and deferred-posthoc-006/007
 controllers were retired without interrupting an in-flight call. Existing

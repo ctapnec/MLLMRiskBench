@@ -6076,6 +6076,13 @@ the continuous hosted queue. The specification separates existing controls from
 new controls; it applies equally to imported work and campaigns launched manually
 through the UI. New UI operations will inherit an explicitly selected campaign.
 
+For retained paid execution, missing-output and terminal-transport investigations
+are scoped to the affected target route. The small target-pause record blocks
+that route before its next physical request; independent target models continue.
+Retain and review the pause when recovering the exact input, rather than deleting
+it or automatically repeating an empty paid answer. Provider credit exhaustion
+remains provider-wide, while a genuinely shared accounting fault is separate.
+
 A single-operator application starts, monitors, and stops the
 allowlisted experiment CLIs from typed forms, composes campaign lanes through
 a mode-aware builder (dry run, attestation probe, diagnostic canary, measured
