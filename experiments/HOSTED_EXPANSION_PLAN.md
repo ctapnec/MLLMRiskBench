@@ -1,11 +1,35 @@
 # Third hosted campaign: provider-scaled expansion
 
-Status update, 11 September 2026 at 02:38 UTC: the requested program is
+Status update, 11 September 2026 at 03:12 UTC: the requested program is
 expanded from 6,541 to 6,736 target evaluations by the additional frontier
 selection below. The added 195 evaluations have counted requests and validated
 replay files but are not yet funded or executed. The operator's latest reported balances and the
 existing USD 114 cumulative ceiling are unchanged. Frontier coverage takes
 priority over adding further lower-cost groups.
+
+The 03:04 aggregate records 2,459 started assignments and 2,453 usable
+outcomes from 2,618 funded inputs. The eighth Kimi route is complete for all
+nineteen inputs. DeepSeek has twenty-four durable outcomes, one unsettled
+request and thirty-four unstarted inputs. Four terminal failures remain across
+the expansion; the other unsettled request is Google. Haiku totals remain
+1,516 local and 1,314 hosted assessments, with USD 3.905620 reported cost.
+Judging is queued, not actively issuing requests. Console availability is
+HTTP 200; GPUs are idle and no provider credit-exhaustion stop is recorded.
+The next aggregate is due at 03:34 UTC.
+
+The two earlier Haiku controllers were waiting solely for Google results but
+still consumed both Anthropic scheduler slots. Their five and four completed
+route analyses were verified, together with zero in-flight judge requests and
+their actual idle process owners. At 03:11 UTC they were replaced by visible
+queued successors that consume no HTTP slot and resume automatically after
+the eighth targets and both judging stages finish. The successors skip all
+completed analyses. Eight focused dependency cases and an omitted-dependency
+mutation passed on the rig. No paid request was stopped or repeated. The
+eighth Fable and Opus workers are now active alongside DeepSeek, with at most
+two Anthropic requests. Existing Google owners and every monetary hold remain
+unchanged. This supersedes the earlier conservative idle-slot wait below.
+
+Earlier 02:38 observations follow.
 
 The eighth slice was funded at 02:37:50 UTC for 125 non-Google inputs:
 Fable 18, Opus 29, Kimi 19 and DeepSeek 59. Funded assignments now total

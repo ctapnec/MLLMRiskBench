@@ -62,9 +62,14 @@ once, acquire their reservation guards in chronological order, and retain all
 of those bindings in the next allocation's controller record. A report must
 deduplicate shared parent holds and release a hold only after that parent
 closes. Deferring a provider also requires rebasing later prospective prefixes;
-reuse exact request counts and never skip the deferred inputs. Count earlier
+reuse exact request counts and never skip the deferred inputs. Count runnable
 judging workers against the judge provider's network limit before starting new
-targets or local-output judging.
+targets or local-output judging. A controller waiting only for another
+provider's unfinished outputs must remain queued without occupying an HTTP
+slot. For an existing idle controller, first verify its completed output-specific
+judgments, lack of in-flight judge requests and current process owner. Its
+successor must skip those completed judgments and wait for the current slot
+users to finish; simply ignoring a live worker in the slot count is unsafe.
 
 A completed source view can contain no answers eligible for the common Haiku
 rubric. Retained hosted preparation preserves an explicitly enabled original
