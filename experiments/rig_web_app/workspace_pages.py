@@ -8,9 +8,33 @@ from pathlib import Path
 from urllib.parse import quote
 
 from .ui import _page
+from .workspace_charts import coverage_html, coverage_svg, quality_svg, model_counts_csv
 
 
 class WorkspacePagesMixin:
+    def _workspace_export(self, campaign_id: str, name: str, query: dict[str, str]) -> tuple[int, str, bytes]:
+        self.db.require_workspace(campaign_id)
+        page = max(0, int(query.get("page", "0")))
+        rows = self.db.workspace_model_totals(campaign_id, offset=page * 25)
+        if rows is None:
+            return 503, "text/plain; charset=utf-8", b"Campaign result index unavailable"
+        rows = rows[:25]
+        if not rows:
+            return 404, "text/plain; charset=utf-8", b"No indexed results for this page"
+        if name == "model-counts.csv":
+            return 200, "text/csv; charset=utf-8", model_counts_csv(rows)
+        if name not in {"coverage.svg", "quality.svg"}:
+            return 404, "text/plain; charset=utf-8", b"Unknown figure"
+        scope = f"Displayed model conditions, page {page + 1}. Operational coverage; not pooled security rates."
+        figure = (coverage_svg(rows, title="Campaign outcome composition", scope=scope)
+                  if name == "coverage.svg" else quality_svg(rows, scope=scope))
+        # Preserve the project's light/dark theme variables in the standalone
+        # vector. No remote library, script, image or external stylesheet.
+        from .ui import _STYLE  # noqa: PLC0415
+        theme = _STYLE.split("* { box-sizing:", 1)[0]
+        figure = figure.replace("<style>", "<style>" + theme, 1)
+        return 200, "image/svg+xml; charset=utf-8", figure.encode("utf-8")
+
     def _workspace_source_link(self, reference: str) -> str:
         path, separator, row = reference.rpartition(":")
         locator = path if separator and row.isdigit() else reference
@@ -155,22 +179,25 @@ class WorkspacePagesMixin:
             rows = self.db.workspace_model_totals(campaign_id, offset=page * 25)
             if not rows:
                 return unknown
-            chart = self._count_bar_chart(
-                [(row["model"] + " / " + row["evidence_class"], int(row["usable"] or 0) + int(row["policy"] or 0)) for row in rows[:25]],
-                label="Retained usable and policy outcomes by model",
-            )
+            chart = coverage_html(rows[:25])
+            exports = "<p>" + " ".join(
+                "<a class='button ghost' download='campaign-" + name + "' href='/campaigns/" + campaign_id
+                + "/figures/" + name + "?page=" + str(page) + "'>" + label + "</a>"
+                for name, label in (("coverage.svg", "Export coverage figure"), ("quality.svg", "Export missing/truncation figure"),
+                                    ("model-counts.csv", "Export matching table"))
+            ) + "</p>"
             return (
                 "<p>Explicitly indexed assignments, not sums of overlapping job reports. "
                 "Pending means no selected retained outcome; it does not establish that no HTTP attempt occurred. "
                 "Truncation overlaps usable/missing outcomes and is not an additional outcome bucket. "
                 "Execution conditions remain distinct; these counts are not pooled safety rates.</p>"
-                + chart + table(
+                + exports + chart + "<details><summary>Exact counts and execution-condition coverage</summary>" + table(
                     ("Model", "Evidence", "Conditions", "Assigned", "Usable", "Policy", "Missing", "Retry pending", "Pending", "Truncated", "Truncation unknown"),
                     [["<a href='/campaigns/" + campaign_id + "?section=results&amp;model=" + quote(row["model"], safe="") + "'>" + html.escape(row["model"]) + "</a>"]
                      + [html.escape(row["evidence_class"])]
                      + [str(row[key] or 0) for key in ("conditions", "assigned", "usable", "policy", "missing", "retry_pending", "pending", "truncated", "truncation_unknown")]
                      for row in rows[:25]],
-                ) + pagination(len(rows) > 25)
+                ) + "</details>" + pagination(len(rows) > 25)
             )
         model = query.get("model", "")
         if model:

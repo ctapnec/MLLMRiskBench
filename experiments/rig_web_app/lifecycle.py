@@ -3821,6 +3821,9 @@ class LifecycleMixin:
                 campaign_id = self.db.create_workspace(data.get("name", ""), data.get("kind", ""))
                 return 303, f"/build?campaign_id={campaign_id}", b""
             if method == "GET" and path.startswith("/campaigns/"):
+                parts = path.removeprefix("/campaigns/").split("/")
+                if len(parts) == 3 and parts[1] == "figures":
+                    return self._workspace_export(parts[0], parts[2], query)
                 return 200, "text/html; charset=utf-8", self._workspace_page(
                     path.removeprefix("/campaigns/"), query
                 )
