@@ -578,6 +578,15 @@ Record implementation proofs and deployment state in the development ledger.
 Describe the eventual design and experimental methods academically in the thesis;
 do not insert these click instructions or operational status notes in its prose.
 
+Retained Haiku publication uses `workspace_judgments.retained_judge_rows`.
+It joins each saved verdict through the selected response's run and attempt
+identity, never by a shared question alone. The same API configuration identifies
+the judging condition across plan sizes. Invalid verdicts stay unscored; paid
+HTTP attempts retain their own costs, and final usage is not copied onto earlier
+network failures. Publication accepts a completed prefix without requiring a
+fresh judge call or reloading the input corpora. The derived index does not
+modify the source plan, answers, verdicts or monetary ledger.
+
 Adding inputs to an existing API campaign must include their execution ledger in
 the same cumulative spending view. `AttemptBudget.use_campaign_spending` accepts
 an append-only extension of ledger references with unchanged provider/judge

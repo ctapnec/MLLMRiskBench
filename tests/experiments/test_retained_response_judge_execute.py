@@ -16,6 +16,55 @@ HEX_A = "a" * 64
 HEX_B = "b" * 64
 
 
+@pytest.mark.parametrize("retry", [False, True])
+def test_workspace_indexes_real_executor_artifacts_by_output_without_new_calls(tmp_path, monkeypatch, retry):
+    from experiments.rig_web_app.workspace_judgments import retained_judge_rows
+
+    prepared = _prepared(tmp_path, monkeypatch)
+    fake = FakeHaiku()
+    subject.execute(**{key: prepared[key] for key in (
+        "plan_path", "runner_view", "source_receipt", "api_config", "pricing_config", "out")},
+        judge_factory=lambda _spec, _config: fake)
+    plan = prepared["plan"]
+    artifacts = [(str(path), json.loads(path.read_text()))
+                 for path in sorted((prepared["out"] / "judgments").glob("*.json"))]
+    slots, requests, attempts, owners = [], {}, {}, {}
+    for row in plan["selected"]:
+        key = row["retained_row_sha256"]
+        slots.append(dict(call_id=key, provider="anthropic", pool="judge", bound_microusd=5000))
+        requests[key] = {"call_id": key}
+        attempts[key] = {"1": dict(state="settled", actual_cost_microusd=160)}
+        owners[row["run_id"] + ":" + row["attempt_id"]] = "assignment-" + key
+    if retry:
+        for _, artifact in artifacts:
+            artifact["judgment"]["raw"]["judge_call"]["transport_attempt_count"] = 2
+            attempts[artifact["retained_row_sha256"]] = {
+                "1": dict(state="unknown", actual_cost_microusd=None),
+                "2": dict(state="settled", actual_cost_microusd=160)}
+    kwargs = dict(output_assignments=owners, campaign_id="local", shared_requests=requests,
+        budget_plan={"planned_calls": slots}, ledger={"attempts": attempts}, ledger_path="retained/ledger.json")
+    rows = retained_judge_rows(plan, artifacts, **kwargs)
+    assert fake.calls == 2
+    assert {row["response_id"] for row in rows["judgments"]} == set(owners)
+    assert all(row["status"] == "valid" and row["label"] for row in rows["judgments"])
+    assert sum(row["cost_microusd"] or 0 for row in rows["costs"]) == 320
+    assert sum(row["input_tokens"] or 0 for row in rows["costs"]) == 200
+    assert len(rows["costs"]) == (4 if retry else 2)
+    if retry:
+        assert all(row["input_tokens"] is None for row in rows["costs"] if row["attempt_number"] == 1)
+    changed = json.loads(json.dumps(plan))
+    changed["judge_condition"].update(max_judge_calls=100, max_http_attempts=400)
+    assert retained_judge_rows(changed, artifacts, **kwargs)["judgments"] == rows["judgments"]
+    with pytest.raises(ValueError, match="matching output"):
+        retained_judge_rows(plan, artifacts, **{**kwargs, "output_assignments": {"same-input-different-answer": "wrong"}})
+    with pytest.raises(ValueError, match="Repeated"):
+        retained_judge_rows(plan, [artifacts[0], artifacts[0]], **kwargs)
+    bad = json.loads(json.dumps(artifacts))
+    bad[0][1]["retained_row_sha256"] = "f" * 64
+    with pytest.raises(ValueError, match="contract changed"):
+        retained_judge_rows(plan, bad, **kwargs)
+
+
 def test_atomic_publication_from_two_threads_uses_distinct_temporary_files(tmp_path, monkeypatch):
     from concurrent.futures import ThreadPoolExecutor
     import threading
