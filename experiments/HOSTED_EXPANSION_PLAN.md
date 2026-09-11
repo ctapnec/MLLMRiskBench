@@ -1,11 +1,41 @@
 # Third hosted campaign: provider-scaled expansion
 
-Status update, 11 September 2026 at 01:34 UTC: the requested program is
+Status update, 11 September 2026 at 02:17 UTC: the requested program is
 expanded from 6,541 to 6,736 target evaluations by the additional frontier
 selection below. The added 195 evaluations have counted requests and validated
 replay files but are not yet funded or executed. The operator's latest reported balances and the
 existing USD 114 cumulative ceiling are unchanged. Frontier coverage takes
 priority over adding further lower-cost groups.
+
+All 120 non-Google seventh-slice inputs are now complete, with their required
+local and Haiku judgments: Fable 15, Opus 23, Kimi 15 and DeepSeek 67. Its
+72 Google inputs remain queued behind the sixth Google route's daily quota
+wait. Explicit OpenAI HTTP 400 `cyber_policy` responses are retained provider
+policy outcomes and do not stop subsequent inputs or receive answer retries.
+The present Google wait is HTTP 429, not that HTTP 400 condition.
+
+The 02:04 aggregate recorded 2,400 started assignments and 2,394 usable
+outcomes from 2,493 funded assignments, with four terminal failures and two
+then-unsettled requests. It gained 105 started inputs and 104 usable outcomes
+in thirty minutes. DeepSeek subsequently completed its remaining sixteen
+inputs. The snapshot retained 1,516 local and 1,261 hosted Haiku assessments,
+with USD 3.839137 reported judging cost. Console availability was HTTP 200;
+both GPUs were idle, as expected for the active hosted collection. The next
+aggregate is due at 02:34 UTC. These snapshot counts are not later completion
+counts and are not live provider credit balances.
+
+The eighth slice has 225 counted inputs; the ninth has another 152 counted
+inputs. Neither is funded. A read-only review protecting every remaining
+attempt in both unfinished slices six and seven found that the eighth slice's
+non-Google target quotes fit, but essentially no additional Google capacity
+is available while reserving the worst-case Google continuation. This is
+reserved exposure, not spent credit. Additional allocation still requires
+complete judging reservations and cumulative provider ownership; no money was
+allocated by the review. A comparison of completed routes through slice seven
+is building, explicitly excluding the unfinished Google routes. It makes no
+target or judge calls and does not declare the full expansion complete.
+
+Earlier 01:34 preparation and recovery observations follow.
 
 The seventh slice's funding successor completed for 192 inputs. Its
 120 non-Google inputs can advance independently; its 72 Google inputs wait
