@@ -79,8 +79,10 @@ same delivered input and unchanged reasoning setting. Its original failed row
 and charge remain retained; the new generation is a separate condition requiring
 its own local and Haiku judgments. It is not an automatic answer-retry policy
 or a reason to repeat successful responses. The conservative per-physical-call
-forecast is USD 0.132565, within the original DeepSeek ceiling. It launched in
-tmux; completion and analysis publication are pending.
+forecast is USD 0.132565, within the original DeepSeek ceiling. The rerun completed
+with a visible answer, reporting 402 input and 30,045 output tokens. It is retained
+as a separate direct adapter capture, not silently promoted into the predecessor
+Runner grid. Its local/Haiku judgments and analysis publication remain pending.
 
 Preparation exposed a generic 25,000-token configuration restriction. Source
 cab59c4 permits the documented DeepSeek V4 output range while preserving all
@@ -88,6 +90,11 @@ explicit campaign defaults. Four focused configuration/request tests and the
 removed-fix check passed. The [provider reference](https://api-docs.deepseek.com/api/create-chat-completion/)
 defines a maximum of 393,216 tokens; this is a supported configuration ceiling,
 not the requested campaign allowance. No model default was raised to that value.
+Source 3e80fca removes the arbitrary fallback for other generic API routes as
+well. All 23 focused rig checks passed, including CLI and Build configuration
+paths; restoring the fallback produced eleven targeted failures. The production
+console is deployed at that revision with existing SQLite records preserved.
+Configured output allowances and campaign spending ceilings remain unchanged.
 
 09:34 UTC observation: 3,286 of 6,669 selected assignments started, with 3,277
 usable outcomes. Thirty-minute gains are 342 starts and 343 usable outcomes.

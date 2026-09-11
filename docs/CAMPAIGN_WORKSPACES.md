@@ -2,7 +2,8 @@
 
 Status: Build ownership, compact result/judgment indexes, model coverage views
 and figure/table exports implemented; complete workflow still in progress,
-11 September 2026. These changes are not deployed yet. Historical import,
+11 September 2026. The foundation is deployed at `3e80fca`; its SQLite migration
+preserved existing records and the production pages returned HTTP 200. Historical import,
 automatic result publication, cost attribution, matched comparison figures and
 the remaining execution actions below are unfinished.
 
