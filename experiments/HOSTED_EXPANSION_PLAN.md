@@ -48,6 +48,17 @@ required after target collection.
 
 ## Continuous execution
 
+12:04 UTC observation: 5,240 of 6,669 assignments attempted, retaining 5,226
+usable outcomes, up 458 in thirty minutes. There are 1,429 unstarted assignments
+and the separate 67-input allocation gap. Haiku totals remain 2,217 local and
+1,508 hosted. Console HTTP is 200; no credit-exhaustion response was observed.
+Luna's new missing answer is a reported 4,096-token reasoning-only completion,
+not an HTTP error or discarded visible text. Its exact failed row and costs
+remain retained. The reviewed continuation covers 570 untouched inputs and
+preserves 47 saved responses without changing the 4,096-token request condition
+or adding an automatic answer retry. Opus recovery preparation and final
+local/Haiku judging remain unfinished.
+
 11:04 UTC observation: 4,572 of 6,669 selected assignments attempted, with
 4,560 usable outcomes. The thirty-minute increase is 258 attempts and 257 usable
 outcomes. There are 2,097 unstarted assignments and the separate 67-input
