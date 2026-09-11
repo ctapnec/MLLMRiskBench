@@ -1,6 +1,6 @@
 # Third hosted campaign: provider-scaled expansion
 
-Status update, 11 September 2026 at 05:34 UTC: the requested program is
+Status update, 11 September 2026 at 06:04 UTC: the requested program is
 expanded from 6,541 to 6,736 target evaluations by the additional frontier
 selection below. The added 195 evaluations have counted requests and validated
 replay files. Twenty Fable evaluations and their judging are now complete;
@@ -8,21 +8,22 @@ the other 175 additional assignments remain unfunded. The operator's latest repo
 existing USD 114 cumulative ceiling are unchanged. Frontier coverage takes
 priority over adding further lower-cost groups.
 
-The 05:34 aggregate records 2,656 started assignments and 2,649 usable
-outcomes from 2,734 funded inputs, gaining 28 starts and 29 usable outcomes in
-thirty minutes. Six failures, one unsettled Google request and 78 unstarted
-Google inputs remain. Haiku totals are 1,990 local and 1,443 hosted assessments,
-including seventeen and seven invalid verdicts respectively, with
-USD 4.888609 reported cost. Console availability is HTTP 200; no shared stop
-or provider credit-exhaustion marker is present. The next aggregate is due at
-06:04 UTC. The ninth slice is complete: 95 usable outcomes and one exhausted
-Opus overload outcome, with 73 eligible hosted Haiku assessments and 201 new
-matching-local assessments. The tenth slice's twenty additional Fable targets
-are complete. Its judging was still pending in this aggregate and subsequently
-completed by 05:42, including 55 new local assessments with one invalid verdict.
-The following slice has 78 counted inputs and 153 new matching-local judging
-assignments awaiting funding. The full requested expansion still depends on
-quota and subsequent funding; the unfunded remainder is not claimed complete.
+The 06:04 aggregate records 2,711 started assignments and 2,703 usable
+outcomes from 2,812 funded inputs, gaining 55 starts and 54 usable outcomes in
+thirty minutes. Six failures, two unsettled requests and 101 unstarted inputs
+remain: 23 DeepSeek and 78 Google inputs. Haiku totals are 2,045 local and
+1,458 hosted assessments, including eighteen and seven invalid verdicts
+respectively, with USD 4.992498 reported cost. Console availability is HTTP
+200; no shared stop or provider credit-exhaustion marker is present. The next
+aggregate is due at 06:34 UTC. The ninth slice is complete: 95 usable outcomes
+and one exhausted Opus overload outcome, with 73 eligible hosted Haiku
+assessments and 201 new matching-local assessments. The tenth slice's twenty
+additional Fable targets and judging completed by 05:42, including 55 new
+local assessments with one invalid verdict. The eleventh slice is funded for
+78 inputs and 153 new matching-local judging assignments. Opus and Kimi
+targets are complete; DeepSeek collection and the subsequent judging remain
+active. The full requested expansion still depends on quota and subsequent
+funding; the unfunded remainder is not claimed complete.
 
 The ninth interruption was an Opus HTTP 529 `overloaded_error` after four
 transport attempts, not HTTP 400 or `cyber_policy`. Its missing output and
@@ -34,7 +35,7 @@ next monetary reservation. The corrected checkpoint reuses that held logical
 slot, still requires the ordinary paid reservation, and leaves historical
 counters unchanged. Its focused real-slot and reversed-fix checks passed on
 the rig; the separate DeepSeek continuation was launched at 04:53 UTC.
-The existing ninth judging workers remain live and waiting for target results.
+The ninth judging workers subsequently completed by 05:18 UTC.
 No completed answer or exhausted transport request is scheduled for repetition.
 
 Fable, Opus and Kimi completed all 18, 29 and 19 eighth-slice inputs.
@@ -70,15 +71,16 @@ capacity by USD 0.216182. A no-call partition deferred six requests and their
 eighteen newly matching local judgments, preserving whole input clusters and
 the exact request contents. Its protected plan reserves 96 target attempts,
 96 prospective hosted Haiku assessments and 201 new matching-local Haiku
-assessments. Dispatch and both judging controllers are live; funded starts
-must remain distinct from actual responses. Total funded inputs are now 2,714.
+assessments. At that funding snapshot, dispatch and both judging controllers
+were live; funded starts must remain distinct from actual responses. Total
+funded inputs then stood at 2,714.
 
 The tenth slice has prepared the first twenty extra Fable inputs:
 eleven text and nine image inputs, with USD 8.263490 maximum target exposure.
 It reuses already counted requests and keeps the other nineteen extra Fable
 inputs pending. Its inputs match 91 existing local answers, of which 55 need
-new Haiku assessments. Funding is queued behind the ninth target and judging
-terminals; execution and both judging stages remain subject to cumulative capacity.
+new Haiku assessments. Funding completed at 05:22:54 UTC after the ninth target
+and judging terminals; targets and both judging stages subsequently completed.
 Every new hosted output receives its own eligible local and Haiku assessment.
 Only judgments of the identical retained local answers may be reused.
 
@@ -110,6 +112,16 @@ They match sixty retained local answers, of which nineteen need new Haiku
 assessments. Its funding controller is queued behind the eleventh targets and
 both judging stages. The original program's unfunded inputs remain pending.
 
+At 06:09 UTC a thirteenth preparation was queued for 39 extra Opus inputs,
+using the same 26 text and thirteen image inputs as the extra Fable block.
+Its unchanged cached maximum target quote is USD 6.068070. Preparation waits
+for twelfth funding before binding the exact preceding selection; thirteenth
+funding then requires the twelfth target and both judging stages to finish.
+No thirteenth call is funded or issued by this queue. Local-answer reuse must
+be verified from that preceding selection, while every new eligible Opus
+output requires its own local and Haiku assessment. This queue changes neither
+the 6,736 requested assignments nor the cumulative provider ceilings.
+
 The historical RR prefix reader now forwards the optional artifact-checking
 mode to its original-source subprocess. Ninety-three focused rig tests, a
 reversed-fix test and a real two-cell, 200-response prefix check passed.
@@ -128,6 +140,12 @@ from 7,385,885 to 147,085 bytes, with all outcome, contrast and token details
 available through separate paged links. Full-population aggregates and the
 retained report are unchanged. This correction is queued with operational costs
 for post-collection deployment; the currently served page remains unchanged.
+
+A further comparison through the ten completed non-Google slices started at
+05:58 UTC and is joining their output-specific judgments. It makes no target
+or judge calls and does not replace the published eighth comparison until its
+result is complete. The sixth and seventh unfinished Google routes remain
+explicitly excluded from this completed-route snapshot.
 
 Earlier 03:12 observations follow.
 
