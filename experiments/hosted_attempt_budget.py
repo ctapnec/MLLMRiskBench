@@ -297,7 +297,19 @@ class AttemptBudget:
             if path.exists():
                 value, _ = _read_regular(path, label='campaign spending', max_bytes=_MAX_BYTES)
                 if value != document:
-                    raise BudgetError('retained campaign spending configuration differs')
+                    before = {(row['root'], row['plan_sha256']) for row in value['budgets']}
+                    after = {(row['root'], row['plan_sha256']) for row in document['budgets']}
+                    if (value['pool_caps_microusd'] != document['pool_caps_microusd']
+                            or not before < after):
+                        raise BudgetError('campaign extension must retain all ledgers and unchanged ceilings')
+                    history = self.root / f'campaign-spending-before-extension-{len(before)}.json'
+                    if history.exists():
+                        retained, _ = _read_regular(history, label='campaign spending history', max_bytes=_MAX_BYTES)
+                        if retained != value:
+                            raise BudgetError('campaign spending extension history differs')
+                    else:
+                        _write_new(history, value)
+                    _write_atomic(path, document)
             else:
                 _write_new(path, document)
             return result

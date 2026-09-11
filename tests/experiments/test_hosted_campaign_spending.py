@@ -68,6 +68,37 @@ def test_changed_predecessor_spending_invalidates_cached_subtotal(campaign, monk
     assert current.reserved_attempt_count('A') == 0
 
 
+def test_added_campaign_inventory_shares_unchanged_ceiling_and_retains_history(campaign, tmp_path):
+    prior, current, document = campaign
+    current.use_campaign_spending(document)
+    original = (current.root / 'campaign-spending.json').read_bytes()
+    added_root = tmp_path / 'additional-inputs'
+    descriptor = create_budget(added_root, provider_budgets_microusd={'anthropic': 200},
+        protected_haiku_microusd=10, reservation_policy='per_attempt',
+        planned_calls=[{'call_id': 'new', 'provider': 'anthropic', 'pool': 'target', 'bound_microusd': 100}])
+    added = AttemptBudget(added_root, descriptor['sha256'])
+    added.use_precalculated_spending()
+    expanded = copy.deepcopy(document)
+    expanded['budgets'].append({'root': str(added_root), 'plan_sha256': descriptor['sha256']})
+    preserved = {(b.root, name): (b.root/name).read_bytes() for b in (prior, current)
+                 for name in ('plan.json', 'ledger.json')}
+    current.use_campaign_spending(expanded)
+    added.use_campaign_spending(expanded)
+    assert (current.root / 'campaign-spending-before-extension-2.json').read_bytes() == original
+    assert all((root/name).read_bytes() == value for (root,name),value in preserved.items())
+    added.reserve('new', 1, provider='anthropic')
+    added.settle('new', 1, 100)
+    with pytest.raises(BudgetCapacityUnavailable, match='reported spending'):
+        current.reserve('A', 1, provider='anthropic')
+    assert current.reserved_attempt_count('A') == 0
+    current.use_campaign_spending(expanded)  # Restart does not duplicate history or costs.
+    assert current.snapshot()['campaign_spending']['budget_ledgers'] == 3
+    for changed in (document, {**expanded, 'pool_caps_microusd': {'anthropic:target': 101, 'anthropic:judge': 10}}):
+        with pytest.raises(BudgetError, match='retain all ledgers'):
+            current.use_campaign_spending(changed)
+        assert json.loads((current.root/'campaign-spending.json').read_text()) == expanded
+
+
 def test_unknown_and_inflight_are_not_maximum_holds_or_zero_settlements(campaign):
     prior, current, document = campaign
     prior.reserve('A', 1, provider='anthropic')
