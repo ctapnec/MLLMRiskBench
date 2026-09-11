@@ -19,6 +19,7 @@ from experiments.retained_response_judge_execute import (
 
 
 PLAN_SCHEMA = "ura-hosted-attempt-budget-plan/1"
+PER_ATTEMPT_PLAN_SCHEMA = "ura-hosted-attempt-budget-plan/2"
 LEDGER_SCHEMA = "ura-hosted-attempt-budget-ledger/1"
 ADJUSTED_LEDGER_SCHEMA = "ura-hosted-attempt-budget-ledger/2"
 USAGE_BOUNDED_LEDGER_SCHEMA = "ura-hosted-attempt-budget-ledger/3"
@@ -95,7 +96,10 @@ def _reported_usage_bound(value: object) -> int:
     return bound
 
 
-def _plan(provider_budgets: Mapping[str, int], calls: Sequence[Mapping], protected: int) -> dict:
+def _plan(provider_budgets: Mapping[str, int], calls: Sequence[Mapping], protected: int,
+          reservation_policy: str = "first_attempts_upfront") -> dict:
+    if not isinstance(reservation_policy, str) or reservation_policy not in {"first_attempts_upfront", "per_attempt"}:
+        raise BudgetError("unknown paid reservation policy")
     protected = _integer(protected, "protected Haiku allocation")
     if protected > MAX_HAIKU_MICROUSD or not isinstance(provider_budgets, Mapping) or not provider_budgets:
         raise BudgetError("protected Haiku allocation or provider budget inventory is invalid")
@@ -127,9 +131,11 @@ def _plan(provider_budgets: Mapping[str, int], calls: Sequence[Mapping], protect
         bound = _integer(call["bound_microusd"], "per-attempt bound")
         selected[call_id] = {"call_id": call_id, "provider": provider, "pool": pool, "bound_microusd": bound}
         commitments[f"{provider}:{pool}"] += bound
-    if any(commitments[key] > cap for key, cap in caps.items()):
+    if reservation_policy == "first_attempts_upfront" and any(commitments[key] > cap for key, cap in caps.items()):
         raise BudgetError("planned first attempts exceed their dedicated pool cap")
-    return {"schema": PLAN_SCHEMA, "provider_budgets_microusd": dict(sorted(budgets.items())),
+    return {"schema": PLAN_SCHEMA if reservation_policy == "first_attempts_upfront" else PER_ATTEMPT_PLAN_SCHEMA,
+            **({"reservation_policy": reservation_policy} if reservation_policy == "per_attempt" else {}),
+            "provider_budgets_microusd": dict(sorted(budgets.items())),
             "provider_ceilings_microusd": dict(sorted(ceilings.items())),
             "protected_haiku_microusd": protected, "pool_caps_microusd": dict(sorted(caps.items())),
             "planned_calls": [selected[key] for key in sorted(selected)]}
@@ -137,9 +143,10 @@ def _plan(provider_budgets: Mapping[str, int], calls: Sequence[Mapping], protect
 
 def create_budget(root: Path, *, provider_budgets_microusd: Mapping[str, int],
                   planned_calls: Sequence[Mapping],
-                  protected_haiku_microusd: int = MAX_HAIKU_MICROUSD) -> dict:
+                  protected_haiku_microusd: int = MAX_HAIKU_MICROUSD,
+                  reservation_policy: str = "first_attempts_upfront") -> dict:
     """Create one dedicated budget directory. No first call is sent or inferred."""
-    plan = _plan(provider_budgets_microusd, planned_calls, protected_haiku_microusd)
+    plan = _plan(provider_budgets_microusd, planned_calls, protected_haiku_microusd, reservation_policy)
     root = Path(root)
     if not root.is_absolute() or root.resolve() != root or root.exists() or root.is_symlink():
         raise BudgetError("budget needs a fresh canonical absolute directory")
@@ -168,8 +175,10 @@ class AttemptBudget:
         plan, descriptor = _read_regular(self.root / "plan.json", label="attempt budget plan", max_bytes=_MAX_BYTES)
         if descriptor["sha256"] != self.expected_plan_sha256 or not isinstance(plan, dict):
             raise BudgetError("attempt budget plan bytes changed")
+        policy = ("first_attempts_upfront" if plan.get("schema") == PLAN_SCHEMA
+                  else plan.get("reservation_policy"))
         expected = _plan(plan.get("provider_budgets_microusd"), plan.get("planned_calls"),
-                         plan.get("protected_haiku_microusd"))
+                         plan.get("protected_haiku_microusd"), policy)
         if plan != expected:
             raise BudgetError("attempt budget derived caps or commitments changed")
         ledger, _ = _read_regular(self.root / "ledger.json", label="attempt budget ledger", max_bytes=_MAX_BYTES)
@@ -237,7 +246,7 @@ class AttemptBudget:
             bound = allowances.get(call["call_id"], call["bound_microusd"])
             pool = pools[f"{call['provider']}:{call['pool']}"]
             attempts = ledger["attempts"].get(call["call_id"], {})
-            if not attempts:
+            if not attempts and plan.get("reservation_policy") != "per_attempt":
                 pool["unstarted_first_commitments_microusd"] += bound
             for number, attempt in attempts.items():
                 if attempt["state"] == "settled":
@@ -371,7 +380,8 @@ class AttemptBudget:
                 attempts = ledger["attempts"].get(key, {})
                 # Snapshot liability already holds each recorded attempt
                 # and the first attempt of a completely unissued call.
-                remaining = MAX_ATTEMPTS - len(attempts) - int(not attempts)
+                first_held = not attempts and plan.get("reservation_policy") != "per_attempt"
+                remaining = MAX_ATTEMPTS - len(attempts) - int(first_held)
                 extra[f"{call['provider']}:{call['pool']}"] += (
                     remaining * allowances.get(key, call["bound_microusd"]))
         ceilings = {key: min(pool["cap_microusd"], pool["liability_microusd"] + extra[key])
@@ -530,7 +540,9 @@ class AttemptBudget:
             bound = next((change["bound_microusd"] for change in reversed(ledger.get("allowance_adjustments", []))
                           if change["call_id"] == call_id), call["bound_microusd"])
             pool = current["pools"][f"{provider}:{call['pool']}"]
-            if number > 1 and pool["available_retry_margin_microusd"] < bound:
+            if (number > 1 or plan.get("reservation_policy") == "per_attempt") and pool["available_retry_margin_microusd"] < bound:
+                if plan.get("reservation_policy") == "per_attempt":
+                    raise BudgetError("attempt maximum exceeds available provider pool capacity")
                 raise BudgetError("retry cannot consume other planned first attempts or another pool")
             ledger["attempts"].setdefault(call_id, {})[str(number)] = {"state": "reserved", "actual_cost_microusd": None}
             _write_atomic(self.root / "ledger.json", ledger)

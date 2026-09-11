@@ -33,6 +33,100 @@ def reopen(budget):
     return mod.AttemptBudget(budget.root, budget.expected_plan_sha256)
 
 
+def queued_budget(tmp_path):
+    calls = [{"call_id": f"T{number}", "provider": "anthropic", "pool": "target", "bound_microusd": 20}
+             for number in range(10)] + [{"call_id": "J", "provider": "anthropic", "pool": "judge", "bound_microusd": 30}]
+    descriptor = mod.create_budget(tmp_path / "continuous", provider_budgets_microusd={"anthropic": 100},
+        planned_calls=calls, protected_haiku_microusd=33, reservation_policy="per_attempt")
+    return mod.AttemptBudget(tmp_path / "continuous", descriptor["sha256"])
+
+
+def test_continuous_inventory_does_not_need_financial_batches_or_completed_judging(tmp_path):
+    money = queued_budget(tmp_path)
+    initial_plan = (money.root / "plan.json").read_bytes()
+    assert json.loads(initial_plan)["schema"] == mod.PER_ATTEMPT_PLAN_SCHEMA
+    assert money.snapshot()["planned_calls"] == 11
+    for number in range(10):
+        money = reopen(money)
+        money.reserve(f"T{number}", 1, provider="anthropic")
+        money.settle(f"T{number}", 1, 1)
+    assert (money.root / "plan.json").read_bytes() == initial_plan
+    snapshot = money.snapshot()
+    assert snapshot["pools"]["anthropic:target"]["settled_cost_microusd"] == 10
+    assert snapshot["pools"]["anthropic:judge"]["cap_microusd"] == 33
+    assert money.reserved_attempt_count("J") == 0
+    money.reserve("J", 1, provider="anthropic")
+    money.settle("J", 1, 2)
+
+
+def test_continuous_first_attempt_is_reserved_before_spending_and_unknown_stays_held(tmp_path):
+    money = queued_budget(tmp_path)
+    money.reserve("T0", 1, provider="anthropic")
+    money.settle("T0", 1, None)
+    money.reserve("T1", 1, provider="anthropic")
+    before = (money.root / "ledger.json").read_bytes()
+    with pytest.raises(mod.BudgetError):
+        money.reserve("T2", 1, provider="anthropic")
+    assert (money.root / "ledger.json").read_bytes() == before
+    assert money.snapshot()["pools"]["anthropic:target"]["reserved_exposure_microusd"] == 40
+    money.settle("T1", 1, 1)
+    money.reserve("T2", 1, provider="anthropic")
+    assert money.snapshot()["pools"]["anthropic:target"]["liability_microusd"] == 41
+
+
+def test_continuous_forecast_includes_unstarted_first_attempts(tmp_path):
+    money = queued_budget(tmp_path)
+    forecast = money.continuation_liability([])
+    assert forecast["extra_transport_reserve_microusd"]["anthropic:target"] == 10 * 4 * 20
+    assert forecast["extra_transport_reserve_microusd"]["anthropic:judge"] == 4 * 30
+    assert forecast["continuation_liability_microusd"]["anthropic:target"] == 47
+
+
+def test_upfront_budget_contract_is_unchanged_and_still_checks_all_first_attempts(tmp_path):
+    plan = mod._plan({"anthropic": 100, "openai": 100}, slots(), 33)
+    assert plan["schema"] == mod.PLAN_SCHEMA
+    assert "reservation_policy" not in plan
+    with pytest.raises(mod.BudgetError, match="first attempts"):
+        mod.create_budget(tmp_path / "too-much", provider_budgets_microusd={"anthropic": 100},
+            planned_calls=[{"call_id": f"T{n}", "provider": "anthropic", "pool": "target", "bound_microusd": 20}
+                           for n in range(10)], protected_haiku_microusd=33)
+
+
+def _reserve_continuous_slot(root, digest, name, barrier, results):
+    money = mod.AttemptBudget(root, digest)
+    barrier.wait(timeout=15)
+    try:
+        money.reserve(name, 1, provider="anthropic")
+    except mod.BudgetError:
+        results.put("denied")
+    else:
+        results.put("reserved")
+
+
+def test_continuous_concurrent_first_attempts_cannot_overbook_the_pool(tmp_path):
+    money = queued_budget(tmp_path)
+    context = multiprocessing.get_context("spawn")
+    barrier, results = context.Barrier(3), context.Queue()
+    processes = [context.Process(target=_reserve_continuous_slot,
+        args=(money.root, money.expected_plan_sha256, f"T{n}", barrier, results)) for n in range(3)]
+    for process in processes:
+        process.start()
+    for process in processes:
+        process.join(timeout=20)
+        assert process.exitcode == 0
+    assert sorted(results.get(timeout=5) for _ in processes) == ["denied", "reserved", "reserved"]
+    assert reopen(money).snapshot()["pools"]["anthropic:target"]["liability_microusd"] == 40
+
+
+def test_continuous_mode_does_not_reset_attempt_count(tmp_path):
+    money = queued_budget(tmp_path)
+    for number in range(1, 5):
+        money.reserve("T0", number, provider="anthropic")
+        money.settle("T0", number, 0)
+    with pytest.raises(mod.BudgetError, match="four-attempt cap"):
+        reopen(money).reserve("T0", 5, provider="anthropic")
+
+
 def usage_bound(**changes):
     return {"input_tokens": 2, "output_tokens": 1, "input_unit_price": "1.5", "output_unit_price": "2",
             "response_sha256": "a" * 64, "pricing_sha256": "b" * 64, "bound_microusd": 5, **changes}
