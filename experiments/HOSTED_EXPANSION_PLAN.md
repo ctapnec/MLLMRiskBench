@@ -24,6 +24,9 @@ same generation condition and giving the failed answer no paid answer retry.
 It also resumes the interrupted output-specific and matching-local Haiku
 judging. New failures still use the ordinary investigation stop. The recovery
 process is running; resumed paid generation is not yet claimed at this update.
+The 03:41 continuation check subsequently confirms three new DeepSeek starts,
+37 durable outcomes and 38 physical attempts, with the same one missing output.
+Both Haiku queues have resumed; their attempt starts are not final verdicts.
 Explicit OpenAI HTTP 400 `cyber_policy` remains an observed refusal that does
 not stop subsequent inputs. Other HTTP 400 causes are not inferred from it.
 
