@@ -1366,6 +1366,11 @@ class Runner:
                 "reason": str(answer_error)[:500],
                 "transport_attempt_count": observed,
             })
+            provider_reply = _safe_failed_provider_reply(
+                getattr(answer_error, "retained_provider_response", None)
+            )
+            if provider_reply is not None:
+                failures[-1]["provider_response"] = provider_reply
             if call_number <= self.target_answer_retries:
                 if self.call_budget is not None:
                     self.call_budget.reconcile_http_attempts(
@@ -6539,6 +6544,21 @@ def _transport_attempt_count(raw: Any) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise ValueError("transport_attempt_count must be a non-negative integer")
     return value
+
+
+def _safe_failed_provider_reply(value: Any) -> dict[str, Any] | None:
+    """Retain bounded provider reply data, not SDK clients, requests or headers."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        return {"retention_status": "non_json_provider_reply"}
+    try:
+        encoded = json.dumps(value, ensure_ascii=False, allow_nan=False).encode("utf-8")
+    except (TypeError, ValueError):
+        return {"retention_status": "non_json_provider_reply"}
+    if len(encoded) > 2 * 1024 * 1024:
+        return {"retention_status": "provider_reply_exceeds_2_mib", "bytes": len(encoded)}
+    return strict_json_loads(encoded)
 
 
 def _safe_call_audit(value: Any) -> dict[str, Any]:

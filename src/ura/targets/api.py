@@ -1237,6 +1237,49 @@ class AnthropicTarget(BaseTarget):
         )
         latency_ms = (time.perf_counter() - start) * 1000.0
 
+        try:
+            return self._parse_response(resp, dialog, seed=seed, latency_ms=latency_ms,
+                                        transport_attempts=transport_attempts)
+        except AnthropicOutputError as exc:
+            # Retain the paid reply even when its representation cannot yet be
+            # normalized. This is diagnostic data, not a successful model answer.
+            fields = ("id", "type", "role", "model", "stop_reason", "stop_sequence", "content", "usage")
+            if callable(getattr(resp, "model_dump", None)):
+                native = resp.model_dump(mode="json")
+                retained = {key: native.get(key) for key in fields}
+            else:
+                retained = {key: _provider_field(resp, key) for key in fields}
+                content = retained.get("content")
+                if isinstance(content, (list, tuple)):
+                    retained["content"] = [{key: _provider_field(block, key) for key in
+                        ("type", "text", "thinking", "signature", "data")
+                        if _provider_field(block, key) is not None} for block in content]
+                usage = retained.get("usage")
+                retained["usage"] = {key: _provider_field(usage, key) for key in (
+                    "input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")}
+            exc.retained_provider_response = retained
+            audit = {"operation": "generate", "provider": self.provider,
+                     "logical_call_count": 1, "transport_attempt_count": len(transport_attempts),
+                     "error_type": type(exc).__name__, "provider_response_id": retained.get("id"),
+                     "requested_output_tokens": self.max_tokens}
+            usage = retained.get("usage")
+            if not isinstance(usage, Mapping):
+                usage = {}
+            counts = [usage.get(key) for key in ("input_tokens", "output_tokens",
+                                                "cache_read_input_tokens", "cache_creation_input_tokens")]
+            if all(type(value) is int and value >= 0 for value in counts):
+                input_tokens = counts[0] + counts[2] + counts[3]
+                audit.update(reported_input_tokens=input_tokens, reported_output_tokens=counts[1],
+                             reported_total_tokens=input_tokens + counts[1])
+            if retained.get("stop_reason") in {"end_turn", "max_tokens"}:
+                audit["finish_reason"] = "length" if retained["stop_reason"] == "max_tokens" else "stop"
+            exc.call_audit = audit
+            raise
+
+    def _parse_response(self, resp: Any, dialog: list[DialogTurn], *, seed: int | None,
+                        latency_ms: float, transport_attempts: list[dict[str, Any]]) -> Response:
+        """Normalize an already obtained reply; reparsing never makes a call."""
+
         response_id = _required_provider_string(
             resp, "id", error=AnthropicOutputError, location="Anthropic response"
         )
@@ -1254,6 +1297,8 @@ class AnthropicTarget(BaseTarget):
         content = _provider_field(resp, "content")
         if not isinstance(content, (list, tuple)):
             raise AnthropicOutputError("Anthropic response content is not a block list")
+        stop_reason = _provider_field(resp, "stop_reason")
+        provider_refusal = stop_reason == "refusal"
         text_parts: list[str] = []
         thinking_blocks: list[dict[str, Any]] = []
         saw_text = False
@@ -1275,7 +1320,7 @@ class AnthropicTarget(BaseTarget):
                     "Anthropic returned unsupported content block "
                     f"{block_type!r} for this execution condition"
                 )
-            if saw_text:
+            if saw_text and not provider_refusal:
                 raise AnthropicOutputError(
                     "Anthropic returned thinking after visible text"
                 )
@@ -1290,7 +1335,7 @@ class AnthropicTarget(BaseTarget):
                     "type": "redacted_thinking",
                     "data": _provider_field(block, "data"),
                 })
-        if thinking_blocks:
+        if thinking_blocks and not provider_refusal:
             try:
                 thinking_blocks = _validated_anthropic_thinking_blocks(
                     thinking_blocks
@@ -1298,8 +1343,6 @@ class AnthropicTarget(BaseTarget):
             except ValueError as exc:
                 raise AnthropicOutputError(str(exc)) from exc
         text = "".join(text_parts)
-        stop_reason = _provider_field(resp, "stop_reason")
-        provider_refusal = stop_reason == "refusal"
         if provider_refusal:
             # Anthropic documents typed refusals both before and during a
             # generation. Partial text/thinking is not a model answer and must
