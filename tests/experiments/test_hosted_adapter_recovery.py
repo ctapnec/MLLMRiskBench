@@ -199,10 +199,11 @@ def test_complete_program_admits_only_explicit_adapter_recovery_contract(tmp_pat
         subject._validated_jobs(program, budget)
 
 
-def test_mixed_parser_checkpoint_preserves_usable_prefix_and_retries_only_failed_input(tmp_path, monkeypatch):
+@pytest.mark.parametrize('schema', [subject.ADAPTER_PREFIX_RECOVERY_SCHEMA, subject.COHORT_ADAPTER_RECOVERY_SCHEMA], ids=['original', 'cohort'])
+def test_mixed_parser_checkpoint_preserves_usable_prefix_and_retries_only_failed_input(tmp_path, monkeypatch, schema):
     points, _attacker, target, calls, original, program, prior, _checked = _prefix(
         tmp_path, monkeypatch, 'openai', after_usable=True)
-    program['schema'] = subject.ADAPTER_PREFIX_RECOVERY_SCHEMA
+    program['schema'] = schema
     failed = next(iter(program['adapter_recoveries']))
     job = program['jobs'][0]
     config_path = Path(job['argv'][job['argv'].index('--attacker-config') + 1])
