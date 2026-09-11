@@ -80,6 +80,22 @@ def _projection(**changes) -> dict:
     return subject.build_projection(**values)
 
 
+def test_continuous_projection_keeps_full_inventory_without_claiming_upfront_fit():
+    routes = [{**row, "call_cap": 10000} for row in subject.ROUTES]
+    blocked = _projection(route_configuration=routes)
+    assert blocked["status"] == "blocked_budget"
+    queued = _projection(route_configuration=routes, reservation_policy="per_attempt")
+    assert queued["schema"] == subject.CONTINUOUS_SCHEMA
+    assert subject.admissible_projection(queued)
+    assert queued["status"] == "per_attempt_budgeted"
+    assert queued["totals"] == blocked["totals"]
+    assert queued["providers"] == blocked["providers"]
+    assert queued["routes"] == blocked["routes"]
+    assert not subject.admissible_projection({**blocked, "status": "per_attempt_budgeted"})
+    assert not subject.admissible_projection({**queued, "reservation_policy": "first_attempts_upfront"})
+    assert _projection() == _projection(reservation_policy="first_attempts_upfront")
+
+
 def test_projection_binds_expected_and_maximum_token_costs() -> None:
     value = _projection()
 

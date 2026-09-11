@@ -28,6 +28,7 @@ from ura.targets.api import (
 
 SCHEMA = "ura-hosted-campaign-budget-projection/4"
 CONFIGURED_SCHEMA = "ura-hosted-campaign-budget-projection/5"
+CONTINUOUS_SCHEMA = "ura-hosted-campaign-budget-projection/6"
 EXPECTED_INPUT_TOKENS = 4_000
 MAX_INPUT_TOKENS = 4_000
 JUDGE_EXPECTED_INPUT_TOKENS = 8_192
@@ -353,7 +354,10 @@ def build_projection(
     descriptors: Mapping[str, Mapping[str, Any]],
     pricing_as_of: str,
     route_configuration: Sequence[Mapping[str, Any]] | None = None,
+    reservation_policy: str = "first_attempts_upfront",
 ) -> dict[str, Any]:
+    if reservation_policy not in {"first_attempts_upfront", "per_attempt"}:
+        raise ValueError("unknown hosted reservation policy")
     routes = ROUTES if route_configuration is None else route_configuration
     if route_configuration is not None:
         required = {"label", "spec", "provider", "model", "call_cap", "max_output_tokens"}
@@ -478,9 +482,12 @@ def build_projection(
         int(row["maximum_total_output_tokens"]) for row in rows
     )
     value: dict[str, Any] = {
-        "schema": SCHEMA if route_configuration is None else CONFIGURED_SCHEMA,
+        "schema": (CONTINUOUS_SCHEMA if reservation_policy == "per_attempt" else
+                   SCHEMA if route_configuration is None else CONFIGURED_SCHEMA),
+        **({"reservation_policy": "per_attempt"} if reservation_policy == "per_attempt" else {}),
         **({"route_configuration": [dict(route) for route in routes]} if route_configuration is not None else {}),
         "status": (
+            "per_attempt_budgeted" if reservation_policy == "per_attempt" else
             "budget_fit" if all(row["fits_campaign_cap"] for row in providers)
             else "blocked_budget"
         ),
@@ -541,6 +548,15 @@ def build_projection(
     return value
 
 
+def admissible_projection(value: Mapping[str, Any]) -> bool:
+    """A queued inventory is not a promise that every maximum fits upfront."""
+    if value.get("schema") == CONTINUOUS_SCHEMA:
+        return (value.get("reservation_policy") == "per_attempt"
+                and value.get("status") == "per_attempt_budgeted")
+    return (value.get("schema") in {SCHEMA, CONFIGURED_SCHEMA}
+            and "reservation_policy" not in value and value.get("status") == "budget_fit")
+
+
 def _write_new(path_value: Path, value: object) -> Path:
     path = Path(path_value)
     if path.exists() or path.is_symlink():
@@ -565,6 +581,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--pricing-as-of", required=True)
     parser.add_argument("--route-configuration", type=Path)
     parser.add_argument("--route-configuration-sha256")
+    parser.add_argument("--reservation-policy", choices=("first_attempts_upfront", "per_attempt"),
+                        default="first_attempts_upfront",
+                        help="Queue the full inventory and reserve money before each attempt, or reserve all first attempts upfront")
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)
     api_config, api_descriptor = load_bound_json(
@@ -590,9 +609,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         },
         pricing_as_of=args.pricing_as_of,
         route_configuration=routes,
+        reservation_policy=args.reservation_policy,
     )
     print(_write_new(args.out, projection))
-    return 0 if projection["status"] == "budget_fit" else 2
+    return 0 if admissible_projection(projection) else 2
 
 
 if __name__ == "__main__":

@@ -21,8 +21,9 @@ from typing import Any, Callable
 from urllib.parse import unquote_to_bytes
 
 from experiments.hosted_campaign_budget import (
-    SCHEMA as BUDGET_SCHEMA,
-    CONFIGURED_SCHEMA as CONFIGURED_BUDGET_SCHEMA,
+    SCHEMA as BUDGET_SCHEMA,  # noqa: F401 - retained public compatibility alias
+    CONFIGURED_SCHEMA as CONFIGURED_BUDGET_SCHEMA,  # noqa: F401
+    admissible_projection,
     _sha,
     _write_new,
     load_bound_json,
@@ -337,7 +338,7 @@ def build_plan(*, candidates: list[dict], budget: dict, budget_descriptor: dict,
                call_cap: int | None = None) -> dict:
     _check_candidate_identities(candidates, label="retained input identity")
     material = {key: value for key, value in budget.items() if key != "projection_id"}
-    if (budget.get("schema") not in {BUDGET_SCHEMA, CONFIGURED_BUDGET_SCHEMA} or budget.get("status") != "budget_fit"
+    if (not admissible_projection(budget)
             or budget.get("projection_id") != "hosted-budget-" + _sha(material)[:24]):
         raise ValueError("hosted selection requires an unchanged fitting budget projection")
     if budget["sources"]["api_config"] != api_descriptor:

@@ -152,8 +152,9 @@ def _validated_projection(
         },
         pricing_as_of=request["pricing_as_of"],
         route_configuration=values["budget_projection"].get("route_configuration"),
+        reservation_policy=values["budget_projection"].get("reservation_policy", "first_attempts_upfront"),
     )
-    if values["budget_projection"] != expected or expected["status"] != "budget_fit":
+    if values["budget_projection"] != expected or not projection.admissible_projection(expected):
         raise ValueError("hosted budget projection is stale or no longer fits")
     return expected
 
@@ -388,6 +389,7 @@ def prepare_campaign(
             request["sources"][name], label=name.replace("_", " ")
         )
     budget_projection = _validated_projection(request=request, sources=sources, values=values)
+    reservation_policy = budget_projection.get("reservation_policy", "first_attempts_upfront")
     routes = _replay_inventory(request["routes"], distinct=distinct, cohort=cohort)
     funding = (executor._additional_funding(sources["additional_funding"],
                 projection._provider_budgets(values["budgets"])) if distinct else None)
@@ -406,6 +408,7 @@ def prepare_campaign(
         if (descriptor["sha256"] != shared_budget.expected_plan_sha256
             or retained_plan["provider_budgets_microusd"] != allocated
             or retained_plan["protected_haiku_microusd"] != protected
+            or retained_plan.get("reservation_policy", "first_attempts_upfront") != reservation_policy
             or (shared_budget.root / "paid-circuit.json").exists()):
             raise ValueError("supplied shared budget differs from the declared available allocation")
         shared_descriptor = {"path": str(plan_path), **{key: descriptor[key] for key in ("sha256", "bytes")}}
@@ -643,7 +646,8 @@ def prepare_campaign(
     (root / "programs").mkdir(mode=0o700)
     if shared_budget is None:
         budget_descriptor = create_budget(root / "budget", provider_budgets_microusd=allocated,
-                                          planned_calls=slots, protected_haiku_microusd=protected)
+                                          planned_calls=slots, protected_haiku_microusd=protected,
+                                          reservation_policy=reservation_policy)
         budget = AttemptBudget(root / "budget", budget_descriptor["sha256"])
     else:
         budget = shared_budget

@@ -651,6 +651,7 @@ def _program(
     extra_points=0,
     source_capture=None,
     scoring_probes=False,
+    reservation_policy="first_attempts_upfront",
 ):
     from test_hosted_campaign_budget import _api_config, _pricing, _budgets
     from experiments import hosted_campaign_budget as money, hosted_retained_inputs as materializer
@@ -714,7 +715,8 @@ def _program(
         return {"file": Path(raw["path"]).name, "sha256": raw["sha256"], "bytes": raw["bytes"]}
     budget_projection = money.build_projection(api_config=api, pricing=pricing, budgets=_budgets(),
         descriptors={"api_config": portable(sources["api_config"]), "pricing_config": portable(sources["pricing"]),
-                     "budgets": portable(sources["budgets"])}, pricing_as_of="2026-09-03")
+                     "budgets": portable(sources["budgets"])}, pricing_as_of="2026-09-03",
+                     reservation_policy=reservation_policy)
     sources["budget_projection"] = save("projection.json", budget_projection)
     inventory = save("historical-inventory.json", {"fixture": "not a real complete local campaign"})
     monkeypatch.setattr(subject, "_validated_local_cells", lambda program: ([cell], inventory))

@@ -179,6 +179,26 @@ def _distinct_request(tmp_path, monkeypatch, *, cohort=False, **program_options)
     return request, old_plan, old_ledger
 
 
+def test_continuous_preparation_and_execution_share_per_attempt_policy(tmp_path, monkeypatch):
+    request, _, _ = _distinct_request(tmp_path, monkeypatch, cohort=True, reservation_policy="per_attempt")
+    old_bytes = (tmp_path / "program-money/ledger.json").read_bytes()
+    receipt = subject.prepare_campaign(request=request, request_descriptor={},
+        out_root=tmp_path / "continuous", allow_network_counts=False)
+    plan = json.loads(Path(receipt["budget"]["path"]).read_text())
+    assert plan["reservation_policy"] == "per_attempt"
+    budget = subject.AttemptBudget(tmp_path / "continuous/budget", receipt["budget"]["sha256"])
+    assert all(pool["liability_microusd"] == 0 for pool in budget.snapshot()["pools"].values())
+    program = json.loads(Path(receipt["programs"][0]["path"]).read_text())
+    assert len(subject.executor._validated_jobs(program, budget)) >= 2
+    assert (tmp_path / "program-money/ledger.json").read_bytes() == old_bytes
+    wrong = subject.create_budget(tmp_path / "wrong-policy",
+        provider_budgets_microusd=plan["provider_budgets_microusd"],
+        protected_haiku_microusd=plan["protected_haiku_microusd"], planned_calls=plan["planned_calls"])
+    program["budget_plan_sha256"] = wrong["sha256"]
+    with pytest.raises(ValueError, match="reservation policy"):
+        subject.executor._validated_jobs(program, subject.AttemptBudget(tmp_path / "wrong-policy", wrong["sha256"]))
+
+
 def test_distinct_preparation_funds_all_local_answers_and_preserves_old_accounting(tmp_path, monkeypatch):
     request, old_plan, old_ledger = _distinct_request(tmp_path, monkeypatch)
     old_bytes = {name: (tmp_path / "program-money" / name).read_bytes() for name in ["plan.json", "ledger.json"]}

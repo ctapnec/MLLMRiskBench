@@ -888,10 +888,13 @@ def _validated_jobs(program: dict, budget: AttemptBudget, *, local_context: tupl
         descriptors={"api_config": descriptors["api_config"], "pricing_config": descriptors["pricing"],
                      "budgets": descriptors["budgets"]}, pricing_as_of=program["pricing_as_of"],
         route_configuration=values["budget_projection"].get("route_configuration"),
+        reservation_policy=values["budget_projection"].get("reservation_policy", "first_attempts_upfront"),
     )
-    if values["budget_projection"] != expected_projection or expected_projection["status"] != "budget_fit":
+    if values["budget_projection"] != expected_projection or not projection.admissible_projection(expected_projection):
         raise ValueError("hosted program budget or effective-dated pricing projection changed")
     budget_plan, _descriptor = _read_regular(budget.root / "plan.json", label="funded program budget", max_bytes=64 * 1024 * 1024)
+    if budget_plan.get("reservation_policy", "first_attempts_upfront") != expected_projection.get("reservation_policy", "first_attempts_upfront"):
+        raise ValueError("hosted reservation policy differs from its selected inventory")
     configured = projection._provider_budgets(values["budgets"])
     distinct = program["schema"] in {DISTINCT_INPUT_SCHEMA, COHORT_INPUT_SCHEMA}
     if distinct:
@@ -910,7 +913,9 @@ def _validated_jobs(program: dict, budget: AttemptBudget, *, local_context: tupl
         key: row["configured_budget_microusd"] for key, row in configured.items()
     }:
         raise ValueError("shared funding differs from the bound current provider budgets")
-    if sum(row["pool"] == "judge" for row in budget_plan["planned_calls"]) > projection.JUDGE_CALL_CAP:
+    judge_cap = (expected_projection["judge"]["paid_call_cap"]
+                 if expected_projection.get("reservation_policy") == "per_attempt" else projection.JUDGE_CALL_CAP)
+    if sum(row["pool"] == "judge" for row in budget_plan["planned_calls"]) > judge_cap:
         raise ValueError("funded Haiku population exceeds its complete campaign call cap")
     routes = [row for row in expected_projection["routes"] if row["target_spec"] == program["target"]]
     if (len(routes) != 1 or routes[0]["provider"] != program["provider"]
