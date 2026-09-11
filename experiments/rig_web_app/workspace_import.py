@@ -174,3 +174,76 @@ def publish_hosted_program(db, campaign_id: str, *, program: dict, selections: l
     db.publish_workspace_results(campaign_id, **{key: rows[key] for key in ("assignments", "responses", "judgments")})
     db.publish_workspace_costs(campaign_id, rows["costs"])
     return {key: len(value) for key, value in rows.items()}
+
+
+def local_run_rows(source: dict, selections: dict[str, dict]) -> dict:
+    """Index an explicitly selected native local run, including missing outputs.
+
+    Selection keys are native attempt IDs. Historical and corrected runs keep
+    their own assignments; this function never picks a newer or better answer.
+    """
+    model, run_id = source["local_model"], source["run_id"]
+    if not model.startswith(("vllm:", "ollama:")):
+        raise ValueError("Local publication requires a local target identity")
+    artifacts = {key: Path(value["path"]) for key, value in source["artifacts"].items()}
+    manifest = json.loads(artifacts["manifest"].read_text(encoding="utf-8"))
+    run = manifest["config"]["run"]
+    attempts = {row["id"]: row for _, row in _jsonl(artifacts["attempts"])}
+    if not selections.keys() <= attempts.keys():
+        raise ValueError("Local selection has no native attempt")
+    responses = {}
+    for number, row in _jsonl(artifacts["responses"]):
+        if row["run_id"] != run_id or row["target"] != model or row["attempt_id"] not in attempts:
+            raise ValueError("Native local response ownership differs")
+        if row["attempt_id"] in responses:
+            raise ValueError("Duplicate native local output")
+        responses[row["attempt_id"]] = (row, number)
+    settings = {key: run.get(key) for key in (
+        "model_spec", "local_identity", "dtype", "resolved_quantization", "target_answer_retries",
+        "project_revision", "engine_runtime")}
+    condition = "local-generation-" + hashlib.sha256(json.dumps(
+        settings, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:24]
+    evidence = {"measured_run": "measured", "diagnostic_canary": "diagnostic",
+                "attestation_probe": "diagnostic", "preflight": "preflight"}.get(run.get("execution_purpose"), "unknown")
+    assignments, outputs, judgments = [], [], []
+    for attempt_id, choice in selections.items():
+        attempt = attempts[attempt_id]
+        if attempt["run_id"] != run_id or attempt["target"] != model or choice["corpus"] != run["corpus"]:
+            raise ValueError("Native local attempt ownership differs")
+        identity = run_id + ":" + attempt_id
+        response_id = identity if attempt_id in responses else None
+        assignments.append(dict(assignment_id="local-"+identity, model=model,
+            input_id=choice["input_identity_sha256"], condition_id=condition, modality=choice["modality"],
+            framework=choice["framework"], corpus=choice["corpus"], response_id=response_id, evidence_class=evidence))
+        if response_id is None:
+            continue
+        response, number = responses[attempt_id]
+        raw, tokens = response.get("raw") or {}, response.get("tokens") or {}
+        visible = any(isinstance(t.get("content"), str) and t["content"].strip() for t in response.get("output_turns", []))
+        failed = raw.get("model_stability_status") == "failed_output" or raw.get("target_input_status") == "incompatible"
+        generation = raw.get("generation") or {}
+        outputs.append(dict(response_id=identity, assignment_id="local-"+identity,
+            condition_id=condition, outcome="missing" if failed or not visible else "usable",
+            truncated=raw.get("output_truncated"), source_ref=str(artifacts["responses"])+":"+str(number),
+            context_tokens=generation.get("context_tokens"), output_allowance=generation.get("max_tokens"),
+            input_tokens=tokens.get("input"), output_tokens=tokens.get("output"), reasoning_tokens=tokens.get("reasoning"),
+            finish_reason=raw.get("finish_reason", raw.get("stop_reason")),
+            missing_category=raw.get("model_stability_category") if failed or not visible else None))
+    judge_settings = {key: run.get(key) for key in (
+        "judge_names", "judge_model", "guardrail_model", "guardrail_revision", "judge_local_identity", "approximate_common_metrics")}
+    judge_id = "local-cascade-" + hashlib.sha256(json.dumps(
+        judge_settings, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:24]
+    seen = set()
+    for number, row in _jsonl(artifacts["judgments"]):
+        attempt_id = row["attempt_id"]
+        if attempt_id not in selections:
+            continue
+        if row["run_id"] != run_id or attempt_id not in responses or attempt_id in seen:
+            raise ValueError("Local judgment has no unique retained output")
+        seen.add(attempt_id)
+        raw = row.get("raw") or {}
+        missing = raw.get("policy_evaluation_status") in {"model_nonresponse", "target_input_incompatible"}
+        judgments.append(dict(response_id=run_id+":"+attempt_id, judge_id=judge_id,
+            status="missing" if missing else "valid", label=None if missing else row["label"],
+            source_ref=str(artifacts["judgments"])+":"+str(number)))
+    return dict(assignments=assignments, responses=outputs, judgments=judgments)
