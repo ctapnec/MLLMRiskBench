@@ -479,7 +479,8 @@ def test_usable_truncated_response_never_opens_paid_circuit(tmp_path, purpose):
     assert not (admission.budget.root / "paid-circuit.json").exists()
 
 
-def test_restored_missing_paid_output_can_finish_judging_without_reopening_target_calls(tmp_path):
+@pytest.mark.parametrize("execution_stage", ["all", "judgments"])
+def test_restored_missing_paid_output_can_finish_judging_without_reopening_target_calls(tmp_path, execution_stage):
     points, attacker, target, calls, admission = _setup(tmp_path, outputs=["", "must never run"])
     checkpoint = tmp_path / "responses.jsonl"
     with pytest.raises(RuntimeError, match="durable response"):
@@ -496,7 +497,8 @@ def test_restored_missing_paid_output_can_finish_judging_without_reopening_targe
     attempt = Attempt.model_validate(first["attempt"])
     response = Response.model_validate(first["response"])
     resumed = _runner(attacker, target, admission)
-    resumed.execution_stage = "judgments"
+    resumed.execution_stage = execution_stage
+    resumed.stop_on_failed_output = True
     restored = resumed._execute_or_restore(points[0], attempt, response.run_id, None, None,
                                           response_record=first)
     assert restored == response

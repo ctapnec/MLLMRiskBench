@@ -176,6 +176,25 @@ def publish_hosted_program(db, campaign_id: str, *, program: dict, selections: l
     return {key: len(value) for key, value in rows.items()}
 
 
+def _local_artifact_paths(source: dict) -> tuple[dict, dict | None]:
+    artifacts = {key: Path(value["path"]) for key, value in source["artifacts"].items()}
+    if "scoring_completion" not in artifacts:
+        return artifacts, None
+    completion = json.loads(artifacts["scoring_completion"].read_text(encoding="utf-8"))
+    if completion["generation_run_id"] != source["run_id"]:
+        raise ValueError("Separate scoring belongs to another generation")
+    # These are explicitly retained source paths, not a directory scan or a
+    # reconstruction of the original corpus. Final exports can be partial.
+    for role, suffix in (("manifest", ".manifest.json"), ("attempts", ".attempts.jsonl"),
+                         ("responses", ".responses.jsonl"), ("judgments", ".jsonl"),
+                         ("response_checkpoint", ".responses.checkpoint.jsonl")):
+        matches = [path for path in artifacts.values() if path.name.endswith(source["run_id"] + suffix)]
+        if len(matches) != 1:
+            raise ValueError(f"Separate scoring needs one retained {role} source")
+        artifacts[role] = matches[0]
+    return artifacts, completion
+
+
 def local_run_rows(source: dict, selections: dict[str, dict]) -> dict:
     """Index an explicitly selected native local run, including missing outputs.
 
@@ -185,7 +204,7 @@ def local_run_rows(source: dict, selections: dict[str, dict]) -> dict:
     model, run_id = source["local_model"], source["run_id"]
     if not model.startswith(("vllm:", "ollama:")):
         raise ValueError("Local publication requires a local target identity")
-    artifacts = {key: Path(value["path"]) for key, value in source["artifacts"].items()}
+    artifacts, completion = _local_artifact_paths(source)
     manifest = json.loads(artifacts["manifest"].read_text(encoding="utf-8"))
     run = manifest["config"]["run"]
     attempts = {row["id"]: row for _, row in _jsonl(artifacts["attempts"])}
@@ -197,7 +216,18 @@ def local_run_rows(source: dict, selections: dict[str, dict]) -> dict:
             raise ValueError("Native local response ownership differs")
         if row["attempt_id"] in responses:
             raise ValueError("Duplicate native local output")
-        responses[row["attempt_id"]] = (row, number)
+        responses[row["attempt_id"]] = (row, f"{artifacts['responses']}:{number}")
+    if completion is not None:
+        for number, record in _jsonl(artifacts["response_checkpoint"]):
+            row, attempt = record["response"], record["attempt"]
+            key = row["attempt_id"]
+            if (row["run_id"] != run_id or row["target"] != model
+                    or (attempt["run_id"], attempt["id"]) != (run_id, key)
+                    or attempt != attempts.get(key)):
+                raise ValueError("Native local response checkpoint ownership differs")
+            if key in responses and responses[key][0] != row:
+                raise ValueError("Local final output differs from its checkpoint")
+            responses.setdefault(key, (row, f"{artifacts['response_checkpoint']}:{number}"))
     settings = {key: run.get(key) for key in (
         "model_spec", "local_identity", "dtype", "resolved_quantization", "target_answer_retries",
         "project_revision", "engine_runtime")}
@@ -217,14 +247,14 @@ def local_run_rows(source: dict, selections: dict[str, dict]) -> dict:
             framework=choice["framework"], corpus=choice["corpus"], response_id=response_id, evidence_class=evidence))
         if response_id is None:
             continue
-        response, number = responses[attempt_id]
+        response, reference = responses[attempt_id]
         raw, tokens = response.get("raw") or {}, response.get("tokens") or {}
         visible = any(isinstance(t.get("content"), str) and t["content"].strip() for t in response.get("output_turns", []))
         failed = raw.get("model_stability_status") == "failed_output" or raw.get("target_input_status") == "incompatible"
         generation = raw.get("generation") or {}
         outputs.append(dict(response_id=identity, assignment_id="local-"+identity,
             condition_id=condition, outcome="missing" if failed or not visible else "usable",
-            truncated=raw.get("output_truncated"), source_ref=str(artifacts["responses"])+":"+str(number),
+            truncated=raw.get("output_truncated"), source_ref=reference,
             context_tokens=generation.get("context_tokens"), output_allowance=generation.get("max_tokens"),
             input_tokens=tokens.get("input"), output_tokens=tokens.get("output"), reasoning_tokens=tokens.get("reasoning"),
             finish_reason=raw.get("finish_reason", raw.get("stop_reason")),
@@ -233,8 +263,26 @@ def local_run_rows(source: dict, selections: dict[str, dict]) -> dict:
         "judge_names", "judge_model", "guardrail_model", "guardrail_revision", "judge_local_identity", "approximate_common_metrics")}
     judge_id = "local-cascade-" + hashlib.sha256(json.dumps(
         judge_settings, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:24]
-    seen = set()
-    for number, row in _jsonl(artifacts["judgments"]):
+    records = [(row, f"{artifacts['judgments']}:{number}", judge_id)
+               for number, row in _jsonl(artifacts["judgments"])]
+    if completion is not None:
+        recovered_judge = judge_id + "-" + completion["judging_revision"]["expected_commit"][:12]
+        checkpoint = completion.get("checkpoint")
+        if checkpoint is not None:
+            for number, record in _jsonl(Path(checkpoint["path"])):
+                response = record["response"]
+                if responses.get(response["attempt_id"], (None,))[0] != response:
+                    raise ValueError("Separate judgment changed its retained output")
+                records.append((record["judgment"], f"{checkpoint['path']}:{number}", recovered_judge))
+        for descriptor in completion.get("evaluator_failures", []):
+            row = json.loads(Path(descriptor["path"]).read_text(encoding="utf-8"))
+            if row["generation_run_id"] != run_id or row["attempt_id"] not in responses:
+                raise ValueError("Invalid evaluator record has no retained output")
+            if row["attempt_id"] in selections:
+                judgments.append(dict(response_id=run_id+":"+row["attempt_id"], judge_id=recovered_judge,
+                    status="invalid", label=None, source_ref=descriptor["path"]))
+    seen = {row["response_id"].removeprefix(run_id+":") for row in judgments}
+    for row, reference, actual_judge in records:
         attempt_id = row["attempt_id"]
         if attempt_id not in selections:
             continue
@@ -243,7 +291,7 @@ def local_run_rows(source: dict, selections: dict[str, dict]) -> dict:
         seen.add(attempt_id)
         raw = row.get("raw") or {}
         missing = raw.get("policy_evaluation_status") in {"model_nonresponse", "target_input_incompatible"}
-        judgments.append(dict(response_id=run_id+":"+attempt_id, judge_id=judge_id,
+        judgments.append(dict(response_id=run_id+":"+attempt_id, judge_id=actual_judge,
             status="missing" if missing else "valid", label=None if missing else row["label"],
-            source_ref=str(artifacts["judgments"])+":"+str(number)))
+            source_ref=reference))
     return dict(assignments=assignments, responses=outputs, judgments=judgments)

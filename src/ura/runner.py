@@ -973,6 +973,8 @@ class Runner:
             self.call_budget.raise_if_overrun()
         if (
             self.stop_on_failed_output
+            and record is None
+            and response_record is None
             and response.raw.get("model_stability_status") == "failed_output"
         ):
             raise RetainedFailedOutputStop(response)
