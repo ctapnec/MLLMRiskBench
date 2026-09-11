@@ -59,6 +59,35 @@ def test_continuous_inventory_does_not_need_financial_batches_or_completed_judgi
     money.settle("J", 1, 2)
 
 
+def test_immutable_slots_reuse_plan_but_reservations_read_live_ledger(tmp_path, monkeypatch):
+    from ura import validation_cache
+
+    now = validation_cache.time.time_ns()
+    monkeypatch.setattr(validation_cache.time, "time_ns", lambda: now + 2_000_000_000)
+    money = queued_budget(tmp_path)
+    reads = []
+    original = mod._read_regular
+    def counted(path, **kwargs):
+        reads.append(path.name)
+        return original(path, **kwargs)
+    monkeypatch.setattr(mod, "_read_regular", counted)
+    for index in range(10):
+        slot = money.call("T" + str(index))
+        slot["bound_microusd"] = 0
+    assert money.call("T0")["bound_microusd"] == 20
+    assert reads == []
+    money.reserve("T0", 1, provider="anthropic")
+    assert "ledger.json" in reads and "plan.json" not in reads
+    money.settle("T0", 1, None)
+    money.reserve("T1", 1, provider="anthropic")
+    with pytest.raises(mod.BudgetError):
+        money.reserve("T2", 1, provider="anthropic")
+    path = money.root / "plan.json"
+    path.write_text(path.read_text() + " ")
+    with pytest.raises(mod.BudgetError, match="plan bytes changed"):
+        money.call("T0")
+
+
 def test_continuous_first_attempt_is_reserved_before_spending_and_unknown_stays_held(tmp_path):
     money = queued_budget(tmp_path)
     money.reserve("T0", 1, provider="anthropic")

@@ -12,6 +12,7 @@ from collections.abc import Mapping, Sequence
 from contextlib import ExitStack, contextmanager
 from decimal import Decimal, InvalidOperation, ROUND_CEILING
 from pathlib import Path
+from ura.validation_cache import ValidationCache
 
 from experiments.retained_response_judge_execute import (
     _exclusive_lock, _read_regular, _write_atomic, _write_new,
@@ -169,9 +170,14 @@ class AttemptBudget:
                 or any(char not in "0123456789abcdef" for char in expected_plan_sha256)):
             raise BudgetError("budget requires its exact immutable plan SHA256")
         self.expected_plan_sha256 = expected_plan_sha256
+        self._immutable_plan_cache = ValidationCache(entries=1, copy_results=False)
         self.snapshot()  # Refuse missing/partial or incompatible retained state.
 
-    def _load(self) -> tuple[dict, dict, dict]:
+    def _load_plan(self) -> tuple[dict, dict]:
+        return self._immutable_plan_cache.get(self.expected_plan_sha256, self._read_plan,
+                                             paths=(self.root / "plan.json",))
+
+    def _read_plan(self) -> tuple[dict, dict]:
         plan, descriptor = _read_regular(self.root / "plan.json", label="attempt budget plan", max_bytes=_MAX_BYTES)
         if descriptor["sha256"] != self.expected_plan_sha256 or not isinstance(plan, dict):
             raise BudgetError("attempt budget plan bytes changed")
@@ -181,6 +187,10 @@ class AttemptBudget:
                          plan.get("protected_haiku_microusd"), policy)
         if plan != expected:
             raise BudgetError("attempt budget derived caps or commitments changed")
+        return plan, {call["call_id"]: call for call in plan["planned_calls"]}
+
+    def _load(self) -> tuple[dict, dict, dict]:
+        plan, calls = self._load_plan()
         ledger, _ = _read_regular(self.root / "ledger.json", label="attempt budget ledger", max_bytes=_MAX_BYTES)
         usage_bounded = isinstance(ledger, dict) and ledger.get("schema") == USAGE_BOUNDED_LEDGER_SCHEMA
         adjusted = isinstance(ledger, dict) and ledger.get("schema") in {ADJUSTED_LEDGER_SCHEMA, USAGE_BOUNDED_LEDGER_SCHEMA}
@@ -190,7 +200,6 @@ class AttemptBudget:
                 or ledger["plan_sha256"] != self.expected_plan_sha256
                 or not isinstance(ledger["attempts"], dict)):
             raise BudgetError("attempt budget ledger binding differs")
-        calls = {call["call_id"]: call for call in plan["planned_calls"]}
         if adjusted:
             changes = ledger["allowance_adjustments"]
             if not isinstance(changes, list) or (not changes and not usage_bounded):
@@ -449,7 +458,7 @@ class AttemptBudget:
         """The callback checks the provider/request allowance against this slot."""
         call_id = _name(call_id, "call ID")
         with _budget_lock(self.root):
-            _plan_value, _ledger, calls = self._load()
+            _plan_value, calls = self._load_plan()
             if call_id not in calls:
                 raise BudgetError("call ID is outside the immutable funded plan")
             return copy.deepcopy(calls[call_id])
