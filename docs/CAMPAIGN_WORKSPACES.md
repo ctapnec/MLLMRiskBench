@@ -1,24 +1,42 @@
 # Campaign workspaces and the reproducible UI workflow
 
-Status: ownership foundation implemented, complete workflow still in progress,
-11 September 2026. Source bd036ca adds SQLite campaign metadata and explicit
-activity membership, a campaign selector linked to the existing Build form,
-review-bound launch ownership and an Activity page. Source acefbe5 corrects an
-ownership-test fixture. Focused rig verification passed all 32 selected checks
-(31 initially, then only the corrected failed check), lint and two reversed-fix
-checks. Evidence: ui-workspaces-bd036ca and ui-workspaces-acefbe5.
+Status: Build ownership, compact result/judgment indexes, model coverage views
+and figure/table exports implemented; complete workflow still in progress,
+11 September 2026. These changes are not deployed yet. Historical import,
+automatic result publication, cost attribution, matched comparison figures and
+the remaining execution actions below are unfinished.
 
-These changes are not deployed yet. Retained-data import, model-level results,
-judging/cost indexes and the remaining execution actions below are not claimed
-implemented. Empty workspace result sections explicitly report unknown data,
-not zero outcomes. Target collection continues independently. Browser visual
-verification is pending; no browser connection was available for this check.
+Focused rig verification covers 32 ownership checks, six result-index checks,
+seven initial chart checks and two changed export/navigation checks. Four real
+headless-browser checks also passed: repeated export clicks produce one request,
+and success, HTTP error, network error and timeout all release the loading
+overlay. These reused the rig's isolated browser tools. Interactive inspection
+of the deployed campaign pages remains pending. Proofs: ui-workspaces-bd036ca,
+ui-workspaces-acefbe5, workspace-results-d83bc77, workspace-charts-c365197 and
+campaign-spend-ui-020ef86. Removed-fix tests detect ownership loss, implicit
+newest-response selection, input-level verdict reuse and a wrong denominator.
+
+The real-data index proof uses one diagnostic Sol response in an isolated
+console database. It is not a full campaign import or measured publication.
+Unindexed costs and results explicitly remain unknown, not zero.
 
 Build remains the single configuration and launch interface. Campaign creation
 only names the workspace and target category, then returns to Build. There is
 no second pipeline builder in Campaigns. Existing typed Run tools additionally
 carry explicit campaign selection. Neither selection changes Runner arguments
 or invalidates an otherwise identical no-call projection.
+
+Implemented creation flow: **Build -> New campaign -> name and Local/API/Mixed
+-> Create and open Build**. Configure the existing Build controls, then
+**Compose & review** and launch. The review shows the parent campaign. Creating
+the parent makes no target or judge calls. Select the same campaign for later
+collection, recovery and judging operations; running jobs do not change owners
+when another browser tab changes its selection.
+
+Stats is the primary results navigation item. Once campaign parents exist,
+`/stats` opens their landing page; **Standalone jobs and earlier report
+publications** preserves access to the legacy view. There is no extra primary
+Campaigns tab competing with Build or Stats.
 
 ## The user-facing result
 
@@ -108,6 +126,19 @@ over-refusal. Comparisons must not silently mix full local coverage with a
 smaller hosted subset, diagnostic probes with measured rows, or source-native
 metrics with approximate common metrics.
 
+The implemented coverage figure is a shared-scale stacked bar per model and
+evidence class, with visible counts. Usable, policy, missing, retry-pending and
+not-yet-retained outcomes are exclusive categories. Truncation is shown
+separately: its rate uses terminal outcomes with a known truncation flag, not
+all assigned inputs. Missing-output rates use terminal retained outcomes.
+Unknown denominators do not become zero-percent rates. Diagnostic, preflight,
+measured and unclassified evidence remain distinct.
+
+Labels remain full-size text on narrow screens. Vector exports and the CSV
+contain the displayed model page and identify that scope explicitly; they do
+not imply a full-campaign or matched security comparison. Shared-scale bars and
+aligned quality plots support accurate comparison without perspective effects.
+
 ### Judging, costs and activity
 
 Judging shows required, completed, invalid, missing and pending verdicts for the
@@ -135,8 +166,9 @@ rewriting that process as successful.
 `rig_web_app/storage.py` uses SQLite in `<state-dir>/console.db`. Before the
 ownership change it stored `jobs`, `runs`, `usage` and `reports`, plus schema
 metadata. Its legacy Stats campaign query still combines terminal runs with
-active run-kind jobs. Schema version 5 additionally stores `campaigns` and
-`campaign_members`; these survive usage/report reindexing. The old query and
+active run-kind jobs. Schema version 7 additionally stores `campaigns`,
+`campaign_members`, assignments, response references and output-specific
+judgments; these survive usage/report reindexing. The old query and
 deep links remain available during implementation of the grouped results view.
 
 External controllers, measured jobs and analysis publications already have
@@ -200,7 +232,7 @@ input completions. Report figures retain their scientific selection rules.
 The following labels specify the new controls to implement, not controls that
 have already been verified in the deployed UI.
 
-1. Open **Campaigns -> Import existing work**. Choose **Local campaign** and
+1. Open **Stats -> Import existing work**. Choose **Local campaign** and
    select the retained local inventory, original runs, recovery relationships,
    historical/RR analyses and local-output judging publications. Import from
    these known sources, not from a recursive scan of the whole storage disk.
@@ -247,7 +279,8 @@ Do not infer background worker ownership from a browser-wide mutable selection.
 
 ### Local
 
-1. **Campaigns -> New -> Local**: name it and select its results location.
+1. **Build -> New campaign -> Local**: name it and open Build; choose its
+   output location using Build's existing output control.
 2. **Build -> Runtimes**: reuse installed framework environments and models.
    Run installation only for missing or broken dependencies. Use **Run ->
    Targets and rosters -> local_model_readiness** for a missing or changed local

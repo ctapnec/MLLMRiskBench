@@ -48,6 +48,47 @@ required after target collection.
 
 ## Continuous execution
 
+11:04 UTC observation: 4,572 of 6,669 selected assignments attempted, with
+4,560 usable outcomes. The thirty-minute increase is 258 attempts and 257 usable
+outcomes. There are 2,097 unstarted assignments and the separate 67-input
+selection gap. Local/hosted Haiku totals remain 2,217/1,508; recorded Haiku
+cost remains USD 5.308997. No provider credit-exhaustion response was observed.
+
+The operator reaffirmed one precomputed campaign budget, without partial batch
+allowances. The old continuation cap still reflected predecessor maximum-cost
+holds and stopped OpenAI before HTTP despite remaining campaign capacity.
+The corrected execution uses the original pool ceilings across all thirteen
+existing ledgers. It counts reported charges and complete reported-token upper
+bounds; unknown bills remain unknown. It changes no input selection, old plan,
+physical-attempt ordinal or settlement. It does not allocate new money or create
+another financial slice. At the handoff, tracked OpenAI usage was USD 11.367865
+against the original USD 24 ceiling. This is not an account-credit balance.
+
+The scoped continuation reviewed 101 pre-HTTP-stopped jobs: 945 inputs had not
+been sent, while 50 saved responses remain reusable. Two OpenAI workers resumed
+under the unchanged target implementation. Collection remains incomplete.
+Source 8c46c93/020ef86 passed twelve focused campaign/precalculated budget checks
+and a removed-fix regression on the rig. Explicit output-forecast updates also
+no longer reintroduce maximum-cost holds (419ef06, one focused and removed-fix
+check). Budget exhaustion and tracked campaign ceilings still govern spending.
+
+DeepSeek input `bec4426a3a7bf0f20e948a63150f3936ff89a6273892b27b91bc580701bf56b2`
+returned no visible answer after 16,384 reported reasoning tokens. The operator
+explicitly requested one rerun. That rerun uses 32,768 output tokens, with the
+same delivered input and unchanged reasoning setting. Its original failed row
+and charge remain retained; the new generation is a separate condition requiring
+its own local and Haiku judgments. It is not an automatic answer-retry policy
+or a reason to repeat successful responses. The conservative per-physical-call
+forecast is USD 0.132565, within the original DeepSeek ceiling. It launched in
+tmux; completion and analysis publication are pending.
+
+Preparation exposed a generic 25,000-token configuration restriction. Source
+cab59c4 permits the documented DeepSeek V4 output range while preserving all
+explicit campaign defaults. Four focused configuration/request tests and the
+removed-fix check passed. The [provider reference](https://api-docs.deepseek.com/api/create-chat-completion/)
+defines a maximum of 393,216 tokens; this is a supported configuration ceiling,
+not the requested campaign allowance. No model default was raised to that value.
+
 09:34 UTC observation: 3,286 of 6,669 selected assignments started, with 3,277
 usable outcomes. Thirty-minute gains are 342 starts and 343 usable outcomes.
 The 3,383 unstarted assignments and separate 67-input allocation gap remain.

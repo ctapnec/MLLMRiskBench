@@ -6070,11 +6070,26 @@ diagnostics and cannot be promoted to thesis evidence.
 
 The [campaign workspace and UI workflow specification](../docs/CAMPAIGN_WORKSPACES.md)
 describes the requested unified presentation and the precise local/API flow to
-implement. The current console has individual run records, not parent campaign
-workspaces. Reindex alone cannot group the retained thesis work or reproduce
+implement. Parent creation, Build launch ownership and indexed model results
+are implemented and rig-tested, but not deployed. The production console still
+has individual run records. Reindex alone cannot group the retained thesis work or reproduce
 the continuous hosted queue. The specification separates existing controls from
 new controls; it applies equally to imported work and campaigns launched manually
-through the UI. New UI operations will inherit an explicitly selected campaign.
+through the UI. New UI operations inherit an explicitly selected campaign in
+the extension. Create it from **Build -> New campaign**, name it, choose its
+target category and return to the existing Build controls. No provider call is
+made by creation. Review confirms ownership; Stats groups its results.
+
+For a previously partitioned hosted campaign, `hosted_attempt_budget
+--spending-policy precalculated --campaign-spending <configuration.json>`
+uses the original precomputed campaign pool ceilings and all contributing
+ledger roots. Supply the existing `--budget-root` and `--plan-sha256` as usual.
+The configuration contains `schema: ura-hosted-campaign-spending/1`,
+`pool_caps_microusd`, and `budgets` with each canonical `root` and
+`plan_sha256`, including the active ledger. This is a one-time association with
+the original campaign budget, not a new allocation per execution batch. It
+leaves old plans, attempts and settlements intact. Do not substitute maximum
+liabilities for recorded spending or claim unknown charges are zero.
 
 For retained paid execution, missing-output and terminal-transport investigations
 are scoped to the affected target route. The small target-pause record blocks

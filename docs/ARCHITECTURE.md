@@ -925,13 +925,25 @@ operator-edited effective-dated pricing registry (missing data renders N/A,
 never zero), and the validated filesystem artifacts remain the sole
 measurement authority.
 
-The current run registry is not a durable parent-campaign model. The planned
-[campaign workspaces](CAMPAIGN_WORKSPACES.md) replace job-card-first presentation
-with unified local/API workspaces, automatically associate new UI-launched
-operations and import existing external work without inventing process ownership.
-Compact SQLite indexes support model-level coverage and matched comparisons;
-original outputs, execution conditions and verdicts remain retained artifacts.
-This extension and its full UI execution workflow are specified, not yet deployed.
+The [campaign workspace extension](CAMPAIGN_WORKSPACES.md) adds durable parent
+campaigns without duplicating Build. A reviewed launch records its parent
+before process creation. Compact SQLite indexes retain assignment identities,
+explicitly selected response references and judgments keyed to distinct outputs.
+Stats provides paginated model coverage, quality flags and vector/table exports;
+diagnostic and measured evidence remain separate. Rendering these pages does not
+scan corpora or reconstruct historical results. Original outputs, generation
+conditions and verdicts remain filesystem artifacts. Historical import, complete
+cost attribution and matched-comparison publication remain in progress; this
+extension is not yet deployed.
+
+Precalculated hosted execution uses one campaign-wide spending ceiling, not
+successive batch allowances. Existing execution ledgers contribute reported
+charges and complete token-based upper bounds to that ceiling. Unknown costs
+remain unknown, and maximum possible request costs are forecasts, not holds.
+Historical subtotals are recomputed when their ledger metadata changes; every
+new paid attempt reads current spending. Provider exhaustion still stops that
+provider. In-flight requests can settle after a threshold is reached, so this
+mode is not a strict worst-case monetary bound.
 
 When an adapter rejects a provider's returned representation, Runner can retain
 a bounded JSON copy of that reply with the failed attempt. The Anthropic adapter

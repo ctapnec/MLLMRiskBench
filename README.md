@@ -74,9 +74,10 @@ screen when tmux is unavailable. The phase-by-phase form and recovery rules are 
 [`distro/README.md`](distro/README.md) and use the same roots and lock as the
 [operator runbook](experiments/RUN_AND_RETURN.md).
 
-The [campaign workspace specification](docs/CAMPAIGN_WORKSPACES.md) describes
-the planned unified campaign UI, historical import and repeatable manual
-local/API workflow. It distinguishes current controls from pending implementation.
+The [campaign workspace guide](docs/CAMPAIGN_WORKSPACES.md) describes campaign
+creation through Build, grouped Stats with vector/CSV exports, historical import
+and the repeatable local/API workflow. It distinguishes rig-tested source,
+deployed controls and unfinished integration.
 
 ```bash
 python -m pip install -e ".[dev,analysis]"
