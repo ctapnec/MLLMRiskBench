@@ -40,9 +40,12 @@ def test_interrupted_retry_never_replays_a_retained_answer_or_resets_attempts(tm
     if condition in {'active','exhausted'}:
         for number in range(2,5 if condition == 'exhausted' else 3):
             admission.budget.reserve(key,number,provider='openai')
-            if condition == 'exhausted':admission.budget.settle(key,number,None)
-    if condition == 'settled':admission.budget.settle(key,1,3)
-    if condition == 'changed_logical':logical.charge_target(http_exposure=4)
+            if condition == 'exhausted':
+                admission.budget.settle(key,number,None)
+    if condition == 'settled':
+        admission.budget.settle(key,1,3)
+    if condition == 'changed_logical':
+        logical.charge_target(http_exposure=4)
     with pytest.raises(ValueError):
         resume_interrupted_transport(admission,input_id=key,retained_input_ids=retained,held_snapshot=logical.snapshot())
     assert not calls
