@@ -7,6 +7,9 @@ Summary counts and rates still use the complete selected population; pagination
 does not modify the report, judging or funding. Collapsing an HTML section alone
 does not limit its browser memory cost. This display correction is queued for
 the post-collection console deployment with operational costs.
+Registered reports reuse their metadata-sensitive validation result when
+changing detail pages. Changed files invalidate that result; unregistered
+reports still require validation before display.
 
 Operational costs are read from registered hosted attempt ledgers, separately
 for target generation and judging. Successful hosted preparation registers its
