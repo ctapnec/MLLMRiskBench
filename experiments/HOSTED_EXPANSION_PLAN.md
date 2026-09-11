@@ -1,6 +1,6 @@
 # Third hosted campaign: provider-scaled expansion
 
-Status update, 10 September 2026 at 23:34 UTC: the requested program is
+Status update, 11 September 2026 at 00:34 UTC: the requested program is
 expanded from 6,541 to 6,736 target evaluations by the additional frontier
 selection below. The added 195 evaluations have counted requests and validated
 replay files but are not yet funded or executed. The operator's latest reported balances and the
@@ -16,7 +16,7 @@ needs no new local Haiku calls because its exact matching local answers were
 already assessed; the funding handoff binds those existing verdicts. New
 hosted outputs still require their own local and Haiku judgments.
 
-The sixth slice has attempted 124 of 194 assignments. Gemini exhausted its
+At the earlier 23:34 UTC snapshot, the sixth slice had attempted 124 of 194 assignments. Gemini exhausted its
 three transport retries on HTTP 429; the shared paid stop then interrupted
 three unrelated provider routes. Its failed response and four physical
 attempts remain retained, with unknown charges still reserved. Recovery
@@ -34,7 +34,30 @@ top-up or a retry of an exhausted request. The remaining non-Google routes run
 independently. A checkpoint-reader bookkeeping error after successful Opus,
 Kimi and DeepSeek jobs was also repaired from their finalized files, without
 repeating their calls. A further 225-input prospective slice is selected from
-the unchanged prefixes; it is not funded.
+the unchanged prefixes; all 225 requests are now counted, but it is not funded.
+
+At 00:34 UTC, the six funded slices retain 2,295 started assignments from
+2,301 planned inputs, with 2,290 usable outcomes, four terminal failures and
+one unsettled Google request. Six Google inputs remain unstarted. All five
+non-Google routes in the sixth slice are complete with their required judging;
+DeepSeek completed all seventy inputs successfully. Google alone is waiting
+on request quota. The next 192-input and 225-input slices have counted requests
+and queued funding controllers; neither can consume new money before the
+preceding funded work closes and cumulative capacity is checked. The full
+6,736-input scope has not been replaced by these funded slices. The earlier
+15-30 minute estimate for closing the sixth slice no longer holds, and the
+whole-program completion time remains uncertain while Google is quota-limited.
+
+The current expansion retains 1,516 local-output Haiku assessments and 1,234
+hosted-output Haiku assessments, including fourteen and seven invalid verdicts.
+Their reported cost is USD 3.820234. Uncommitted target capacity within the
+existing campaign ceilings is USD 15.083930 Anthropic, 5.232875 OpenAI,
+11.847553 Google, 4.163529 Kimi and 4.874205 DeepSeek; protected uncommitted
+judging capacity is USD 27.323766. These are operational allocations, not live
+provider balances. The cost-view repair has passed focused rig, actual-ledger
+and reversed-fix checks at c4221e4/4bda20c. Production publication remains
+scheduled after collection. A matched comparison through the five fully closed
+slices is being prepared without new target or judging calls.
 
 Thirty-seven completed OpenAI responses released USD 3.457155 in excess
 maximum-output reservations using reported token totals and the already-funded
