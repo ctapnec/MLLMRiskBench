@@ -180,7 +180,8 @@ class WorkspacePagesMixin:
                 return ("unknown" if total is None else f"{total:,}") + (f"; {missing:,} attempt(s) unknown" if missing else "")
 
             return (
-                "<p>Physical attempts counted once, including retries and historical outcomes. "
+                "<p>Indexed physical attempts counted once, including retries and historical outcomes. "
+                "Unindexed charges remain unknown. "
                 "Judging costs belong to the campaign whose output was judged. "
                 "Recorded costs are not account balances; uncertain exposure is not a money hold. "
                 "Local work has no API charge; electricity and hardware costs are not estimated.</p>"

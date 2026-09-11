@@ -112,3 +112,25 @@ def test_cost_role_model_names_are_escaped_and_unknown_index_is_explicit(app):
     app.db.publish_workspace_costs(campaign, [{**attempt(), 'model': '<img src=x onerror=alert(1)>'}])
     page = app._workspace_results(campaign, 'costs', {})
     assert '<img src=x' not in page and '&lt;img' in page
+
+
+def test_retained_budget_translation_keeps_unknown_retry_usage_and_output_ownership(app):
+    from experiments.rig_web_app.workspace_costs import budget_attempt_rows
+    local, hosted = owner(app, 'local'), owner(app)
+    plan = {'planned_calls': [dict(call_id='target',provider='openai',pool='target',bound_microusd=90000),
+                             dict(call_id='judge',provider='anthropic',pool='judge',bound_microusd=10000)]}
+    ledger = {'attempts': {'target': {'1': dict(state='unknown',actual_cost_microusd=None),
+        '2': dict(state='bounded_unknown',actual_cost_microusd=None,
+                  usage_bound=dict(input_tokens=111,output_tokens=222,bound_microusd=15000))},
+        'judge': {'1': dict(state='settled',actual_cost_microusd=123)}}}
+    bindings = {'target': dict(campaign_id=hosted,assignment_id='a',response_id='answer',model='target-model'),
+        'judge': dict(campaign_id=local,assignment_id='a',response_id='answer',model='haiku',
+                      attempt_usage={'1':dict(input_tokens=800,output_tokens=30)})}
+    rows = budget_attempt_rows(plan,ledger,bindings=bindings,source_ref='ledger.json')
+    assert rows[hosted][0]['input_tokens'] is None and rows[hosted][0]['output_tokens'] is None
+    assert rows[hosted][1]['output_tokens'] == 222
+    for campaign, attempts in rows.items():
+        app.db.publish_workspace_costs(campaign,attempts)
+    assert app.db.workspace_cost_totals(local)[0]['cost_microusd'] == 123
+    assert app.db.workspace_cost_totals(hosted)[0]['cost_microusd'] is None
+    assert app.db.workspace_cost_totals(hosted)[0]['http_attempts'] == 2

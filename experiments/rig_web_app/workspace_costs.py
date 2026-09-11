@@ -6,6 +6,45 @@ import sqlite3
 import time
 
 
+def budget_attempt_rows(plan: dict, ledger: dict, *, bindings: dict[str, dict], source_ref: str) -> dict[str, list[dict]]:
+    """Translate explicitly owned paid calls, without guessing model/output ownership.
+
+    Bindings select the calls being imported, including their model and output
+    identity. Unselected calls may belong to another workspace. Optional usage
+    is keyed by physical attempt number, never copied across network retries.
+    Callers report the scope of this publication; this is not a whole-ledger
+    completeness assertion or another spending validator.
+    """
+    slots = {row["call_id"]: row for row in plan["planned_calls"]}
+    if not set(bindings) <= slots.keys():
+        raise ValueError("Cost attribution names an unplanned call")
+    bounds = {row["call_id"]: row["bound_microusd"] for row in ledger.get("allowance_adjustments", [])}
+    result = {}
+    for call_id, binding in bindings.items():
+        slot = slots[call_id]
+        owner = binding["campaign_id"]
+        for number, retained in ledger["attempts"].get(call_id, {}).items():
+            if not number.isdecimal() or int(number) < 1:
+                raise ValueError("Invalid retained physical-attempt ordinal")
+            state = retained["state"]
+            usage = binding.get("attempt_usage", {}).get(number, {})
+            reported_bound = retained.get("usage_bound", {})
+            # A configured token ceiling is never a reported token count.
+            tokens = {name: usage.get(name, reported_bound.get(name))
+                      for name in ("input_tokens", "output_tokens", "reasoning_tokens")}
+            if any(name in usage and name in reported_bound and usage[name] != reported_bound[name]
+                   for name in ("input_tokens", "output_tokens")):
+                raise ValueError("Cost usage differs from the physical attempt's retained report")
+            row = {"call_id": call_id, "attempt_number": int(number), "assignment_id": binding["assignment_id"],
+                "response_id": binding.get("response_id"), "provider": slot["provider"], "model": binding["model"],
+                "role": slot["pool"], "state": state, "cost_microusd": retained["actual_cost_microusd"],
+                "exposure_microusd": 0 if state == "settled" else reported_bound.get(
+                    "bound_microusd", bounds.get(call_id, slot["bound_microusd"])),
+                "source_ref": source_ref, **tokens}
+            result.setdefault(owner, []).append(row)
+    return result
+
+
 class WorkspaceCostsMixin:
     def _create_workspace_costs(self) -> None:
         self._conn.execute(
