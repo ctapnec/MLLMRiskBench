@@ -3,7 +3,8 @@
 Status update, 11 September 2026 at 05:34 UTC: the requested program is
 expanded from 6,541 to 6,736 target evaluations by the additional frontier
 selection below. The added 195 evaluations have counted requests and validated
-replay files but are not yet funded or executed. The operator's latest reported balances and the
+replay files. Twenty Fable evaluations and their judging are now complete;
+the other 175 additional assignments remain unfunded. The operator's latest reported balances and the
 existing USD 114 cumulative ceiling are unchanged. Frontier coverage takes
 priority over adding further lower-cost groups.
 
@@ -84,7 +85,9 @@ Only judgments of the identical retained local answers may be reused.
 The following original-input slice is queued behind the tenth funded
 selection, with prospective caps of Opus 30, Kimi 19 and DeepSeek 40.
 Whole-cluster selection, request counting and cumulative funding still apply;
-these are not funded or executed quantities. The independent additional
+those caps are not executed quantities. At 05:46:35 UTC the resulting eleventh
+slice was funded for Opus 23, Kimi 16 and DeepSeek 39, with 153 new matching-local
+Haiku assignments. Its controllers are running. The independent additional
 Fable prefix must not move the original model-input prefixes. The queue uses
 the existing preparation, materialization, counting and funding commands,
 including local and Haiku judging, without altering requests already issued.
@@ -102,6 +105,10 @@ model-input pair and preserve the independent original prefixes. Funding
 still waits for all preceding target and judging terminals and protects both
 pending Google slices. Each new hosted output needs its own local and Haiku
 judgment; only judgments of identical retained local answers can be reused.
+The twelfth preparation completed by 05:49 UTC for all 27 unchanged requests.
+They match sixty retained local answers, of which nineteen need new Haiku
+assessments. Its funding controller is queued behind the eleventh targets and
+both judging stages. The original program's unfunded inputs remain pending.
 
 The historical RR prefix reader now forwards the optional artifact-checking
 mode to its original-source subprocess. Ninety-three focused rig tests, a
