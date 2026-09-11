@@ -90,15 +90,36 @@ acceptance must exercise the current real campaign, a new UI-created campaign an
 a standalone run through configuration, execution, ongoing publication, judging,
 continuation and Stats. Both local and hosted paths are required.
 
-Status: Build ownership, compact result/judgment indexes, model coverage views
-and figure/table exports implemented; complete workflow still in progress,
-11 September 2026. The console is deployed at `54fbc07`; production pages
-returned HTTP 200. The original deployment backup check used a malformed
+Status: the campaign/single-run editor, saved campaign definitions, separated
+Jobs/Stats scopes, visible server-side navigation and stable response artifact
+links are deployed at `7b091c4`, 11 September 2026. Build now includes naming and
+saving a campaign; the earlier separate creation page redirects into Build.
+The same definition reopens after navigation or restart. Local/API/mixed is no
+longer a creation question. Runtime services live in Runtimes, not above the
+experiment summary. Reviewed jobs keep their own settings when a draft changes.
+Focused rig regressions, lint and removed-fix checks passed; eight deployed
+routes returned HTTP 200. Interactive browser visual QA remains pending because
+the browser connection was unavailable. Complete workflow integration is still
+in progress. The original deployment backup check used a malformed
 SQLite URI and did not verify preservation; a corrected live backup and the
 4,097-assignment condition repair are retained under
-`workspace-conditions-078f798-20260911`. Full historical import,
+`workspace-conditions-078f798-20260911`. The later `7b091c4` deployment used a
+correct SQLite/WAL backup and preserved all existing rows without restarting
+campaign workers or reinstalling runtimes. Full historical import,
 automatic result publication, full cost-source attribution, matched comparison figures and
 the remaining execution actions below are unfinished.
+
+The active API index was refreshed from its seventeen explicit current program
+sources: 4,097 assignments, 3,908 retained outcomes and 3,917 physical-attempt cost
+records. This is the current continuation and Flash-extension subset, not the
+combined three-cohort total. Forty-seven explicit current controller references,
+including the running local-judging work and retained recovery processes, were
+attached to the API campaign. Their process ownership and historical states did
+not change. Earlier cohorts, complete local-campaign import, output-specific
+judgment publication and ongoing publication hooks remain to be integrated.
+Proofs: `campaign-flow-deployment-7b091c4-20260911`,
+`workspace-current-refresh-7b091c4-20260911`, and
+`workspace-activity-current-20260911`.
 
 An explicit hosted-program importer is available as `experiments.campaign_publish`.
 It reads the selected program, input-plan metadata, completed checkpoint/final

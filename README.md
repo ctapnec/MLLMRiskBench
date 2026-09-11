@@ -75,7 +75,8 @@ screen when tmux is unavailable. The phase-by-phase form and recovery rules are 
 [operator runbook](experiments/RUN_AND_RETURN.md).
 
 The [campaign workspace guide](docs/CAMPAIGN_WORKSPACES.md) describes campaign
-creation through Build, grouped Stats with vector/CSV exports, historical import
+and single-run creation through the same Build editor, saved campaign definitions,
+separate Jobs/Stats scopes, grouped Stats with vector/CSV exports, historical import
 and the repeatable local/API workflow. It distinguishes rig-tested source,
 deployed controls and unfinished integration.
 

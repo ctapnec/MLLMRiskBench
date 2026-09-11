@@ -10,6 +10,25 @@ collection continues while it is prepared.
 
 ## Current account balances
 
+Operator-reported fourth update on 11 September 2026, received around 15:09 UTC:
+
+| Provider | Previous credit (USD) | Latest credit (USD) | Net decrease (USD) |
+| --- | ---: | ---: | ---: |
+| Anthropic | 49.08 | 49.01 | 0.07 |
+| OpenAI | 14.74 | 14.50 | 0.24 |
+| Google | 17.74 | 17.46 | 0.28 |
+| Kimi | 4.23 | 4.23 | 0.00 |
+| DeepSeek | 4.42 | 3.51 | 0.91 |
+| Total | 90.21 | 88.71 | 1.50 |
+
+This is a new account observation, not a replacement of earlier balances or
+settlement of unknown per-call charges. The subsequent request for another
+balanced campaign is documented in [the balanced campaign plan](HOSTED_BALANCED_CAMPAIGN_PLAN.md).
+It shares these account credits with all unfinished target and judging work;
+USD 88.71 must not be allocated independently to both campaigns.
+
+### Previous allowance update
+
 Operator-reported third update on 11 September 2026, received at 13:33 UTC.
 These are account credits. The preceding snapshots remain unchanged below.
 
@@ -745,6 +764,35 @@ after [the original campaign](HOSTED_CAMPAIGN_PLAN.md) and
 
 ## Required quantities
 
+### Completing the retained allocation gap
+
+Following the 11 September all-provider allowance increase, fill the remaining
+67-input rounding gap through the next complete source clusters: at least
+14 Opus inputs, 8 Astra inputs, 12 Flash inputs, 16 Kimi inputs and 17 DeepSeek
+inputs. Use the existing shared input order and generation settings. Opus and
+Astra take their next original-prefix inputs, excluding the separate frontier
+block; Flash continues after its completed 747-input prefix. Kimi and DeepSeek
+continue their existing prefixes. The smallest necessary whole-cluster
+overshoot is permitted and must be recorded before execution. This allocation
+prioritizes frontier coverage within Anthropic/OpenAI and uses available Flash
+capacity rather than adding to Pro's quota wait. It does not replace any
+previous assignment or treat a failed output as an unissued input.
+
+Every eligible new output requires local and Haiku judging. Reuse a local
+verdict only for the same retained local answer; newly covered local inputs
+need their own Haiku assessment. Publish exact shared-input intersections and
+coverage, not an implication that unequal model prefixes are identical samples.
+The 67-input gap remains pending until the actual selection and execution are
+retained. Current spending thresholds are the all-provider update recorded
+above, not the superseded per-slice reservations described in historical notes.
+
+The actual 11 September selection requires 79 assignments: Opus 18, Astra 11,
+Flash 14, Kimi 18 and DeepSeek 18. Its 12-input excess preserves complete
+source clusters. Materialization reused 61 existing inputs and prepared the
+remaining 18 from retained local source records. There are 381 matching local
+answers, including 156 without an existing Haiku slot. Target collection and
+both judging obligations remain pending. Evidence: hosted-gap-67-20260911.
+
 The new campaign alone requests five times the combined earlier Kimi and
 DeepSeek input counts and three times the combined earlier Google, OpenAI and
 Anthropic counts. These are additional evaluations, not cumulative totals,
@@ -1153,8 +1201,8 @@ Quota or output investigation on one model must not idle a distinct model with
 available capacity. In the current Google continuation, the existing Pro work
 occupies at most one provider worker; Flash may use the other. Once that Pro work
 is terminal, both worker slots may serve the remaining queue. This changes only
-scheduling, not inputs, generation settings, retry counts or the USD 17 Google
-ceiling. Check actual live ownership before replacing an idle dispatcher and
+scheduling, not inputs, generation settings, retry counts or the shared Google
+spending ceiling. Check actual live ownership before replacing an idle dispatcher and
 never terminate a paid request merely to hand off its queue.
 
 A reviewed parser recovery keeps the original failed output and cost. It must
@@ -1170,12 +1218,13 @@ repair or an automatic answer retry.
 1. Verify the completed-family baseline - done, 10 September at 08:54 UTC.
 2. Finalize new retained inputs and count all matching local judging obligations;
    the full-pool availability preview completed at 09:04 UTC.
-3. Quote actual requests, reconcile outstanding liabilities and fund the work.
+3. Quote actual requests, reconcile outstanding attempt charges and precompute
+   the complete campaign spending forecast against the shared provider limits.
 4. Execute target collection on the rig in tmux, preserving checkpoints.
 5. Complete local and Haiku judging, then publish the separate Stats report.
 6. After the interrupted hosted collection finishes, reconcile the console's
    Operational costs tab with the retained target and judging ledgers. Show
-   reported spending, unknown charges, reserved exposure and remaining budget
+   reported spending, unknown charges, uncertain charge exposure and remaining budget
    separately. Missing cost integration must not appear as zero spending.
    Include all campaign cohorts without double-counting resumed jobs or source
    aliases; verify the UI totals against the same billing records, with no new
@@ -1202,4 +1251,22 @@ read-only cache. Independent routes retain their own error records; a failed
 transport-probe derivation must not discard a saved provider-policy outcome
 or prevent unrelated funded routes from completing. A replacement transport
 probe must use an unissued assigned input, preserve the original outcome and
-retain the same monetary reservation checks.
+retain the same cumulative spending checks.
+
+The current 79-input whole-cluster gap selection is materialized and counted,
+but preparation stopped before generation because a selected arm left no whole
+source cluster for measurement. Its count receipts remain reusable; neither
+target nor judge calls have run for this addition. Do not include it in completed
+collection or charge the fourth-campaign plan as independent new account credit.
+
+### UI execution and publication
+
+The whole-flow contract is in [Campaign workspaces](../docs/CAMPAIGN_WORKSPACES.md).
+Build defines a campaign or standalone run; local/API/mixed follows from the
+selected models. The running campaign must become configurable and manageable
+through those same controls, including input selection, model settings,
+provider-parallel collection, retries, budgets and both judging stages. Import
+current and historical retained work without new generations. Publish progress,
+outcomes, costs and output-specific judgments as durable data changes, keeping
+historical and corrected conditions available. The current scoped index refresh
+is not the full combined campaign import or a completed automatic UI workflow.
