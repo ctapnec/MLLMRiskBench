@@ -222,10 +222,10 @@ def test_tab_dom_has_unique_ids_safe_form_ownership_and_no_disabled_state(
     parser = _StructureParser()
     parser.feed(builder)
     # The campaign form spans its four panels. The independent Ollama forms
-    # live in General; the picker modal remains in the campaign form but has no
+    # live in Runtimes; the picker modal remains in the campaign form but has no
     # hidden tab-panel ancestor, so either target/judge opener can display it.
     assert parser.context["builder"] == (None, None)
-    assert parser.context["ollama-service"] == ("build-general", None)
+    assert parser.context["ollama-service"] == ("build-runtimes", None)
     assert parser.context["model-picker"] == (None, "builder")
     for field in ("name='mode'", "name='corpora'", "name='judge_model'"):
         assert " disabled" not in _opening_tag(builder, field)
@@ -311,7 +311,7 @@ def test_build_error_and_existing_deep_link_targets_select_the_right_panel(
     finally:
         app.close()
 
-    root_tag = _opening_tag(page, "data-tab-key='build'")
+    root_tag = _opening_tag(page, "data-tab-key='build-run'")
     assert "data-default-tab='build-pipeline'" in root_tag
     assert "data-force-default='true'" in root_tag
     pipeline_at = page.index("data-page-panel='build-pipeline'")

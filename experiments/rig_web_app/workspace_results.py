@@ -11,6 +11,14 @@ import sqlite3
 import time
 
 
+def canonical_response_source_ref(reference: str) -> str:
+    """Checkpoint promotion changes a filename, not the retained response."""
+    path, separator, row = reference.rpartition(":")
+    if separator and row.isdigit() and path.endswith(".responses.checkpoint.jsonl"):
+        return path.removesuffix(".responses.checkpoint.jsonl") + ".responses.jsonl:" + row
+    return reference
+
+
 class WorkspaceResultsMixin:
     def _create_workspace_results(self) -> None:
         self._conn.execute(
@@ -79,7 +87,7 @@ class WorkspaceResultsMixin:
             for key in ("context_tokens", "output_allowance", "input_tokens", "output_tokens", "reasoning_tokens"):
                 if details[key] is not None and (type(details[key]) is not int or details[key] < 0):
                     raise ValueError("Token metadata must be reported counts or unknown")
-            details["source_ref"] = text(row, "source_ref")
+            details["source_ref"] = canonical_response_source_ref(text(row, "source_ref"))
             payload = json.dumps(details, sort_keys=True, allow_nan=False)
             if len(payload) > 16384:
                 raise ValueError("Response index metadata is too large")
@@ -121,7 +129,15 @@ class WorkspaceResultsMixin:
                             "SELECT * FROM campaign_responses WHERE campaign_id=? AND response_id=?", row[:2],
                         ).fetchone()
                         if old and tuple(old) != row:
-                            raise ValueError("Retained response metadata changed; retain a separate condition")
+                            previous = json.loads(old["details"])
+                            previous["source_ref"] = canonical_response_source_ref(previous["source_ref"])
+                            comparable = (*tuple(old)[:6], json.dumps(previous, sort_keys=True, allow_nan=False))
+                            if comparable != row:
+                                raise ValueError("Retained response metadata changed; retain a separate condition")
+                            self._conn.execute(
+                                "UPDATE campaign_responses SET details=? WHERE campaign_id=? AND response_id=?",
+                                (row[6], row[0], row[1]),
+                            )
                         self._conn.execute("INSERT OR IGNORE INTO campaign_responses VALUES(?,?,?,?,?,?,?)", row)
                     for row in prepared_assignments:
                         if row[8] is not None and not self._conn.execute(

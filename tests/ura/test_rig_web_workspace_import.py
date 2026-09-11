@@ -67,6 +67,32 @@ def test_final_files_and_checkpoint_copies_are_one_response(retained):
         publish_hosted_program(db, campaign, **args)
 
 
+def test_active_checkpoint_can_be_promoted_and_republished_without_new_condition(retained):
+    db, campaign, args, path, records = retained
+    publish_hosted_program(db, campaign, **args)
+    old_totals = dict(db.workspace_model_totals(campaign)[0])
+    old_costs = [dict(row) for row in db.workspace_cost_totals(campaign)]
+    # Reproduce an index from before stable artifact locators were introduced.
+    with db._lock, db._conn:
+        for row in db._conn.execute("SELECT response_id,details FROM campaign_responses").fetchall():
+            details = json.loads(row["details"])
+            details["source_ref"] = details["source_ref"].replace(".responses.jsonl:", ".responses.checkpoint.jsonl:")
+            db._conn.execute("UPDATE campaign_responses SET details=? WHERE response_id=?",
+                (json.dumps(details, sort_keys=True), row["response_id"]))
+    path.with_name("test.responses.jsonl").write_text("".join(json.dumps(r["response"]) + "\n" for r in records))
+    path.with_name("test.attempts.jsonl").write_text("".join(json.dumps(r["attempt"]) + "\n" for r in records))
+    path.unlink()
+    publish_hosted_program(db, campaign, **args)
+    assert dict(db.workspace_model_totals(campaign)[0]) == old_totals
+    assert [dict(row) for row in db.workspace_cost_totals(campaign)] == old_costs
+    assert all(".responses.jsonl:" in json.loads(row["details"])["source_ref"]
+        for row in db._query("SELECT details FROM campaign_responses"))
+    records[0]["response"]["raw"]["output_truncated"] = False
+    path.with_name("test.responses.jsonl").write_text("".join(json.dumps(r["response"]) + "\n" for r in records))
+    with pytest.raises(ValueError, match="metadata changed"):
+        publish_hosted_program(db, campaign, **args)
+
+
 def test_live_incomplete_tail_is_not_an_output(retained):
     db, campaign, args, path, _ = retained
     with path.open("a") as stream:

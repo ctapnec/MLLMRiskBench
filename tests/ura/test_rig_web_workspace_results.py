@@ -97,3 +97,12 @@ def test_diagnostics_do_not_pool_with_measured_assignments(app):
     assert len(rows) == 2
     assert {row["evidence_class"] for row in rows} == {"measured", "diagnostic"}
     assert [row["assigned"] for row in rows] == [1, 1]
+
+
+def test_response_artifact_link_resolves_both_sides_of_finalization(app):
+    app.results_root.mkdir(exist_ok=True)
+    checkpoint = app.results_root / "run.responses.checkpoint.jsonl"
+    checkpoint.write_text("{}\n")
+    assert "path=run.responses.checkpoint.jsonl" in app._workspace_source_link("run.responses.jsonl:1")
+    checkpoint.rename(app.results_root / "run.responses.jsonl")
+    assert "path=run.responses.jsonl" in app._workspace_source_link("run.responses.checkpoint.jsonl:1")

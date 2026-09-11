@@ -8,6 +8,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from .ui import _page
+from .workspace_results import canonical_response_source_ref
 from .workspace_charts import coverage_html, coverage_svg, quality_svg, model_counts_csv, EXPORT_SCRIPT
 
 
@@ -114,11 +115,16 @@ class WorkspacePagesMixin:
         return 200, "image/svg+xml; charset=utf-8", figure.encode("utf-8")
 
     def _workspace_source_link(self, reference: str) -> str:
+        reference = canonical_response_source_ref(reference)
         path, separator, row = reference.rpartition(":")
         locator = path if separator and row.isdigit() else reference
         candidate = Path(locator)
         if not candidate.is_absolute():
             candidate = self.results_root / candidate
+        if not candidate.exists() and candidate.name.endswith(".responses.jsonl"):
+            checkpoint = candidate.with_name(candidate.name.removesuffix(".responses.jsonl") + ".responses.checkpoint.jsonl")
+            if checkpoint.is_file():
+                candidate = checkpoint
         try:
             relative = candidate.resolve().relative_to(self.results_root.resolve()).as_posix()
         except (OSError, ValueError, RuntimeError):
