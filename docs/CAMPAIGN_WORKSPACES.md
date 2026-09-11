@@ -2,8 +2,8 @@
 
 Status: Build ownership, compact result/judgment indexes, model coverage views
 and figure/table exports implemented; complete workflow still in progress,
-11 September 2026. The foundation is deployed at `3e80fca`; its SQLite migration
-preserved existing records and the production pages returned HTTP 200. Historical import,
+11 September 2026. The console is deployed at `54fbc07`; its SQLite migration
+preserved existing records and the production pages returned HTTP 200. Full historical import,
 automatic result publication, full cost-source attribution, matched comparison figures and
 the remaining execution actions below are unfinished.
 
@@ -32,8 +32,8 @@ unknown. Multi-attempt token usage is taken from each attempt's ledger report,
 never copied from the final answer onto earlier network failures. This is a
 scoped import, not a claim that all programs or judgments have been published.
 
-Output-owned cost indexing and its workspace table are implemented at `38a361f`
-but not deployed yet. Twenty-one focused rig checks covered cost ownership,
+Output-owned cost indexing and its workspace table are now deployed. Twenty-one
+focused rig checks covered cost ownership,
 retries, copied records, migration and the existing result views. The changed
 ledger-translation check also passed. Three reversed-fix checks detected wrong
 ownership, unknown charges turned into zero and wrong per-attempt response
@@ -42,6 +42,17 @@ isolated database: one assignment, both output conditions, 46,429 reported outpu
 tokens and unknown costs shown separately from exposure. It made no calls and
 did not import production campaigns. Proofs: workspace-costs-b76283b-20260911
 and workspace-costs-38a361f-20260911.
+
+The subsequent importer passed 20 focused rig tests, lint and two reversed-fix
+checks. Its actual-record proof reconciled 110 Sol assignments, 110 retained
+outcomes and 112 HTTP attempts, preserving diagnostic/measured classes and
+policy decisions. Deployment backed up SQLite including its WAL, preserved
+existing rows and restarted only the console. Sixteen current hosted programs
+are published in the API campaign workspace with real cost rows and diagrams.
+The earlier cohorts, one Opus recovery-program import and output-specific
+judgments still need publication; this is not the complete combined campaign.
+Evidence: workspace-import-54fbc07-20260911,
+workspace-import-deployment-54fbc07-20260911 and workspace-current-publication-20260911.
 
 Focused rig verification covers 32 ownership checks, six result-index checks,
 seven initial chart checks and two changed export/navigation checks. Four real
