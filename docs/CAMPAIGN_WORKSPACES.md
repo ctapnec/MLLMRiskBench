@@ -152,13 +152,14 @@ same import is idempotent. It does not run checksums, call providers, execute
 judges, rebuild corpora, or run from a Stats page request. Existing judgments
 are untouched; this command does not claim judging coverage.
 
-Pending rig verification, 11 September: preserve the actual checkpoint or final
+Rig-verified correction, 11 September: preserve the actual checkpoint or final
 export locator supplied by the publisher. A partial final export must not hide
 a checkpoint tail. Promotion may change row order, so compare the stable output
 identity and metadata while updating its physical locator. If only an alternate
 export exists, link that file without claiming the original row number applies.
 The focused regression covers a three-row checkpoint beside a one-row final
-export. This correction is not yet deployed while rig connectivity is unavailable.
+export. All 22 focused rig tests and both removed-fix checks passed. Deployment
+and repair of the previously normalized index locators remain pending.
 
 The Conditions count identifies generation settings, not distinct questions.
 It is derived from the target configuration and output allowance, excluding

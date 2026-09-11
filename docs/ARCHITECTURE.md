@@ -361,6 +361,11 @@ transport timeout, and neither changes generation token allowances. Connection
 errors and timeouts remain unresolved counts, never zero-token evidence or
 model outcomes. Recover only missing counts after a network interruption.
 
+Atomic JSON publication uses a unique temporary file for each write, including
+concurrent threads in one process. Writers flush their complete document before
+replacing the destination. State-changing read/modify/write operations still
+require their existing locks; atomic replacement alone is not a transaction.
+
 Every Hugging Face model is admitted through one sealed acquisition boundary.
 `collect_run_requirements` projects the five supported roles (vLLM target,
 local vLLM LLM judge, scoring Guardrail, defense Guardrail, and NanoGCG
