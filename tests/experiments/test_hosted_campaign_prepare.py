@@ -328,6 +328,31 @@ def test_distinct_already_judged_local_outputs_are_reused_only_by_exact_answer(t
         assert sum(slot["call_id"].startswith("judge-hosted-") for slot in slots) == len(program["requests"])
 
 
+def test_extension_reuses_scheduled_local_judging_without_claiming_finished_verdicts(tmp_path, monkeypatch):
+    request, old, _ = _distinct_request(tmp_path, monkeypatch)
+    funding = json.loads(Path(request['sources']['additional_funding']['path']).read_text())
+    key = 'e' * 64
+    row = {'retained_row_sha256': key}
+    budget_root = tmp_path/'pending-local-judging'
+    descriptor = subject.create_budget(budget_root, provider_budgets_microusd={'anthropic': 1000000},
+        protected_haiku_microusd=100000, planned_calls=[{'call_id': 'judge-local-'+key,
+            'provider': 'anthropic', 'pool': 'judge', 'bound_microusd': 1000}])
+    inventory = {'unjudged_rows': [], 'all_matching_rows': [row], 'scheduled_judging_budgets': [descriptor]}
+    funding['judging_inventory'] = _save(tmp_path/'scheduled-local.json', inventory)
+    request['sources']['additional_funding'] = _save(tmp_path/'scheduled-funding.json', funding)
+    receipt = subject.prepare_campaign(request=request, request_descriptor={}, out_root=tmp_path/'prepared', allow_network_counts=False)
+    calls = json.loads(Path(receipt['budget']['path']).read_text())['planned_calls']
+    assert not any(call['call_id'].startswith('judge-local-') for call in calls)
+    assert any(call['call_id'].startswith('judge-hosted-') for call in calls)
+    assert json.loads((budget_root/'ledger.json').read_text())['attempts'] == {}
+    configured = {name: {'configured_budget_microusd': value} for name,value in old['provider_budgets_microusd'].items()}
+    inventory['all_matching_rows'] = [{'retained_row_sha256': 'f'*64}]
+    funding['judging_inventory'] = _save(tmp_path/'wrong-scheduled-local.json', inventory)
+    wrong = _save(tmp_path/'wrong-scheduled-funding.json', funding)
+    with pytest.raises(ValueError, match='exact selected outputs'):
+        subject.executor._additional_funding(wrong, configured)
+
+
 def test_distinct_selected_provider_cannot_be_omitted_before_token_counting(tmp_path, monkeypatch):
     request, _old, _ledger = _distinct_request(tmp_path, monkeypatch)
     funding = json.loads(Path(request["sources"]["additional_funding"]["path"]).read_text())

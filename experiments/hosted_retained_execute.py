@@ -851,7 +851,9 @@ def _additional_funding(descriptor: Mapping, configured: Mapping, *, budget_plan
     rows = inventory.get("unjudged_rows")
     if not isinstance(rows, list):
         raise ValueError("additional funding needs its exact existing local judge population")
-    if not rows:
+    if not rows and "scheduled_judging_budgets" in inventory:
+        _validate_scheduled_local_judging(inventory)
+    elif not rows:
         # A new target still needs fresh hosted judgments. Only unchanged local
         # answers may already have been adjudicated in a previous comparison.
         matching = inventory.get("all_matching_rows")
@@ -886,6 +888,27 @@ def _additional_funding(descriptor: Mapping, configured: Mapping, *, budget_plan
                 & {row["call_id"] for row in old_plan["planned_calls"]}):
             raise ValueError("additional budget differs or repeats predecessor slots")
     return value
+
+
+def _validate_scheduled_local_judging(inventory: dict) -> None:
+    """Reuse output-owned scheduled work, not an invented completed verdict."""
+    descriptors = inventory["scheduled_judging_budgets"]
+    matching = inventory.get("all_matching_rows")
+    if not isinstance(descriptors, list) or not descriptors or not isinstance(matching, list) or not matching:
+        raise ValueError("scheduled local judging needs existing plans and output inventory")
+    calls = set()
+    for descriptor in descriptors:
+        plan, _ = _bound(descriptor)
+        money = AttemptBudget(Path(descriptor["path"]).parent, descriptor["sha256"])
+        if money.snapshot()["state"] == "closed":
+            raise ValueError("scheduled local judging budget is already closed")
+        calls.update(row["call_id"] for row in plan["planned_calls"]
+                     if row["provider"] == "anthropic" and row["pool"] == "judge")
+    keys = [row.get("retained_row_sha256") for row in matching if isinstance(row, dict)]
+    if (len(keys) != len(matching) or len(set(keys)) != len(keys)
+            or any(not isinstance(key, str) or not re.fullmatch(r"[0-9a-f]{64}", key)
+                   or "judge-local-" + key not in calls for key in keys)):
+        raise ValueError("scheduled local judging does not cover the exact selected outputs")
 
 
 def _distinct_judge_ids(plan: dict, key: str, candidates: Sequence[dict]) -> dict[str, str]:
