@@ -248,3 +248,68 @@ def test_stats_renders_registered_comparison_with_self_judge_and_token_condition
     assert "CI unavailable" in page and "Matched model contrasts" in page
     assert "4096" in page and "32768" in page
     assert "0.000640" in page and "invalid</span>" not in page
+
+
+def test_stats_comparison_pages_bound_dom_without_dropping_retained_details(completed):
+    from experiments.rig_web import RigWebApp
+    report = subject.build_report(**completed[0])
+    strata, contrasts = report["summary"]["strata"], report["summary"]["contrasts"]
+    conditions = report["generation_conditions"]["conditions"]
+    report["summary"]["strata"] = []
+    report["summary"]["contrasts"] = []
+    report["generation_conditions"]["conditions"] = []
+    for index in range(43):
+        row = copy.deepcopy(strata[0])
+        row["condition"]["exact_model"] = f"condition-{index:03d}"
+        report["summary"]["strata"].append(row)
+        contrast = copy.deepcopy(contrasts[0])
+        contrast["hosted_condition"]["exact_model"] = f"contrast-{index:03d}"
+        report["summary"]["contrasts"].append(contrast)
+        token = copy.deepcopy(conditions[0])
+        token["run_id"] = f"token-{index:03d}"
+        report["generation_conditions"]["conditions"].append(token)
+    before = copy.deepcopy(report)
+    app = object.__new__(RigWebApp)
+    options = {"detail_url": "/stats/job/example?report=2"}
+    overview = app._render_judge_comparison("Large report", report, **options)
+    assert overview.count("class='barchart'") <= 63
+    for key, prefix in [("outcomes", "condition"), ("contrasts", "contrast"), ("tokens", "token")]:
+        assert f"{prefix}-019" in overview and f"{prefix}-020" not in overview
+        assert f"report=2&amp;detail_section={key}&amp;detail_page=1" in overview
+        for number in range(3):
+            page = app._render_judge_comparison("Large report", report, **options,
+                detail_section=key, detail_page=number)
+            assert page.count("class='barchart'") <= 43
+            assert f"data-stats-report href='/stats/job/example?report=2&amp;detail_section={key}' aria-current='page'" in page
+            for index in range(43):
+                assert (f"{prefix}-{index:03d}" in page) == (number * 20 <= index < (number + 1) * 20)
+        last = app._render_judge_comparison("Large report", report, **options,
+            detail_section=key, detail_page=999999)
+        assert f"{prefix}-042" in last and "showing 41-43 of 43" in last
+    assert report == before
+    assert "Distinct local outputs judged" in overview and "token-priced usage USD 0.000640" in overview
+
+
+@pytest.mark.parametrize("section,page", [("invalid", "0"), ("tokens", "-1"), ("tokens", "x"), ("tokens", "9999999")])
+def test_stats_comparison_invalid_page_rejected_before_backend_work(section, page):
+    from experiments.rig_web import RigWebApp
+    app = object.__new__(RigWebApp)
+    assert app._stats_job_detail_page("example", fragment=True,
+        detail_section=section, detail_page=page) is None
+
+
+def test_stats_comparison_paging_query_reaches_fragment_renderer(tmp_path, monkeypatch):
+    from experiments.rig_web import RigWebApp
+    app = RigWebApp(results_root=tmp_path / "runs", state_dir=tmp_path / "state",
+        repo_root=tmp_path, gpu_hardware={"devices": []}, system_hardware={})
+    seen = []
+    def render(job_id, **kwargs):
+        seen.append((job_id, kwargs))
+        return b"paged comparison"
+    monkeypatch.setattr(app, "_stats_job_detail_page", render)
+    try:
+        status, _, body = app.handle("GET", "/stats/job/example?report=2&detail_section=tokens&detail_page=1&fragment=1")
+    finally:
+        app.close()
+    assert status == 200 and body == b"paged comparison"
+    assert seen == [("example", {"report": "2", "fragment": True, "detail_section": "tokens", "detail_page": "1"})]

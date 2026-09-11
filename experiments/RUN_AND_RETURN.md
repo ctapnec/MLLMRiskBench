@@ -1,5 +1,13 @@
 # Run and return: broad thesis experiment program
 
+Matched-judgment Stats reports show at most twenty detail conditions per
+section in the overview. Outcome conditions, matched contrasts and token
+windows have separate paged links, including inside the existing modal.
+Summary counts and rates still use the complete selected population; pagination
+does not modify the report, judging or funding. Collapsing an HTML section alone
+does not limit its browser memory cost. This display correction is queued for
+the post-collection console deployment with operational costs.
+
 Operational costs are read from registered hosted attempt ledgers, separately
 for target generation and judging. Successful hosted preparation registers its
 budget under the request's results root. A registration failure is a warning,

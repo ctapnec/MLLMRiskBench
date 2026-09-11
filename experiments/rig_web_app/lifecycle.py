@@ -3970,6 +3970,8 @@ class LifecycleMixin:
                     job_id,
                     fragment=query.get("fragment") == "1",
                     report=query.get("report"),
+                    detail_section=query.get("detail_section", "overview"),
+                    detail_page=query.get("detail_page", "0"),
                 )
                 if detail is None:
                     return 404, "text/plain; charset=utf-8", b"unknown campaign job"

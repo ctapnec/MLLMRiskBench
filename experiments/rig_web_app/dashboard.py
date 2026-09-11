@@ -1781,7 +1781,10 @@ class DashboardMixin:
             f"{detail_label}</a></div></article>"
         )
 
-    def _stats_report_card(self, report: Mapping[str, Any]) -> str:
+    def _stats_report_card(
+        self, report: Mapping[str, Any], *, detail_url: str | None = None,
+        detail_section: str = "overview", detail_page: int = 0,
+    ) -> str:
         rel = str(report.get("path") or "")
         display_name = str(report.get("display_name") or rel or "external report")
         kind = str(report.get("kind") or "")
@@ -1845,7 +1848,10 @@ class DashboardMixin:
             )
         try:
             if kind == "judge_comparison":
-                return self._render_judge_comparison(display_name, doc)
+                return self._render_judge_comparison(
+                    display_name, doc, detail_url=detail_url,
+                    detail_section=detail_section, detail_page=detail_page,
+                )
             if kind == "terminal_inventory":
                 return self._render_terminal_inventory(
                     display_name, doc, artifact_relative=rel
@@ -1865,7 +1871,10 @@ class DashboardMixin:
                 "no chart is rendered.</p></div>"
             )
 
-    def _render_judge_comparison(self, name: str, doc: Mapping[str, Any]) -> str:
+    def _render_judge_comparison(
+        self, name: str, doc: Mapping[str, Any], *, detail_url: str | None = None,
+        detail_section: str = "overview", detail_page: int = 0,
+    ) -> str:
         """Display matched judgments, never infer them from logs or job state."""
         def estimate(value: Mapping[str, Any]) -> str:
             point = value["value"]
@@ -1883,6 +1892,46 @@ class DashboardMixin:
             )) + annotation
 
         summary, completion = doc["summary"], doc["completion"]
+        # Collapsed details still allocate their full DOM. Bound rendered rows,
+        # not the retained report or the population used to compute aggregates.
+        groups = {
+            "outcomes": ("Outcome conditions", summary["strata"]),
+            "contrasts": ("Matched model contrasts", summary["contrasts"]),
+            "tokens": ("Token windows", doc.get("generation_conditions", {}).get("conditions", [])),
+        }
+        if detail_section not in {"overview", *groups} or detail_page < 0:
+            raise ValueError("unknown comparison detail page")
+        page_size = 20
+        navigation = ""
+        if detail_url:
+            links = []
+            for key, title in [("overview", "Overview"), *[(key, value[0]) for key, value in groups.items()]]:
+                href = f"{detail_url}&detail_section={key}"
+                current = " aria-current='page'" if key == detail_section else ""
+                links.append(f"<a data-stats-report href='{html.escape(href, quote=True)}'{current}>{title}</a>")
+            navigation = "<nav class='page-tabs' aria-label='Comparison details'>" + " ".join(links) + "</nav>"
+
+        def window(key: str) -> list:
+            title, rows = groups[key]
+            if detail_section not in {"overview", key}:
+                return []
+            page = 0 if detail_section == "overview" else min(detail_page, max(0, (len(rows) - 1) // page_size))
+            start = page * page_size
+            chosen = rows[start:start + page_size]
+            if rows:
+                parts.append(f"<p class='note'>{title}: showing {start + 1}-{start + len(chosen)} of {len(rows)}. "
+                             "Summary counts and rates above cover the full selected population.</p>")
+            if len(rows) > page_size and detail_url:
+                base = f"{detail_url}&detail_section={key}"
+                links = []
+                if page:
+                    href = html.escape(f"{base}&detail_page={page - 1}", quote=True)
+                    links.append(f"<a data-stats-report href='{href}'>Previous {title.lower()}</a>")
+                if start + len(chosen) < len(rows):
+                    href = html.escape(f"{base}&detail_page={page + 1}", quote=True)
+                    links.append(f"<a data-stats-report href='{href}'>Next {title.lower()}</a>")
+                parts.append("<nav aria-label='" + title + " pages'>" + " ".join(links) + "</nav>")
+            return chosen
         if doc.get("schema") in {"ura-retained-judge-comparison/4", "ura-retained-judge-comparison/5"}:
             usage = (f"<p>Completed source batches: {len(doc['source_partitions'])}; no new judge calls. "
                      f"Selected verdicts: {completion['judge_calls']}; {completion['http_attempts']} recorded HTTP attempts; "
@@ -1902,7 +1951,7 @@ class DashboardMixin:
                      ("Distinct hosted outputs judged", summary["cohorts"]["hosted"]),
                      ("Comparison links (not paid calls)", summary["comparison_pairs"]),
                  ], label="Unique judged outputs and comparison links"),
-                 usage,
+                 usage, navigation,
                  "<details><summary>Source-view coverage before matched selection</summary>"]
         if "input_weighting" in summary:
             parts.insert(1, f"<p>Input-balanced comparison: {summary['distinct_inputs']} distinct inputs. "
@@ -1918,7 +1967,7 @@ class DashboardMixin:
                 [(key.replace("_", " "), value) for key, value in audit.items()],
                 label=f"{cohort} source-view coverage, not selected-cohort rates"))
         parts.append("</details>")
-        for row in summary["strata"]:
+        for row in window("outcomes"):
             condition = row["condition"]
             label = condition_label(condition)
             parts.extend([f"<details><summary>{html.escape(label)} - {row['selected_outputs']} outputs</summary>",
@@ -1938,14 +1987,20 @@ class DashboardMixin:
             parts.append("<p>Same-output label agreement: " + estimate(row["agreement"])
                          + f"; {row['agreement']['excluded_abstentions']} excluded for abstention.</p></details>")
         parts.append("<details><summary>Matched model contrasts</summary>")
-        for contrast in summary["contrasts"]:
+        for contrast in window("contrasts"):
             label = condition_label(contrast["hosted_condition"]) + " versus " + condition_label(contrast["local_condition"])
             parts.append(f"<h4>{html.escape(label)}</h4><p>{contrast['pairs']} matched links; "
                          f"{html.escape(contrast['event'])}, hosted minus local.</p>")
             for judge in ("cascade", "haiku"):
                 rate = contrast[judge]
                 parts.append(f"<p>{judge.title()}: {estimate(rate)}; {rate['excluded_abstentions']} abstained pairs.</p>")
-        parts.append("</details>" + self._render_generation_conditions(doc))
+        parts.append("</details>")
+        conditions = window("tokens")
+        if detail_section in {"overview", "tokens"}:
+            token_doc = doc if "generation_conditions" not in doc else {
+                **doc, "generation_conditions": {**doc["generation_conditions"], "conditions": conditions},
+            }
+            parts.append(self._render_generation_conditions(token_doc))
         parts.extend(f"<p class='note'>{html.escape(note)}</p>" for note in doc["limitations"])
         return "".join(parts) + "</div>"
 
@@ -1974,6 +2029,7 @@ class DashboardMixin:
 
     def _stats_campaign_detail(
         self, campaign: Mapping[str, Any], *, report_index: int | None = None,
+        detail_section: str = "overview", detail_page: int = 0,
     ) -> str:
         state_label, state_tone = self._stats_state_badge(str(campaign["state"]))
         job_href = str(campaign.get("job_href") or f"/jobs/{quote(str(campaign['job_id']))}")
@@ -2007,7 +2063,11 @@ class DashboardMixin:
 
         def report_card(index: int) -> str:
             if index not in rendered:
-                rendered[index] = self._stats_report_card(available[index])
+                rendered[index] = self._stats_report_card(
+                    available[index],
+                    detail_url="/stats/job/" + quote(str(campaign["job_id"])) + f"?report={index}",
+                    detail_section=detail_section, detail_page=detail_page,
+                )
             return rendered[index]
 
         if report_index is not None:
@@ -2245,8 +2305,13 @@ class DashboardMixin:
         *,
         fragment: bool,
         report: str | None = None,
+        detail_section: str = "overview",
+        detail_page: str = "0",
     ) -> bytes | None:
         if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", job_id) is None:
+            return None
+        if (detail_section not in {"overview", "outcomes", "contrasts", "tokens"}
+                or re.fullmatch(r"[0-9]{1,6}", detail_page) is None):
             return None
         self._reconcile()
         campaigns, unavailable, _has_more = self._stats_run_campaigns(
@@ -2280,7 +2345,10 @@ class DashboardMixin:
             report_index = int(report)
             if report_index >= len(campaign["reports"]):
                 return None
-        detail = self._stats_campaign_detail(campaign, report_index=report_index)
+        detail = self._stats_campaign_detail(
+            campaign, report_index=report_index,
+            detail_section=detail_section, detail_page=int(detail_page),
+        )
         if fragment:
             return detail.encode("utf-8")
         title = f"Campaign statistics: {job_id}"

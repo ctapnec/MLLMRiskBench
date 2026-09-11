@@ -1,19 +1,32 @@
 # Third hosted campaign: provider-scaled expansion
 
-Status update, 11 September 2026 at 04:10 UTC: the requested program is
+Status update, 11 September 2026 at 04:53 UTC: the requested program is
 expanded from 6,541 to 6,736 target evaluations by the additional frontier
 selection below. The added 195 evaluations have counted requests and validated
 replay files but are not yet funded or executed. The operator's latest reported balances and the
 existing USD 114 cumulative ceiling are unchanged. Frontier coverage takes
 priority over adding further lower-cost groups.
 
-The 04:04 aggregate records 2,540 started assignments and 2,534 usable
-outcomes from 2,618 funded inputs, gaining 24 durable outcomes in thirty
-minutes. Five failures, one unsettled Google request and 78 unstarted Google
+The 04:34 aggregate records 2,592 started assignments and 2,585 usable
+outcomes from 2,714 funded inputs, gaining 52 starts and 51 usable outcomes in
+thirty minutes. Six failures, one unsettled Google request and 122 unstarted
 inputs remain. Haiku totals are 1,789 local and 1,370 hosted assessments,
 including sixteen and seven invalid verdicts respectively, with
 USD 4.539097 reported cost. Console availability is HTTP 200; no provider
-reports exhausted credit. The next aggregate is due at 04:34 UTC.
+reports exhausted credit. The next aggregate is due at 05:04 UTC.
+
+The ninth interruption was an Opus HTTP 529 `overloaded_error` after four
+transport attempts, not HTTP 400 or `cyber_policy`. Its missing output and
+uncertain charge remain retained without a fifth attempt. The continuation
+preserves eleven Opus, nineteen Kimi and twenty-two DeepSeek outcomes and
+resumes the 44 unissued inputs. Opus has issued new requests. DeepSeek's first
+continuation found a local stop record left by the shared outage before its
+next monetary reservation. The corrected checkpoint reuses that held logical
+slot, still requires the ordinary paid reservation, and leaves historical
+counters unchanged. Its focused real-slot and reversed-fix checks passed on
+the rig; the separate DeepSeek continuation was launched at 04:53 UTC.
+The existing ninth judging workers remain live and waiting for target results.
+No completed answer or exhausted transport request is scheduled for repetition.
 
 Fable, Opus and Kimi completed all 18, 29 and 19 eighth-slice inputs.
 DeepSeek retained 35 of 59 outcomes before one request exhausted its 16,384
@@ -73,10 +86,14 @@ mode to its original-source subprocess. Ninety-three focused rig tests, a
 reversed-fix test and a real two-cell, 200-response prefix check passed.
 The checked runtime handoff changes no generation revision or retained data.
 
-At 04:20 UTC the ninth ledger confirms 26 new logical target starts and exactly
-26 physical attempts across Opus, Kimi and DeepSeek, with no paid-circuit stop.
-These are starts, not final answer or verdict counts. A completed-route
-comparison through slice eight is being published without new provider calls.
+The completed-route comparison through slice eight is published at
+`/stats/job/hosted-expansion-comparison-through-008-65ac4d6-20260910-completed-routes`.
+It contains 1,370 hosted and 1,547 matching local outputs on 418 distinct inputs,
+with 4,566 comparison links. The two unfinished Google routes remain explicitly
+excluded. No target or judge was called by publication. HTTP 200 and chart markup
+were verified; the browser connector has no available browser, so visual QA is
+not claimed. The actual page is 7.4 MB with 12,698 table rows; its bounded
+presentation needs correction before final UI deployment.
 
 Earlier 03:12 observations follow.
 
