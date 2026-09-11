@@ -1,9 +1,10 @@
 # Hosted subset and Haiku re-adjudication campaign plan
 
 The [third hosted expansion](HOSTED_EXPANSION_PLAN.md), requested on
-10 September 2026, separately targets 6,541 additional evaluations with
-local and Haiku judging. Its quantities are verified; selection and funding
-remain pending. The two earlier campaigns retain their completed status.
+10 September 2026 and subsequently enlarged, separately targets 6,736
+additional evaluations with local and Haiku judging. It is executing funded
+subsets; its linked plan records completed work, remaining inputs and caps.
+The two earlier campaigns retain their completed status.
 
 Completed follow-on, 10 September 2026: [the supplemental plan](HOSTED_SUPPLEMENT_PLAN.md) includes
 Gemini 3.8 Flash and Gemini 3.1 Pro Preview on retained local inputs, both local

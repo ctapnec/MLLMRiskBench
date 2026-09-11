@@ -44,6 +44,20 @@ possible. Do not close a cohort with pending target inputs, active requests,
 unfinished intended judging or an unresolved paid-output stop. Freed capacity
 may fund a new shared-input selection only within the same cumulative ceilings.
 
+An unfinished cohort need not idle independently funded providers. The caller
+can use `AttemptBudget.continuation_liability(completed_call_ids)` after
+establishing those completed identities from retained outputs. The forecast
+includes existing charges, unknown exposure, unissued commitments and every
+remaining permitted transport attempt. A settled request alone is not proof
+of a completed output. Keep the original cohort open and reserve this full
+forecast before allocating the next cohort within the cumulative ceilings.
+Use `hold_continuation_ceiling(completed_call_ids, ceilings)` around each new
+cohort's monetary reservation, locking older budgets before newer budgets.
+Release the locks before HTTP; an allowance increase beyond the reserved
+forecast prevents new spending. There must be one allocation owner and no
+replay of the completed IDs. This does not retry an exhausted input, close
+unfinished judging or give a quota-limited provider another request slot.
+
 A completed source view can contain no answers eligible for the common Haiku
 rubric. Retained hosted preparation preserves an explicitly enabled original
 local `--approximate-common-metrics` condition for source-specific inputs.
@@ -73,6 +87,13 @@ capacity. Funding errors remain distinct from transient throttling. See
 [RetryInfo semantics](https://docs.cloud.google.com/php/docs/reference/common-protos/latest/Rpc.RetryInfo).
 The expansion plan records the bounded provider-queue policy and unchanged
 local/Haiku judgment requirements.
+
+HTTP status alone does not determine a scientific outcome. An OpenAI HTTP 400
+with the explicit `cyber_policy` code is retained as a provider-policy outcome,
+not a missing generated answer: no answer retry and no campaign stop. Preserve
+the original error, absent generation and unknown usage without inventing a
+zero charge. An invalid-parameter HTTP 400 instead requires a configuration
+correction; an unclassified error must not be relabeled as a policy refusal.
 
 Counted request tokens are not necessarily a bound on billed model work.
 OpenAI Pro mode aggregates internal model work at the model's token rates.

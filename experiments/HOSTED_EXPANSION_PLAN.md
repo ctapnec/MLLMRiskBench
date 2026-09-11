@@ -1,11 +1,23 @@
 # Third hosted campaign: provider-scaled expansion
 
-Status update, 11 September 2026 at 00:34 UTC: the requested program is
+Status update, 11 September 2026 at 01:20 UTC: the requested program is
 expanded from 6,541 to 6,736 target evaluations by the additional frontier
 selection below. The added 195 evaluations have counted requests and validated
 replay files but are not yet funded or executed. The operator's latest reported balances and the
 existing USD 114 cumulative ceiling are unchanged. Frontier coverage takes
 priority over adding further lower-cost groups.
+
+The seventh slice's funding successor is now running for 192 inputs. Its
+120 non-Google inputs can advance independently; its 72 Google inputs wait
+for the preceding Google route to finish. Only the unfunded waiting process
+was replaced. The active Google request, its retry counter, retained answers
+and existing ceilings were untouched. The pending sixth-slice liability now
+reserves every remaining permitted attempt, including unfinished judging;
+new reservations hold that preceding budget stable while checking the bound.
+Eleven focused rig tests, reversed-fix checks and an actual retained-budget
+integration check passed. The actual forecast leaves USD 18.682230 protected
+for new Haiku judging. All seventh-slice target quotes fit. Funding completion
+and paid dispatch are not claimed by this preparation status.
 
 The first five funded slices have all 2,107 assigned target inputs
 attempted and all required local and Haiku judging complete. They retain
@@ -42,8 +54,10 @@ one unsettled Google request. Six Google inputs remain unstarted. All five
 non-Google routes in the sixth slice are complete with their required judging;
 DeepSeek completed all seventy inputs successfully. Google alone is waiting
 on request quota. The next 192-input and 225-input slices have counted requests
-and queued funding controllers; neither can consume new money before the
-preceding funded work closes and cumulative capacity is checked. The full
+and queued funding controllers. That snapshot used whole-slice closure;
+the seventh-slice pending-liability correction above supersedes that wait
+without releasing money needed by the unfinished sixth slice. The eighth
+slice still waits for predecessor completion and fresh capacity checks. The full
 6,736-input scope has not been replaced by these funded slices. The earlier
 15-30 minute estimate for closing the sixth slice no longer holds, and the
 whole-program completion time remains uncertain while Google is quota-limited.
@@ -102,8 +116,8 @@ is queued, not yet allocated. Astra's 19 inputs remain pending: the 15-input
 cluster exceeds current uncommitted OpenAI capacity, while its four-input
 predecessor alone cannot satisfy the preparation helper's separate pilot and
 measurement groups. This preparation limitation must not split a cluster or
-silently remove either group. The queued allocation must fit the closed
-sixth-slice liabilities.
+silently remove either group. The queued allocation must fit all sixth-slice
+liabilities, including the full reserved continuation of unfinished work.
 
 Completed-budget closure released USD 10.868736 of never-issued Haiku
 reservations from the first four slices. Actual charges and unknown-usage
