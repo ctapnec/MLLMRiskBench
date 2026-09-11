@@ -1,5 +1,35 @@
 # Third hosted campaign: provider-scaled expansion
 
+Current instruction, 11 September 2026: collect all remaining targets through
+one continuous provider-parallel queue, then perform local and Haiku judging.
+The financial slices below are historical. No new slice may wait for preceding
+judgments. Preserve the full 6,736 requested evaluations, existing provider
+ceilings, protected Haiku allocation, unknown charges and completed answers.
+Use bounded concurrency per provider, not thousands of simultaneous HTTP calls.
+Quota or exhausted credits on one provider must not idle independent providers.
+
+At 06:54:36 UTC the unstarted fund-013, prepare-flow-014 and deferred-posthoc-006/007
+controllers were retired without interrupting an in-flight call. Existing
+Google target continuations retain their ownership and accounting.
+
+The 07:04 aggregate records 2,839 funded inputs, 2,761 starts and 2,754 usable
+outcomes. All 27 twelfth-slice targets and judging are complete. Haiku totals
+are 2,217 local and 1,508 hosted assessments, with USD 5.308997 reported cost.
+Six failures, one unsettled Google request and 78 unstarted Google inputs remain.
+Console HTTP is 200. Next aggregate: 07:34 UTC. A revised ETA requires observed
+continuous-dispatch throughput; the previous serial-batch estimate is obsolete.
+
+Per-attempt money reservation and its preparation/execution integration passed
+96 and 162 focused rig tests respectively, plus targeted reversed-fix checks.
+The complete queued inventory does not commit every maximum output upfront;
+each physical request still reserves its maximum cost immediately before HTTP.
+The separate hosted response-collection scope pauses before local judge load.
+Materialization of 3,830 remaining fixed inputs is running without provider
+calls. Paid dispatch has not restarted. The older 67-input whole-cluster
+allocation shortfall remains open, not silently discarded or counted complete.
+
+## Historical execution snapshots
+
 Status update, 11 September 2026 at 06:34 UTC: the requested program is
 expanded from 6,541 to 6,736 target evaluations by the additional frontier
 selection below. The added 195 evaluations have counted requests and validated

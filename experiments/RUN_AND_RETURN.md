@@ -1,5 +1,17 @@
 # Run and return: broad thesis experiment program
 
+Hosted continuous collection: use `hosted_campaign_budget --reservation-policy
+per_attempt` to retain the full input inventory with request-level money
+reservation. Preparation carries this policy into the shared attempt budget.
+Maximum-cost projections remain visible even when their aggregate exceeds the
+budget; they are not represented as an upfront-funded completion guarantee.
+Never reset earlier costs or unresolved reservations when creating a successor.
+The hosted scheduler's `hosted_responses_only` scope defers local judge load
+after durable response checkpoints. Resume the unchanged jobs outside that
+scope for judging, without repeating target calls. It is a scheduling handoff,
+not a completed scored grid. Independent providers may collect concurrently;
+provider backoff, four-attempt transport limits and budget reservations remain.
+
 Matched-judgment Stats reports show at most twenty detail conditions per
 section in the overview. Outcome conditions, matched contrasts and token
 windows have separate paged links, including inside the existing modal.
