@@ -93,6 +93,17 @@ def test_active_checkpoint_can_be_promoted_and_republished_without_new_condition
         publish_hosted_program(db, campaign, **args)
 
 
+def test_partial_final_export_keeps_checkpoint_tail_locator(retained):
+    db, campaign, args, path, records = retained
+    path.with_name("test.responses.jsonl").write_text(json.dumps(records[0]["response"]) + "\n")
+    path.with_name("test.attempts.jsonl").write_text(json.dumps(records[0]["attempt"]) + "\n")
+    assert publish_hosted_program(db, campaign, **args)["responses"] == 3
+    indexed = db._query("SELECT response_id,details FROM campaign_responses")
+    locators = {row["response_id"]: json.loads(row["details"])["source_ref"] for row in indexed}
+    assert locators["run:2"] == str(path) + ":3"
+    assert db.workspace_model_totals(campaign)[0]["missing"] == 1
+
+
 def test_live_incomplete_tail_is_not_an_output(retained):
     db, campaign, args, path, _ = retained
     with path.open("a") as stream:

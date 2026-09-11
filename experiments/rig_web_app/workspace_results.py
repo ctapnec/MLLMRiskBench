@@ -12,11 +12,23 @@ import time
 
 
 def canonical_response_source_ref(reference: str) -> str:
-    """Checkpoint promotion changes a filename, not the retained response."""
+    """Comparison alias only, never the artifact locator shown to a reader."""
     path, separator, row = reference.rpartition(":")
     if separator and row.isdigit() and path.endswith(".responses.checkpoint.jsonl"):
         return path.removesuffix(".responses.checkpoint.jsonl") + ".responses.jsonl:" + row
     return reference
+
+
+def _same_response_source(left: str, right: str) -> bool:
+    if left == right:
+        return True
+    # Final export can reorder restored rows. Identity belongs to response_id,
+    # not a line number shared by two different physical files.
+    a, a_sep, a_row = left.rpartition(":")
+    b, b_sep, b_row = right.rpartition(":")
+    return bool(a_sep and b_sep and a_row.isdigit() and b_row.isdigit()
+                and a != b
+                and canonical_response_source_ref(a + ":1") == canonical_response_source_ref(b + ":1"))
 
 
 class WorkspaceResultsMixin:
@@ -87,7 +99,7 @@ class WorkspaceResultsMixin:
             for key in ("context_tokens", "output_allowance", "input_tokens", "output_tokens", "reasoning_tokens"):
                 if details[key] is not None and (type(details[key]) is not int or details[key] < 0):
                     raise ValueError("Token metadata must be reported counts or unknown")
-            details["source_ref"] = canonical_response_source_ref(text(row, "source_ref"))
+            details["source_ref"] = text(row, "source_ref")
             payload = json.dumps(details, sort_keys=True, allow_nan=False)
             if len(payload) > 16384:
                 raise ValueError("Response index metadata is too large")
@@ -130,7 +142,9 @@ class WorkspaceResultsMixin:
                         ).fetchone()
                         if old and tuple(old) != row:
                             previous = json.loads(old["details"])
-                            previous["source_ref"] = canonical_response_source_ref(previous["source_ref"])
+                            current = json.loads(row[6])
+                            if _same_response_source(previous["source_ref"], current["source_ref"]):
+                                previous["source_ref"] = current["source_ref"]
                             comparable = (*tuple(old)[:6], json.dumps(previous, sort_keys=True, allow_nan=False))
                             if comparable != row:
                                 raise ValueError("Retained response metadata changed; retain a separate condition")

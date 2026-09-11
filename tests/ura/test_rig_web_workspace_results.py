@@ -1,4 +1,5 @@
 """Logical outcome accounting and output-specific judging in the UI index."""
+import json
 import pytest
 from experiments.rig_web import RigWebApp
 
@@ -106,3 +107,32 @@ def test_response_artifact_link_resolves_both_sides_of_finalization(app):
     assert "path=run.responses.checkpoint.jsonl" in app._workspace_source_link("run.responses.jsonl:1")
     checkpoint.rename(app.results_root / "run.responses.jsonl")
     assert "path=run.responses.jsonl" in app._workspace_source_link("run.responses.checkpoint.jsonl:1")
+
+
+def test_checkpoint_tail_link_is_not_redirected_to_partial_final_export(app):
+    app.results_root.mkdir(exist_ok=True)
+    (app.results_root / "run.responses.checkpoint.jsonl").write_text("{}\n{}\n{}\n")
+    (app.results_root / "run.responses.jsonl").write_text("{}\n")
+    reference = "run.responses.checkpoint.jsonl:3"
+    owner = app.db.create_workspace("Local", "local")
+    app.db.publish_workspace_results(owner, assignments=[assignment()],
+        responses=[{**response(), "source_ref": reference}], judgments=[])
+    details = json.loads(app.db.workspace_result_rows(owner)[0]["details"])
+    assert details["source_ref"] == reference
+    link = app._workspace_source_link(details["source_ref"])
+    assert "path=run.responses.checkpoint.jsonl" in link and "(row 3)" in link
+
+
+def test_promotion_uses_actual_final_row_and_can_repair_legacy_alias(app):
+    owner = app.db.create_workspace("API", "api")
+    def publish(reference):
+        app.db.publish_workspace_results(owner, assignments=[assignment()],
+            responses=[{**response(), "source_ref": reference}], judgments=[])
+    publish("run.responses.jsonl:3")  # older index's guessed final locator
+    publish("run.responses.checkpoint.jsonl:3")
+    assert json.loads(app.db.workspace_result_rows(owner)[0]["details"])["source_ref"].endswith("checkpoint.jsonl:3")
+    publish("run.responses.jsonl:2")
+    assert json.loads(app.db.workspace_result_rows(owner)[0]["details"])["source_ref"] == "run.responses.jsonl:2"
+    with pytest.raises(ValueError, match="metadata changed"):
+        publish("unrelated.responses.jsonl:2")
+    assert app.db.workspace_model_totals(owner)[0]["assigned"] == 1
