@@ -10,9 +10,11 @@ from .dashboard import DashboardMixin
 from .lifecycle import LifecycleMixin
 from .pages import PagesMixin
 from .settings import SettingsMixin
+from .workspace_pages import WorkspacePagesMixin
 
 
 class RigWebApp(
+    WorkspacePagesMixin,
     LifecycleMixin,
     DashboardMixin,
     BuilderModelsMixin,

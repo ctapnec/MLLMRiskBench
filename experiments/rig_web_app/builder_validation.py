@@ -2700,6 +2700,7 @@ class BuilderValidationMixin:
             f"<code>{html.escape(mode)}</code>. Review the exact command and "
             "ceilings below; nothing has started yet.</p></div>"
             + acquisition_notice
+            + self._campaign_banner(params.get("campaign_id", ""))
             + "<div class='card'><h2>"
             + _icon("terminal")
             + "Durable command identity</h2>"

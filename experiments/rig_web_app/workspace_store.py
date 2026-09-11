@@ -1,0 +1,123 @@
+"""Small campaign ownership index, independent of worker/process lifetimes."""
+
+from __future__ import annotations
+
+import re
+import sqlite3
+import time
+import uuid
+
+
+class WorkspaceStoreMixin:
+    def _create_workspaces(self) -> None:
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS campaigns ("
+            "campaign_id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, "
+            "created_at REAL NOT NULL)"
+        )
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS campaign_members ("
+            "member_kind TEXT NOT NULL, member_id TEXT NOT NULL, "
+            "campaign_id TEXT NOT NULL, role TEXT NOT NULL, registered_at REAL NOT NULL, "
+            "PRIMARY KEY(member_kind, member_id))"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS campaign_members_owner "
+            "ON campaign_members(campaign_id, registered_at)"
+        )
+
+    def create_workspace(self, name: str, kind: str) -> str:
+        name = name.strip()
+        if not name or len(name) > 120 or any(ord(c) < 32 for c in name):
+            raise ValueError("Campaign name must contain 1-120 printable characters")
+        if kind not in {"local", "api", "mixed"}:
+            raise ValueError("Choose a local, API or mixed campaign")
+        campaign_id = uuid.uuid4().hex
+        with self._lock:
+            if self._conn is None:
+                raise ValueError("Campaign database is unavailable")
+            try:
+                with self._conn:
+                    self._conn.execute(
+                        "INSERT INTO campaigns VALUES(?,?,?,?)",
+                        (campaign_id, name, kind, time.time()),
+                    )
+            except sqlite3.Error as exc:
+                self._fail(exc)
+                raise ValueError("Campaign could not be saved") from exc
+        return campaign_id
+
+    def workspace(self, campaign_id: str) -> sqlite3.Row | None:
+        rows = self._query("SELECT * FROM campaigns WHERE campaign_id=?", (campaign_id,))
+        return rows[0] if rows else None
+
+    def require_workspace(self, campaign_id: str) -> None:
+        if re.fullmatch(r"[0-9a-f]{32}", campaign_id) is None or not self.workspace(campaign_id):
+            raise ValueError("Campaign is unavailable; select it again in Build")
+
+    def workspaces(self) -> list[sqlite3.Row] | None:
+        return self._query("SELECT * FROM campaigns ORDER BY created_at DESC, campaign_id")
+
+    def workspace_for_job(self, job_id: str) -> str:
+        rows = self._query(
+            "SELECT campaign_id FROM campaign_members WHERE member_kind='job' AND member_id=?",
+            (job_id,),
+        )
+        return str(rows[0]["campaign_id"]) if rows else ""
+
+    def attach_workspace_member(
+        self, campaign_id: str, member_kind: str, member_id: str, role: str
+    ) -> None:
+        """Idempotent explicit ownership; never move an existing task implicitly.
+
+        External records are references, not fabricated console Job rows. Shared
+        publications must be split by output ownership before they are attached.
+        """
+        self.require_workspace(campaign_id)
+        if member_kind not in {"job", "external", "controller", "analysis", "budget"}:
+            raise ValueError("Unsupported campaign member kind")
+        if not member_id or len(member_id) > 4096 or any(ord(c) < 32 for c in member_id):
+            raise ValueError("Invalid campaign member")
+        if role not in {"preparation", "collection", "judging", "analysis", "budget"}:
+            raise ValueError("Unsupported campaign activity role")
+        with self._lock:
+            if self._conn is None:
+                raise ValueError("Campaign database is unavailable")
+            try:
+                with self._conn:
+                    existing = self._conn.execute(
+                        "SELECT campaign_id,role FROM campaign_members "
+                        "WHERE member_kind=? AND member_id=?", (member_kind, member_id),
+                    ).fetchone()
+                    if existing and (existing["campaign_id"], existing["role"]) != (campaign_id, role):
+                        raise ValueError("This activity already belongs to another campaign or role")
+                    self._conn.execute(
+                        "INSERT OR IGNORE INTO campaign_members VALUES(?,?,?,?,?)",
+                        (member_kind, member_id, campaign_id, role, time.time()),
+                    )
+            except sqlite3.Error as exc:
+                self._fail(exc)
+                raise ValueError("Campaign ownership could not be saved") from exc
+
+    def workspace_activity(self, campaign_id: str, *, offset: int = 0) -> list[sqlite3.Row] | None:
+        if offset < 0:
+            raise ValueError("Invalid activity page")
+        return self._query(
+            "SELECT m.*,j.command,j.state,j.started_at,j.ended_at,j.exit_code "
+            "FROM campaign_members m LEFT JOIN jobs j "
+            "ON m.member_kind='job' AND j.job_id=m.member_id "
+            "WHERE m.campaign_id=? ORDER BY m.registered_at DESC,m.member_id LIMIT 51 OFFSET ?",
+            (campaign_id, offset),
+        )
+
+
+def activity_role(command: str) -> str:
+    if command in {"run_matrix", "hosted_retained_execute"}:
+        return "collection"
+    if command in {"retained_response_judge_pair", "retained_response_judge_pair_execute"}:
+        return "judging"
+    if command in {"level1_evidence", "level2_report", "figures"}:
+        return "analysis"
+    if command == "hosted_campaign_budget":
+        return "budget"
+    return "preparation"

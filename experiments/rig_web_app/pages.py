@@ -672,7 +672,7 @@ class PagesMixin:
         listattr = f" list='dl-{html.escape(param.suggest)}'" if param.suggest else ""
         return f"<input type='text' name='{flag}'{listattr}>"
 
-    def _command_card(self, name: str) -> str:
+    def _command_card(self, name: str, campaign_id: str = "") -> str:
         entry = self.commands[name]
         fields = []
         for param in entry.params:
@@ -710,6 +710,7 @@ class PagesMixin:
             "</code></p>"
             "<form class='cmd' method='post' action='/jobs'>"
             f"<input type='hidden' name='command' value='{html.escape(name)}'>"
+            + self._campaign_selector(campaign_id)
             + "".join(fields)
             + "<span></span><button type='submit'>"
             + _icon("play", size=15)
@@ -751,7 +752,7 @@ class PagesMixin:
             for key, values in lists.items()
         )
 
-    def _commands_page(self) -> bytes:
+    def _commands_page(self, campaign_id: str = "") -> bytes:
         grouped: set[str] = set()
         sections = []
 
@@ -759,7 +760,7 @@ class PagesMixin:
             if name == "run_matrix":
                 return ""
             if name not in {"capture_t3mp3st", "harmbench_capture"}:
-                return self._command_card(name)
+                return self._command_card(name, campaign_id)
             label = "T3MP3ST Capture" if name == "capture_t3mp3st" else "HarmBench Prepare"
             return (
                 f"<details class='cmd' data-name='{html.escape(name)}'><summary>"
@@ -1780,6 +1781,7 @@ class PagesMixin:
         body = (
             f"<h1>{_icon('terminal', size=22)}Job {html.escape(job.job_id)}"
             "</h1>"
+            + self._campaign_banner(self.db.workspace_for_job(job.job_id))
             + meta
             + activity
             + model_acquisition_actions

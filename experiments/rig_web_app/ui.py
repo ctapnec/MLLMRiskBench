@@ -1079,6 +1079,7 @@ refresh();
 _NAV_LINKS = (
     ("/", "grid", "Dashboard"),
     ("/build", "flask", "Build"),
+    ("/campaigns", "folder", "Campaigns"),
     ("/commands", "terminal", "Run"),
     ("/jobs", "pulse", "Jobs"),
     ("/stats", "chart", "Stats"),

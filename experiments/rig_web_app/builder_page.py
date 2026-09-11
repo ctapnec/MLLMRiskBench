@@ -45,6 +45,7 @@ class BuilderPageMixin:
         *,
         action_state: str = "",
         action_error: str = "",
+        campaign_id: str = "",
     ) -> str:
         """Render lifecycle controls outside the campaign-builder form."""
 
@@ -191,6 +192,7 @@ class BuilderPageMixin:
             "10-text/5-image readiness and maximum-response assessment; the "
             "model remains unavailable to Build until that follow-up passes.</p>"
             "<form class='cmd' method='post' action='/ollama/pull' data-busy>"
+            "<input type='hidden' name='campaign_id' data-builder-campaign value='" + html.escape(campaign_id) + "'>"
             "<label for='ollama-pull-model'>Exact model tag</label>"
             f"<input id='ollama-pull-model' type='text' name='model' "
             f"maxlength='256' autocomplete='off' placeholder='llama3.2:3b' "
@@ -1489,6 +1491,7 @@ class BuilderPageMixin:
             ollama_roster,
             action_state=ollama_state,
             action_error=ollama_error,
+            campaign_id=prefill.get("campaign_id", ""),
         )
         framework_runtime_panel = self._framework_runtime_panel(
             action_state=framework_runtime_state,
@@ -2315,6 +2318,9 @@ class BuilderPageMixin:
             "exact command and its call ceilings for confirmation before "
             "anything starts.</p>"
             + error_summary
+            + "<div class='card'>"
+            + self._campaign_selector((prefill or {}).get("campaign_id", ""), form_id="builder")
+            + "</div>"
             + "<div class='page-tabs' data-page-tabs data-tab-key='build' "
             + f"data-default-tab='{build_default}'{force_default}>"
             + _page_tablist("Builder sections", build_tabs, default=build_default)
@@ -2654,6 +2660,9 @@ class BuilderPageMixin:
             "</section>"
             + model_picker_modal
             + "</form></div>"
+            + "<script>(()=>{const c=document.querySelector('select[name=campaign_id][form=builder]');"
+            "if(c)c.addEventListener('change',()=>{document.querySelectorAll('[data-builder-campaign]')"
+            ".forEach(e=>{e.value=c.value;});});})();</script>"
             "<script type='application/json' id='builder-prefill'>"
             + json.dumps(
                 {

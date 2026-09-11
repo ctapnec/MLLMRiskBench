@@ -566,6 +566,7 @@ class LifecycleMixin:
                 "readiness_parent_job_id": parent.job_id,
                 "readiness_trigger": "successful_ollama_pull",
             },
+            campaign_id=self.db.workspace_for_job(parent.job_id),
         )
 
     # -- job lifecycle -----------------------------------------------------
@@ -3163,7 +3164,14 @@ class LifecycleMixin:
         reserved_job_id: str | None = None,
         model_acquisition_activity_token: str | None = None,
         execution_snapshot: Mapping[str, bytes] | None = None,
+        campaign_id: str = "",
     ) -> Job:
+        bound_campaign = str((builder_params or {}).get("campaign_id", ""))
+        if campaign_id and bound_campaign and campaign_id != bound_campaign:
+            raise ValueError("Campaign differs from the reviewed Build launch")
+        campaign_id = campaign_id or bound_campaign
+        if campaign_id:
+            self.db.require_workspace(campaign_id)
         if activity not in {None, "model_download"}:
             raise ValueError("unsupported job activity")
         if activity == "model_download" and command != "ollama_pull":
@@ -3342,6 +3350,16 @@ class LifecycleMixin:
                 "command": command,
                 "argv": argv,
             }
+            if campaign_id:
+                from .workspace_store import activity_role  # noqa: PLC0415
+
+                # Commit ownership before a process can make a call. A failed
+                # launch leaves an honest unresolved activity, never an
+                # unowned paid worker or a fabricated successful job.
+                self.db.attach_workspace_member(
+                    campaign_id, "job", job_id, activity_role(command)
+                )
+                command_document["campaign_id"] = campaign_id
             if controller_wall_time_seconds is not None:
                 command_document["controller_wall_time_seconds"] = (
                     controller_wall_time_seconds
@@ -3796,6 +3814,16 @@ class LifecycleMixin:
         path = parsed.path
         query = {key: values[0] for key, values in parse_qs(parsed.query).items() if values}
         try:
+            if method == "GET" and path == "/campaigns":
+                return 200, "text/html; charset=utf-8", self._workspaces_page()
+            if method == "POST" and path == "/campaigns":
+                data = dict(form or {})
+                campaign_id = self.db.create_workspace(data.get("name", ""), data.get("kind", ""))
+                return 303, f"/build?campaign_id={campaign_id}", b""
+            if method == "GET" and path.startswith("/campaigns/"):
+                return 200, "text/html; charset=utf-8", self._workspace_page(
+                    path.removeprefix("/campaigns/"), query
+                )
             if method == "GET" and path == "/":
                 return (
                     200,
@@ -3809,7 +3837,7 @@ class LifecycleMixin:
             if method == "GET" and path in {"/static/favicon.svg", "/favicon.ico"}:
                 return 200, "image/svg+xml", _FAVICON_SVG
             if method == "GET" and path == "/commands":
-                return 200, "text/html; charset=utf-8", self._commands_page()
+                return 200, "text/html; charset=utf-8", self._commands_page(query.get("campaign_id", ""))
             if method == "GET" and path == "/ollama/status":
                 return (
                     200,
@@ -3867,6 +3895,7 @@ class LifecycleMixin:
                             "--timeout-seconds": "120",
                         },
                         builder_params={"ollama_model": model},
+                        campaign_id=data.get("campaign_id", ""),
                         activity="model_download",
                     )
                 except (OllamaError, OSError, ValueError) as exc:
@@ -3875,6 +3904,7 @@ class LifecycleMixin:
             if method == "POST" and path == "/jobs":
                 data = dict(form or {})
                 command = data.pop("command", "")
+                campaign_id = data.pop("campaign_id", "")
                 if command in {
                     "run_matrix",
                     "model_acquire",
@@ -3896,6 +3926,7 @@ class LifecycleMixin:
                     command,
                     data,
                     scrub_receipt_env=(command == "rig_check" and "--dry-run" in data),
+                    campaign_id=campaign_id,
                 )
                 return 303, f"/jobs/{job.job_id}", b""
             if method == "GET" and path == "/jobs":
@@ -3983,6 +4014,7 @@ class LifecycleMixin:
                     200,
                     "text/html; charset=utf-8",
                     self._build_page(
+                        prefill={"campaign_id": query.get("campaign_id", "")},
                         ollama_state=query.get("ollama_state", ""),
                         ollama_error=query.get("ollama_error", ""),
                         framework_runtime_state=query.get(

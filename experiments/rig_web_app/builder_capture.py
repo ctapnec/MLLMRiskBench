@@ -18,6 +18,7 @@ from .ui import _page
 
 class BuilderCaptureMixin:
     _BUILDER_FIELDS = frozenset({
+        "campaign_id",
         "mode",
         "canary_dry",
         "corpora",
@@ -437,7 +438,8 @@ class BuilderCaptureMixin:
             "model or generation scripts. It does not call the measured target "
             "or judges. Review the exact command before starting.</p></div>"
             "<div class='card'><h2>Exact command</h2>" + chips + "</div>"
-            f"<form method='post' action='{action}'>"
+            + self._campaign_banner(params.get("campaign_id", ""))
+            + f"<form method='post' action='{action}'>"
             + "<input type='hidden' name='launch_ticket' value='"
             + html.escape(launch_ticket)
             + "'>"
@@ -496,7 +498,7 @@ class BuilderCaptureMixin:
             params = {
                 key: str(value).strip()
                 for key, value in data.items()
-                if key.startswith(prefix)
+                if key.startswith(prefix) or key == "campaign_id"
             }
             confirmed = False
         command, values, errors = self._capture_values(kind, params)
@@ -520,13 +522,15 @@ class BuilderCaptureMixin:
                     params,
                 ),
             )
-        job = self.start_job(command, values)
+        job = self.start_job(command, values, campaign_id=params.get("campaign_id", ""))
         return 303, f"/jobs/{job.job_id}", b""
 
     def _builder_params(self, form: Mapping[str, str]) -> dict[str, str]:
         """Normalize builder fields without materializing runtime config."""
 
         self._validate_builder_form_keys(form)
+        if form.get("campaign_id"):
+            self.db.require_workspace(str(form["campaign_id"]))
 
         params = {
             key: str(value).strip()
