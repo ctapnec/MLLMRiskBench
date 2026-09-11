@@ -77,7 +77,7 @@ def test_full_request_count_preserves_history_images_and_selected_model(kind, tm
     assert receipt["requested_model"] == target.model and receipt["requested_spec"] == target.requested_spec
     assert receipt["input_tokens"] == 731
     assert receipt["method"] == ("provider_exact" if kind == "sol" else "provider_estimate")
-    assert options == [{"max_retries": 0, "timeout": 30.0}]
+    assert options == [{"max_retries": 0, "timeout": min(120.0, target.timeout)}]
     assert "max_tokens" not in observed[0] and "max_output_tokens" not in observed[0]
     encoded = str(observed[0])
     for text in ("Preserve every instruction.", "Earlier question.", "Earlier answer.",
@@ -94,6 +94,23 @@ def test_full_request_count_preserves_history_images_and_selected_model(kind, tm
     before = copy.deepcopy(observed)
     assert validate_receipt(target, request, receipt) == receipt
     assert observed == before  # Resume cannot recount or generate.
+
+
+@pytest.mark.parametrize("media,configured,expected", [
+    (False, 300, 30.0), (True, 300, 120.0), (True, 15, 15.0),
+])
+def test_count_timeout_allows_media_upload_without_changing_generation(
+    tmp_path, monkeypatch, media, configured, expected,
+):
+    target = _target("astra", tmp_path)
+    target.timeout = configured
+    dialog = _dialog(tmp_path) if media else [DialogTurn(role="user", content="Hello")]
+    request = target.build_request(dialog, seed=0)
+    before = copy.deepcopy(request)
+    _, options = _client(target, monkeypatch)
+    count_request(target, request, allow_network=True)
+    assert options == [{"max_retries": 0, "timeout": expected}]
+    assert target.build_request(dialog, seed=0) == before
 
 
 @pytest.mark.parametrize("kind", KINDS)

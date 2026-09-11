@@ -152,7 +152,8 @@ def count_request(target, request: Mapping, *, allow_network: bool = False) -> d
     """Count one complete request after the controller's campaign admission.
 
     Default: no client, key, download or network. Explicit network counting uses
-    the target's existing sealed transport, zero SDK retries and a 30s timeout.
+    the target's existing sealed transport and zero SDK retries. Image uploads
+    have a 120s timeout; text-only counts have 30s, capped by target.timeout.
     Count failures propagate: they never cause generation or silent fallback.
     Receipts contain hashes/counts, not prompts, media payloads or credentials.
     """
@@ -160,6 +161,7 @@ def count_request(target, request: Mapping, *, allow_network: bool = False) -> d
         raise ValueError("allow_network must be an explicit boolean")
     body = _checked_request(target, request)
     method, method_id, counted, fee = _count_plan(target, body, network=allow_network)
+    timeout = min(120.0 if _has_media(body) else 30.0, target.timeout)
     receipt = {"request_sha256": request_sha256(body), "count_request_sha256": request_sha256(counted),
                "provider": target.provider, "requested_spec": target.requested_spec,
                "requested_model": target.model, "method": method, "method_id": method_id,
@@ -170,11 +172,11 @@ def count_request(target, request: Mapping, *, allow_network: bool = False) -> d
         from google.genai import types
         response = target._get_client()._api_client.request(
             "post", "models/" + target.model + ":countTokens", counted,
-            types.HttpOptions(timeout=int(min(30.0, target.timeout) * 1000),
+            types.HttpOptions(timeout=int(timeout * 1000),
                               retry_options=types.HttpRetryOptions(attempts=1)))
         tokens = json.loads(response.body).get("totalTokens")
     else:
-        client = target._get_client().with_options(max_retries=0, timeout=min(30.0, target.timeout))
+        client = target._get_client().with_options(max_retries=0, timeout=timeout)
         if method_id == "anthropic_messages_count_tokens_v1":
             response = client.messages.count_tokens(**counted)
             tokens = _field(response, "input_tokens")
