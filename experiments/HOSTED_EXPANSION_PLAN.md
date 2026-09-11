@@ -1,13 +1,13 @@
 # Third hosted campaign: provider-scaled expansion
 
-Status update, 11 September 2026 at 01:20 UTC: the requested program is
+Status update, 11 September 2026 at 01:25 UTC: the requested program is
 expanded from 6,541 to 6,736 target evaluations by the additional frontier
 selection below. The added 195 evaluations have counted requests and validated
 replay files but are not yet funded or executed. The operator's latest reported balances and the
 existing USD 114 cumulative ceiling are unchanged. Frontier coverage takes
 priority over adding further lower-cost groups.
 
-The seventh slice's funding successor is now running for 192 inputs. Its
+The seventh slice's funding successor completed for 192 inputs. Its
 120 non-Google inputs can advance independently; its 72 Google inputs wait
 for the preceding Google route to finish. Only the unfunded waiting process
 was replaced. The active Google request, its retry counter, retained answers
@@ -16,8 +16,11 @@ reserves every remaining permitted attempt, including unfinished judging;
 new reservations hold that preceding budget stable while checking the bound.
 Eleven focused rig tests, reversed-fix checks and an actual retained-budget
 integration check passed. The actual forecast leaves USD 18.682230 protected
-for new Haiku judging. All seventh-slice target quotes fit. Funding completion
-and paid dispatch are not claimed by this preparation status.
+for new Haiku judging. All seventh-slice target quotes fit. The dispatcher
+started at 01:24:57 UTC and is preparing its shared source context; new target
+responses are not yet claimed. The slice's 510 exact local answers already
+have retained Haiku assessments, so its local assessment handoff is complete
+with zero new judge calls. New hosted outputs still need their own judgments.
 
 The first five funded slices have all 2,107 assigned target inputs
 attempted and all required local and Haiku judging complete. They retain
