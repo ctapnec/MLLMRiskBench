@@ -340,6 +340,8 @@ class WorkspacePagesMixin:
             details = json.loads(row["details"]) if row["details"] else {}
             def value(key):
                 item = details.get(key)
+                if key == "output_allowance" and item == -1:
+                    return "Native maximum (no fixed output cap)"
                 return "unknown" if item is None else html.escape(str(item))
             metadata = "<details><summary>Generation settings and usage</summary><dl>" + "".join(
                 "<dt>" + label + "</dt><dd>" + value(key) + "</dd>" for key, label in (

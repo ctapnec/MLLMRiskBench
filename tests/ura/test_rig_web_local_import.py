@@ -5,6 +5,34 @@ from experiments.rig_web_app.workspace_import import local_run_rows
 from experiments.rig_web_app.storage import ConsoleDB
 
 
+@pytest.mark.parametrize("backend,generation,tokens,reason", [
+    ("ollama", dict(num_ctx=8192,num_predict=512), dict(prompt=24,completion=512), dict(done_reason="length")),
+    ("vllm", dict(max_model_len=32768,max_tokens=4096), dict(input=24,output=512), dict(finish_reason="length")),
+    ("ollama", dict(num_ctx=65536,num_predict=-1), dict(prompt=24,completion=512), dict(done_reason="length")),
+])
+def test_local_provider_native_token_metadata_is_not_lost(tmp_path, backend, generation, tokens, reason):
+    model=backend+":local-model";run_id="run-native";artifacts={}
+    response=dict(run_id=run_id,target=model,attempt_id="a",output_turns=[],tokens=tokens,
+                  raw=dict(backend=backend,generation=generation,empty_completion_observed=True,**reason))
+    values=dict(manifest={"config":{"run":{"model_spec":model,"corpus":"example","execution_purpose":"measured_run"}}},
+        attempts=[dict(id="a",run_id=run_id,target=model)],responses=[response],
+        judgments=[dict(run_id=run_id,attempt_id="a",label="not_applicable",raw=dict(policy_evaluation_status="model_nonresponse"))])
+    for role,value in values.items():
+        path=tmp_path/(role+".json")
+        path.write_text(json.dumps(value) if role=="manifest" else "".join(json.dumps(r)+"\n" for r in value))
+        artifacts[role]=dict(path=str(path))
+    rows=local_run_rows(dict(local_model=model,run_id=run_id,artifacts=artifacts),
+        {"a":dict(input_identity_sha256="input-a",corpus="example",framework="replay",modality="text")})
+    r=rows['responses'][0]
+    assert (r['input_tokens'],r['output_tokens'],r['finish_reason'],r['truncated'],r['outcome'])==(24,512,'length',True,'missing')
+    assert r['context_tokens']==generation.get('num_ctx',generation.get('max_model_len'))
+    assert r['output_allowance']==generation.get('num_predict',generation.get('max_tokens'))
+    assert r['missing_category']=='empty_output'
+    db=ConsoleDB(tmp_path/'console.db')
+    try:db.publish_workspace_results(db.create_workspace('Local','local'),**rows)
+    finally:db.close()
+
+
 def test_local_publication_keeps_missing_and_unanswered_assignments(tmp_path):
     model, run_id = "vllm:local-model", "run-real-shape"
     artifacts = {}

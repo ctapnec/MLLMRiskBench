@@ -97,6 +97,8 @@ class WorkspaceResultsMixin:
                 "source_ref", "context_tokens", "output_allowance", "input_tokens",
                 "output_tokens", "reasoning_tokens", "finish_reason", "missing_category")}
             for key in ("context_tokens", "output_allowance", "input_tokens", "output_tokens", "reasoning_tokens"):
+                if key == "output_allowance" and type(details[key]) is int and details[key] == -1:
+                    continue  # Retained local-provider native-maximum policy, not negative usage.
                 if details[key] is not None and (type(details[key]) is not int or details[key] < 0):
                     raise ValueError("Token metadata must be reported counts or unknown")
             details["source_ref"] = text(row, "source_ref")

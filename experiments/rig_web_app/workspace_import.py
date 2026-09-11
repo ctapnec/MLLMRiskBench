@@ -10,6 +10,8 @@ import hashlib
 import json
 from pathlib import Path
 
+from experiments.generation_conditions import _first, _stop, _usage
+
 from .workspace_costs import budget_attempt_rows
 
 
@@ -254,13 +256,20 @@ def local_run_rows(source: dict, selections: dict[str, dict]) -> dict:
         visible = any(isinstance(t.get("content"), str) and t["content"].strip() for t in response.get("output_turns", []))
         failed = raw.get("model_stability_status") == "failed_output" or raw.get("target_input_status") == "incompatible"
         generation = raw.get("generation") or {}
+        stop = _stop(raw)
+        truncated = raw.get("output_truncated")
+        if truncated is None and stop in {"truncated", "normal_stop"}:
+            truncated = stop == "truncated"
         outputs.append(dict(response_id=identity, assignment_id="local-"+identity,
             condition_id=condition, outcome="missing" if failed or not visible else "usable",
-            truncated=raw.get("output_truncated"), source_ref=reference,
-            context_tokens=generation.get("context_tokens"), output_allowance=generation.get("max_tokens"),
-            input_tokens=tokens.get("input"), output_tokens=tokens.get("output"), reasoning_tokens=tokens.get("reasoning"),
-            finish_reason=raw.get("finish_reason", raw.get("stop_reason")),
-            missing_category=raw.get("model_stability_category") if failed or not visible else None))
+            truncated=truncated, source_ref=reference,
+            context_tokens=_first(generation, ("context_tokens", "max_model_len", "num_ctx")),
+            output_allowance=_first(generation, ("max_output_tokens", "max_tokens", "num_predict")),
+            input_tokens=_usage(tokens, ("input", "prompt")), output_tokens=_usage(tokens, ("output", "completion")),
+            reasoning_tokens=tokens.get("reasoning"),
+            finish_reason=_first(raw, ("finish_reason", "done_reason", "stop_reason")),
+            missing_category=(raw.get("model_stability_category") or raw.get("target_input_category")
+                or ("empty_output" if not visible else None)) if failed or not visible else None))
     judge_settings = {key: run.get(key) for key in (
         "judge_names", "judge_model", "guardrail_model", "guardrail_revision", "judge_local_identity", "approximate_common_metrics")}
     judge_id = "local-cascade-" + hashlib.sha256(json.dumps(

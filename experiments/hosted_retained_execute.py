@@ -939,6 +939,16 @@ def _distinct_judge_ids(plan: dict, key: str, candidates: Sequence[dict]) -> dic
     return result
 
 
+def _matched_judge_call_cap(projected_cap: int, routes: Sequence[dict], inventory: dict | None) -> int:
+    """Count output-owned local verdicts, not one assumed local answer per target."""
+    if inventory is None:
+        return projected_cap
+    # Distinct/cohort funding already validates the exact, unique local rows.
+    # Keep the historical projection readable, but do not let its two-per-target
+    # approximation reject the larger explicitly funded local population.
+    return max(projected_cap, sum(row["paid_call_cap"] for row in routes) + len(inventory["unjudged_rows"]))
+
+
 def _validated_jobs(program: dict, budget: AttemptBudget, *, local_context: tuple | None = None) -> list[_Admission]:
     """Rebuild fixed input selection from complete historical and RR evidence."""
     from experiments import hosted_pending_condition
@@ -1009,6 +1019,7 @@ def _validated_jobs(program: dict, budget: AttemptBudget, *, local_context: tupl
         raise ValueError("shared funding differs from the bound current provider budgets")
     judge_cap = (expected_projection["judge"]["paid_call_cap"]
                  if expected_projection.get("reservation_policy") == "per_attempt" else projection.JUDGE_CALL_CAP)
+    judge_cap = _matched_judge_call_cap(judge_cap, expected_projection["routes"], inventory if distinct else None)
     if sum(row["pool"] == "judge" for row in budget_plan["planned_calls"]) > judge_cap:
         raise ValueError("funded Haiku population exceeds its complete campaign call cap")
     routes = [row for row in expected_projection["routes"] if row["target_spec"] == program["target"]]
