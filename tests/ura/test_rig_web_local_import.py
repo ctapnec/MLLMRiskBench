@@ -31,7 +31,9 @@ def test_local_publication_keeps_missing_and_unanswered_assignments(tmp_path):
     db=ConsoleDB(tmp_path/'console.db')
     try:
         campaign=db.create_workspace('Local campaign','local')
-        for _ in range(2):db.publish_workspace_results(campaign,**rows)
+        for _ in range(2):
+            db.publish_workspace_results(campaign,**rows)
         total=db.workspace_model_totals(campaign)[0]
         assert tuple(total[k] for k in ('assigned','usable','missing','pending'))==(3,1,1,1)
-    finally:db.close()
+    finally:
+        db.close()
