@@ -546,7 +546,7 @@ class DashboardMixin:
                     + f"<td>{money(row, 'unstarted_commitments_microusd')}</td></tr>")
             content = ("<div class='scroll'><table><tr><th>Provider</th><th>Role</th>"
                 "<th>Request attempt records</th><th>Settled usage cost</th><th>Unknown-charge exposure</th>"
-                "<th>Unsettled reservations</th><th>Unissued commitments</th></tr>"
+                "<th>Unsettled reservations</th><th>Unissued retained-plan allowance</th></tr>"
                 + "".join(rows) + "</table></div>")
         links = "".join("<li><a href='/artifacts?path=" + quote(source["budget"])
             + "'>" + html.escape(source["label"]) + "</a></li>" for source in inventory["sources"])
@@ -555,7 +555,8 @@ class DashboardMixin:
             "Each physical request is counted once across recovery copies. Reported-usage costs "
             "are retained ledger settlements, not provider invoices. Unknown charges and unsettled "
             "reservations are exposure, not confirmed spending or proof of a live request; "
-            "unissued commitments are not calls. "
+            "unissued allowances are not calls and can include superseded plans. "
+            "They are not today's reserved budget or authority for further spending. "
             "Sequential batch ceilings are not added together. These figures are not live provider "
             "credit balances and exclude unregistered work. The legacy usage index is not added, "
             "to avoid double-counting. Local inference is not provider-billed.</p>"

@@ -153,3 +153,16 @@ def test_unknown_provider_usage_does_not_render_as_zero_spending(tmp_path):
     page = DashboardMixin()._retained_spend_card(subject.campaign_costs(tmp_path))
     openai_row = page.split("<tr><td>openai</td>")[1].split("</tr>")[0]
     assert "<td>$0.0000</td>" in openai_row and "Not settled" not in openai_row
+
+
+def test_historical_unissued_allowances_are_not_presented_as_current_budget(tmp_path):
+    budget(tmp_path, "predecessor")
+    budget(tmp_path, "closed-successor", closed=True)
+    inventory = subject.campaign_costs(tmp_path)
+    # Old retained plans still describe unissued slots, without current authority.
+    assert by_role(inventory, "anthropic", "judge")["unstarted_commitments_microusd"] == 40_000
+    page = DashboardMixin()._retained_spend_card(inventory)
+    assert "Unissued retained-plan allowance" in page
+    assert "can include superseded plans" in page
+    assert "not today's reserved budget or authority for further spending" in page
+    assert "$0.0400" in page
