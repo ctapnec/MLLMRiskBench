@@ -1,11 +1,57 @@
 # Third hosted campaign: provider-scaled expansion
 
-Status update, 11 September 2026 at 02:17 UTC: the requested program is
+Status update, 11 September 2026 at 02:38 UTC: the requested program is
 expanded from 6,541 to 6,736 target evaluations by the additional frontier
 selection below. The added 195 evaluations have counted requests and validated
 replay files but are not yet funded or executed. The operator's latest reported balances and the
 existing USD 114 cumulative ceiling are unchanged. Frontier coverage takes
 priority over adding further lower-cost groups.
+
+The eighth slice was funded at 02:37:50 UTC for 125 non-Google inputs:
+Fable 18, Opus 29, Kimi 19 and DeepSeek 59. Funded assignments now total
+2,618. The slice reserves 125 prospective hosted Haiku assessments and 273
+new matching local assessments, within USD 8.025068 of protected judging
+capacity after both earlier unfinished slices' worst-case continuation.
+All 125 exact request-count receipts were reused with no new HTTP request.
+Shared dispatch is live; this funding result alone is not a generation count.
+
+The same eighth selection's 100 Google inputs remain deferred. The ninth
+prospective slice has been rebased to start at the correct unchanged prefixes,
+so those inputs cannot be skipped. Its 149 exact count receipts were reused
+offline, and its funding successor waits for all three preceding slices'
+targets and judgments. It remains unfunded. The older 152-input ninth preview
+is superseded, not silently counted as completed work.
+
+Two-parent monetary reservations acquire locks in chronological order and
+release them before HTTP. Focused rig checks covered both holds, changed
+forecasts, unrelated budgets, duplicate/reversed parents, closed-parent
+reporting and actual reversed-fix cases. Only the unfunded eighth and ninth
+waiters were stopped. Existing Google workers and paid responses were not
+touched. Earlier Haiku workers retain their provider slots; the eighth local
+judge is queued until those judges and the eighth Anthropic targets finish,
+preserving the two-request Anthropic ceiling.
+
+The 02:34 aggregate recorded 2,415 started assignments and 2,410 usable
+outcomes out of the then-funded 2,493 inputs: fifteen newly started inputs
+and sixteen newly durable outcomes in thirty minutes. Four terminal failures,
+one unsettled Google request and 78 unstarted Google inputs remain. Haiku
+assessments total 1,516 local and 1,314 hosted outputs, with USD 3.905620
+reported judging cost. Console availability is HTTP 200; GPUs are idle.
+There is no recorded credit-exhaustion stop. The next aggregate is due at
+03:04 UTC. The full-program finish time remains dependent on Google's daily
+quota and subsequent cumulative funding, not on GPU inference.
+
+The completed-route comparison through slice seven is now published at
+`/stats/job/hosted-expansion-comparison-through-007-65ac4d6-20260910-completed-routes`.
+It contains 1,314 hosted and 1,351 matching local outputs, 378 distinct inputs
+and 4,324 comparison links. The sixth and seventh Google routes are explicitly
+unfinished and excluded. All thirteen observed hosted models still share only
+three eligible judged inputs; pairwise support is reported separately, and
+links are not independent observations. HTTP and comparison/chart markup
+checks passed. Browser visual QA remains unavailable. Publication made no new
+target or judge call.
+
+Earlier 02:17 observations follow.
 
 All 120 non-Google seventh-slice inputs are now complete, with their required
 local and Haiku judgments: Fable 15, Opus 23, Kimi 15 and DeepSeek 67. Its

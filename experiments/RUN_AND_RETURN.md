@@ -57,6 +57,14 @@ Release the locks before HTTP; an allowance increase beyond the reserved
 forecast prevents new spending. There must be one allocation owner and no
 replay of the completed IDs. This does not retry an exhausted input, close
 unfinished judging or give a quota-limited provider another request slot.
+If several preceding cohorts remain open, include each one's complete forecast
+once, acquire their reservation guards in chronological order, and retain all
+of those bindings in the next allocation's controller record. A report must
+deduplicate shared parent holds and release a hold only after that parent
+closes. Deferring a provider also requires rebasing later prospective prefixes;
+reuse exact request counts and never skip the deferred inputs. Count earlier
+judging workers against the judge provider's network limit before starting new
+targets or local-output judging.
 
 A completed source view can contain no answers eligible for the common Haiku
 rubric. Retained hosted preparation preserves an explicitly enabled original
