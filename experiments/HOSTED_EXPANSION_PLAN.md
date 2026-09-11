@@ -10,6 +10,54 @@ collection continues while it is prepared.
 
 ## Current account balances
 
+Operator-reported third update on 11 September 2026, received at 13:33 UTC.
+These are account credits. The preceding snapshots remain unchanged below.
+
+| Provider | Previous credit (USD) | Latest credit (USD) | Net decrease (USD) |
+| --- | ---: | ---: | ---: |
+| Anthropic | 49.52 | 49.08 | 0.44 |
+| OpenAI | 14.83 | 14.74 | 0.09 |
+| Google | 17.79 | 17.74 | 0.05 |
+| Kimi | 4.23 | 4.23 | 0.00 |
+| DeepSeek | 4.88 | 4.42 | 0.46 |
+| Total | 91.25 | 90.21 | 1.04 |
+
+The balance update itself does not settle uncertain charges. After this report,
+the operator explicitly authorized continuing DeepSeek against its remaining
+USD 4.42 rather than stopping at the older USD 7 campaign ceiling. At that stop,
+tracked campaign spending was USD 7.024506; the revised stopping threshold is
+USD 11.444506, adding the reported available credit without resetting spending.
+At that initial DeepSeek-only update, other provider ceilings and the protected
+Haiku allocation were unchanged. The continuation selects only the 295 untouched inputs in seven partial jobs,
+preserving 265 saved responses and the separate interrupted HTTP pilot. An actual
+insufficient-credit response stops that provider. Retain the previous scope and
+the new authorization beside the unchanged plans and billing records.
+
+The operator subsequently authorized raising all five provider allowances.
+The applied configuration uses the 13:34 tracked-spending observation and the
+13:33 account balances, preserving the remaining Haiku allocation inside the
+Anthropic balance. These figures are planning headroom, not live account reads;
+later charges and in-flight requests reduce the available amounts.
+
+| Provider / purpose | Additional tracked headroom (USD) | Revised cumulative threshold (USD) |
+| --- | ---: | ---: |
+| Anthropic targets | 21.388997 | 46.263894 |
+| Anthropic Haiku judging | 27.691003 | 33.000000 |
+| OpenAI targets | 14.740000 | 32.429681 |
+| Google targets | 17.740000 | 21.475466 |
+| Kimi targets | 4.230000 | 9.084431 |
+| DeepSeek targets | 4.420000 | 11.444506 |
+| Total additional headroom | 90.210000 | - |
+
+This explicit authorization supersedes the former target thresholds without
+resetting any previously tracked spending, erasing uncertain charges or raising
+the Haiku threshold. Both active shared-spending owners received the revision.
+Continue the fixed selected inputs, retain provider-directed quota waits and
+stop a provider on an actual exhausted-credit response. Do not infer that a
+higher allowance has itself selected, generated or judged additional inputs.
+
+### Previous same-day snapshot
+
 Operator-reported second update on 11 September 2026, received after the
 12:34 UTC observation. These are account credits, not campaign-only costs.
 
@@ -84,7 +132,9 @@ already completed Flash answer is repeated, and Pro inputs are not replaced.
 Exact counting and preparation precede dispatch; this paragraph is not evidence
 that the additional generations have completed.
 
-The Google campaign ceiling remains USD 17 and the Haiku ceiling USD 33.
+At this extension's initial preparation, the Google ceiling was USD 17 and the
+Haiku ceiling USD 33. The later explicit all-provider update above raises the
+Google threshold; Haiku remains USD 33.
 Additional inventory is included in the same cumulative spending calculation,
 not a fresh spending allowance. Both local and Haiku judges assess every
 eligible new hosted output. Existing local answers on the identical inputs
