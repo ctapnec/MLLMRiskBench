@@ -7,6 +7,17 @@ and the final quote are in preparation. No fourth-campaign target call is claime
 The third campaign's 81-input addition is complete; remaining Google work and
 outstanding judging continue independently.
 
+Recovery observation, 11 September at 19:07 UTC: 2,864 of the 3,719 request
+counts survived the interruption. A focused longer-timeout diagnostic completed
+one previously missing OpenAI image count in 57.7 seconds; Kimi returned a
+connection error and Google a connection timeout. The image-count timeout fix
+passed 46 focused rig tests and a removed-fix regression. Its tmux continuation
+reuses completed receipts and retains per-request counting failures. No new
+generation is claimed until preparation completes. The Windows-to-rig SSH
+connection subsequently became unavailable; its launched sessions have not
+been presumed stopped or restarted. Resume inspection before launching anything
+again. Local-output Haiku preparation is written but its transfer did not finish.
+
 ## Available credit and obligations
 
 The latest operator balances are Anthropic USD 49.01, OpenAI 14.50, Google

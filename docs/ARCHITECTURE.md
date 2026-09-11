@@ -354,6 +354,13 @@ category can settle reported cached input against the remaining ordinary
 input. A priced write category still requires its reported count; absent cache
 reads remain unknown. Billing normalization does not invent usage metadata.
 
+Hosted request counting reuses completed receipts for unchanged requests.
+Image-bearing count requests allow up to 120 seconds for upload and counting;
+text-only counts retain a 30-second limit. Both respect a shorter configured
+transport timeout, and neither changes generation token allowances. Connection
+errors and timeouts remain unresolved counts, never zero-token evidence or
+model outcomes. Recover only missing counts after a network interruption.
+
 Every Hugging Face model is admitted through one sealed acquisition boundary.
 `collect_run_requirements` projects the five supported roles (vLLM target,
 local vLLM LLM judge, scoring Guardrail, defense Guardrail, and NanoGCG
