@@ -6083,6 +6083,16 @@ Retain and review the pause when recovering the exact input, rather than deletin
 it or automatically repeating an empty paid answer. Provider credit exhaustion
 remains provider-wide, while a genuinely shared accounting fault is separate.
 
+On an Anthropic output-parser failure, inspect the retained provider reply in
+the failed attempt's diagnostics before considering another paid request. The
+reply contains provider content/stop reason/usage, not API keys or request
+headers. An explicit refusal remains a provider outcome even when partial
+thinking is not suitable for a subsequent conversation turn. Other unhandled
+content sequences remain unscored pending inspection. Retaining their payloads
+does not promote them to valid answers. The actual transport-attempt count and
+complete reported usage survive such parser failures; unavailable usage remains
+unknown. This cannot recover payloads discarded by an older adapter.
+
 A single-operator application starts, monitors, and stops the
 allowlisted experiment CLIs from typed forms, composes campaign lanes through
 a mode-aware builder (dry run, attestation probe, diagnostic canary, measured

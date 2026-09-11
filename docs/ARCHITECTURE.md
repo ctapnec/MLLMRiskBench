@@ -933,6 +933,15 @@ Compact SQLite indexes support model-level coverage and matched comparisons;
 original outputs, execution conditions and verdicts remain retained artifacts.
 This extension and its full UI execution workflow are specified, not yet deployed.
 
+When an adapter rejects a provider's returned representation, Runner can retain
+a bounded JSON copy of that reply with the failed attempt. The Anthropic adapter
+supplies response content, stop reason, usage and the actual HTTP-attempt count;
+it excludes request bodies and HTTP headers. A diagnostic reply is not a usable
+answer or an adjudicated result. Oversized/non-JSON diagnostics carry an explicit
+retention status instead of silently disappearing. Parsing a saved reply is a
+local operation, not a reason to repeat a paid call. Typed partial refusals are
+classified before applying continuation-only thinking-order requirements.
+
 For an explicit workstation vLLM checkpoint, the raw filesystem locator is a
 launch-only input. The confirmation capability and raw builder selection are
 short-lived process memory, the selected config is a private one-shot file
