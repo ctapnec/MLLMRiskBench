@@ -56,8 +56,17 @@ existing campaign ceilings is USD 15.083930 Anthropic, 5.232875 OpenAI,
 judging capacity is USD 27.323766. These are operational allocations, not live
 provider balances. The cost-view repair has passed focused rig, actual-ledger
 and reversed-fix checks at c4221e4/4bda20c. Production publication remains
-scheduled after collection. A matched comparison through the five fully closed
-slices is being prepared without new target or judging calls.
+scheduled after collection. The matched comparison through the five fully closed
+slices is published at
+`/stats/job/hosted-expansion-comparison-through-005-65ac4d6-20260910`:
+1,165 hosted outputs and 1,346 matching local outputs on 375 distinct inputs,
+with 3,908 comparison links. Links are not independent questions. All thirteen
+observed hosted models share only three eligible judged inputs in this snapshot;
+pairwise input support is retained, and unmatched model averages must not be
+ranked as though every model answered the same complete corpus. Publication
+made no target or judge call. HTTP and server-rendered comparison/chart checks
+passed; browser visual QA remains pending because no browser connection was
+available.
 
 Thirty-seven completed OpenAI responses released USD 3.457155 in excess
 maximum-output reservations using reported token totals and the already-funded
