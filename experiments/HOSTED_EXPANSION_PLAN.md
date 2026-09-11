@@ -1,19 +1,23 @@
 # Third hosted campaign: provider-scaled expansion
 
-Status update, 11 September 2026 at 04:53 UTC: the requested program is
+Status update, 11 September 2026 at 05:04 UTC: the requested program is
 expanded from 6,541 to 6,736 target evaluations by the additional frontier
 selection below. The added 195 evaluations have counted requests and validated
 replay files but are not yet funded or executed. The operator's latest reported balances and the
 existing USD 114 cumulative ceiling are unchanged. Frontier coverage takes
 priority over adding further lower-cost groups.
 
-The 04:34 aggregate records 2,592 started assignments and 2,585 usable
-outcomes from 2,714 funded inputs, gaining 52 starts and 51 usable outcomes in
-thirty minutes. Six failures, one unsettled Google request and 122 unstarted
-inputs remain. Haiku totals are 1,789 local and 1,370 hosted assessments,
+The 05:04 aggregate records 2,628 started assignments and 2,620 usable
+outcomes from 2,714 funded inputs, gaining 36 starts and 35 usable outcomes in
+thirty minutes. Six failures, two unsettled requests and 86 unstarted
+inputs remain. Haiku totals are 1,789 local and 1,397 hosted assessments,
 including sixteen and seven invalid verdicts respectively, with
-USD 4.539097 reported cost. Console availability is HTTP 200; no provider
-reports exhausted credit. The next aggregate is due at 05:04 UTC.
+USD 4.575345 reported cost. Console availability is HTTP 200; no shared stop
+or provider credit-exhaustion marker is present. The next aggregate is due at
+05:34 UTC. Opus and Kimi are complete in the ninth slice. DeepSeek has eight
+unstarted inputs and one in flight. Current non-Google target and judging
+completion is estimated at fifteen to thirty minutes from this snapshot;
+the full requested expansion still depends on quota and subsequent funding.
 
 The ninth interruption was an Opus HTTP 529 `overloaded_error` after four
 transport attempts, not HTTP 400 or `cyber_policy`. Its missing output and
