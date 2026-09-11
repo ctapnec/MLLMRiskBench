@@ -326,41 +326,60 @@ class AttemptBudget:
         cohort's unused transport-retry allowance as free money. Recheck it
         before concurrent paid attempts; an allowance change can raise it.
         """
+        with _budget_lock(self.root):
+            return self._continuation_liability_locked(completed_call_ids)
+
+    @contextmanager
+    def hold_continuation_ceiling(self, completed_call_ids: Sequence[str], ceilings: Mapping[str, int]):
+        """Hold a prior cohort's ledger stable through a new money reservation.
+
+        Only the brief child-budget reservation belongs inside this context,
+        never its network call. Lock older budgets before newer budgets.
+        """
+        with _budget_lock(self.root):
+            forecast = self._continuation_liability_locked(completed_call_ids)
+            current = forecast["continuation_liability_microusd"]
+            if (not isinstance(ceilings, Mapping) or set(ceilings) != set(current)
+                    or any(type(value) is not int or value < 0 for value in ceilings.values())
+                    or any(current[key] > ceilings[key] for key in current)):
+                raise BudgetError("preceding cohort exceeds its reserved continuation ceiling")
+            yield forecast
+
+    def _continuation_liability_locked(self, completed_call_ids: Sequence[str]) -> dict:
         if isinstance(completed_call_ids, (str, bytes)) or not isinstance(completed_call_ids, Sequence):
             raise BudgetError("completed calls must be an explicit identity sequence")
         finished = {_name(key, "completed call ID") for key in completed_call_ids}
         if len(finished) != len(completed_call_ids):
             raise BudgetError("completed call identities are duplicated")
-        with _budget_lock(self.root):
-            plan, ledger, calls = self._load()
-            if not finished <= calls.keys():
-                raise BudgetError("completed call is outside the funded inventory")
-            for key in finished:
+        plan, ledger, calls = self._load()
+        if not finished <= calls.keys():
+            raise BudgetError("completed call is outside the funded inventory")
+        for key in finished:
+            attempts = ledger["attempts"].get(key, {})
+            if not attempts or any(row["state"] == "reserved" for row in attempts.values()):
+                raise BudgetError("unissued or unsettled call cannot be declared complete")
+        snapshot = self._closed_snapshot(plan, ledger, calls)
+        if snapshot["state"] not in {"active", "closed"}:
+            raise BudgetError("above-bound usage prevents a continuation allocation")
+        extra = dict.fromkeys(snapshot["pools"], 0)
+        allowances = {row["call_id"]: row["bound_microusd"]
+                      for row in ledger.get("allowance_adjustments", [])}
+        if snapshot["state"] != "closed":
+            for key, call in calls.items():
+                if key in finished:
+                    continue
                 attempts = ledger["attempts"].get(key, {})
-                if not attempts or any(row["state"] == "reserved" for row in attempts.values()):
-                    raise BudgetError("unissued or unsettled call cannot be declared complete")
-            snapshot = self._closed_snapshot(plan, ledger, calls)
-            if snapshot["state"] not in {"active", "closed"}:
-                raise BudgetError("above-bound usage prevents a continuation allocation")
-            extra = dict.fromkeys(snapshot["pools"], 0)
-            allowances = {row["call_id"]: row["bound_microusd"]
-                          for row in ledger.get("allowance_adjustments", [])}
-            if snapshot["state"] != "closed":
-                for key, call in calls.items():
-                    if key in finished:
-                        continue
-                    attempts = ledger["attempts"].get(key, {})
-                    # Snapshot liability already holds each recorded attempt
-                    # and the first attempt of a completely unissued call.
-                    remaining = MAX_ATTEMPTS - len(attempts) - int(not attempts)
-                    extra[f"{call['provider']}:{call['pool']}"] += (
-                        remaining * allowances.get(key, call["bound_microusd"]))
-            ceilings = {key: min(pool["cap_microusd"], pool["liability_microusd"] + extra[key])
-                        for key, pool in snapshot["pools"].items()}
-            return {"budget_plan_sha256": self.expected_plan_sha256,
-                    "completed_call_ids": sorted(finished), "snapshot": snapshot,
-                    "extra_transport_reserve_microusd": extra,
-                    "continuation_liability_microusd": ceilings}
+                # Snapshot liability already holds each recorded attempt
+                # and the first attempt of a completely unissued call.
+                remaining = MAX_ATTEMPTS - len(attempts) - int(not attempts)
+                extra[f"{call['provider']}:{call['pool']}"] += (
+                    remaining * allowances.get(key, call["bound_microusd"]))
+        ceilings = {key: min(pool["cap_microusd"], pool["liability_microusd"] + extra[key])
+                    for key, pool in snapshot["pools"].items()}
+        return {"budget_plan_sha256": self.expected_plan_sha256,
+                "completed_call_ids": sorted(finished), "snapshot": snapshot,
+                "extra_transport_reserve_microusd": extra,
+                "continuation_liability_microusd": ceilings}
 
     def _closed_snapshot(self, plan: dict, ledger: dict, calls: dict) -> dict:
         totals = self._totals(plan, ledger)

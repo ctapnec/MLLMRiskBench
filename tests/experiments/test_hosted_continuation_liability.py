@@ -67,3 +67,34 @@ def test_closed_cohort_does_not_reserve_canceled_judge_retries(budget):
     assert result["continuation_liability_microusd"] == {
         "anthropic:target": 22, "anthropic:judge": 0, "google:target": 3}
     assert not any(result["extra_transport_reserve_microusd"].values())
+
+
+def test_growth_guard_stops_before_a_child_reservation(budget):
+    ceilings = budget.continuation_liability(["done"])["continuation_liability_microusd"]
+    ceilings["google:target"] -= 1
+    reservations = []
+    with pytest.raises(BudgetError, match="continuation ceiling"):
+        with budget.hold_continuation_ceiling(["done"], ceilings):
+            reservations.append("must not reserve")
+    assert reservations == []
+
+
+def test_parent_ledger_is_locked_during_child_reservation_not_afterward(budget):
+    import threading
+    from experiments.hosted_attempt_budget import _budget_lock
+
+    ceilings = budget.continuation_liability(["done"])["continuation_liability_microusd"]
+    waiting, entered = threading.Event(), threading.Event()
+
+    def edit():
+        waiting.set()
+        with _budget_lock(budget.root):
+            entered.set()
+
+    with budget.hold_continuation_ceiling(["done"], ceilings):
+        worker = threading.Thread(target=edit)
+        worker.start()
+        assert waiting.wait(2)
+        assert not entered.wait(0.1)
+    worker.join(timeout=2)
+    assert entered.is_set() and not worker.is_alive()
