@@ -351,6 +351,17 @@ def test_extension_reuses_scheduled_local_judging_without_claiming_finished_verd
     wrong = _save(tmp_path/'wrong-scheduled-funding.json', funding)
     with pytest.raises(ValueError, match='exact selected outputs'):
         subject.executor._additional_funding(wrong, configured)
+    finished = {'retained_row_sha256': 'f'*64, 'exact_model': 'ollama:example'}
+    record = {**finished, 'cohort': 'local', 'judgment_artifact': _save(tmp_path/'finished-verdict.json', finished)}
+    inventory.update(all_matching_rows=[row, finished],
+        reused_judgments=_save(tmp_path/'finished-records.json', {'records': [record]}))
+    funding['judging_inventory'] = _save(tmp_path/'mixed-scheduled-local.json', inventory)
+    mixed = _save(tmp_path/'mixed-scheduled-funding.json', funding)
+    assert subject.executor._additional_funding(mixed, configured) == funding
+    inventory['all_matching_rows'][1] = {**finished, 'exact_model': 'ollama:different'}
+    funding['judging_inventory'] = _save(tmp_path/'wrong-mixed-local.json', inventory)
+    with pytest.raises(ValueError, match='exact selected outputs'):
+        subject.executor._additional_funding(_save(tmp_path/'wrong-mixed-funding.json', funding), configured)
 
 
 def test_distinct_selected_provider_cannot_be_omitted_before_token_counting(tmp_path, monkeypatch):

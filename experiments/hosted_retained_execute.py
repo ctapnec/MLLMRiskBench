@@ -906,9 +906,21 @@ def _validate_scheduled_local_judging(inventory: dict) -> None:
                      if row["provider"] == "anthropic" and row["pool"] == "judge")
     keys = [row.get("retained_row_sha256") for row in matching if isinstance(row, dict)]
     if (len(keys) != len(matching) or len(set(keys)) != len(keys)
-            or any(not isinstance(key, str) or not re.fullmatch(r"[0-9a-f]{64}", key)
-                   or "judge-local-" + key not in calls for key in keys)):
+            or any(not isinstance(key, str) or not re.fullmatch(r"[0-9a-f]{64}", key) for key in keys)):
         raise ValueError("scheduled local judging does not cover the exact selected outputs")
+    pending = [row for row in matching if "judge-local-" + row["retained_row_sha256"] not in calls]
+    if pending:
+        reused, _ = _bound(inventory.get("reused_judgments", {})) if "reused_judgments" in inventory else ({}, {})
+        records = {row["retained_row_sha256"]: row for row in reused.get("records", [])
+                   if isinstance(row, dict) and row.get("cohort") == "local"}
+        for row in pending:
+            prior = records.get(row["retained_row_sha256"])
+            if prior is None or any(prior.get(field) != row.get(field) for field in
+                    ("exact_model", "run_id", "attempt_id", "input_identity_sha256")):
+                raise ValueError("scheduled local judging does not cover the exact selected outputs")
+            artifact, _ = _bound(prior.get("judgment_artifact", {}))
+            if artifact.get("retained_row_sha256") != row["retained_row_sha256"]:
+                raise ValueError("reused judgment artifact names a different output")
 
 
 def _distinct_judge_ids(plan: dict, key: str, candidates: Sequence[dict]) -> dict[str, str]:
