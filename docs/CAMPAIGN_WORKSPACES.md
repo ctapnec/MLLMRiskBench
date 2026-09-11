@@ -2,8 +2,11 @@
 
 Status: Build ownership, compact result/judgment indexes, model coverage views
 and figure/table exports implemented; complete workflow still in progress,
-11 September 2026. The console is deployed at `54fbc07`; its SQLite migration
-preserved existing records and the production pages returned HTTP 200. Full historical import,
+11 September 2026. The console is deployed at `54fbc07`; production pages
+returned HTTP 200. The original deployment backup check used a malformed
+SQLite URI and did not verify preservation; a corrected live backup and the
+4,097-assignment condition repair are retained under
+`workspace-conditions-078f798-20260911`. Full historical import,
 automatic result publication, full cost-source attribution, matched comparison figures and
 the remaining execution actions below are unfinished.
 
@@ -14,6 +17,14 @@ retained outcomes; incomplete live JSONL tails are not outcomes. Repeating the
 same import is idempotent. It does not run checksums, call providers, execute
 judges, rebuild corpora, or run from a Stats page request. Existing judgments
 are untouched; this command does not claim judging coverage.
+
+The Conditions count identifies generation settings, not distinct questions.
+It is derived from the target configuration and output allowance, excluding
+credentials and configuration-file locations. Different inputs under unchanged
+settings share a condition; changed settings remain separate. The rig verified
+this correction with nine focused tests, a reversed-fix check and a live-data
+rehearsal. Production index repair changed only the derived condition fields;
+response selection, outcomes, verdicts, token counts and costs stayed unchanged.
 
 Create or select the campaign in Build, then use its ID from the campaign URL:
 
