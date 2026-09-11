@@ -4,8 +4,19 @@ Status: Build ownership, compact result/judgment indexes, model coverage views
 and figure/table exports implemented; complete workflow still in progress,
 11 September 2026. The foundation is deployed at `3e80fca`; its SQLite migration
 preserved existing records and the production pages returned HTTP 200. Historical import,
-automatic result publication, cost attribution, matched comparison figures and
+automatic result publication, full cost-source attribution, matched comparison figures and
 the remaining execution actions below are unfinished.
+
+Output-owned cost indexing and its workspace table are implemented at `38a361f`
+but not deployed yet. Twenty-one focused rig checks covered cost ownership,
+retries, copied records, migration and the existing result views. The changed
+ledger-translation check also passed. Three reversed-fix checks detected wrong
+ownership, unknown charges turned into zero and wrong per-attempt response
+attribution. A real-data proof indexed the two retained DeepSeek attempts in an
+isolated database: one assignment, both output conditions, 46,429 reported output
+tokens and unknown costs shown separately from exposure. It made no calls and
+did not import production campaigns. Proofs: workspace-costs-b76283b-20260911
+and workspace-costs-38a361f-20260911.
 
 Focused rig verification covers 32 ownership checks, six result-index checks,
 seven initial chart checks and two changed export/navigation checks. Four real
@@ -156,6 +167,16 @@ both campaigns. Account balance updates form a dated history, separate from
 attributed campaign costs. Unknown charges are not zero. Precalculated spending
 forecasts are not money reservations.
 
+The implemented cost table reads SQLite only. Publishers explicitly map each
+physical attempt to its assignment and, for judging, its exact retained output.
+Different responses on the same input cannot share a judging bill. Network
+retries have distinct attempt ordinals; copied references do not duplicate
+costs. Original and corrected responses can have separate per-attempt mappings.
+An unknown settlement has no known amount, and an output allowance never fills
+a missing reported-token field. Local judging is labeled as having no API bill,
+not as having no electricity or hardware cost. Full source attribution and
+publication hooks are still required before the complete Costs view is claimed.
+
 Activity is the only default location for individual jobs, controllers,
 preparation tasks, retries, recoveries, logs and artifacts. Keep their real
 origins and timestamps. Group related operations under the affected model or
@@ -167,9 +188,10 @@ rewriting that process as successful.
 `rig_web_app/storage.py` uses SQLite in `<state-dir>/console.db`. Before the
 ownership change it stored `jobs`, `runs`, `usage` and `reports`, plus schema
 metadata. Its legacy Stats campaign query still combines terminal runs with
-active run-kind jobs. Schema version 7 additionally stores `campaigns`,
+active run-kind jobs. Schema version 7 added `campaigns`,
 `campaign_members`, assignments, response references and output-specific
-judgments; these survive usage/report reindexing. The old query and
+judgments; version 8 adds output-owned physical-attempt costs. These survive
+usage/report reindexing. The old query and
 deep links remain available during implementation of the grouped results view.
 
 External controllers, measured jobs and analysis publications already have
