@@ -2812,7 +2812,11 @@ python -m experiments.rig_web --reindex --verify-artifact-sha256
 Without that option, routine file structure and record accounting are retained,
 but file bytes are not claimed to have been freshly checksum-verified. Frozen
 readers retain their original schema, semantic and accounting logic with the
-file-checksum policy applied separately and reported as such. Stored content
+file-checksum policy applied separately and reported as such.
+The RR interrupted-grid prefix reader follows this option too, including its
+historical subprocess and closed-cell joins. It reports the actual checking
+mode without promoting the interrupted parent grid to a completed result.
+Stored content
 identities, newly generated descriptors, request construction and monetary
 bindings are not replaced by invented digests. Model-file checks use their
 separate `--verify-model-sha256` option.

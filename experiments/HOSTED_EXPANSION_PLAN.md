@@ -1,18 +1,19 @@
 # Third hosted campaign: provider-scaled expansion
 
-Status update, 11 September 2026 at 03:38 UTC: the requested program is
+Status update, 11 September 2026 at 04:10 UTC: the requested program is
 expanded from 6,541 to 6,736 target evaluations by the additional frontier
 selection below. The added 195 evaluations have counted requests and validated
 replay files but are not yet funded or executed. The operator's latest reported balances and the
 existing USD 114 cumulative ceiling are unchanged. Frontier coverage takes
 priority over adding further lower-cost groups.
 
-The 03:34 aggregate records 2,516 started assignments and 2,510 usable
-outcomes from 2,618 funded inputs, gaining 57 durable outcomes in thirty
-minutes. Five failures, one unsettled Google request and 102 unstarted inputs
-remain. Haiku totals are 1,516 local and 1,314 hosted assessments, with
-USD 3.905620 reported cost. Console availability is HTTP 200; no provider
-reports exhausted credit. The next aggregate is due at 04:04 UTC.
+The 04:04 aggregate records 2,540 started assignments and 2,534 usable
+outcomes from 2,618 funded inputs, gaining 24 durable outcomes in thirty
+minutes. Five failures, one unsettled Google request and 78 unstarted Google
+inputs remain. Haiku totals are 1,789 local and 1,370 hosted assessments,
+including sixteen and seven invalid verdicts respectively, with
+USD 4.539097 reported cost. Console availability is HTTP 200; no provider
+reports exhausted credit. The next aggregate is due at 04:34 UTC.
 
 Fable, Opus and Kimi completed all 18, 29 and 19 eighth-slice inputs.
 DeepSeek retained 35 of 59 outcomes before one request exhausted its 16,384
@@ -23,15 +24,16 @@ The reviewed continuation starts only the 24 unissued inputs, preserving the
 same generation condition and giving the failed answer no paid answer retry.
 It also resumes the interrupted output-specific and matching-local Haiku
 judging. New failures still use the ordinary investigation stop. The recovery
-process is running; resumed paid generation is not yet claimed at this update.
-The 03:41 continuation check subsequently confirms three new DeepSeek starts,
-37 durable outcomes and 38 physical attempts, with the same one missing output.
-Both Haiku queues have resumed; their attempt starts are not final verdicts.
+completed at approximately 04:02 UTC, retaining all 59 DeepSeek outcomes:
+58 usable answers and the original missing output. No completed target was
+repeated. All four target routes and both judging stages of this slice are
+now complete, including 273 new matching-local Haiku assessments and 56
+eligible new hosted-output assessments.
 Explicit OpenAI HTTP 400 `cyber_policy` remains an observed refusal that does
 not stop subsequent inputs. Other HTTP 400 causes are not inferred from it.
 
-The ninth prospective slice now retains 102 unchanged non-Google requests:
-Opus 27, Kimi 19 and DeepSeek 56. Its 47 Google requests are deferred, not
+The ninth prospective slice now retains 96 unchanged non-Google requests:
+Opus 27, Kimi 19 and DeepSeek 50. Its 47 Google requests are deferred, not
 discarded or skipped by the next input prefix. The partition reused exact
 request counts without HTTP. Funding waits for eighth-slice target and both
 judging terminals, then checks actual remaining capacity while still reserving
@@ -41,7 +43,24 @@ until their own Google outputs are ready and run one at a time. Ninth-slice
 hosted and matching-local judging run sequentially, maintaining at most two
 Anthropic requests including the older judge. Focused scheduling and reversed
 dependency checks passed on the rig. No paid process was stopped by this
-queue handoff. The ninth slice is still unfunded.
+queue handoff. The initial 56-request DeepSeek reservation exceeded remaining
+capacity by USD 0.216182. A no-call partition deferred six requests and their
+eighteen newly matching local judgments, preserving whole input clusters and
+the exact request contents. Funding of the corrected slice is running; it
+must not be counted as paid generation before actual execution starts.
+
+The tenth slice is queued to prepare the first twenty extra Fable inputs:
+eleven text and nine image inputs, with USD 8.263490 maximum target exposure.
+It reuses already counted requests and keeps the other nineteen extra Fable
+inputs pending. Preparation waits for the ninth selection to be funded;
+execution and both judging stages remain subject to cumulative capacity.
+Every new hosted output receives its own eligible local and Haiku assessment.
+Only judgments of the identical retained local answers may be reused.
+
+The historical RR prefix reader now forwards the optional artifact-checking
+mode to its original-source subprocess. Ninety-three focused rig tests, a
+reversed-fix test and a real two-cell, 200-response prefix check passed.
+The checked runtime handoff changes no generation revision or retained data.
 
 Earlier 03:12 observations follow.
 
