@@ -38,6 +38,31 @@ COHORT_INPUT_SCHEMA = "ura-hosted-retained-execution-plan/7"
 COUNTED_INPUT_POLICY = "counted_requests_within_route_reservation_v1"
 TOKEN_COUNT_POLICY = "surface_specific_counts_with_declared_estimates_v1"
 _HEX40 = re.compile(r"[0-9a-f]{40}\Z")
+_TARGET_PAUSE_CATEGORIES = frozenset({
+    "missing_target_output", "transport_retry_pending", "terminal_transport_failure",
+})
+
+
+class TargetRoutePaused(RuntimeError):
+    """One target awaits output/transport review; independent targets can run."""
+
+
+def target_pause_path(budget: AttemptBudget, target: str) -> Path:
+    return budget.root / ("target-pause-" + hashlib.sha256(target.encode()).hexdigest()[:24] + ".json")
+
+
+def target_pause(budget: AttemptBudget, target: str) -> dict | None:
+    """Read a small target-local operational stop without scanning results."""
+    path = target_pause_path(budget, target)
+    if not path.exists() and not path.is_symlink():
+        return None
+    value, _ = _read_regular(path, label="target pause", max_bytes=8192)
+    if (value.get("schema") != "ura-hosted-target-pause/1"
+            or value.get("budget_plan_sha256") != budget.expected_plan_sha256
+            or value.get("target") != target
+            or value.get("category") not in _TARGET_PAUSE_CATEGORIES):
+        raise ValueError("target pause binding differs")
+    return value
 
 
 def _billing_provider(surface: str) -> str:
@@ -209,6 +234,15 @@ class _Admission:
         if category == "provider_funding_unavailable":
             self.budget.stop_provider_funding(self.program["provider"], call_id)
             return
+        if category in _TARGET_PAUSE_CATEGORIES:
+            with _budget_lock(self.budget.root):
+                path = target_pause_path(self.budget, self.program["target"])
+                if not path.exists():
+                    _write_new(path, {"schema": "ura-hosted-target-pause/1",
+                        "target": self.program["target"], "provider": self.program["provider"],
+                        "category": category, "call_id": call_id,
+                        "budget_plan_sha256": self.budget.expected_plan_sha256})
+            return
         with _budget_lock(self.budget.root):
             path = self.budget.root / "paid-circuit.json"
             if not path.exists():
@@ -231,6 +265,9 @@ class _Admission:
             if (_billing_provider(provider) != self.program["provider"] or _sha(request) != receipt["request_sha256"]
                 or number != ordinal + 1):
                 raise ValueError("physical request identity or retry ordinal differs from its funded slot")
+            pause = target_pause(self.budget, self.program["target"])
+            if pause is not None:
+                raise TargetRoutePaused("target awaits review: " + pause["category"])
             if ordinal:
                 # A subsequent SDK callback proves an admitted HTTP/network retry.
                 # The unsuccessful attempt's unknown bill remains fully held.
@@ -264,7 +301,9 @@ class _Admission:
                 self.budget.settle(call_id, ordinal, None)
             # Runner wraps callback errors as ExternalCallFailure, preserving
             # their cause. Capacity is still a scheduling condition there.
-            if not isinstance(exc.__cause__, BudgetCapacityUnavailable):
+            if not isinstance(exc, TargetRoutePaused) and not isinstance(
+                exc.__cause__, (BudgetCapacityUnavailable, TargetRoutePaused)
+            ):
                 self._circuit("terminal_target_call_failure", call_id)
             raise
 

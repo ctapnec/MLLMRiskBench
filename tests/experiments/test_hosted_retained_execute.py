@@ -432,16 +432,31 @@ def test_credit_exhaustion_preserves_checkpoint_and_unknown_charge_without_retry
     assert admission.budget.snapshot()["pools"]["openai:target"]["unknown_usage_attempts"] == 1
 
 
-def test_paid_empty_response_is_durable_then_opens_global_circuit_before_next_input(tmp_path):
+def test_paid_empty_response_is_durable_then_pauses_only_its_target(tmp_path):
     points, attacker, target, calls, admission = _setup(tmp_path, outputs=["", "must never run"])
     checkpoint = tmp_path / "responses.jsonl"
     with pytest.raises(RuntimeError, match="durable response"):
         _runner(attacker, target, admission).run(points, on_response=lambda row: Runner.append_checkpoint(checkpoint, row))
     records = Runner.load_response_checkpoint(checkpoint)
     assert len(calls) == len(records) == 1
-    assert (admission.budget.root / "paid-circuit.json").is_file()
+    assert not (admission.budget.root / "paid-circuit.json").exists()
+    pause = subject.target_pause(admission.budget, target.name)
+    assert pause["category"] == "missing_target_output"
+    assert subject.target_pause(admission.budget, "openai:another-model") is None
     assert next(iter(records.values()))["response"]["raw"]["model_stability_status"] == "failed_output"
     assert admission.budget.snapshot()["pools"]["openai:target"]["unknown_usage_attempts"] == 1
+
+    # A new worker on the same target stops before the SDK, without poisoning
+    # the shared budget. Another target's unused slot remains available.
+    entry = list(admission.entries.values())[1]
+    attempt = SimpleNamespace(params={"retained_origin": entry["origin"]},
+                              rendered_input=retained_dialog(entry["rendered_input"]), seed=0)
+    with pytest.raises(subject.TargetRoutePaused, match="target awaits review"):
+        with admission.attempt(SimpleNamespace(target=target), attempt):
+            target.generate(attempt.rendered_input, seed=0)
+    assert len(calls) == 1
+    assert not (admission.budget.root / "paid-circuit.json").exists()
+    admission.budget.reserve(list(admission.requests.values())[1]["call_id"], 1, provider="openai")
 
 
 @pytest.mark.parametrize("purpose", ["attestation_probe", "diagnostic_canary", "measured_run"])
@@ -506,7 +521,8 @@ def test_terminal_transport_failure_does_not_claim_a_pending_retry(tmp_path, mon
     assert response["raw"]["transport_retry_status"] == expected_state
     assert response["raw"]["model_stability_category"] == "transport_failure"
     assert response["output_turns"] == [] and response["tokens"] is None
-    assert json.loads((admission.budget.root / "paid-circuit.json").read_text())["category"] == "terminal_transport_failure"
+    assert subject.target_pause(admission.budget, target.name)["category"] == "terminal_transport_failure"
+    assert not (admission.budget.root / "paid-circuit.json").exists()
     assert len(calls) == physical
     assert admission.budget.snapshot()["pools"]["openai:target"]["unknown_usage_attempts"] == physical
     assert admission.budget.snapshot()["pools"]["openai:target"]["unstarted_first_commitments_microusd"] == 10000

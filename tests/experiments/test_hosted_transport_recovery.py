@@ -32,7 +32,7 @@ def _failed_prefix(tmp_path, monkeypatch, *, tight=False):
     assert len(records) == len(calls) == 1
     attempt_id, record = next(iter(records.items()))
     key = record["attempt"]["params"]["retained_origin"]["selection"]["input_identity_sha256"]
-    original.budget.root.joinpath("paid-circuit.json").rename(tmp_path / "reviewed-stop.json")
+    subject.target_pause_path(original.budget, target.name).rename(tmp_path / "reviewed-stop.json")
     raw = checkpoint.read_bytes()
     recovery = {
         "checkpoint": {"path": str(checkpoint), "sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw)},

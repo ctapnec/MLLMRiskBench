@@ -91,7 +91,7 @@ def _prefix(tmp_path, monkeypatch, provider, *, tight=False, after_usable=False)
     raw = record['response']['raw']
     assert raw['model_stability_category'] == 'unusable_output'
     assert raw['transport_attempt_count'] == 4 and budget.reserved_attempt_count(ids[0]) == 1
-    budget.root.joinpath('paid-circuit.json').rename(tmp_path / 'reviewed-stop.json')
+    subject.target_pause_path(budget, target.name).rename(tmp_path / 'reviewed-stop.json')
     data = checkpoint.read_bytes()
     program.update(schema=subject.ADAPTER_RECOVERY_SCHEMA, adapter_recoveries={failed_key: {
         'checkpoint': {'path': str(checkpoint), 'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()},
