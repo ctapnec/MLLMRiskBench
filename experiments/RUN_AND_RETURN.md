@@ -11,6 +11,10 @@ python -m experiments.operational_costs --results-root /absolute/results \
   --register-budget /absolute/results/campaign/budget
 ```
 
+Unissued retained-plan allowances may include superseded plans. They are not
+current reserved credit, a live account balance or authority for more calls.
+Use the campaign's current cumulative funding record for new allocations.
+
 Register the current accounting source for each cohort, including its retained
 predecessor attempts, not synthetic proof budgets. Recovery copies share
 physical-attempt identities and are counted once; contradictory settlements
