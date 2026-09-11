@@ -11,7 +11,9 @@ from experiments.rig_web_app.storage import ConsoleDB
     ("ollama", dict(num_ctx=65536,num_predict=-1), dict(prompt=24,completion=512), dict(done_reason="length")),
 ])
 def test_local_provider_native_token_metadata_is_not_lost(tmp_path, backend, generation, tokens, reason):
-    model=backend+":local-model";run_id="run-native";artifacts={}
+    model=backend+":local-model"
+    run_id="run-native"
+    artifacts={}
     response=dict(run_id=run_id,target=model,attempt_id="a",output_turns=[],tokens=tokens,
                   raw=dict(backend=backend,generation=generation,empty_completion_observed=True,**reason))
     values=dict(manifest={"config":{"run":{"model_spec":model,"corpus":"example","execution_purpose":"measured_run"}}},
@@ -29,8 +31,10 @@ def test_local_provider_native_token_metadata_is_not_lost(tmp_path, backend, gen
     assert r['output_allowance']==generation.get('num_predict',generation.get('max_tokens'))
     assert r['missing_category']=='empty_output'
     db=ConsoleDB(tmp_path/'console.db')
-    try:db.publish_workspace_results(db.create_workspace('Local','local'),**rows)
-    finally:db.close()
+    try:
+        db.publish_workspace_results(db.create_workspace('Local','local'),**rows)
+    finally:
+        db.close()
 
 
 def test_local_publication_keeps_missing_and_unanswered_assignments(tmp_path):
