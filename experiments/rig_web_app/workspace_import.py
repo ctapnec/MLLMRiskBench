@@ -50,6 +50,39 @@ def _responses(job: dict):
     return observed.values()
 
 
+def _program_groups(program: dict):
+    """Keep the explicitly retained pre-repair prefix in the denominator.
+
+    Recovery jobs can omit inputs whose answers are already in the declared
+    predecessor checkpoint. Those are real retained records, not new jobs or
+    new generations. The repaired input itself belongs to the current job.
+    """
+    assigned = {key for job in program["jobs"] for key in job["input_ids"]}
+    for job in program["jobs"]:
+        yield job["purpose"], job["input_ids"], _responses(job)
+    prefixes = {}
+    for repaired_input, recovery in program.get("adapter_recoveries", {}).items():
+        owners = [job for job in program["jobs"] if repaired_input in job["input_ids"]]
+        if len(owners) != 1:
+            raise ValueError("Retained prefix has no exact recovery job")
+        path = Path(recovery["checkpoint"]["path"])
+        for number, record in _jsonl(path):
+            attempt, response = record["attempt"], record["response"]
+            key = attempt["params"]["retained_origin"]["selection"]["input_identity_sha256"]
+            if key in assigned or key not in program["requests"]:
+                continue
+            if (attempt["run_id"], attempt["id"]) != (response["run_id"], response["attempt_id"]):
+                raise ValueError("Retained prefix response does not match its attempt")
+            if response.get("raw", {}).get("model_stability_status") == "failed_output":
+                raise ValueError("Failed predecessor requires explicit recovery selection")
+            value = (owners[0]["purpose"], attempt, response, f"{path}:{number}")
+            if key in prefixes and prefixes[key][:3] != value[:3]:
+                raise ValueError("Conflicting retained recovery prefixes")
+            prefixes.setdefault(key, value)
+    for key, (purpose, attempt, response, source) in prefixes.items():
+        yield purpose, [key], [(attempt, response, source)]
+
+
 def hosted_program_rows(program: dict, selections: list[dict], *, campaign_id: str,
                         budget_plan: dict, ledger: dict, ledger_path: str) -> dict:
     """Index exactly the supplied program, including its unstarted assignments.
@@ -63,9 +96,9 @@ def hosted_program_rows(program: dict, selections: list[dict], *, campaign_id: s
     if not requests.keys() <= choices.keys():
         raise ValueError("Input selection does not cover the retained program")
     assignments, responses, bindings = {}, [], {}
-    for job in program["jobs"]:
-        evidence = {"measured_run": "measured", "diagnostic_canary": "diagnostic"}.get(job["purpose"], "unknown")
-        for input_id in job["input_ids"]:
+    for purpose, input_ids, records in _program_groups(program):
+        evidence = {"measured_run": "measured", "diagnostic_canary": "diagnostic"}.get(purpose, "unknown")
+        for input_id in input_ids:
             if input_id in assignments:
                 raise ValueError("Input is assigned to multiple program jobs")
             request, choice = requests[input_id], choices[input_id]
@@ -74,10 +107,10 @@ def hosted_program_rows(program: dict, selections: list[dict], *, campaign_id: s
                 framework=choice["framework"], corpus=choice["corpus"], response_id=None, evidence_class=evidence)
             bindings[request["call_id"]] = dict(campaign_id=campaign_id, assignment_id=request["call_id"],
                 model=program["target"], attempt_response_ids={}, attempt_usage={})
-        for attempt, response, source in _responses(job):
+        for attempt, response, source in records:
             selection = attempt["params"]["retained_origin"]["selection"]
             input_id = selection["input_identity_sha256"]
-            if input_id not in job["input_ids"] or response["target"] != program["target"]:
+            if input_id not in input_ids or response["target"] != program["target"]:
                 raise ValueError("Response is outside the selected program job")
             row, request = assignments[input_id], requests[input_id]
             if any(selection[key] != row[key] for key in ("modality", "framework", "corpus")):

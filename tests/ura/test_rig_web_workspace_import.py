@@ -98,3 +98,31 @@ def test_selection_cannot_invent_a_different_framework(retained):
     args["selections"][0]["framework"] = "other"
     with pytest.raises(ValueError, match="metadata differs"):
         publish_hosted_program(db, campaign, **args)
+
+
+def test_recovery_keeps_declared_completed_prefix_without_importing_repaired_failure(retained):
+    db, campaign, args, path, records = retained
+    old = json.loads(json.dumps(records))
+    old[0]["response"]["raw"]["model_stability_status"] = "failed_output"
+    old[0]["response"]["output_turns"] = []
+    prefix = path.with_name("previous.jsonl")
+    prefix.write_text("".join(json.dumps(row) + "\n" for row in old))
+    args["program"]["jobs"][0]["input_ids"].remove("1")
+    path.write_text("".join(json.dumps(row) + "\n" for row in records if row["attempt"]["id"] != "1"))
+    args["program"]["adapter_recoveries"] = {"0": dict(checkpoint=dict(path=str(prefix)))}
+    assert publish_hosted_program(db, campaign, **args)["assignments"] == 4
+    total = db.workspace_model_totals(campaign)[0]
+    assert total["usable"] == 1 and total["policy"] == 1 and total["missing"] == 1
+    assert total["pending"] == 1
+    assert publish_hosted_program(db, campaign, **args)["responses"] == 3
+
+
+def test_failed_predecessor_cannot_be_silently_selected_as_a_completed_prefix(retained):
+    db, campaign, args, path, records = retained
+    prefix = path.with_name("previous.jsonl")
+    prefix.write_text("".join(json.dumps(row) + "\n" for row in records))
+    args["program"]["jobs"][0]["input_ids"].remove("2")
+    path.write_text("".join(json.dumps(row) + "\n" for row in records if row["attempt"]["id"] != "2"))
+    args["program"]["adapter_recoveries"] = {"0": dict(checkpoint=dict(path=str(prefix)))}
+    with pytest.raises(ValueError, match="Failed predecessor"):
+        publish_hosted_program(db, campaign, **args)
