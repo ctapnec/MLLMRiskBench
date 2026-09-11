@@ -386,3 +386,12 @@ Required focused rig checks include:
 Record implementation proofs and deployment state in the development ledger.
 Describe the eventual design and experimental methods academically in the thesis;
 do not insert these click instructions or operational status notes in its prose.
+
+Adding inputs to an existing API campaign must include their execution ledger in
+the same cumulative spending view. `AttemptBudget.use_campaign_spending` accepts
+an append-only extension of ledger references with unchanged provider/judge
+ceilings, retaining the previous scope before publication. It rejects removing
+historical ledgers, changing existing references or increasing ceilings through
+this operation. Existing plan and billing records remain unchanged. Active
+owners must receive the expanded scope before additional calls are dispatched;
+this avoids independent ledgers spending against separately counted allowances.

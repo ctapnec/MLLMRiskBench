@@ -67,6 +67,31 @@ required after target collection.
 
 ## Continuous execution
 
+### Additional Flash inputs, 11 September
+
+The operator's account-panel screenshot confirms Gemini 3.8 Flash limits of
+1,000 requests/minute, 2,000,000 tokens/minute and 10,000 requests/day. The
+displayed 259 requests/day is peak usage over the selected 28-day interval,
+not remaining daily capacity. Gemini 3.1 Pro is separately limited to 250/day.
+Evidence: [operator-supplied quota panel](https://gyazo.com/f1b2b82020b809ec21e9d0b40bcc89aa).
+
+The authorized additional Flash selection extends the existing deterministic
+shared input prefix from 480 to 747 inputs: 267 additional inputs, matching
+Sonnet's prefix. Preserve the existing 4,096-token output allowance, seed,
+prompt/media bytes, whole source clusters and zero answer retries. Qualifying
+HTTP failures retain up to three retries with provider-directed backoff. No
+already completed Flash answer is repeated, and Pro inputs are not replaced.
+Exact counting and preparation precede dispatch; this paragraph is not evidence
+that the additional generations have completed.
+
+The Google campaign ceiling remains USD 17 and the Haiku ceiling USD 33.
+Additional inventory is included in the same cumulative spending calculation,
+not a fresh spending allowance. Both local and Haiku judges assess every
+eligible new hosted output. Existing local answers on the identical inputs
+remain in the Haiku comparison; a saved verdict is reused only for the same
+actual output and judge condition. The original 67-input allocation gap remains
+separate from this explicitly added work.
+
 12:34 UTC observation: 5,519 of 6,669 assignments attempted, with 5,503 usable
 outcomes, up 277 in thirty minutes. There are 1,150 unstarted assignments and
 the separate 67-input allocation gap. Haiku totals remain 2,217 local and
