@@ -11,6 +11,30 @@ from ura import hosted_scheduling as scheduling
 from ura.targets import api
 
 
+def test_responses_only_defers_before_any_judge_slot_and_restores_scope(monkeypatch):
+    from ura import runner
+
+    acquired = []
+    monkeypatch.setattr(runner, "current_retained_execution_admission", lambda: object())
+    slot = SimpleNamespace(acquire=lambda: acquired.append(True))
+    token = scheduling._SCORING_SLOT.set(slot)
+    try:
+        with scheduling.hosted_responses_only():
+            with pytest.raises(scheduling.HostedJudgingDeferred):
+                scheduling.acquire_hosted_local_scoring_slot()
+            assert acquired == []
+        scheduling.acquire_hosted_local_scoring_slot()
+        assert acquired == [True]
+    finally:
+        scheduling._SCORING_SLOT.reset(token)
+
+
+def test_responses_only_cannot_silently_defer_an_unrelated_local_job():
+    with scheduling.hosted_responses_only():
+        with pytest.raises(RuntimeError, match="retained execution admission"):
+            scheduling.acquire_hosted_local_scoring_slot()
+
+
 @pytest.mark.parametrize("header", ["13", "0.75", "Thu, 10 Sep 2026 12:00:13 GMT"])
 def test_retry_after_is_respected_before_next_paid_attempt(monkeypatch, header):
     monkeypatch.setattr(api.time, "time", lambda: 1789041600)

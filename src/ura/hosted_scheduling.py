@@ -10,6 +10,21 @@ import time
 
 
 _SCORING_SLOT = ContextVar("hosted_local_scoring_slot", default=None)
+_RESPONSES_ONLY = ContextVar("hosted_responses_only", default=False)
+
+
+class HostedJudgingDeferred(BaseException):
+    """Intentional scheduling handoff after durable responses, not a failed output."""
+
+
+@contextmanager
+def hosted_responses_only():
+    """Collect hosted responses now; resume unchanged jobs for local judging later."""
+    token = _RESPONSES_ONLY.set(True)
+    try:
+        yield
+    finally:
+        _RESPONSES_ONLY.reset(token)
 
 
 class _ScoringSlot:
@@ -73,6 +88,12 @@ def hosted_local_scoring_slot(path: Path, *, timeout_seconds: float = 3600):
 
 def acquire_hosted_local_scoring_slot():
     """No-op for ordinary Runner/UI/local execution without a hosted scheduler."""
+    if _RESPONSES_ONLY.get():
+        from ura.runner import current_retained_execution_admission
+
+        if current_retained_execution_admission() is None:
+            raise RuntimeError("response-only hosted scheduling requires retained execution admission")
+        raise HostedJudgingDeferred()
     slot = _SCORING_SLOT.get()
     if slot is not None:
         slot.acquire()
