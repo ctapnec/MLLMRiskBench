@@ -36,7 +36,8 @@ def budget_attempt_rows(plan: dict, ledger: dict, *, bindings: dict[str, dict], 
                    for name in ("input_tokens", "output_tokens")):
                 raise ValueError("Cost usage differs from the physical attempt's retained report")
             row = {"call_id": call_id, "attempt_number": int(number), "assignment_id": binding["assignment_id"],
-                "response_id": binding.get("response_id"), "provider": slot["provider"], "model": binding["model"],
+                "response_id": binding.get("attempt_response_ids", {}).get(number, binding.get("response_id")),
+                "provider": slot["provider"], "model": binding["model"],
                 "role": slot["pool"], "state": state, "cost_microusd": retained["actual_cost_microusd"],
                 "exposure_microusd": 0 if state == "settled" else reported_bound.get(
                     "bound_microusd", bounds.get(call_id, slot["bound_microusd"])),
