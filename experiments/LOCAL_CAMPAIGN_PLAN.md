@@ -6,7 +6,13 @@ jobs under Activity, not a fragmented job-card list. The
 [workspace specification](../docs/CAMPAIGN_WORKSPACES.md) defines importing this
 work, automatic membership for future UI launches and the same-input comparison
 with the single API campaign. Grouping does not rerun completed generations or
-pool incompatible historical and corrected conditions. Implementation remains open.
+pool incompatible historical and corrected conditions. The Local campaign now
+indexes all 372 retained runs and their 50,653 output records, including
+historical failed conditions and corrections. Native local scoring records and
+the historical/RR reports are visible; local Haiku indexing, cost attribution
+and complete UI execution/continuation controls remain open. These historical
+counts are not a pooled final-comparison population. No local generation was
+repeated by publication.
 
 Status: automated execution and analysis are terminal; human audit and thesis
 evidence synthesis remain separate work. This operating plan was written

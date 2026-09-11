@@ -1256,10 +1256,12 @@ retain the same cumulative spending checks.
 The initial 79-input gap selection stopped before generation because the Kimi
 and DeepSeek selections each contained only one source cluster. Extending each
 by one retained input fixed that allocation without relaxing the measurement
-requirement. The corrected 81-input addition is prepared and collecting across
-independent providers, reusing the previous request counts and completed
-transport observations. It includes Opus 18, Astra 11, Flash 14, Kimi 19 and
-DeepSeek 19 inputs. Both local and output-specific Haiku judging remain required.
+requirement. The corrected 81-input addition completed target collection at
+approximately 16:36 UTC on 11 September, with 81 usable answers or policy
+outcomes and no repeated completed response. It reused previous request counts
+and completed transport observations across independent providers. It includes
+Opus 18, Astra 11, Flash 14, Kimi 19 and DeepSeek 19 inputs. Both local and
+output-specific Haiku judging remain required.
 The fourth-campaign allocation is in HOSTED_BALANCED_CAMPAIGN_PLAN.md and uses
 the same remaining account credit, not independent new funds.
 

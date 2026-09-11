@@ -1,10 +1,11 @@
 # Fourth hosted campaign: balanced matched coverage
 
 Status: requested on 11 September 2026; the allocation below was fixed before
-selection. Exact whole-cluster selection, media resolution and quotes are in
-preparation. No fourth-campaign target call is claimed. The third campaign,
-its remaining Google work, its corrected 81-input completion and outstanding
-judging continue independently.
+selection. Exact whole-cluster selection and media materialization have retained
+3,719 assignments on 1,200 distinct inputs already used locally. Request counting
+and the final quote are in preparation. No fourth-campaign target call is claimed.
+The third campaign's 81-input addition is complete; remaining Google work and
+outstanding judging continue independently.
 
 ## Available credit and obligations
 
@@ -84,20 +85,20 @@ The requested caps below total 3,760 new model-input assignments. Whole-cluster
 selection may yield fewer inputs. These are prospective quantities, not issued
 calls. The exact selection and quote must be retained before paid dispatch.
 
-| Model | Additional input cap | Unchanged output allowance |
-| --- | ---: | ---: |
-| Fable 5.1 | 240 | 8,192 |
-| Opus 5 | 120 | 6,144 |
-| Sonnet 5 | 300 | 4,096 |
-| Haiku 4.5 | 500 | 2,048 |
-| Astra | 110 | 8,192 |
-| Sol | 80 | 8,192 |
-| Terra | 140 | 6,144 |
-| GPT-5.5 | 120 | 8,192 |
-| Luna | 400 | 4,096 |
-| Kimi K3 | 300 | 8,192 |
-| DeepSeek V4-Pro | 250 | 16,384 |
-| Gemini Flash 3.8 | 1,200 | 4,096 |
+| Model | Additional input cap | Selected inputs | Unchanged output allowance |
+| --- | ---: | ---: | ---: |
+| Fable 5.1 | 240 | 234 | 8,192 |
+| Opus 5 | 120 | 108 | 6,144 |
+| Sonnet 5 | 300 | 300 | 4,096 |
+| Haiku 4.5 | 500 | 500 | 2,048 |
+| Astra | 110 | 108 | 8,192 |
+| Sol | 80 | 79 | 8,192 |
+| Terra | 140 | 140 | 6,144 |
+| GPT-5.5 | 120 | 108 | 8,192 |
+| Luna | 400 | 397 | 4,096 |
+| Kimi K3 | 300 | 300 | 8,192 |
+| DeepSeek V4-Pro | 250 | 245 | 16,384 |
+| Gemini Flash 3.8 | 1,200 | 1,200 | 4,096 |
 
 Google Pro retains its 267 already-assigned quota-pending inputs. It does not
 block new work for Flash or other providers. All new eligible hosted outputs
@@ -115,5 +116,9 @@ input populations into a purported equal-support comparison.
 The retained snapshot contains 8,784 previously scheduled but unstarted Haiku
 slots. Their expenditure and the new local/hosted judging must be included in
 the same Anthropic account calculation. Observed mean costs guide this initial
-allocation; they are not guaranteed bills. The exact new judging population and
-the costed execution table remain pending materialization and request counting.
+allocation; they are not guaranteed bills. Materialization identifies 5,049
+matching retained local answers needing their own Haiku verdicts. Together with
+up to 3,719 new hosted-output assessments, the new maximum judging population
+is 8,768 outputs. Provider policy outcomes and missing outputs remain separate
+from judge-eligible generated text. The costed execution table remains pending
+request counting; these obligations share the existing Anthropic credit.

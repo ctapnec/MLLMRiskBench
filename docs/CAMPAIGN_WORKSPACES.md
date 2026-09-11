@@ -121,6 +121,29 @@ Proofs: `campaign-flow-deployment-7b091c4-20260911`,
 `workspace-current-refresh-7b091c4-20260911`, and
 `workspace-activity-current-20260911`.
 
+The separate Local campaign is now published as
+`d74685e6af8e4e199d46db201c557858`. Its 372 retained runs contribute 50,653
+output records across historical and corrected conditions: 44,550 usable and
+6,103 missing outputs. These are retained generation-condition records, not a
+pooled independent sample or the size of the final corrected comparison.
+The native scoring index preserves 50,653 records, including two invalid
+classifier outputs without labels. Two partly exported GraySwan runs required
+their retained response/attempt checkpoints and separately completed judging
+records; no corpus reconstruction or regeneration was performed. Local targets
+remain separate from hosted targets. The historical and RR report publications
+are attached under Activity. Local Haiku verdicts, cost attribution and broader
+controller membership still need indexing. The overview, results, judging,
+activity and two SVG exports returned HTTP 200 on the rig. Interactive browser
+QA remains unavailable. Evidence: `local-workspace-native-index-20260911`,
+its `-r-tail/live-summary.json`, and `local-attempt-tail-109b2c8`.
+
+Build's Campaign and Single run modes deliberately share Runner command
+semantics. Campaign ownership and its saved definition are retained separately
+from the command. At present, a reviewed launch attaches that one Runner job;
+this does not yet implement the complete multi-job collection/judging schedule
+specified below. Do not add a cosmetic command flag or claim that the complete
+campaign execution workflow is finished.
+
 An explicit hosted-program importer is available as `experiments.campaign_publish`.
 It reads the selected program, input-plan metadata, completed checkpoint/final
 rows and its budget ledger once. It imports unstarted assignments as well as
