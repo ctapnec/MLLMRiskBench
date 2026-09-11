@@ -7,6 +7,31 @@ preserved existing records and the production pages returned HTTP 200. Historica
 automatic result publication, full cost-source attribution, matched comparison figures and
 the remaining execution actions below are unfinished.
 
+An explicit hosted-program importer is available as `experiments.campaign_publish`.
+It reads the selected program, input-plan metadata, completed checkpoint/final
+rows and its budget ledger once. It imports unstarted assignments as well as
+retained outcomes; incomplete live JSONL tails are not outcomes. Repeating the
+same import is idempotent. It does not run checksums, call providers, execute
+judges, rebuild corpora, or run from a Stats page request. Existing judgments
+are untouched; this command does not claim judging coverage.
+
+Create or select the campaign in Build, then use its ID from the campaign URL:
+
+```sh
+python -m experiments.campaign_publish \
+  --database /absolute/console.db --campaign-id CAMPAIGN_ID \
+  --hosted-program /absolute/attested-program.json \
+  --input-plan /absolute/input-plan.json --budget-root /absolute/budget
+```
+
+Use the explicitly selected recovery program, not a directory-wide latest-file
+search. Multiple different answers for one assignment require explicit recovery
+selection. Policy outcomes stay distinct from generated answers; a usable length
+completion stays usable and truncated. Costs with no retained charge remain
+unknown. Multi-attempt token usage is taken from each attempt's ledger report,
+never copied from the final answer onto earlier network failures. This is a
+scoped import, not a claim that all programs or judgments have been published.
+
 Output-owned cost indexing and its workspace table are implemented at `38a361f`
 but not deployed yet. Twenty-one focused rig checks covered cost ownership,
 retries, copied records, migration and the existing result views. The changed

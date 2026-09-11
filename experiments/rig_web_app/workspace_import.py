@@ -1,0 +1,127 @@
+"""Explicit retained-program publication, outside the HTTP page-read path.
+
+This translates saved records, not experiment semantics. It neither reconstructs
+corpora nor hashes model files, and makes no provider or judge calls.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from .workspace_costs import budget_attempt_rows
+
+
+def _jsonl(path: Path):
+    with path.open(encoding="utf-8") as stream:
+        for number, line in enumerate(stream, 1):
+            # A live append can be incomplete. Never index that partial row.
+            if not line.endswith("\n"):
+                break
+            if line.strip():
+                yield number, json.loads(line)
+
+
+def _responses(job: dict):
+    argv = job["argv"]
+    out = Path(argv[argv.index("--out") + 1])
+    observed = {}
+    for path in sorted(out.glob("*.responses.checkpoint.jsonl")):
+        for number, record in _jsonl(path):
+            response = record["response"]
+            key = (response["run_id"], response["attempt_id"])
+            attempt = record["attempt"]
+            if (attempt["run_id"], attempt["id"]) != key:
+                raise ValueError("Checkpoint response does not match its attempt")
+            value = (attempt, response, f"{path}:{number}")
+            if key in observed and observed[key][:2] != value[:2]:
+                raise ValueError("Conflicting retained checkpoint responses")
+            observed.setdefault(key, value)
+    for path in sorted(out.glob("*.responses.jsonl")):
+        attempts_path = path.with_name(path.name.removesuffix(".responses.jsonl") + ".attempts.jsonl")
+        attempts = {(row["run_id"], row["id"]): row for _, row in _jsonl(attempts_path)}
+        for number, response in _jsonl(path):
+            key = (response["run_id"], response["attempt_id"])
+            if key in observed:
+                if observed[key][:2] != (attempts[key], response):
+                    raise ValueError("Final response differs from its retained checkpoint")
+                continue
+            observed[key] = (attempts[key], response, f"{path}:{number}")
+    return observed.values()
+
+
+def hosted_program_rows(program: dict, selections: list[dict], *, campaign_id: str,
+                        budget_plan: dict, ledger: dict, ledger_path: str) -> dict:
+    """Index exactly the supplied program, including its unstarted assignments.
+
+    The caller chooses the program and selection explicitly. Recoveries with
+    multiple answers for one assignment need an explicit selection and are not
+    silently reduced to the latest or most successful response.
+    """
+    choices = {row["input_identity_sha256"]: row for row in selections}
+    requests = program["requests"]
+    if not requests.keys() <= choices.keys():
+        raise ValueError("Input selection does not cover the retained program")
+    assignments, responses, bindings = {}, [], {}
+    for job in program["jobs"]:
+        evidence = {"measured_run": "measured", "diagnostic_canary": "diagnostic"}.get(job["purpose"], "unknown")
+        for input_id in job["input_ids"]:
+            if input_id in assignments:
+                raise ValueError("Input is assigned to multiple program jobs")
+            request, choice = requests[input_id], choices[input_id]
+            assignments[input_id] = dict(assignment_id=request["call_id"], model=program["target"],
+                input_id=input_id, condition_id=request["request_sha256"], modality=choice["modality"],
+                framework=choice["framework"], corpus=choice["corpus"], response_id=None, evidence_class=evidence)
+            bindings[request["call_id"]] = dict(campaign_id=campaign_id, assignment_id=request["call_id"],
+                model=program["target"], attempt_response_ids={}, attempt_usage={})
+        for attempt, response, source in _responses(job):
+            selection = attempt["params"]["retained_origin"]["selection"]
+            input_id = selection["input_identity_sha256"]
+            if input_id not in job["input_ids"] or response["target"] != program["target"]:
+                raise ValueError("Response is outside the selected program job")
+            row, request = assignments[input_id], requests[input_id]
+            if any(selection[key] != row[key] for key in ("modality", "framework", "corpus")):
+                raise ValueError("Retained response input metadata differs from selection")
+            response_id = response["run_id"] + ":" + response["attempt_id"]
+            if row["response_id"] is not None:
+                raise ValueError("Multiple outputs require explicit recovery selection")
+            row["response_id"] = response_id
+            raw, tokens = response.get("raw") or {}, response.get("tokens") or {}
+            policy = raw.get("provider_refusal") is True or raw.get("provider_policy_rejection") is True
+            usable = any(isinstance(turn.get("content"), str) and turn["content"].strip()
+                         for turn in response.get("output_turns", []))
+            failed = raw.get("model_stability_status") == "failed_output" or raw.get("target_input_status") == "incompatible"
+            outcome = "policy" if policy else "missing" if failed or not usable else "usable"
+            generation, audit = raw.get("generation") or {}, raw.get("call_audit") or {}
+            responses.append(dict(response_id=response_id, assignment_id=row["assignment_id"],
+                condition_id=row["condition_id"], outcome=outcome, truncated=raw.get("output_truncated"),
+                source_ref=source, output_allowance=generation.get("max_tokens", request["max_output_tokens"]),
+                context_tokens=generation.get("context_tokens"), input_tokens=tokens.get("input"),
+                output_tokens=tokens.get("output"), reasoning_tokens=tokens.get("reasoning"),
+                finish_reason=raw.get("finish_reason", audit.get("finish_reason")),
+                missing_category=raw.get("model_stability_category") if outcome == "missing" else None))
+            # Only attach usage where the physical attempt is unambiguous.
+            # Multi-attempt charges still publish; their reported ledger usage
+            # is retained without copying the final answer onto earlier retries.
+            retained = ledger["attempts"].get(request["call_id"], {})
+            if set(retained) == {"1"} and raw.get("transport_attempt_count") == 1:
+                binding = bindings[request["call_id"]]
+                binding["attempt_response_ids"]["1"] = response_id
+                binding["attempt_usage"]["1"] = {name: tokens[key] for name, key in
+                    (("input_tokens", "input"), ("output_tokens", "output"), ("reasoning_tokens", "reasoning")) if key in tokens}
+    if assignments.keys() != requests.keys():
+        raise ValueError("Program jobs do not cover the assigned requests")
+    costs = budget_attempt_rows(budget_plan, ledger, bindings=bindings, source_ref=ledger_path)
+    return dict(assignments=list(assignments.values()), responses=responses, judgments=[],
+                costs=costs.get(campaign_id, []))
+
+
+def publish_hosted_program(db, campaign_id: str, *, program: dict, selections: list[dict],
+                           budget_plan: dict, ledger: dict, ledger_path: str) -> dict:
+    """Idempotent publication; no selection, execution, charging or new judging."""
+    db.require_workspace(campaign_id)
+    rows = hosted_program_rows(program, selections, campaign_id=campaign_id,
+        budget_plan=budget_plan, ledger=ledger, ledger_path=ledger_path)
+    db.publish_workspace_results(campaign_id, **{key: rows[key] for key in ("assignments", "responses", "judgments")})
+    db.publish_workspace_costs(campaign_id, rows["costs"])
+    return {key: len(value) for key, value in rows.items()}
