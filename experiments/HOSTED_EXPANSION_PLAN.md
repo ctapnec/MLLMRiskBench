@@ -1020,7 +1020,10 @@ missing outputs in coverage even when they have no common-security verdict.
 
 Keep zero answer retries and up to three retries for qualifying HTTP or
 network errors. Explicit provider-policy refusals, including HTTP 400 with
-`cyber_policy`, are legitimate terminal outcomes and do not stop the campaign.
+OpenAI's `cyber_policy` or `bio_policy`, are legitimate terminal outcomes and do
+not stop the campaign. A previously successful parameter set does not establish
+that every later HTTP 400 is a refusal: input size, media validity and other
+request-specific causes must remain distinguishable by the retained error.
 Usable length-ended text is retained with truncation marked. Unexplained empty
 answers require investigation before further paid execution, not automatic
 answer retries. Invalid judge verdicts remain unscored.
