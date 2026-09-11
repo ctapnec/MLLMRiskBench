@@ -122,6 +122,15 @@ be verified from that preceding selection, while every new eligible Opus
 output requires its own local and Haiku assessment. This queue changes neither
 the 6,736 requested assignments nor the cumulative provider ceilings.
 
+A following original-input preparation is queued as slice fourteen, behind
+thirteenth funding, with prospective caps of Opus 30, Kimi 19 and DeepSeek 40.
+It uses the existing whole-cluster selection, materialization, request counting
+and cumulative funding workflow. These are preparation caps, not promised
+executed counts. The original prefixes remain independent of additional
+frontier inputs; matching local and new hosted-output judging are included.
+Paid execution still waits for preceding target and judging terminals and
+available capacity. No completed input is selected again.
+
 The historical RR prefix reader now forwards the optional artifact-checking
 mode to its original-source subprocess. Ninety-three focused rig tests, a
 reversed-fix test and a real two-cell, 200-response prefix check passed.
@@ -141,11 +150,15 @@ available through separate paged links. Full-population aggregates and the
 retained report are unchanged. This correction is queued with operational costs
 for post-collection deployment; the currently served page remains unchanged.
 
-A further comparison through the ten completed non-Google slices started at
-05:58 UTC and is joining their output-specific judgments. It makes no target
-or judge calls and does not replace the published eighth comparison until its
-result is complete. The sixth and seventh unfinished Google routes remain
-explicitly excluded from this completed-route snapshot.
+The completed-route comparison through slice ten is now published at
+`/stats/job/hosted-expansion-comparison-through-010-65ac4d6-20260910-completed-routes`.
+It joins 1,450 hosted and 1,768 matching local outputs across 468 distinct
+inputs, retaining 4,907 comparison links rather than treating those links as
+independent questions. The sixth and seventh unfinished Google routes remain
+explicitly excluded. HTTP 200 and chart markup were verified; no target or
+judge was called and browser visual QA is not claimed. This is a completed
+snapshot, not completion of the full expansion. The earlier publications
+remain retained.
 
 Earlier 03:12 observations follow.
 
