@@ -1,5 +1,6 @@
 """Campaign-wide precalculated spending, without historical batch holds."""
 import copy
+import hashlib
 import json
 import os
 
@@ -79,6 +80,22 @@ def test_unknown_and_inflight_are_not_maximum_holds_or_zero_settlements(campaign
     assert pool['unknown_usage_attempts'] == 1
     assert pool['unresolved_attempts'] == 2
     assert json.loads((prior.root / 'ledger.json').read_text())['attempts']['A']['1']['actual_cost_microusd'] is None
+
+
+def test_revised_output_forecast_does_not_reintroduce_maximum_cost_holds(campaign):
+    _, current, document = campaign
+    current.use_campaign_spending(document)
+    current.reserve('A', 1, provider='anthropic')
+    current.settle('A', 1, None)
+    # An explicit new output condition updates the forecast, not the campaign ceiling.
+    current.increase_allowances({'A': 200}, reason='Explicit larger-output recovery',
+        expected_ledger_sha256=hashlib.sha256((current.root / 'ledger.json').read_bytes()).hexdigest())
+    assert current.attempt_bound('A') == 200
+    current.reserve('A', 2, provider='anthropic')
+    assert current.snapshot()['campaign_spending']['pools']['anthropic:target']['cap_microusd'] == 100
+    current.settle('A', 2, 100)
+    with pytest.raises(BudgetCapacityUnavailable):
+        current.reserve('B', 1, provider='anthropic')
 
 
 @pytest.mark.parametrize('change', ['duplicate', 'omit_current', 'wrong_plan', 'wrong_pool', 'negative'])

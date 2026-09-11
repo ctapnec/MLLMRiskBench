@@ -381,7 +381,8 @@ class AttemptBudget:
                 changes.append({"call_id": key, "previous_bound_microusd": effective[key],
                                 "bound_microusd": bound, "reason": reason})
             result = self._totals(plan, ledger)
-            if any(pool["over_cap_microusd"] for pool in result["pools"].values()):
+            if (self.spending_policy() != 'precalculated'
+                    and any(pool["over_cap_microusd"] for pool in result["pools"].values())):
                 raise BudgetError("allowance adjustment exceeds its existing dedicated pool cap")
             if ledger["schema"] != USAGE_BOUNDED_LEDGER_SCHEMA:
                 ledger["schema"] = ADJUSTED_LEDGER_SCHEMA
