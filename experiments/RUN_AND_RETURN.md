@@ -1,5 +1,30 @@
 # Run and return: broad thesis experiment program
 
+Operational costs are read from registered hosted attempt ledgers, separately
+for target generation and judging. Successful hosted preparation registers its
+budget under the request's results root. A registration failure is a warning,
+not a reason to interrupt preparation or repeat a paid call. Existing retained
+budgets can be registered without generation or settlement changes:
+
+```bash
+python -m experiments.operational_costs --results-root /absolute/results \
+  --register-budget /absolute/results/campaign/budget
+```
+
+Register the current accounting source for each cohort, including its retained
+predecessor attempts, not synthetic proof budgets. Recovery copies share
+physical-attempt identities and are counted once; contradictory settlements
+make the cost view unavailable instead of producing an incomplete total.
+The view separates settled usage cost, unknown-charge exposure, unsettled
+reservations and unissued commitments. A reservation does not prove an active
+network request. Batch ceilings are not additive, and recorded costs do not
+establish a live provider credit balance. The legacy usage index is not added
+to these ledgers. Unregistered work remains outside the displayed scope.
+Registered files are parsed again only when filesystem metadata changes;
+rendering does not traverse result trees, hash model files, reconstruct
+historical responses or acquire paid-execution locks. These are operational
+accounting views, not scientific outcome aggregates.
+
 Retained input payload checksums follow the same optional artifact-checking
 setting as retained files. Ordinary selection checks digest syntax, duplicate
 identities, input grouping and budget relationships without rehashing every

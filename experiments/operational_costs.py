@@ -106,6 +106,10 @@ def campaign_costs(results_root: Path) -> dict:
                     or ledger.get("schema") not in {"ura-hosted-attempt-budget-ledger/1",
                         "ura-hosted-attempt-budget-ledger/2", "ura-hosted-attempt-budget-ledger/3"}):
                 raise ValueError("unsupported operational budget format")
+            if (not isinstance(plan.get("planned_calls"), list)
+                    or not isinstance(ledger.get("attempts"), dict)
+                    or any(not isinstance(attempts, dict) for attempts in ledger["attempts"].values())):
+                raise ValueError("invalid planned calls or attempt inventory")
             allowances = {row["call_id"]: _amount(row["bound_microusd"])
                           for row in ledger.get("allowance_adjustments", [])}
             planned = {slot["call_id"] for slot in plan["planned_calls"]}
@@ -134,7 +138,7 @@ def campaign_costs(results_root: Path) -> dict:
                     if prior is not None and prior != attempt:
                         raise ValueError("copied physical attempt has conflicting settlements")
                     entry["attempts"][number] = attempt
-            sources.append({"label": source["label"], "budget": source["budget"],
+            sources.append({"label": str(source["label"]), "budget": source["budget"],
                             "closed": bool(released) or closure.get("category") == "completed_budget_closed"})
         except (OSError, ValueError, KeyError, TypeError) as exc:
             errors.append(f"{path.name}: {exc}")

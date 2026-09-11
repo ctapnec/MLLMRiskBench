@@ -76,7 +76,7 @@ def test_closure_removes_only_unused_judge_commitments(tmp_path):
     assert by_role(result, "openai", "target")["unknown_exposure_microusd"] == 700_000
 
 
-@pytest.mark.parametrize("problem", ["conflicting-copy", "missing-file", "unplanned-attempt"])
+@pytest.mark.parametrize("problem", ["conflicting-copy", "missing-file", "unplanned-attempt", "invalid-inventory"])
 def test_incomplete_or_conflicting_sources_are_not_plausible_totals(tmp_path, problem):
     path = budget(tmp_path)
     if problem == "conflicting-copy":
@@ -85,7 +85,10 @@ def test_incomplete_or_conflicting_sources_are_not_plausible_totals(tmp_path, pr
         (path / "ledger.json").unlink()
     else:
         ledger = json.loads((path / "ledger.json").read_text())
-        ledger["attempts"]["outside-plan"] = {"1": {"state": "settled", "actual_cost_microusd": 5}}
+        if problem == "invalid-inventory":
+            ledger["attempts"] = []
+        else:
+            ledger["attempts"]["outside-plan"] = {"1": {"state": "settled", "actual_cost_microusd": 5}}
         save(path / "ledger.json", ledger)
     result = subject.campaign_costs(tmp_path)
     assert result["registered"] and result["errors"] and result["rows"] == []
