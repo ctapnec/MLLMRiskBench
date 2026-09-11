@@ -598,6 +598,27 @@ def materialize_replay(
     plan: dict, *, cells: Sequence[Mapping[str, Any]], source_corpora: Mapping[str, Sequence[Any]],
     corpus: str, **bindings: Any,
 ) -> dict:
+    return materialize_replays(plan, cells=cells, source_corpora=source_corpora,
+                               corpora=[corpus], **bindings)[0]
+
+
+def materialize_replays(
+    plan: dict, *, cells: Sequence[Mapping[str, Any]], source_corpora: Mapping[str, Sequence[Any]],
+    corpora: Sequence[str], **bindings: Any,
+) -> list[dict]:
+    """Resolve one unchanged input plan once for all its corpus artifacts."""
+    if isinstance(corpora, str) or not corpora or len(set(corpora)) != len(corpora):
+        raise ValueError("replay corpus inventory must be nonempty and unique")
+    candidates = candidates_from_cells(cells)
+    resolved = {row["input_identity_sha256"]: row for row in
+                resolve_inputs(plan, candidates=candidates, **bindings)}
+    by_run = {cell["run_id"]: cell for cell in cells}
+    plan_sha = _sha(plan)
+    return [_materialize_resolved_replay(plan, source_corpora=source_corpora,
+        corpus=corpus, resolved=resolved, by_run=by_run, plan_sha=plan_sha) for corpus in corpora]
+
+
+def _materialize_resolved_replay(plan, *, source_corpora, corpus, resolved, by_run, plan_sha):
     """Prepare one source arm for mock replay, not admit a hosted execution.
 
     Full original converted populations are keyed by retained run ID. Their
@@ -611,10 +632,6 @@ def materialize_replay(
     from ura.converters._common import canonical_converted_corpus_sha256
     from ura.data_models import DataPoint
 
-    candidates = candidates_from_cells(cells)
-    resolved = {row["input_identity_sha256"]: row for row in
-                resolve_inputs(plan, candidates=candidates, **bindings)}
-    by_run = {cell["run_id"]: cell for cell in cells}
     checked_corpora = {}
     entries = []
     for selected in plan["selected"]:
@@ -652,7 +669,7 @@ def materialize_replay(
             "source_membership": copy.deepcopy(source),
             "source_datapoint_sha256": canonical_converted_corpus_sha256([point]),
             "delivered_input_sha256": retained_dialog_sha256(dialog),
-            "plan_id": plan["plan_id"], "plan_sha256": _sha(plan),
+            "plan_id": plan["plan_id"], "plan_sha256": plan_sha,
         }
         validate_retained_origin(origin, dialog)
         entries.append({"origin": origin,

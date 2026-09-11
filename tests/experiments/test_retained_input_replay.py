@@ -100,6 +100,32 @@ def _fixture(tmp_path, *, adaptive=False, image=False, points=None, corpus="reta
     return points, cell, plan, bindings, value, config
 
 
+def test_bulk_materialization_resolves_once_and_preserves_each_corpus(tmp_path, monkeypatch):
+    points, left, _, bindings, _, _ = _fixture(tmp_path)
+    right = copy.deepcopy(left)
+    right["run_id"] = "other-local-run"
+    right["manifest"]["config"]["run"]["corpus"] = "other-corpus"
+    for attempt in right["attempts"].values():
+        attempt["run_id"] = right["run_id"]
+    right["artifacts"]["attempts"] = tmp_path / "other.attempts.jsonl"
+    right["artifacts"]["attempts"].write_text("\n".join(json.dumps(a) for a in right["attempts"].values()) + "\n")
+    cells = [left, right]
+    plan = materializer.build_plan(candidates=materializer.candidates_from_cells(cells), target=TARGET, call_cap=20, **bindings)
+    populations = {cell["run_id"]: points for cell in cells}
+    corpora = ["retained-corpus", "other-corpus"]
+    expected = [materializer.materialize_replay(plan, cells=cells, source_corpora=populations,
+        corpus=corpus, **bindings) for corpus in corpora]
+    calls = []
+    original = materializer.resolve_inputs
+    def counted(*args, **kwargs):
+        calls.append(True)
+        return original(*args, **kwargs)
+    monkeypatch.setattr(materializer, "resolve_inputs", counted)
+    actual = materializer.materialize_replays(plan, cells=cells, source_corpora=populations, corpora=corpora, **bindings)
+    assert actual == expected and calls == [True]
+    assert len({row["replay_id"] for row in actual}) == 2
+
+
 class _RecordingMock(MockTarget):
     def __init__(self):
         super().__init__()
