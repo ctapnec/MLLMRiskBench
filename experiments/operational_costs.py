@@ -102,10 +102,19 @@ def campaign_costs(results_root: Path) -> dict:
                 continue
             seen_roots.add(budget)
             plan, ledger = _read(budget / "plan.json"), _read(budget / "ledger.json")
-            if (plan.get("schema") != "ura-hosted-attempt-budget-plan/1"
+            if (plan.get("schema") not in {"ura-hosted-attempt-budget-plan/1", "ura-hosted-attempt-budget-plan/2"}
                     or ledger.get("schema") not in {"ura-hosted-attempt-budget-ledger/1",
                         "ura-hosted-attempt-budget-ledger/2", "ura-hosted-attempt-budget-ledger/3"}):
                 raise ValueError("unsupported operational budget format")
+            if plan.get('schema') == 'ura-hosted-attempt-budget-plan/2' and plan.get('reservation_policy') != 'per_attempt':
+                raise ValueError('unsupported continuous budget policy')
+            policy_path = budget / 'spending-policy.json'
+            spending_policy = 'reserved_maximum'
+            if policy_path.exists():
+                policy = _read(policy_path)
+                if policy != {'budget_plan_sha256': ledger['plan_sha256'], 'mode': 'precalculated'}:
+                    raise ValueError('cost source spending policy differs from its plan')
+                spending_policy = 'precalculated'
             if (not isinstance(plan.get("planned_calls"), list)
                     or not isinstance(ledger.get("attempts"), dict)
                     or any(not isinstance(attempts, dict) for attempts in ledger["attempts"].values())):
@@ -139,6 +148,7 @@ def campaign_costs(results_root: Path) -> dict:
                         raise ValueError("copied physical attempt has conflicting settlements")
                     entry["attempts"][number] = attempt
             sources.append({"label": str(source["label"]), "budget": source["budget"],
+                            "spending_policy": spending_policy,
                             "closed": bool(released) or closure.get("category") == "completed_budget_closed"})
         except (OSError, ValueError, KeyError, TypeError) as exc:
             errors.append(f"{path.name}: {exc}")

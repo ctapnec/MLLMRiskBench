@@ -76,6 +76,24 @@ def test_closure_removes_only_unused_judge_commitments(tmp_path):
     assert by_role(result, "openai", "target")["unknown_exposure_microusd"] == 700_000
 
 
+def test_continuous_precalculated_costs_are_visible_without_claiming_money_holds(tmp_path):
+    path = budget(tmp_path)
+    plan = json.loads((path / 'plan.json').read_text())
+    plan.update(schema='ura-hosted-attempt-budget-plan/2', reservation_policy='per_attempt')
+    save(path / 'plan.json', plan)
+    save(path / 'spending-policy.json', {'budget_plan_sha256': 'a' * 64, 'mode': 'precalculated'})
+    inventory = subject.campaign_costs(tmp_path)
+    assert not inventory['errors']
+    assert by_role(inventory, 'openai', 'target')['unknown_exposure_microusd'] == 700_000
+    assert by_role(inventory, 'openai', 'target')['reported_cost_microusd'] == 1_500_000
+    page = DashboardMixin()._retained_spend_card(inventory)
+    assert 'are not money holds' in page and 'Unsettled attempt exposure' in page
+    assert '<th>Unsettled reservations</th>' not in page
+    save(path / 'spending-policy.json', {'budget_plan_sha256': 'b' * 64, 'mode': 'precalculated'})
+    invalid = subject.campaign_costs(tmp_path)
+    assert invalid['errors'] and not invalid['rows']
+
+
 @pytest.mark.parametrize("problem", ["conflicting-copy", "missing-file", "unplanned-attempt", "invalid-inventory"])
 def test_incomplete_or_conflicting_sources_are_not_plausible_totals(tmp_path, problem):
     path = budget(tmp_path)

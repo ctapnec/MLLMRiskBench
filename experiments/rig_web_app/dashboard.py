@@ -546,15 +546,19 @@ class DashboardMixin:
                     + f"<td>{money(row, 'unstarted_commitments_microusd')}</td></tr>")
             content = ("<div class='scroll'><table><tr><th>Provider</th><th>Role</th>"
                 "<th>Request attempt records</th><th>Settled usage cost</th><th>Unknown-charge exposure</th>"
-                "<th>Unsettled reservations</th><th>Unissued retained-plan allowance</th></tr>"
+                "<th>Unsettled attempt exposure</th><th>Unissued retained-plan allowance</th></tr>"
                 + "".join(rows) + "</table></div>")
         links = "".join("<li><a href='/artifacts?path=" + quote(source["budget"])
             + "'>" + html.escape(source["label"]) + "</a></li>" for source in inventory["sources"])
+        if any(source.get('spending_policy') == 'precalculated' for source in inventory['sources']):
+            content += ("<p class='note'>Pre-calculated execution is present: maximum-cost forecasts "
+                        "are not money holds. Reported spending is tracked; unknown charges remain "
+                        "unknown. Calls already in flight may finish after a spending stop.</p>")
         return ("<div class='card'><h2>" + _icon("coins") + "Retained campaign costs</h2>"
             + content + "<p class='note'>Target generation and hosted judging are separate. "
             "Each physical request is counted once across recovery copies. Reported-usage costs "
             "are retained ledger settlements, not provider invoices. Unknown charges and unsettled "
-            "reservations are exposure, not confirmed spending or proof of a live request; "
+            "attempt amounts are exposure, not confirmed spending or proof of a live request; "
             "unissued allowances are not calls and can include superseded plans. "
             "They are not today's reserved budget or authority for further spending. "
             "Sequential batch ceilings are not added together. These figures are not live provider "
