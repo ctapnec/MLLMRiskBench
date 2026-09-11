@@ -332,6 +332,11 @@ class DashboardMixin:
         return f"{unit}{value:,.4f}"
 
     def _spend_card(self) -> str:
+        from experiments.operational_costs import campaign_costs
+
+        retained = campaign_costs(self.results_root)
+        if retained["registered"]:
+            return self._retained_spend_card(retained)
         cost_rows, unavailable = self._usage_cost_rows()
         if cost_rows is None:
             body = f"<p class='note'><strong>N/A</strong> - {html.escape(unavailable)}.</p>"
@@ -520,6 +525,40 @@ class DashboardMixin:
             "artifact, that amount is authoritative over this calculation."
             "</p></div>"
         )
+
+    def _retained_spend_card(self, inventory: dict) -> str:
+        if inventory["errors"]:
+            content = "<div class='notice amber'>Campaign costs are unavailable, not zero.<ul>" + "".join(
+                "<li>" + html.escape(error) + "</li>" for error in inventory["errors"]
+            ) + "</ul></div>"
+        else:
+            def money(row, key):
+                return self._fmt_money(row[key] / 1_000_000, "USD")
+
+            rows = []
+            for row in inventory["rows"]:
+                rows.append("<tr><td>" + html.escape(row["provider"]) + "</td><td>"
+                    + html.escape(row["role"]) + f"</td><td>{row['http_attempts']:,}</td>"
+                    + f"<td>{money(row, 'reported_cost_microusd')}</td>"
+                    + f"<td>{money(row, 'unknown_exposure_microusd')} ({row['unknown_attempts']:,} attempts)</td>"
+                    + f"<td>{money(row, 'unsettled_exposure_microusd')} ({row['unsettled_attempts']:,} attempts)</td>"
+                    + f"<td>{money(row, 'unstarted_commitments_microusd')}</td></tr>")
+            content = ("<div class='scroll'><table><tr><th>Provider</th><th>Role</th>"
+                "<th>HTTP attempts</th><th>Reported-usage cost</th><th>Unknown-charge exposure</th>"
+                "<th>Unsettled reservations</th><th>Unissued commitments</th></tr>"
+                + "".join(rows) + "</table></div>")
+        links = "".join("<li><a href='/artifacts?path=" + quote(source["budget"])
+            + "'>" + html.escape(source["label"]) + "</a></li>" for source in inventory["sources"])
+        return ("<div class='card'><h2>" + _icon("coins") + "Retained campaign costs</h2>"
+            + content + "<p class='note'>Target generation and hosted judging are separate. "
+            "Each physical request is counted once across recovery copies. Reported-usage costs "
+            "are retained ledger settlements, not provider invoices. Unknown charges and unsettled "
+            "reservations are exposure, not confirmed spending or proof of a live request; "
+            "unissued commitments are not calls. "
+            "Sequential batch ceilings are not added together. These figures are not live provider "
+            "credit balances and exclude unregistered work. The legacy usage index is not added, "
+            "to avoid double-counting. Local inference is not provider-billed.</p>"
+            + "<details><summary>Registered accounting sources</summary><ul>" + links + "</ul></details></div>")
 
     @staticmethod
     def _parse_money(amount: str) -> float | None:

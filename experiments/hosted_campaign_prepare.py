@@ -13,6 +13,7 @@ import argparse
 import copy
 import hashlib
 import json
+import logging
 import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -695,6 +696,12 @@ def prepare_campaign(
         "answer_retries": 0,
     }
     _write_new(root / "receipt.json", receipt)
+    from experiments.operational_costs import register_budget
+
+    try:
+        register_budget(Path(request["results_root"]), budget.root)
+    except (OSError, ValueError) as exc:
+        logging.getLogger(__name__).warning("Operational cost registration unavailable: %s", exc)
     return receipt
 
 

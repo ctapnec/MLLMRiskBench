@@ -77,6 +77,11 @@ def test_preparation_creates_funded_disjoint_pilot_and_measured_program_without_
     assert receipt["status"] == "prepared_no_generation_calls"
     assert receipt["target_calls"] == receipt["judge_calls"] == 0
     assert receipt["generation_http_attempts"] == 0
+    from experiments.operational_costs import campaign_costs
+
+    costs = campaign_costs(tmp_path)
+    assert costs["registered"] and not costs["errors"]
+    assert costs["sources"][0]["budget"] == "prepared/budget"
     assert len(calls) == receipt["programs"][0]["selected_target_calls"] == 2
     assert calls == [(request["routes"][0]["target"], False)] * 2
     saved = json.loads(Path(receipt["programs"][0]["path"]).read_text(encoding="utf-8"))
@@ -587,6 +592,21 @@ def test_unrunnable_cluster_partition_stops_before_counting(tmp_path, monkeypatc
         subject.prepare_campaign(request=request, request_descriptor={},
                                  out_root=tmp_path / "invalid", allow_network_counts=True)
     assert not (tmp_path / "invalid").exists()
+
+
+def test_cost_index_failure_cannot_interrupt_funded_preparation(tmp_path, monkeypatch, caplog):
+    from experiments import operational_costs
+
+    request, _execution_root = _request(tmp_path, monkeypatch)
+
+    def unavailable(*args, **kwargs):
+        raise OSError("read-only cost registry")
+
+    monkeypatch.setattr(operational_costs, "register_budget", unavailable)
+    result = subject.prepare_campaign(request=request, request_descriptor={},
+        out_root=tmp_path / "prepared", allow_network_counts=False)
+    assert result["status"] == "prepared_no_generation_calls"
+    assert "read-only cost registry" in caplog.text
 
 
 def test_single_multirecord_cluster_cannot_be_split_into_pilot_and_measurement():
