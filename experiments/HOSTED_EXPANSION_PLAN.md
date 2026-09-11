@@ -51,11 +51,12 @@ the exact request contents. Its protected plan reserves 96 target attempts,
 assessments. Dispatch and both judging controllers are live; funded starts
 must remain distinct from actual responses. Total funded inputs are now 2,714.
 
-The tenth slice is queued to prepare the first twenty extra Fable inputs:
+The tenth slice has prepared the first twenty extra Fable inputs:
 eleven text and nine image inputs, with USD 8.263490 maximum target exposure.
 It reuses already counted requests and keeps the other nineteen extra Fable
-inputs pending. Preparation waits for the ninth selection to be funded;
-execution and both judging stages remain subject to cumulative capacity.
+inputs pending. Its inputs match 91 existing local answers, of which 55 need
+new Haiku assessments. Funding is queued behind the ninth target and judging
+terminals; execution and both judging stages remain subject to cumulative capacity.
 Every new hosted output receives its own eligible local and Haiku assessment.
 Only judgments of the identical retained local answers may be reused.
 
@@ -71,6 +72,11 @@ The historical RR prefix reader now forwards the optional artifact-checking
 mode to its original-source subprocess. Ninety-three focused rig tests, a
 reversed-fix test and a real two-cell, 200-response prefix check passed.
 The checked runtime handoff changes no generation revision or retained data.
+
+At 04:20 UTC the ninth ledger confirms 26 new logical target starts and exactly
+26 physical attempts across Opus, Kimi and DeepSeek, with no paid-circuit stop.
+These are starts, not final answer or verdict counts. A completed-route
+comparison through slice eight is being published without new provider calls.
 
 Earlier 03:12 observations follow.
 
