@@ -84,6 +84,25 @@ controllers and the measured child are attached to the existing Local campaign's
 Activity view. Operational scripts and exact worklists remain under the ignored
 thesis verification directory and the rig's engineering run directories.
 
+Source-scoring correction, 12 September at 13:19 UTC: the combined Gemma image
+recovery stopped at planning, before a measured target call, because its
+inherited approximate-security option was incompatible with GPTGeoChat's
+binary privacy-moderation task. The same combination occurs in the prepared
+GraySwan RR image unit. Keep GPTGeoChat's original rules-only, source-specific
+scoring separate from the security cascade. The corrected worklist contains
+568 Gemma and 204 RR privacy-moderation inputs, plus 33 Gemma and 163 RR security
+inputs. These 968 inputs are already part of the 2,636 assignments, not an
+expansion. Their prompts, images, seeds and model profiles are unchanged.
+
+The real-data preparation check passed for every affected corpus; restoring
+the erroneous option rejected the actual GPTGeoChat inputs again. The source
+converters, original plans and retained answers were not edited. A correction
+window is queued behind the current GPU work in the same recovery session, so
+residual assessment and deferred judging continue to wait for collection.
+Half-hour observation, Local workspace publication and fresh output-specific
+Haiku selection include this correction. Preparation is not generation evidence;
+neither these 968 outputs nor their new verdicts are claimed complete.
+
 At 02:42 UTC, 59 of the selected conditions have been attempted: 58 have usable,
 non-truncated replacements and one still has no visible answer after its retry.
 The latter reports 4,096 completion tokens, but the older Runner discarded its
