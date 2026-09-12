@@ -684,6 +684,14 @@ network failures. Publication accepts a completed prefix without requiring a
 fresh judge call or reloading the input corpora. The derived index does not
 modify the source plan, answers, verdicts or monetary ledger.
 
+Native judging publication includes original inline verdicts as well as later
+post-hoc results. `workspace_judgments.native_inline_rows` reads the explicitly
+selected run's final/checkpoint verdicts, checks their saved response ownership
+and original judge configuration/revision, and publishes their actual source
+locators. It does not relabel them as newly judged work or infer a fresh model
+call or cost. The current API campaign's 79 previously omitted inline verdicts
+are indexed; those outputs did not require another judgment.
+
 A judge-only continuation can share a campaign spending scope containing more
 providers than that worker uses. Every pool available to the worker must still
 have a declared ceiling, every declared pool must occur in a referenced ledger,
