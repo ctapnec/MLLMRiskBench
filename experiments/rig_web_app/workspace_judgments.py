@@ -3,8 +3,59 @@ from __future__ import annotations
 
 import hashlib
 import json
+from pathlib import Path
 
 from .workspace_costs import budget_attempt_rows
+
+
+def native_inline_rows(source: dict, *, output_assignments: dict[str, str]) -> list[dict]:
+    """Publish original inline verdicts, not only later post-hoc checkpoints.
+
+    The source is an explicitly selected native run. Read its exact local
+    files once; do not reconstruct the corpus, query a judge or hash artifacts.
+    """
+    from .workspace_import import _jsonl, _responses
+    model, run_id = source["target"], source["run_id"]
+    directory = Path(source["out"])
+    responses = {response["attempt_id"]: response for _attempt, response, _ref in _responses(
+        dict(argv=source["runner_argv"])) if response["run_id"] == run_id}
+    manifests = list(directory.glob("*"+run_id+".manifest.json"))
+    if len(manifests) != 1:
+        raise ValueError("Original inline judging needs its retained generation manifest")
+    manifest = json.loads(manifests[0].read_text(encoding="utf-8"))
+    if (manifest["run_id"] != run_id or manifest["config"]["components"]["judge_cascade"] != source["judge_cascade"]
+            or manifest["config"]["run"]["project_revision"] != source["generation_project_revision"]):
+        raise ValueError("Original native judging condition differs from its source")
+    condition = dict(config=source["judge_cascade"],
+        scoring_revision=source["generation_project_revision"]["expected_commit"])
+    judge = "local-cascade-" + hashlib.sha256(json.dumps(condition, sort_keys=True).encode()).hexdigest()[:24]
+    stem = manifests[0].name.removesuffix(".manifest.json")
+    observed = {}
+    checkpoint = directory / (stem+".checkpoint.jsonl")
+    if checkpoint.is_file():
+        for number, record in _jsonl(checkpoint):
+            value = record["judgment"]
+            if responses.get(value["attempt_id"]) != record["response"]:
+                raise ValueError("Inline judgment checkpoint changed its saved response")
+            observed[value["attempt_id"]] = (value, f"{checkpoint}:{number}")
+    final = directory / (stem+".jsonl")
+    if final.is_file():
+        for number, value in _jsonl(final):
+            prior = observed.get(value["attempt_id"])
+            if prior is not None and prior[0] != value:
+                raise ValueError("Final native judgment differs from its checkpoint")
+            observed[value["attempt_id"]] = (value, f"{final}:{number}")
+    rows = []
+    for aid, (value, reference) in observed.items():
+        identity = run_id+":"+aid
+        response = responses.get(aid)
+        if (value["run_id"] != run_id or response is None or response["target"] != model
+                or identity not in output_assignments):
+            raise ValueError("Original inline judgment has no matching campaign output")
+        missing = (value.get("raw") or {}).get("policy_evaluation_status") in {"model_nonresponse", "target_input_incompatible"}
+        rows.append(dict(response_id=identity, judge_id=judge, status="missing" if missing else "valid",
+            label=None if missing else value["label"], source_ref=reference))
+    return rows
 
 
 def retained_judge_rows(plan: dict, artifacts: list[tuple[str, dict]], *,
