@@ -58,6 +58,38 @@ def native_inline_rows(source: dict, *, output_assignments: dict[str, str]) -> l
     return rows
 
 
+def native_invalid_rows(unit: dict, artifacts: list[tuple[str, dict]], *,
+                        responses: dict[str, dict], output_assignments: dict[str, str]) -> dict:
+    """Retain completed-but-unscored native assessments, not perpetual pending rows."""
+    from ura.runner import _sha256_json
+    condition = dict(config=unit["source"]["judge_cascade"], scoring_revision=unit["judging_revision"])
+    judge = "local-cascade-" + hashlib.sha256(json.dumps(condition, sort_keys=True).encode()).hexdigest()[:24]
+    if len(artifacts) != unit["invalid_judgments"]:
+        raise ValueError("Native invalid-assessment count differs from its terminal")
+    rows, costs, seen = [], [], set()
+    for reference, value in artifacts:
+        aid = value["attempt_id"]
+        response = responses.get(aid)
+        identity = unit["run_id"]+":"+aid
+        if (value.get("schema") != "ura-rr-retained-judge-failure/1" or aid in seen or response is None
+                or value["generation_run_id"] != unit["run_id"] or response["run_id"] != unit["run_id"]
+                or response["attempt_id"] != aid or response["target"] != unit["source"]["target"]
+                or value["response_sha256"] != _sha256_json(response) or identity not in output_assignments):
+            raise ValueError("Invalid native assessment changed its output owner")
+        seen.add(aid)
+        trail = value["trail"]
+        if (not trail or trail[-1]["judge"] != "guardrail" or trail[-1].get("raw", {}).get("parsed") is not False
+                or trail[-1].get("raw", {}).get("guardrail_queried") is not True
+                or any(stage["run_id"] != unit["run_id"] or stage["attempt_id"] != aid for stage in trail)):
+            raise ValueError("Native failure is not an observed unparsed guard assessment")
+        rows.append(dict(response_id=identity, judge_id=judge, status="invalid", label=None, source_ref=reference))
+        costs.append(dict(call_id="local-scoring:"+judge+":"+identity, attempt_number=1,
+            assignment_id=output_assignments[identity], response_id=identity, provider="local",
+            model=unit["source"]["judge_cascade"]["stages"][-1]["model_id"], role="judge",
+            state="not_billed", cost_microusd=0, exposure_microusd=0, source_ref=reference))
+    return dict(judgments=rows, costs=costs)
+
+
 def retained_judge_rows(plan: dict, artifacts: list[tuple[str, dict]], *,
                         output_assignments: dict[str, str], campaign_id: str,
                         shared_requests: dict, budget_plan: dict, ledger: dict,
