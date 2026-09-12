@@ -6924,6 +6924,24 @@ the most favorable recovery. It makes no target, judge or provider calls and
 does not grant funding or claim verdict reuse. Full Build execution of this
 broader selection remains separate from the bounded paired controls above.
 
+### Prepare funded hosted-only judging inputs
+
+`retained_hosted_judge_items` accepts `--preparation` from native judging
+preparation, `--budget-root`, `--budget-plan-sha256` and a new `--out` directory.
+Tools exposes the same command. It prepares the common, evaluable measured
+hosted answers for their original Haiku slots, without selecting another local
+counterpart or creating another allocation. An output must belong to its
+recorded target, job and input. Two answers cannot spend the same slot.
+
+The result retains missing and excluded-source coverage. A previously started
+paid slot is recorded as owned by its existing executor, not as a new pending
+call and not as proof of a completed verdict. Resume that executor to recover
+its artifacts or unresolved transport state. The command reads the budget once
+for preparation; actual execution still checks the current spending state
+immediately before calls. `validated-items.json` is a no-call handoff to the
+funded judging planner, not an executable allocation. Additional source-grading
+contexts remain separately required when the collection planned them.
+
 Console-form to runbook-section mapping (the console builds the identical
 argument vectors; nothing below is console-only):
 
@@ -6941,6 +6959,7 @@ argument vectors; nothing below is console-only):
 | `retained_native_judge_execute` | Execute local judging of saved hosted answers |
 | `retained_response_judge_pair_execute` | Publish retained-output judging into campaigns |
 | `retained_judge_inventory` | Inventory all answers on the same input entries |
+| `retained_hosted_judge_items` | Prepare funded hosted-only judging inputs |
 | `lane_canary` | 8.1, 9.1 |
 | `native_import` | 14.3, 16 |
 | `human_audit` (common and source-task frames) | 15, 15.1 |

@@ -1101,3 +1101,12 @@ verdicts, allocate money or claim that judging has finished. The bounded Build
 comparison above remains unchanged until its all-output execution and reuse
 integration is complete. Any later reuse must refer to the same saved output
 and judging condition, never merely to the same input or another model's answer.
+
+For a hosted-only follow-up, `retained_hosted_judge_items` connects a saved
+native source preparation to the collection's original Haiku slots. It is
+available in CLI and Tools and creates no calls or funding. Missing answers
+remain in coverage. Already-started slots remain owned by their existing
+executors; the preparation does not equate them with completed judgments.
+Additional source-grading contexts are outside this primary answer selection
+and stay explicit. Native and Haiku verdict publication still belongs to each
+exact saved output in its existing campaign workspace.
