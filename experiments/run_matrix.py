@@ -7550,12 +7550,15 @@ def _main(argv=None) -> int:
                             planned = _restore_response_phase_start(paths["manifest"], planned)
                         elif args.attestation_probe and resumed_responses:
                             raise ValueError("probe response checkpoint lacks its original start manifest")
-                        elif _recyclable_vllm_child(
+                        elif not resumed_responses or _recyclable_vllm_child(
                             model_specs=model_specs, attacker_names=attacker_names,
                             deferred_local_judging=deferred_local_judging,
                         ):
-                            # Persist before the first target call as well, so
-                            # an interrupted partial probe retains its start.
+                            # Every fresh deferred target phase needs its start
+                            # metadata before calls, including hosted/Ollama
+                            # handoffs that leave only response checkpoints.
+                            # Do not invent a start for historical hosted or
+                            # Ollama checkpoints that omitted this artifact.
                             _write_json(paths["manifest"], planned.model_dump(mode="json"))
                     execution_started = True
                     judgments, manifest = runner.run(

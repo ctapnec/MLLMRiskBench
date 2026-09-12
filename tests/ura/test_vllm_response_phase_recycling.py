@@ -189,6 +189,45 @@ def test_judge_child_preserves_target_phase_start_not_its_new_timestamp(tmp_path
     assert events.count("target_preflight") == 1
 
 
+def test_non_vllm_judging_handoff_retains_start_before_target_calls(tmp_path, monkeypatch):
+    from ura.hosted_scheduling import HostedJudgingDeferred
+
+    out, argv, events, allocation = _matrix(tmp_path, monkeypatch)
+    monkeypatch.setattr(run_matrix, "_recyclable_vllm_child", lambda **kw: False)
+    target_type = type(run_matrix.build_target())
+    judge_type = type(run_matrix.build_judges().stages[0])
+    generate = target_type.generate
+    preflight = judge_type.preflight
+    observed_starts = []
+
+    def retained_generate(self, dialog, *, seed=None):
+        paths = list(out.glob("*.manifest.json"))
+        assert len(paths) == 1, "target call must have retained start metadata"
+        observed_starts.append(json.loads(paths[0].read_text())["started_at"])
+        return generate(self, dialog, seed=seed)
+
+    def defer_judging(self):
+        raise HostedJudgingDeferred()
+
+    monkeypatch.setattr(target_type, "generate", retained_generate)
+    monkeypatch.setattr(judge_type, "preflight", defer_judging)
+    with pytest.raises(HostedJudgingDeferred):
+        run_matrix.main(argv)
+    assert len(observed_starts) == 2
+    assert observed_starts[0] == observed_starts[1]
+    assert run_matrix._response_checkpoint_count(out) == 2
+    assert not list(out.glob("*.complete.json"))
+    assert events.count("target_call") == 2
+
+    allocation["target"] = False
+    monkeypatch.setattr(judge_type, "preflight", preflight)
+    assert run_matrix.main(argv) == 0
+    assert events.count("target_call") == 2
+    assert events.count("judge_preflight") == 1
+    saved = json.loads(next(out.glob("*.manifest.json")).read_text())
+    assert saved["started_at"] == observed_starts[0]
+
+
 @pytest.mark.parametrize("changed", ["run_id", "code_version", "schema_version", "config"])
 def test_response_phase_start_rejects_mismatched_plan_identity(tmp_path, changed):
     planned = RunManifest(run_id="run-example", code_version="example-code",
