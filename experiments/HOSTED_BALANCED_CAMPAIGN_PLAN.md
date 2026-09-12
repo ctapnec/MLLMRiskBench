@@ -19,8 +19,11 @@ repeated merely to repair a controller link.
 
 The matched judging population is output-owned: 5,049 retained local answers
 plus at most 3,719 new hosted outputs, not two verdicts per hosted assignment.
-The executor now checks that actual funded population rather than the earlier
-two-per-input approximation. This does not increase account balances, duplicate
+The retained plan additionally requires 189 distinct source grading contexts
+for deduplicated hosted requests: 8,957 funded assessments of at most 8,768
+distinct outputs. Those contextual judgments do not create more target samples.
+The executor checks this population rather than the earlier two-per-input
+approximation. This does not increase account balances, duplicate
 allowances, or remove per-call spending checks. Completed request counts are
 reused and no framework or model is downloaded during this continuation.
 
@@ -150,6 +153,7 @@ the same Anthropic account calculation. Observed mean costs guide this initial
 allocation; they are not guaranteed bills. Materialization identifies 5,049
 matching retained local answers needing their own Haiku verdicts. Together with
 up to 3,719 new hosted-output assessments, the new maximum judging population
-is 8,768 outputs. Provider policy outcomes and missing outputs remain separate
+is 8,768 outputs, with 189 additional context-specific hosted assessments in
+the exact retained plan, for 8,957 funded judging calls. Provider policy outcomes and missing outputs remain separate
 from judge-eligible generated text. The costed execution table remains pending
 request counting; these obligations share the existing Anthropic credit.
