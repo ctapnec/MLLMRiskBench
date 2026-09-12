@@ -60,6 +60,7 @@ def test_only_exact_selected_measured_outputs_are_compared(study):
     rows = comparison_rows(app.db, left, query)
     assert totals(rows) == dict(matched=1, left_only=1, right_only=1, ambiguous=0)
     assert all(row['left_label'] != 'violation' for row in rows)
+    assert next(row for row in rows if row['match_status']=='left_only')['left_label']=='safe'
 
 
 def test_duplicate_assignments_are_not_cartesian_pairs(study):
