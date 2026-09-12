@@ -2860,8 +2860,17 @@ matching digest and `--reservation-policy`, including `per_attempt`; omit the
 route configuration only when intentionally using the legacy fixed cohort.
 
 Pass this inventory and its digest to `hosted_retained_inputs`; omit the legacy
-`--runner-view`. Existing budget, media, whole-cluster selection and exact
-source-corpus requirements still apply. For executable preparation use request
+`--runner-view`. The existing budget and whole-cluster selection still apply.
+With `--materialize-corpus`, selected local sources now reconstruct their exact
+original converted records and sampling order automatically; `--source-corpora`
+and its digest are optional explicit overrides. Local media resolve from those
+records and configured media roots, including prior dialogue turns; supply
+`--media-index` only when the retained sources no longer locate those bytes.
+Reconstruction converts each distinct source once and opens only source runs
+needed by the selected inputs. It neither resamples inputs nor selects them by
+answer quality. Legacy analysis inventories still require their explicit source
+corpora. This is no-call preparation; it does not install a runtime or load a
+model. For executable preparation use request
 `ura-hosted-retained-campaign-request/5` with the counted input policy
 `counted_requests_within_route_reservation_v1`. It retains the request fields
 below except `runner_view` and `rr_analysis_root`, and substitutes

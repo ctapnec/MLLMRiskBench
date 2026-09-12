@@ -100,6 +100,16 @@ Use `hosted_campaign_budget` for the target/judging forecast, then
 selection and replay artifacts. This existing replay protocol uses retained
 seed-zero inputs; adaptive conversations are replayed, not freshly attacked.
 It does not introduce arbitrary-seed or shared-cohort selection support.
+For selected local sources, replay preparation restores the original converted
+records and their recorded subset order automatically. It converts each
+distinct source once per preparation and resolves media only for the funded
+selection, including media in earlier dialogue turns. Unselected sources are
+not opened just to prepare another route. No answer, verdict or replacement
+quality affects this reconstruction. The explicit media index and source-corpus
+files remain available for moved or legacy artifacts; they are no longer
+required manual handoffs for ordinary selected local runs. Original sampling
+and source identities must still agree. Full file checksum revalidation remains
+opt-in, and preparation makes no target or judge calls.
 The selected-source request in `hosted_campaign_prepare` now emits executable
 programs without requiring the historical controller or GraySwan analysis.
 Its explicit network option permits token counting, not answer generation.
