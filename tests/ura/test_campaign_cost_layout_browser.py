@@ -26,6 +26,9 @@ def test_cost_columns_fit_desktop_and_scroll_within_mobile_card(browser, tmp_pat
             widths = page.locator('.campaign-costs .scroll').evaluate(
                 'node=>({client:node.clientWidth,content:node.scrollWidth})')
             assert widths['content'] <= widths['client'] + 1
+            column_share = page.locator('.campaign-costs table').evaluate(
+                'node=>node.querySelector("th").getBoundingClientRect().width/node.getBoundingClientRect().width')
+            assert column_share <= .30, 'Long model names must not crowd the five accounting columns'
             page.set_viewport_size({'width':390,'height':844})
             assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
             assert page.locator('.campaign-costs .scroll').evaluate('node=>node.scrollWidth>node.clientWidth')
