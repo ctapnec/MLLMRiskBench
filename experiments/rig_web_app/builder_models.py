@@ -1411,6 +1411,9 @@ class BuilderModelsMixin:
     #: grid (no row, target, attacker, or judge selection), so a successful
     #: no-call preflight stays valid when only they change.
     _PROJECTION_OPERATIONAL_FIELDS = frozenset({
+        "retained_source_campaign",
+        "retained_source_runs",
+        "retained_sources_job",
         "campaign_id",
         "work_kind",
         "campaign_name",
