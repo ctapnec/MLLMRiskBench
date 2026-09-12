@@ -1371,6 +1371,12 @@ class Runner:
                 "reason": str(answer_error)[:500],
                 "transport_attempt_count": observed,
             })
+            if failed_response is not None:
+                # Classification must not erase what the model generated.
+                # Keep each failed physical answer as diagnostic evidence,
+                # including when a later retry succeeds. It is not a verdict
+                # or an additional logical input.
+                failures[-1]["generated_response"] = failed_response.model_dump(mode="json")
             provider_reply = _safe_failed_provider_reply(
                 getattr(answer_error, "retained_provider_response", None)
             )
