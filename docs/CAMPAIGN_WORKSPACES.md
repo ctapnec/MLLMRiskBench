@@ -472,8 +472,11 @@ table and vector metadata; long on-screen identities wrap outside the bars.
 The shared request busy guard covers both export actions.
 
 This addition passed sixteen focused rig tests, two removed-fix regressions and
-actual Local/API index count comparisons at 856a315. It is awaiting the queued
-console deployment; browser visual acceptance remains open.
+actual Local/API index count comparisons at 856a315. The same four-file UI
+change was deployed independently at 3754f97, without waiting for a separate
+GPU-dependent image correction. Both campaign pages and their figure/table
+exports return HTTP 200; exported counts agree. No campaign worker was
+restarted. Browser visual acceptance remains open.
 
 Judging shows required, completed, invalid, missing and pending verdicts for the
 local judge and Haiku, with the same-input selection visible. Response failures

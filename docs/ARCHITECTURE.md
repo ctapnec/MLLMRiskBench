@@ -1068,6 +1068,15 @@ truncation marker. OpenAI Responses admits only token-limit `incomplete` output
 with usable visible text and otherwise valid identity, usage and continuation
 state; arbitrary incomplete or failed requests are not promoted.
 
+When a local answer fails output validation, Runner retains the complete
+generated response in that physical attempt's failure trace, before deciding
+whether to retry. This includes rejected text, provider metadata and usage,
+including when the next attempt succeeds. The final normalized result can
+remain a missing/unusable answer without erasing what the model actually
+generated. Retention does not change the retry count or turn rejected text
+into a policy verdict. Older traces without this payload cannot be used to
+reconstruct discarded text. Existing workers keep their loaded source version.
+
 The generic generation-condition exporter reads completion-validated cells.
 Level-2 `/2` and Stats expose runtime-observed context, configured output allowance,
 reported token usage with coverage, and completion-reason diagrams alongside

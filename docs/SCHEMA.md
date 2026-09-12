@@ -655,6 +655,13 @@ an executed cell:
   associated policy stages are unqueried `model_nonresponse` rows. An unchanged
   deterministic incompatible input is not answer-retried, while the remaining
   selected population continues.
+  For a generated response rejected by output validation, each entry of
+  `raw.model_stability_failures` additionally retains `generated_response`, the
+  JSON representation of that physical attempt's response when one exists.
+  It preserves rejected output turns and metadata even if the retry succeeds.
+  This optional diagnostic payload does not change the final outcome, logical
+  row count, retry allowance or scoring eligibility. Legacy entries may omit it;
+  an absent payload is not evidence that the provider generated no bytes.
   Ollama uses a narrower shape: an `ollama:<model-tag>` entry requires the exact
   64-hex digest returned by the daemon's `/api/tags` inventory and a unique
   explicit modality list containing `text` and optionally `image`. It forbids
