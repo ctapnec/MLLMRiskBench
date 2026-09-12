@@ -6,7 +6,7 @@ import pytest
 
 from experiments import hosted_selected_replays as subject
 from experiments import hosted_retained_inputs as inputs
-from test_retained_input_replay import _fixture, TARGET, DESC
+from test_retained_input_replay import _fixture, DESC
 
 
 @pytest.fixture
@@ -15,7 +15,8 @@ def selected(tmp_path,monkeypatch):
     right = copy.deepcopy(left)
     right['run_id'] = 'other-run'
     right['manifest']['config']['run']['corpus'] = 'other-arm'
-    for attempt in right['attempts'].values():attempt['run_id'] = right['run_id']
+    for attempt in right['attempts'].values():
+        attempt['run_id'] = right['run_id']
     artifact = tmp_path/'other.attempts.jsonl'
     artifact.write_text('\n'.join(json.dumps(row) for row in right['attempts'].values())+'\n')
     right['artifacts']['attempts'] = artifact
@@ -62,7 +63,8 @@ def test_response_quality_never_changes_replay_selection(selected):
     first = subject.prepare(**kwargs)
     for cell in cells:
         cell['responses'] = {'irrelevant':'Different answer quality and truncation'}
-        for row in cell['judgments']:row.update(label='safe',score=0)
+        for row in cell['judgments']:
+            row.update(label='safe',score=0)
     second = subject.prepare(**dict(kwargs,out_root=kwargs['out_root'].with_name('again')))
     assert first['route_summary'] == second['route_summary']
     for left,right in zip(first['routes'],second['routes']):
@@ -73,7 +75,8 @@ def test_response_quality_never_changes_replay_selection(selected):
 def test_too_small_cluster_cap_fails_before_conversion_or_output_creation(selected):
     _,kwargs,conversions = selected
     budget = kwargs['budget']
-    for route in budget['routes']:route['paid_call_cap'] = 1
+    for route in budget['routes']:
+        route['paid_call_cap'] = 1
     budget.pop('projection_id')
     budget['projection_id'] = 'hosted-budget-'+inputs._sha(budget)[:24]
     with pytest.raises(ValueError,match='no complete compatible source cluster'):
@@ -95,6 +98,7 @@ def test_cli_shares_the_preparation_function(selected,monkeypatch):
                  'api':(kwargs['api_config'],DESC)}
     monkeypatch.setattr(subject,'load_bound_json',lambda path,digest: documents[str(path)])
     argv = ['--local-inventory','source','--budget','budget','--api-config','api','--out-root',str(kwargs['out_root'])]
-    for name in ('local-inventory','budget','api-config'):argv += ['--'+name+'-sha256','a'*64]
+    for name in ('local-inventory','budget','api-config'):
+        argv += ['--'+name+'-sha256','a'*64]
     assert subject.main(argv) == 0
     assert len(json.loads((kwargs['out_root']/'prepared-replays.json').read_text())['routes']) == 2
