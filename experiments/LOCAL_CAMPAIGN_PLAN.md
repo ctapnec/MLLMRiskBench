@@ -111,6 +111,14 @@ records do not expose their native stop reason. Unattempted queue entries are
 not counted as failed. Keep the successful replacements and reassess only the
 residual problems after the active GPU owner releases the models.
 
+Matched-output judging continuation: the separate 5,049-answer local Haiku
+selection began execution on 12 September at 03:36 UTC with two network workers.
+All request counts are retained. Two longer answers required USD 0.0161 in
+combined per-request allowance adjustments, without increasing the campaign
+ceiling or shortening the answers. This population contains existing local
+answers on the fourth hosted cohort's inputs, not the new 2,636-condition
+recovery outputs. Successful replacements still require their own judgments.
+
 Human audit and thesis evidence synthesis remain separate work. This plan was written
 20 August 2026 after the readiness audit
 of the big rig (Debian, 2x RTX 4090 24,564 MiB, 125 GiB RAM, /mnt/stor 7.1 TB

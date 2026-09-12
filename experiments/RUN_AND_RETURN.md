@@ -3218,6 +3218,13 @@ and contaminate target resource observations. Crescendo must remain inline
 because each verdict controls the next turn. A defense guard also remains in the
 target phase because it changes the treatment rather than merely scoring it.
 
+Every fresh deferred target phase saves its planned start metadata before its
+first call, including hosted and Ollama phases. This is not a completion marker.
+A response-only handoff can then retain exact inputs, answers and start metadata
+for later judging without target regeneration. Historical hosted/Ollama response
+checkpoints lacking that start artifact remain unchanged: resume native scoring
+or explicitly reconstruct their context, but do not invent an original timestamp.
+
 For response-independent local vLLM cells without runtime-backed attackers,
 Runner owns a bounded outer process recycler, including admitted probes and
 canaries. A target child writes durable response checkpoints and exits before

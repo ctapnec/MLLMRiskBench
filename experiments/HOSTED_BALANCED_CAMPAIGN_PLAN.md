@@ -102,6 +102,16 @@ Flash inputs with this normalization while preserving the lost historical body a
 an execution-data limitation. Do not invent its contents or score it as a proven
 safe refusal. Google Pro's existing quota wait is independent.
 
+At 03:36 UTC, all 5,049 local-answer judge requests had completed counting and
+the two-worker Haiku execution began. Two longer requests required USD 0.0161
+in combined allowance adjustments; the campaign ceiling and original answers
+were unchanged. Count receipts were reused rather than requested again. Native
+local scoring of newly collected hosted outputs remains queued behind the
+two-GPU local recovery owner. Preparation makes no target or judge call.
+Some response-only hosted jobs retain their answers without a start manifest;
+those require the unchanged native checkpoint scoring path, not invented
+generation metadata. Future deferred phases retain their start before calls.
+
 The matched judging population is output-owned: 5,049 retained local answers
 plus at most 3,719 new hosted outputs, not two verdicts per hosted assignment.
 The retained plan additionally requires 189 distinct source grading contexts
