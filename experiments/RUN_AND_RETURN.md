@@ -6547,6 +6547,17 @@ Unchanged answers are not reparsed when only billing changes. Publication
 errors remain explicitly pending and do not cancel paid collection. These
 settings do not change input selection, generation or spending limits.
 
+Historical publication and operational counters also recognize an old OpenAI
+transport-failure wrapper when its retained generation audit explicitly records
+HTTP 400 with `cyber_policy` or `bio_policy` and no visible answer. This is a
+provider-policy outcome, not model missingness or a new judge verdict. Republishing
+may correct that index classification without changing the original response,
+attempt history, token usage or charges. Generic HTTP 400 errors remain unresolved
+without their actual cause. A filter error that discarded visible partial text
+does not qualify as a clean refusal. Check saved records through the same import
+and counter paths used by the live campaign; adapter-only tests do not verify
+historical publication or independently pinned campaign workers.
+
 Native local `run_matrix` collection accepts the same workspace/database pair.
 Publication follows durable response and judgment callbacks, including restored
 checkpoints, and is not performed by page navigation. Missingness, truncation,
