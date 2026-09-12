@@ -152,3 +152,16 @@ def test_real_admission_and_budget_transfer_without_reconstructing_sources(tmp_p
     assert result[0]["status"] == "collected"
     assert result[0]["output"] == str(tmp_path / "out")
     assert calls == []
+
+
+def test_running_checkpoint_publication_does_not_wait_for_job_exit(tmp_path, monkeypatch):
+    from itertools import count
+    import multiprocessing.connection
+
+    clock = count(0, 31)
+    monkeypatch.setattr(subject.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(multiprocessing.connection, "wait", lambda *_a, **_k: time.sleep(0.02))
+    progress = []
+    subject.dispatch_admitted([[admission(tmp_path, "openai", "still-running")]],
+        _worker=worker, _pause=lambda _: None, on_progress=progress.append)
+    assert sum(value["jobs"][0]["status"] == "running" for value in progress) >= 2

@@ -194,6 +194,35 @@ def test_unknown_campaign_never_launches(tmp_path, monkeypatch):
         app.close()
 
 
+def test_prepared_hosted_launch_publishes_to_its_selected_workspace_only(tmp_path, monkeypatch):
+    app = _app(tmp_path)
+    app.commands["hosted_campaign_execute"] = Command("hosted_campaign_execute", "diagnostic", "test", ())
+    campaign = app.db.create_workspace("API publication", "api")
+    environments = []
+    monkeypatch.setattr(app, "_generic_child_environment", lambda *a: {
+        "URA_CAMPAIGN_WORKSPACE_ID":"wrong-inherited-owner", "URA_CAMPAIGN_CONSOLE_DB":"wrong.db"})
+
+    class Process:
+        pid = 987654321
+        def poll(self):
+            return 0
+
+    def popen(_argv, **kwargs):
+        environments.append(kwargs["env"])
+        return Process()
+
+    monkeypatch.setattr("experiments.rig_web_app.lifecycle.subprocess.Popen", popen)
+    try:
+        app.start_job("hosted_campaign_execute", {}, campaign_id=campaign)
+        app.start_job("hosted_campaign_execute", {})
+        assert environments[0]["URA_CAMPAIGN_WORKSPACE_ID"] == campaign
+        assert environments[0]["URA_CAMPAIGN_CONSOLE_DB"] == str(app.db.path.resolve())
+        assert "URA_CAMPAIGN_WORKSPACE_ID" not in environments[1]
+        assert "URA_CAMPAIGN_CONSOLE_DB" not in environments[1]
+    finally:
+        app.close()
+
+
 def test_activity_is_paginated_and_keeps_failed_process_status(tmp_path):
     app = _app(tmp_path)
     try:

@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections import Counter
 from contextlib import nullcontext
 import multiprocessing
+import time
 from pathlib import Path
 from typing import Callable, Sequence
 
@@ -112,15 +113,18 @@ def dispatch_admitted(
                 name=admission.job["name"], target=route["target"], provider=_billing_provider(route["provider"]),
                 purpose=purpose, status="pending", output=output, admission=admission))
     active = {}
+    last_publication = 0.0
 
     def public():
         return [{key: value for key, value in row.items() if key != "admission"} for row in tasks]
 
     def publish():
+        nonlocal last_publication
         if on_progress is not None:
             on_progress(dict(jobs=public(), workers_per_provider=workers_per_provider,
                 responses_only=responses_only, active_by_provider=dict(Counter(
                     tasks[index]["provider"] for index in active))))
+        last_publication = time.monotonic()
 
     try:
         while any(row["status"] == "pending" for row in tasks) or active:
@@ -181,7 +185,7 @@ def dispatch_admitted(
                     active_pilots.add(row["program"])
                 occupied[row["provider"]] += 1
                 changed = True
-            if changed:
+            if changed or (active and time.monotonic() - last_publication >= 30):
                 publish()
             if active:
                 # Wait on real child handles. No corpus/ledger scan or busy loop.

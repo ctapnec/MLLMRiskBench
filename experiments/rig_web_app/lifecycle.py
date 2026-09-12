@@ -3304,6 +3304,13 @@ class LifecycleMixin:
             if scrub_receipt_env:
                 for name in self._DRY_SCRUB_ENV:
                     child_env.pop(name, None)
+            # The selected campaign owner binds this child's derived index.
+            # Standalone launches must not inherit another campaign's binding.
+            child_env.pop("URA_CAMPAIGN_WORKSPACE_ID", None)
+            child_env.pop("URA_CAMPAIGN_CONSOLE_DB", None)
+            if command == "hosted_campaign_execute" and campaign_id:
+                child_env["URA_CAMPAIGN_WORKSPACE_ID"] = campaign_id
+                child_env["URA_CAMPAIGN_CONSOLE_DB"] = str(self.db.path.resolve())
             if transient_config is not None:
                 child_env[_PRIVATE_LOCAL_CONFIG_ENV] = str(transient_config)
             if transient_api_config is not None:

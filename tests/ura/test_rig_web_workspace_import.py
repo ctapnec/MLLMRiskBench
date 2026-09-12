@@ -8,6 +8,53 @@ from experiments.rig_web_app.storage import ConsoleDB
 from experiments.rig_web_app.workspace_import import publish_hosted_program
 
 
+def test_collection_publication_tracks_only_changed_checkpoints(retained, tmp_path, monkeypatch):
+    from copy import deepcopy
+    from experiments.rig_web_app import workspace_import as subject
+    db, campaign, args, path, records = retained
+    budget = tmp_path / "budget"
+    budget.mkdir()
+    for name in ("plan", "ledger"):
+        (budget / (name + ".json")).write_text(json.dumps(args["budget_plan" if name == "plan" else name]))
+    publisher = subject.HostedWorkspacePublication(db, campaign, programs=[args["program"]],
+        selections=[args["selections"]], budget_root=budget)
+    progress = dict(jobs=[dict(program=0, job=0, status="running")])
+    original, reads = subject._responses, []
+    monkeypatch.setattr(subject, "_responses", lambda job: reads.append(job) or original(job))
+    assert publisher.refresh(progress)["status"] == "published"
+    assert db.workspace_model_totals(campaign)[0]["pending"] == 1
+    assert publisher.refresh(progress)["status"] == "published" and len(reads) == 1
+    row = deepcopy(records[0])
+    row["attempt"]["id"] = row["response"]["attempt_id"] = "3"
+    row["attempt"]["params"]["retained_origin"]["selection"] = args["selections"][3]
+    with path.open("a") as stream:
+        stream.write(json.dumps(row) + "\n")
+    publisher.refresh(progress)
+    assert len(reads) == 2 and db.workspace_model_totals(campaign)[0]["pending"] == 0
+    restarted = subject.HostedWorkspacePublication(db, campaign, programs=[args["program"]],
+        selections=[args["selections"]], budget_root=budget)
+    restarted.refresh(progress)
+    assert len(db._query("SELECT * FROM campaign_responses")) == 4
+
+
+def test_publication_failure_is_reported_and_retried_without_canceling_collection(retained, tmp_path, monkeypatch):
+    from experiments.rig_web_app import workspace_import as subject
+    db, campaign, args, _path, _records = retained
+    budget = tmp_path / "budget"
+    budget.mkdir()
+    (budget / "plan.json").write_text(json.dumps(args["budget_plan"]))
+    (budget / "ledger.json").write_text(json.dumps(args["ledger"]))
+    publisher = subject.HostedWorkspacePublication(db, campaign, programs=[args["program"]],
+        selections=[args["selections"]], budget_root=budget)
+    original = subject.publish_hosted_program
+    monkeypatch.setattr(subject, "publish_hosted_program", lambda *a, **k: (_ for _ in ()).throw(ValueError("private payload")))
+    progress = dict(jobs=[dict(program=0, job=0, status="running")])
+    result = publisher.refresh(progress)
+    assert result["status"] == "publication_pending" and "private payload" not in json.dumps(result)
+    monkeypatch.setattr(subject, "publish_hosted_program", original)
+    assert publisher.refresh(progress)["status"] == "published"
+
+
 @pytest.fixture
 def retained(tmp_path):
     db = ConsoleDB(tmp_path / "console.db")

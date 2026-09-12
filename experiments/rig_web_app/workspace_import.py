@@ -179,6 +179,64 @@ def publish_hosted_program(db, campaign_id: str, *, program: dict, selections: l
     return {key: len(value) for key, value in rows.items()}
 
 
+class HostedWorkspacePublication:
+    """Refresh only changed, explicitly admitted programs in the collection process.
+
+    HTTP page reads never run this publisher. File sizes/timestamps detect new
+    checkpoint data; they are not an assertion of scientific source validity.
+    Admission remains with the collector and Runner. Publication failure does
+    not cancel independently running target requests.
+    """
+
+    def __init__(self, db, campaign_id: str, *, programs: list[dict], selections: list[list[dict]],
+                 budget_root: Path):
+        db.require_workspace(campaign_id)
+        self.db, self.campaign_id = db, campaign_id
+        self.programs, self.selections = programs, selections
+        self.budget_root = budget_root
+        self.budget_plan = json.loads((budget_root / "plan.json").read_text(encoding="utf-8"))
+        self.signatures: dict[int, tuple] = {}
+        self.results: dict[int, dict] = {}
+
+    @staticmethod
+    def _signature(program: dict) -> tuple:
+        paths = set()
+        for job in program["jobs"]:
+            argv = job["argv"]
+            out = Path(argv[argv.index("--out") + 1])
+            for pattern in ("*.responses.checkpoint.jsonl", "*.responses.jsonl", "*.attempts.jsonl"):
+                paths.update(out.glob(pattern))
+        for recovery in program.get("adapter_recoveries", {}).values():
+            paths.add(Path(recovery["checkpoint"]["path"]))
+        return tuple((str(path), item.st_size, item.st_mtime_ns)
+            for path in sorted(paths) for item in (path.stat(),))
+
+    def refresh(self, progress: dict) -> dict:
+        states = {}
+        for row in progress["jobs"]:
+            states.setdefault(row["program"], []).append((row["job"], row["status"]))
+        ledger = None
+        for index, program in enumerate(self.programs):
+            try:
+                signature = (tuple(states.get(index, ())), self._signature(program))
+                if self.signatures.get(index) == signature:
+                    continue
+                if ledger is None:
+                    ledger = json.loads((self.budget_root / "ledger.json").read_text(encoding="utf-8"))
+                counts = publish_hosted_program(self.db, self.campaign_id, program=program,
+                    selections=self.selections[index], budget_plan=self.budget_plan, ledger=ledger,
+                    ledger_path=str(self.budget_root / "ledger.json"))
+                if not self.db.healthy:
+                    raise RuntimeError("Campaign index is unavailable")
+                self.signatures[index] = signature
+                self.results[index] = dict(status="published", **counts)
+            except (OSError, ValueError, KeyError, TypeError, RuntimeError) as exc:
+                self.results[index] = dict(status="publication_pending", error_type=type(exc).__name__)
+        return dict(status="published" if all(row["status"] == "published" for row in self.results.values())
+                    else "publication_pending", campaign_id=self.campaign_id,
+                    programs=[dict(program=index, **row) for index, row in sorted(self.results.items())])
+
+
 def _local_artifact_paths(source: dict) -> tuple[dict, dict | None]:
     artifacts = {key: Path(value["path"]) for key, value in source["artifacts"].items()}
     if "scoring_completion" not in artifacts:

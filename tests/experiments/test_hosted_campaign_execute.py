@@ -96,3 +96,57 @@ def test_ui_environment_uses_each_selected_program_not_all_provider_keys(tmp_pat
     del values["--program-sha256#1"]
     with pytest.raises(ValueError, match="matching digest"):
         LifecycleMixin._generic_child_environment(fake, "hosted_campaign_execute", values)
+
+
+def test_owned_collection_publishes_pending_progress_and_terminal_without_judging(tmp_path, monkeypatch):
+    from experiments.rig_web_app.storage import ConsoleDB
+    from experiments.rig_web_app import workspace_import
+
+    db_path = tmp_path / "console.db"
+    db = ConsoleDB(db_path)
+    campaign = db.create_workspace("Prepared API", "api")
+    db.close()
+    path = tmp_path / "program.json"
+    raw = json.dumps(dict(target="openai:model", sources={})).encode()
+    path.write_bytes(raw)
+    monkeypatch.setattr(subject.retained, "_validated_checkout", lambda *_: None)
+    monkeypatch.setattr(subject, "AttemptBudget", lambda *_: object())
+    monkeypatch.setattr(subject.retained, "_validated_local_cells", lambda *_: object())
+    job = SimpleNamespace(requests={"a":dict(call_id="a")},
+        attacker=SimpleNamespace(_retained={"plan":{"selected":[{"input_identity_sha256":"a"}]}}))
+    monkeypatch.setattr(subject.retained, "_validated_jobs", lambda *a, **k: [job])
+    observed = []
+
+    class Publisher:
+        def __init__(self, database, workspace, **kwargs):
+            assert workspace == campaign and database.workspace(campaign)["name"] == "Prepared API"
+            assert kwargs["selections"] == [[{"input_identity_sha256":"a"}]]
+
+        def refresh(self, progress):
+            observed.append(progress["jobs"][0]["status"])
+            return dict(status="published")
+
+    monkeypatch.setattr(workspace_import, "HostedWorkspacePublication", Publisher)
+    def dispatch(_admitted, **kwargs):
+        kwargs["on_progress"](dict(jobs=[dict(program=0, job=0, status="running")]))
+        return [dict(program=0, job=0, status="collected")]
+    monkeypatch.setattr(subject, "dispatch_admitted", dispatch)
+    result = subject.collect_campaign(programs=[(path,hashlib.sha256(raw).hexdigest())],
+        budget_root=tmp_path, budget_plan_sha256="a"*64, project_root=tmp_path,
+        expected_commit="b"*40, out=tmp_path/"out", workspace_id=campaign, console_db=db_path)
+    assert observed == ["pending", "running", "collected"]
+    assert result["publication"]["status"] == "published"
+    assert result["judgments"] == "not_executed_by_collection"
+
+
+def test_cli_publication_binding_matches_owned_console_environment(tmp_path, monkeypatch):
+    monkeypatch.setenv("URA_CAMPAIGN_WORKSPACE_ID", "selected-workspace")
+    monkeypatch.setenv("URA_CAMPAIGN_CONSOLE_DB", str(tmp_path/"console.db"))
+    observed = []
+    monkeypatch.setattr(subject, "collect_campaign", lambda **kwargs: observed.append(kwargs)
+        or {"status":"responses_collected_awaiting_judging"})
+    subject.main(["--program",str(tmp_path/"p"),"--program-sha256","a"*64,
+        "--budget-root",str(tmp_path),"--budget-plan-sha256","b"*64,
+        "--project-root",str(tmp_path),"--expected-commit","c"*40,"--out",str(tmp_path/"out")])
+    assert observed[0]["workspace_id"] == "selected-workspace"
+    assert observed[0]["console_db"] == tmp_path/"console.db"
