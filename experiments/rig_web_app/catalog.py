@@ -1101,6 +1101,21 @@ def _commands() -> dict[str, Command]:
             ),
         ),
         Command(
+            "hosted_selected_replays",
+            "experiments.hosted_selected_replays",
+            "Prepare all selected models' matched replay inputs from saved sources and a forecast, without calls",
+            (
+                CommandParam("--local-inventory", "path", required=True),
+                CommandParam("--local-inventory-sha256", "str", required=True),
+                CommandParam("--budget", "path", required=True),
+                CommandParam("--budget-sha256", "str", required=True),
+                CommandParam("--api-config", "path", required=True),
+                CommandParam("--api-config-sha256", "str", required=True),
+                CommandParam("--out-root", "path", required=True),
+                CommandParam("--verify-artifact-sha256", "flag"),
+            ),
+        ),
+        Command(
             "hosted_campaign_execute",
             "experiments.hosted_campaign_execute",
             "Collect prepared hosted programs in parallel; judge retained answers afterward",

@@ -27,6 +27,7 @@ class BuilderCaptureMixin:
         "retained_budget_caps",
         "retained_pricing_date",
         "retained_budget_job",
+        "retained_replays_job",
         "mode",
         "canary_dry",
         "corpora",

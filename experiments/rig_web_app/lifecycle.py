@@ -1729,6 +1729,15 @@ class LifecycleMixin:
         """Minimal environment for every non-matrix allowlisted command."""
 
         allowed = set(self._MATRIX_BASE_ENV)
+        if command in {"hosted_retained_inputs", "hosted_selected_replays"}:
+            # Original conversion needs the operator-configured corpus locators,
+            # not provider keys or the contents of the credentials file.
+            sources = self._load_registry("source-instances.json", "rig/source-instances.example.json")
+            for source in sources.values():
+                name = source.get("path_env") if isinstance(source, Mapping) else None
+                if isinstance(name, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+                    allowed.add(name)
+            allowed.add("URA_MEDIA_ROOTS")
         if command == "hosted_campaign_prepare" and values.get("--allow-network-counts") in {"on", "true", "1", "yes"}:
             request = self._strict_config_document(str(values.get("--request", "")),
                 str(values.get("--request-sha256", "")))
@@ -4102,6 +4111,10 @@ class LifecycleMixin:
             if method == "POST" and path == "/build/forecast-matched":
                 from .builder_budget import prepare_budget
                 job = prepare_budget(self, self._builder_params(form or {}))
+                return 303, "/jobs/" + job.job_id, b""
+            if method == "POST" and path == "/build/prepare-replays":
+                from .builder_replays import prepare_replays
+                job = prepare_replays(self, self._builder_params(form or {}))
                 return 303, "/jobs/" + job.job_id, b""
             if method == "POST" and path == "/build/edit":
                 ticket = self._consume_launch_ticket((form or {}).get("edit_ticket", ""), purpose="build-edit")
