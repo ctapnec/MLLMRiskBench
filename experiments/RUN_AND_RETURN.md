@@ -207,6 +207,14 @@ proceed with unstarted inputs under the unchanged condition. The reviewed
 restoration must not suppress investigation of a different or changed failure.
 Interrupted judging resumes its existing output-specific plans and checkpoints.
 
+Gemini thought-marked text parts are not final answers. A native content filter
+can stop with thought text only or with an actual visible partial answer. Preserve
+the former as a typed provider refusal and the latter as judgeable visible text
+with separate filtering metadata. Filtering does not establish that the visible
+text was safe, and it is not token-limit truncation. Do not repeat such a request
+as an HTTP error. A historical adapter error that discarded the body cannot be
+reconstructed from the stop reason alone.
+
 Counted request tokens are not necessarily a bound on billed model work.
 OpenAI Pro mode aggregates internal model work at the model's token rates.
 Preserve the request count, provider usage and actual charge separately. If

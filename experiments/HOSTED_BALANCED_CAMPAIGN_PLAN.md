@@ -93,6 +93,15 @@ the overall campaign ceiling or truncating source answers. This is still judging
 preparation, not 5,049 completed verdicts. New local recovery answers have their
 own later output-specific judging obligation.
 
+Flash subsequently paused on a native PROHIBITED_CONTENT finish accompanied by
+text parts. The old parser discarded that body before separating thought summaries
+from final-answer text. Fix 19247bf preserves visible partial answers for assessment
+and separately retains no-answer policy outcomes; neither is a network failure.
+Thirty-six focused rig checks and the removed-fix probe passed. Continue untouched
+Flash inputs with this normalization while preserving the lost historical body as
+an execution-data limitation. Do not invent its contents or score it as a proven
+safe refusal. Google Pro's existing quota wait is independent.
+
 The matched judging population is output-owned: 5,049 retained local answers
 plus at most 3,719 new hosted outputs, not two verdicts per hosted assignment.
 The retained plan additionally requires 189 distinct source grading contexts
