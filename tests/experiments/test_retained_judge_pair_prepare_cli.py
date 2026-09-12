@@ -20,6 +20,7 @@ def selection(tmp_path,monkeypatch):
     program=tmp_path/'program.json'
     program.write_text('{"target":"hosted:model-0"}')
     budget=create_budget(tmp_path/'budget',provider_budgets_microusd={'anthropic':1000000},
+        protected_haiku_microusd=50000,
         planned_calls=[dict(call_id='existing-funded-slot',provider='anthropic',pool='judge',bound_microusd=10000)])
     local,hosted=[_candidate(0,cohort='local')],[_candidate(0,cohort='hosted')]
     monkeypatch.setattr(subject,'load_pair_candidate_views',lambda *a:
