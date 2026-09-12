@@ -8,9 +8,10 @@ work, automatic membership for future UI launches and the same-input comparison
 with the single API campaign. Grouping does not rerun completed generations or
 pool incompatible historical and corrected conditions. The Local campaign now
 indexes all 372 retained runs and their 50,653 output records, including
-historical failed conditions and corrections. Native local scoring records and
-the historical/RR reports are visible; local Haiku indexing, cost attribution
-and complete UI execution/continuation controls remain open. These historical
+historical failed conditions and corrections. Native local scoring records,
+retained Haiku assessments and their recorded costs, and the historical/RR
+reports are published. New recovery judging and complete UI execution/continuation
+controls remain open. These historical
 counts are not a pooled final-comparison population. No local generation was
 repeated by publication.
 
@@ -33,6 +34,17 @@ include 512-token output allowances, whereas its later ten timeouts used a
 65,536-token context and native-maximum generation. Increasing context alone
 does not explain or repair both conditions. Test the affected configuration
 against the responsiveness/time requirements before starting its correction.
+
+The follow-up checkpoint join inspected 14,178 retained recovery responses and
+found 211 exact matches to this pending selection, none providing an additional
+normal-ended usable correction. The 2,636-input selection therefore remains
+open; no new generation was made during that reconciliation. Qwen's already
+corrected missing inputs remain excluded. The separate metadata repair filled
+omitted native token usage, limits and explicit stop information in 50,475
+existing index rows, preserving every original answer and verdict. It does not
+change missing outputs into successes. The current 3,252-output local Haiku
+selection is fully assessed, including its two network recoveries; further
+newly generated answers still need their own assessments.
 
 Human audit and thesis evidence synthesis remain separate work. This plan was written
 20 August 2026 after the readiness audit

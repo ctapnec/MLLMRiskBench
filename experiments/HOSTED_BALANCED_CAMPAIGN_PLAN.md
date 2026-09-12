@@ -3,8 +3,10 @@
 Status: requested on 11 September 2026; the allocation below was fixed before
 selection. Exact whole-cluster selection and media materialization have retained
 3,719 assignments on 1,200 distinct inputs already used locally. All 3,719 exact
-request counts are retained. Final preparation is being completed with the
-existing budget and count cache; no fourth-campaign target call is yet claimed.
+request counts are retained. Final preparation completed using the existing
+budget and count cache, with no repeated provider-count requests. Collection
+is active: the 12 September 00:37 UTC snapshot records 144 started assignments
+and 141 usable outcomes. These are interim counts, not completed results.
 The third campaign's 81-input addition is complete; remaining Google work and
 outstanding judging continue independently.
 
@@ -16,6 +18,12 @@ priority without changing their fixed inputs. Other providers remain independent
 Google Pro's older quota remainder must not block Flash. Fresh transport probes
 use untouched assigned inputs, count toward the campaign once, and are never
 repeated merely to repair a controller link.
+
+The half-hour monitor also publishes current retained target outcomes and judge
+records to the existing workspaces. A failed or timed-out observation is recorded
+without stopping the next poll or any independent execution controller. The
+00:34 observation's preparation-record mismatch was corrected without changing
+the prepared programs or restarting model requests.
 
 The matched judging population is output-owned: 5,049 retained local answers
 plus at most 3,719 new hosted outputs, not two verdicts per hosted assignment.
