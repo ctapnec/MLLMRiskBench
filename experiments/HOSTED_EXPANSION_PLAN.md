@@ -106,6 +106,17 @@ judging. Additional source-grading contexts remain separately pending and
 must not be conflated with primary output assessments or independent target
 generations. The worker records that remaining scope explicitly.
 
+The older remainder has a separate observation-age issue: fourteen untouched
+inputs sit behind an already-started job with six pending inputs. Its 24-hour
+transport observations expire before this quota reset. The transport-tail
+controller therefore waits for the old worker to end and the new Pro queue's
+fresh observations before dispatching only wholly untouched jobs. The target
+configurations were compared and are identical. Completed jobs and paid slots
+are preserved; the observation-age policy is not extended, and no extra probe
+input is purchased. Any partially started remainder stays with its existing
+checkpoint recovery. Tail collection, its judging and publication must still
+be verified after execution, not inferred from the queued controller.
+
 ### Previous account observation: fifth update
 
 Operator-reported fifth update, recorded on 11 September 2026 at 23:11
