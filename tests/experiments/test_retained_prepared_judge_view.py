@@ -114,7 +114,8 @@ def test_changed_prepared_source_is_rejected(prepared,change):
 
 def test_incomplete_source_count_remains_in_the_population(prepared):
     _,value,_=prepared
-    value.update(status='preparation_incomplete',failed=[dict(assigned=3)])
+    value.update(status='preparation_incomplete',failed=[dict(
+        program=value['programs'][0]['path'],job='pending-source',assigned=3)])
     _,audit=judge._candidates_from_view(*subject.read_hosted_preparation(value))
     assert audit['unprepared_outputs']==3
 
