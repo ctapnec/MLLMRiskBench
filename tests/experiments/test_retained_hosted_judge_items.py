@@ -73,11 +73,28 @@ def test_empty_outputs_remain_in_coverage_without_judging_or_budget_work(funded,
 
 @pytest.mark.parametrize('change',['budget','target','input','duplicate-slot','provider','pool'])
 def test_changed_output_owner_or_funding_is_rejected(funded,change):
-    if change=='budget':funded.program['budget_plan_sha256']='b'*64
-    elif change=='target':funded.program['target']='openai:different'
-    elif change=='input':funded.program['jobs'][0]['input_ids']=['different']
-    elif change=='duplicate-slot':funded.program['requests']['input-1']=copy.deepcopy(funded.program['requests']['input-0'])
-    elif change=='provider':funded.slots['judge-hosted-0']['provider']='google'
-    else:funded.slots['judge-hosted-0']['pool']='target'
+    if change=='budget':
+        funded.program['budget_plan_sha256']='b'*64
+    elif change=='target':
+        funded.program['target']='openai:different'
+    elif change=='input':
+        funded.program['jobs'][0]['input_ids']=['different']
+    elif change=='duplicate-slot':
+        funded.program['requests']['input-1']=copy.deepcopy(funded.program['requests']['input-0'])
+    elif change=='provider':
+        funded.slots['judge-hosted-0']['provider']='google'
+    else:
+        funded.slots['judge-hosted-0']['pool']='target'
     funded.save()
-    with pytest.raises(ValueError):subject.collect_items(funded.prepared,funded.budget)
+    with pytest.raises(ValueError):
+        subject.collect_items(funded.prepared,funded.budget)
+
+
+def test_tools_builds_the_same_no_call_cli(funded,tmp_path,monkeypatch):
+    from experiments.rig_web_app.catalog import build_argv
+    monkeypatch.setattr(subject,'AttemptBudget',lambda root,digest:funded.budget)
+    argv=build_argv('retained_hosted_judge_items',{'--preparation':str(funded.prepared),
+        '--budget-root':str(funded.budget.root),'--budget-plan-sha256':'a'*64,'--out':str(tmp_path/'tools')})
+    assert subject.main(argv)==0
+    result=json.loads((tmp_path/'tools/result.json').read_text())
+    assert result['selected_outputs']==2 and result['judge_calls']==result['provider_http_calls']==0

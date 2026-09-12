@@ -1222,6 +1222,17 @@ def _commands() -> dict[str, Command]:
             ),
         ),
         Command(
+            "retained_hosted_judge_items",
+            "experiments.retained_hosted_judge_items",
+            "Prepare saved hosted answers for their existing Haiku funding, without paid calls",
+            (
+                CommandParam("--preparation", "path", required=True),
+                CommandParam("--budget-root", "path", required=True),
+                CommandParam("--budget-plan-sha256", "str", required=True),
+                CommandParam("--out", "path", required=True),
+            ),
+        ),
+        Command(
             "retained_response_judge_pair_execute",
             "experiments.retained_response_judge_pair_execute",
             "Execute one sealed matched local and hosted Haiku judging plan",
@@ -1353,6 +1364,7 @@ COMMAND_GROUPS: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
             "retained_native_judge_execute",
             "retained_response_judge_pair",
             "retained_judge_inventory",
+            "retained_hosted_judge_items",
             "retained_response_judge_pair_execute",
         ),
     ),
