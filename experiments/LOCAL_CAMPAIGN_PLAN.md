@@ -260,6 +260,17 @@ and invalid verdicts remain explicit. Publication includes the new response
 owners, verdicts and physical-attempt costs. Queuing is not execution evidence;
 the live deferred workers report their wait and subsequent terminal results.
 
+Execution update, 12 September at 09:04 UTC: 789 recovery conditions have been
+attempted, yielding 781 normal usable replacements, six missing outputs and two
+truncated outputs. The other 1,847 inputs are unattempted. The last half-hour
+added 28 attempted inputs and 25 normal replacements. Both GPUs remain active.
+ETAs now use observed checkpoint progress over wall-clock time as well as the
+separately labeled response-latency estimate. Retrying and inter-response
+overhead must not disappear from the forecast. At this interval's pace the
+first DeepSeek unit has about 5.3 hours of generation left, versus 2.4 hours
+from response latency alone. Neither forecast establishes the duration of the
+remaining image lanes, native judging or the whole campaign.
+
 Human audit and thesis evidence synthesis remain separate work. This plan was written
 20 August 2026 after the readiness audit
 of the big rig (Debian, 2x RTX 4090 24,564 MiB, 125 GiB RAM, /mnt/stor 7.1 TB
