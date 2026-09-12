@@ -27,9 +27,12 @@ def test_equivalent_context_is_a_reference_not_a_new_verdict(native):
 @pytest.mark.parametrize("change", ["output", "model", "criteria"])
 def test_native_reference_never_moves_a_verdict_to_another_output(native, change):
     context, response, verdict = native
-    if change == "output": response["output_turns"][0]["content"] += " changed"
-    elif change == "model": response["target"] = "api:different-model"
-    else: context["same_native_judge_input"] = False
+    if change == "output":
+        response["output_turns"][0]["content"] += " changed"
+    elif change == "model":
+        response["target"] = "api:different-model"
+    else:
+        context["same_native_judge_input"] = False
     with pytest.raises(ValueError, match="criteria or model output"):
         native_context_reference(context, response, [verdict], expected_judge_ids={verdict["judge_id"]})
 
