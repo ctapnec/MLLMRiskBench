@@ -80,7 +80,7 @@ def native_invalid_rows(unit: dict, artifacts: list[tuple[str, dict]], *,
         trail = value["trail"]
         if (not trail or trail[-1]["judge"] != "guardrail" or trail[-1].get("raw", {}).get("parsed") is not False
                 or trail[-1].get("raw", {}).get("guardrail_queried") is not True
-                or any(stage["run_id"] != unit["run_id"] or stage["attempt_id"] != aid for stage in trail)):
+                or any(stage.get("run_id") not in {None, unit["run_id"]} or stage["attempt_id"] != aid for stage in trail)):
             raise ValueError("Native failure is not an observed unparsed guard assessment")
         rows.append(dict(response_id=identity, judge_id=judge, status="invalid", label=None, source_ref=reference))
         costs.append(dict(call_id="local-scoring:"+judge+":"+identity, attempt_number=1,
