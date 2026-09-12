@@ -290,6 +290,16 @@ activity must not be inferred from an unavailable index.
 ### Results and comparisons
 
 Results is a single filterable table, not one table per execution batch.
+
+To inspect a historical or corrected setting, open the campaign's Overview,
+choose a model, then select its execution condition. The condition list shows
+the reported context and output allowances, including ranges and unknown values.
+Overview figures, Results, Judging, pagination and SVG/CSV exports retain the
+same filter. All conditions remains available and includes historical failures;
+filtering never overwrites an answer or automatically selects its newest or
+best replacement. Costs remain campaign-wide, including recovery attempts.
+These filters read the SQLite index only and do not reopen corpora or response
+payloads. Export metadata retains the exact selected condition identifier.
 Filters include model, modality, framework, arm, corpus, sampling selection,
 generation settings and judge. The model detail opens a bounded side panel or
 modal with its charts and a paginated input/output/judgment browser.

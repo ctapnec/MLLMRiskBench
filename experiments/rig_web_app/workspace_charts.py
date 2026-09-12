@@ -143,12 +143,12 @@ def quality_svg(rows: Sequence[Mapping], *, scope: str) -> str:
     )
 
 
-def model_counts_csv(rows: Sequence[Mapping]) -> bytes:
+def model_counts_csv(rows: Sequence[Mapping], *, condition: str = "") -> bytes:
     fields = ("model", "evidence_class", "conditions", "assigned", "usable", "policy", "missing",
               "retry_pending", "pending", "truncated", "truncation_unknown", "updated_at")
     stream = io.StringIO(newline="")
     writer = csv.writer(stream)
-    writer.writerow(fields)
+    writer.writerow((*fields, "condition_filter") if condition else fields)
     for row in rows:
         values = []
         for key in fields:
@@ -158,6 +158,8 @@ def model_counts_csv(rows: Sequence[Mapping]) -> bytes:
             if isinstance(value, str) and value.startswith(("=", "+", "-", "@")):
                 value = "'" + value
             values.append(value)
+        if condition:
+            values.append("'" + condition if condition.startswith(("=", "+", "-", "@")) else condition)
         writer.writerow(values)
     return stream.getvalue().encode("utf-8-sig")
 

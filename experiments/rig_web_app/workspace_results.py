@@ -181,7 +181,30 @@ class WorkspaceResultsMixin:
                 self._fail(exc)
                 raise ValueError("Campaign result index could not be saved") from exc
 
-    def workspace_model_totals(self, campaign_id: str, *, offset: int = 0) -> list[sqlite3.Row] | None:
+    def workspace_result_models(self, campaign_id: str) -> list[sqlite3.Row] | None:
+        return self._query(
+            "SELECT DISTINCT model FROM campaign_assignments WHERE campaign_id=? ORDER BY model",
+            (campaign_id,),
+        )
+
+    def workspace_result_conditions(self, campaign_id: str, *, model: str) -> list[sqlite3.Row] | None:
+        """Settings for one selected model, read only from compact indexed metadata."""
+        return self._query(
+            "SELECT COALESCE(r.condition_id,a.condition_id) AS condition_id,COUNT(*) AS assigned, "
+            "MIN(json_extract(r.details,'$.context_tokens')) AS context_min, "
+            "MAX(json_extract(r.details,'$.context_tokens')) AS context_max, "
+            "MIN(json_extract(r.details,'$.output_allowance')) AS output_min, "
+            "MAX(json_extract(r.details,'$.output_allowance')) AS output_max, "
+            "COUNT(json_extract(r.details,'$.context_tokens')) AS context_known, "
+            "COUNT(json_extract(r.details,'$.output_allowance')) AS output_known "
+            "FROM campaign_assignments a LEFT JOIN campaign_responses r "
+            "ON r.campaign_id=a.campaign_id AND r.response_id=a.response_id "
+            "WHERE a.campaign_id=? AND a.model=? GROUP BY COALESCE(r.condition_id,a.condition_id) "
+            "ORDER BY condition_id", (campaign_id, model),
+        )
+
+    def workspace_model_totals(self, campaign_id: str, *, offset: int = 0,
+                               model: str = "", condition: str = "") -> list[sqlite3.Row] | None:
         return self._query(
             "SELECT a.model,a.evidence_class,COUNT(*) AS assigned,COUNT(DISTINCT COALESCE(r.condition_id,a.condition_id)) AS conditions, "
             "SUM(r.outcome='usable') AS usable,SUM(r.outcome='policy') AS policy, "
@@ -191,22 +214,30 @@ class WorkspaceResultsMixin:
             "SUM(r.response_id IS NULL) AS pending,MAX(a.updated_at) AS updated_at "
             "FROM campaign_assignments a LEFT JOIN campaign_responses r "
             "ON r.campaign_id=a.campaign_id AND r.response_id=a.response_id "
-            "WHERE a.campaign_id=? GROUP BY a.model,a.evidence_class ORDER BY a.model,a.evidence_class LIMIT 26 OFFSET ?",
-            (campaign_id, max(0, offset)),
+            "WHERE a.campaign_id=? AND (?='' OR a.model=?) "
+            "AND (?='' OR COALESCE(r.condition_id,a.condition_id)=?) "
+            "GROUP BY a.model,a.evidence_class ORDER BY a.model,a.evidence_class LIMIT 26 OFFSET ?",
+            (campaign_id, model, model, condition, condition, max(0, offset)),
         )
 
-    def workspace_result_rows(self, campaign_id: str, *, offset: int = 0, model: str = "") -> list[sqlite3.Row] | None:
+    def workspace_result_rows(self, campaign_id: str, *, offset: int = 0, model: str = "",
+                              condition: str = "") -> list[sqlite3.Row] | None:
         return self._query(
             "SELECT a.*,r.outcome,r.truncated,r.details,r.condition_id AS response_condition FROM campaign_assignments a "
             "LEFT JOIN campaign_responses r ON r.campaign_id=a.campaign_id AND r.response_id=a.response_id "
             "WHERE a.campaign_id=? AND (?='' OR a.model=?) "
-            "ORDER BY a.model,a.assignment_id LIMIT 51 OFFSET ?", (campaign_id, model, model, max(0, offset)),
+            "AND (?='' OR COALESCE(r.condition_id,a.condition_id)=?) "
+            "ORDER BY a.model,a.assignment_id LIMIT 51 OFFSET ?",
+            (campaign_id, model, model, condition, condition, max(0, offset)),
         )
 
-    def workspace_judging_totals(self, campaign_id: str) -> list[sqlite3.Row] | None:
+    def workspace_judging_totals(self, campaign_id: str, *, model: str = "",
+                                condition: str = "") -> list[sqlite3.Row] | None:
         return self._query(
             "SELECT j.judge_id,j.status,COUNT(*) AS count FROM campaign_judgments j "
             "JOIN campaign_assignments a ON a.campaign_id=j.campaign_id AND a.response_id=j.response_id "
-            "WHERE j.campaign_id=? GROUP BY j.judge_id,j.status ORDER BY j.judge_id,j.status",
-            (campaign_id,),
+            "JOIN campaign_responses r ON r.campaign_id=j.campaign_id AND r.response_id=j.response_id "
+            "WHERE j.campaign_id=? AND (?='' OR a.model=?) AND (?='' OR r.condition_id=?) "
+            "GROUP BY j.judge_id,j.status ORDER BY j.judge_id,j.status",
+            (campaign_id, model, model, condition, condition),
         )

@@ -64,6 +64,10 @@ h2 .ic { color:var(--muted); }
   padding:.65rem .8rem; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--ink); font:inherit; font-weight:400; }
 .campaign-field select { padding-right:2.2rem; }
 .campaign-field input:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.campaign-result-filters { display:grid; gap:1rem; margin:1rem 0; }
+.campaign-result-filters form { display:flex; flex-wrap:wrap; gap:.75rem; align-items:flex-end; margin:0; }
+.campaign-result-filters .campaign-field { flex:1 1 20rem; max-width:48rem; }
+.campaign-result-filters button { margin:0; min-height:2.65rem; }
 .campaign-ownership > .note { margin:0; line-height:1.55; }
 .campaign-create-card { max-width:44rem; padding:1.5rem; margin:1.5rem 0; }
 .campaign-create-form { display:grid; gap:1.5rem; margin:0; }

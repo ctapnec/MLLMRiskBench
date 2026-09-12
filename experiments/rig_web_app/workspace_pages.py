@@ -12,6 +12,68 @@ from .workspace_charts import coverage_html, coverage_svg, quality_svg, model_co
 
 
 class WorkspacePagesMixin:
+    @staticmethod
+    def _workspace_result_scope(query: dict[str, str]) -> tuple[str, str]:
+        model, condition = query.get("model", ""), query.get("condition", "")
+        if condition and not model:
+            raise ValueError("Choose a model before selecting its execution condition")
+        return model, condition
+
+    def _workspace_result_filters(self, campaign_id: str, section: str, query: dict[str, str]) -> str:
+        model, condition = self._workspace_result_scope(query)
+        models = self.db.workspace_result_models(campaign_id)
+        if not models:
+            return ""
+        action = "/campaigns/" + campaign_id
+        options = "<option value=''>All models</option>" + "".join(
+            "<option value='" + html.escape(row["model"], quote=True) + "'"
+            + (" selected" if row["model"] == model else "") + ">" + html.escape(row["model"]) + "</option>"
+            for row in models
+        )
+        if model and not any(row["model"] == model for row in models):
+            options += "<option selected value='" + html.escape(model, quote=True) + "'>Unknown model</option>"
+        content = (
+            "<div class='campaign-result-filters'><form method='get' action='" + action + "'>"
+            "<input type='hidden' name='section' value='" + section + "'>"
+            "<label class='campaign-field'>Model<select name='model'>" + options + "</select></label>"
+            "<button type='submit'>Choose model</button></form>"
+        )
+        if model:
+            conditions = self.db.workspace_result_conditions(campaign_id, model=model)
+            if conditions is None:
+                return content + "<p class='notice red'>Execution-condition index unavailable.</p></div>"
+
+            def allowance(row, prefix):
+                low, high = row[prefix + "_min"], row[prefix + "_max"]
+                def tokens(value):
+                    return "native maximum" if value == -1 else f"{value:,}"
+                value = "unknown" if low is None else tokens(low) if low == high else tokens(low) + " to " + tokens(high)
+                if 0 < row[prefix + "_known"] < row["assigned"]:
+                    value += " (partly unknown)"
+                return value
+
+            options = "<option value=''>All retained conditions (includes history)</option>"
+            for index, row in enumerate(conditions, 1):
+                label = (f"Condition {index}: context {allowance(row, 'context')}; output {allowance(row, 'output')}; "
+                         f"{row['assigned']:,} assignments")
+                options += ("<option value='" + html.escape(row["condition_id"], quote=True) + "'"
+                    + (" selected" if row["condition_id"] == condition else "") + ">" + html.escape(label) + "</option>")
+            if condition and not any(row["condition_id"] == condition for row in conditions):
+                options += "<option selected value='" + html.escape(condition, quote=True) + "'>Unknown execution condition</option>"
+            content += (
+                "<form method='get' action='" + action + "'><input type='hidden' name='section' value='" + section + "'>"
+                "<input type='hidden' name='model' value='" + html.escape(model, quote=True) + "'>"
+                "<label class='campaign-field'>Execution condition<select name='condition'>" + options + "</select></label>"
+                "<button type='submit'>View condition</button></form>"
+            )
+        else:
+            content += "<p class='note'>Choose a model to inspect its individual execution conditions.</p>"
+        return content + (
+            "</div><p class='note'>All conditions includes historical failures and later corrections. "
+            "A condition filter keeps charts, output rows, verdict counts and exports on the same selection. "
+            "It does not select the newest or best answer automatically. Costs remain campaign-wide.</p>"
+        )
+
     def _save_build_campaign(self, params: dict[str, str]) -> dict[str, str]:
         if params.get("work_kind") != "campaign" and not params.get("campaign_id"):
             return params
@@ -93,17 +155,19 @@ class WorkspacePagesMixin:
     def _workspace_export(self, campaign_id: str, name: str, query: dict[str, str]) -> tuple[int, str, bytes]:
         self.db.require_workspace(campaign_id)
         page = max(0, int(query.get("page", "0")))
-        rows = self.db.workspace_model_totals(campaign_id, offset=page * 25)
+        model, condition = self._workspace_result_scope(query)
+        rows = self.db.workspace_model_totals(campaign_id, offset=page * 25, model=model, condition=condition)
         if rows is None:
             return 503, "text/plain; charset=utf-8", b"Campaign result index unavailable"
         rows = rows[:25]
         if not rows:
             return 404, "text/plain; charset=utf-8", b"No indexed results for this page"
         if name == "model-counts.csv":
-            return 200, "text/csv; charset=utf-8", model_counts_csv(rows)
+            return 200, "text/csv; charset=utf-8", model_counts_csv(rows, condition=condition)
         if name not in {"coverage.svg", "quality.svg"}:
             return 404, "text/plain; charset=utf-8", b"Unknown figure"
-        scope = f"Displayed model conditions, page {page + 1}. Operational coverage; not pooled security rates."
+        scope = ("Selected execution condition" if condition else "All retained conditions, including history")
+        scope += f", page {page + 1}. Operational coverage; not pooled security rates."
         figure = (coverage_svg(rows, title="Campaign outcome composition", scope=scope)
                   if name == "coverage.svg" else quality_svg(rows, scope=scope))
         # Preserve the project's light/dark theme variables in the standalone
@@ -111,6 +175,8 @@ class WorkspacePagesMixin:
         from .ui import _STYLE  # noqa: PLC0415
         theme = _STYLE.split("* { box-sizing:", 1)[0]
         figure = figure.replace("<style>", "<style>" + theme, 1)
+        figure = figure.replace("<style>", "<metadata>" + html.escape(json.dumps(
+            dict(model_filter=model, condition_filter=condition))) + "</metadata><style>", 1)
         return 200, "image/svg+xml; charset=utf-8", figure.encode("utf-8")
 
     def _workspace_source_link(self, reference: str) -> str:
@@ -200,8 +266,12 @@ class WorkspacePagesMixin:
         if section not in sections:
             raise ValueError("Unknown campaign section")
         base = "/campaigns/" + campaign_id
+        model, condition = self._workspace_result_scope(query)
+        scope_query = ("&amp;model=" + quote(model, safe="") if model else "") + (
+            "&amp;condition=" + quote(condition, safe="") if condition else "")
         navigation = "<nav class='page-tablist server-tablist' aria-label='Campaign sections'>" + "".join(
-            "<a class='page-tab' href='" + base + "?section=" + tab + "'"
+            "<a class='page-tab' href='" + base + "?section=" + tab
+            + (scope_query if tab in {"overview", "results", "judging"} else "") + "'"
             + (" aria-current='page'" if tab == section else "") + ">"
             + tab.title() + "</a>" for tab in sections
         ) + "</nav>"
@@ -240,6 +310,8 @@ class WorkspacePagesMixin:
                     content += f"<a href='{base}?section=activity&amp;page={offset // 50 + 1}'>Next</a>"
         else:
             content = self._workspace_results(campaign_id, section, query)
+        if section in {"overview", "results", "judging"}:
+            content = self._workspace_result_filters(campaign_id, section, query) + content
         return _page(
             campaign["name"], "<h1>" + html.escape(campaign["name"]) + "</h1>"
             "<p><a class='button' href='/build?campaign_id=" + campaign_id + "'>Configure in Build</a> "
@@ -257,6 +329,13 @@ class WorkspacePagesMixin:
         )
         page = max(0, int(query.get("page", "0")))
         base = "/campaigns/" + campaign_id + "?section=" + section
+        model, condition = self._workspace_result_scope(query)
+        scope_query = ("&amp;model=" + quote(model, safe="") if model else "") + (
+            "&amp;condition=" + quote(condition, safe="") if condition else "")
+        base += scope_query
+        if model or condition:
+            unknown = ("<p class='notice amber'>No indexed " + html.escape(section)
+                       + " rows for this selection. Missing data are unknown, not zero.</p>")
 
         def pagination(has_next):
             return ((f"<a href='{base}&amp;page={page - 1}'>Previous</a> " if page else "")
@@ -298,7 +377,7 @@ class WorkspacePagesMixin:
                 + pagination(len(rows) > 25)
             )
         if section == "judging":
-            rows = self.db.workspace_judging_totals(campaign_id)
+            rows = self.db.workspace_judging_totals(campaign_id, model=model, condition=condition)
             if not rows:
                 return unknown
             return "<p>Verdicts for the explicitly selected outputs. Other historical judgments remain retained.</p>" + table(
@@ -306,13 +385,13 @@ class WorkspacePagesMixin:
                 [[html.escape(row["judge_id"]), html.escape(row["status"]), str(row["count"])] for row in rows],
             )
         if section == "overview":
-            rows = self.db.workspace_model_totals(campaign_id, offset=page * 25)
+            rows = self.db.workspace_model_totals(campaign_id, offset=page * 25, model=model, condition=condition)
             if not rows:
                 return unknown
             chart = coverage_html(rows[:25])
             exports = "<p id='campaign-exports'>" + " ".join(
                 "<a class='button ghost' data-campaign-export download='campaign-" + name + "' href='/campaigns/" + campaign_id
-                + "/figures/" + name + "?page=" + str(page) + "'>" + label + "</a>"
+                + "/figures/" + name + "?page=" + str(page) + scope_query + "'>" + label + "</a>"
                 for name, label in (("coverage.svg", "Export coverage figure"), ("quality.svg", "Export missing/truncation figure"),
                                     ("model-counts.csv", "Export matching table"))
             ) + "</p><p id='campaign-export-status' role='status'></p>" + EXPORT_SCRIPT
@@ -323,16 +402,14 @@ class WorkspacePagesMixin:
                 "Execution conditions remain distinct; these counts are not pooled safety rates.</p>"
                 + exports + chart + "<details><summary>Exact counts and execution-condition coverage</summary>" + table(
                     ("Model", "Evidence", "Conditions", "Assigned", "Usable", "Policy", "Missing", "Retry pending", "Pending", "Truncated", "Truncation unknown"),
-                    [["<a href='/campaigns/" + campaign_id + "?section=results&amp;model=" + quote(row["model"], safe="") + "'>" + html.escape(row["model"]) + "</a>"]
+                    [["<a href='/campaigns/" + campaign_id + "?section=results&amp;model=" + quote(row["model"], safe="")
+                      + ("&amp;condition=" + quote(condition, safe="") if condition else "") + "'>" + html.escape(row["model"]) + "</a>"]
                      + [html.escape(row["evidence_class"])]
                      + [str(row[key] or 0) for key in ("conditions", "assigned", "usable", "policy", "missing", "retry_pending", "pending", "truncated", "truncation_unknown")]
                      for row in rows[:25]],
                 ) + "</details>" + pagination(len(rows) > 25)
             )
-        model = query.get("model", "")
-        if model:
-            base += "&amp;model=" + quote(model, safe="")
-        rows = self.db.workspace_result_rows(campaign_id, offset=page * 50, model=model)
+        rows = self.db.workspace_result_rows(campaign_id, offset=page * 50, model=model, condition=condition)
         if not rows:
             return unknown
         output = []
