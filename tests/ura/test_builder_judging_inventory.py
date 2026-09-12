@@ -34,7 +34,7 @@ def completed(inventory):
         selection=dict(selected_inputs=1), coverage=dict(retained_outputs=4, judgeable_text=3,
             missing_text=1, hosted_inputs_without_local_records=0),
         population=dict(local={}, hosted=dict(unprepared_outputs=2)),
-        by_model=[dict(cohort='local', model='local:a', retained_outputs=2, judgeable_text=1, missing_text=1),
+        by_model=[dict(cohort='local', model='local:a@sha256:'+'a'*64, retained_outputs=2, judgeable_text=1, missing_text=1),
                   dict(cohort='local', model='local:b', retained_outputs=1, judgeable_text=1),
                   dict(cohort='hosted', model='api:c', retained_outputs=1, judgeable_text=1)])))
     app.db._conn.execute("UPDATE jobs SET state='complete',exit_code=0 WHERE job_id=?", (job.job_id,))
@@ -104,6 +104,10 @@ def test_inventory_panel_and_review_fit_mobile(browser, inventory):  # noqa: F81
         page.set_content(body.replace("<link rel='stylesheet' href='/static/style.css'>", '<style>'+ui._STYLE+'</style>'))
         assert page.get_by_role('heading', name='Same-input output coverage').is_visible()
         assert page.locator('table tr').count() == 4
+        for cell in page.locator('table td[data-label]').all():
+            box = cell.bounding_box()
+            assert box['x'] >= 0 and box['x']+box['width'] <= 390
+        assert '@sha256' not in page.locator('table').inner_text()
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
     finally:
         page.close()

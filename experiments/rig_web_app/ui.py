@@ -60,6 +60,17 @@ h2 .ic { color:var(--muted); }
 .campaign-ownership-row { display:flex; flex-wrap:wrap; align-items:flex-end; gap:1rem; }
 .campaign-field { display:grid; gap:.5rem; min-width:0; font-weight:600; font-size:.9rem; }
 .haiku-judging-controls { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1rem; margin:1rem 0; }
+.judging-inventory-table { width:100%; }
+.judging-inventory-table td:nth-child(2) { overflow-wrap:anywhere; }
+@media(max-width:640px) {
+  .judging-inventory-table, .judging-inventory-table tbody { display:block; }
+  .judging-inventory-table thead { display:none; }
+  .judging-inventory-table tbody tr { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); padding:.75rem 0; border-bottom:1px solid var(--line); }
+  .judging-inventory-table td { display:block; border:0; padding:.35rem; min-width:0; }
+  .judging-inventory-table td:first-child, .judging-inventory-table td:nth-child(2) { grid-column:1/-1; }
+  .judging-inventory-table td:nth-child(2) { font-weight:600; }
+  .judging-inventory-table td[data-label]::before { content:attr(data-label); display:block; font-size:.7rem; color:var(--muted); }
+}
 @media(max-width:640px) { .haiku-judging-controls { grid-template-columns:minmax(0,1fr); } }
 .campaign-ownership-row .campaign-field { flex:1 1 280px; max-width:36rem; }
 .campaign-field select, .campaign-field input { box-sizing:border-box; width:100%; min-width:0; min-height:2.65rem; margin:0;

@@ -74,9 +74,11 @@ def judging_inventory_review(app, params):
         raise ValueError('The saved job has no completed same-input output inventory')
     selection, coverage = value['selection'], value['coverage']
     pending = sum(part.get('unprepared_outputs', 0) for part in value['population'].values())
-    rows = ''.join('<tr><td>' + html.escape(row['cohort']) + '</td><td>' + html.escape(row['model'])
-        + f"</td><td>{row['retained_outputs']:,}</td><td>{row.get('judgeable_text', 0):,}</td>"
-        + f"<td>{row.get('missing_text', 0):,}</td></tr>" for row in value['by_model'])
+    rows = ''.join('<tr><td>' + html.escape(row['cohort']) + "</td><td title='" + html.escape(row['model'], quote=True)
+        + "'>" + html.escape(row['model'].split('@', 1)[0])
+        + f"</td><td data-label='Saved outputs'>{row['retained_outputs']:,}</td>"
+        + f"<td data-label='With text'>{row.get('judgeable_text', 0):,}</td>"
+        + f"<td data-label='Missing text'>{row.get('missing_text', 0):,}</td></tr>" for row in value['by_model'])
     body = '<h1>Same-input output coverage</h1>' + app._campaign_banner(owner)
     body += (f"<p>{selection['selected_inputs']:,} selected input entries; {coverage['retained_outputs']:,} retained outputs. "
         'Every saved local and hosted answer on those inputs is included, including separate generation conditions. '
@@ -86,9 +88,9 @@ def judging_inventory_review(app, params):
         f"{pending:,} source outputs remain unprepared outside this observed population.</p>"
         '<p>This is coverage, not completed judging. Text availability does not establish rubric eligibility, '
         'an existing verdict or funding. No target or judge calls were made. The separately reviewed paired '
-        'Haiku selection below is not changed by this inventory.</p>'
-        "<div class='scroll'><table><tr><th>Population</th><th>Model</th><th>Saved outputs</th>"
-        '<th>With text</th><th>Missing text</th></tr>' + rows + '</table></div>'
+        'Haiku selection in Build is not changed by this inventory.</p>'
+        "<table class='judging-inventory-table'><thead><tr><th>Population</th><th>Model</th><th>Saved outputs</th>"
+        '<th>With text</th><th>Missing text</th></tr></thead><tbody>' + rows + '</tbody></table>'
         + "<details><summary>Exact command</summary><pre>" + html.escape(' '.join(argv)) + '</pre></details>'
         + "<p><a href='/jobs/" + html.escape(params['retained_inventory_job'], quote=True) + "'>Open full inventory</a>"
         + " | <a href='/build?campaign_id=" + html.escape(owner, quote=True) + "'>Return to Build</a></p>")
