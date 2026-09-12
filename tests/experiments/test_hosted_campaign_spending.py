@@ -68,6 +68,32 @@ def test_changed_predecessor_spending_invalidates_cached_subtotal(campaign, monk
     assert current.reserved_attempt_count('A') == 0
 
 
+def test_judge_only_continuation_keeps_all_provider_totals_and_own_ceiling(campaign, tmp_path):
+    prior,current,document=campaign
+    other_root=tmp_path/'other-provider'
+    descriptor=create_budget(other_root,provider_budgets_microusd={'anthropic':200,'google':200},
+        protected_haiku_microusd=10,reservation_policy='per_attempt',
+        planned_calls=[dict(call_id='G',provider='google',pool='target',bound_microusd=100)])
+    other=AttemptBudget(other_root,descriptor['sha256'])
+    other.reserve('G',1,provider='google')
+    other.settle('G',1,50)
+    expanded=copy.deepcopy(document)
+    expanded['pool_caps_microusd']['google:target']=100
+    expanded['budgets'].append(dict(root=str(other_root),plan_sha256=descriptor['sha256']))
+    current.use_campaign_spending(expanded)
+    current.reserve('J',1,provider='anthropic')
+    current.settle('J',1,10)
+    pools=current.snapshot()['campaign_spending']['pools']
+    assert pools['google:target']['tracked_spend_microusd']==50
+    assert pools['anthropic:judge']['tracked_spend_microusd']==10
+    with pytest.raises(BudgetCapacityUnavailable,match='reported spending'):
+        current.reserve('J',2,provider='anthropic')
+    missing=copy.deepcopy(expanded)
+    del missing['pool_caps_microusd']['anthropic:judge']
+    with pytest.raises(BudgetError,match='configuration fields'):
+        scope.validate_scope(missing,current.root,current.expected_plan_sha256,{'anthropic:target':0,'anthropic:judge':10})
+
+
 def test_added_campaign_inventory_shares_unchanged_ceiling_and_retains_history(campaign, tmp_path):
     prior, current, document = campaign
     current.use_campaign_spending(document)

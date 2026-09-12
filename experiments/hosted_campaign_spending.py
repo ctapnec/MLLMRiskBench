@@ -24,9 +24,12 @@ def validate_scope(document, root, plan_sha256, pools):
 
     if (not isinstance(document, dict) or set(document) != {'schema', 'pool_caps_microusd', 'budgets'}
             or document['schema'] != SCHEMA or not isinstance(document['pool_caps_microusd'], dict)
-            or set(document['pool_caps_microusd']) != set(pools)
+            or not set(pools) <= set(document['pool_caps_microusd'])
             or not isinstance(document['budgets'], list) or not document['budgets']):
         raise BudgetError('campaign spending configuration fields differ')
+    # A judge-only continuation has fewer pools than the whole campaign. It
+    # must retain the full campaign totals, including other providers' ledgers,
+    # while every pool it can actually spend from remains explicitly covered.
     for cap in document['pool_caps_microusd'].values():
         _integer(cap, 'precomputed campaign pool ceiling', zero=True)
     seen = set()
