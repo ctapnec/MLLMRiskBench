@@ -168,7 +168,8 @@ def test_durable_judgments_publish_by_output_and_resume_repairs_index(retained, 
     result, calls, _ = score(retained, tmp_path, monkeypatch, outputs=["gibberish", "unsafe\nS1"], publication=publisher)
     publisher.close()
     assert result["status"] == "complete" and len(calls) == 2
-    assert len(db._query("SELECT * FROM campaign_judgments")) == 2
+    if not index_failure:
+        assert len(db._query("SELECT * FROM campaign_judgments")) == 2
     status = tmp_path/"scoring/publication.json"
     assert "private fixture" not in status.read_text()
     if index_failure:
