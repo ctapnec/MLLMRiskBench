@@ -2306,6 +2306,8 @@ class BuilderPageMixin:
             "<button form='builder' type='submit'>Compose &amp; review</button></div>"
             "</div>"
         )
+        from .builder_sources import source_panel
+        general_panel += source_panel(self, dict(prefill))
         force_default = (
             " data-force-default='true'"
             if errors or framework_runtime_state or framework_runtime_error

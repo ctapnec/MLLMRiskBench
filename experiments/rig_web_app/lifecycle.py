@@ -4092,6 +4092,13 @@ class LifecycleMixin:
                     raise ValueError("Select Campaign to save a campaign definition")
                 params = self._save_build_campaign(params)
                 return 303, "/campaigns/" + params["campaign_id"] + "?section=definition", b""
+            if method == "POST" and path in {"/build/source-runs", "/build/prepare-inputs"}:
+                from .builder_sources import prepare_selected_inputs
+                params = self._builder_params(form or {})
+                if path == "/build/source-runs":
+                    return 200, "text/html; charset=utf-8", self._build_page(prefill=params)
+                job = prepare_selected_inputs(self, params)
+                return 303, "/jobs/" + job.job_id, b""
             if method == "POST" and path == "/build/edit":
                 ticket = self._consume_launch_ticket((form or {}).get("edit_ticket", ""), purpose="build-edit")
                 if ticket is None:
