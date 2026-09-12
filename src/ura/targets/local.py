@@ -46,6 +46,7 @@ from .base import (
     TargetInputError,
     TargetIntegrityError,
 )
+from .api import _require
 
 _ROLE_MAP = {
     "system": "system",

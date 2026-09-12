@@ -39,6 +39,17 @@ _DIGEST_B = "b" * 64
 _PROCESS_IDENTITY = "linux-proc-v1:4242:100"
 
 
+@pytest.fixture(autouse=True)
+def isolated_runtime_temp(tmp_path, monkeypatch):
+    """Mock HTTP tests must not contend with a live rig's inference lock."""
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+
+
+def test_mock_lock_namespace_is_separate_from_running_models(tmp_path):
+    assert ollama_lock_path().is_relative_to(tmp_path)
+
+
 class _Response:
     def __init__(self, document: object) -> None:
         raw = document if isinstance(document, bytes) else json.dumps(document).encode()
