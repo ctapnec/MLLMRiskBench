@@ -632,6 +632,7 @@ def _retained_execution_counts(program: Mapping[str, Any], budget: AttemptBudget
                                include_saved: bool = False) -> tuple[int, int] | tuple[int, int, int]:
     """Count logical target starts and durable usable responses for Jobs only."""
     from experiments import run_matrix
+    from experiments.retained_outcomes import legacy_provider_policy_basis
     from ura.data_models import Response
     from ura.runner import Runner
 
@@ -669,10 +670,11 @@ def _retained_execution_counts(program: Mapping[str, Any], budget: AttemptBudget
     starts = budget.reserved_attempt_counts([receipt["call_id"] for receipt in requests.values()])
     attempted = sum(count > 0 for count in starts.values())
     successful = sum(
+        bool(legacy_provider_policy_basis(row)) or (
         row.get("raw", {}).get("model_stability_status") != "failed_output"
         and row.get("raw", {}).get("target_input_status") != "incompatible"
         and (row.get("raw", {}).get("provider_refusal") is True
-             or any((turn.get("content") or "").strip() for turn in row.get("output_turns", [])))
+             or any((turn.get("content") or "").strip() for turn in row.get("output_turns", []))))
         for row in responses.values()
     )
     if len(responses) > attempted or successful > attempted:

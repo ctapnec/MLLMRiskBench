@@ -122,6 +122,26 @@ def test_registered_count_keeps_paid_checkpoint_beside_incomplete_final(tmp_path
     assert subject._retained_execution_counts(program, admission.budget) == (2, 2)
 
 
+@pytest.mark.parametrize("code,expected", [("cyber_policy", 2), ("bio_policy", 2), ("invalid_parameter", 1)])
+def test_registered_count_recognizes_only_explicit_legacy_policy_codes(tmp_path, code, expected):
+    points, attacker, target, calls, admission = _setup(tmp_path)
+    records = []
+    _runner(attacker, target, admission).run(points, on_response=records.append)
+    saved = records[1]["response"]
+    saved["output_turns"] = []
+    saved["raw"].update(model_stability_status="failed_output", model_stability_category="transport_failure",
+        call_audit=dict(provider="openai", operation="generate", status_code=400, provider_error_code=code))
+    output = tmp_path / "legacy"
+    output.mkdir()
+    path = output / "cell.responses.jsonl"
+    path.write_text("".join(json.dumps(row["response"])+"\n" for row in records))
+    original = path.read_bytes()
+    program = {"target": target.name, "requests": admission.requests,
+        "jobs": [{"argv": ["--out", str(output)]}]}
+    assert subject._retained_execution_counts(program, admission.budget, include_saved=True) == (2, expected, 2)
+    assert path.read_bytes() == original and len(calls) == 2
+
+
 def test_target_money_settles_after_checkpoint_and_resume_never_reissues(tmp_path):
     points, attacker, target, calls, admission = _setup(tmp_path)
     checkpoint = tmp_path / "responses.jsonl"
