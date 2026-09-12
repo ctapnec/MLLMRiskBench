@@ -196,10 +196,17 @@ The conservative request-size estimate is USD 1.654744 for first attempts at
 512 output tokens; allowing four transport attempts gives USD 6.618976. These
 are forecasts, not charges or a new campaign ceiling. The new judging ledger is
 linked to all 17 predecessor ledgers under the unchanged shared spending caps.
-Actual execution has retained its first verdicts. Native local scoring remains
-pending after target release, and later replacement answers need their own
-judgments. The half-hour publication includes this judging prefix and its costs
-under Local campaign, without reusing earlier verdicts or interrupting recovery.
+This 243-answer judging selection is complete: 240 valid verdicts and three
+invalid rubric outputs, costing USD 0.246915 with no unknown usage. All 243
+judgments and their physical-attempt costs are indexed under Local campaign;
+the read-only index check matches 216,345 input and 6,114 output tokens to the
+retained execution. Invalid verdicts remain explicit, not invented safety labels.
+Later snapshots exclude these already assessed outputs, including the three
+invalid verdicts, and retain changed/new answers for separate assessment. The
+actual 243-output skip check rejects changed content and detects removal of the
+skip. Native local scoring remains pending after target release, and later
+replacement answers still need their own judgments. No target was repeated and
+the GPU recovery was not interrupted.
 
 Residual follow-up is queued behind both active recovery controllers. If
 DeepSeek still has unresolved outputs, run one 8,192-token throughput probe at
