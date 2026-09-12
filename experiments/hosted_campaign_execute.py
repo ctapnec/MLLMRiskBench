@@ -15,7 +15,7 @@ from typing import Sequence
 
 from experiments import hosted_retained_execute as retained
 from experiments.hosted_attempt_budget import AttemptBudget
-from experiments.hosted_campaign_budget import load_bound_json, _sha
+from experiments.hosted_campaign_budget import load_bound_json
 from experiments.hosted_dispatch import dispatch_admitted
 from experiments.retained_response_judge_execute import _write_atomic, _write_new
 from ura.artifact_checks import artifact_verification_cli
