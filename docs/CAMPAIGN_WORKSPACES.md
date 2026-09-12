@@ -701,6 +701,15 @@ separate; publication does not choose the favorable one. Context references
 add no generation, judgment or cost rows to SQLite. Genuinely different native
 criteria still require their own output-specific assessment.
 
+Unparsed local-judge completions are completed but unscored assessments.
+`workspace_judgments.native_invalid_rows` joins retained evaluator-failure
+records to their actual saved responses and publishes an invalid assessment
+with no invented label. The local judge call remains visible as non-billed
+work; it is neither a missing target response nor an indefinitely pending
+judgment. Intermediate classifier stages may have no run identifier: the
+outer failure artifact and exact response establish that ownership. Publication
+accepts this retained form but rejects a stage naming a different run.
+
 A judge-only continuation can share a campaign spending scope containing more
 providers than that worker uses. Every pool available to the worker must still
 have a declared ceiling, every declared pool must occur in a referenced ledger,
