@@ -123,7 +123,7 @@ def test_explicit_media_resolution_and_checksum_opt_in(media):
     path, digest, _, row = media
     assert subject.source_media_index([row], {}, {digest:str(path), 'f'*64:'unused'}) == {digest:str(path)}
     path.write_bytes(b'changed')
-    with artifact_verification(True), pytest.raises(ValueError, match='bytes changed'):
+    with artifact_verification(verify_sha256=True), pytest.raises(ValueError, match='bytes changed'):
         subject.source_media_index([row], {}, {digest:str(path)})
 
 
