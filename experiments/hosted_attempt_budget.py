@@ -701,7 +701,15 @@ class AttemptBudget:
             allowance = next((change["bound_microusd"] for change in reversed(ledger.get("allowance_adjustments", []))
                               if change["call_id"] == call_id), calls[call_id]["bound_microusd"])
             if amount > allowance:
-                raise BudgetError("reported usage bound exceeds its funded attempt allowance")
+                if self.spending_policy() != 'precalculated':
+                    raise BudgetError("reported usage bound exceeds its funded attempt allowance")
+                # This policy limits cumulative reported spending, not each
+                # forecast. Preserve its correction in the existing history.
+                ledger.setdefault("allowance_adjustments", []).append({
+                    "call_id": call_id, "previous_bound_microusd": allowance,
+                    "bound_microusd": amount,
+                    "reason": "Complete reported usage exceeds the pre-call forecast; campaign ceilings unchanged",
+                })
             if attempt["state"] == "bounded_unknown":
                 if attempt["usage_bound"] != evidence:
                     raise BudgetError("conflicting reported usage cannot rewrite the retained bound")

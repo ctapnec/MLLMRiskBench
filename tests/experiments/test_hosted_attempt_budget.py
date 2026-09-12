@@ -304,6 +304,32 @@ def test_reported_token_bound_remains_unknown_not_an_invented_exact_bill(budget)
     assert current.snapshot()["pools"]["openai:target"]["reserved_exposure_microusd"] == 15
 
 
+def test_precalculated_usage_above_forecast_is_counted_and_still_stops_at_pool_cap(budget):
+    budget.use_precalculated_spending()
+    original_plan = (budget.root / "plan.json").read_bytes()
+    budget.reserve("O", 1, provider="openai")
+    budget.settle("O", 1, None)
+    evidence = usage_bound(input_tokens=20, bound_microusd=32)
+    budget.bound_reported_usage("O", 1, evidence)
+    current = reopen(budget)
+    pool = current.snapshot()["pools"]["openai:target"]
+    assert pool["tracked_spend_microusd"] == 32
+    assert pool["settled_cost_microusd"] == 0
+    assert pool["unknown_usage_attempts"] == 1
+    assert current.attempt_bound("O") == 32
+    assert (current.root / "plan.json").read_bytes() == original_plan
+    saved = (current.root / "ledger.json").read_bytes()
+    current.bound_reported_usage("O", 1, evidence)
+    assert (current.root / "ledger.json").read_bytes() == saved
+    current.reserve("O", 2, provider="openai")
+    current.settle("O", 2, None)
+    current.bound_reported_usage("O", 2, usage_bound(input_tokens=40, bound_microusd=62))
+    assert current.snapshot()["pools"]["openai:target"]["tracked_spend_microusd"] == 94
+    with pytest.raises(mod.BudgetCapacityUnavailable, match="reported spending"):
+        reopen(current).reserve("O", 3, provider="openai")
+    current.reserve("A", 1, provider="anthropic")
+
+
 @pytest.mark.parametrize("evidence", [usage_bound(bound_microusd=4), usage_bound(input_tokens=True),
     usage_bound(input_unit_price="NaN"), usage_bound(output_unit_price="-1"),
     usage_bound(response_sha256="bad"), usage_bound(input_tokens=20, bound_microusd=32)])

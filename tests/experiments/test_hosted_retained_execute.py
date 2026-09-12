@@ -230,6 +230,34 @@ def test_openai_reported_writes_use_only_funded_cache_ceiling(tmp_path, monkeypa
     assert len(calls) == 2
 
 
+def test_precalculated_aggregate_usage_preserves_answer_and_unknown_bill_above_forecast(tmp_path, monkeypatch):
+    points, attacker, target, calls, admission = _setup(tmp_path)
+    admission.budget.use_precalculated_spending()
+    admission.prices.update(cache_read="0.2", cache_write=None, reservation_input="2.5")
+    generate = target.generate
+
+    def aggregate_usage(dialog, *, seed=None):
+        response = generate(dialog, seed=seed)
+        # Actual Sol Pro usage shape: aggregate input exceeds counted prompt;
+        # positive cache writes lack an exact tariff in the retained price file.
+        response.tokens.update(input=20565, output=6199, cached_input=8353, cache_write_input=1808)
+        return response
+
+    monkeypatch.setattr(target, "generate", aggregate_usage)
+    checkpoint = tmp_path / "aggregate.responses.checkpoint.jsonl"
+    _runner(attacker, target, admission).run(points, on_response=lambda row: Runner.append_checkpoint(checkpoint, row))
+    pool = admission.budget.snapshot()["pools"]["openai:target"]
+    assert len(calls) == 2
+    assert pool["tracked_spend_microusd"] == 2 * 88607
+    assert pool["settled_cost_microusd"] == 0
+    assert pool["unknown_usage_attempts"] == pool["bounded_usage_attempts"] == 2
+    assert not (admission.budget.root / "paid-circuit.json").exists()
+    ledger = (admission.budget.root / "ledger.json").read_bytes()
+    _runner(attacker, target, admission).run(points, response_records=Runner.load_response_checkpoint(checkpoint))
+    assert len(calls) == 2
+    assert (admission.budget.root / "ledger.json").read_bytes() == ledger
+
+
 def test_typed_provider_refusal_is_funded_observed_outcome_not_paid_stop(tmp_path):
     points, attacker, target, calls, admission = _setup(tmp_path)
     create = target._client.chat.completions.create

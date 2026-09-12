@@ -367,6 +367,8 @@ class _Admission:
             and "reservation_input" in self.prices
             and Decimal(str(self.prices["reservation_input"])) >= Decimal(str(self.prices["input"])) * Decimal("1.25")
         )
+        usage_bounded = False
+        precalculated = self.budget.spending_policy() == "precalculated"
         if (cost is None and not missing and self.program["provider"] in {"openai", "kimi", "google"}
                 and self.prices.get("cache_write") is None and pricing_source.get("sha256")
                 and type(written) is int and (written == 0 or reserved_writes)
@@ -376,14 +378,16 @@ class _Admission:
                                   Decimal(self.prices["reservation_input"]) if reserved_writes else Decimal(0)))
             output_price = str(Decimal(self.prices["output"]))
             upper = _cost(tokens["input"], tokens["output"], {"input": input_price, "output": output_price})
-            if upper <= self.budget.attempt_bound(call_id):
+            if upper <= self.budget.attempt_bound(call_id) or precalculated:
                 self.budget.bound_reported_usage(call_id, count, {
                     "input_tokens": tokens["input"], "output_tokens": tokens["output"],
                     "input_unit_price": input_price, "output_unit_price": output_price,
                     "response_sha256": _sha(response.model_dump(mode="json")),
                     "pricing_sha256": pricing_source["sha256"], "bound_microusd": upper,
                 })
-        if (cost is None and all(type(tokens.get(key)) is int and tokens[key] >= 0
+                usage_bounded = True
+        if (cost is None and not (precalculated and usage_bounded)
+            and all(type(tokens.get(key)) is int and tokens[key] >= 0
                                  for key in ("input", "output"))
             and _cost(tokens["input"], tokens["output"], {
                 **self.prices,
