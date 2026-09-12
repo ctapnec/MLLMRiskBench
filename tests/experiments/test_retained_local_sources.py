@@ -129,3 +129,22 @@ def test_hosted_selector_consumes_selected_sources_without_historical_view(sourc
     assert observed[0]["local_inventory_descriptor"] == descriptor
     with pytest.raises(SystemExit):
         inputs.main(argv[argv.index("experiments.hosted_retained_inputs")+1:] + ["--runner-view", str(root)])
+
+
+def test_executor_reads_selected_sources_without_campaign_analysis(source, tmp_path):
+    from experiments import hosted_retained_execute as executor
+    root, cells = source
+    inventory = subject.prepare_sources([root])
+    path = tmp_path/"inventory.json"
+    path.write_text(json.dumps(inventory))
+    descriptor = dict(path=str(path), sha256=hashlib.sha256(path.read_bytes()).hexdigest(), bytes=path.stat().st_size)
+    program = dict(schema=executor.LOCAL_SOURCES_SCHEMA, sources={"local_sources": descriptor})
+    observed, binding = executor._validated_local_cells(program)
+    assert observed == cells and binding == descriptor
+    different = copy.deepcopy(program)
+    different["sources"]["local_sources"]["sha256"] = "e"*64
+    assert executor._local_context_key(program) != executor._local_context_key(different)
+    legacy = dict(results_root="root", runner_view="view", rr_analysis_root="rr",
+                  sources=dict(historical_result=descriptor))
+    assert executor._local_context_key(legacy) == inputs._sha(dict(results_root="root", runner_view="view",
+        rr_analysis_root="rr", historical_result=descriptor))

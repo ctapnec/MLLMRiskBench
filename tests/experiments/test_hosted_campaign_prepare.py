@@ -92,6 +92,65 @@ def test_preparation_creates_funded_disjoint_pilot_and_measured_program_without_
     assert len(budget["planned_calls"]) == 6
 
 
+def test_selected_local_sources_prepare_executable_program_without_historical_layout(tmp_path, monkeypatch):
+    from experiments import retained_local_sources as local, hosted_retained_execute as executor
+    from experiments.hosted_attempt_budget import AttemptBudget
+    original_validate = executor._validated_local_cells
+    captured = {}
+    request, _ = _request(tmp_path, monkeypatch, source_capture=captured)
+    monkeypatch.setattr(local, "load_cells", lambda path: [captured["cell"]])
+    inventory = _save(tmp_path/"local-sources.json", local.prepare_sources([tmp_path]))
+    request["schema"] = subject.LOCAL_SOURCES_REQUEST_SCHEMA
+    request["input_budget_policy"] = executor.COUNTED_INPUT_POLICY
+    for key in ("runner_view", "rr_analysis_root"):
+        request.pop(key)
+    request["sources"].pop("historical_result")
+    request["sources"]["local_sources"] = inventory
+    values = {key: json.loads(Path(value["path"]).read_text()) for key, value in request["sources"].items()}
+    bindings = dict(budget=values["budget_projection"], budget_descriptor=subject._portable(request["sources"]["budget_projection"]),
+        api_config=values["api_config"], api_descriptor=subject._portable(request["sources"]["api_config"]),
+        media_index={}, local_inventory_descriptor=subject._portable(inventory))
+    candidates = subject.inputs.candidates_from_cells([captured["cell"]])
+    plan = subject.inputs.build_plan(candidates=candidates, target=request["routes"][0]["target"], call_cap=2, **bindings)
+    replay = subject.inputs.materialize_replay(plan, cells=[captured["cell"]],
+        corpus="retained-corpus", source_corpora={captured["cell"]["run_id"]: captured["points"]}, **bindings)
+    request["routes"][0]["replay_artifacts"] = [_save(tmp_path/"selected-replay.json", replay)]
+    monkeypatch.setattr(executor, "_validated_local_cells", original_validate)
+    receipt = subject.prepare_campaign(request=request,
+        request_descriptor=dict(path=str(tmp_path/"request.json"), sha256="a"*64, bytes=1),
+        out_root=tmp_path/"prepared", allow_network_counts=False)
+    program = json.loads(Path(receipt["programs"][0]["path"]).read_text())
+    assert program["schema"] == executor.LOCAL_SOURCES_SCHEMA
+    assert program["sources"]["local_sources"] == inventory
+    assert not {"runner_view", "rr_analysis_root"} & program.keys()
+    assert "historical_result" not in program["sources"]
+    budget = AttemptBudget(tmp_path/"prepared/budget", receipt["budget"]["sha256"])
+    admissions = executor._validated_jobs(program, budget)
+    assert sum(len(admission.requests) for admission in admissions) == 2
+    assert receipt["target_calls"] == receipt["judge_calls"] == receipt["generation_http_attempts"] == 0
+
+
+def test_preparation_typed_form_and_counting_environment_are_explicit(tmp_path):
+    from experiments.rig_web_app.catalog import build_argv
+    from experiments.rig_web_app.lifecycle import LifecycleMixin
+    values = {"--request": str(tmp_path/"request.json"), "--request-sha256": "a"*64,
+        "--out-root": str(tmp_path/"out"), "--count-cache": str(tmp_path/"counts")}
+    argv = build_argv("hosted_campaign_prepare", values)
+    assert "--allow-network-counts" not in argv and "--verify-artifact-sha256" not in argv
+    seen = []
+    fake = SimpleNamespace(_MATRIX_BASE_ENV={"PATH"},
+        _strict_config_document=lambda *a: dict(sources=dict(api_config=dict(path="api.json", sha256="b"*64)),
+            routes=[dict(target="anthropic:judge"), dict(target="openai:target")]),
+        _selected_matrix_environment_names=lambda selected: seen.append(selected) or {"SELECTED_PROVIDER_KEY"},
+        _selected_child_environment=lambda allowed: allowed)
+    assert LifecycleMixin._generic_child_environment(fake, "hosted_campaign_prepare", values) == {"PATH"}
+    assert not seen
+    values["--allow-network-counts"] = "on"
+    assert "--allow-network-counts" in build_argv("hosted_campaign_prepare", values)
+    assert LifecycleMixin._generic_child_environment(fake, "hosted_campaign_prepare", values) == {"PATH", "SELECTED_PROVIDER_KEY"}
+    assert seen == [{"--api": "anthropic:judge,openai:target", "--api-config": "api.json", "--api-config-sha256": "b"*64}]
+
+
 @pytest.mark.parametrize("source_enabled,eligible,expected", [(True, False, True), (False, False, False),
     (None, False, False), (True, True, False)])
 def test_retained_source_proxy_condition_is_preserved_without_native_opt_in(source_enabled, eligible, expected):

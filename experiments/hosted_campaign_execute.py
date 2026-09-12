@@ -103,8 +103,7 @@ def collect_campaign(*, programs: Sequence[tuple[Path, str]], budget_root: Path,
     prepared_programs = []
     for path, sha256 in programs:
         program, descriptor = load_bound_json(path, sha256)
-        key = _sha({name: program.get(name) for name in ("results_root", "runner_view", "rr_analysis_root")}
-            | {"historical_result": program.get("sources", {}).get("historical_result")})
+        key = retained._local_context_key(program)
         if key not in contexts:
             contexts[key] = retained._validated_local_cells(program)
         jobs = retained._validated_jobs(program, budget, local_context=contexts[key])
