@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from experiments.rig_web_app import builder_native_judging as subject
+from experiments.rig_web_app import builder_native_judging as subject, ui
 from experiments.rig_web_app.catalog import build_argv
 from test_builder_collection import study  # noqa: F401
 from test_rig_web_busy_browser import browser  # noqa: F401
@@ -160,10 +160,13 @@ def test_native_review_browser_renders_scoring_without_raw_configuration(browser
     body,_=review(app,params)
     page=browser.new_page(viewport={'width':1440,'height':900})
     try:
-        page.set_content(body.decode())
+        page.set_content(body.decode().replace("<link rel='stylesheet' href='/static/style.css'>",'<style>'+ui._STYLE+'</style>'))
         assert page.get_by_role('heading',name='Review local judging').is_visible()
         assert page.locator('table tr').count()==3
         assert 'cuda:0' in page.locator('table').inner_text()
         assert page.get_by_role('button',name='Start or resume local judging').is_visible()
+        page.set_viewport_size({'width':390,'height':844})
+        assert page.locator('table').bounding_box()['width']>=864
+        assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
     finally:
         page.close()

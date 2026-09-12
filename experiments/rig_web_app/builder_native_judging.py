@@ -117,7 +117,7 @@ def native_judging_review(app, params):
         "Haiku assessment is a separate output-specific stage.</p>"
         +(f"<p class='notice amber'>{failed:,} assigned outputs are not prepared. Their source errors remain "
           "visible and this judging subset cannot complete the whole campaign.</p>" if failed else '')
-        +"<div class='scroll'><table><tr><th>Target model</th><th>Source run</th><th>Outputs</th>"
+        +"<div class='scroll'><table style='min-width:54rem'><tr><th>Target model</th><th>Source run</th><th>Outputs</th>"
         "<th>Saved scoring condition</th></tr>"+rows+'</table></div>'
         +"<details><summary>Exact command</summary><pre>"+html.escape(' '.join(build_argv('retained_native_judge_execute',values)))
         +"</pre></details><form method='post' action='/build/judge-retained-local'>"
