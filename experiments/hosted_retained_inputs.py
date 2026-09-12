@@ -698,7 +698,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--verify-artifact-sha256", action="store_true",
                         help="Opt in to retained-file and input-payload checksum revalidation")
-    parser.add_argument("--runner-view", type=Path, required=True)
+    parser.add_argument("--runner-view", type=Path,
+                        help="Legacy retained view; omit when local-inventory names selected source directories")
     for name in ("budget", "api-config", "local-inventory"):
         parser.add_argument("--" + name, type=Path, required=True)
         parser.add_argument("--" + name + "-sha256", required=True)
@@ -714,7 +715,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     budget, budget_desc = load_bound_json(args.budget, args.budget_sha256)
     api, api_desc = load_bound_json(args.api_config, args.api_config_sha256)
-    _inventory, inventory_desc = load_bound_json(args.local_inventory, args.local_inventory_sha256)
+    inventory, inventory_desc = load_bound_json(args.local_inventory, args.local_inventory_sha256)
     if bool(args.media_index) != bool(args.media_index_sha256):
         parser.error("media index path and digest must be supplied together")
     media_index = (load_bound_json(args.media_index, args.media_index_sha256)[0]
@@ -722,7 +723,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     if (bool(args.source_corpora) != bool(args.source_corpora_sha256)
         or bool(args.materialize_corpus) != bool(args.source_corpora)):
         parser.error("materialization requires a corpus and bound original source corpora together")
-    cells = load_cells(args.runner_view)
+    from experiments.retained_local_sources import SCHEMA as LOCAL_SOURCE_SCHEMA, load_sources
+    if inventory.get("schema") == LOCAL_SOURCE_SCHEMA:
+        if args.runner_view:
+            parser.error("Selected local sources already name their directories; omit runner-view")
+        cells = load_sources(inventory)
+    else:
+        if not args.runner_view:
+            parser.error("Legacy local inventories require runner-view")
+        cells = load_cells(args.runner_view)
     candidates = candidates_from_cells(cells)
     plan = build_plan(candidates=candidates, budget=budget, budget_descriptor=budget_desc,
                       api_config=api, api_descriptor=api_desc, target=args.target,
