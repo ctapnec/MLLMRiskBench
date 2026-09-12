@@ -6,8 +6,10 @@ selection. Exact whole-cluster selection and media materialization have retained
 request counts are retained. Final preparation completed using the existing
 budget and count cache, with no repeated provider-count requests. Collection
 reached 567 started assignments and 567 usable outcomes at the 12 September
-01:04 UTC snapshot. Its controller then requires recovery from the accounting
-stop described below. These are interim counts, not completed results.
+01:04 UTC snapshot. Collection resumed after the accounting and checkpoint
+handoffs below. At 01:45 the controller records 67 completed jobs, all five
+providers active, no failed job and no shared stop. These are interim counts,
+not completed results.
 The third campaign's 81-input addition is complete; remaining Google work and
 outstanding judging continue independently.
 
@@ -36,6 +38,15 @@ bill remains unknown. Focused rig verification was launched. SSH became
 unavailable before its result and the checkpoint continuation could be verified.
 Resume the existing 12 programs, preserve all 567 outputs and their completed
 transport probes, and publish the next aggregate without waiting for local work.
+
+Recovery completion: the failed regression fixture and its removed-fix check
+pass after correcting the fixture's total-token count. The production fix is
+unchanged and deployed in the console. The successor reuses already-counted
+logical slots whose HTTP starts were denied, preserves paid answers and costs,
+and has resumed independent-provider collection. The 01:34 aggregate was retained
+and published; the next scheduled report is 02:04 UTC. Assess further matched
+coverage against the credit history and outstanding Haiku costs without holding
+the current queue.
 
 The matched judging population is output-owned: 5,049 retained local answers
 plus at most 3,719 new hosted outputs, not two verdicts per hosted assignment.

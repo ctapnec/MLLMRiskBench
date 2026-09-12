@@ -46,6 +46,16 @@ change missing outputs into successes. The current 3,252-output local Haiku
 selection is fully assessed, including its two network recoveries; further
 newly generated answers still need their own assessments.
 
+Recovery first, thesis afterwards: the pending 2,636 model-input conditions are
+a worklist, not the final experimental missingness result. DeepSeek's diagnostic
+at 32,768 context and 8,192 output tokens returned normal-ended answers for all
+three selected old misses in 21.7-24.4 seconds and scored 8/10 on the readiness
+questions. It remained entirely GPU-resident. One initial request timed out;
+investigate this before choosing the correction settings. No diagnostic answer
+is promoted into the campaign, and the default profile remains unchanged.
+Complete the other models' cause-specific recovery and both required judges
+before writing final outcomes. Preserve historical failures and correction links.
+
 Human audit and thesis evidence synthesis remain separate work. This plan was written
 20 August 2026 after the readiness audit
 of the big rig (Debian, 2x RTX 4090 24,564 MiB, 125 GiB RAM, /mnt/stor 7.1 TB
