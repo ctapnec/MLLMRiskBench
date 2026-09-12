@@ -2,7 +2,6 @@ import copy
 import hashlib
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -12,7 +11,7 @@ from test_builder_replays import study  # noqa: F401
 
 
 @pytest.fixture
-def prepared(study, monkeypatch, tmp_path):
+def prepared(study, monkeypatch, tmp_path):  # noqa: F811 - imported pytest fixture
     app, params, calls, jobs = study
     params = dict(params, judges='rules,guardrail', retained_replays_job='replay-ready',
                   corpora='unrelated-draft-arm', attackers='unrelated-draft-attacker',
