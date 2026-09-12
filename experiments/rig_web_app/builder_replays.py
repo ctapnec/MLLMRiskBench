@@ -27,7 +27,7 @@ def argument(argv, name):
     return argv[argv.index(name) + 1]
 
 
-def prepare_replays(app, params):
+def prepared_sources(app, params):
     owner = params.get('campaign_id', '')
     app.db.require_workspace(owner)
     source = completed_argv(app,params.get('retained_sources_job'),owner,'retained_local_sources')
@@ -50,6 +50,12 @@ def prepare_replays(app, params):
     if (routes != saved_routes or api != saved_api
         or params.get('retained_pricing_date') != argument(forecast,'--pricing-as-of')):
         raise ValueError("Model settings or pricing date changed; prepare a new forecast")
+    return source, forecast
+
+
+def prepare_replays(app, params):
+    source, forecast = prepared_sources(app, params)
+    owner = params['campaign_id']
     values = {'--out-root':str((app.results_root/'rig-web'/'prepared-replays'/uuid4().hex).resolve())}
     for name,argv in [('local-inventory',source),('budget',forecast)]:
         descriptor = _descriptor(Path(argument(argv,'--out')))

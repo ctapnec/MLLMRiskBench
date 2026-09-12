@@ -125,7 +125,8 @@ def source_panel(app, params: dict[str, str]) -> str:
         content += "<input type='hidden' form='builder' name='retained_sources_job' value='" + escape(job_id) + "'>"
     from .builder_budget import budget_panel
     from .builder_replays import replay_panel
-    return content + "</section>" + budget_panel(app, params) + replay_panel(params)
+    from .builder_programs import program_panel
+    return content + "</section>" + budget_panel(app, params) + replay_panel(params) + program_panel(params)
 
 
 def prepare_selected_inputs(app, params: dict[str, str]):

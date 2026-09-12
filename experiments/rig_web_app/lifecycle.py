@@ -4116,6 +4116,10 @@ class LifecycleMixin:
                 from .builder_replays import prepare_replays
                 job = prepare_replays(self, self._builder_params(form or {}))
                 return 303, "/jobs/" + job.job_id, b""
+            if method == "POST" and path == "/build/prepare-programs":
+                from .builder_programs import prepare_programs
+                job = prepare_programs(self, self._builder_params(form or {}))
+                return 303, "/jobs/" + job.job_id, b""
             if method == "POST" and path == "/build/edit":
                 ticket = self._consume_launch_ticket((form or {}).get("edit_ticket", ""), purpose="build-edit")
                 if ticket is None:
