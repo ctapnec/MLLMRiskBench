@@ -731,8 +731,30 @@ not forwarded to this preparation child. The reader cannot generate answers or
 load a judge. A missing final manifest does not prevent reading complete saved
 responses, but preparation never manufactures that manifest or a generation start.
 Partial source failures retain separate diagnostics and do not erase successfully
-prepared sources. This command prepares sources only; it does not execute local
-judgments and is not yet the complete normal Build judging flow.
+prepared sources. This command prepares sources only. Use the separate
+`retained_native_judge_execute` Tools form to perform the local scoring stage.
+
+The native executor uses the original rules/guardrail cascade, including its
+source-specific criteria and approximate-metric setting. It uses already admitted
+model bytes and keeps an unchanged judge resident across source jobs, releasing
+it when the execution ends or the judging configuration changes. Full model and
+artifact hashing are separate opt-in controls. This command processes sources
+sequentially on their recorded judge device; it is not a new GPU scheduler.
+Launch it after generation releases the required device. Normal Build resource
+coordination remains part of the broader workflow integration.
+
+Resume with the same preparation, execution directory and scoring revision.
+Existing original verdicts retain their original revision. New checkpoints and
+unscored classifier outputs remain outside the generation directory, and only
+pending outputs receive new judgments. Unparsed local classifier responses are
+retained without a label and do not cancel later outputs. An infrastructure
+failure preserves the completed prefix for continuation. The typed console job
+is classified as judging and inherits its selected campaign owner, but not API
+credentials. Durable verdicts, invalid assessments and observed local judge
+calls publish against exact existing answers; a common question is not enough
+to transfer a verdict. Index failures do not cancel scoring. Resuming completed
+work can repair publication without new target or judge calls. This supplies
+the reusable execution stage, not full normal Build workflow acceptance.
 
 Native judging publication includes original inline verdicts as well as later
 post-hoc results. `workspace_judgments.native_inline_rows` reads the explicitly

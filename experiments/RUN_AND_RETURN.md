@@ -6615,8 +6615,38 @@ makes no target or judge calls. Full artifact hashing remains opt-in through
 Incomplete source jobs retain their own diagnostic references while other valid
 jobs remain prepared. A complete response checkpoint can be prepared without a
 final native manifest; no missing generation metadata is fabricated. The result
-explicitly says judgments have not executed. Local scoring execution and normal
-Build judging management are separate remaining integration work.
+explicitly says judgments have not executed. Run the separate execution stage
+below after generation releases the local judge's configured device.
+
+### Execute local judging of saved hosted answers
+
+Select the existing campaign in Tools and open `retained_native_judge_execute`.
+Supply the preparation's `result.json`, its recorded digest and a separate
+execution directory. The CLI equivalent is:
+
+```bash
+python -m experiments.retained_native_judge_execute \
+  --preparation "$PREPARATION_RESULT" --preparation-sha256 "$PREPARATION_SHA256" \
+  --out "$JUDGING_DIRECTORY" --workspace-id "$CAMPAIGN_ID" --console-db "$CONSOLE_DB"
+```
+
+The console supplies the owner and database itself. CLI publication is optional;
+provide both options or neither. Source locators are the same as preparation;
+provider keys are not needed. The command uses existing managed model bytes,
+preserves the original cascade, and processes source jobs sequentially on the
+recorded judge device. An unchanged judge remains resident across those jobs.
+It makes no target calls. Model and artifact checksum verification are off by
+default; `--verify-model-sha256` and `--verify-artifact-sha256` opt in separately.
+
+For continuation, repeat the same command from the same clean scoring revision
+and reuse the execution directory. Original verdicts and completed new records
+are not judged again. Unparsed classifier results remain completed but unscored;
+an infrastructure failure retains its prefix and reports continuation required.
+`publication.json` independently reports campaign indexing. Repair an indexing
+problem and resume to republish completed assessments without new model calls.
+New assessments never overwrite the source generation or its original verdicts.
+The normal Build resource/scheduling and judging-management flow remains separate
+integration work; these are the executable advanced Tools/CLI stages.
 
 ### Publish retained-output judging into campaigns
 
@@ -6657,6 +6687,7 @@ argument vectors; nothing below is console-only):
 | `live_attestation` | 8.1, 9 |
 | `hosted_campaign_execute` | Collect prepared hosted programs concurrently |
 | `retained_native_judge_prepare` | Prepare local judging of saved hosted answers |
+| `retained_native_judge_execute` | Execute local judging of saved hosted answers |
 | `retained_response_judge_pair_execute` | Publish retained-output judging into campaigns |
 | `lane_canary` | 8.1, 9.1 |
 | `native_import` | 14.3, 16 |
