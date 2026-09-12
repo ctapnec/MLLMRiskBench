@@ -12,30 +12,36 @@ from .catalog import build_argv
 from .ui import _page
 
 
-def _program_paths(argv):
-    return [argv[index+1] for index,flag in enumerate(argv[:-1]) if flag == '--program']
+def _program_paths(argv, input_flag='--program'):
+    return [argv[index+1] for index,flag in enumerate(argv[:-1]) if flag == input_flag]
 
 
-def collection_history(app, owner, paths):
+def collection_history(app, owner, paths, *, command='hosted_campaign_execute', input_flag='--program'):
     rows = app.db._query(
         "SELECT j.* FROM jobs j JOIN campaign_members m ON m.member_kind='job' AND m.member_id=j.job_id "
-        "WHERE m.campaign_id=? AND j.command='hosted_campaign_execute' ORDER BY j.started_at DESC,j.job_id DESC",
-        (owner,))
+        "WHERE m.campaign_id=? AND j.command=? ORDER BY j.started_at DESC,j.job_id DESC",
+        (owner,command))
     if rows is None:
         raise ValueError('Campaign collection history is unavailable')
     for row in rows:
-        if _program_paths(json.loads(row['argv'])) == paths:
+        if _program_paths(json.loads(row['argv']),input_flag) == paths:
             return row
     return None
 
 
-def collection_review(app, params):
+def prepared_collection(app, params):
     owner = params.get('campaign_id','')
     app.db.require_workspace(owner)
     argv = completed_argv(app,params.get('retained_programs_job'),owner,'hosted_campaign_prepare')
     receipt = json.loads((Path(argument(argv,'--out-root'))/'receipt.json').read_text())
     if receipt.get('status') != 'prepared_no_generation_calls' or not receipt.get('programs'):
         raise ValueError('Complete counted collection preparation first')
+    return receipt
+
+
+def collection_review(app, params):
+    owner = params.get('campaign_id','')
+    receipt = prepared_collection(app,params)
     workers = params.get('retained_collection_workers','2') or '2'
     if workers not in {str(number) for number in range(1,9)}:
         raise ValueError('Choose 1 to 8 collection workers per provider')

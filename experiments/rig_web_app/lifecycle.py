@@ -4127,6 +4127,17 @@ class LifecycleMixin:
                 from .builder_collection import collect_prepared
                 job = collect_prepared(self,form or {})
                 return 303, "/jobs/" + job.job_id, b""
+            if method == "POST" and path == "/build/prepare-native-judging":
+                from .builder_native_judging import prepare_native_judging
+                job = prepare_native_judging(self,self._builder_params(form or {}))
+                return 303, "/jobs/" + job.job_id, b""
+            if method == "POST" and path == "/build/review-native-judging":
+                from .builder_native_judging import native_judging_review
+                return 200, "text/html; charset=utf-8", native_judging_review(self,self._builder_params(form or {}))
+            if method == "POST" and path == "/build/judge-retained-local":
+                from .builder_native_judging import judge_retained_local
+                job = judge_retained_local(self,form or {})
+                return 303, "/jobs/" + job.job_id, b""
             if method == "POST" and path == "/build/edit":
                 ticket = self._consume_launch_ticket((form or {}).get("edit_ticket", ""), purpose="build-edit")
                 if ticket is None:
