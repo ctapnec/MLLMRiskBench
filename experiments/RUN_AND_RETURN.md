@@ -2819,6 +2819,29 @@ never dismiss changed responses or judgments as a deployment effect. Preserve
 the previous view and its failed read, and bind the new directory explicitly
 before matched judging. This refresh makes no target or judge call.
 
+Scientific reports use the methodological names below. Keep exact protocol
+versions and compatibility history in engineering records, not the thesis
+narrative.
+
+| Methodological concept | Engineering record |
+| --- | --- |
+| Prospective work specification | `ura-request-envelope/6`; retains configured answer retries and exact single-arm, multi-arm-prefix or per-arm completed-ID recovery selections |
+| Early preparation failure | `ura-request-error/1`; only the scope actually known before materialization |
+| Source-stratum eligibility assessment | `ura-eligibility-plan/3` |
+| Pre-generation workload projection | `ura-lane-projection/2` |
+| One-cluster live diagnostic | `ura-lane-canary/1` |
+| Coverage and evidence reconciliation | `ura-level1-evidence/3` |
+
+Earlier request formats remain exact historical read formats: version 2 added
+hosted-judge data-transfer acknowledgment, version 3 answer retries, version 4
+single-arm recovery, version 5 multi-arm prefix recovery, and version 6 exact
+per-arm completed-ID sets. New narrative terminology does not reinterpret any
+retained record or add inferred fields. Hosted adapters disable opaque SDK
+retries and default to three explicit transport retries; paid answer retries
+remain zero. The hosted campaign scheduler defaults to two workers per provider
+and defers judgment. Historical no-retry, sequential and 25,000-token conditions
+must not be represented as universal current defaults.
+
 For a new campaign that does not use the historical analysis layout, first
 prepare its local source inventory with `python -m experiments.retained_local_sources
 --source-root /resolved/local-run --out /resolved/local-sources.json`.
