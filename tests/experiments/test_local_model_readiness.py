@@ -815,10 +815,10 @@ def test_readiness_rejects_context_that_cannot_exercise_output_protocol(ceiling)
 
 
 def test_readiness_context_ceiling_is_available_in_console_tools():
-    from experiments.rig_web_app.catalog import COMMANDS, build_argv
+    from experiments.rig_web_app.catalog import build_argv
 
     params = {"--local": "ollama:example:model", "--context-ceiling": "32768"}
-    argv = build_argv(COMMANDS["local_model_readiness"], params)
+    argv = build_argv("local_model_readiness", params)
     assert argv[argv.index("--context-ceiling") + 1] == "32768"
 
 
