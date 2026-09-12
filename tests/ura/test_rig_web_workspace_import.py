@@ -24,6 +24,11 @@ def test_collection_publication_tracks_only_changed_checkpoints(retained, tmp_pa
     assert publisher.refresh(progress)["status"] == "published"
     assert db.workspace_model_totals(campaign)[0]["pending"] == 1
     assert publisher.refresh(progress)["status"] == "published" and len(reads) == 1
+    args["ledger"]["attempts"]["call-3"] = {"1":dict(state="unknown", actual_cost_microusd=None)}
+    (budget / "ledger.json").write_text(json.dumps(args["ledger"]))
+    publisher.refresh(progress)
+    assert len(reads) == 1, "A billing change must not reread unchanged answers"
+    assert db.workspace_cost_totals(campaign)[0]["http_attempts"] == 4
     row = deepcopy(records[0])
     row["attempt"]["id"] = row["response"]["attempt_id"] = "3"
     row["attempt"]["params"]["retained_origin"]["selection"] = args["selections"][3]
@@ -46,12 +51,12 @@ def test_publication_failure_is_reported_and_retried_without_canceling_collectio
     (budget / "ledger.json").write_text(json.dumps(args["ledger"]))
     publisher = subject.HostedWorkspacePublication(db, campaign, programs=[args["program"]],
         selections=[args["selections"]], budget_root=budget)
-    original = subject.publish_hosted_program
-    monkeypatch.setattr(subject, "publish_hosted_program", lambda *a, **k: (_ for _ in ()).throw(ValueError("private payload")))
+    original = subject.hosted_program_rows
+    monkeypatch.setattr(subject, "hosted_program_rows", lambda *a, **k: (_ for _ in ()).throw(ValueError("private payload")))
     progress = dict(jobs=[dict(program=0, job=0, status="running")])
     result = publisher.refresh(progress)
     assert result["status"] == "publication_pending" and "private payload" not in json.dumps(result)
-    monkeypatch.setattr(subject, "publish_hosted_program", original)
+    monkeypatch.setattr(subject, "hosted_program_rows", original)
     assert publisher.refresh(progress)["status"] == "published"
 
 

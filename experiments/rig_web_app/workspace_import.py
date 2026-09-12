@@ -101,7 +101,8 @@ def _program_groups(program: dict):
 
 
 def hosted_program_rows(program: dict, selections: list[dict], *, campaign_id: str,
-                        budget_plan: dict, ledger: dict, ledger_path: str) -> dict:
+                        budget_plan: dict, ledger: dict, ledger_path: str,
+                        include_cost_bindings: bool = False) -> dict:
     """Index exactly the supplied program, including its unstarted assignments.
 
     The caller chooses the program and selection explicitly. Recoveries with
@@ -164,8 +165,11 @@ def hosted_program_rows(program: dict, selections: list[dict], *, campaign_id: s
     if assignments.keys() != requests.keys():
         raise ValueError("Program jobs do not cover the assigned requests")
     costs = budget_attempt_rows(budget_plan, ledger, bindings=bindings, source_ref=ledger_path)
-    return dict(assignments=list(assignments.values()), responses=responses, judgments=[],
+    rows = dict(assignments=list(assignments.values()), responses=responses, judgments=[],
                 costs=costs.get(campaign_id, []))
+    if include_cost_bindings:
+        rows["cost_bindings"] = bindings
+    return rows
 
 
 def publish_hosted_program(db, campaign_id: str, *, program: dict, selections: list[dict],
@@ -196,6 +200,10 @@ class HostedWorkspacePublication:
         self.budget_root = budget_root
         self.budget_plan = json.loads((budget_root / "plan.json").read_text(encoding="utf-8"))
         self.signatures: dict[int, tuple] = {}
+        self.cost_bindings: dict[int, dict] = {}
+        self.cost_signatures: dict[int, dict] = {}
+        self.ledger_signature: tuple | None = None
+        self.ledger: dict = {}
         self.results: dict[int, dict] = {}
 
     @staticmethod
@@ -215,23 +223,48 @@ class HostedWorkspacePublication:
         states = {}
         for row in progress["jobs"]:
             states.setdefault(row["program"], []).append((row["job"], row["status"]))
-        ledger = None
+        ledger_path = self.budget_root / "ledger.json"
+        try:
+            item = ledger_path.stat()
+            ledger_signature = (item.st_size, item.st_mtime_ns, item.st_ino)
+            if ledger_signature != self.ledger_signature:
+                self.ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+                self.ledger_signature = ledger_signature
+        except (OSError, ValueError) as exc:
+            return dict(status="publication_pending", campaign_id=self.campaign_id,
+                error_type=type(exc).__name__, programs=[])
         for index, program in enumerate(self.programs):
             try:
                 signature = (tuple(states.get(index, ())), self._signature(program))
-                if self.signatures.get(index) == signature:
+                cost_signature = {request["call_id"]: self.ledger["attempts"].get(request["call_id"], {})
+                    for request in program["requests"].values()}
+                source_changed = self.signatures.get(index) != signature
+                if not source_changed and self.cost_signatures.get(index) == cost_signature:
                     continue
-                if ledger is None:
-                    ledger = json.loads((self.budget_root / "ledger.json").read_text(encoding="utf-8"))
-                counts = publish_hosted_program(self.db, self.campaign_id, program=program,
-                    selections=self.selections[index], budget_plan=self.budget_plan, ledger=ledger,
-                    ledger_path=str(self.budget_root / "ledger.json"))
+                if source_changed:
+                    rows = hosted_program_rows(program, self.selections[index], campaign_id=self.campaign_id,
+                        budget_plan=self.budget_plan, ledger=self.ledger, ledger_path=str(ledger_path),
+                        include_cost_bindings=True)
+                    bindings = rows.pop("cost_bindings")
+                    self.db.publish_workspace_results(self.campaign_id,
+                        **{key: rows[key] for key in ("assignments", "responses", "judgments")})
+                    counts = {key: len(value) for key, value in rows.items()}
+                else:
+                    bindings = self.cost_bindings[index]
+                    rows = dict(costs=budget_attempt_rows(self.budget_plan, self.ledger,
+                        bindings=bindings, source_ref=str(ledger_path)).get(self.campaign_id, []))
+                    counts = {key: self.results[index][key] for key in ("assignments", "responses", "judgments")}
+                    counts["costs"] = len(rows["costs"])
+                self.db.publish_workspace_costs(self.campaign_id, rows["costs"])
                 if not self.db.healthy:
                     raise RuntimeError("Campaign index is unavailable")
                 self.signatures[index] = signature
+                self.cost_bindings[index] = bindings
+                self.cost_signatures[index] = cost_signature
                 self.results[index] = dict(status="published", **counts)
             except (OSError, ValueError, KeyError, TypeError, RuntimeError) as exc:
-                self.results[index] = dict(status="publication_pending", error_type=type(exc).__name__)
+                self.results[index] = dict(self.results.get(index, {}),
+                    status="publication_pending", error_type=type(exc).__name__)
         return dict(status="published" if all(row["status"] == "published" for row in self.results.values())
                     else "publication_pending", campaign_id=self.campaign_id,
                     programs=[dict(program=index, **row) for index, row in sorted(self.results.items())])
