@@ -1209,6 +1209,10 @@ def _commands() -> dict[str, Command]:
             "experiments.retained_response_judge_pair_execute",
             "Execute one sealed matched local and hosted Haiku judging plan",
             (
+                CommandParam("--shared-budget-root", "path", help="Existing campaign judging allocation."),
+                CommandParam("--shared-budget-sha256", "str"),
+                CommandParam("--shared-requests", "path", help="Saved output-specific funded Haiku requests."),
+                CommandParam("--shared-requests-sha256", "str"),
                 CommandParam("--matching-workspace-id", "str", help="The other campaign ID owning matched outputs. "
                     "The selected campaign is included automatically; each verdict and cost belongs to its exact answer."),
                 CommandParam("--retain-invalid-verdicts", "flag"),

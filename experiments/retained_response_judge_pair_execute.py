@@ -147,6 +147,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--source-receipt", type=Path, required=True)
     parser.add_argument("--api-config", type=Path, required=True)
     parser.add_argument("--pricing-config", type=Path, required=True)
+    parser.add_argument("--shared-budget-root", type=Path,
+                        help="Use the campaign's existing judging allocation, not independent funding")
+    parser.add_argument("--shared-budget-sha256")
+    parser.add_argument("--shared-requests", type=Path,
+                        help="Saved full-rubric requests mapped to the existing funded call IDs")
+    parser.add_argument("--shared-requests-sha256")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--ack-paid-execution", action="store_true")
     parser.add_argument("--retain-invalid-verdicts", action="store_true")
@@ -159,6 +165,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not args.ack_paid_execution:
         parser.error("--ack-paid-execution is required")
+    binding = (args.shared_budget_root, args.shared_budget_sha256,
+               args.shared_requests, args.shared_requests_sha256)
+    if any(binding) and not all(binding):
+        parser.error("Supply the shared budget and request file with both digests together")
+    shared = {}
+    if all(binding):
+        from experiments.hosted_attempt_budget import AttemptBudget
+        from experiments.hosted_campaign_budget import load_bound_json
+        requests, _ = load_bound_json(args.shared_requests, args.shared_requests_sha256)
+        shared = dict(shared_budget=AttemptBudget(args.shared_budget_root, args.shared_budget_sha256),
+                      shared_requests=requests)
     print(
         execute(
             plan_path=args.plan,
@@ -171,6 +188,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             retain_invalid_verdicts=args.retain_invalid_verdicts,
             workspace_ids=[value for value in (args.workspace_id, args.matching_workspace_id) if value],
             console_db=args.console_db,
+            **shared,
         )
     )
     return 0
