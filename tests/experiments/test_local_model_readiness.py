@@ -861,6 +861,27 @@ def test_ollama_model_load_precedes_generation_deadline_marker(tmp_path, monkeyp
     assert events == ["lease", "load-and-fit", "clock", "generate"]
 
 
+def test_ollama_probe_preload_retains_lease_until_owned_cleanup(monkeypatch):
+    from ura.targets.local import OllamaTarget
+
+    target = OllamaTarget("example:model", model_digest="d" * 64, context_ceiling=32768)
+    monkeypatch.setattr(target, "_verify_daemon_identity", lambda **kw: "d" * 64)
+    monkeypatch.setattr(target, "_verify_pre_generation_residency", lambda **kw: "empty")
+    def load(**kwargs):
+        assert target._lifetime_lease is not None
+        target._residency_owned = True
+    def unload(**kwargs):
+        target._residency_owned = False
+        return "unload"
+    monkeypatch.setattr(target, "_ensure_hardware_fit_context", load)
+    monkeypatch.setattr(target, "_release_owned_residency", unload)
+    readiness_module._prepare_probe_model(target)
+    assert target._lifetime_lease is not None
+    assert not target._transaction_lock.locked()
+    target.close()
+    assert target._lifetime_lease is None
+
+
 def test_retained_schema_two_readiness_receipts_remain_valid() -> None:
     value = readiness_receipt(vision=False)
     text = value["text"]
