@@ -129,6 +129,10 @@ class WorkspaceCostsMixin:
                             identity = ("campaign_id", "assignment_id", "provider", "model", "role")
                             if tuple(old[key] for key in identity) != (row[2], row[3], row[5], row[6], row[7]):
                                 raise ValueError("Physical attempt already belongs to another campaign, output or role")
+                            if row[4] is None and old["response_id"] is not None:
+                                # A later ledger-only refresh may lack a previously
+                                # established link. Absence does not revoke evidence.
+                                row = (*row[:4], old["response_id"], *row[5:])
                             if old["response_id"] is not None and old["response_id"] != row[4]:
                                 raise ValueError("Physical attempt output attribution changed")
                             transitions = {"reserved": {"reserved", "unknown", "bounded_unknown", "settled"},

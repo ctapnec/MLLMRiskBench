@@ -59,6 +59,27 @@ def test_shared_judging_costs_belong_to_each_output_not_both_campaigns(app):
         app.db.publish_workspace_costs(hosted, [judge])
 
 
+def test_later_retry_refresh_preserves_the_first_attempts_known_output_link(app):
+    campaign = owner(app)
+    first = {**attempt(), 'state': 'unknown', 'cost_microusd': None, 'exposure_microusd': 10261,
+        'input_tokens': None, 'output_tokens': None}
+    app.db.publish_workspace_costs(campaign, [first])
+    # The expanded ledger no longer supplies an unambiguous response binding.
+    refresh = {**first, 'response_id': None}
+    second = {**refresh, 'attempt_number': 2}
+    for _ in range(2):
+        app.db.publish_workspace_costs(campaign, [refresh, second])
+    rows = app.db._query('SELECT * FROM campaign_cost_attempts ORDER BY attempt_number')
+    assert len(rows) == 2 and rows[0]['response_id'] == 'answer' and rows[1]['response_id'] is None
+    assert all(row['cost_microusd'] is None and row['input_tokens'] is None for row in rows)
+    app.db.publish_workspace_results(campaign, assignments=[], judgments=[], responses=[dict(
+        response_id='another-answer', assignment_id='a', condition_id='condition', outcome='missing',
+        truncated=None, source_ref='another.jsonl:1')])
+    with pytest.raises(ValueError, match='attribution changed'):
+        app.db.publish_workspace_costs(campaign, [{**first, 'response_id': 'another-answer'}])
+    assert app.db._query('SELECT response_id FROM campaign_cost_attempts WHERE attempt_number=1')[0][0] == 'answer'
+
+
 def test_judge_needs_the_exact_output_and_publication_rolls_back(app):
     campaign = owner(app)
     with pytest.raises(ValueError, match='does not belong'):
