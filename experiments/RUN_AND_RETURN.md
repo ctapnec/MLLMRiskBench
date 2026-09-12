@@ -16,6 +16,14 @@ missing-output assessments remain separate from valid verdicts. Repeated
 publication must leave the same identities and counts unchanged. See RA-580
 in the engineering ledger for the retained recovery publication correction.
 
+For descriptive judgment results, open the campaign's Judging tab and choose
+the model and execution condition. Its label figures and CSV/SVG exports use
+the same selected output references. Source arms, frameworks, modalities and
+judges remain separate, and pagination preserves complete distributions.
+Keep invalid and missing-output assessments visible; do not present these
+descriptive label counts as a pooled security score. Source-native analysis
+and matched-input comparisons retain their own scoring and eligibility rules.
+
 Current campaign execution uses pre-calculated quantities and reported-spend
 tracking, not maximum-cost money holds. For an existing prepared budget:
 

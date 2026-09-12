@@ -455,6 +455,26 @@ aligned quality plots support accurate comparison without perspective effects.
 
 ### Judging, costs and activity
 
+Judging now includes label-distribution figures and matching CSV/SVG exports.
+Each distribution keeps model, generation condition, evidence class, modality,
+framework, corpus and judge condition separate. It uses only the response
+currently selected by its assignment; a retained predecessor verdict does not
+enter the bar. Pages contain twelve complete distributions, rather than twelve
+individual labels that could split a denominator across pages.
+
+The denominator is retained assessments for that exact group. Invalid verdicts
+and missing-output assessments stay visible, while not-yet-retained judgments
+are not represented as safe or failed labels. These figures are descriptive
+label counts, not pooled attack-success rates or source-native benchmark
+scores. The existing model/condition filters apply to both the displayed page
+and its exports. A figure's exact conditions are retained in the accompanying
+table and vector metadata; long on-screen identities wrap outside the bars.
+The shared request busy guard covers both export actions.
+
+This addition passed sixteen focused rig tests, two removed-fix regressions and
+actual Local/API index count comparisons at 856a315. It is awaiting the queued
+console deployment; browser visual acceptance remains open.
+
 Judging shows required, completed, invalid, missing and pending verdicts for the
 local judge and Haiku, with the same-input selection visible. Response failures
 remain in collection coverage even where no text is eligible for adjudication.
