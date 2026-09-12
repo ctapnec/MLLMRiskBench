@@ -115,6 +115,27 @@ Build's General section now starts source preparation from the campaign index:
    no generation request, runs no judge and does not start collection. Review
    the resulting costs before execution. Haiku still requires its separate
    output-specific selection and preparation.
+8. Under **Collect prepared inputs**, choose the number of workers per provider
+   (default two), then **Review prepared collection**. The review shows the saved
+   model assignments, output allowances and initial-attempt cost ceilings, not
+   later edits to the draft. **Start prepared collection** launches the existing
+   provider-parallel executor with this campaign's ownership and publication.
+   It does not start local or Haiku judging. Required execution readiness and
+   admission inputs must already be present in the prepared programs.
+9. For the same saved programs, reopen this review after a stopped collection.
+   **Continue saved collection** selects the previous control directory
+   automatically. Completed jobs are restored and eligible checkpoints resumed;
+   the inputs and spending plan do not change. Active or duplicate launches are
+   rejected, including two review pages opened in different tabs. A changed
+   software revision or spending plan needs an explicit recovery handoff rather
+   than silently changing the old execution conditions.
+
+Eleven focused rig checks cover this collection handoff, including an actual
+browser form submission and duplicate-click control; two removed-fix controls
+fail as required. A review of the actual two-model prepared source was rendered
+and visually inspected without starting its paid executor. This is not yet
+acceptance of a complete new UI campaign through readiness, paid generation,
+local/Haiku judging and final analysis.
 
 The forecast, replay and counted-program actions are rig-verified; console
 deployment is tracked in the development ledger. The
@@ -130,9 +151,10 @@ selected in Stats. It never chooses the newest or best answer automatically.
 It resolves only the selected artifact locations, then reuses the existing
 source-preparation command. Opening the page does not scan or hash result files.
 This is a separate preparation action, not a switch silently changing the
-current Runner pipeline's corpus. The remaining readiness, reviewed collection
-launch/continuation and judging orchestration below is not yet assembled by the
-normal Build editor. A forecast is not that execution handoff.
+current Runner pipeline's corpus. Readiness preparation and judging orchestration
+below are not yet assembled by the normal Build editor. The reviewed collection
+and continuation handoff is implemented and rig-verified, but not yet deployed;
+a forecast alone is not an executable collection.
 Replay preparation converts the union of required sources once across models,
 using the configured corpus and media locations without API credentials.
 Its request caps can leave unused space when the next whole cluster does not
@@ -177,8 +199,8 @@ Unchanged source context is reused by provider workers; budgets remain checked
 at paid dispatch. Old programs retain their original reader and interpretation.
 
 These typed forms and reusable preparation APIs are not the finished normal
-Build workflow. Source and replay preparation are connected; the remaining editor
-work must assemble readiness, reviewed collection and requested judging stages from
+Build workflow. Source/replay preparation and reviewed collection are connected;
+the remaining editor work must assemble readiness and requested judging stages from
 its ordinary controls. Do not present manual JSON/path handoffs as that completed
 UX. The retained executor still owns provider concurrency and continuation;
 creating a second scheduler or independently funded per-model grids is not the
