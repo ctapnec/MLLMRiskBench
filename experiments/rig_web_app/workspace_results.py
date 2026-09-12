@@ -305,8 +305,9 @@ class WorkspaceResultsMixin:
                                 condition: str = "") -> list[sqlite3.Row] | None:
         return self._query(
             "SELECT j.judge_id,j.status,COUNT(*) AS count FROM campaign_judgments j "
-            "JOIN campaign_assignments a ON a.campaign_id=j.campaign_id AND a.response_id=j.response_id "
             "JOIN campaign_responses r ON r.campaign_id=j.campaign_id AND r.response_id=j.response_id "
+            "JOIN campaign_assignments a ON a.campaign_id=r.campaign_id AND a.assignment_id=r.assignment_id "
+            "AND a.response_id=r.response_id "
             "WHERE j.campaign_id=? AND (?='' OR a.model=?) AND (?='' OR r.condition_id=?) "
             "GROUP BY j.judge_id,j.status ORDER BY j.judge_id,j.status",
             (campaign_id, model, model, condition, condition),
