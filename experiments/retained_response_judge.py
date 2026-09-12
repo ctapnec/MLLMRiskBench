@@ -226,9 +226,17 @@ def load_pricing_condition(
     }
 
 
-def _output_policy_sha256(cell: Mapping[str, Any]) -> str:
+def _generation_config(cell: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    if 'generation_context' in cell:
+        if 'manifest' in cell or cell.get('scope') != 'retained_response_candidates_only':
+            raise ValueError('Prepared response context is not a generation manifest')
+        return cell['generation_context']
     manifest = cell.get("manifest")
-    config = manifest.get("config") if isinstance(manifest, Mapping) else None
+    return manifest.get('config') if isinstance(manifest, Mapping) else None
+
+
+def _output_policy_sha256(cell: Mapping[str, Any]) -> str:
+    config = _generation_config(cell)
     components = config.get("components") if isinstance(config, Mapping) else None
     target = components.get("target") if isinstance(components, Mapping) else None
     if not isinstance(target, Mapping) or not target:
@@ -237,8 +245,7 @@ def _output_policy_sha256(cell: Mapping[str, Any]) -> str:
 
 
 def _project_revision_sha256(cell: Mapping[str, Any]) -> str:
-    manifest = cell.get("manifest")
-    config = manifest.get("config") if isinstance(manifest, Mapping) else None
+    config = _generation_config(cell)
     run = config.get("run") if isinstance(config, Mapping) else None
     revision = run.get("project_revision") if isinstance(run, Mapping) else None
     digest = revision.get("sha256") if isinstance(revision, Mapping) else None
@@ -253,8 +260,8 @@ def load_candidates(
     """Return common, evaluable, usable retained outputs from one validated view."""
 
     root = Path(runner_view).resolve(strict=True)
-    if not root.is_dir():
-        raise ValueError("Runner view must be a resolved directory")
+    if not root.is_dir() and not root.is_file():
+        raise ValueError("Select a resolved Runner view or saved source preparation")
     return _candidates_from_view(*_read_view(root), include_match_identity=include_match_identity)
 
 
@@ -270,8 +277,7 @@ def _candidates_from_view(
     checked_original_artifacts: set[tuple[str, str]] = set()
     for cell in cells:
         run_id = _text(cell.get("run_id"), label="validated run ID")
-        manifest = cell["manifest"]
-        run = manifest["config"]["run"]
+        run = _generation_config(cell)["run"]
         context = {
             "exact_model": _text(cell.get("model"), label="validated model"),
             "framework": _text(run.get("attacker"), label="validated framework"),
@@ -363,7 +369,7 @@ def _candidates_from_view(
         candidates.append(row)
     if not candidates and not allow_empty:
         raise ValueError("validated Runner view has no usable common retained outputs")
-    return candidates, {
+    population = {
         "validated_joined_rows": int(audit["policy_evaluable_samples"]),
         "eligible_usable_outputs": len(candidates),
         "excluded_missing_outputs": excluded_missing,
@@ -371,6 +377,10 @@ def _candidates_from_view(
             audit["common_ineligible_evaluable_rows_excluded"]
         ),
     }
+    for field in ('excluded_diagnostic_outputs','unprepared_outputs'):
+        if field in audit:
+            population[field]=int(audit[field])
+    return candidates, population
 
 
 def _project_retained_match(
@@ -444,6 +454,9 @@ def load_pair_candidate_views(local_root: Path, hosted_root: Path) -> tuple:
 
 
 def _read_view(root: Path) -> tuple[list[dict], dict, dict, dict]:
+    if root.is_file():
+        from experiments.retained_prepared_judge_view import read_prepared_view
+        return read_prepared_view(root)
     if (root / "retained-view.json").exists():
         from experiments.retained_response_view import read_view
         return read_view(root)
