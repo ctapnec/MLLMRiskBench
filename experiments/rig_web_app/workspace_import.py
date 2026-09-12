@@ -115,7 +115,8 @@ def hosted_program_rows(program: dict, selections: list[dict], *, campaign_id: s
         raise ValueError("Input selection does not cover the retained program")
     assignments, responses, bindings = {}, [], {}
     for purpose, input_ids, records in _program_groups(program):
-        evidence = {"measured_run": "measured", "diagnostic_canary": "diagnostic"}.get(purpose, "unknown")
+        evidence = {"measured_run": "measured", "diagnostic_canary": "diagnostic",
+                    "attestation_probe": "diagnostic"}.get(purpose, "unknown")
         for input_id in input_ids:
             if input_id in assignments:
                 raise ValueError("Input is assigned to multiple program jobs")

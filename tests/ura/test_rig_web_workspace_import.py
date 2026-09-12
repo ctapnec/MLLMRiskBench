@@ -56,6 +56,15 @@ def test_full_assignment_denominator_policy_and_truncation_survive_republication
     assert costs["output_tokens"] == 4096 and costs["input_unknown"] == 1
 
 
+def test_transport_probe_outputs_remain_diagnostic_not_measured_or_unknown(retained):
+    db, campaign, args, _, _ = retained
+    args['program']['jobs'][0]['purpose']='attestation_probe'
+    publish_hosted_program(db,campaign,**args)
+    rows=db._query('SELECT evidence_class FROM campaign_assignments WHERE campaign_id=?',(campaign,))
+    assert len(rows)==4
+    assert {row['evidence_class'] for row in rows}=={'diagnostic'}
+
+
 def test_final_files_and_checkpoint_copies_are_one_response(retained):
     db, campaign, args, path, records = retained
     path.with_name("test.responses.jsonl").write_text("".join(json.dumps(r["response"]) + "\n" for r in records))
