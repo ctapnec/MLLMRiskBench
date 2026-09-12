@@ -6830,9 +6830,44 @@ or require a favorable local verdict. Only the selected local run IDs are read
 into the comparison. Source-task exclusions, missing answers, diagnostic-only
 outputs and unprepared source counts remain explicit. Visible truncated answers
 remain eligible. The native preparation must be unchanged, but its local
-judging need not have finished before Haiku selection. Normal-Build Haiku
-selection and launch controls remain an integration task; file support alone
-does not complete that UI flow.
+judging need not have finished before Haiku selection.
+
+In Build, keep the original local source selection, forecast and saved hosted
+preparation selected. Under **Haiku comparison of saved outputs**, choose the
+configured Haiku route, comparison limit, selection seed and USD ceiling.
+**Prepare matched Haiku selection** runs the existing paired selector as a
+background job and binds its full judge requests to the collection's existing
+funded slots. It makes no provider calls and creates no second allocation.
+The exact original prompts, source criteria and responses determine the pairs;
+later edits to the target-model draft do not replace them. This bounded selector
+chooses at most one local counterpart per selected hosted answer and can reuse
+that exact local answer across comparison links. It is not the all-local-model
+matching policy used by the larger supplemental inventory. Those broader
+inventory/reuse controls remain separate integration work.
+
+After preparation completes, **Review Haiku judging** displays the distinct
+local/hosted answer counts by model, selected judge, 512-token verdict allowance,
+existing budget binding, retry policy and exact executable command. The rubric
+uses rendered prompt text plus the saved answer; image pixels are not sent to
+this text-only judge. Missing and source-excluded outputs remain in the recorded
+population, without fabricated labels. **Start or resume Haiku judging** retains
+invalid verdicts and publishes output-owned assessments into both campaigns.
+Opening two reviews or clicking repeatedly cannot launch the same active work
+twice. Continuation uses the original output directory and restores verdicts.
+Once judging has started, resume that saved selection rather than creating
+another overlapping selection. Incremental preparations remain explicit subsets;
+their existence does not establish complete campaign coverage.
+
+The paired selector's optional funding arguments are `--api-config`,
+`--shared-budget-root`, `--shared-budget-sha256` and repeated `--program` /
+`--program-sha256` pairs. It writes the selected plan and a sibling
+`*.shared-requests.json` containing the exact output-to-funded-call mappings.
+The executor accepts `--shared-budget-root`, `--shared-budget-sha256`,
+`--shared-requests` and `--shared-requests-sha256` together. Build supplies all
+four. Partial bindings are rejected before execution; they never fall back to
+independent spending. The original unshared CLI remains explicit and unchanged.
+If the actual full rubric exceeds its prospective slot, no judge is called:
+inspect the prepared request cost and existing allocation before continuation.
 
 In Tools, select the campaign owning the outputs and open
 `retained_response_judge_pair_execute`. Supply the retained plan, the local and

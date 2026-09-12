@@ -1056,3 +1056,30 @@ references or increasing ceilings through
 this operation. Existing plan and billing records remain unchanged. Active
 owners must receive the expanded scope before additional calls are dispatched;
 this avoids independent ledgers spending against separately counted allowances.
+
+### Build: selected Haiku comparisons
+
+Build now connects saved source selection and native output preparation to the
+existing bounded paired Haiku selector. Choose a configured Haiku route, a
+comparison limit, seed and judging ceiling, then prepare the selection. This
+background job makes no provider calls and maps the exact full-rubric requests
+to the original collection's funded slots. Its review shows distinct answers
+by model, the judge and allowance, the shared budget and the exact command.
+Starting or resuming the reviewed selection uses the existing paired executor,
+zero answer retries and three HTTP-error retries. Invalid verdicts remain
+recorded. Output-specific publication belongs to both selected campaigns.
+
+Active or completed identical preparations are reused. Duplicate reviews cannot
+start the same judging worker twice, and continuation restores the original
+judgment directory. A different target draft does not change the saved output
+selection. A failed funding preparation cannot be launched as unshared paid
+work. The underlying CLI and Tools expose the same optional funding arguments;
+the four executor binding fields must be supplied together.
+
+This control is a bounded paired comparison: at most one local counterpart is
+selected per hosted answer. It does not yet manage the larger expansion's
+all-matching-local-output inventory or cross-preparation judgment reuse.
+Automatic readiness, device scheduling, complete incremental population
+reconciliation and final deployed UI acceptance remain open. In particular,
+the existence of a selected Haiku job is not evidence that all campaign outputs
+have been judged. See the operator runbook for the exact Build flow and scope.

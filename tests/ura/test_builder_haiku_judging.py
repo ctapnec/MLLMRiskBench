@@ -165,4 +165,5 @@ def test_haiku_panel_and_review_are_usable_at_mobile_width(browser,haiku):  # no
         assert page.get_by_role('button',name='Start or resume Haiku judging').is_visible()
         assert page.locator('table tr').count()==3
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
-    finally:page.close()
+    finally:
+        page.close()
