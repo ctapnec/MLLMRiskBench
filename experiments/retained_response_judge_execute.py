@@ -665,6 +665,8 @@ def execute(
     shared_budget: Any = None,
     shared_requests: Mapping[str, dict] | None = None,
     retain_invalid_verdicts: bool = False,
+    workspace_ids: Sequence[str] = (),
+    console_db: Path | None = None,
 ) -> Path:
     if type(retain_invalid_verdicts) is not bool:
         raise ValueError("invalid-verdict retention policy must be explicit boolean")
@@ -718,7 +720,13 @@ def execute(
     circuit_path = root / "circuit.json"
     completion_path = root / "completion.json"
 
-    with _exclusive_lock(root):
+    with _exclusive_lock(root), contextlib.ExitStack() as resources:
+        publisher = None
+        if workspace_ids:
+            from experiments.rig_web_app.workspace_retained_judging import RetainedJudgmentPublication
+            publisher = RetainedJudgmentPublication(database=console_db, campaign_ids=workspace_ids,
+                root=root, plan=plan, shared_budget=shared_budget, shared_requests=shared_requests)
+            resources.callback(publisher.close)
         shared_path = root / "shared-budget.json"
         if shared_binding is None:
             if shared_path.exists() or shared_path.is_symlink():
@@ -854,6 +862,8 @@ def execute(
                 artifact = _validate_artifact(artifact_raw, plan=plan, index=index, row=row)
                 if shared_binding is not None:
                     _settle_shared_artifact(shared_budget, shared_requests, row, artifact)
+                if publisher is not None:
+                    publisher.accept(artifact, artifact_path)
             elif artifact_path.exists() or artifact_path.is_symlink():
                 raise ValueError("judgment artifact is ahead of the durable ledger")
 
@@ -1057,6 +1067,9 @@ def execute(
                 raise AssertionError("sealed Haiku cost ceiling was exceeded")
             _write_atomic(ledger_path, ledger)
 
+            if publisher is not None:
+                publisher.accept(artifact, _judgment_path(root, index, row))
+
         ledger["state"] = "complete"
         _write_atomic(ledger_path, ledger)
         completion = {
@@ -1102,6 +1115,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--ack-paid-execution", action="store_true")
     parser.add_argument("--retain-invalid-verdicts", action="store_true")
+    parser.add_argument("--workspace-id", action="append", default=[],
+                        help="Publish exact output-owned judgments into these existing campaigns")
+    parser.add_argument("--console-db", type=Path, default=os.environ.get("URA_CAMPAIGN_CONSOLE_DB"))
     args = parser.parse_args(argv)
     if not args.ack_paid_execution:
         parser.error("--ack-paid-execution is required")
@@ -1114,6 +1130,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             pricing_config=args.pricing_config,
             out=args.out,
             retain_invalid_verdicts=args.retain_invalid_verdicts,
+            workspace_ids=args.workspace_id or ([os.environ["URA_CAMPAIGN_WORKSPACE_ID"]]
+                if os.environ.get("URA_CAMPAIGN_WORKSPACE_ID") else []),
+            console_db=args.console_db,
         )
     )
     return 0

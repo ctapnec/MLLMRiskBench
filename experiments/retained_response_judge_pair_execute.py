@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -94,6 +95,8 @@ def execute(
     shared_budget: Any = None,
     shared_requests: Mapping[str, dict] | None = None,
     retain_invalid_verdicts: bool = False,
+    workspace_ids: Sequence[str] = (),
+    console_db: Path | None = None,
 ) -> Path:
     def build_judge(spec: str, config: Mapping[str, object]) -> Any:
         if config.get("max_tokens") != 512:
@@ -129,6 +132,8 @@ def execute(
         plan_validator=validate_pair_plan,
         selection_reconciler=reconcile,
         retain_invalid_verdicts=retain_invalid_verdicts,
+        workspace_ids=workspace_ids,
+        console_db=console_db,
         **shared_kwargs,
     )
 
@@ -145,6 +150,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--ack-paid-execution", action="store_true")
     parser.add_argument("--retain-invalid-verdicts", action="store_true")
+    parser.add_argument("--workspace-id", default=os.environ.get("URA_CAMPAIGN_WORKSPACE_ID", ""))
+    parser.add_argument("--matching-workspace-id", default="",
+                        help="The other campaign owning outputs in this local/hosted comparison")
+    parser.add_argument("--console-db", type=Path, default=os.environ.get("URA_CAMPAIGN_CONSOLE_DB"))
     parser.add_argument("--verify-artifact-sha256", action="store_true",
                         help="Opt in to full retained-file checksum revalidation")
     args = parser.parse_args(argv)
@@ -160,6 +169,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             pricing_config=args.pricing_config,
             out=args.out,
             retain_invalid_verdicts=args.retain_invalid_verdicts,
+            workspace_ids=[value for value in (args.workspace_id, args.matching_workspace_id) if value],
+            console_db=args.console_db,
         )
     )
     return 0

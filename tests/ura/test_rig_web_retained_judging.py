@@ -47,3 +47,19 @@ def test_retained_judging_ui_can_keep_invalid_verdicts(tmp_path):
     # Parser accepts the UI option and stops on the missing plan, not an unknown flag.
     with pytest.raises((OSError, ValueError)):
         main(argv[argv.index("experiments.retained_response_judge_pair_execute") + 1:])
+
+
+def test_judging_ui_and_cli_keep_both_explicit_output_owners(tmp_path, monkeypatch):
+    from experiments import retained_response_judge_pair_execute as subject
+    captured = []
+    monkeypatch.setattr(subject, "execute", lambda **kwargs: captured.append(kwargs) or tmp_path)
+    monkeypatch.setenv("URA_CAMPAIGN_WORKSPACE_ID", "api-campaign")
+    monkeypatch.setenv("URA_CAMPAIGN_CONSOLE_DB", str(tmp_path / "console.db"))
+    values = {flag: str(tmp_path / flag[2:]) for flag in (
+        "--plan", "--local-runner-view", "--hosted-runner-view", "--source-receipt",
+        "--api-config", "--pricing-config", "--out")}
+    values.update({"--ack-paid-execution": "on", "--matching-workspace-id": "local-campaign"})
+    argv = build_argv("retained_response_judge_pair_execute", values)
+    assert subject.main(argv[argv.index("experiments.retained_response_judge_pair_execute") + 1:]) == 0
+    assert captured[0]["workspace_ids"] == ["api-campaign", "local-campaign"]
+    assert captured[0]["console_db"] == tmp_path / "console.db"

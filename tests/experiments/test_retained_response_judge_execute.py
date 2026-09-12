@@ -16,6 +16,119 @@ HEX_A = "a" * 64
 HEX_B = "b" * 64
 
 
+def _workspace_outputs(tmp_path, plan):
+    from experiments.rig_web_app.storage import ConsoleDB
+    db = ConsoleDB(tmp_path / "console.db")
+    owners = [db.create_workspace("First outputs", "local"), db.create_workspace("Matched outputs", "api")]
+    for index, selected in enumerate(plan["selected"]):
+        response = selected["run_id"] + ":" + selected["attempt_id"]
+        db.publish_workspace_results(owners[index % 2], assignments=[dict(
+            assignment_id=response, model=selected["exact_model"], input_id="same-input", condition_id="condition",
+            modality="text", framework="replay", corpus="sample", response_id=response, evidence_class="measured")],
+            responses=[dict(response_id=response, assignment_id=response, condition_id="condition",
+                outcome="usable", truncated=False, source_ref="original.jsonl:"+str(index+1))], judgments=[])
+    return db, owners
+
+
+@pytest.mark.parametrize("index_failure", [False, True])
+def test_executor_publishes_exact_output_judgments_and_costs_without_repeating_calls(tmp_path, monkeypatch, index_failure):
+    from experiments.rig_web_app.storage import ConsoleDB
+    prepared = _prepared(tmp_path, monkeypatch)
+    db, owners = _workspace_outputs(tmp_path, prepared["plan"])
+    original = ConsoleDB.publish_workspace_costs
+    if index_failure:
+        def unavailable(*args, **kwargs):
+            raise ValueError("private diagnostic not for status")
+        monkeypatch.setattr(ConsoleDB, "publish_workspace_costs", unavailable)
+    fake = FakeHaiku()
+    kwargs = {key: prepared[key] for key in (
+        "plan_path", "runner_view", "source_receipt", "api_config", "pricing_config", "out")}
+    kwargs.update(judge_factory=lambda _s, _c: fake, workspace_ids=owners, console_db=db.path)
+    completion = subject.execute(**kwargs)
+    assert fake.calls == 2 and completion.is_file()
+    status = prepared["out"] / "publication.json"
+    assert "private diagnostic" not in status.read_text()
+    if index_failure:
+        assert json.loads(status.read_text())["status"] == "publication_pending"
+        monkeypatch.setattr(ConsoleDB, "publish_workspace_costs", original)
+    before = completion.read_bytes()
+    subject.execute(**kwargs)
+    assert fake.calls == 2 and completion.read_bytes() == before
+    assert json.loads(status.read_text())["status"] == "published"
+    for owner in owners:
+        assert sum(row["count"] for row in db.workspace_judging_totals(owner) if row["status"] == "valid") == 1
+        costs = db.workspace_cost_totals(owner)[0]
+        assert (costs["attempts"], costs["cost_microusd"], costs["input_tokens"], costs["output_tokens"]) == (1, 160, 100, 12)
+    assert len(db._query("SELECT * FROM campaign_judgments")) == 2
+    db.close()
+
+
+def test_publication_occurs_after_durable_artifact_before_next_judge_call(tmp_path, monkeypatch):
+    prepared = _prepared(tmp_path, monkeypatch)
+    db, owners = _workspace_outputs(tmp_path, prepared["plan"])
+
+    class Observed(FakeHaiku):
+        def generate(self, dialog, *, seed=None):
+            if self.calls:
+                assert len(list((prepared["out"] / "judgments").glob("*.json"))) == 1
+                assert len(db._query("SELECT * FROM campaign_judgments")) == 1
+            return super().generate(dialog, seed=seed)
+
+    subject.execute(**{key: prepared[key] for key in (
+        "plan_path", "runner_view", "source_receipt", "api_config", "pricing_config", "out")},
+        judge_factory=lambda _s, _c: Observed(), workspace_ids=owners, console_db=db.path)
+    db.close()
+
+
+def test_publication_does_not_guess_owner_from_matched_input(tmp_path, monkeypatch):
+    prepared = _prepared(tmp_path, monkeypatch)
+    db, owners = _workspace_outputs(tmp_path, prepared["plan"])
+    fake = FakeHaiku()
+    subject.execute(**{key: prepared[key] for key in (
+        "plan_path", "runner_view", "source_receipt", "api_config", "pricing_config", "out")},
+        judge_factory=lambda _s, _c: fake, workspace_ids=owners[:1], console_db=db.path)
+    assert fake.calls == 2
+    assert len(db._query("SELECT * FROM campaign_judgments")) == 1
+    assert db.workspace_judging_totals(owners[1]) == []
+    assert json.loads((prepared["out"] / "publication.json").read_text())["pending_judgments"] == 1
+    db.close()
+
+
+@pytest.mark.parametrize("shared", [False, True])
+def test_automatic_judge_publication_keeps_retry_usage_unknown(tmp_path, monkeypatch, shared):
+    from types import SimpleNamespace
+    from experiments.rig_web_app.workspace_retained_judging import RetainedJudgmentPublication
+    prepared = _prepared(tmp_path, monkeypatch, count=1)
+    subject.execute(**{key: prepared[key] for key in (
+        "plan_path", "runner_view", "source_receipt", "api_config", "pricing_config", "out")},
+        judge_factory=lambda _s, _c: FakeHaiku())
+    db, owners = _workspace_outputs(tmp_path, prepared["plan"])
+    path = next((prepared["out"] / "judgments").glob("*.json"))
+    artifact = json.loads(path.read_text())
+    artifact["judgment"]["raw"]["judge_call"]["transport_attempt_count"] = 2
+    kwargs = {}
+    if shared:
+        budget = tmp_path / "budget"
+        budget.mkdir()
+        (budget / "plan.json").write_text(json.dumps(dict(planned_calls=[dict(
+            call_id="physical-call", provider="anthropic", pool="judge", bound_microusd=5000)])))
+        (budget / "ledger.json").write_text(json.dumps(dict(attempts={"physical-call": {
+            "1": dict(state="unknown", actual_cost_microusd=None),
+            "2": dict(state="settled", actual_cost_microusd=160)}})))
+        kwargs = dict(shared_budget=SimpleNamespace(root=budget),
+            shared_requests={artifact["retained_row_sha256"]: dict(call_id="physical-call")})
+    publisher = RetainedJudgmentPublication(database=db.path, campaign_ids=owners,
+        root=prepared["out"], plan=prepared["plan"], **kwargs)
+    publisher.accept(artifact, path)
+    publisher.close()
+    costs = db._query("SELECT * FROM campaign_cost_attempts ORDER BY attempt_number")
+    assert len(costs) == 2
+    assert costs[0]["cost_microusd"] is None and costs[0]["input_tokens"] is None
+    assert costs[1]["cost_microusd"] == 160 and costs[1]["input_tokens"] == 100
+    assert costs[0]["exposure_microusd"] == (5000 if shared else None)
+    db.close()
+
+
 @pytest.mark.parametrize("retry", [False, True])
 def test_workspace_indexes_real_executor_artifacts_by_output_without_new_calls(tmp_path, monkeypatch, retry):
     from experiments.rig_web_app.workspace_judgments import retained_judge_rows

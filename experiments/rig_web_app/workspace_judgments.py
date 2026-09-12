@@ -90,6 +90,15 @@ def native_invalid_rows(unit: dict, artifacts: list[tuple[str, dict]], *,
     return dict(judgments=rows, costs=costs)
 
 
+def retained_judge_identity(condition: dict) -> str:
+    identity = {key: value for key, value in condition.items()
+                if not key.startswith("pricing_") and key not in {
+                    "max_cost_microusd", "input_microusd_per_token", "output_microusd_per_token",
+                    "independent_judge_rows", "same_model_judge_rows", "max_judge_calls", "max_http_attempts"}}
+    digest = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:24]
+    return condition["model"] + ":" + digest
+
+
 def retained_judge_rows(plan: dict, artifacts: list[tuple[str, dict]], *,
                         output_assignments: dict[str, str], campaign_id: str,
                         shared_requests: dict, budget_plan: dict, ledger: dict,
@@ -105,12 +114,7 @@ def retained_judge_rows(plan: dict, artifacts: list[tuple[str, dict]], *,
     )
 
     condition = plan["judge_condition"]
-    identity = {key: value for key, value in condition.items()
-                if not key.startswith("pricing_") and key not in {
-                    "max_cost_microusd", "input_microusd_per_token", "output_microusd_per_token",
-                    "independent_judge_rows", "same_model_judge_rows", "max_judge_calls", "max_http_attempts"}}
-    digest = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:24]
-    judge_id = condition["model"] + ":" + digest
+    judge_id = retained_judge_identity(condition)
     judgments, bindings, seen = [], {}, set()
     for reference, value in artifacts:
         index = value["selection_index"]

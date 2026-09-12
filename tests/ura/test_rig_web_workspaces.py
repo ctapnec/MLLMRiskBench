@@ -194,7 +194,7 @@ def test_unknown_campaign_never_launches(tmp_path, monkeypatch):
         app.close()
 
 
-@pytest.mark.parametrize("command", ["hosted_campaign_execute", "run_matrix"])
+@pytest.mark.parametrize("command", ["hosted_campaign_execute", "run_matrix", "retained_response_judge_pair_execute"])
 def test_prepared_hosted_launch_publishes_to_its_selected_workspace_only(tmp_path, monkeypatch, command):
     app = _app(tmp_path)
     app.commands[command] = Command(command, "diagnostic", "test", ())

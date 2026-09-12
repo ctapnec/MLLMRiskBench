@@ -1107,6 +1107,8 @@ def _commands() -> dict[str, Command]:
             "experiments.retained_response_judge_pair_execute",
             "Execute one sealed matched local and hosted Haiku judging plan",
             (
+                CommandParam("--matching-workspace-id", "str", help="The other campaign ID owning matched outputs. "
+                    "The selected campaign is included automatically; each verdict and cost belongs to its exact answer."),
                 CommandParam("--retain-invalid-verdicts", "flag"),
                 CommandParam("--verify-artifact-sha256", "flag"),
                 CommandParam("--plan", "path", required=True),
