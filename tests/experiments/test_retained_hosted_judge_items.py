@@ -95,6 +95,7 @@ def test_tools_builds_the_same_no_call_cli(funded,tmp_path,monkeypatch):
     monkeypatch.setattr(subject,'AttemptBudget',lambda root,digest:funded.budget)
     argv=build_argv('retained_hosted_judge_items',{'--preparation':str(funded.prepared),
         '--budget-root':str(funded.budget.root),'--budget-plan-sha256':'a'*64,'--out':str(tmp_path/'tools')})
-    assert subject.main(argv)==0
+    assert argv[1:3]==['-m','experiments.retained_hosted_judge_items']
+    assert subject.main(argv[3:])==0
     result=json.loads((tmp_path/'tools/result.json').read_text())
     assert result['selected_outputs']==2 and result['judge_calls']==result['provider_http_calls']==0
