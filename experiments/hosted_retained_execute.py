@@ -939,14 +939,16 @@ def _distinct_judge_ids(plan: dict, key: str, candidates: Sequence[dict]) -> dic
     return result
 
 
-def _matched_judge_call_cap(projected_cap: int, routes: Sequence[dict], inventory: dict | None) -> int:
+def _matched_judge_call_cap(projected_cap: int, routes: Sequence[dict], inventory: dict | None,
+                           *, additional_grading_contexts: int = 0) -> int:
     """Count output-owned local verdicts, not one assumed local answer per target."""
     if inventory is None:
         return projected_cap
     # Distinct/cohort funding already validates the exact, unique local rows.
     # Keep the historical projection readable, but do not let its two-per-target
     # approximation reject the larger explicitly funded local population.
-    return max(projected_cap, sum(row["paid_call_cap"] for row in routes) + len(inventory["unjudged_rows"]))
+    return max(projected_cap, sum(row["paid_call_cap"] for row in routes)
+               + len(inventory["unjudged_rows"]) + additional_grading_contexts)
 
 
 def _validated_jobs(program: dict, budget: AttemptBudget, *, local_context: tuple | None = None) -> list[_Admission]:
@@ -1019,7 +1021,13 @@ def _validated_jobs(program: dict, budget: AttemptBudget, *, local_context: tupl
         raise ValueError("shared funding differs from the bound current provider budgets")
     judge_cap = (expected_projection["judge"]["paid_call_cap"]
                  if expected_projection.get("reservation_policy") == "per_attempt" else projection.JUDGE_CALL_CAP)
-    judge_cap = _matched_judge_call_cap(judge_cap, expected_projection["routes"], inventory if distinct else None)
+    # A deduplicated target request may belong to multiple grading contexts.
+    # Their exact input-derived IDs are checked below by _distinct_judge_ids;
+    # they are extra judgments, not extra independent target generations.
+    extra_contexts = sum(row["pool"] == "judge" and row["call_id"].startswith("judge-hosted-context-")
+                         for row in budget_plan["planned_calls"]) if distinct else 0
+    judge_cap = _matched_judge_call_cap(judge_cap, expected_projection["routes"], inventory if distinct else None,
+                                       additional_grading_contexts=extra_contexts)
     if sum(row["pool"] == "judge" for row in budget_plan["planned_calls"]) > judge_cap:
         raise ValueError("funded Haiku population exceeds its complete campaign call cap")
     routes = [row for row in expected_projection["routes"] if row["target_spec"] == program["target"]]
