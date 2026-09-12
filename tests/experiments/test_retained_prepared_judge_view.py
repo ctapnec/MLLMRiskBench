@@ -23,7 +23,7 @@ def prepared(retained,tmp_path,monkeypatch):  # noqa: F811
     artifact.write_text('{}')
     origin['files']=[subject.sources.metadata(artifact)]
     program=Path(origin['program'])
-    program.write_text(json.dumps(dict(target=origin['target'],jobs=[dict(name=origin['job'],purpose='measured_run')]))
+    program.write_text(json.dumps(dict(target=origin['target'],jobs=[dict(name=origin['job'],purpose='measured_run')])))
     payload=program.read_bytes()
     value=dict(status='prepared',judgments='not_executed',units=[origin],outputs=2,failed=[],
         programs=[dict(path=str(program),sha256=hashlib.sha256(payload).hexdigest(),bytes=len(payload))],
