@@ -2898,6 +2898,15 @@ one shared spending plan and the existing executable programs, but no collection
 launch follows automatically. Readiness, reviewed launch/continuation and the
 actual output-specific Haiku population remain subsequent stages.
 
+For visual console QA on this rig, reuse the installed Chromium cache and the
+isolated `tools/operational-qa` environment. A missing Windows browser bridge
+does not require reinstalling runtimes or running tests on Windows. Read-only
+browser checks can visit the real loopback console and retain screenshots of
+desktop/mobile pages without starting an experiment. Keep isolated preparation
+checks separate from live-campaign SQLite, and distinguish inspected deployed
+pages from new controls still awaiting deployment. Record browser errors,
+overflow, navigation/operation completion and the exact checked release.
+
 Pass this inventory and its digest to `hosted_retained_inputs`; omit the legacy
 `--runner-view`. The existing budget and whole-cluster selection still apply.
 With `--materialize-corpus`, selected local sources now reconstruct their exact

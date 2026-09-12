@@ -58,6 +58,17 @@ Campaign completion requires all assigned collection and requested judging work,
 not merely a successful child process. Existing experimental jobs continue during
 this UI work.
 
+Live visual check, 12 September: the rig's existing isolated browser environment
+rendered Campaigns, Local Results, API Judging, API Costs and Build at desktop
+width, plus Local Results and Build at mobile width. The screenshots were
+inspected; there were no browser script errors or page-level horizontal overflow
+in those views. Loaded-page busy indicators were clear, and the API Judging view
+contained real indexed label diagrams. These checks cover the deployed pages,
+not the complete new-campaign execution flow or every interactive control.
+The observed diagnostic-first chart order is corrected in the next release:
+measured groups come first, while diagnostics remain separately paginated and
+all condition-specific counts and exports are preserved.
+
 ### Selected local inputs for a hosted follow-on
 
 Build's General section now starts source preparation from the campaign index:
