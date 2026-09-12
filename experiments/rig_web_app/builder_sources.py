@@ -122,7 +122,9 @@ def source_panel(app, params: dict[str, str]) -> str:
     job_id = params.get("retained_sources_job", "")
     if job_id:
         content += "<p><a href='/jobs/" + escape(job_id) + "'>Open the input preparation job and its artifacts</a></p>"
-    return content + "</section>"
+        content += "<input type='hidden' form='builder' name='retained_sources_job' value='" + escape(job_id) + "'>"
+    from .builder_budget import budget_panel
+    return content + "</section>" + budget_panel(app, params)
 
 
 def prepare_selected_inputs(app, params: dict[str, str]):

@@ -4099,6 +4099,10 @@ class LifecycleMixin:
                     return 200, "text/html; charset=utf-8", self._build_page(prefill=params)
                 job = prepare_selected_inputs(self, params)
                 return 303, "/jobs/" + job.job_id, b""
+            if method == "POST" and path == "/build/forecast-matched":
+                from .builder_budget import prepare_budget
+                job = prepare_budget(self, self._builder_params(form or {}))
+                return 303, "/jobs/" + job.job_id, b""
             if method == "POST" and path == "/build/edit":
                 ticket = self._consume_launch_ticket((form or {}).get("edit_ticket", ""), purpose="build-edit")
                 if ticket is None:
