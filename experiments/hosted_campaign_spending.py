@@ -95,6 +95,7 @@ def campaign_totals(money, plan, ledger, *, document=None):
     pools = {key: {'cap_microusd': cap, 'tracked_spend_microusd': 0,
                    'unknown_usage_attempts': 0, 'unresolved_attempts': 0}
              for key, cap in document['pool_caps_microusd'].items()}
+    represented_pools = set()
 
     def stamp(paths):
         return tuple((s.st_dev, s.st_ino, s.st_size, s.st_mtime_ns, s.st_ctime_ns)
@@ -115,11 +116,14 @@ def campaign_totals(money, plan, ledger, *, document=None):
                 subtotal = _ledger_totals(_read(paths[0]), _read(paths[1]), row['plan_sha256'])
                 if before == stamp(paths):
                     cache[key] = (before, subtotal)
+        represented_pools.update(subtotal)
         for key, values in subtotal.items():
             if key not in pools:
                 raise BudgetError('campaign spending predecessor has an unconfigured pool')
             for name, value in values.items():
                 pools[key][name] += value
+    if represented_pools != set(pools):
+        raise BudgetError('campaign spending has a pool absent from its referenced ledgers')
     for pool in pools.values():
         pool['remaining_tracked_microusd'] = max(0, pool['cap_microusd'] - pool['tracked_spend_microusd'])
     return {'scope': 'whole_campaign', 'budget_ledgers': len(document['budgets']), 'pools': pools,
