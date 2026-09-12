@@ -587,6 +587,12 @@ token usage. Unknown historical values remain unknown. Correction metadata is
 derived from retained source records, not guessed from model names or token counts.
 
 Retained Haiku publication uses `workspace_judgments.retained_judge_rows`.
+Transport probes publish as diagnostic evidence, not measured evidence or
+unknown work. If an unstarted assignment is selected as a real probe, its
+derived classification may be corrected with retained prior metadata and an
+unchanged model/input/generation identity; existing measured outputs must not
+be overwritten or promoted.
+
 It joins each saved verdict through the selected response's run and attempt
 identity, never by a shared question alone. The same API configuration identifies
 the judging condition across plan sizes. Invalid verdicts stay unscored; paid
@@ -594,6 +600,14 @@ HTTP attempts retain their own costs, and final usage is not copied onto earlier
 network failures. Publication accepts a completed prefix without requiring a
 fresh judge call or reloading the input corpora. The derived index does not
 modify the source plan, answers, verdicts or monetary ledger.
+
+A judge-only continuation can share a campaign spending scope containing more
+providers than that worker uses. Every pool available to the worker must still
+have a declared ceiling, every declared pool must occur in a referenced ledger,
+and all previous charges remain counted. The smaller worker must not reset
+balances, omit other providers' history, or create another copy of the campaign
+allowance. Network recovery retains previous uncertain charges and refers to
+the exact output awaiting its first completed verdict.
 
 Adding inputs to an existing API campaign must include their execution ledger in
 the same cumulative spending view. `AttemptBudget.use_campaign_spending` accepts
