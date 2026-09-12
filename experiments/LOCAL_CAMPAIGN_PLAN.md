@@ -21,8 +21,10 @@ missing output, distinguish input-context overflow, output-length exhaustion,
 transport failure and unusable text, and reconcile existing correction checkpoints
 before issuing any new generation. Preserve predecessor outcomes. A larger
 window is a tested new execution condition, not a presumed cure for every miss.
-Each recovered answer requires its own local and Haiku verdict; a judgment of
-another output cannot be reused. Hosted collection continues independently.
+Each recovered answer requires its own eligible native/local assessment and,
+where selected for the matched hosted comparison, a fresh Haiku assessment.
+A judgment of another output cannot be reused. Hosted collection continues
+independently.
 
 The 23:44 UTC audit inspected all 50,653 indexed response records. Of 6,103
 historical missing records, 3,263 have a normal-ended answer for the same model
@@ -161,6 +163,22 @@ UTC on 12 September; image-lane throughput and subsequent judging are not
 included in that estimate. The residual five still require targeted follow-up.
 Completed hosted Haiku judging and no-call source-context preparation have not
 interrupted this GPU owner or repeated a successful replacement.
+
+Replacement judging selection, 12 September: the exact input union across 153
+retained hosted program references overlaps 893 conditions in the 2,636-input
+recovery worklist: DeepSeek 617, Gemma 33, GPT-OSS 166, GraySwan RR 59,
+LLaVA base 15 and Ministral 3. This is a prospective overlap count, not a claim
+that all those outputs are already usable or eligible for common Haiku judging.
+Transport probes are excluded. At the no-call handoff, 243 new usable,
+non-truncated answers match this measured hosted selection. Keep their own
+response identities and obtain fresh verdicts; do not attach a predecessor's
+verdict to its replacement. Residual missing/truncated answers remain in the
+recovery worklist, and source-specific endpoints remain separate. Native judging
+follows target release; paid judging preparation must count these new requests
+against the existing Haiku allowance, without increasing the campaign ceiling.
+This handoff does not load models, repeat targets or reconstruct historical
+corpora. Final source ownership and eligibility are checked against the retained
+native records before assessment and publication.
 
 Human audit and thesis evidence synthesis remain separate work. This plan was written
 20 August 2026 after the readiness audit
