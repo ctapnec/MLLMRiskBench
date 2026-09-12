@@ -82,6 +82,19 @@ controllers and the measured child are attached to the existing Local campaign's
 Activity view. Operational scripts and exact worklists remain under the ignored
 thesis verification directory and the rig's engineering run directories.
 
+At 02:42 UTC, 59 of the selected conditions have been attempted: 58 have usable,
+non-truncated replacements and one still has no visible answer after its retry.
+The latter reports 4,096 completion tokens, but the older Runner discarded its
+native stop and generation metadata while normalizing the missing output.
+Fix 3c08b44 preserves these observations; it passed focused rig regressions and
+removed-fix checks without restarting the active recovery. The current worker
+remains on its original revision. Retain residual misses for cause-specific
+follow-up and, where necessary, a readiness-tested larger-output condition;
+do not repeat successful replacements or claim that token equality proves a
+length stop. Required judging and the replacement-aware final analysis remain
+pending. The current first DeepSeek unit's generation-only forecast is about
+12:10 UTC at the observed throughput; it is not a whole-campaign completion date.
+
 Human audit and thesis evidence synthesis remain separate work. This plan was written
 20 August 2026 after the readiness audit
 of the big rig (Debian, 2x RTX 4090 24,564 MiB, 125 GiB RAM, /mnt/stor 7.1 TB

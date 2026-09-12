@@ -62,6 +62,25 @@ still needs execution verification; a prepared or waiting controller is not a
 completed route. Tracked Haiku allowance remaining is USD 22.743713, distinct
 from the operator-reported Anthropic account balance.
 
+The delayed 02:42 aggregate records 9,734/10,736 started assignments and 9,715
+usable or recognized policy outcomes across the third/fourth expansion. The
+02:34 report itself timed out because reporting reread the monetary ledger per
+input. A bulk snapshot reduced observation time to six seconds without changing
+paid-call checks. Terra's reviewed continuation is complete; Luna has resumed
+untouched inputs while retaining one 4,096-token reasoning-only outcome, with
+zero automatic paid answer retries. Haiku's unclassified HTTP 400 was diagnosed
+by one funded retry of the failed request: the provider explicitly reported an
+output content-filter policy rejection. Preserve both physical attempts and
+unknown charges. Fix 3c08b44 handles that exact native policy response; it does
+not equate all HTTP 400 errors with refusals. The Haiku continuation uses the
+verified parser/classification and preserves the original checkpoint.
+
+At this snapshot the remaining tracked allowances are USD 22.743713 for Haiku
+judging, 8.140847 for Anthropic targets, 4.499124 OpenAI, 13.610344 Google,
+1.452341 Kimi and 0.867256 DeepSeek. These are not new account-credit observations
+and must not replace the dated operator balances below. Judging remains
+output-specific, with no verdict copied between models sharing an input.
+
 The matched judging population is output-owned: 5,049 retained local answers
 plus at most 3,719 new hosted outputs, not two verdicts per hosted assignment.
 The retained plan additionally requires 189 distinct source grading contexts

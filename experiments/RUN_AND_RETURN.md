@@ -2706,6 +2706,12 @@ Inspect these fields before resuming a paid failure: a provider policy rejection
 is not a transient network error or an observation of model instability. Do not
 automatically retry or rephrase a policy-rejected request. The existing bounded
 HTTP retry policy and zero paid answer retries are unchanged.
+Anthropic's exact SDK error `Output blocked by content filtering policy` at
+HTTP 400 is normalized to the bounded code `output_content_filter` and retained
+as a provider-policy outcome, including on the Fable surface. No completion,
+served-model identity or zero cost is invented. Other invalid-request messages
+remain errors. A previously retained unclassified error needs an evidenced
+review, not an automatic reinterpretation of every HTTP 400.
 An empty Chat/compatible answer also retains its actual finish reason,
 physical-attempt count, requested output allowance and available numeric usage.
 Runner checkpoints complete, internally consistent reported token totals even
@@ -2714,6 +2720,14 @@ or inconsistent usage stays unknown. None of this supplies a usable answer,
 authorizes a retry, or closes the paid-output stop. Older errors whose adapter
 discarded these fields cannot establish reasoning exhaustion or normal stopping
 from the error message alone.
+
+For local providers, a returned but unusable answer retains its observed
+generation settings, native stop reason, truncation flag, usage and latency
+after answer retries are exhausted. Missingness and truncation may both apply.
+Do not infer a length stop merely because usage equals the output allowance;
+older normalized records may have lost the native stop metadata. Recovery
+selects the exact unresolved input, keeps its predecessor, and treats a changed
+output allowance as a separate tested execution condition.
 
 Anthropic, Fable, OpenAI Chat/compatible and Responses targets expose
 `build_request(dialog, seed=...)` for an exact offline request preview. Live
@@ -2967,6 +2981,11 @@ or after each job. Keep intermediate progress in per-job records. If publication
 fails after completed jobs, reconcile their retained responses and resume only
 unfinished jobs under the same validated source; no new model preparation or
 target replay is needed merely to repair controller accounting.
+
+Operational hosted counts use `AttemptBudget.reserved_attempt_counts` once per
+program, after reading its durable outputs. Do not reopen and validate the
+whole monetary ledger for every input in a report. Each reporting snapshot is
+fresh; this optimization does not cache or bypass reservations before paid calls.
 
 An explicit, validated provider refusal is an observed target outcome even when
 there are no ordinary text turns. Preserve its refusal category and usage;
