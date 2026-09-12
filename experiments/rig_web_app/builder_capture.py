@@ -30,6 +30,7 @@ class BuilderCaptureMixin:
         "retained_replays_job",
         "retained_network_counts",
         "retained_programs_job",
+        "retained_collection_workers",
         "mode",
         "canary_dry",
         "corpora",

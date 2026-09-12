@@ -4120,6 +4120,13 @@ class LifecycleMixin:
                 from .builder_programs import prepare_programs
                 job = prepare_programs(self, self._builder_params(form or {}))
                 return 303, "/jobs/" + job.job_id, b""
+            if method == "POST" and path == "/build/review-collection":
+                from .builder_collection import collection_review
+                return 200, "text/html; charset=utf-8", collection_review(self,self._builder_params(form or {}))
+            if method == "POST" and path == "/build/collect-prepared":
+                from .builder_collection import collect_prepared
+                job = collect_prepared(self,form or {})
+                return 303, "/jobs/" + job.job_id, b""
             if method == "POST" and path == "/build/edit":
                 ticket = self._consume_launch_ticket((form or {}).get("edit_ticket", ""), purpose="build-edit")
                 if ticket is None:

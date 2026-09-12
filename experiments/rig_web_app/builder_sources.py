@@ -126,7 +126,9 @@ def source_panel(app, params: dict[str, str]) -> str:
     from .builder_budget import budget_panel
     from .builder_replays import replay_panel
     from .builder_programs import program_panel
-    return content + "</section>" + budget_panel(app, params) + replay_panel(params) + program_panel(params)
+    from .builder_collection import collection_panel
+    return (content + "</section>" + budget_panel(app, params) + replay_panel(params)
+            + program_panel(params) + collection_panel(params))
 
 
 def prepare_selected_inputs(app, params: dict[str, str]):
