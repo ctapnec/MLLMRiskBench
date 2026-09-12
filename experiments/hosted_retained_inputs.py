@@ -117,6 +117,35 @@ def _media_bindings(turns: list, media_index: Mapping[str, str]) -> list[dict]:
     return result
 
 
+def retained_input_identity(run: Mapping, corpus_sha: str, attempt: Mapping, metadata: Mapping) -> dict:
+    """Describe an already rendered input, independently of its answer or judge.
+
+    The caller supplies admitted source metadata. This function neither admits
+    a corpus nor resolves media. Historical hosted selection still enforces its
+    seed-zero and source-reader requirements in ``candidates_from_cells``.
+    """
+    params, turns = attempt["params"], attempt.get("rendered_input")
+    if not isinstance(turns, list) or not turns:
+        raise ValueError("retained Attempt has no exact rendered input")
+    physical = sorted({media["modality"] for turn in turns for media in (turn.get("media") or [])})
+    if any(value not in {"image", "audio", "video"} for value in physical):
+        raise ValueError("retained input has unsupported physical modality")
+    return {
+        "corpus": _text(run.get("corpus"), "corpus"),
+        "converted_corpus_sha256": _digest(corpus_sha, "converted corpus"),
+        "source": _text(params.get("planning_source", metadata.get("source")), "source"),
+        "framework": _text(attempt.get("attacker"), "framework"),
+        "datapoint_id": _text(attempt.get("datapoint_id"), "datapoint ID"),
+        "source_cluster_id": _text(params.get("source_cluster_id"), "source cluster"),
+        "requested_seed": attempt["seed"], "turn_index": attempt["turn_index"],
+        "modality": "+".join(physical) or "text", "required_modalities": ["text", *physical],
+        "risk": _text(metadata.get("risk_category", metadata.get("risk")), "input risk"),
+        "expected_behavior": _text(params.get("planning_expected_behavior", metadata.get("expected_behavior")), "behavior"),
+        "source_policy": copy.deepcopy(params.get("planning_source_policy", params.get("source_policy"))),
+        "rendered_input_sha256": _sha(turns),
+    }
+
+
 def candidates_from_cells(cells: Sequence[Mapping[str, Any]]) -> list[dict]:
     """Use only input metadata from cells already accepted by the exact source reader.
 
@@ -170,27 +199,7 @@ def candidates_from_cells(cells: Sequence[Mapping[str, Any]]) -> list[dict]:
                 raise ValueError("retained Attempt has no exact rendered input")
             if attempt.get("seed") != 0 or isinstance(attempt.get("seed"), bool):
                 raise ValueError("hosted follow-on requires retained seed 0")
-            physical = sorted({media["modality"] for turn in turns
-                               for media in (turn.get("media") or [])})
-            if any(value not in {"image", "audio", "video"} for value in physical):
-                raise ValueError("retained input has unsupported physical modality")
-            identity = {
-                "corpus": _text(run.get("corpus"), "corpus"),
-                "converted_corpus_sha256": corpus_sha,
-                "source": _text(params.get("planning_source", raw.get("source")), "source"),
-                "framework": _text(attempt.get("attacker"), "framework"),
-                "datapoint_id": _text(attempt.get("datapoint_id"), "datapoint ID"),
-                "source_cluster_id": _text(params.get("source_cluster_id"), "source cluster"),
-                "requested_seed": attempt["seed"], "turn_index": attempt["turn_index"],
-                "modality": "+".join(physical) or "text",
-                "required_modalities": ["text", *physical],
-                "risk": _text(raw.get("risk_category", raw.get("risk")), "input risk"),
-                "expected_behavior": _text(params.get("planning_expected_behavior",
-                                                      raw.get("expected_behavior")), "behavior"),
-                "source_policy": copy.deepcopy(params.get("planning_source_policy",
-                                                           params.get("source_policy"))),
-                "rendered_input_sha256": _sha(turns),
-            }
+            identity = retained_input_identity(run, corpus_sha, attempt, raw)
             identity_sha = _sha(identity)
             candidate = candidates.setdefault(identity_sha, {
                 **identity, "input_identity_sha256": identity_sha,

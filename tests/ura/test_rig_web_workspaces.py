@@ -194,9 +194,10 @@ def test_unknown_campaign_never_launches(tmp_path, monkeypatch):
         app.close()
 
 
-def test_prepared_hosted_launch_publishes_to_its_selected_workspace_only(tmp_path, monkeypatch):
+@pytest.mark.parametrize("command", ["hosted_campaign_execute", "run_matrix"])
+def test_prepared_hosted_launch_publishes_to_its_selected_workspace_only(tmp_path, monkeypatch, command):
     app = _app(tmp_path)
-    app.commands["hosted_campaign_execute"] = Command("hosted_campaign_execute", "diagnostic", "test", ())
+    app.commands[command] = Command(command, "diagnostic", "test", ())
     campaign = app.db.create_workspace("API publication", "api")
     environments = []
     monkeypatch.setattr(app, "_generic_child_environment", lambda *a: {
@@ -213,8 +214,8 @@ def test_prepared_hosted_launch_publishes_to_its_selected_workspace_only(tmp_pat
 
     monkeypatch.setattr("experiments.rig_web_app.lifecycle.subprocess.Popen", popen)
     try:
-        app.start_job("hosted_campaign_execute", {}, campaign_id=campaign)
-        app.start_job("hosted_campaign_execute", {})
+        app.start_job(command, {}, campaign_id=campaign)
+        app.start_job(command, {})
         assert environments[0]["URA_CAMPAIGN_WORKSPACE_ID"] == campaign
         assert environments[0]["URA_CAMPAIGN_CONSOLE_DB"] == str(app.db.path.resolve())
         assert "URA_CAMPAIGN_WORKSPACE_ID" not in environments[1]

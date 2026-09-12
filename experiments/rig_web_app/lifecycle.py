@@ -3308,7 +3308,7 @@ class LifecycleMixin:
             # Standalone launches must not inherit another campaign's binding.
             child_env.pop("URA_CAMPAIGN_WORKSPACE_ID", None)
             child_env.pop("URA_CAMPAIGN_CONSOLE_DB", None)
-            if command == "hosted_campaign_execute" and campaign_id:
+            if command in {"hosted_campaign_execute", "run_matrix"} and campaign_id:
                 child_env["URA_CAMPAIGN_WORKSPACE_ID"] = campaign_id
                 child_env["URA_CAMPAIGN_CONSOLE_DB"] = str(self.db.path.resolve())
             if transient_config is not None:

@@ -4244,6 +4244,10 @@ def build_parser() -> argparse.ArgumentParser:
     """
 
     ap = argparse.ArgumentParser(description="URA-Bench experiment matrix.")
+    ap.add_argument("--workspace-id", default=os.environ.get("URA_CAMPAIGN_WORKSPACE_ID", ""),
+                    help="optional campaign owner for local checkpoint publication")
+    ap.add_argument("--console-db", type=Path, default=os.environ.get("URA_CAMPAIGN_CONSOLE_DB") or None,
+                    help="SQLite campaign index; used with --workspace-id, not a generation setting")
     ap.add_argument("--dry-run", action="store_true", help="use MockTarget only")
     ap.add_argument(
         "--preflight-only", action="store_true",
@@ -4682,6 +4686,8 @@ def _main(argv=None) -> int:
         for token in raw_argv
     )
     args = ap.parse_args(raw_argv)
+    if bool(args.workspace_id) != (args.console_db is not None):
+        ap.error("--workspace-id and --console-db must be supplied together")
     from ura.runner import current_retained_execution_admission
     retained_admission = current_retained_execution_admission()
     if retained_admission is not None:
@@ -7567,8 +7573,12 @@ def _main(argv=None) -> int:
                             # Ollama checkpoints that omitted this artifact.
                             _write_json(paths["manifest"], planned.model_dump(mode="json"))
                     execution_started = True
-                    judgments, manifest = runner.run(
+                    from experiments.rig_web_app.workspace_local import run_with_workspace_publication
+                    judgments, manifest = run_with_workspace_publication(
+                        runner,
                         corpus,
+                        campaign_id=args.workspace_id, database=args.console_db,
+                        checkpoint=paths["checkpoint"], response_checkpoint=paths["response_checkpoint"],
                         started_at=run_started,
                         env=run_env,
                         run_config=cell_config,
@@ -7642,8 +7652,11 @@ def _main(argv=None) -> int:
                             stop_on_failed_output=spec in api_specs,
                             execution_stage="judgments",
                         )
-                        judgments, manifest = runner.run(
+                        judgments, manifest = run_with_workspace_publication(
+                            runner,
                             corpus,
+                            campaign_id=args.workspace_id, database=args.console_db,
+                            checkpoint=paths["checkpoint"], response_checkpoint=paths["response_checkpoint"],
                             started_at=run_started,
                             env=run_env,
                             run_config=cell_config,

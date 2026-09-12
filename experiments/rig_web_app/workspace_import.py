@@ -289,6 +289,42 @@ def _local_artifact_paths(source: dict) -> tuple[dict, dict | None]:
     return artifacts, completion
 
 
+def local_generation_condition(run: dict) -> str:
+    settings = {key: run.get(key) for key in (
+        "model_spec", "local_identity", "dtype", "resolved_quantization", "target_answer_retries",
+        "project_revision", "engine_runtime")}
+    return "local-generation-" + hashlib.sha256(json.dumps(
+        settings, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:24]
+
+
+def local_judge_condition(run: dict) -> str:
+    settings = {key: run.get(key) for key in (
+        "judge_names", "judge_model", "guardrail_model", "guardrail_revision", "judge_local_identity", "approximate_common_metrics")}
+    return "local-cascade-" + hashlib.sha256(json.dumps(
+        settings, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:24]
+
+
+def local_response_row(response: dict, condition: str, reference: str) -> dict:
+    identity = response["run_id"] + ":" + response["attempt_id"]
+    raw, tokens = response.get("raw") or {}, response.get("tokens") or {}
+    visible = any(isinstance(t.get("content"), str) and t["content"].strip() for t in response.get("output_turns", []))
+    failed = raw.get("model_stability_status") == "failed_output" or raw.get("target_input_status") == "incompatible"
+    generation, stop = raw.get("generation") or {}, _stop(raw)
+    truncated = raw.get("output_truncated")
+    if truncated is None and stop in {"truncated", "normal_stop"}:
+        truncated = stop == "truncated"
+    return dict(response_id=identity, assignment_id="local-"+identity,
+        condition_id=condition, outcome="missing" if failed or not visible else "usable",
+        truncated=truncated, source_ref=reference,
+        context_tokens=_first(generation, ("context_tokens", "max_model_len", "num_ctx")),
+        output_allowance=_first(generation, ("max_output_tokens", "max_tokens", "num_predict")),
+        input_tokens=_usage(tokens, ("input", "prompt")), output_tokens=_usage(tokens, ("output", "completion")),
+        reasoning_tokens=tokens.get("reasoning"),
+        finish_reason=_first(raw, ("finish_reason", "done_reason", "stop_reason")),
+        missing_category=(raw.get("model_stability_category") or raw.get("target_input_category")
+            or ("empty_output" if not visible else None)) if failed or not visible else None)
+
+
 def local_run_rows(source: dict, selections: dict[str, dict]) -> dict:
     """Index an explicitly selected native local run, including missing outputs.
 
@@ -324,11 +360,7 @@ def local_run_rows(source: dict, selections: dict[str, dict]) -> dict:
             responses.setdefault(key, (row, f"{artifacts['response_checkpoint']}:{number}"))
     if not selections.keys() <= attempts.keys():
         raise ValueError("Local selection has no native attempt")
-    settings = {key: run.get(key) for key in (
-        "model_spec", "local_identity", "dtype", "resolved_quantization", "target_answer_retries",
-        "project_revision", "engine_runtime")}
-    condition = "local-generation-" + hashlib.sha256(json.dumps(
-        settings, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:24]
+    condition = local_generation_condition(run)
     evidence = {"measured_run": "measured", "diagnostic_canary": "diagnostic",
                 "attestation_probe": "diagnostic", "preflight": "preflight"}.get(run.get("execution_purpose"), "unknown")
     assignments, outputs, judgments = [], [], []
@@ -344,28 +376,8 @@ def local_run_rows(source: dict, selections: dict[str, dict]) -> dict:
         if response_id is None:
             continue
         response, reference = responses[attempt_id]
-        raw, tokens = response.get("raw") or {}, response.get("tokens") or {}
-        visible = any(isinstance(t.get("content"), str) and t["content"].strip() for t in response.get("output_turns", []))
-        failed = raw.get("model_stability_status") == "failed_output" or raw.get("target_input_status") == "incompatible"
-        generation = raw.get("generation") or {}
-        stop = _stop(raw)
-        truncated = raw.get("output_truncated")
-        if truncated is None and stop in {"truncated", "normal_stop"}:
-            truncated = stop == "truncated"
-        outputs.append(dict(response_id=identity, assignment_id="local-"+identity,
-            condition_id=condition, outcome="missing" if failed or not visible else "usable",
-            truncated=truncated, source_ref=reference,
-            context_tokens=_first(generation, ("context_tokens", "max_model_len", "num_ctx")),
-            output_allowance=_first(generation, ("max_output_tokens", "max_tokens", "num_predict")),
-            input_tokens=_usage(tokens, ("input", "prompt")), output_tokens=_usage(tokens, ("output", "completion")),
-            reasoning_tokens=tokens.get("reasoning"),
-            finish_reason=_first(raw, ("finish_reason", "done_reason", "stop_reason")),
-            missing_category=(raw.get("model_stability_category") or raw.get("target_input_category")
-                or ("empty_output" if not visible else None)) if failed or not visible else None))
-    judge_settings = {key: run.get(key) for key in (
-        "judge_names", "judge_model", "guardrail_model", "guardrail_revision", "judge_local_identity", "approximate_common_metrics")}
-    judge_id = "local-cascade-" + hashlib.sha256(json.dumps(
-        judge_settings, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:24]
+        outputs.append(local_response_row(response, condition, reference))
+    judge_id = local_judge_condition(run)
     records = [(row, f"{artifacts['judgments']}:{number}", judge_id)
                for number, row in _jsonl(artifacts["judgments"])]
     if completion is not None:

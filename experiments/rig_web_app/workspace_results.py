@@ -31,6 +31,14 @@ def _same_response_source(left: str, right: str) -> bool:
                 and canonical_response_source_ref(a + ":1") == canonical_response_source_ref(b + ":1"))
 
 
+def _same_judgment_source(left: str, right: str) -> bool:
+    a, _, a_row = left.rpartition(":")
+    b, _, b_row = right.rpartition(":")
+    return left == right or bool(a_row.isdigit() and b_row.isdigit() and a != b
+        and a.removesuffix(".checkpoint.jsonl").removesuffix(".jsonl")
+        == b.removesuffix(".checkpoint.jsonl").removesuffix(".jsonl"))
+
+
 class WorkspaceResultsMixin:
     def _create_workspace_results(self) -> None:
         self._conn.execute(
@@ -171,7 +179,8 @@ class WorkspaceResultsMixin:
                             row[:3],
                         ).fetchone()
                         if old and old["status"] in {"valid", "invalid"} and tuple(old) != row:
-                            raise ValueError("Retained judgment changed; use a distinct judge condition")
+                            if tuple(old)[:-1] != row[:-1] or not _same_judgment_source(old["source_ref"], row[-1]):
+                                raise ValueError("Retained judgment changed; use a distinct judge condition")
                         self._conn.execute(
                             "INSERT INTO campaign_judgments VALUES(?,?,?,?,?,?) "
                             "ON CONFLICT(campaign_id,response_id,judge_id) DO UPDATE SET "
