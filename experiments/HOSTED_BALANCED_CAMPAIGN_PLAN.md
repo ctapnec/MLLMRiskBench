@@ -185,6 +185,25 @@ artifact is retained for the final grouped comparison, without adding duplicate
 judgment or cost rows to the campaign database. Local recovery remains the GPU
 priority, and every new replacement answer still requires its own judgments.
 
+At 05:34 UTC the primary hosted Haiku batch is complete: 2,876 assessments,
+2,865 valid verdicts and 11 invalid replies, with 2,778,464 reported input
+tokens, 72,405 output tokens and USD 3.140489 in charges. No judgment usage is
+unknown. All outcomes and charges are indexed in the API workspace. This does
+not close the native local scoring queue or the new local-replacement judging.
+
+The native source-context follow-up reconstructed 125 selected source inputs
+from five source populations, without historical-view or weight checksum
+scans. Comparing the actual RuleJudge fields and Llama Guard conversation
+inputs resolves another 129 contexts as unchanged judging inputs. Four have
+genuinely different source histories in the local judge request. These four
+output-specific assessments are prepared, not executed; they follow the main
+native judging queue after local target recovery releases the GPUs. A changed
+grading reference fails the equivalence control. Source subtype and membership
+metadata remain available for grouping even when the classifier input is the
+same. Across all 189 contexts, 185 therefore reference matching native scoring
+conditions, while four require a new local assessment; none requires another
+target generation or Haiku call.
+
 Recovery observation, 11 September at 19:07 UTC: 2,864 of the 3,719 request
 counts survived the interruption. A focused longer-timeout diagnostic completed
 one previously missing OpenAI image count in 57.7 seconds; Kimi returned a

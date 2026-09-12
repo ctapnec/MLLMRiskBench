@@ -151,6 +151,17 @@ actual-data wrong-model check rejects mismatched ownership before any database
 write, and removing that check fails the regression. Final native artifacts
 and the later replacement-aware analysis remain authoritative.
 
+The 05:34 UTC half-hour publication contains 380 attempted recovery conditions:
+375 usable, non-truncated replacements, four missing answers and one truncated
+answer. All 60 newly completed rows since 05:04 are usable and non-truncated.
+The remaining 2,256 conditions are unattempted, not additional failures. Both
+GPUs remain assigned to the first DeepSeek unit, which has 707 generations
+left. The current unit's generation-only forecast is approximately 11:30-12:00
+UTC on 12 September; image-lane throughput and subsequent judging are not
+included in that estimate. The residual five still require targeted follow-up.
+Completed hosted Haiku judging and no-call source-context preparation have not
+interrupted this GPU owner or repeated a successful replacement.
+
 Human audit and thesis evidence synthesis remain separate work. This plan was written
 20 August 2026 after the readiness audit
 of the big rig (Debian, 2x RTX 4090 24,564 MiB, 125 GiB RAM, /mnt/stor 7.1 TB
