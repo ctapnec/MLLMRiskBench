@@ -50,6 +50,16 @@ allowance. Its native assessments remain Runner's source-specific stage. Neither
 followup can reuse another answer's verdict or turn a publication error into
 permission to repeat a completed paid assessment.
 
+The native Gemma image unit subsequently completed all 568 assigned inputs,
+with 568 usable responses. The other 444 inputs continue after correcting a
+between-unit GPU-release timing assumption. The completed prefix is preserved.
+Ministral's one-request diagnostic now identifies an HTTP 400 image-decoding
+failure, not token exhaustion: all 31 affected entries declare WebP images.
+Compare the same decoded pixels delivered losslessly as PNG before launching
+that exact 31-input correction. Record the transport change, preserve source
+images and historical failures, and obtain native and eligible matched Haiku
+judgments of the corrected outputs. Do not rerun unrelated successful inputs.
+
 The 23:44 UTC audit inspected all 50,653 indexed response records. Of 6,103
 historical missing records, 3,263 have a normal-ended answer for the same model
 and exact input; 61 belong to the retired RWKV roster. The remaining selection
