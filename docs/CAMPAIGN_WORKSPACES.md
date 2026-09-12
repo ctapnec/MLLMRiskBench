@@ -2,6 +2,36 @@
 
 ## Campaign and run contract - whole-flow reassessment
 
+### Selected local inputs for a hosted follow-on
+
+The advanced Tools flow now supports ordinary completed Runner directories as
+input sources, independently of the thesis campaign's historical analysis
+layout. Use `retained_local_sources` to select one or more narrow source
+directories and optional exact run IDs. Its inventory includes failed local
+answers: response text, outcome and judge labels do not select the inputs.
+Later runs added to those directories do not silently enter the saved selection.
+
+Use `hosted_campaign_budget` for the target/judging forecast, then
+`hosted_retained_inputs` with that inventory to prepare a bounded, whole-cluster
+selection and replay artifacts. This existing replay protocol uses retained
+seed-zero inputs; adaptive conversations are replayed, not freshly attacked.
+It does not introduce arbitrary-seed or shared-cohort selection support.
+The selected-source request in `hosted_campaign_prepare` now emits executable
+programs without requiring the historical controller or GraySwan analysis.
+Its explicit network option permits token counting, not answer generation.
+Unchanged source context is reused by provider workers; budgets remain checked
+at paid dispatch. Old programs retain their original reader and interpretation.
+
+These typed forms and reusable preparation APIs are not the finished normal
+Build workflow. The remaining editor work must assemble source/replay inputs,
+request settings, shared budgets, readiness and requested judging stages from
+its ordinary controls. Do not present manual JSON/path handoffs as that completed
+UX. The retained executor still owns provider concurrency and continuation;
+creating a second scheduler or independently funded per-model grids is not the
+integration. Rig verification covers 181 focused tests, removed-fix controls
+and the real 568-input Gemma source, with no generation, judging or full-artifact
+checksum scan. The runbook documents the engineering request fields.
+
 The user-facing distinction is **Campaign** versus **Single run**, not local
 versus API. A campaign applies a defined selection of arms, corpora and attack
 frameworks to a set of models. It owns the resulting collection runs, preparation,

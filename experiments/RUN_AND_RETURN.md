@@ -2819,6 +2819,26 @@ never dismiss changed responses or judgments as a deployment effect. Preserve
 the previous view and its failed read, and bind the new directory explicitly
 before matched judging. This refresh makes no target or judge call.
 
+For a new campaign that does not use the historical analysis layout, first
+prepare its local source inventory with `python -m experiments.retained_local_sources
+--source-root /resolved/local-run --out /resolved/local-sources.json`.
+Repeat `--source-root` for other completed job directories; optional repeated
+`--run-id` limits the saved selection. Do not select the whole results store.
+The corresponding Tools form follows the same CLI. Full artifact checksums are
+opt-in. Saved answers and verdict labels do not control the selected inputs.
+
+Pass this inventory and its digest to `hosted_retained_inputs`; omit the legacy
+`--runner-view`. Existing budget, media, whole-cluster selection and exact
+source-corpus requirements still apply. For executable preparation use request
+`ura-hosted-retained-campaign-request/5` with the counted input policy
+`counted_requests_within_route_reservation_v1`. It retains the request fields
+below except `runner_view` and `rr_analysis_root`, and substitutes
+`sources.local_sources` for `sources.historical_result`. It produces execution
+plan `/9` using the existing seed-zero replay-plan `/1` selection. Earlier
+request/program versions are unchanged. This is fresh-campaign preparation,
+not a new supplemental-funding or recovery contract. The normal Build editor
+must still assemble these controls into a complete workflow.
+
 Prepare those programs with `python -m experiments.hosted_campaign_prepare
 --request /resolved/path/campaign-request.json --request-sha256 '<SHA-256>'
 --out-root /resolved/path/fresh-hosted-preparation`. The request schema is
