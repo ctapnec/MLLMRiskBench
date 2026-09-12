@@ -125,6 +125,31 @@ def test_added_campaign_inventory_shares_unchanged_ceiling_and_retains_history(c
         assert json.loads((current.root/'campaign-spending.json').read_text()) == expanded
 
 
+def test_added_inventory_can_lower_the_shared_credit_stop_without_resetting_spend(campaign, tmp_path):
+    prior, current, document = campaign
+    prior.reserve('A', 1, provider='anthropic')
+    prior.settle('A', 1, 60)
+    current.use_campaign_spending(document)
+    original = (current.root/'campaign-spending.json').read_bytes()
+    added_root = tmp_path/'lower-credit-extension'
+    descriptor = create_budget(added_root, provider_budgets_microusd={'anthropic': 200},
+        protected_haiku_microusd=10, reservation_policy='per_attempt',
+        planned_calls=[{'call_id':'new','provider':'anthropic','pool':'target','bound_microusd':100}])
+    added = AttemptBudget(added_root, descriptor['sha256'])
+    added.use_precalculated_spending()
+    expanded = copy.deepcopy(document)
+    expanded['budgets'].append({'root':str(added_root),'plan_sha256':descriptor['sha256']})
+    expanded['pool_caps_microusd']['anthropic:target'] = 60
+    current.use_campaign_spending(expanded)
+    added.use_campaign_spending(expanded)
+    assert (current.root/'campaign-spending-before-extension-2.json').read_bytes() == original
+    for money, call_id in ((current,'A'),(added,'new')):
+        assert money.snapshot()['campaign_spending']['pools']['anthropic:target']['tracked_spend_microusd'] == 60
+        with pytest.raises(BudgetCapacityUnavailable):
+            money.reserve(call_id,1,provider='anthropic')
+        assert money.reserved_attempt_count(call_id) == 0
+
+
 def test_unknown_and_inflight_are_not_maximum_holds_or_zero_settlements(campaign):
     prior, current, document = campaign
     prior.reserve('A', 1, provider='anthropic')

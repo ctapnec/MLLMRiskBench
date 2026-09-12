@@ -299,9 +299,11 @@ class AttemptBudget:
                 if value != document:
                     before = {(row['root'], row['plan_sha256']) for row in value['budgets']}
                     after = {(row['root'], row['plan_sha256']) for row in document['budgets']}
-                    if (value['pool_caps_microusd'] != document['pool_caps_microusd']
+                    old_caps, new_caps = value['pool_caps_microusd'], document['pool_caps_microusd']
+                    if (set(old_caps) != set(new_caps)
+                            or any(new_caps[key] > old_caps[key] for key in old_caps)
                             or not before < after):
-                        raise BudgetError('campaign extension must retain all ledgers and unchanged ceilings')
+                        raise BudgetError('campaign extension must retain all ledgers without increasing ceilings')
                     history = self.root / f'campaign-spending-before-extension-{len(before)}.json'
                     if history.exists():
                         retained, _ = _read_regular(history, label='campaign spending history', max_bytes=_MAX_BYTES)
