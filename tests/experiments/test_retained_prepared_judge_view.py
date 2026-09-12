@@ -36,14 +36,14 @@ def prepared(retained,tmp_path,monkeypatch):  # noqa: F811
 
 
 def test_prepared_outputs_supply_candidates_without_fabricated_manifests_or_verdicts(prepared):
-    retained,value,path=prepared
+    records,value,path=prepared
     cells,metadata,identities,audit=judge._read_view(path)
     assert 'manifest' not in cells[0] and cells[0]['judgments']==[]
     assert all(set(row)=={'attempt_id'} for row in identities.values())
     assert len(metadata)==len(identities)==audit['policy_evaluable_samples']==2
     candidates,population=judge.load_candidates(path,include_match_identity=True)
     assert len(candidates)==population['eligible_usable_outputs']==2
-    assert {row['attempt_id'] for row in candidates}==set(retained.inputs)
+    assert {row['attempt_id'] for row in candidates}==set(records.inputs)
     # Only the context access path differs; the retained candidate fields and
     # content identities remain byte-equivalent to the original view contract.
     legacy=copy.deepcopy(cells)
@@ -53,11 +53,11 @@ def test_prepared_outputs_supply_candidates_without_fabricated_manifests_or_verd
 
 
 def test_empty_output_exclusion_does_not_exclude_usable_truncation_or_depend_on_local_verdict(prepared):
-    retained,value,path=prepared
-    keys=list(retained.responses)
-    retained.responses[keys[0]]['response']['output_turns']=[]
-    retained.responses[keys[1]]['response']['raw']['output_truncated']=True
-    retained.judgments.clear()
+    records,value,path=prepared
+    keys=list(records.responses)
+    records.responses[keys[0]]['response']['output_turns']=[]
+    records.responses[keys[1]]['response']['raw']['output_truncated']=True
+    records.judgments.clear()
     candidates,population=judge.load_candidates(path)
     assert len(candidates)==1 and candidates[0]['attempt_id']==keys[1]
     assert population['excluded_missing_outputs']==1
@@ -76,8 +76,8 @@ def test_prepared_diagnostics_cannot_enter_measured_haiku_selection(prepared):
 
 
 def test_source_task_rows_remain_outside_common_judging(prepared):
-    retained,value,_=prepared
-    next(iter(retained.inputs.values()))[0].meta['common_metrics_eligible']=False
+    records,value,_=prepared
+    next(iter(records.inputs.values()))[0].meta['common_metrics_eligible']=False
     view=subject.read_hosted_preparation(value)
     rows,audit=judge._candidates_from_view(*view)
     assert len(rows)==1 and audit['excluded_source_authoritative_rows']==1
