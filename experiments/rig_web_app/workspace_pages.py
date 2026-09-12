@@ -391,7 +391,7 @@ class WorkspacePagesMixin:
                 "Judging costs belong to the campaign whose output was judged. "
                 "Recorded costs are not account balances; uncertain exposure is not a money hold. "
                 "Local work has no API charge; electricity and hardware costs are not estimated.</p>"
-                + table(("Provider / model", "Role", "HTTP attempts / local evaluations", "Recorded cost (USD)",
+                + "<div class='campaign-costs'>" + table(("Provider / model", "Role", "HTTP attempts / local evaluations", "Recorded cost (USD)",
                          "Uncertain charge exposure (USD)", "Reported tokens: input / output / reasoning"),
                     [[html.escape(row["provider"] + " / " + row["model"]), html.escape(row["role"]),
                       f"{row['http_attempts']:,} / {row['local_evaluations']:,}",
@@ -399,7 +399,7 @@ class WorkspacePagesMixin:
                       + f"<br>{row['settled_attempts']:,} settled; {row['unknown_attempts']:,} unknown; {row['unsettled_attempts']:,} in flight",
                       amount(row["exposure_microusd"]) + (f"; {row['unknown_exposure_count']:,} without a bound" if row["unknown_exposure_count"] else ""),
                       " / ".join(tokens(row, name) for name in ("input", "output", "reasoning"))]
-                     for row in rows[:25]])
+                     for row in rows[:25]]) + "</div>"
                 + pagination(len(rows) > 25)
             )
         if section == "judging":

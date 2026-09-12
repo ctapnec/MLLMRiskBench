@@ -97,6 +97,13 @@ th { color:var(--muted); font-weight:600; font-size:.78rem;
   border-bottom:2px solid var(--line); }
 tr:hover td { background:var(--soft); }
 .scroll { overflow-x:auto; }
+.campaign-costs table { table-layout:fixed; min-width:58rem; }
+.campaign-costs th, .campaign-costs td { overflow-wrap:anywhere; }
+.campaign-costs th:nth-child(1) { width:27%; }
+.campaign-costs th:nth-child(2) { width:8%; }
+.campaign-costs th:nth-child(3) { width:13%; }
+.campaign-costs th:nth-child(4), .campaign-costs th:nth-child(5) { width:16%; }
+.campaign-costs th:nth-child(6) { width:20%; }
 pre { background:var(--soft); border:1px solid var(--line);
   border-radius:10px; padding:.8rem .95rem; overflow-x:auto;
   font-size:.82rem; white-space:pre-wrap; word-break:break-word; }
