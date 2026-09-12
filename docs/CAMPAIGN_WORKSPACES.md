@@ -84,6 +84,14 @@ Build's General section now starts source preparation from the campaign index:
    preserving the existing per-attempt spending policy. A changed target list
    requires a refreshed table; it cannot reuse stale per-model caps.
 
+The new forecast action is rig-verified and queued for console deployment; the
+older selected-source action is already deployed. Its initial Haiku forecast
+assumes one hosted and one matched local output per target request. This is not
+the final number of distinct selected local answers: later preparation must
+count the actual output-specific judging population, including multiple local
+models and any already assessed identical outputs. Do not use the initial
+forecast as permission to exceed an execution or judging allowance.
+
 The selector includes historical outputs even when a later replacement is
 selected in Stats. It never chooses the newest or best answer automatically.
 It resolves only the selected artifact locations, then reuses the existing
