@@ -1083,3 +1083,21 @@ Automatic readiness, device scheduling, complete incremental population
 reconciliation and final deployed UI acceptance remain open. In particular,
 the existence of a selected Haiku job is not evidence that all campaign outputs
 have been judged. See the operator runbook for the exact Build flow and scope.
+
+### All-output matched inventory
+
+`retained_judge_inventory` accepts saved local source inventories and hosted
+native preparations. It selects hosted input entries first, then includes every
+retained local and hosted output for those entries. Selection does not depend
+on whether an answer exists. Missing text, unmatched inputs and unprepared
+source jobs remain coverage categories; they are not paid judging candidates.
+Inputs match on the original prompt, media, seed, source criteria and attack
+context, not just question wording. Repeated preparations cannot duplicate a
+run. A formerly unprepared job is no longer counted pending when an explicitly
+supplied later preparation contains it.
+
+This is a no-call inventory, available through CLI and Tools. It does not reuse
+verdicts, allocate money or claim that judging has finished. The bounded Build
+comparison above remains unchanged until its all-output execution and reuse
+integration is complete. Any later reuse must refer to the same saved output
+and judging condition, never merely to the same input or another model's answer.

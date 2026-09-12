@@ -6905,6 +6905,25 @@ assignment's explicitly selected response, preserving historical assessments.
 Normal Build preparation and judging management remain tracked separately in
 the workspace specification.
 
+### Inventory all answers on the same input entries
+
+Use `retained_judge_inventory` before an all-model matched comparison. Supply
+`--local-view` with the saved local source inventory and `--hosted-view` with
+the native hosted preparation. Repeat either option for disjoint source
+preparations. `--input-limit 0` keeps every hosted input; a positive limit takes
+a deterministic input prefix under `--sample-seed`. `--out` is a new inventory
+file. The equivalent command is available in Tools.
+
+This inventory includes all local model outputs matching each selected hosted
+input, including missing answers in its coverage. It reports counts by model
+and cohort without multiplying one physical output by its comparison links.
+It keeps inputs even when every answer in one cohort is missing. Inputs with
+no local record and source jobs not yet prepared remain explicit. Supply only
+the intended historical or corrected source runs: this command does not choose
+the most favorable recovery. It makes no target, judge or provider calls and
+does not grant funding or claim verdict reuse. Full Build execution of this
+broader selection remains separate from the bounded paired controls above.
+
 Console-form to runbook-section mapping (the console builds the identical
 argument vectors; nothing below is console-only):
 
@@ -6921,6 +6940,7 @@ argument vectors; nothing below is console-only):
 | `retained_native_judge_prepare` | Prepare local judging of saved hosted answers |
 | `retained_native_judge_execute` | Execute local judging of saved hosted answers |
 | `retained_response_judge_pair_execute` | Publish retained-output judging into campaigns |
+| `retained_judge_inventory` | Inventory all answers on the same input entries |
 | `lane_canary` | 8.1, 9.1 |
 | `native_import` | 14.3, 16 |
 | `human_audit` (common and source-task frames) | 15, 15.1 |
