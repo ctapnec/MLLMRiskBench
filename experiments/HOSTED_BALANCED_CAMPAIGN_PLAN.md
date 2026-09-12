@@ -48,6 +48,20 @@ and published; the next scheduled report is 02:04 UTC. Assess further matched
 coverage against the credit history and outstanding Haiku costs without holding
 the current queue.
 
+At the 02:05 UTC aggregate, the combined third/fourth expansion has attempted
+8,348 of 10,736 assignments and retains 8,329 usable outcomes, up 784 attempts
+since the previous half-hour report. All five providers remain active and no
+campaign-wide spending stop is open. Terra's older pinned worker classified one
+explicit HTTP 400 `bio_policy` rejection as a transport failure despite the
+already verified adapter correction. Preserve that rejection without repeating
+its query. A scoped continuation loads the existing tested classification fix,
+waits for the current OpenAI workers to finish, and resumes only untouched
+policy-paused inputs with at most two provider workers. Other providers and the
+local missing-output recovery do not wait on this correction. This continuation
+still needs execution verification; a prepared or waiting controller is not a
+completed route. Tracked Haiku allowance remaining is USD 22.743713, distinct
+from the operator-reported Anthropic account balance.
+
 The matched judging population is output-owned: 5,049 retained local answers
 plus at most 3,719 new hosted outputs, not two verdicts per hosted assignment.
 The retained plan additionally requires 189 distinct source grading contexts

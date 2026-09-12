@@ -56,6 +56,32 @@ is promoted into the campaign, and the default profile remains unchanged.
 Complete the other models' cause-specific recovery and both required judges
 before writing final outcomes. Preserve historical failures and correction links.
 
+Execution update, 12 September at 02:09 UTC: all 2,636 pending model-input
+conditions have now been matched to their original delivered prompts/media and
+seeds. No input is missing from the recovery worklist. Native Runner recovery
+has started on 1,087 DeepSeek conditions; a separate prepared queue covers its
+remaining 101 plus Gemma 634, GPT-OSS 372, Ministral 31, GraySwan RR 391 and
+LLaVA base 20. Use the already verified local profiles: DeepSeek and both
+LLaVA targets have 4,096 output tokens, while Gemma, GPT-OSS and Ministral have
+8,192. Context is automatically fitted to the available GPUs and each request
+has the approved 120-second deadline and one answer retry. These settings differ
+from the early 512-token runs. Do not silently promote the diagnostic 8,192-token
+DeepSeek configuration into a readiness-approved profile.
+
+The previously timed-out readiness question completed in 4.3 seconds after a
+separate 6.3-second model preload. This establishes responsiveness under the
+tested loaded condition, not a definitive cause for the initial timeout.
+Recovery uses exact input filters, not a fresh random sample. Where loading the
+whole source is necessary to locate the old inputs, its other rows are only the
+filter universe, not additional assigned queries or claimed completed outputs.
+The two-GPU DeepSeek owner runs without a resident scoring model; native local
+judging follows target release. Subsequent units wait for that owner, not for
+hosted work. Fresh Haiku assessments and replacement-aware final analysis remain
+required after collection. Historical outcomes remain unchanged. The recovery
+controllers and the measured child are attached to the existing Local campaign's
+Activity view. Operational scripts and exact worklists remain under the ignored
+thesis verification directory and the rig's engineering run directories.
+
 Human audit and thesis evidence synthesis remain separate work. This plan was written
 20 August 2026 after the readiness audit
 of the big rig (Debian, 2x RTX 4090 24,564 MiB, 125 GiB RAM, /mnt/stor 7.1 TB
