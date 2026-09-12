@@ -71,6 +71,52 @@ class WorkspaceResultsMixin:
             "status TEXT NOT NULL, label TEXT, source_ref TEXT NOT NULL, "
             "PRIMARY KEY(campaign_id,response_id,judge_id))"
         )
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS campaign_input_progress ("
+            "campaign_id TEXT NOT NULL, run_id TEXT NOT NULL, model TEXT NOT NULL, "
+            "condition_id TEXT NOT NULL, evidence_class TEXT NOT NULL, planned INTEGER NOT NULL, "
+            "reached INTEGER NOT NULL, updated_at REAL NOT NULL, PRIMARY KEY(campaign_id,run_id))"
+        )
+
+    def publish_workspace_inputs(self, campaign_id: str, *, run_id: str, model: str,
+                                 condition_id: str, evidence_class: str, planned: int, reached: int) -> None:
+        """Source rows per native run, not generated turns or finished assessments."""
+        self.require_workspace(campaign_id)
+        if any(not isinstance(value, str) or not value.strip() or len(value) > 4096
+               for value in (run_id, model, condition_id)):
+            raise ValueError("Invalid input-plan identity")
+        if evidence_class not in {"measured", "diagnostic", "preflight", "unknown"}:
+            raise ValueError("Input plan needs its evidence class")
+        if type(planned) is not int or type(reached) is not int or not 0 <= reached <= planned:
+            raise ValueError("Invalid planned/reached source-row counts")
+        row = (campaign_id, run_id, model, condition_id, evidence_class, planned)
+        with self._lock:
+            if self._conn is None:
+                raise ValueError("Campaign database is unavailable")
+            with self._conn:
+                old = self._conn.execute(
+                    "SELECT * FROM campaign_input_progress WHERE campaign_id=? AND run_id=?", row[:2]
+                ).fetchone()
+                if old:
+                    if tuple(old)[:6] != row:
+                        raise ValueError("Native input plan changed; retain a separate run")
+                    if old["reached"] >= reached:
+                        return  # Resume can replay a smaller durable prefix while restoring.
+                self._conn.execute(
+                    "INSERT INTO campaign_input_progress VALUES(?,?,?,?,?,?,?,?) "
+                    "ON CONFLICT(campaign_id,run_id) DO UPDATE SET reached=excluded.reached,updated_at=excluded.updated_at",
+                    (*row, reached, time.time()),
+                )
+
+    def workspace_input_totals(self, campaign_id: str, *, model: str = "", condition: str = "",
+                               offset: int = 0) -> list[sqlite3.Row] | None:
+        return self._query(
+            "SELECT model,evidence_class,COUNT(*) AS runs,SUM(planned) AS planned,SUM(reached) AS reached,"
+            "MAX(updated_at) AS updated_at FROM campaign_input_progress "
+            "WHERE campaign_id=? AND (?='' OR model=?) AND (?='' OR condition_id=?) "
+            "GROUP BY model,evidence_class ORDER BY model,evidence_class LIMIT 26 OFFSET ?",
+            (campaign_id, model, model, condition, condition, max(0, offset)),
+        )
 
     def publish_workspace_results(self, campaign_id: str, *, assignments: list[dict],
                                   responses: list[dict], judgments: list[dict]) -> None:
@@ -206,8 +252,9 @@ class WorkspaceResultsMixin:
 
     def workspace_result_models(self, campaign_id: str) -> list[sqlite3.Row] | None:
         return self._query(
-            "SELECT DISTINCT model FROM campaign_assignments WHERE campaign_id=? ORDER BY model",
-            (campaign_id,),
+            "SELECT model FROM campaign_assignments WHERE campaign_id=? "
+            "UNION SELECT model FROM campaign_input_progress WHERE campaign_id=? ORDER BY model",
+            (campaign_id, campaign_id),
         )
 
     def workspace_result_conditions(self, campaign_id: str, *, model: str) -> list[sqlite3.Row] | None:

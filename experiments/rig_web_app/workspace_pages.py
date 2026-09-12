@@ -385,9 +385,26 @@ class WorkspacePagesMixin:
                 [[html.escape(row["judge_id"]), html.escape(row["status"]), str(row["count"])] for row in rows],
             )
         if section == "overview":
+            inputs = self.db.workspace_input_totals(campaign_id, offset=page * 25, model=model, condition=condition)
+            input_coverage = ""
+            if inputs:
+                input_coverage = (
+                    "<h3>Native collection input coverage</h3>"
+                    "<p>Source rows in the indexed local run plans. Reached means at least one durable "
+                    "response record, including missing output. It does not mean every seed, adaptive turn "
+                    "or judgment is complete. The same source row in separate runs is counted separately. "
+                    "Older runs without an indexed input plan are not represented here.</p>"
+                    + table(("Model", "Evidence", "Runs", "Source rows planned", "Reached", "Not reached"),
+                        [[html.escape(row["model"]), html.escape(row["evidence_class"]), str(row["runs"]),
+                          str(row["planned"]), str(row["reached"]), str(row["planned"] - row["reached"])]
+                         for row in inputs[:25]])
+                    + pagination(len(inputs) > 25)
+                )
+            elif inputs is None:
+                input_coverage = "<p class='notice amber'>Native input-plan index unavailable.</p>"
             rows = self.db.workspace_model_totals(campaign_id, offset=page * 25, model=model, condition=condition)
             if not rows:
-                return unknown
+                return input_coverage + unknown
             chart = coverage_html(rows[:25])
             exports = "<p id='campaign-exports'>" + " ".join(
                 "<a class='button ghost' data-campaign-export download='campaign-" + name + "' href='/campaigns/" + campaign_id
@@ -400,7 +417,7 @@ class WorkspacePagesMixin:
                 "Pending means no selected retained outcome; it does not establish that no HTTP attempt occurred. "
                 "Truncation overlaps usable/missing outcomes and is not an additional outcome bucket. "
                 "Execution conditions remain distinct; these counts are not pooled safety rates.</p>"
-                + exports + chart + "<details><summary>Exact counts and execution-condition coverage</summary>" + table(
+                + input_coverage + exports + chart + "<details><summary>Exact counts and execution-condition coverage</summary>" + table(
                     ("Model", "Evidence", "Conditions", "Assigned", "Usable", "Policy", "Missing", "Retry pending", "Pending", "Truncated", "Truncation unknown"),
                     [["<a href='/campaigns/" + campaign_id + "?section=results&amp;model=" + quote(row["model"], safe="")
                       + ("&amp;condition=" + quote(condition, safe="") if condition else "") + "'>" + html.escape(row["model"]) + "</a>"]

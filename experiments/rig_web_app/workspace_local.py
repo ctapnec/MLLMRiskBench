@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import time
 from pathlib import Path
 
@@ -30,6 +31,10 @@ class LocalCheckpointPublication:
         self.condition, self.judge = local_generation_condition(self.run), local_judge_condition(self.run)
         self.metadata = {dp.id: dict(source=dp.source, risk_category=dp.risk_category,
             expected_behavior=dp.expected_behavior) for dp in corpus}
+        self.reached_inputs = set()
+        self.published_input_count = None
+        self.evidence = {"measured_run": "measured", "diagnostic_canary": "diagnostic",
+            "attestation_probe": "diagnostic", "preflight": "preflight"}.get(self.run.get("execution_purpose"), "unknown")
         self.paths = {"response": Path(response_checkpoint), "judgment": Path(checkpoint)}
         self.references, self.lines = {}, {}
         # One pass over the two exact checkpoint files at cell startup. No
@@ -42,6 +47,7 @@ class LocalCheckpointPublication:
                     self.lines[role] = number
         self.pending, self.published, self.db = {}, set(), None
         self.status_path = self.paths["response"].with_suffix(".publication.json")
+        self.flush()  # Publish the loaded input plan before the first target call.
 
     def _rows(self, record, role):
         attempt, response = record["attempt"], record["response"]
@@ -60,12 +66,10 @@ class LocalCheckpointPublication:
                 raise ValueError("Recovery output differs from its original retained input")
             choice = original
         identity = self.run_id + ":" + aid
-        evidence = {"measured_run": "measured", "diagnostic_canary": "diagnostic",
-            "attestation_probe": "diagnostic", "preflight": "preflight"}.get(self.run.get("execution_purpose"), "unknown")
         assignment = dict(assignment_id="local-"+identity, model=self.model,
             input_id=_sha(choice), condition_id=self.condition, modality=choice["modality"],
             framework=choice["framework"], corpus=choice["corpus"], response_id=identity,
-            evidence_class=evidence)
+            evidence_class=self.evidence)
         reference = self.references["response"].get(aid, self.references[role][aid])
         judgments = []
         if role == "judgment":
@@ -91,18 +95,24 @@ class LocalCheckpointPublication:
     def flush(self):
         error = None
         try:
-            if self.pending and self.db is None:
+            if self.db is None:
                 self.db = ConsoleDB(Path(self.database))
             for key, record in list(self.pending.items()):
                 self.db.publish_workspace_results(self.campaign_id, **self._rows(record, key[1]))
+                self.reached_inputs.add(record["attempt"]["datapoint_id"])
                 self.published.add(key)
                 del self.pending[key]
-        except (OSError, ValueError, KeyError, TypeError, RuntimeError) as exc:
+            if self.published_input_count != len(self.reached_inputs):
+                self.db.publish_workspace_inputs(self.campaign_id, run_id=self.run_id, model=self.model,
+                    condition_id=self.condition, evidence_class=self.evidence,
+                    planned=len(self.metadata), reached=len(self.reached_inputs))
+                self.published_input_count = len(self.reached_inputs)
+        except (OSError, ValueError, KeyError, TypeError, RuntimeError, sqlite3.Error) as exc:
             error = type(exc).__name__
             if self.db is not None:
                 self.db.close()
                 self.db = None
-        status = dict(status="publication_pending" if self.pending else "published",
+        status = dict(status="publication_pending" if self.pending or error else "published",
             campaign_id=self.campaign_id, run_id=self.run_id, published_records=len(self.published),
             pending_records=len(self.pending), error_type=error, updated_at=time.time())
         # Publication failure is not a generation failure. Its small retained
