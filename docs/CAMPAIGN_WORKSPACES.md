@@ -1077,8 +1077,8 @@ work. The underlying CLI and Tools expose the same optional funding arguments;
 the four executor binding fields must be supplied together.
 
 This control is a bounded paired comparison: at most one local counterpart is
-selected per hosted answer. It does not yet manage the larger expansion's
-all-matching-local-output inventory or cross-preparation judgment reuse.
+selected per hosted answer. Its paid execution does not yet manage the larger
+all-matching-local-output population or cross-preparation judgment reuse.
 Automatic readiness, device scheduling, complete incremental population
 reconciliation and final deployed UI acceptance remain open. In particular,
 the existence of a selected Haiku job is not evidence that all campaign outputs
@@ -1096,10 +1096,19 @@ context, not just question wording. Repeated preparations cannot duplicate a
 run. A formerly unprepared job is no longer counted pending when an explicitly
 supplied later preparation contains it.
 
-This is a no-call inventory, available through CLI and Tools. It does not reuse
-verdicts, allocate money or claim that judging has finished. The bounded Build
-comparison above remains unchanged until its all-output execution and reuse
-integration is complete. Any later reuse must refer to the same saved output
+This no-call inventory is available in Build, CLI and Tools. Build's
+**Same-input output coverage** panel defaults to all hosted inputs and reads
+all completed source-preparation increments for the selected collection, not
+only the most recent increment. Repeated clicks reuse an identical active or
+completed inventory. The review shows retained output and missing-text counts
+by model, unmatched local coverage and unprepared source outputs. Mobile rows
+keep all counts visible; exact model fingerprints remain in the full artifact
+and label title rather than dominating the table.
+
+The inventory does not reuse verdicts, allocate money or claim that judging
+has finished. Text availability alone does not establish rubric eligibility.
+The bounded Build comparison above remains unchanged until its all-output
+execution and reuse integration is complete. Any later reuse must refer to the same saved output
 and judging condition, never merely to the same input or another model's answer.
 
 For a hosted-only follow-up, `retained_hosted_judge_items` connects a saved

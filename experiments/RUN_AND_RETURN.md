@@ -6914,6 +6914,16 @@ preparations. `--input-limit 0` keeps every hosted input; a positive limit takes
 a deterministic input prefix under `--sample-seed`. `--out` is a new inventory
 file. The equivalent command is available in Tools.
 
+In Build, finish or refresh the saved source preparations, then use
+**Same-input output coverage -> Prepare all-output coverage**. Set the input
+limit to zero for every hosted input, or choose a positive limit and seed.
+After that background job completes, choose **Review all-output coverage**.
+The review combines all completed preparation increments for this collection,
+including successful units in partial preparations, and retains pending source
+coverage. Inspect counts by model and the full saved inventory before selecting
+judgments. Repeating an identical request reopens its existing job. This step
+has no API charges and does not start the separately reviewed paired Haiku job.
+
 This inventory includes all local model outputs matching each selected hosted
 input, including missing answers in its coverage. It reports counts by model
 and cohort without multiplying one physical output by its comparison links.
