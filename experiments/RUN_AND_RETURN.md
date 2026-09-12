@@ -1,5 +1,21 @@
 # Run and return: broad thesis experiment program
 
+Local image transport: preserve source files and input identities. The tested
+Ollama adapter can deliver a static RGB/RGBA WebP image as lossless PNG when
+the installed serving backend cannot decode WebP. It does not resize images
+or silently reduce animations to one frame. Retain the delivery format as a
+generation condition; compare the original and converted input on the actual
+runtime before attributing a historical decoder failure to model behavior.
+Recover only explicitly selected missing conditions, then judge each new
+output. A repeated or truncated visible answer is not automatically missing.
+
+Campaign publication must include saved local judgments as well as responses
+and hosted judgments. An indexing repair must not regenerate answers or repeat
+judging. Use the actual output identity and retained judging configuration;
+missing-output assessments remain separate from valid verdicts. Repeated
+publication must leave the same identities and counts unchanged. See RA-580
+in the engineering ledger for the retained recovery publication correction.
+
 Current campaign execution uses pre-calculated quantities and reported-spend
 tracking, not maximum-cost money holds. For an existing prepared budget:
 

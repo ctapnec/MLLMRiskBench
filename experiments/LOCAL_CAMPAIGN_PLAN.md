@@ -60,6 +60,25 @@ that exact 31-input correction. Record the transport change, preserve source
 images and historical failures, and obtain native and eligible matched Haiku
 judgments of the corrected outputs. Do not rerun unrelated successful inputs.
 
+At 15:04 UTC, 2,225 of the original 2,636 recovery conditions have been
+attempted: 2,134 usable non-truncated replacements, 76 missing outputs and
+16 truncated outputs, including one missing-and-truncated overlap. The 411
+unstarted conditions belong to GraySwan RR and LLaVA base. A direct comparison
+found that Gemma's 31 image transport failures are the exact same WebP inputs
+that failed for Ministral. The codec correction therefore selects 62
+model-input conditions, not 31 new independent images. It excludes the two
+visible truncated Gemma answers and changes neither their generation settings
+nor source images. Execution waits for the same-pixel PNG diagnostic; new
+native and matched Haiku judgments follow the actual replacement outputs.
+Historical failures remain saved and are not silently relabelled.
+
+The recovery publication had omitted saved local judgments from SQLite. At
+15:12 UTC all 2,225 retained assessments were indexed: 2,149 verdicts and 76
+missing-output assessments. Repeating publication adds no rows; removing the
+publication fix fails the actual-evidence regression. No target or judge was
+called to repair the display. Subsequent checkpoint publication now includes
+these local assessments alongside outputs and eligible Haiku judgments.
+
 The 23:44 UTC audit inspected all 50,653 indexed response records. Of 6,103
 historical missing records, 3,263 have a normal-ended answer for the same model
 and exact input; 61 belong to the retired RWKV roster. The remaining selection
