@@ -2859,6 +2859,18 @@ Runner pipeline. The advanced budget form exposes `--route-configuration`, its
 matching digest and `--reservation-policy`, including `per_attempt`; omit the
 route configuration only when intentionally using the legacy fixed cohort.
 
+After source preparation, normal Build also exposes a selected-model budget
+table. Refresh it after changing hosted targets, choose per-model request caps
+and a pricing date, then prepare the forecast. It uses the existing
+`hosted_campaign_budget` CLI with an automatically written route list and
+`--reservation-policy per_attempt`; no target, judge or token-count call follows.
+The route-list CLI loader accepts a JSON list while the API, price and budget
+registries still require objects. Build preserves the source and budget job
+links in its saved definition. The copied registry balances are observations,
+not a live provider balance check, and the forecast's token assumptions remain
+distinct from later exact-input counting. This step does not yet compose the
+complete replay/readiness/execution/judging pipeline.
+
 Pass this inventory and its digest to `hosted_retained_inputs`; omit the legacy
 `--runner-view`. The existing budget and whole-cluster selection still apply.
 With `--materialize-corpus`, selected local sources now reconstruct their exact

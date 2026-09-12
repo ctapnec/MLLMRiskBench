@@ -73,14 +73,25 @@ Build's General section now starts source preparation from the campaign index:
 4. Open the preparation job from Build or Jobs. It belongs to the destination
    campaign; its original source runs retain their own ownership. The saved
    draft retains the run selection and preparation job link.
+5. Reopen the campaign in Build and select the hosted target models. Under
+   **Forecast matched hosted work**, refresh the selected-model table, set a
+   whole-number request cap for each model and choose the pricing date. Output
+   allowances come from the actual configured target routes, not a uniform
+   replacement limit. **Prepare forecast** launches the ordinary budget CLI as
+   a campaign-owned job. It copies the selected configuration, configured prices
+   and reported balances; it makes no provider request and reserves no money.
+   The forecast includes Haiku assessments of hosted and matched local outputs,
+   preserving the existing per-attempt spending policy. A changed target list
+   requires a refreshed table; it cannot reuse stale per-model caps.
 
 The selector includes historical outputs even when a later replacement is
 selected in Stats. It never chooses the newest or best answer automatically.
 It resolves only the selected artifact locations, then reuses the existing
 source-preparation command. Opening the page does not scan or hash result files.
 This is a separate preparation action, not a switch silently changing the
-current Runner pipeline's corpus. The remaining budget, replay, readiness and
-judging orchestration below is not yet assembled by the normal Build editor.
+current Runner pipeline's corpus. The remaining replay, readiness, shared
+execution funding and judging orchestration below is not yet assembled by the
+normal Build editor. A forecast is not that execution handoff.
 This preparation action is deployed at `00dce99`. Twenty-three focused rig
 tests, three removed-fix checks and a real Build-handler child launch passed.
 The actual campaign index listed 413 runs in 0.22 seconds, and preparation
