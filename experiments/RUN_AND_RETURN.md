@@ -6563,9 +6563,11 @@ Publication follows durable response and judgment callbacks, including restored
 checkpoints, and is not performed by page navigation. Missingness, truncation,
 context/output allowance and observed token usage remain separate fields.
 Recovery publication also requires the original retained input selection; a
-filtered recovery corpus is not a new question identity. The external campaign
-publisher provides that selection today. Normal Build continuation wiring and
-the full planned-population view remain tracked in the workspace specification.
+filtered recovery corpus is not a new question identity. New native recoveries
+carry that original identity automatically in their sampling metadata. Older
+records can use an explicit original selection. Normal Build continuation
+controls and historical planned-population import remain tracked in the
+workspace specification.
 
 Campaign-owned native collection publishes its loaded source-row count before
 generation begins. Overview distinguishes planned, reached and not-yet-reached
