@@ -17,6 +17,15 @@ credit. Independent providers keep running. Calls already in flight can finish
 after a ceiling is reached, so this is not a worst-case hard spending guarantee.
 Do not describe forecast exposure as money reserved in this mode.
 
+If a saved answer reports more tokens than its pre-call forecast, retain the
+answer and account for the complete reported usage before dispatching more
+work. In precalculated mode this corrects the forecast, not the campaign's
+spending ceiling. A validated maximum-tariff bound may exceed that forecast
+while the exact discounted bill remains unknown. Do not open a shared stop
+solely for that difference or regenerate the saved answer. In optional
+reservation mode, the original per-attempt restriction still applies.
+Missing usage or unsupported billing categories are not covered by this rule.
+
 Optional conservative collection: use `hosted_campaign_budget --reservation-policy
 per_attempt` to retain the full input inventory with request-level money
 reservation. Preparation carries this policy into the shared attempt budget.

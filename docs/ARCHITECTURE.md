@@ -970,6 +970,14 @@ new paid attempt reads current spending. Provider exhaustion still stops that
 provider. In-flight requests can settle after a threshold is reached, so this
 mode is not a strict worst-case monetary bound.
 
+A complete reported-token cost bound can exceed the initial request forecast
+without exhausting the campaign. Under precalculated spending, the ledger
+retains the corrected bound and its previous forecast, leaving the immutable
+input plan and cumulative spending ceilings unchanged. Exact discounted cost
+remains unknown when the provider's cache pricing is incomplete. Subsequent
+calls use the updated cumulative total; the usable response is not repeated.
+Optional reservation mode retains its per-attempt allowance restriction.
+
 When an adapter rejects a provider's returned representation, Runner can retain
 a bounded JSON copy of that reply with the failed attempt. The Anthropic adapter
 supplies response content, stop reason, usage and the actual HTTP-attempt count;

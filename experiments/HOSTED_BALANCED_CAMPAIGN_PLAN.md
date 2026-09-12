@@ -5,8 +5,9 @@ selection. Exact whole-cluster selection and media materialization have retained
 3,719 assignments on 1,200 distinct inputs already used locally. All 3,719 exact
 request counts are retained. Final preparation completed using the existing
 budget and count cache, with no repeated provider-count requests. Collection
-is active: the 12 September 00:37 UTC snapshot records 144 started assignments
-and 141 usable outcomes. These are interim counts, not completed results.
+reached 567 started assignments and 567 usable outcomes at the 12 September
+01:04 UTC snapshot. Its controller then requires recovery from the accounting
+stop described below. These are interim counts, not completed results.
 The third campaign's 81-input addition is complete; remaining Google work and
 outstanding judging continue independently.
 
@@ -24,6 +25,17 @@ records to the existing workspaces. A failed or timed-out observation is recorde
 without stopping the next poll or any independent execution controller. The
 00:34 observation's preparation-record mismatch was corrected without changing
 the prepared programs or restarting model requests.
+
+At approximately 01:02 UTC, Sol returned and durably saved a usable answer whose
+reported-token cost bound exceeded the pre-call forecast: USD 0.226805 versus
+USD 0.180790. An inherited per-call check stopped the shared queue even though
+the campaign uses precalculated cumulative spending. This is not exhausted
+provider credit or a missing answer. Fix 5bc5786 records the complete reported
+bound under that policy without raising campaign ceilings; the exact discounted
+bill remains unknown. Focused rig verification was launched. SSH became
+unavailable before its result and the checkpoint continuation could be verified.
+Resume the existing 12 programs, preserve all 567 outputs and their completed
+transport probes, and publish the next aggregate without waiting for local work.
 
 The matched judging population is output-owned: 5,049 retained local answers
 plus at most 3,719 new hosted outputs, not two verdicts per hosted assignment.
