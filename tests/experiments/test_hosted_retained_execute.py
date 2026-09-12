@@ -240,7 +240,7 @@ def test_precalculated_aggregate_usage_preserves_answer_and_unknown_bill_above_f
         response = generate(dialog, seed=seed)
         # Actual Sol Pro usage shape: aggregate input exceeds counted prompt;
         # positive cache writes lack an exact tariff in the retained price file.
-        response.tokens.update(input=20565, output=6199, cached_input=8353, cache_write_input=1808)
+        response.tokens.update(input=20565, output=6199, total=26764, cached_input=8353, cache_write_input=1808)
         return response
 
     monkeypatch.setattr(target, "generate", aggregate_usage)
