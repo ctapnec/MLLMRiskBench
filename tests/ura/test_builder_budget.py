@@ -1,5 +1,6 @@
 """Selected-route forecasts use the existing CLI, never a second scheduler."""
 import copy
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -109,3 +110,16 @@ def test_fixed_route_uses_its_actual_inherent_output_policy(study,monkeypatch):
     routes,api = subject.selected_routes(app,dict(params,api=fixed['spec']))
     assert routes[0]['max_output_tokens'] == fixed['max_output_tokens']
     assert routes[0]['inherent_config'] is True and api[fixed['spec']] == {'modalities':['text','image']}
+
+
+def test_budget_loader_keeps_configuration_objects_distinct_from_route_lists(tmp_path):
+    path = tmp_path/'routes.json'
+    path.write_text('[]')
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    with pytest.raises(ValueError,match='JSON object'):
+        budget.load_bound_json(path,digest)
+    assert budget.load_bound_json(path,digest,expect_list=True)[0] == []
+    path.write_text('{}')
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    with pytest.raises(ValueError,match='JSON list'):
+        budget.load_bound_json(path,digest,expect_list=True)

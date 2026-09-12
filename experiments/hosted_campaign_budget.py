@@ -168,7 +168,7 @@ def _pairs(items: list[tuple[str, object]]) -> dict[str, object]:
     return value
 
 
-def load_bound_json(path_value: Path, expected_sha256: str) -> tuple[dict, dict]:
+def load_bound_json(path_value: Path, expected_sha256: str, *, expect_list: bool = False) -> tuple[Any, dict]:
     if _HEX64.fullmatch(expected_sha256) is None:
         raise ValueError("input SHA-256 must be 64 lowercase hex")
     unresolved = Path(path_value)
@@ -192,8 +192,8 @@ def load_bound_json(path_value: Path, expected_sha256: str) -> tuple[dict, dict]
         value = json.loads(payload.decode("utf-8"), object_pairs_hook=_pairs)
     except (UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError("budget input is not strict UTF-8 JSON") from exc
-    if not isinstance(value, dict):
-        raise ValueError("budget input must be a JSON object")
+    if not isinstance(value, list if expect_list else dict):
+        raise ValueError("budget input must be a JSON " + ("list" if expect_list else "object"))
     return value, {"file": path.name, "sha256": observed, "bytes": len(payload)}
 
 
@@ -597,7 +597,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if bool(args.route_configuration) != bool(args.route_configuration_sha256):
         parser.error("route configuration requires its SHA-256")
     if args.route_configuration:
-        routes, _ = load_bound_json(args.route_configuration, args.route_configuration_sha256)
+        routes, _ = load_bound_json(args.route_configuration, args.route_configuration_sha256, expect_list=True)
     projection = build_projection(
         api_config=api_config,
         pricing=pricing,
