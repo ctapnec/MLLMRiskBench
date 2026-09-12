@@ -1,7 +1,7 @@
 """Provider-limited execution of already admitted hosted Runner jobs.
 
-Selection, source validation and funding happen before dispatch. Workers inherit
-that read-only preparation, retain Runner checkpoints, and use the existing
+Selection, source validation and funding happen before dispatch. Workers receive
+that preparation, retain Runner checkpoints, and use the existing
 per-request budget and transport-retry handling. No local campaign is scheduled
 here, and collection never waits for a different program's judging stage.
 """
@@ -74,16 +74,18 @@ def dispatch_admitted(
     as pending, not silently tried with a fresh selection. The caller publishes
     the returned states and owns any explicit continuation.
 
-    This process controller runs on the POSIX rig. It must be invoked as a
-    detached command, not forked from a web request thread.
+    This process controller runs as a detached command on the POSIX rig. A
+    forkserver starts workers without inheriting the web server's or numerical
+    libraries' active threads. Admitted metadata are transferred to the workers;
+    historical corpus admission is not repeated there.
     """
     if type(workers_per_provider) is not int or not 1 <= workers_per_provider <= 8:
         raise ValueError("Workers per provider must be an integer from 1 to 8")
     if type(responses_only) is not bool or not programs or any(not jobs for jobs in programs):
         raise ValueError("Dispatch needs nonempty admitted programs and an explicit execution stage")
-    if "fork" not in multiprocessing.get_all_start_methods():
+    if "forkserver" not in multiprocessing.get_all_start_methods():
         raise RuntimeError("Provider-parallel retained execution requires the POSIX rig")
-    context = multiprocessing.get_context("fork")
+    context = multiprocessing.get_context("forkserver")
     from experiments.hosted_retained_execute import _billing_provider
     tasks = []
     outputs = set()

@@ -3,7 +3,6 @@ from collections import Counter
 from contextlib import nullcontext
 import json
 import multiprocessing
-from pathlib import Path
 from types import SimpleNamespace
 import time
 
@@ -12,7 +11,7 @@ import pytest
 from experiments import hosted_dispatch as subject
 
 
-pytestmark = pytest.mark.skipif("fork" not in multiprocessing.get_all_start_methods(), reason="POSIX rig dispatcher")
+pytestmark = pytest.mark.skipif("forkserver" not in multiprocessing.get_all_start_methods(), reason="POSIX rig dispatcher")
 
 
 def admission(root, provider, name, *, purpose="measured_run", fail=False):
@@ -23,7 +22,7 @@ def admission(root, provider, name, *, purpose="measured_run", fail=False):
 
 def worker(job, *, responses_only):
     begin = time.monotonic_ns()
-    time.sleep(0.08)
+    time.sleep(0.2)
     end = time.monotonic_ns()
     (job.events / (job.job["name"] + ".json")).write_text(json.dumps({
         "start": begin, "end": end, "provider": job.program["provider"],
@@ -126,12 +125,12 @@ def test_real_worker_requires_complete_accounting_after_deferred_judging(tmp_pat
 
 
 def test_worker_crash_is_failed_not_an_unfinished_wait(tmp_path):
-    import os
-
-    def crash(job, *, responses_only):
-        os._exit(7)
-
     result = subject.dispatch_admitted([[admission(tmp_path, "openai", "crash")]],
-        _worker=crash, _pause=lambda _: None)
+        _worker=crash_worker, _pause=lambda _: None)
     assert result[0]["status"] == "failed"
     assert result[0]["error_type"] == "WorkerExitedWithoutResult"
+
+
+def crash_worker(job, *, responses_only):
+    import os
+    os._exit(7)

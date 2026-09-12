@@ -98,6 +98,9 @@ def test_registered_count_uses_funded_starts_and_final_or_checkpointed_responses
     monkeypatch.setattr(admission.budget, "_load", observed_load)
     assert subject._retained_execution_counts(program, admission.budget) == (2, 1)
     assert len(reads) == 1, "Reporting must not reload the monetary ledger per input"
+    reads.clear()
+    assert subject._retained_execution_counts(program, admission.budget, include_saved=True) == (2, 1, 2)
+    assert len(reads) == 1, "Saved-output accounting must use the same single ledger snapshot"
 
 
 @pytest.mark.parametrize("final_prefix", [0, 1])
