@@ -106,6 +106,12 @@ owners have finished, then recover only unresolved inputs under the tested
 condition and obtain fresh judgments for their actual new outputs. This is a
 targeted alternative for remaining misses, not a restart of successful rows or
 an automatic claim that all missing outputs were caused by context overflow.
+At 08:31 UTC the standard readiness controller is queued after both active
+local recovery owners. It supersedes the never-executed stress-only diagnostic,
+is visible in Local campaign Activity, and will store a separate profile rather
+than change the settings of an existing run. The half-hour aggregate reports its
+state. A passing assessment must still be followed by exact residual replay
+and judgments of the new answers.
 
 The unstarted 1,549-condition queue has moved to a clean isolated checkout of
 3c08b44 with its own validated project receipt. All existing profiles and exact
