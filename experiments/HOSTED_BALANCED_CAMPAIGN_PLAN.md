@@ -81,6 +81,18 @@ judging, 8.140847 for Anthropic targets, 4.499124 OpenAI, 13.610344 Google,
 and must not replace the dated operator balances below. Judging remains
 output-specific, with no verdict copied between models sharing an input.
 
+At 03:04 UTC the combined expansion has started 10,416/10,736 inputs and
+retained 10,399 usable answers or recognized policy outcomes. The reviewed
+Terra, Luna and Haiku continuations are complete without repeating saved answers.
+Flash continues; Pro remains quota-pending. The existing 5,049 matching local
+answers have been joined to their native records without model calls. Complete
+full-request Haiku token counting, including any longer retained answers, before
+judging them. One counted GPT-OSS answer needs USD 0.016234 rather than its old
+USD 0.014848 request allowance. Review such differences together without raising
+the overall campaign ceiling or truncating source answers. This is still judging
+preparation, not 5,049 completed verdicts. New local recovery answers have their
+own later output-specific judging obligation.
+
 The matched judging population is output-owned: 5,049 retained local answers
 plus at most 3,719 new hosted outputs, not two verdicts per hosted assignment.
 The retained plan additionally requires 189 distinct source grading contexts

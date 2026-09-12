@@ -103,6 +103,14 @@ the console were untouched. Subsequent units will therefore retain missing-outpu
 generation metadata. Both the handoff and successor appear in Local campaign
 Activity. No new runtime installation or model download is involved.
 
+The 03:04 UTC observation records 99 attempted recovery conditions: 96 usable,
+non-truncated replacements, two missing outputs and one usable truncated output.
+The latter three remain unresolved, not successful corrections. Their exact
+input references are retained for follow-up; the two older normalized missing
+records do not expose their native stop reason. Unattempted queue entries are
+not counted as failed. Keep the successful replacements and reassess only the
+residual problems after the active GPU owner releases the models.
+
 Human audit and thesis evidence synthesis remain separate work. This plan was written
 20 August 2026 after the readiness audit
 of the big rig (Debian, 2x RTX 4090 24,564 MiB, 125 GiB RAM, /mnt/stor 7.1 TB

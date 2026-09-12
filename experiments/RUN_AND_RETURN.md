@@ -220,6 +220,14 @@ that understands those allocations. Future first attempts and unknown charges
 hold their enlarged allowance; retries need the same enlarged funding. An
 unfunded overrun or a paid-output circuit still stops new spending. A
 contingency is an operational reservation, not a guaranteed provider token cap.
+In precalculated mode these allowances remain accounting bounds, not money
+held for every possible maximum-length response. Shared retained-output judging
+must read the reviewed effective allowances, not only the original slot estimates.
+The same effective bound applies to an HTTP retry. Read a whole judging plan's
+allowances once, and keep the immediate paid-call spending checks. If a complete
+retained answer exceeds its old estimate, count and review the full request;
+never shorten the answer to make the old estimate fit. Preserve the old plan
+and use an explicit successor if the judging plan's own ceiling must change.
 See the official OpenAI reasoning-mode documentation:
 https://developers.openai.com/api/docs/guides/reasoning#reasoning-mode
 
