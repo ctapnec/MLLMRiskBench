@@ -109,6 +109,37 @@ campaign workers or reinstalling runtimes. Full historical import,
 automatic result publication, full cost-source attribution, matched comparison figures and
 the remaining execution actions below are unfinished.
 
+### Prepared hosted collection through Tools
+
+`hosted_campaign_execute` now exposes the reusable provider-parallel collection
+path through the typed Tools form. Select the campaign owner, supply each exact
+prepared/attested program and its matching digest, the shared spending plan and
+clean execution checkout, and a fresh control output directory. The per-provider
+worker count defaults to two. All selected providers can progress concurrently;
+each program's own probe and canary finish before its measured jobs. Collection
+does not wait for judging and does not load a local judge.
+
+The dispatcher preserves the prepared input IDs and Runner arguments. It does
+not resample, introduce answer retries, or change the existing HTTP retry and
+paid-attempt accounting. A paused program does not block independent providers.
+Its target-collection terminal means responses are saved and judging is pending,
+not that the campaign is complete. A failed worker retains a continuation state;
+do not restart a paid program from zero to repair its accounting.
+
+On the rig, workers start with `forkserver` and receive already admitted jobs;
+they do not inherit active parent threads or reconstruct historical sources for
+every dispatch. Source validation is shared per distinct source context. Funding
+stop observation reads stop metadata and the immutable plan, not the complete
+spending history; the live spending check still occurs before each paid attempt.
+Full retained-file checksum revalidation remains opt-in.
+
+This is the advanced prepared-program launch, not completed normal Build
+integration. Preparation, counting, reviewed spending, attestation, multi-local
+scheduling, judging and ongoing publication still need the end-to-end workflow
+acceptance above. Rig checks cover the rendered form, exact CLI mapping,
+campaign ownership, provider concurrency and real retained job metadata without
+issuing paid calls. Browser visual acceptance and deployment remain pending.
+
 The active API index was refreshed from its seventeen explicit current program
 sources: 4,097 assignments, 3,908 retained outcomes and 3,917 physical-attempt cost
 records. This is the current continuation and Flash-extension subset, not the

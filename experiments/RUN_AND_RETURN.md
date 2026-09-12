@@ -6511,6 +6511,34 @@ An absent maximum tariff, invalid usage or a response without token totals
 does not qualify. In particular, a retained HTTP 400 does not become a
 zero-cost attempt merely because it produced no visible answer.
 
+### Collect prepared hosted programs concurrently
+
+Use `python -m experiments.hosted_campaign_execute` for a reviewed selection of
+already prepared/attested hosted programs. Required flags are repeatable paired
+`--program` and `--program-sha256`, then `--budget-root`,
+`--budget-plan-sha256`, `--project-root`, `--expected-commit` and a fresh absolute
+`--out` directory whose parent is already resolved. Program/digest pairs use
+the same order. `--workers-per-provider` defaults to 2 and accepts 1 through 8.
+The equivalent Tools form keeps the selected campaign owner on its real job.
+
+Different providers execute concurrently. A program's attestation and canary
+precede its measured jobs; unrelated programs do not wait for their judging.
+The command collects target responses only. `selection.json` records the fixed
+workload, `progress.json` records worker state, and `result.json` distinguishes
+complete target collection awaiting judging from a required continuation.
+Only complete assigned starts and saved outputs qualify as collected; retained
+missing outcomes remain missing, not successful answers. Run the requested
+output-specific judging stage separately after collection or on independent
+resources. Do not use this command to replay already completed paid calls.
+
+Source admission is shared once per source context. The rig's isolated workers
+receive the same admitted arguments and input IDs, with unchanged per-attempt
+budget and HTTP retry handling. Full retained-file hashing is disabled by
+default; `--verify-artifact-sha256` explicitly enables that audit. Provider stop
+observation does not repeatedly parse the spending history. This command does
+not replace the normal Build preparation/counting workflow, whose complete
+integration is tracked in `docs/CAMPAIGN_WORKSPACES.md`.
+
 Console-form to runbook-section mapping (the console builds the identical
 argument vectors; nothing below is console-only):
 
@@ -6523,6 +6551,7 @@ argument vectors; nothing below is console-only):
 | `rig_check` | 8.1, 9-13 |
 | `run_matrix` (dry-run, probe, canary, measured) | 4.1, 8/8.1, 9/9.1, 10-13 |
 | `live_attestation` | 8.1, 9 |
+| `hosted_campaign_execute` | Collect prepared hosted programs concurrently |
 | `lane_canary` | 8.1, 9.1 |
 | `native_import` | 14.3, 16 |
 | `human_audit` (common and source-task frames) | 15, 15.1 |
