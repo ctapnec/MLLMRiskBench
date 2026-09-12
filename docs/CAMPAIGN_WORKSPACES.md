@@ -692,6 +692,15 @@ locators. It does not relabel them as newly judged work or infer a fresh model
 call or cost. The current API campaign's 79 previously omitted inline verdicts
 are indexed; those outputs did not require another judgment.
 
+Equivalent source-context links are not additional outputs or assessments.
+`workspace_contexts.native_context_reference` requires the same actual response,
+model and established native evaluation criteria, and retains references only
+to the expected judge conditions. Missing primary judgments remain pending.
+If an output has several applicable retained assessments, their labels remain
+separate; publication does not choose the favorable one. Context references
+add no generation, judgment or cost rows to SQLite. Genuinely different native
+criteria still require their own output-specific assessment.
+
 A judge-only continuation can share a campaign spending scope containing more
 providers than that worker uses. Every pool available to the worker must still
 have a declared ceiling, every declared pool must occur in a referenced ledger,
