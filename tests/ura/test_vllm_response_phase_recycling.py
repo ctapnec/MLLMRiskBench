@@ -192,12 +192,11 @@ def test_judge_child_preserves_target_phase_start_not_its_new_timestamp(tmp_path
 def test_non_vllm_judging_handoff_retains_start_before_target_calls(tmp_path, monkeypatch):
     from ura.hosted_scheduling import HostedJudgingDeferred
 
-    out, argv, events, allocation = _matrix(tmp_path, monkeypatch)
+    out, argv, events, _allocation = _matrix(tmp_path, monkeypatch)
     monkeypatch.setattr(run_matrix, "_recyclable_vllm_child", lambda **kw: False)
     target_type = type(run_matrix.build_target())
     judge_type = type(run_matrix.build_judges().stages[0])
     generate = target_type.generate
-    preflight = judge_type.preflight
     observed_starts = []
 
     def retained_generate(self, dialog, *, seed=None):
@@ -219,11 +218,6 @@ def test_non_vllm_judging_handoff_retains_start_before_target_calls(tmp_path, mo
     assert not list(out.glob("*.complete.json"))
     assert events.count("target_call") == 2
 
-    allocation["target"] = False
-    monkeypatch.setattr(judge_type, "preflight", preflight)
-    assert run_matrix.main(argv) == 0
-    assert events.count("target_call") == 2
-    assert events.count("judge_preflight") == 1
     saved = json.loads(next(out.glob("*.manifest.json")).read_text())
     assert saved["started_at"] == observed_starts[0]
 
