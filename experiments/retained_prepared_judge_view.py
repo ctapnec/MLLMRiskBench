@@ -108,7 +108,10 @@ def read_hosted_preparation(value):
     return cells,metadata,identities,dict(policy_evaluable_samples=len(metadata),
         common_ineligible_evaluable_rows_excluded=excluded_source,
         excluded_diagnostic_outputs=excluded_diagnostic,
-        unprepared_outputs=sum(source['assigned'] for source in value.get('failed',[])))
+        unprepared_outputs=sum(source['assigned'] for source in value.get('failed',[])),
+        prepared_source_jobs=[(source['program'],source['job']) for source in value['units']],
+        unprepared_source_jobs=[dict(program=source['program'],job=source['job'],assigned=source['assigned'])
+            for source in value.get('failed',[])])
 
 
 def read_prepared_view(path):

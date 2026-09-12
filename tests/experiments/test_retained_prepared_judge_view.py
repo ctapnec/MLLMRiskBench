@@ -75,6 +75,20 @@ def test_prepared_diagnostics_cannot_enter_measured_haiku_selection(prepared):
     assert rows==[] and audit['excluded_diagnostic_outputs']==2
 
 
+def test_input_inventory_retains_missing_rows_but_legacy_judge_selection_does_not(prepared):
+    records,_value,path=prepared
+    keys=list(records.responses)
+    records.responses[keys[0]]['response']['output_turns']=[]
+    view=judge._read_view(path)
+    legacy,population=judge._candidates_from_view(*view,include_match_identity=True)
+    complete,coverage=judge._candidates_from_view(*view,include_match_identity=True,include_missing=True)
+    assert len(legacy)==1 and len(complete)==2
+    assert next(row for row in complete if row['attempt_id']==keys[1])==legacy[0]
+    assert population==coverage
+    assert coverage['eligible_usable_outputs']==1 and coverage['excluded_missing_outputs']==1
+    assert next(row for row in complete if row['attempt_id']==keys[0])['response_sha256']==hashlib.sha256(b'').hexdigest()
+
+
 def test_source_task_rows_remain_outside_common_judging(prepared):
     records,value,_=prepared
     next(iter(records.inputs.values()))[0].meta['common_metrics_eligible']=False

@@ -1210,6 +1210,18 @@ def _commands() -> dict[str, Command]:
             ),
         ),
         Command(
+            "retained_judge_inventory",
+            "experiments.retained_judge_inventory",
+            "Inventory every local and hosted answer on the same inputs, without judging or spending",
+            (
+                CommandParam("--local-view", "path", required=True, repeat=True),
+                CommandParam("--hosted-view", "path", required=True, repeat=True),
+                CommandParam("--input-limit", "int", help="Zero keeps every hosted input, including missing answers."),
+                CommandParam("--sample-seed", "int"),
+                CommandParam("--out", "path", required=True),
+            ),
+        ),
+        Command(
             "retained_response_judge_pair_execute",
             "experiments.retained_response_judge_pair_execute",
             "Execute one sealed matched local and hosted Haiku judging plan",
@@ -1340,6 +1352,7 @@ COMMAND_GROUPS: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
             "retained_native_judge_prepare",
             "retained_native_judge_execute",
             "retained_response_judge_pair",
+            "retained_judge_inventory",
             "retained_response_judge_pair_execute",
         ),
     ),

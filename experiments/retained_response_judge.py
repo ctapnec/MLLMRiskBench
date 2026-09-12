@@ -270,6 +270,7 @@ def _candidates_from_view(
     judgments: Mapping[str, dict], audit: Mapping[str, Any], *, include_match_identity: bool = False,
     original_cells: Sequence[Mapping[str, Any]] = (),
     allow_empty: bool = False,
+    include_missing: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Construct the unchanged candidate contract after its source view validates."""
     contexts: dict[str, dict[str, str]] = {}
@@ -296,7 +297,8 @@ def _candidates_from_view(
         response_text = str(meta.get("prepared_response") or "").strip()
         if not response_text:
             excluded_missing += 1
-            continue
+            if not include_missing:
+                continue
         run_id = _text(meta.get("run_id"), label="candidate run ID")
         context = contexts.get(run_id)
         if context is None:
@@ -371,7 +373,7 @@ def _candidates_from_view(
         raise ValueError("validated Runner view has no usable common retained outputs")
     population = {
         "validated_joined_rows": int(audit["policy_evaluable_samples"]),
-        "eligible_usable_outputs": len(candidates),
+        "eligible_usable_outputs": len(candidates) - (excluded_missing if include_missing else 0),
         "excluded_missing_outputs": excluded_missing,
         "excluded_source_authoritative_rows": int(
             audit["common_ineligible_evaluable_rows_excluded"]
