@@ -182,6 +182,7 @@ def haiku_judging_panel(app,params):
     body=("<section class='card'><h2>Haiku comparison of saved outputs</h2>"
         '<p>Select input-matched local and hosted answers from the saved preparation above. Preparation '
         'makes no provider calls and uses the existing judging allocation. It does not regenerate targets.</p>'
+        "<div class='haiku-judging-controls'>"
         "<label class='campaign-field'>Haiku judge<select form='builder' name='retained_haiku_model'>"
         +''.join("<option value='"+html.escape(model,quote=True)+"'"+(' selected' if model==chosen else '')+'>'
             +html.escape(model)+'</option>' for model in choices)+'</select></label>')
@@ -190,7 +191,7 @@ def haiku_judging_panel(app,params):
         ('seed','Selection seed','0',None,'1'),('cost','Judging ceiling (USD)','7',MAX_COST_MICROUSD/1e6,'0.000001')):
         body+="<label class='campaign-field'>"+label+"<input type='number' form='builder' name='retained_haiku_"+name+"' step='"+step+"'"+(
             " max='"+str(maximum)+"'" if maximum is not None else '')+" value='"+html.escape(params.get('retained_haiku_'+name,default),quote=True)+"'></label>"
-    body+="<button form='builder' formaction='/build/prepare-haiku-judging'>Prepare matched Haiku selection</button>"
+    body+="</div><div class='campaign-actions'><button form='builder' formaction='/build/prepare-haiku-judging'>Prepare matched Haiku selection</button></div>"
     job=params.get('retained_haiku_job','')
     if job:
         body+="<input type='hidden' form='builder' name='retained_haiku_job' value='"+html.escape(job,quote=True)+"'>"

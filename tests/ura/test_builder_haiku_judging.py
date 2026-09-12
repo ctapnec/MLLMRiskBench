@@ -167,3 +167,25 @@ def test_haiku_panel_and_review_are_usable_at_mobile_width(browser,haiku):  # no
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
     finally:
         page.close()
+
+
+def test_haiku_controls_have_separate_rows_and_responsive_spacing(browser,haiku):  # noqa: F811
+    app,params,_,_=haiku
+    content=ui._page('Haiku controls',"<form id='builder'></form>"+subject.haiku_judging_panel(app,params)).decode()
+    content=content.replace("<link rel='stylesheet' href='/static/style.css'>",'<style>'+ui._STYLE+'</style>')
+    page=browser.new_page(viewport={'width':1440,'height':900})
+    try:
+        page.set_content(content)
+        fields=page.locator('.campaign-field')
+        a,b=fields.nth(0).bounding_box(),fields.nth(1).bounding_box()
+        assert abs(a['y']-b['y'])<1 and b['x']>=a['x']+a['width']+15
+        page.set_viewport_size({'width':390,'height':844})
+        for index in range(1,4):
+            previous,current=fields.nth(index-1).bounding_box(),fields.nth(index).bounding_box()
+            assert current['y']>=previous['y']+previous['height']+15
+        last=fields.nth(3).bounding_box()
+        button=page.get_by_role('button',name='Prepare matched Haiku selection').bounding_box()
+        assert button['y']>=last['y']+last['height']+15
+        assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+    finally:
+        page.close()

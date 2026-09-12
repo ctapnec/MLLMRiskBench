@@ -59,6 +59,8 @@ h2 .ic { color:var(--muted); }
 .campaign-ownership { display:grid; gap:.65rem; }
 .campaign-ownership-row { display:flex; flex-wrap:wrap; align-items:flex-end; gap:1rem; }
 .campaign-field { display:grid; gap:.5rem; min-width:0; font-weight:600; font-size:.9rem; }
+.haiku-judging-controls { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1rem; margin:1rem 0; }
+@media(max-width:640px) { .haiku-judging-controls { grid-template-columns:minmax(0,1fr); } }
 .campaign-ownership-row .campaign-field { flex:1 1 280px; max-width:36rem; }
 .campaign-field select, .campaign-field input { box-sizing:border-box; width:100%; min-width:0; min-height:2.65rem; margin:0;
   padding:.65rem .8rem; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--ink); font:inherit; font-weight:400; }
