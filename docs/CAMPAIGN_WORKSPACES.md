@@ -300,6 +300,9 @@ filtering never overwrites an answer or automatically selects its newest or
 best replacement. Costs remain campaign-wide, including recovery attempts.
 These filters read the SQLite index only and do not reopen corpora or response
 payloads. Export metadata retains the exact selected condition identifier.
+Closing a read-only console that owns no Ollama process does not acquire the
+inference lock. A console-owned daemon still uses the normal locked cleanup;
+unrelated running local inference must not delay a no-op shutdown.
 Filters include model, modality, framework, arm, corpus, sampling selection,
 generation settings and judge. The model detail opens a bounded side panel or
 modal with its charts and a paginated input/output/judgment browser.
