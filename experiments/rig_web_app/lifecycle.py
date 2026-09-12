@@ -1729,7 +1729,7 @@ class LifecycleMixin:
         """Minimal environment for every non-matrix allowlisted command."""
 
         allowed = set(self._MATRIX_BASE_ENV)
-        if command == "hosted_campaign_execute":
+        if command in {"hosted_campaign_execute", "retained_native_judge_prepare"}:
             from .catalog import _param_values
 
             parameters = {parameter.flag: parameter for parameter in self.commands[command].params}
@@ -1743,7 +1743,14 @@ class LifecycleMixin:
                     argv = job["argv"]
                     selected = {flag: argv[index + 1] for index, flag in enumerate(argv[:-1])
                         if flag.startswith("--") and not argv[index + 1].startswith("--")}
-                    allowed.update(self._selected_matrix_environment_names(selected))
+                    if command == "retained_native_judge_prepare":
+                        # Source locators are needed, provider/capture credentials
+                        # are not: this command constructs no callable target.
+                        selected = {key:value for key,value in selected.items()
+                            if key in {"--source-config", "--source-config-sha256", "--corpora"}}
+                        allowed.update(self._declared_matrix_environment(selected))
+                    else:
+                        allowed.update(self._selected_matrix_environment_names(selected))
             allowed.update(self._MATRIX_OPTIONAL_ENV)
             allowed.update(self._MATRIX_RECEIPT_ENV)
         if command == "retained_response_judge_pair_execute":

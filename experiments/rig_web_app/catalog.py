@@ -1080,6 +1080,18 @@ def _commands() -> dict[str, Command]:
             ),
         ),
         Command(
+            "retained_native_judge_prepare",
+            "experiments.retained_native_judge_prepare",
+            "Prepare local judging of saved API answers without generating or judging",
+            (
+                CommandParam("--program", "path", required=True, repeat=True),
+                CommandParam("--program-sha256", "str", required=True, repeat=True),
+                CommandParam("--job", "str", repeat=True, help="Optional exact job names; blank selects all supplied jobs."),
+                CommandParam("--out", "path", required=True),
+                CommandParam("--verify-artifact-sha256", "flag"),
+            ),
+        ),
+        Command(
             "retained_response_judge_pair",
             "experiments.retained_response_judge_pair",
             "Select matched retained local and hosted outputs for bounded Haiku judging",
@@ -1223,6 +1235,7 @@ COMMAND_GROUPS: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
         (
             "hosted_campaign_budget",
             "hosted_campaign_execute",
+            "retained_native_judge_prepare",
             "retained_response_judge_pair",
             "retained_response_judge_pair_execute",
         ),
