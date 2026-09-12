@@ -180,6 +180,17 @@ This handoff does not load models, repeat targets or reconstruct historical
 corpora. Final source ownership and eligibility are checked against the retained
 native records before assessment and publication.
 
+Residual follow-up is queued behind both active recovery controllers. If
+DeepSeek still has unresolved outputs, run one 8,192-token throughput probe at
+32,768 context tokens, with model loading timed separately, full GPU residency
+and the unchanged 120-second generation requirement. This completes the missing
+cap-stress observation for the earlier diagnostic condition; it is not another
+campaign input or an approved profile change. A passing probe still requires its
+responsiveness survey and a native recovery selection containing only residual
+inputs. A failed probe remains diagnostic evidence, not a reason to repeat good
+answers. The deferred controller is visible under Local campaign Activity and
+is included in the half-hour aggregate. No runtime is reinstalled.
+
 Human audit and thesis evidence synthesis remain separate work. This plan was written
 20 August 2026 after the readiness audit
 of the big rig (Debian, 2x RTX 4090 24,564 MiB, 125 GiB RAM, /mnt/stor 7.1 TB
