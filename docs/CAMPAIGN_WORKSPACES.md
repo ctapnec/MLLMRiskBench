@@ -158,6 +158,27 @@ not cancel unrelated paid requests or imply that collection failed. This
 connection covers prepared hosted collection; normal Build preparation, local
 run publication and the complete judging/continuation flow remain unfinished.
 
+Native local collection now has a checkpoint publication hook in `run_matrix`.
+Campaign-owned launches receive their workspace/database binding; CLI launches
+can supply `--workspace-id` and `--console-db` together. The existing Runner
+callback first saves the response durably, then updates its SQLite assignment
+and response. Its later judgment attaches to that exact output. A restored
+checkpoint republishes without generation, and an index error retains pending
+publication without cancelling model work. The hook reuses admitted source
+metadata and the already rendered input; it does not reconstruct a corpus.
+
+This publishes the realized checkpoint prefix, not invented unstarted adaptive
+turns. Full planned-population presentation remains a separate integration task.
+Recovery runs must supply their original retained input selection to the
+publisher: the filtered recovery corpus has a different corpus identity, so
+deriving a new input identity from it would break comparisons. A recovery without
+that selection remains pending publication rather than being indexed under a
+different question identity. The current external recovery publishers already
+supply the original selection; wiring the same selection into normal Build
+continuations remains pending. The original and replacement generation
+conditions remain distinct. Focused rig and actual saved Ollama/vLLM record
+checks passed; deployment and full UI acceptance are not yet claimed.
+
 The active API index was refreshed from its seventeen explicit current program
 sources: 4,097 assignments, 3,908 retained outcomes and 3,917 physical-attempt cost
 records. This is the current continuation and Flash-extension subset, not the

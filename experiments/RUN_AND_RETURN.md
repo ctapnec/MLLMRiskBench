@@ -6547,6 +6547,15 @@ Unchanged answers are not reparsed when only billing changes. Publication
 errors remain explicitly pending and do not cancel paid collection. These
 settings do not change input selection, generation or spending limits.
 
+Native local `run_matrix` collection accepts the same workspace/database pair.
+Publication follows durable response and judgment callbacks, including restored
+checkpoints, and is not performed by page navigation. Missingness, truncation,
+context/output allowance and observed token usage remain separate fields.
+Recovery publication also requires the original retained input selection; a
+filtered recovery corpus is not a new question identity. The external campaign
+publisher provides that selection today. Normal Build continuation wiring and
+the full planned-population view remain tracked in the workspace specification.
+
 Different providers execute concurrently. A program's attestation and canary
 precede its measured jobs; unrelated programs do not wait for their judging.
 The command collects target responses only. `selection.json` records the fixed
