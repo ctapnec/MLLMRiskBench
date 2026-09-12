@@ -11,6 +11,7 @@ Factories are registered in the shared ``REGISTRY`` under ``"vllm"`` and
 """
 from __future__ import annotations
 
+import base64
 import gc
 import hashlib
 import json
@@ -24,6 +25,7 @@ import time
 import urllib.error
 import urllib.request
 from contextlib import contextmanager
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, Literal, Optional
 
@@ -523,16 +525,42 @@ def _vllm_chat_template_messages(
                       "template_sha256": digest}
 
 
+def _ollama_image_payload(mime: str, encoded: str) -> tuple[str, dict[str, Any] | None]:
+    """Use lossless PNG for WebP, which some Ollama engines cannot decode."""
+    if mime != "image/webp":
+        return encoded, None
+    image = _require("PIL.Image", "Ollama WebP image delivery")
+    original = base64.b64decode(encoded, validate=True)
+    try:
+        with image.open(BytesIO(original)) as decoded:
+            if decoded.format != "WEBP" or getattr(decoded, "n_frames", 1) != 1:
+                raise LocalTargetInputError("Ollama WebP delivery requires one still image")
+            decoded.load()
+            if decoded.mode not in {"RGB", "RGBA"}:
+                raise LocalTargetInputError("Ollama WebP delivery cannot preserve this pixel mode")
+            buffer = BytesIO()
+            decoded.save(buffer, format="PNG")
+            delivered = buffer.getvalue()
+            trace = dict(source_mime=mime, delivered_mime="image/png", source_bytes=len(original),
+                delivered_bytes=len(delivered), width=decoded.width, height=decoded.height,
+                pixel_mode=decoded.mode, delivered_sha256=hashlib.sha256(delivered).hexdigest(),
+                resized=False, decoded_pixels_preserved=True)
+    except (OSError, ValueError) as exc:
+        raise LocalTargetInputError("Ollama could not decode the retained WebP image") from exc
+    return base64.b64encode(delivered).decode("ascii"), trace
+
+
 def _dialog_to_ollama_messages(
     dialog: list[DialogTurn],
     *,
     multimodal: bool = False,
     media_roots: Optional[Iterable[str | Path]] = None,
+    image_transport: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Render Ollama ``/api/chat`` messages with bounded base64 images."""
 
     messages: list[dict[str, Any]] = []
-    for turn in dialog:
+    for turn_index, turn in enumerate(dialog):
         if turn.provider_state is not None or turn.provider_thinking:
             raise ValueError(
                 "Ollama target cannot consume provider-native continuation state"
@@ -561,7 +589,7 @@ def _dialog_to_ollama_messages(
             from .api import _encode_media
 
             images: list[str] = []
-            for media in turn.media:
+            for media_index, media in enumerate(turn.media):
                 _mime, encoded, remote_url = _encode_media(
                     media, allowed_roots=media_roots
                 )
@@ -570,6 +598,10 @@ def _dialog_to_ollama_messages(
                         "Ollama image input requires content-addressed local or "
                         "inline bytes; remote image URLs are not admitted"
                     )
+                encoded, trace = _ollama_image_payload(_mime, encoded)
+                if trace is not None and image_transport is not None:
+                    image_transport.append(dict(trace, turn_index=turn_index, media_index=media_index,
+                        source_sha256=media.sha256))
                 images.append(encoded)
             message["images"] = images
         messages.append(message)
@@ -1273,6 +1305,8 @@ class OllamaTarget(BaseTarget):
             NoRedirect(),
         ).open
         self.modality_support = tuple(modality_support)
+        if "image" in self.modality_support:
+            self.image_transport = "webp_to_lossless_png"
         self.modality_combinations = tuple(
             [("text",)]
             + ([("text", "image")] if "image" in self.modality_support else [])
@@ -1917,10 +1951,12 @@ class OllamaTarget(BaseTarget):
                 )
             else:
                 resolved_num_ctx = self._resolve_num_ctx(deadline=deadline)
+            image_transport: list[dict[str, Any]] = []
             messages = _dialog_to_ollama_messages(
                 dialog,
                 multimodal="image" in self.modality_support,
                 media_roots=self.media_roots,
+                image_transport=image_transport,
             )
             # Once the chat is submitted the daemon may own residency even
             # if the response later fails validation. Mark it before the
@@ -2072,6 +2108,8 @@ class OllamaTarget(BaseTarget):
                 "hardware_fit_attempts": list(self._hardware_fit_attempts),
                 "loaded_runtime": loaded_runtime_profile,
                 "thinking_output_observed": thinking_observed,
+                **({"image_transport": {"policy": self.image_transport, "transforms": image_transport}}
+                   if "image" in self.modality_support else {}),
             },
         )
 
