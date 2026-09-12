@@ -112,6 +112,38 @@ Some response-only hosted jobs retain their answers without a start manifest;
 those require the unchanged native checkpoint scoring path, not invented
 generation metadata. Future deferred phases retain their start before calls.
 
+The 04:34 UTC snapshot records all 3,719 fourth-cohort targets attempted;
+the combined third/fourth expansion retains 10,716 starts out of 10,736, with
+20 Google inputs still quota-pending. Flash's continuation is terminal. Exact
+checkpoint reconciliation now covers every fourth-cohort output and its actual
+source datapoint, including jobs without generation-start manifests. It neither
+creates missing start times nor repeats target calls. Native scoring already
+exists for 79 outputs; 3,640 remain prepared for local judging after the local
+recovery releases both GPUs. Source-specific classification and approximate
+metrics retain their original endpoint settings.
+
+Primary Haiku preparation selects 2,876 usable, common-evaluable API answers.
+It separately retains 516 no-answer provider refusals, five missing visible
+outputs, 88 non-evaluable setup turns and 234 source-specific endpoint records;
+these are not silently treated as common-security judge verdicts. The 189
+additional grading contexts remain a separate pending selection. Five real
+input-metadata controls cover text/image and refusal/safe-answer expectations;
+an intentionally wrong risk grouping is rejected. The full prepared requests
+needed 77 provider token counts, with no further allowance increase, answer
+shortening or paid target generation. Judging reuses each output's existing
+funded hosted-judge call ID, not a local-output slot. At 04:34 the parallel
+existing-local Haiku selection has assessed 4,728 of 5,049 outputs for a reported
+USD 6.875157; new local recovery outputs remain a distinct judging obligation.
+
+At 04:41 UTC the 5,049-answer existing-local Haiku selection is terminal:
+4,984 valid and 65 invalid verdicts, reported cost USD 7.407918. The published
+outcomes remain output-owned. After that worker ended, the two-worker Haiku
+execution for the 2,876 prepared hosted answers started, within the unchanged
+campaign allowance. Native local scoring of hosted answers remains deferred
+for the active local recovery. Preparation and execution activity are linked
+to the API workspace; half-hour publication indexes actual new verdicts and
+their costs. A prepared local scoring queue is not a completed judgment.
+
 The matched judging population is output-owned: 5,049 retained local answers
 plus at most 3,719 new hosted outputs, not two verdicts per hosted assignment.
 The retained plan additionally requires 189 distinct source grading contexts

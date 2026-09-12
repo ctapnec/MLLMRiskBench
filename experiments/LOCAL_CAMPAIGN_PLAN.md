@@ -119,6 +119,27 @@ ceiling or shortening the answers. This population contains existing local
 answers on the fourth hosted cohort's inputs, not the new 2,636-condition
 recovery outputs. Successful replacements still require their own judgments.
 
+At 04:34 UTC the recovery has attempted 259 of 2,636 conditions, producing
+254 usable, non-truncated replacements, four missing outputs and one truncated
+output. The 2,377 unattempted conditions remain queued, not failed. The five
+residual inputs are short; their observed output usage reaches 4,096 tokens,
+but only the truncated answer retains an explicit native length stop. Do not
+describe the other four as proven context overflows or intrinsic instability.
+Keep these exact residuals for a separately tested output-condition follow-up,
+without repeating successful replacements or bypassing the 120-second
+readiness requirement. Existing matched-local Haiku judging has reached
+4,728 of 5,049 assessments and remains separate from replacement judging.
+
+The matched-local Haiku selection subsequently completed all 5,049 assessments:
+4,984 valid verdicts and 65 retained invalid verdicts, with reported usage of
+USD 7.407918 and no unknown-usage judgment. All outcomes and costs are published
+in the Local workspace. Forty-four invalid replies contain a canonical final
+three-line score block preceded by explanatory text or a heading. These are
+candidates for a separately recorded formatting interpretation, not missing
+target answers or permission to make another paid call. No such interpretation
+has yet changed a retained verdict. The recovery generations and their future
+output-specific assessments remain open.
+
 Human audit and thesis evidence synthesis remain separate work. This plan was written
 20 August 2026 after the readiness audit
 of the big rig (Debian, 2x RTX 4090 24,564 MiB, 125 GiB RAM, /mnt/stor 7.1 TB
