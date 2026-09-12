@@ -6692,6 +6692,10 @@ already completed judgments are republished without more provider calls. An
 unresolved paid reservation still requires its existing execution recovery, not
 a fresh output directory that could spend twice. Cost publication from this hook
 covers attempts with retained verdict artifacts, not failed calls lacking one.
+For local Ollama transport failures, inspect the retained HTTP status and native
+reason. An immediate image-decoding rejection or refused connection is not a
+generation deadline and does not establish that more output tokens would help.
+Keep these execution failures separate from a model's security refusal.
 An HTTP page check is separate from both execution and database publication.
 If that check times out after successful indexing, inspect the retained result
 and indexed rows; do not restart generation or judging. Campaign judging totals
