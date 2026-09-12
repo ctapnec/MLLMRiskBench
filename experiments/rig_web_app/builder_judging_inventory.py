@@ -1,0 +1,112 @@
+"""Review all saved model outputs on shared inputs without buying judgments."""
+from __future__ import annotations
+
+import html
+import json
+from pathlib import Path
+from types import SimpleNamespace
+from uuid import uuid4
+
+from experiments.retained_judge_inventory import SCHEMA
+
+from .builder_collection import prepared_collection, collection_history
+from .builder_native_judging import preparation_history, _state
+from .builder_replays import argument, completed_argv
+from .catalog import build_argv
+from .ui import _page
+
+
+def prepare_judging_inventory(app, params):
+    owner = params.get('campaign_id', '')
+    receipt = prepared_collection(app, params)
+    source = completed_argv(app, params.get('retained_sources_job'), owner, 'retained_local_sources')
+    preparations = preparation_history(app, owner, receipt['programs'])
+    views = []
+    eligible = set()
+    for job in preparations:
+        if _state(app, job) not in {'complete', 'failed'} or job['exit_code'] not in {0, 1}:
+            continue
+        path = Path(argument(json.loads(job['argv']), '--out')) / 'result.json'
+        if not path.is_file():
+            continue
+        saved = json.loads(path.read_text())
+        if saved.get('status') not in {'prepared', 'preparation_incomplete'}:
+            continue
+        views.append(str(path))
+        eligible.add(job['job_id'])
+    if params.get('retained_native_judging_job') not in eligible:
+        raise ValueError("Select this campaign's completed saved-output preparation first")
+    try:
+        limit = int(params.get('retained_inventory_limit', '0'))
+        seed = int(params.get('retained_inventory_seed', '0'))
+    except ValueError:
+        raise ValueError('Use a whole-number input limit and selection seed') from None
+    if limit < 0:
+        raise ValueError('Input limit must be zero for all inputs or a positive integer')
+    values = {'--local-view': argument(source, '--out'), '--input-limit': str(limit), '--sample-seed': str(seed)}
+    views = sorted(set(views))
+    for index, path in enumerate(views):
+        values['--hosted-view' + (f'#{index}' if index else '')] = path
+    with app._app_lock:
+        previous = collection_history(app, owner, views, command='retained_judge_inventory', input_flag='--hosted-view')
+        if previous is not None:
+            argv = json.loads(previous['argv'])
+            if (argv == build_argv('retained_judge_inventory', dict(values, **{'--out': argument(argv, '--out')}))
+                    and _state(app, previous) in {'running', 'starting', 'queued', 'complete'}):
+                app._save_build_campaign(dict(params, retained_inventory_job=previous['job_id']))
+                return SimpleNamespace(job_id=previous['job_id'])
+            if _state(app, previous) in {'running', 'starting', 'queued'}:
+                raise ValueError('This source inventory is still being prepared; open its job')
+        folder = (app.results_root / 'rig-web' / 'judging-inventory' / uuid4().hex).resolve()
+        folder.mkdir(parents=True, mode=0o700)
+        values['--out'] = str(folder / 'inventory.json')
+        app._save_build_campaign(params)
+        job = app.start_job('retained_judge_inventory', values, campaign_id=owner)
+        app._save_build_campaign(dict(params, retained_inventory_job=job.job_id))
+        return job
+
+
+def judging_inventory_review(app, params):
+    owner = params.get('campaign_id', '')
+    argv = completed_argv(app, params.get('retained_inventory_job'), owner, 'retained_judge_inventory')
+    value = json.loads(Path(argument(argv, '--out')).read_text())
+    if value.get('schema') != SCHEMA or value.get('status') != 'inventory_only_no_calls':
+        raise ValueError('The saved job has no completed same-input output inventory')
+    selection, coverage = value['selection'], value['coverage']
+    pending = sum(part.get('unprepared_outputs', 0) for part in value['population'].values())
+    rows = ''.join('<tr><td>' + html.escape(row['cohort']) + '</td><td>' + html.escape(row['model'])
+        + f"</td><td>{row['retained_outputs']:,}</td><td>{row.get('judgeable_text', 0):,}</td>"
+        + f"<td>{row.get('missing_text', 0):,}</td></tr>" for row in value['by_model'])
+    body = '<h1>Same-input output coverage</h1>' + app._campaign_banner(owner)
+    body += (f"<p>{selection['selected_inputs']:,} selected input entries; {coverage['retained_outputs']:,} retained outputs. "
+        'Every saved local and hosted answer on those inputs is included, including separate generation conditions. '
+        'Inputs are selected independently of answer availability. Output counts are not independent input counts.</p>'
+        f"<p>{coverage['judgeable_text']:,} outputs have text; {coverage['missing_text']:,} have missing text. "
+        f"{coverage['hosted_inputs_without_local_records']:,} selected inputs have no retained local record. "
+        f"{pending:,} source outputs remain unprepared outside this observed population.</p>"
+        '<p>This is coverage, not completed judging. Text availability does not establish rubric eligibility, '
+        'an existing verdict or funding. No target or judge calls were made. The separately reviewed paired '
+        'Haiku selection below is not changed by this inventory.</p>'
+        "<div class='scroll'><table><tr><th>Population</th><th>Model</th><th>Saved outputs</th>"
+        '<th>With text</th><th>Missing text</th></tr>' + rows + '</table></div>'
+        + "<details><summary>Exact command</summary><pre>" + html.escape(' '.join(argv)) + '</pre></details>'
+        + "<p><a href='/jobs/" + html.escape(params['retained_inventory_job'], quote=True) + "'>Open full inventory</a>"
+        + " | <a href='/build?campaign_id=" + html.escape(owner, quote=True) + "'>Return to Build</a></p>")
+    return _page('Same-input output coverage', body, active='Build')
+
+
+def judging_inventory_panel(params):
+    body = ("<section class='card'><h2>Same-input output coverage</h2>"
+        '<p>Include all local models and every saved output on the hosted input entries. '
+        'Uses all completed source preparations for this collection, including earlier increments. '
+        'Missing answers stay visible. This preparation makes no provider calls.</p>'
+        "<div class='haiku-judging-controls'>")
+    for field, label, default in (('limit', 'Input limit (0 = all hosted inputs)', '0'),
+                                  ('seed', 'Input selection seed', '0')):
+        body += "<label class='campaign-field'>" + label + "<input form='builder' type='number' step='1' name='retained_inventory_" + field
+        body += "' value='" + html.escape(params.get('retained_inventory_' + field, default), quote=True) + "'></label>"
+    body += "</div><div class='campaign-actions'><button form='builder' formaction='/build/prepare-judging-inventory'>Prepare all-output coverage</button></div>"
+    if params.get('retained_inventory_job'):
+        body += "<input form='builder' type='hidden' name='retained_inventory_job' value='" + html.escape(params['retained_inventory_job'], quote=True) + "'>"
+        body += "<button form='builder' formaction='/build/review-judging-inventory'>Review all-output coverage</button>"
+    return body + '</section>'

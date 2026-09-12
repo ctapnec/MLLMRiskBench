@@ -4142,6 +4142,13 @@ class LifecycleMixin:
                 from .builder_haiku_judging import prepare_haiku_judging
                 job = prepare_haiku_judging(self,self._builder_params(form or {}))
                 return 303, "/jobs/" + job.job_id, b""
+            if method == "POST" and path == "/build/prepare-judging-inventory":
+                from .builder_judging_inventory import prepare_judging_inventory
+                job = prepare_judging_inventory(self,self._builder_params(form or {}))
+                return 303, "/jobs/" + job.job_id, b""
+            if method == "POST" and path == "/build/review-judging-inventory":
+                from .builder_judging_inventory import judging_inventory_review
+                return 200, "text/html; charset=utf-8", judging_inventory_review(self,self._builder_params(form or {}))
             if method == "POST" and path == "/build/review-haiku-judging":
                 from .builder_haiku_judging import haiku_judging_review
                 return 200, "text/html; charset=utf-8", haiku_judging_review(self,self._builder_params(form or {}))

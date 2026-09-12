@@ -177,6 +177,7 @@ def judge_retained_haiku(app,form):
 def haiku_judging_panel(app,params):
     if not params.get('retained_native_judging_job'):
         return ''
+    from .builder_judging_inventory import judging_inventory_panel
     choices=_choices(app)
     chosen=params.get('retained_haiku_model') or next(iter(choices),'')
     body=("<section class='card'><h2>Haiku comparison of saved outputs</h2>"
@@ -197,4 +198,4 @@ def haiku_judging_panel(app,params):
         body+="<input type='hidden' form='builder' name='retained_haiku_job' value='"+html.escape(job,quote=True)+"'>"
         body+="<p><a href='/jobs/"+html.escape(job,quote=True)+"'>Open selection and exclusions</a></p>"
         body+="<button form='builder' formaction='/build/review-haiku-judging'>Review Haiku judging</button>"
-    return body+'</section>'
+    return judging_inventory_panel(params)+body+'</section>'

@@ -176,7 +176,7 @@ def test_haiku_controls_have_separate_rows_and_responsive_spacing(browser,haiku)
     page=browser.new_page(viewport={'width':1440,'height':900})
     try:
         page.set_content(content)
-        fields=page.locator('.campaign-field')
+        fields=page.locator('section').filter(has=page.get_by_role('heading',name='Haiku comparison of saved outputs')).locator('.campaign-field')
         a,b=fields.nth(0).bounding_box(),fields.nth(1).bounding_box()
         assert abs(a['y']-b['y'])<1 and b['x']>=a['x']+a['width']+15
         page.set_viewport_size({'width':390,'height':844})
