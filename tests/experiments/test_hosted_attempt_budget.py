@@ -448,7 +448,8 @@ def test_short_budget_contention_waits_instead_of_aborting_unrelated_work(budget
         "reserve": lambda: budget.reserve("A", 1, provider="anthropic"),
         "settle": lambda: budget.settle("A", 1, 7),
         "target_circuit": lambda: hosted_retained_execute._Admission._circuit(
-            SimpleNamespace(budget=budget), "missing_target_output", "A"),
+            SimpleNamespace(budget=budget, program={"target": "anthropic:haiku", "provider": "anthropic"}),
+            "missing_target_output", "A"),
         "judge_circuit": lambda: retained_response_judge_execute._open_shared_circuit(
             budget, {"retained_row_sha256": "0" * 64}, ValueError("missing judge output")),
     }
@@ -468,9 +469,14 @@ def test_short_budget_contention_waits_instead_of_aborting_unrelated_work(budget
         assert holder.exitcode == 0
     if operation in {"snapshot", "call", "liability", "count", "target_circuit", "judge_circuit"}:
         assert (budget.root / "ledger.json").read_bytes() == before
-    if operation.endswith("circuit"):
+    if operation == "judge_circuit":
         with pytest.raises(mod.BudgetError, match="circuit is open"):
             budget.reserve("A", 1, provider="anthropic")
+    elif operation == "target_circuit":
+        pause = hosted_retained_execute.target_pause(budget, "anthropic:haiku")
+        assert pause["category"] == "missing_target_output" and pause["call_id"] == "A"
+        assert hosted_retained_execute.target_pause(budget, "openai:model") is None
+        budget.reserve("O", 1, provider="openai")
     elif operation == "reserve":
         assert budget.reserved_attempt_count("A") == 1
     elif operation == "settle":
