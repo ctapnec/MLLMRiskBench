@@ -160,7 +160,9 @@ def test_running_checkpoint_publication_does_not_wait_for_job_exit(tmp_path, mon
 
     clock = count(0, 31)
     monkeypatch.setattr(subject.time, "monotonic", lambda: next(clock))
-    monkeypatch.setattr(multiprocessing.connection, "wait", lambda *_a, **_k: time.sleep(0.02))
+    original_wait = multiprocessing.connection.wait
+    monkeypatch.setattr(multiprocessing.connection, "wait", lambda objects, timeout=None:
+        original_wait(objects, timeout=0.02 if timeout is None else min(timeout, 0.02)))
     progress = []
     subject.dispatch_admitted([[admission(tmp_path, "openai", "still-running")]],
         _worker=worker, _pause=lambda _: None, on_progress=progress.append)
