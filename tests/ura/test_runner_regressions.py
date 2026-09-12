@@ -6776,6 +6776,40 @@ def test_missing_local_output_keeps_observed_generation_conditions(backend, reas
         assert response["latency_ms"] == 30000
 
 
+@pytest.mark.parametrize("backend", ["vllm", "ollama"])
+@pytest.mark.parametrize("recovers", [False, True])
+def test_rejected_generated_text_is_retained_for_each_answer_attempt(backend, recovers, tmp_path) -> None:
+    rejected = ["!" * 1500, "\u0000" * 32]
+    class ObservedTarget(_RecordingTarget):
+        def generate(self, dialog, *, seed=None):
+            self._dialogs.append(list(dialog))
+            attempt = len(self._dialogs) - 1
+            text = "usable answer" if recovers and attempt == 1 else rejected[attempt]
+            return Response(attempt_id="placeholder", target=self.name,
+                output_turns=[DialogTurn(role="assistant", content=text)],
+                tokens={"prompt": 3, "completion": 9, "total": 12}, latency_ms=4,
+                raw={"backend": backend, "requested_seed": seed, "target_sampling_control": "seeded",
+                    "output_truncated": not (recovers and attempt == 1)})
+    target = ObservedTarget()
+    runner = _runner(_FloodAttacker(), target)
+    judgments, _manifest = runner.run([_datapoint()])
+    response = runner.responses[0]
+    assert len(target._dialogs) == 2 and len(runner.responses) == len(judgments) == 1
+    failures = response.raw["model_stability_failures"]
+    assert len(failures) == (1 if recovers else 2)
+    for index, failure in enumerate(failures):
+        saved = failure["generated_response"]
+        assert saved["output_turns"][0]["content"] == rejected[index]
+        assert saved["tokens"] == {"prompt": 3, "completion": 9, "total": 12}
+        assert saved["raw"]["backend"] == backend and saved["raw"]["output_truncated"] is True
+    assert response.raw["model_stability_status"] == ("recovered_after_retry" if recovers else "failed_output")
+    assert bool(response.output_turns) is recovers
+    path = tmp_path / "retained.jsonl"
+    runner.save_responses(path)
+    saved = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
+    assert saved["raw"]["model_stability_failures"] == failures
+
+
 def test_runner_answer_retry_policy_is_local_provider_independent() -> None:
     class EmptyThenAnswer(_RecordingTarget):
         def __init__(self, backend: str) -> None:
