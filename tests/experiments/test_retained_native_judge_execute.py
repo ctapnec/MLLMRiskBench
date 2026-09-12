@@ -168,6 +168,7 @@ def test_durable_judgments_publish_by_output_and_resume_repairs_index(retained, 
     result, calls, _ = score(retained, tmp_path, monkeypatch, outputs=["gibberish", "unsafe\nS1"], publication=publisher)
     publisher.close()
     assert result["status"] == "complete" and len(calls) == 2
+    assert len(db._query("SELECT * FROM campaign_judgments")) == 2
     status = tmp_path/"scoring/publication.json"
     assert "private fixture" not in status.read_text()
     if index_failure:
@@ -181,6 +182,33 @@ def test_durable_judgments_publish_by_output_and_resume_repairs_index(retained, 
     assert {row["status"] for row in db._query("SELECT status FROM campaign_judgments")} == {"valid", "invalid"}
     assert len(db._query("SELECT * FROM campaign_cost_attempts")) == 2
     db.close()
+
+
+def test_publication_never_copies_a_verdict_to_another_models_answer(tmp_path):
+    from experiments.rig_web_app.storage import ConsoleDB
+    from experiments.rig_web_app.workspace_native_judging import NativeJudgmentPublication
+    db = ConsoleDB(tmp_path/"console.db")
+    campaign = db.create_workspace("Other model", "api")
+    db.publish_workspace_results(campaign, assignments=[dict(assignment_id="assignment", model="openai:other",
+        input_id="same-question", condition_id="generation", modality="text", framework="replay", corpus="unit",
+        response_id="run:answer", evidence_class="measured")], responses=[dict(response_id="run:answer", assignment_id="assignment",
+        condition_id="generation", outcome="usable", truncated=False, source_ref="original")], judgments=[])
+    source = dict(target="openai:saved", run_id="run", judge_cascade=_component_config(cascade()[0]))
+    record = dict(response=dict(target="openai:saved", run_id="run", attempt_id="answer"),
+        judgment=dict(run_id="run", attempt_id="answer", label="safe"))
+    publisher = NativeJudgmentPublication(database=db.path, campaign_id=campaign, root=tmp_path)
+    publisher.accept(source, record, "retained.jsonl:1", "a"*40)
+    publisher.close()
+    assert not db._query("SELECT * FROM campaign_judgments")
+    assert json.loads((tmp_path/"publication.json").read_text())["status"] == "publication_pending"
+    db.close()
+
+
+def test_unrecognized_original_cascade_setting_is_not_silently_ignored():
+    condition = _component_config(cascade()[0])
+    condition["unrecognized_setting"] = True
+    with pytest.raises(ValueError, match="changed the selected cascade"):
+        subject.source_cascade(condition, object())
 
 
 def test_ui_cli_and_environment_have_judging_role_without_provider_keys(tmp_path, monkeypatch):

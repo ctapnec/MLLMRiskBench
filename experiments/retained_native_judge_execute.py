@@ -282,6 +282,8 @@ def main(argv=None):
     parser.add_argument("--verify-model-sha256", action="store_true")
     args = parser.parse_args(argv)
     repo = Path(__file__).resolve().parents[1]
+    if subprocess.check_output(["git", "-C", str(repo), "status", "--porcelain", "--untracked-files=no"], text=True).strip():
+        raise ValueError("Native judging must record a clean scoring checkout")
     revision = subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
     result = execute(preparation=args.preparation, preparation_sha256=args.preparation_sha256,
         out=args.out, revision=revision, workspace_id=args.workspace_id, console_db=args.console_db,
