@@ -6567,6 +6567,14 @@ filtered recovery corpus is not a new question identity. The external campaign
 publisher provides that selection today. Normal Build continuation wiring and
 the full planned-population view remain tracked in the workspace specification.
 
+Campaign-owned native collection publishes its loaded source-row count before
+generation begins. Overview distinguishes planned, reached and not-yet-reached
+rows from saved outputs and judgments. Reached means at least one retained
+response record for that source row, not completion of all its seeds or turns.
+Resume preserves already indexed progress. This adds no dataset reconstruction
+or model verification, and index failure does not cancel generation. Historical
+runs without their original indexed plans remain explicitly outside this table.
+
 Different providers execute concurrently. A program's attestation and canary
 precede its measured jobs; unrelated programs do not wait for their judging.
 The command collects target responses only. `selection.json` records the fixed

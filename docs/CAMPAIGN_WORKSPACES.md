@@ -167,8 +167,22 @@ checkpoint republishes without generation, and an index error retains pending
 publication without cancelling model work. The hook reuses admitted source
 metadata and the already rendered input; it does not reconstruct a corpus.
 
-This publishes the realized checkpoint prefix, not invented unstarted adaptive
-turns. Full planned-population presentation remains a separate integration task.
+Native publication also records the loaded source-row plan before the first
+target call. The campaign Overview separates source rows planned, reached and
+not reached from output/judgment totals. A reached source row has at least one
+durable response record, including a missing output. Multiple seeds or adaptive
+turns do not multiply this source-row count or establish that the input's whole
+trajectory is complete. Each run retains its own plan and generation condition;
+these counts are not independent observations across overlapping runs.
+
+Restarting and restoring a checkpoint cannot duplicate or decrease the known
+progress. A failed index update leaves publication pending without cancelling
+target generation. The hook uses the corpus Runner already loaded, and the UI
+reads only SQLite. Historical runs without an indexed plan remain outside this
+new coverage table; their missing plans are not inferred from completed outputs.
+This supports future CLI and campaign-owned Build launches through the same
+wrapper. Full historical plan import and deployment/interactive acceptance remain
+pending, as do the multi-job and judging controls below.
 For new completed-prefix or completed-selection recoveries, the sampling audit
 now retains the already computed original selection identity before filtering.
 The normal Runner publication wrapper uses it automatically for Ollama and
