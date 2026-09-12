@@ -64,7 +64,7 @@ def _runner(attacker, target, admission):
                       [0], target_answer_retries=0, execution_stage="responses")
 
 
-def test_registered_count_uses_funded_starts_and_final_or_checkpointed_responses(tmp_path):
+def test_registered_count_uses_funded_starts_and_final_or_checkpointed_responses(tmp_path, monkeypatch):
     points, attacker, target, _calls, admission = _setup(tmp_path)
     records = []
     runner = _runner(attacker, target, admission)
@@ -90,7 +90,14 @@ def test_registered_count_uses_funded_starts_and_final_or_checkpointed_responses
             {"argv": ["--out", str(checkpoint_root)]},
         ],
     }
+    original_load = admission.budget._load
+    reads = []
+    def observed_load():
+        reads.append(True)
+        return original_load()
+    monkeypatch.setattr(admission.budget, "_load", observed_load)
     assert subject._retained_execution_counts(program, admission.budget) == (2, 1)
+    assert len(reads) == 1, "Reporting must not reload the monetary ledger per input"
 
 
 @pytest.mark.parametrize("final_prefix", [0, 1])

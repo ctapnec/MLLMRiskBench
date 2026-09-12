@@ -635,10 +635,6 @@ def _retained_execution_counts(program: Mapping[str, Any], budget: AttemptBudget
     from ura.runner import Runner
 
     requests = program["requests"]
-    attempted = sum(
-        budget.reserved_attempt_count(receipt["call_id"]) > 0
-        for receipt in requests.values()
-    )
     responses = {}
 
     def register(payload: object) -> None:
@@ -667,6 +663,10 @@ def _retained_execution_counts(program: Mapping[str, Any], budget: AttemptBudget
                 register(record["response"])
     for record in _reviewed_completed_responses(program, budget).values():
         register(record["response"])
+    # Read starts after outputs: concurrent workers may append while this
+    # operational report runs. One ledger read replaces one read per input.
+    starts = budget.reserved_attempt_counts([receipt["call_id"] for receipt in requests.values()])
+    attempted = sum(count > 0 for count in starts.values())
     successful = sum(
         row.get("raw", {}).get("model_stability_status") != "failed_output"
         and row.get("raw", {}).get("target_input_status") != "incompatible"

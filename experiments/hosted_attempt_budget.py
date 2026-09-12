@@ -575,6 +575,17 @@ class AttemptBudget:
                 raise BudgetError("call ID is outside the immutable funded plan")
             return len(ledger["attempts"].get(call_id, {}))
 
+    def reserved_attempt_counts(self, call_ids: Sequence[str]) -> dict[str, int]:
+        """Read a reporting population from one fresh, consistent ledger snapshot."""
+        if isinstance(call_ids, (str, bytes)) or not isinstance(call_ids, Sequence):
+            raise BudgetError("call IDs must be an explicit sequence")
+        selected = {_name(value, "call ID") for value in call_ids}
+        with _budget_lock(self.root):
+            _plan_value, ledger, calls = self._load()
+            if not selected <= calls.keys():
+                raise BudgetError("call ID is outside the immutable funded plan")
+            return {key: len(ledger["attempts"].get(key, {})) for key in selected}
+
     def _provider_stop_path(self, provider: str) -> Path:
         return self.root / ("provider-funding-stop-" + hashlib.sha256(provider.encode()).hexdigest()[:24] + ".json")
 

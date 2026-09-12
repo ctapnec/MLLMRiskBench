@@ -33,6 +33,27 @@ def reopen(budget):
     return mod.AttemptBudget(budget.root, budget.expected_plan_sha256)
 
 
+def test_bulk_attempt_counts_use_one_fresh_read_without_changing_ledger(budget, monkeypatch):
+    original = budget._load
+    reads = []
+    def load():
+        reads.append(True)
+        return original()
+    monkeypatch.setattr(budget, "_load", load)
+    before = (budget.root / "ledger.json").read_bytes()
+    assert budget.reserved_attempt_counts(["A", "B", "J", "O"]) == dict(A=0, B=0, J=0, O=0)
+    assert len(reads) == 1
+    assert (budget.root / "ledger.json").read_bytes() == before
+    budget.reserve("A", 1, provider="anthropic")
+    reads.clear()
+    assert budget.reserved_attempt_counts(["A", "B"]) == dict(A=1, B=0)
+    assert len(reads) == 1
+    with pytest.raises(mod.BudgetError, match="outside"):
+        budget.reserved_attempt_counts(["unknown"])
+    with pytest.raises(mod.BudgetError, match="sequence"):
+        budget.reserved_attempt_counts("A")
+
+
 def queued_budget(tmp_path):
     calls = [{"call_id": f"T{number}", "provider": "anthropic", "pool": "target", "bound_microusd": 20}
              for number in range(10)] + [{"call_id": "J", "provider": "anthropic", "pool": "judge", "bound_microusd": 30}]
