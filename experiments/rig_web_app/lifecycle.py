@@ -1753,6 +1753,16 @@ class LifecycleMixin:
                         allowed.update(self._selected_matrix_environment_names(selected))
             allowed.update(self._MATRIX_OPTIONAL_ENV)
             allowed.update(self._MATRIX_RECEIPT_ENV)
+        if command == "retained_native_judge_execute":
+            prepared = self._strict_config_document(str(values.get("--preparation", "")),
+                str(values.get("--preparation-sha256", "")))
+            for source in prepared["units"]:
+                argv = source["runner_argv"]
+                selected = {flag:argv[index+1] for index,flag in enumerate(argv[:-1])
+                    if flag in {"--source-config", "--source-config-sha256", "--corpora"}}
+                allowed.update(self._declared_matrix_environment(selected))
+            allowed.update(self._MATRIX_OPTIONAL_ENV)
+            allowed.update(self._MATRIX_RECEIPT_ENV)
         if command == "retained_response_judge_pair_execute":
             plan = self._strict_config_document(str(values.get("--plan", "")))
             condition = plan.get("judge_condition")
@@ -3315,7 +3325,8 @@ class LifecycleMixin:
             # Standalone launches must not inherit another campaign's binding.
             child_env.pop("URA_CAMPAIGN_WORKSPACE_ID", None)
             child_env.pop("URA_CAMPAIGN_CONSOLE_DB", None)
-            if command in {"hosted_campaign_execute", "run_matrix", "retained_response_judge_pair_execute"} and campaign_id:
+            if command in {"hosted_campaign_execute", "run_matrix", "retained_response_judge_pair_execute",
+                           "retained_native_judge_execute"} and campaign_id:
                 child_env["URA_CAMPAIGN_WORKSPACE_ID"] = campaign_id
                 child_env["URA_CAMPAIGN_CONSOLE_DB"] = str(self.db.path.resolve())
             if transient_config is not None:
