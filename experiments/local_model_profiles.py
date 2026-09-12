@@ -19,7 +19,8 @@ from ura.strict_json import strict_json_loads
 
 LEGACY_SCHEMA = "ura-local-model-execution-profiles/1"
 UNBOUND_TOPOLOGY_SCHEMA = "ura-local-model-execution-profiles/2"
-SCHEMA = "ura-local-model-execution-profiles/3"
+HARDWARE_FIT_SCHEMA = "ura-local-model-execution-profiles/3"
+SCHEMA = "ura-local-model-execution-profiles/4"
 _HEX40_64 = re.compile(r"[0-9a-f]{40,64}\Z")
 _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 _MAX_BYTES = 4 * 1024 * 1024
@@ -53,6 +54,7 @@ def _read_document(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict) or value.get("schema") not in {
         LEGACY_SCHEMA,
         UNBOUND_TOPOLOGY_SCHEMA,
+        HARDWARE_FIT_SCHEMA,
         SCHEMA,
     }:
         raise ValueError("local model profile registry schema changed")
@@ -141,6 +143,12 @@ def load_profiles(
                 "max_model_len": -1,
                 "tensor_parallel_size": tp,
             }
+            if value["schema"] == SCHEMA and local_execution.get("max_model_len") != -1:
+                from ura.targets.local import validate_vllm_max_model_len
+                ceiling = validate_vllm_max_model_len(local_execution.get("max_model_len"))
+                if ceiling <= 25_000:
+                    raise ValueError("profile context ceiling must exceed the largest output probe")
+                expected_execution["max_model_len"] = ceiling
         else:
             from ura.targets.local import validate_ollama_think
 
@@ -151,6 +159,12 @@ def load_profiles(
                     f"local model profile {spec!r} condition is invalid"
                 ) from exc
             expected_execution = {"num_ctx": "fit", "think": thinking}
+            if value["schema"] == SCHEMA and "context_ceiling" in local_execution:
+                from ura.targets.local import validate_ollama_context_ceiling
+                ceiling = validate_ollama_context_ceiling(local_execution["context_ceiling"])
+                if ceiling <= 25_000:
+                    raise ValueError("profile context ceiling must exceed the largest output probe")
+                expected_execution["context_ceiling"] = ceiling
         if local_execution != expected_execution:
             raise ValueError(f"local model profile {spec!r} condition is invalid")
         profiles[spec] = dict(entry)
@@ -193,6 +207,7 @@ def apply_profile(
         result.update(profile["local_execution"])
     else:
         result["num_predict"] = profile["generation_tokens"]
+        result.pop("context_ceiling", None)
         result.update(profile["local_execution"])
     result["timeout"] = profile["request_timeout_seconds"]
     return result, profile

@@ -782,6 +782,17 @@ def test_ollama_local_config_binds_context_and_output_caps(
     assert "num_ctx" not in default_target._sampling_options()
     assert default_target._sampling_options()["num_predict"] == 4096
 
+    capped_path = tmp_path / "ollama-tested-ceiling.json"
+    capped_path.write_text(json.dumps({spec: {
+        "digest": "a" * 64, "modalities": ["text"], "num_ctx": "fit",
+        "num_predict": 8192, "context_ceiling": 32768,
+    }}), encoding="utf-8")
+    capped, _ = run_matrix._load_local_config(str(capped_path), [spec])
+    capped_target = run_matrix.build_target(spec, local_identity=capped[spec])
+    assert capped_target.context_ceiling == 32768
+    assert capped_target.num_ctx == "fit"
+    assert "context_ceiling" not in capped_target._sampling_options()
+
 
 def test_ollama_native_max_context_is_resolved_once_from_pinned_model_metadata(
     monkeypatch: pytest.MonkeyPatch,

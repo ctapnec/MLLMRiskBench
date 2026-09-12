@@ -743,6 +743,85 @@ def test_readiness_condition_forces_fit_context_and_preserves_thinking() -> None
     }
 
 
+@pytest.mark.parametrize("spec", ["ollama:example:model", "vllm:example/model"])
+def test_tested_context_ceiling_survives_profile_and_probe_handoff(tmp_path, spec):
+    from experiments.local_model_profiles import HARDWARE_FIT_SCHEMA
+    from ura.targets.local import OllamaTarget
+
+    config = ({"digest": "d" * 64} if spec.startswith("ollama:") else {"revision": "b" * 40})
+    config["modalities"] = ["text"]
+    execution = _configure_readiness_condition(spec, config, context_ceiling=32768)
+    if spec.startswith("ollama:"):
+        assert execution == {"num_ctx": "fit", "think": False, "context_ceiling": 32768}
+    else:
+        assert execution["max_model_len"] == 32768
+    receipt = readiness_receipt(vision=False, spec=spec)
+    receipt["execution_profile"]["local_execution"] = execution
+    # Retained hardware-fit receipts cannot be reinterpreted as capped ones.
+    with pytest.raises(ValueError, match="condition changed"):
+        validate_readiness(receipt)
+    receipt["schema"] = readiness_module.CONTEXT_SCHEMA
+    validate_readiness(receipt, expected_spec=spec)
+    raw = json.dumps(receipt).encode()
+    path = tmp_path / "ready.json"
+    path.write_bytes(raw)
+    registry = tmp_path / "profiles.json"
+    update_registry(spec=spec, local_config=config, readiness_path=path,
+        readiness_sha256=hashlib.sha256(raw).hexdigest(), readiness=receipt, path=registry)
+    resolved, _ = apply_profile(spec, config, path=registry)
+    assert all(resolved[key] == value for key, value in execution.items())
+    if spec.startswith("ollama:"):
+        target = readiness_module.build_target(spec, local_identity=resolved)
+        assert isinstance(target, OllamaTarget)
+        assert target.num_ctx == "fit" and target.context_ceiling == 32768
+    document = json.loads(registry.read_text())
+    document["schema"] = HARDWARE_FIT_SCHEMA
+    registry.write_text(json.dumps(document))
+    with pytest.raises(ValueError, match="condition is invalid"):
+        load_profiles(path=registry)
+    args = SimpleNamespace(local=spec, local_config=path, local_config_sha256="a" * 64,
+        context_ceiling=32768, model_acquisition_plan=None, model_acquisition_plan_sha256=None,
+        model_acquisition_receipt=None, model_acquisition_receipt_sha256=None,
+        model_acquisition_store=None)
+    argv = readiness_module._probe_argv(args, kind="survey-text", generation_tokens=8192,
+        out=tmp_path / "probe.json")
+    assert argv[argv.index("--context-ceiling") + 1] == "32768"
+
+
+def test_capped_ollama_fit_still_reduces_allocation_until_fully_gpu_resident(monkeypatch):
+    from ura.targets.local import OllamaTarget
+
+    target = OllamaTarget("example:model", model_digest="d" * 64,
+        num_ctx="fit", context_ceiling=32768)
+    monkeypatch.setattr(target, "_resolve_num_ctx", lambda **kw: 131072)
+    attempted, released = [], []
+    def preload(context, *, deadline):
+        attempted.append(context)
+        return {"context_length": context, "size": 100,
+                "size_vram": 99 if context >= 32768 else 100}
+    monkeypatch.setattr(target, "_preload_context_candidate", preload)
+    monkeypatch.setattr(target, "_release_owned_residency", lambda **kw: released.append(True))
+    assert target._resolve_hardware_fit_context(deadline=100) == 16384
+    assert attempted == [32768, 16384]
+    assert released == [True]
+    assert target.num_ctx == "fit"
+    assert target._hardware_fit_attempts[0]["fully_gpu_resident"] is False
+
+
+@pytest.mark.parametrize("ceiling", [True, 0, -1, 8192, 25000, "32768"])
+def test_readiness_rejects_context_that_cannot_exercise_output_protocol(ceiling):
+    with pytest.raises(ValueError):
+        _configure_readiness_condition("ollama:example:model", {}, context_ceiling=ceiling)
+
+
+def test_readiness_context_ceiling_is_available_in_console_tools():
+    from experiments.rig_web_app.catalog import COMMANDS, build_argv
+
+    params = {"--local": "ollama:example:model", "--context-ceiling": "32768"}
+    argv = build_argv(COMMANDS["local_model_readiness"], params)
+    assert argv[argv.index("--context-ceiling") + 1] == "32768"
+
+
 def test_retained_schema_two_readiness_receipts_remain_valid() -> None:
     value = readiness_receipt(vision=False)
     text = value["text"]

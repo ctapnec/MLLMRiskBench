@@ -1747,7 +1747,7 @@ def _load_local_config(
         if not isinstance(config, dict) or set(config) - {
             "revision", "digest", "modalities", "tensor_parallel_size",
             "gpu_memory_utilization", "max_tokens", "max_model_len",
-            "num_ctx", "num_predict", "think", "timeout",
+            "num_ctx", "num_predict", "think", "timeout", "context_ceiling",
             "parameter_count_b",
             "multi_gpu_compatible", "quantization", "allow_unknown_fit",
         }:
@@ -1953,6 +1953,7 @@ def _load_local_config(
                 OLLAMA_FORBIDDEN_LOCAL_CONFIG_FIELDS,
                 validate_local_request_timeout,
                 validate_ollama_num_ctx,
+                validate_ollama_context_ceiling,
                 validate_ollama_num_predict,
                 validate_ollama_think,
             )
@@ -1968,7 +1969,7 @@ def _load_local_config(
             unsupported = sorted(
                 set(config) - {
                     "digest", "modalities", "num_ctx", "num_predict", "think",
-                    "timeout",
+                    "timeout", "context_ceiling",
                 }
             )
             if unsupported:
@@ -1983,6 +1984,10 @@ def _load_local_config(
                 config["num_predict"] = validate_ollama_num_predict(
                     config.get("num_predict", DEFAULT_OLLAMA_NUM_PREDICT)
                 )
+                if "context_ceiling" in config:
+                    config["context_ceiling"] = validate_ollama_context_ceiling(config["context_ceiling"])
+                    if config["num_ctx"] != "fit":
+                        raise ValueError("context_ceiling requires num_ctx='fit'")
                 config["think"] = validate_ollama_think(
                     config.get("think", False)
                 )
@@ -3032,6 +3037,7 @@ def build_target(
                 model_digest=str(local_identity["digest"]),
                 modality_support=modalities,
                 num_ctx=local_identity["num_ctx"],
+                context_ceiling=local_identity.get("context_ceiling"),
                 num_predict=int(local_identity["num_predict"]),
                 think=local_identity["think"],
                 timeout=local_identity.get(

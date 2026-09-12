@@ -1027,6 +1027,8 @@ def _commands() -> dict[str, Command]:
             "Profile one vLLM or Ollama target with the seeded 10-text/5-image gate",
             (
                 CommandParam("--local", "str"),
+                CommandParam("--context-ceiling", "int", help="Optional context ceiling tested by readiness; "
+                    "leave empty for hardware fit. Minimum 25001 tokens. Ollama still requires full GPU residency."),
                 CommandParam("--local-config", "path"),
                 CommandParam("--local-config-sha256", "str"),
                 CommandParam("--model-acquisition-plan-only", "flag"),

@@ -157,7 +157,7 @@ OLLAMA_FORBIDDEN_LOCAL_CONFIG_FIELDS = frozenset({
     "quantization",
     "allow_unknown_fit",
 })
-VLLM_FORBIDDEN_LOCAL_CONFIG_FIELDS = frozenset({"num_ctx", "num_predict", "think"})
+VLLM_FORBIDDEN_LOCAL_CONFIG_FIELDS = frozenset({"num_ctx", "num_predict", "think", "context_ceiling"})
 _OLLAMA_RESERVED_CONSTRUCTOR_OPTIONS = (
     OLLAMA_FORBIDDEN_LOCAL_CONFIG_FIELDS
     | {"digest", "modalities", "multi_gpu_support_basis", "dtype"}
@@ -263,6 +263,13 @@ def validate_ollama_num_ctx(value: object) -> int | Literal["fit", "max"]:
             "num_ctx must be 'fit', 'max', or an integer in "
             f"1..{MAX_OLLAMA_NUM_CTX}"
         )
+    return value
+
+
+def validate_ollama_context_ceiling(value: object) -> int:
+    """Bound hardware-fit allocation without permitting CPU spill."""
+    if type(value) is not int or not 1 <= value <= MAX_OLLAMA_NUM_CTX:
+        raise ValueError(f"context_ceiling must be an integer in 1..{MAX_OLLAMA_NUM_CTX}")
     return value
 
 
@@ -1221,6 +1228,7 @@ class OllamaTarget(BaseTarget):
         host: str = DEFAULT_OLLAMA_URL,
         temperature: float = 0.0,
         num_ctx: int | Literal["fit", "max"] = DEFAULT_OLLAMA_NUM_CTX,
+        context_ceiling: int | None = None,
         num_predict: int = DEFAULT_OLLAMA_NUM_PREDICT,
         think: bool | str = False,
         timeout: float = DEFAULT_LOCAL_REQUEST_TIMEOUT_SECONDS,
@@ -1244,6 +1252,12 @@ class OllamaTarget(BaseTarget):
         self.host = canonicalize_ollama_url(host)
         self.temperature = temperature
         self.num_ctx = validate_ollama_num_ctx(num_ctx)
+        self.context_ceiling = (
+            validate_ollama_context_ceiling(context_ceiling)
+            if context_ceiling is not None else None
+        )
+        if self.context_ceiling is not None and self.num_ctx != "fit":
+            raise ValueError("context_ceiling requires num_ctx='fit'")
         self._resolved_num_ctx: int | None = None
         self._hardware_fit_attempts: list[dict[str, int | bool]] = []
         self.num_predict = validate_ollama_num_predict(num_predict)
@@ -1554,6 +1568,8 @@ class OllamaTarget(BaseTarget):
         finally:
             self.num_ctx = original_policy
             self._resolved_num_ctx = None
+        if self.context_ceiling is not None:
+            candidate = min(candidate, self.context_ceiling)
         minimum = min(candidate, MIN_OLLAMA_HARDWARE_FIT_CONTEXT)
         while candidate >= minimum:
             profile = self._preload_context_candidate(candidate, deadline=deadline)
@@ -2046,6 +2062,8 @@ class OllamaTarget(BaseTarget):
                     "seed": seed,
                     "temperature": self.temperature,
                     "num_ctx_policy": self.num_ctx,
+                    **({"context_ceiling": self.context_ceiling}
+                       if self.context_ceiling is not None else {}),
                     "num_ctx": resolved_num_ctx,
                     "num_predict": self.num_predict,
                     "think": self.think,

@@ -44,6 +44,8 @@ from ura.targets.local import (  # noqa: E402
     MAX_OLLAMA_NUM_PREDICT,
     MAX_VLLM_GENERATION_TOKENS,
     validate_ollama_think,
+    validate_ollama_context_ceiling,
+    validate_vllm_max_model_len,
 )
 from ura.model_acquisition import (  # noqa: E402
     ModelAcquisitionError,
@@ -62,6 +64,7 @@ LEGACY_SCHEMA = "ura-local-model-readiness/1"
 BOUNDED_SCHEMA = "ura-local-model-readiness/2"
 CAP_STRESS_SCHEMA = "ura-local-model-readiness/3"
 SCHEMA = "ura-local-model-readiness/4"
+CONTEXT_SCHEMA = "ura-local-model-readiness/5"
 PROBE_SCHEMA = "ura-local-model-readiness-probe/1"
 PROBE_START_SCHEMA = "ura-local-model-readiness-probe-start/1"
 READINESS_SEED = 20260829
@@ -388,28 +391,38 @@ def _set_generation_tokens(target: Any, spec: str, value: int) -> None:
 def _configure_readiness_condition(
     spec: str,
     config: dict[str, object],
+    *, context_ceiling: int | None = None,
 ) -> dict[str, object]:
-    """Bind hardware-fit context and the selected model's thinking mode."""
+    """Bind the tested context allocation and thinking mode, not a guessed cap."""
 
+    if context_ceiling is not None:
+        validate_ollama_context_ceiling(context_ceiling)
+        validate_vllm_max_model_len(context_ceiling)
+        if context_ceiling <= PROFILE_MAXIMUM_GENERATION_TOKENS:
+            raise ValueError("readiness context ceiling must exceed the largest output probe")
     config["timeout"] = PROFILE_REQUEST_DEADLINE_SECONDS
     if spec.startswith("vllm:"):
         tensor_parallel_size = config.get("tensor_parallel_size", 2)
         gpu_memory_utilization = config.get("gpu_memory_utilization", 0.90)
-        config["max_model_len"] = -1
+        config["max_model_len"] = context_ceiling if context_ceiling is not None else -1
         config["max_tokens"] = PROFILE_MAXIMUM_GENERATION_TOKENS
         config["tensor_parallel_size"] = tensor_parallel_size
         config["gpu_memory_utilization"] = gpu_memory_utilization
         return {
             "gpu_memory_utilization": gpu_memory_utilization,
-            "max_model_len": -1,
+            "max_model_len": config["max_model_len"],
             "tensor_parallel_size": tensor_parallel_size,
         }
     if spec.startswith("ollama:"):
         config["num_ctx"] = "fit"
+        config.pop("context_ceiling", None)
+        if context_ceiling is not None:
+            config["context_ceiling"] = context_ceiling
         config["num_predict"] = PROFILE_MAXIMUM_GENERATION_TOKENS
         thinking = config.get("think", False)
         config["think"] = thinking
-        return {"num_ctx": "fit", "think": thinking}
+        return {"num_ctx": "fit", "think": thinking,
+                **({"context_ceiling": context_ceiling} if context_ceiling is not None else {})}
     raise ValueError("readiness supports only local vLLM or Ollama targets")
 
 
@@ -775,6 +788,7 @@ def _probe_argv(
         str(generation_tokens),
     ]
     for flag, value in (
+        ("--context-ceiling", getattr(args, "context_ceiling", None)),
         ("--probe-start-marker", start_marker),
         ("--model-acquisition-plan", args.model_acquisition_plan),
         ("--model-acquisition-plan-sha256", args.model_acquisition_plan_sha256),
@@ -1060,6 +1074,7 @@ def validate_readiness(value: object, *, expected_spec: str | None = None) -> di
         BOUNDED_SCHEMA,
         CAP_STRESS_SCHEMA,
         SCHEMA,
+        CONTEXT_SCHEMA,
     }:
         raise ValueError("local-model readiness receipt schema is invalid")
     schema = value.get("schema")
@@ -1068,6 +1083,7 @@ def validate_readiness(value: object, *, expected_spec: str | None = None) -> di
         BOUNDED_SCHEMA: bounded_readiness_policy,
         CAP_STRESS_SCHEMA: cap_stress_readiness_policy,
         SCHEMA: readiness_policy,
+        CONTEXT_SCHEMA: readiness_policy,
     }[schema]()
     if value.get("policy") != expected_policy or value.get("status") != "verified":
         raise ValueError("local-model readiness policy is not terminal-passed")
@@ -1107,7 +1123,7 @@ def validate_readiness(value: object, *, expected_spec: str | None = None) -> di
         if execution is not None:
             raise ValueError("legacy local-model readiness receipt changed")
         return value
-    if schema in {CAP_STRESS_SCHEMA, SCHEMA}:
+    if schema in {CAP_STRESS_SCHEMA, SCHEMA, CONTEXT_SCHEMA}:
         if (
             not isinstance(execution, dict)
             or set(execution)
@@ -1205,7 +1221,11 @@ def validate_readiness(value: object, *, expected_spec: str | None = None) -> di
                         "max_model_len",
                         "tensor_parallel_size",
                     }
-                    or local_execution.get("max_model_len") != -1
+                    or (local_execution.get("max_model_len") != -1
+                        and not (schema == CONTEXT_SCHEMA
+                            and type(local_execution.get("max_model_len")) is int
+                            and PROFILE_MAXIMUM_GENERATION_TOKENS < local_execution["max_model_len"]
+                            and validate_vllm_max_model_len(local_execution["max_model_len"])))
                     or isinstance(local_execution.get("tensor_parallel_size"), bool)
                     or local_execution.get("tensor_parallel_size") not in {1, 2}
                     or isinstance(local_execution.get("gpu_memory_utilization"), bool)
@@ -1223,6 +1243,11 @@ def validate_readiness(value: object, *, expected_spec: str | None = None) -> di
             except ValueError as exc:
                 raise ValueError("local-model execution condition changed") from exc
             expected_local_execution = {"num_ctx": "fit", "think": thinking}
+            if schema == CONTEXT_SCHEMA and "context_ceiling" in local_execution:
+                ceiling = validate_ollama_context_ceiling(local_execution["context_ceiling"])
+                if ceiling <= PROFILE_MAXIMUM_GENERATION_TOKENS:
+                    raise ValueError("readiness context ceiling must exceed the largest output probe")
+                expected_local_execution["context_ceiling"] = ceiling
         else:
             expected_local_execution = None
         if local_execution != expected_local_execution:
@@ -1310,6 +1335,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--local")
     parser.add_argument("--local-config", type=Path)
     parser.add_argument("--local-config-sha256", default="")
+    parser.add_argument("--context-ceiling", type=int,
+        help="Optional tested context allocation ceiling; defaults to hardware fit. "
+             "Must exceed 25000 tokens to leave room for every output stress probe.")
     parser.add_argument("--model-acquisition-plan-only", action="store_true")
     parser.add_argument("--model-acquisition-plan-dir", type=Path)
     parser.add_argument("--model-acquisition-plan", type=Path)
@@ -1357,7 +1385,8 @@ def main(argv: list[str] | None = None) -> int:
         expected_sha256=args.local_config_sha256,
     )
     config = local_configs[args.local]
-    local_execution = _configure_readiness_condition(args.local, config)
+    local_execution = _configure_readiness_condition(
+        args.local, config, context_ceiling=args.context_ceiling)
     requirements = collect_run_requirements(
         target_specs=[args.local],
         local_configs=local_configs,
@@ -1562,7 +1591,7 @@ def main(argv: list[str] | None = None) -> int:
         "readiness_id": "0" * 64,
         "requested_spec": args.local,
         "resolved_target": str(target.name),
-        "schema": SCHEMA,
+        "schema": CONTEXT_SCHEMA if args.context_ceiling is not None else SCHEMA,
         "status": status,
         "text": text,
         "vision": vision,
