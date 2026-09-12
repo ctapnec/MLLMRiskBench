@@ -89,8 +89,18 @@ Build's General section now starts source preparation from the campaign index:
    selection, prompts, dialogue history and media are retained. A changed
    source selection, model configuration, request cap or pricing date requires
    the corresponding preparation to be refreshed. No target or judge is called.
+7. Select **rules,guardrail** in Evaluation for the retained-input executor's
+   local post-hoc scoring path. **Count inputs and prepare collection** obtains
+   the source, replay and forecast artifacts from those jobs and prepares the
+   existing provider-parallel programs with one shared spending plan. Enable
+   provider token counting only when the selected route requires its endpoint;
+   otherwise supported local conservative counts are used. This action sends
+   no generation request, runs no judge and does not start collection. Review
+   the resulting costs before execution. Haiku still requires its separate
+   output-specific selection and preparation.
 
-The forecast and replay actions are rig-verified and queued for console deployment; the
+The forecast, replay and counted-program actions are rig-verified; console
+deployment is tracked in the development ledger. The
 older selected-source action is already deployed. Its initial Haiku forecast
 assumes one hosted and one matched local output per target request. This is not
 the final number of distinct selected local answers: later preparation must
@@ -103,8 +113,8 @@ selected in Stats. It never chooses the newest or best answer automatically.
 It resolves only the selected artifact locations, then reuses the existing
 source-preparation command. Opening the page does not scan or hash result files.
 This is a separate preparation action, not a switch silently changing the
-current Runner pipeline's corpus. The remaining readiness, shared
-execution funding and judging orchestration below is not yet assembled by the
+current Runner pipeline's corpus. The remaining readiness, reviewed collection
+launch/continuation and judging orchestration below is not yet assembled by the
 normal Build editor. A forecast is not that execution handoff.
 Replay preparation converts the union of required sources once across models,
 using the configured corpus and media locations without API credentials.
@@ -151,7 +161,7 @@ at paid dispatch. Old programs retain their original reader and interpretation.
 
 These typed forms and reusable preparation APIs are not the finished normal
 Build workflow. Source and replay preparation are connected; the remaining editor
-work must assemble exact-input counting, shared execution budgets, readiness and requested judging stages from
+work must assemble readiness, reviewed collection and requested judging stages from
 its ordinary controls. Do not present manual JSON/path handoffs as that completed
 UX. The retained executor still owns provider concurrency and continuation;
 creating a second scheduler or independently funded per-model grids is not the

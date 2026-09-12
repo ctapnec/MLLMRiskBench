@@ -2884,6 +2884,20 @@ runs, model settings, caps or pricing date invalidates the corresponding saved
 Build preparation, not the historical artifacts. No model, judge or network
 call is made, and this step does not fund or start collection.
 
+Build's **Count inputs and prepare collection** action then writes the existing
+selected-source campaign request and launches `hosted_campaign_prepare` with a
+dedicated count cache. It preserves source/replay/forecast job ownership and
+rejects a replay from different preparation jobs. The replay selection supplies
+the source arms; the unrelated ordinary Runner arm picker is not substituted.
+The current executor requires `rules,guardrail` for its native post-hoc path
+and zero paid answer retries; other judging choices are not silently ignored.
+Provider token counting is an explicit checkbox corresponding to
+`--allow-network-counts`. With it disabled, supported text-only local counts are
+conservative estimates, not provider-exact observations. The output contains
+one shared spending plan and the existing executable programs, but no collection
+launch follows automatically. Readiness, reviewed launch/continuation and the
+actual output-specific Haiku population remain subsequent stages.
+
 Pass this inventory and its digest to `hosted_retained_inputs`; omit the legacy
 `--runner-view`. The existing budget and whole-cluster selection still apply.
 With `--materialize-corpus`, selected local sources now reconstruct their exact
