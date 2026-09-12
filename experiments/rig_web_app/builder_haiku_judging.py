@@ -84,8 +84,10 @@ def prepare_haiku_judging(app,params):
             input_flag='--hosted-runner-view')
         if previous is not None:
             saved=json.loads(previous['argv'])
-            equivalent=all(argument(saved,flag)==value for flag,value in values.items() if '#' not in flag)
             api_path=Path(argument(saved,'--api-config'))
+            equivalent=saved==build_argv('retained_response_judge_pair',dict(values,**{
+                '--api-config':str(api_path),'--api-config-sha256':argument(saved,'--api-config-sha256'),
+                '--out':argument(saved,'--out')}))
             equivalent=equivalent and json.loads(api_path.read_text())=={model:config}
             if equivalent and _state(app,previous) in {'running','queued','starting','complete'}:
                 app._save_build_campaign(dict(params,retained_haiku_job=previous['job_id']))
@@ -142,7 +144,7 @@ def haiku_judging_review(app,params):
         'This is a selected comparison, not an assertion that every campaign answer is covered.</p>'
         '<p>Judge: '+html.escape(condition['model'])+f"; 512 output tokens per verdict; "
         f"USD {condition['max_cost_microusd']/1e6:,.6f} selection ceiling under the existing campaign allocation. "
-        'This ceiling is not reported spending or an additional allocation. HTTP errors allow three retries; '
+        'This ceiling is not reported spending. It is not an additional allocation. HTTP errors allow three retries; '
         'answers have no automatic retries. Invalid verdicts remain recorded. Saved judgments resume without target regeneration.</p>'
         '<p>Haiku receives the rendered prompt text and each target answer. Images are represented by their '
         'retained text proxy, not sent as image pixels. Missing outputs and excluded source tasks are not given invented verdicts. '

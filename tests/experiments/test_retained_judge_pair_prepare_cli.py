@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from experiments import hosted_retained_execute as funding
+from experiments.hosted_attempt_budget import create_budget
 from experiments import retained_response_judge_execute as executor
 from experiments import retained_response_judge_pair as subject
 from experiments.rig_web_app.catalog import build_argv
@@ -18,6 +19,8 @@ def selection(tmp_path,monkeypatch):
     source.write_text('{}')
     program=tmp_path/'program.json'
     program.write_text('{"target":"hosted:model-0"}')
+    budget=create_budget(tmp_path/'budget',provider_budgets_microusd={'anthropic':1000000},
+        planned_calls=[dict(call_id='existing-funded-slot',provider='anthropic',pool='judge',bound_microusd=10000)])
     local,hosted=[_candidate(0,cohort='local')],[_candidate(0,cohort='hosted')]
     monkeypatch.setattr(subject,'load_pair_candidate_views',lambda *a:
         ((local,_population(1)),(hosted,_population(1)),{}))
@@ -26,7 +29,7 @@ def selection(tmp_path,monkeypatch):
     values={'--local-runner-view':str(tmp_path/'local.json'),'--hosted-runner-view':str(tmp_path/'hosted.json'),
         '--source-receipt':str(source),'--source-receipt-sha256':hashlib.sha256(source.read_bytes()).hexdigest(),
         '--judge-model':JUDGE,'--api-config-sha256':'a'*64,'--api-config':str(tmp_path/'api.json'),
-        '--shared-budget-root':str(tmp_path/'budget'),'--shared-budget-sha256':'b'*64,
+        '--shared-budget-root':str(tmp_path/'budget'),'--shared-budget-sha256':budget['sha256'],
         '--program':str(program),'--program-sha256':hashlib.sha256(program.read_bytes()).hexdigest(),
         '--pricing-config':str(tmp_path/'pricing.json'),'--pricing-config-sha256':'a'*64,
         '--pricing-as-of':'2026-09-03','--pair-limit':'1','--out':str(tmp_path/'plan.json'),
@@ -52,7 +55,9 @@ def test_selection_prepares_existing_funding_without_judge_calls(selection,monke
     assert captured[0]['programs']==[{'target':'hosted:model-0'}]
     assert str(captured[0]['budget'].root)==selection['--shared-budget-root']
     assert json.loads(Path(selection['--out']).with_suffix('.shared-requests.json').read_text())==requests
-    assert not Path(selection['--shared-budget-root']).exists()
+    budget=Path(selection['--shared-budget-root'])
+    assert hashlib.sha256((budget/'plan.json').read_bytes()).hexdigest()==selection['--shared-budget-sha256']
+    assert json.loads((budget/'ledger.json').read_text())['attempts']=={}
 
 
 @pytest.mark.parametrize('missing',['--api-config','--shared-budget-root','--shared-budget-sha256','--program','--program-sha256'])
