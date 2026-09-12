@@ -721,6 +721,19 @@ an execution interrupted before retaining any verdict still needs its failed-cal
 ledger publication. This is advanced typed-tool integration, not acceptance of
 the complete normal Build scheduling and continuation workflow.
 
+`retained_native_judge_prepare` exposes source preparation for local judging of
+saved hosted answers as a reusable CLI and typed Tools form. Select prepared
+program references and optionally exact job names. It reconstructs the original
+replay inputs and pairs them with their saved responses, preserving the original
+model, generation settings, source criteria and approximate-metric setting.
+Declared corpus and media locators are required; target-provider credentials are
+not forwarded to this preparation child. The reader cannot generate answers or
+load a judge. A missing final manifest does not prevent reading complete saved
+responses, but preparation never manufactures that manifest or a generation start.
+Partial source failures retain separate diagnostics and do not erase successfully
+prepared sources. This command prepares sources only; it does not execute local
+judgments and is not yet the complete normal Build judging flow.
+
 Native judging publication includes original inline verdicts as well as later
 post-hoc results. `workspace_judgments.native_inline_rows` reads the explicitly
 selected run's final/checkpoint verdicts, checks their saved response ownership

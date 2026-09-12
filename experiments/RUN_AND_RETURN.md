@@ -6595,6 +6595,29 @@ observation does not repeatedly parse the spending history. This command does
 not replace the normal Build preparation/counting workflow, whose complete
 integration is tracked in `docs/CAMPAIGN_WORKSPACES.md`.
 
+### Prepare local judging of saved hosted answers
+
+Use the `retained_native_judge_prepare` Tools form, or:
+
+```bash
+python -m experiments.retained_native_judge_prepare \
+  --program "$PROGRAM" --program-sha256 "$PROGRAM_SHA256" \
+  --job "$EXACT_JOB_NAME" --out "$FRESH_RESOLVED_DIRECTORY"
+```
+
+Repeat matching program/digest pairs for several programs. Omit `--job` to select
+all their jobs. Supply the original source configuration's corpus/media locators,
+including `URA_MEDIA_ROOTS` for images. This operation needs no provider key and
+makes no target or judge calls. Full artifact hashing remains opt-in through
+`--verify-artifact-sha256`.
+
+`result.json` records the original output identities and generation conditions.
+Incomplete source jobs retain their own diagnostic references while other valid
+jobs remain prepared. A complete response checkpoint can be prepared without a
+final native manifest; no missing generation metadata is fabricated. The result
+explicitly says judgments have not executed. Local scoring execution and normal
+Build judging management are separate remaining integration work.
+
 ### Publish retained-output judging into campaigns
 
 In Tools, select the campaign owning the outputs and open
@@ -6633,6 +6656,7 @@ argument vectors; nothing below is console-only):
 | `run_matrix` (dry-run, probe, canary, measured) | 4.1, 8/8.1, 9/9.1, 10-13 |
 | `live_attestation` | 8.1, 9 |
 | `hosted_campaign_execute` | Collect prepared hosted programs concurrently |
+| `retained_native_judge_prepare` | Prepare local judging of saved hosted answers |
 | `retained_response_judge_pair_execute` | Publish retained-output judging into campaigns |
 | `lane_canary` | 8.1, 9.1 |
 | `native_import` | 14.3, 16 |
