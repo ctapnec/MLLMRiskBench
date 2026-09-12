@@ -579,6 +579,17 @@ class BuilderModelsMixin:
                     "think": self._local_ollama_think(spec, entry),
                     "timeout": self._local_request_timeout(spec, entry),
                 }
+                if "context_ceiling" in entry:
+                    from ura.targets.local import validate_ollama_context_ceiling
+                    resolved_ollama["context_ceiling"] = validate_ollama_context_ceiling(entry["context_ceiling"])
+                    if resolved_ollama["num_ctx"] != "fit":
+                        raise ValueError("Ollama context ceiling requires hardware fit")
+                tested_execution = execution_profile.get("local_execution")
+                if isinstance(tested_execution, Mapping) and (
+                    any(resolved_ollama.get(key) != value for key, value in tested_execution.items())
+                    or ("context_ceiling" in resolved_ollama and "context_ceiling" not in tested_execution)
+                ):
+                    raise ValueError(f"local target {spec!r} differs from its tested context/thinking condition")
                 if (
                     resolved_ollama["num_predict"]
                     != execution_profile["generation_tokens"]

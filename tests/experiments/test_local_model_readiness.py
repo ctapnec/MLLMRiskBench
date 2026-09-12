@@ -822,6 +822,26 @@ def test_readiness_context_ceiling_is_available_in_console_tools():
     assert argv[argv.index("--context-ceiling") + 1] == "32768"
 
 
+def test_build_preserves_readiness_tested_ollama_context_ceiling():
+    from experiments.rig_web_app.builder_models import BuilderModelsMixin
+
+    spec = "ollama:example:model"
+    execution = {"num_ctx": "fit", "think": True, "context_ceiling": 32768}
+    entry = dict(digest="d" * 64, modalities=["text"], num_predict=8192, timeout=120,
+        **execution, _execution_profile=dict(generation_tokens=8192,
+            request_timeout_seconds=120, local_execution=execution))
+    class Builder(BuilderModelsMixin):
+        def _local_entry_catalog(self):
+            return {spec: entry}, set()
+
+    selected = json.loads(Builder()._selected_local_config_payload([spec]))
+    assert selected[spec]["context_ceiling"] == 32768
+    assert selected[spec]["num_ctx"] == "fit"
+    entry["context_ceiling"] = 65536
+    with pytest.raises(ValueError, match="tested context/thinking"):
+        Builder()._selected_local_config_payload([spec])
+
+
 def test_retained_schema_two_readiness_receipts_remain_valid() -> None:
     value = readiness_receipt(vision=False)
     text = value["text"]
