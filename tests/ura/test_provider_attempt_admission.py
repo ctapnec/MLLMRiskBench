@@ -186,3 +186,40 @@ def test_other_400_errors_are_not_misreported_as_native_policy_refusals(provider
     target._client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=reject)))
     with pytest.raises(api.ProviderTransportError):
         target.generate([DialogTurn(role='user', content='retained input')])
+
+
+@pytest.mark.parametrize("fable", [False, True])
+@pytest.mark.parametrize("message", ["Output blocked by content filtering policy", "Invalid model parameter", "private request"])
+def test_anthropic_exact_http_content_filter_is_retained_without_answer_or_retry(fable, message):
+    from types import SimpleNamespace
+    import anthropic
+    import httpx
+    from ura.data_models import DialogTurn
+    from ura.runner import _attested_response_identity_matches, validate_response_refusal_state
+
+    target = api.AnthropicFableTarget("claude-fable-5-1") if fable else api.AnthropicTarget("claude-haiku-4-5-20251001")
+    calls = []
+    def reject(**kwargs):
+        calls.append(kwargs)
+        raise anthropic.BadRequestError("private request", response=httpx.Response(400,
+            headers={"request-id": "req-filter"}, request=httpx.Request("POST", "https://api.anthropic.com/v1/messages")),
+            body={"type": "invalid_request_error", "message": message})
+    target._client = SimpleNamespace(messages=SimpleNamespace(create=reject))
+    if message != "Output blocked by content filtering policy":
+        with pytest.raises(api.ProviderTransportError):
+            target.generate([DialogTurn(role="user", content="retained input")], seed=0)
+        assert len(calls) == 1
+        return
+    response = target.generate([DialogTurn(role="user", content="retained input")], seed=0)
+    assert len(calls) == 1 and not response.output_turns and response.tokens is None
+    validate_response_refusal_state(response)
+    assert response.raw["provider_refusal_category"] == "anthropic_http400_output_content_filter"
+    assert "private" not in repr(response.raw)
+    expected = dict(provider="anthropic", endpoint_identity=response.raw["endpoint_identity"], resolved_model=target.model)
+    assert _attested_response_identity_matches(expected, response)
+    assert not _attested_response_identity_matches({**expected, "provider": "openai"}, response)
+    assert not _attested_response_identity_matches({**expected,
+        "endpoint_identity": api.canonical_https_endpoint_identity("https://wrong.example/v1")}, response)
+    changed = response.model_copy(deep=True)
+    changed.raw["call_audit"]["provider_error_code"] = "invalid_parameter"
+    assert not _attested_response_identity_matches(expected, changed)

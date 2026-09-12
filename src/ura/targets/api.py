@@ -405,6 +405,13 @@ def _transport_error_metadata(exc: BaseException) -> dict[str, str]:
                 and re.fullmatch(r"[A-Za-z][A-Za-z0-9_.-]{0,99}", value)
                 and not value.lower().startswith(("sk-", "bearer"))):
             result["provider_error_" + key] = value
+    # Anthropic reports this policy outcome as a message, without a code.
+    # Retain only its exact classification, never arbitrary echoed text.
+    if (type(exc).__module__.split(".", 1)[0] == "anthropic"
+        and _transport_status_code(exc) == 400
+        and error.get("type") == "invalid_request_error"
+        and error.get("message") == "Output blocked by content filtering policy"):
+        result["provider_error_code"] = "output_content_filter"
     return result
 
 
@@ -1223,18 +1230,41 @@ class AnthropicTarget(BaseTarget):
             kwargs["system"] = system
         return kwargs
 
+    def _policy_rejection(
+        self, error: ProviderTransportError, dialog: list[DialogTurn],
+        *, seed: int | None, started: float,
+    ) -> Response:
+        """Retain the explicit Anthropic HTTP content filter as a policy outcome."""
+        audit = error.call_audit
+        if (self.provider != "anthropic" or audit.get("status_code") != 400
+            or audit.get("provider_error_type") != "invalid_request_error"
+            or audit.get("provider_error_code") != "output_content_filter"):
+            raise error
+        return Response(attempt_id=_dialog_fingerprint(dialog), target=self.name,
+            output_turns=[], tokens=None, latency_ms=(time.perf_counter() - started) * 1000.0,
+            raw={"provider": "anthropic", "endpoint_identity": canonical_https_endpoint_identity(self.base_url),
+                "requested_spec": self.requested_spec, "requested_model": self.model,
+                "resolved_model": None, "target_identity_observed": False,
+                "requested_seed": seed, "target_sampling_control": "not_observed_provider_policy_rejection",
+                "provider_refusal": True, "provider_refusal_category": "anthropic_http400_output_content_filter",
+                "provider_refusal_reason": "output_content_filter", "provider_policy_rejection": True,
+                "provider_generation_observed": False, "output_truncated": False,
+                "provider_request_id": audit.get("provider_request_id"), "call_audit": dict(audit),
+                "transport_attempt_count": len(error.transport_attempts), "transport_attempts": error.transport_attempts,
+                "generation": {"max_tokens": self.max_tokens, "max_retries": self.max_retries}})
+
     def generate(
         self, dialog: list[DialogTurn], *, seed: int | None = None
     ) -> Response:
         kwargs = self.build_request(dialog, seed=seed)
         client = self._get_client()
         start = time.perf_counter()
-        resp, transport_attempts = _call_with_retry(
-            client.messages.create,
-            kwargs,
-            provider=self.provider,
-            max_retries=self.max_retries,
-        )
+        try:
+            resp, transport_attempts = _call_with_retry(
+                client.messages.create, kwargs, provider=self.provider, max_retries=self.max_retries,
+            )
+        except ProviderTransportError as exc:
+            return self._policy_rejection(exc, dialog, seed=seed, started=start)
         latency_ms = (time.perf_counter() - start) * 1000.0
 
         try:
@@ -1715,12 +1745,12 @@ class AnthropicFableTarget(AnthropicTarget):
         kwargs = self.build_request(dialog, seed=seed)
         client = self._get_client()
         start = time.perf_counter()
-        resp, transport_attempts = _call_with_retry(
-            client.messages.create,
-            kwargs,
-            provider="anthropic-fable",
-            max_retries=self.max_retries,
-        )
+        try:
+            resp, transport_attempts = _call_with_retry(
+                client.messages.create, kwargs, provider="anthropic-fable", max_retries=self.max_retries,
+            )
+        except ProviderTransportError as exc:
+            return self._policy_rejection(exc, dialog, seed=seed, started=start)
         latency_ms = (time.perf_counter() - start) * 1000.0
 
         response_id = _provider_field(resp, "id")

@@ -6745,6 +6745,37 @@ def test_runner_retries_one_unusable_answer_by_default_then_scores_recovery(
     )
 
 
+@pytest.mark.parametrize("backend", ["ollama", "vllm"])
+@pytest.mark.parametrize("reason", ["stop", "length"])
+def test_missing_local_output_keeps_observed_generation_conditions(backend, reason) -> None:
+    stop_key = "done_reason" if backend == "ollama" else "finish_reason"
+    generation = {"num_ctx": 65536, "num_predict": 4096} if backend == "ollama" else {"max_model_len": 32768, "max_tokens": 4096}
+    class EmptyLocal(_RecordingTarget):
+        def generate(self, dialog, *, seed=None):
+            self._dialogs.append(list(dialog))
+            return Response(attempt_id="placeholder", target=self.name, output_turns=[],
+                tokens={"prompt": 49, "completion": 4096, "total": 4145}, latency_ms=30000,
+                raw={"backend": backend, "generation": generation, stop_key: reason,
+                    "output_truncated": reason == "length", "empty_completion_observed": True,
+                    "thinking_output_observed": True, "requested_seed": seed,
+                    "target_sampling_control": "uncontrolled"})
+    target = EmptyLocal()
+    runner = _runner(_FloodAttacker(), target)
+    checkpoints = []
+    runner.run([_datapoint("first"), _datapoint("next")], on_response=checkpoints.append)
+    assert len(checkpoints) == 2 and len(target._dialogs) == 4
+    for record in checkpoints:
+        response = record["response"]
+        assert response["raw"]["model_stability_status"] == "failed_output"
+        assert response["raw"]["model_stability_retry_count"] == 1
+        assert response["raw"][stop_key] == reason
+        assert response["raw"]["output_truncated"] is (reason == "length")
+        assert response["raw"]["generation"] == generation
+        assert response["raw"]["thinking_output_observed"] is True
+        assert response["tokens"]["completion"] == 4096
+        assert response["latency_ms"] == 30000
+
+
 def test_runner_answer_retry_policy_is_local_provider_independent() -> None:
     class EmptyThenAnswer(_RecordingTarget):
         def __init__(self, backend: str) -> None:

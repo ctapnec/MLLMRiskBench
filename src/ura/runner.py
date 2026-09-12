@@ -1403,6 +1403,13 @@ class Runner:
                 ),
                 tokens=(failed_response.tokens if failed_response is not None else reported_tokens),
                 raw={
+                    # A returned but unusable answer still has observed runtime
+                    # conditions. Do not erase its length stop or context when
+                    # normalizing it into a retained missing-output record.
+                    **({key: failed_response.raw[key] for key in (
+                        "backend", "generation", "finish_reason", "done_reason", "stop_reason",
+                        "output_truncated", "thinking_output_observed", "loaded_runtime",
+                    ) if key in failed_response.raw} if failed_response is not None else {}),
                     "empty_completion_observed": True,
                     "model_stability_status": "failed_output",
                     "model_stability_category": answer_error.category,
@@ -4387,12 +4394,14 @@ def _attested_response_identity_matches(expected: dict[str, str], response: Resp
     raw = response.raw
     audit = raw.get("call_audit", {})
     policy_code = audit.get("provider_error_code") if isinstance(audit, dict) else None
+    policy_provider = ("openai" if policy_code in ("cyber_policy", "bio_policy") else
+                       "anthropic" if policy_code == "output_content_filter" else None)
     if (raw.get("provider_refusal") is not True
         or raw.get("provider_policy_rejection") is not True
         or raw.get("provider_generation_observed") is not False
         or raw.get("target_identity_observed") is not False
-        or policy_code not in ("cyber_policy", "bio_policy")
-        or raw.get("provider_refusal_category") != f"openai_http400_{policy_code}"
+        or policy_provider is None
+        or raw.get("provider_refusal_category") != f"{policy_provider}_http400_{policy_code}"
         or raw.get("provider_refusal_reason") != policy_code
         or not isinstance(audit, dict) or audit.get("status_code") != 400
         or response.tokens is not None
@@ -4402,7 +4411,7 @@ def _attested_response_identity_matches(expected: dict[str, str], response: Resp
     validate_response_refusal_state(response)
     route = stable_realized_target_identity(observed)
     admitted = stable_realized_target_identity(expected)
-    return (route.get("provider") == admitted.get("provider") == "openai"
+    return (route.get("provider") == admitted.get("provider") == policy_provider
             and bool(route.get("endpoint_identity"))
             and route["endpoint_identity"] == admitted.get("endpoint_identity"))
 
