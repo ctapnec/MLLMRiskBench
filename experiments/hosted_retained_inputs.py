@@ -341,10 +341,7 @@ def select_distinct_requests(
     return result
 
 
-def build_plan(*, candidates: list[dict], budget: dict, budget_descriptor: dict,
-               api_config: dict, api_descriptor: dict, target: str,
-               media_index: Mapping[str, str], local_inventory_descriptor: dict,
-               call_cap: int | None = None) -> dict:
+def _plan_selection(*, candidates, budget, api_config, api_descriptor, target, call_cap):
     _check_candidate_identities(candidates, label="retained input identity")
     material = {key: value for key, value in budget.items() if key != "projection_id"}
     if (not admissible_projection(budget)
@@ -366,6 +363,16 @@ def build_plan(*, candidates: list[dict], budget: dict, budget_descriptor: dict,
             or any(item not in {"text", "image", "audio", "video"} for item in modalities)):
         raise ValueError("target must declare its exact supported modalities")
     selected, population = _select(candidates, modalities=modalities, cap=cap)
+    return route, cap, modalities, selected, population
+
+
+def build_plan(*, candidates: list[dict], budget: dict, budget_descriptor: dict,
+               api_config: dict, api_descriptor: dict, target: str,
+               media_index: Mapping[str, str], local_inventory_descriptor: dict,
+               call_cap: int | None = None) -> dict:
+    route, cap, modalities, selected, population = _plan_selection(
+        candidates=candidates, budget=budget, api_config=api_config,
+        api_descriptor=api_descriptor, target=target, call_cap=call_cap)
     entries = []
     for row in selected:
         entry = {key: copy.deepcopy(value) for key, value in row.items() if key != "rendered_input"}
@@ -709,7 +716,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--global-input-cap", type=int)
     parser.add_argument("--materialize-corpus", help="write mock-only replay inputs for one selected arm")
     parser.add_argument("--source-corpora", type=Path,
-                        help="exact original converted DataPoint lists keyed by retained run ID")
+                        help="Original DataPoint lists keyed by run ID; selected local sources can reconstruct these automatically")
     parser.add_argument("--source-corpora-sha256")
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)
@@ -720,9 +727,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("media index path and digest must be supplied together")
     media_index = (load_bound_json(args.media_index, args.media_index_sha256)[0]
                    if args.media_index else {})
-    if (bool(args.source_corpora) != bool(args.source_corpora_sha256)
-        or bool(args.materialize_corpus) != bool(args.source_corpora)):
-        parser.error("materialization requires a corpus and bound original source corpora together")
+    if bool(args.source_corpora) != bool(args.source_corpora_sha256):
+        parser.error("original source corpora path and digest must be supplied together")
+    if args.source_corpora and not args.materialize_corpus:
+        parser.error("original source corpora require a materialization corpus")
     from experiments.retained_local_sources import SCHEMA as LOCAL_SOURCE_SCHEMA, load_sources
     if inventory.get("schema") == LOCAL_SOURCE_SCHEMA:
         if args.runner_view:
@@ -731,8 +739,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         if not args.runner_view:
             parser.error("Legacy local inventories require runner-view")
+        if args.materialize_corpus and not args.source_corpora:
+            parser.error("Legacy materialization requires bound original source corpora")
         cells = load_cells(args.runner_view)
     candidates = candidates_from_cells(cells)
+    populations = None
+    if inventory.get("schema") == LOCAL_SOURCE_SCHEMA:
+        from experiments.retained_replay_sources import source_populations, source_media_index
+        needs_media = not args.media_index and any(
+            turn.get("media") for row in candidates for turn in row["rendered_input"])
+        if needs_media or (args.materialize_corpus and not args.source_corpora):
+            _, _, _, selected, _ = _plan_selection(
+                candidates=candidates, budget=budget, api_config=api,
+                api_descriptor=api_desc, target=args.target, call_cap=args.global_input_cap)
+            needs_files = needs_media and any(ref.get("path") for row in selected
+                for turn in row["rendered_input"] for ref in turn.get("media") or [])
+            if needs_files or (args.materialize_corpus and not args.source_corpora):
+                selected_runs = {row["local_sources"][0]["run_id"] for row in selected}
+                populations = source_populations([cell for cell in cells if cell["run_id"] in selected_runs])
+            if needs_media:
+                media_index = source_media_index(selected, populations or {})
     plan = build_plan(candidates=candidates, budget=budget, budget_descriptor=budget_desc,
                       api_config=api, api_descriptor=api_desc, target=args.target,
                       local_inventory_descriptor=inventory_desc, media_index=media_index,
@@ -740,7 +766,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.materialize_corpus:
         value = materialize_replay(
             plan, cells=cells, corpus=args.materialize_corpus,
-            source_corpora=load_bound_json(args.source_corpora, args.source_corpora_sha256)[0],
+            source_corpora=(load_bound_json(args.source_corpora, args.source_corpora_sha256)[0]
+                            if args.source_corpora else populations),
             budget=budget, budget_descriptor=budget_desc, api_config=api, api_descriptor=api_desc,
             local_inventory_descriptor=inventory_desc, media_index=media_index,
         )
