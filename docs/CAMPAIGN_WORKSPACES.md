@@ -60,6 +60,34 @@ this UI work.
 
 ### Selected local inputs for a hosted follow-on
 
+Build's General section now starts source preparation from the campaign index:
+
+1. Choose Campaign and name or reopen the destination campaign.
+2. Under **Prepare a matched follow-on**, choose the source campaign and press
+   **Choose source runs**. This reads SQLite only; it makes no model calls.
+3. Select the exact local runs, including the desired generation conditions,
+   and press **Prepare selected inputs**. The background preparation validates
+   the original completed grids and writes their input inventory. Missing and
+   truncated outputs are not filtered out. Only measured local runs are listed;
+   listing a run does not establish that an unfinished original grid is usable.
+4. Open the preparation job from Build or Jobs. It belongs to the destination
+   campaign; its original source runs retain their own ownership. The saved
+   draft retains the run selection and preparation job link.
+
+The selector includes historical outputs even when a later replacement is
+selected in Stats. It never chooses the newest or best answer automatically.
+It resolves only the selected artifact locations, then reuses the existing
+source-preparation command. Opening the page does not scan or hash result files.
+This is a separate preparation action, not a switch silently changing the
+current Runner pipeline's corpus. The remaining budget, replay, readiness and
+judging orchestration below is not yet assembled by the normal Build editor.
+This preparation action is deployed at `00dce99`. Twenty-three focused rig
+tests, three removed-fix checks and a real Build-handler child launch passed.
+The actual campaign index listed 413 runs in 0.22 seconds, and preparation
+reproduced the exact 568-input saved selection. No model calls were made.
+The deployed source-selection page and configured budget form return HTTP 200;
+interactive browser visual acceptance is still pending.
+
 The advanced Tools flow now supports ordinary completed Runner directories as
 input sources, independently of the thesis campaign's historical analysis
 layout. Use `retained_local_sources` to select one or more narrow source

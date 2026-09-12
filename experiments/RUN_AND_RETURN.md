@@ -2827,6 +2827,15 @@ Repeat `--source-root` for other completed job directories; optional repeated
 The corresponding Tools form follows the same CLI. Full artifact checksums are
 opt-in. Saved answers and verdict labels do not control the selected inputs.
 
+Build -> General -> Prepare a matched follow-on now obtains those explicit
+source runs from the selected campaign's SQLite index. Choose the source
+campaign, select exact local run IDs, and prepare the inventory as a background
+job owned by the destination campaign. The saved definition retains the source
+selection and job link. This action neither executes nor changes the current
+Runner pipeline. The advanced budget form exposes `--route-configuration`, its
+matching digest and `--reservation-policy`, including `per_attempt`; omit the
+route configuration only when intentionally using the legacy fixed cohort.
+
 Pass this inventory and its digest to `hosted_retained_inputs`; omit the legacy
 `--runner-view`. Existing budget, media, whole-cluster selection and exact
 source-corpus requirements still apply. For executable preparation use request
