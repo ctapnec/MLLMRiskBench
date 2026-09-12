@@ -68,6 +68,12 @@ not the complete new-campaign execution flow or every interactive control.
 The observed diagnostic-first chart order is corrected in the next release:
 measured groups come first, while diagnostics remain separately paginated and
 all condition-specific counts and exports are preserved.
+The cost table also bounds the model-name column so desktop users can see the
+cost and token columns together. At narrow widths, only the table scrolls, not
+the whole page. Ten focused rig tests, a removed-fix browser control and
+visually inspected renders of actual indexed costs verify this candidate fix;
+its console deployment remains pending. Unknown charges and token reports
+remain explicitly unknown rather than being converted to zero.
 
 ### Selected local inputs for a hosted follow-on
 
