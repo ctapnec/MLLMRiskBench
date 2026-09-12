@@ -1,5 +1,4 @@
 import json
-from pathlib import Path
 import re
 from urllib.parse import parse_qs
 
@@ -143,10 +142,12 @@ def test_real_review_form_busy_guard_submits_one_exact_launch(browser,study):  #
     try:
         page.goto('http://ui.test/')
         assert page.locator('form').count()==1
-        page.evaluate("() => {for(let i=0;i<1000;i++) document.querySelector('form button').click();}")
+        busy = page.evaluate("() => {for(let i=0;i<1000;i++) document.querySelector('form button').click(); "
+            "return window.uraBusy.isBusy();}")
         page.wait_for_timeout(80)
         assert len(posts)==1
-        assert page.evaluate('window.uraBusy.isBusy()')
+        # Do not evaluate in the next document while its POST is deliberately held.
+        assert busy
         form={key:values[0] for key,values in parse_qs(posts[0].request.post_data).items()}
         status,location,_=app.handle('POST','/build/collect-prepared',form)
         assert status==303 and location=='/jobs/collection-0' and len(calls)==1
