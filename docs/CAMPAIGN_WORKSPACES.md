@@ -719,6 +719,13 @@ balances, omit other providers' history, or create another copy of the campaign
 allowance. Network recovery retains previous uncertain charges and refers to
 the exact output awaiting its first completed verdict.
 
+A later billing refresh may omit a response link that an earlier observation
+established for the same physical attempt. Keep the known link rather than
+erasing it or blocking publication of subsequent attempts. This does not copy
+that output or its token usage onto a retry. A different explicit output link,
+changed ownership, changed recorded usage or changed settled bill still requires
+resolution; an omitted link is not evidence that the established link changed.
+
 Adding inputs to an existing API campaign must include their execution ledger in
 the same cumulative spending view. `AttemptBudget.use_campaign_spending` accepts
 an append-only extension of ledger references with unchanged provider/judge
