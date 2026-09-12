@@ -2869,7 +2869,20 @@ registries still require objects. Build preserves the source and budget job
 links in its saved definition. The copied registry balances are observations,
 not a live provider balance check, and the forecast's token assumptions remain
 distinct from later exact-input counting. This step does not yet compose the
-complete replay/readiness/execution/judging pipeline.
+complete readiness/execution/judging pipeline.
+
+After both source and forecast jobs complete, **Prepare replay inputs** uses
+their saved job links to launch `hosted_selected_replays`. Its CLI takes
+`--local-inventory`, `--budget`, `--api-config` and their `--*-sha256`
+descriptors, plus a new resolved `--out-root`. Full checksum revalidation
+remains opt-in. The output `prepared-replays.json` supplies the existing
+per-target replay descriptors to executable preparation, while each model
+directory retains its selection and per-corpus replay files. Source conversion
+is shared across models. Corpus/media locator variables are forwarded to the
+preparation child; provider credentials are not. Changing the selected source
+runs, model settings, caps or pricing date invalidates the corresponding saved
+Build preparation, not the historical artifacts. No model, judge or network
+call is made, and this step does not fund or start collection.
 
 Pass this inventory and its digest to `hosted_retained_inputs`; omit the legacy
 `--runner-view`. The existing budget and whole-cluster selection still apply.

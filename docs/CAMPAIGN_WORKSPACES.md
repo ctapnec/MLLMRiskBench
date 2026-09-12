@@ -83,8 +83,14 @@ Build's General section now starts source preparation from the campaign index:
    The forecast includes Haiku assessments of hosted and matched local outputs,
    preserving the existing per-attempt spending policy. A changed target list
    requires a refreshed table; it cannot reuse stale per-model caps.
+6. Once both preparation jobs complete, choose **Prepare replay inputs**. Build
+   obtains their saved artifacts automatically and prepares every selected
+   model and source arm as one background job. The original whole-cluster
+   selection, prompts, dialogue history and media are retained. A changed
+   source selection, model configuration, request cap or pricing date requires
+   the corresponding preparation to be refreshed. No target or judge is called.
 
-The new forecast action is rig-verified and queued for console deployment; the
+The forecast and replay actions are rig-verified and queued for console deployment; the
 older selected-source action is already deployed. Its initial Haiku forecast
 assumes one hosted and one matched local output per target request. This is not
 the final number of distinct selected local answers: later preparation must
@@ -97,9 +103,17 @@ selected in Stats. It never chooses the newest or best answer automatically.
 It resolves only the selected artifact locations, then reuses the existing
 source-preparation command. Opening the page does not scan or hash result files.
 This is a separate preparation action, not a switch silently changing the
-current Runner pipeline's corpus. The remaining replay, readiness, shared
+current Runner pipeline's corpus. The remaining readiness, shared
 execution funding and judging orchestration below is not yet assembled by the
 normal Build editor. A forecast is not that execution handoff.
+Replay preparation converts the union of required sources once across models,
+using the configured corpus and media locations without API credentials.
+Its request caps can leave unused space when the next whole cluster does not
+fit. An empty selection is reported before conversion instead of producing an
+apparently executable empty campaign. Source-condition counts are not counts
+of valid or outstanding judgments. The real rig check reused the existing
+568-input source job and prepared the same 100 inputs for two configured
+routes, preserving text and media without generation or live SQLite changes.
 This preparation action is deployed at `00dce99`. Twenty-three focused rig
 tests, three removed-fix checks and a real Build-handler child launch passed.
 The actual campaign index listed 413 runs in 0.22 seconds, and preparation
@@ -136,8 +150,8 @@ Unchanged source context is reused by provider workers; budgets remain checked
 at paid dispatch. Old programs retain their original reader and interpretation.
 
 These typed forms and reusable preparation APIs are not the finished normal
-Build workflow. The remaining editor work must assemble source/replay inputs,
-request settings, shared budgets, readiness and requested judging stages from
+Build workflow. Source and replay preparation are connected; the remaining editor
+work must assemble exact-input counting, shared execution budgets, readiness and requested judging stages from
 its ordinary controls. Do not present manual JSON/path handoffs as that completed
 UX. The retained executor still owns provider concurrency and continuation;
 creating a second scheduler or independently funded per-model grids is not the
