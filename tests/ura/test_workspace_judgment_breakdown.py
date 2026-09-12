@@ -63,6 +63,24 @@ def test_pagination_never_splits_a_label_distribution(tmp_path):
         db.close()
 
 
+def test_measured_results_precede_diagnostics_without_hiding_or_pooling_them(tmp_path):
+    db = ConsoleDB(tmp_path / 'console.db', repo_root=tmp_path)
+    try:
+        owner = db.create_workspace('Hosted', 'api')
+        for index in range(13):
+            publish(db, owner, f'd{index}', model='a-diagnostic', evidence='diagnostic', corpus=f'd-{index:02}')
+            publish(db, owner, f'm{index}', model='z-measured', corpus=f'm-{index:02}')
+        first = judgment_groups(db.workspace_judgment_breakdown(owner))
+        assert len(first) == 13 and all(group[0]['evidence_class'] == 'measured' for group in first)
+        following = judgment_groups(db.workspace_judgment_breakdown(owner, offset=13))
+        assert len(following) == 13 and all(group[0]['evidence_class'] == 'diagnostic' for group in following)
+        assert sum(row['count'] for group in first + following for row in group) == 26
+        assert all(group[0]['evidence_class'] == 'diagnostic' for group in
+                   judgment_groups(db.workspace_judgment_breakdown(owner, model='a-diagnostic')))
+    finally:
+        db.close()
+
+
 def rows():
     common = dict(model='provider:<model>', evidence_class='measured', condition_id='exact-condition',
         modality='text', framework='replay', corpus='corpus', judge_id='local-cascade-opaque')

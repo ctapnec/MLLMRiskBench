@@ -419,6 +419,7 @@ class WorkspacePagesMixin:
             return ("<p>Labels for the selected outputs, separated by model, source, framework, modality and generation/judging condition. "
                 "Each bar counts retained assessments, including invalid verdicts and missing-output assessments. "
                 "Pending judgments are not part of these bars. These are label distributions, not pooled security rates.</p>"
+                "<p class='note'>Measured conditions are listed first. Diagnostics remain separate and accessible on later pages.</p>"
                 + exports + judgment_breakdown_html(selected) + pagination(len(groups) > 12)
                 + "<details><summary>All indexed judging totals for this selection</summary>" + table(
                 ("Judge condition", "Status", "Verdicts"),

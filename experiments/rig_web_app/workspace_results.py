@@ -324,7 +324,8 @@ class WorkspaceResultsMixin:
             "AND a.response_id=r.response_id "
             "WHERE j.campaign_id=? AND (?='' OR a.model=?) AND (?='' OR r.condition_id=?) "
             "GROUP BY a.model,a.evidence_class,r.condition_id,a.modality,a.framework,a.corpus,j.judge_id,j.status,j.label), "
-            "ranked AS (SELECT *,DENSE_RANK() OVER (ORDER BY model,evidence_class,condition_id,modality,framework,corpus,judge_id) "
+            "ranked AS (SELECT *,DENSE_RANK() OVER (ORDER BY CASE WHEN evidence_class='measured' THEN 0 ELSE 1 END,"
+            "model,evidence_class,condition_id,modality,framework,corpus,judge_id) "
             "AS group_number FROM counts) SELECT * FROM ranked WHERE group_number>? AND group_number<=? "
             "ORDER BY group_number,status,label",
             (campaign_id, model, model, condition, condition, max(0, offset), max(0, offset) + 13),
