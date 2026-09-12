@@ -144,6 +144,18 @@ for the active local recovery. Preparation and execution activity are linked
 to the API workspace; half-hour publication indexes actual new verdicts and
 their costs. A prepared local scoring queue is not a completed judgment.
 
+The no-model native scoring subset then completed 235 records across 33 jobs,
+with no invalid scoring record, model load, target query or hosted request.
+These are existing native branches for provider refusals, source-specific
+parsing and non-evaluable outcomes, not fabricated Llama Guard generations.
+They are published in the API workspace. Alongside the 79 original native
+records, 314 fourth-cohort outputs now have local scoring; 3,405 still need the
+GPU-backed continuation. That continuation reuses completed unit checkpoints
+and keeps one classifier instance per GPU while its configuration is unchanged.
+It may not overlap either local recovery owner. The first 895 new hosted Haiku
+outcomes and their actual charges were indexed at 04:50 UTC; completion is not
+yet claimed.
+
 The matched judging population is output-owned: 5,049 retained local answers
 plus at most 3,719 new hosted outputs, not two verdicts per hosted assignment.
 The retained plan additionally requires 189 distinct source grading contexts

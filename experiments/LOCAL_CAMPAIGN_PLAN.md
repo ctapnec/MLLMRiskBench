@@ -140,6 +140,17 @@ target answers or permission to make another paid call. No such interpretation
 has yet changed a retained verdict. The recovery generations and their future
 output-specific assessments remain open.
 
+Live publication at 04:54 UTC now includes the recovery checkpoint outputs in
+the Local workspace, not only its controller activity: 298 durable responses,
+293 usable non-truncated replacements, four missing and one truncated. They
+belong to an explicit recovery condition; historical failures are unchanged.
+The half-hour activity publisher refreshes these rows without needing the
+older worker's absent start manifest. It does not invent start times, publish
+unattempted entries as failures or claim the whole recovery is complete. An
+actual-data wrong-model check rejects mismatched ownership before any database
+write, and removing that check fails the regression. Final native artifacts
+and the later replacement-aware analysis remain authoritative.
+
 Human audit and thesis evidence synthesis remain separate work. This plan was written
 20 August 2026 after the readiness audit
 of the big rig (Debian, 2x RTX 4090 24,564 MiB, 125 GiB RAM, /mnt/stor 7.1 TB
