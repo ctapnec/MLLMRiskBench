@@ -169,15 +169,16 @@ metadata and the already rendered input; it does not reconstruct a corpus.
 
 This publishes the realized checkpoint prefix, not invented unstarted adaptive
 turns. Full planned-population presentation remains a separate integration task.
-Recovery runs must supply their original retained input selection to the
-publisher: the filtered recovery corpus has a different corpus identity, so
-deriving a new input identity from it would break comparisons. A recovery without
-that selection remains pending publication rather than being indexed under a
-different question identity. The current external recovery publishers already
-supply the original selection; wiring the same selection into normal Build
-continuations remains pending. The original and replacement generation
+For new completed-prefix or completed-selection recoveries, the sampling audit
+now retains the already computed original selection identity before filtering.
+The normal Runner publication wrapper uses it automatically for Ollama and
+vLLM, including campaign-owned Build launches. This adds no source reconstruction
+or hashing. Older retained recoveries can still supply their explicit original
+input selection; without either source, publication remains pending rather than
+assigning a different question identity. Original and replacement generation
 conditions remain distinct. Focused rig and actual saved Ollama/vLLM record
-checks passed; deployment and full UI acceptance are not yet claimed.
+checks passed. This closes automatic input-identity propagation in the native
+wrapper, not the remaining continuation controls, deployment or full UI acceptance.
 
 The active API index was refreshed from its seventeen explicit current program
 sources: 4,097 assignments, 3,908 retained outcomes and 3,917 physical-attempt cost
