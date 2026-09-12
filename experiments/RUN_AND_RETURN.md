@@ -6595,6 +6595,31 @@ observation does not repeatedly parse the spending history. This command does
 not replace the normal Build preparation/counting workflow, whose complete
 integration is tracked in `docs/CAMPAIGN_WORKSPACES.md`.
 
+### Publish retained-output judging into campaigns
+
+In Tools, select the campaign owning the outputs and open
+`retained_response_judge_pair_execute`. Supply the retained plan, the local and
+hosted Runner views, source receipt, API/pricing configuration and execution
+directory. Set `--matching-workspace-id` to the other existing campaign in the
+comparison. The console supplies its own database and selected campaign to the
+child. Both campaigns must already contain the exact saved outputs; no verdict
+is copied merely because two answers address the same question.
+
+The equivalent paired CLI uses `--workspace-id`, `--matching-workspace-id` and
+`--console-db`. The general `retained_response_judge_execute` CLI accepts repeated
+`--workspace-id` values. These affect publication only, not the judged selection,
+generation conditions, HTTP retry policy or spending ceilings.
+
+Durable verdicts and their physical costs publish as they become available.
+Inspect `publication.json` separately from the judging completion. If indexing
+failed, repair the owner/database problem and resume the same execution directory;
+already completed judgments are republished without more provider calls. An
+unresolved paid reservation still requires its existing execution recovery, not
+a fresh output directory that could spend twice. Cost publication from this hook
+covers attempts with retained verdict artifacts, not failed calls lacking one.
+Normal Build preparation and judging management remain tracked separately in
+the workspace specification.
+
 Console-form to runbook-section mapping (the console builds the identical
 argument vectors; nothing below is console-only):
 
@@ -6608,6 +6633,7 @@ argument vectors; nothing below is console-only):
 | `run_matrix` (dry-run, probe, canary, measured) | 4.1, 8/8.1, 9/9.1, 10-13 |
 | `live_attestation` | 8.1, 9 |
 | `hosted_campaign_execute` | Collect prepared hosted programs concurrently |
+| `retained_response_judge_pair_execute` | Publish retained-output judging into campaigns |
 | `lane_canary` | 8.1, 9.1 |
 | `native_import` | 14.3, 16 |
 | `human_audit` (common and source-task frames) | 15, 15.1 |

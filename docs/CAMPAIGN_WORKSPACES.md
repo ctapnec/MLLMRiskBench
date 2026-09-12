@@ -699,6 +699,28 @@ network failures. Publication accepts a completed prefix without requiring a
 fresh judge call or reloading the input corpora. The derived index does not
 modify the source plan, answers, verdicts or monetary ledger.
 
+The retained-output executor also publishes during execution and when restoring
+a completed prefix. CLI callers supply `--console-db` and their existing
+`--workspace-id` values. The paired judging tool receives the selected campaign
+from the console; `--matching-workspace-id` names the other campaign in a
+local/hosted comparison. An answer must already be indexed under exactly one
+of these owners, with the same target model. A missing or ambiguous owner remains
+pending publication; sharing the input is not a substitute for output ownership.
+
+Publication follows the durable judgment and ledger update, never precedes the
+paid call. It batches resumed records and closes with a final flush. A database
+error does not cancel judging or change its completion artifact. The separate
+`publication.json` reports pending records without exposing exception payloads.
+Rerunning the same completed execution can repair its index without another
+judge call. The funded path uses existing physical attempt identities and costs;
+the unshared path distinguishes executions by their retained output directory.
+Earlier HTTP retries have unknown usage/charges unless recorded, not the final
+successful attempt's tokens or an assumed zero bill. Automatic cost coverage
+here is limited to physical attempts belonging to retained verdict artifacts;
+an execution interrupted before retaining any verdict still needs its failed-call
+ledger publication. This is advanced typed-tool integration, not acceptance of
+the complete normal Build scheduling and continuation workflow.
+
 Native judging publication includes original inline verdicts as well as later
 post-hoc results. `workspace_judgments.native_inline_rows` reads the explicitly
 selected run's final/checkpoint verdicts, checks their saved response ownership
