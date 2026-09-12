@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 
 import pytest
@@ -178,6 +179,37 @@ def test_explicit_larger_judge_cohort_uses_existing_shared_budget(tmp_path, monk
     after = budget.snapshot()
     assert {k: v["cap_microusd"] for k, v in before["pools"].items()} == {
         k: v["cap_microusd"] for k, v in after["pools"].items()}
+
+
+def test_reviewed_judge_allowances_cover_full_request_without_changing_slots(tmp_path, monkeypatch):
+    prepared, kwargs, budget, config, items = prepared_shared(tmp_path, monkeypatch, slot_bound=1)
+    original_plan = (budget.root / 'plan.json').read_bytes()
+    condition = prepared['plan']['judge_condition']
+    with pytest.raises(ValueError, match='dedicated funded judge slot'):
+        subject._shared_binding(budget, kwargs['shared_requests'], items, condition, config, 'a' * 64)
+    budget.increase_allowances({'judge-0': 10000, 'judge-1': 10000}, reason='counted full judge requests',
+        expected_ledger_sha256=hashlib.sha256((budget.root / 'ledger.json').read_bytes()).hexdigest())
+    loads = []
+    original_load = budget._load
+    def observed_load():
+        loads.append(True)
+        return original_load()
+    with monkeypatch.context() as patch:
+        patch.setattr(budget, '_load', observed_load)
+        _, bounds = subject._shared_binding(budget, kwargs['shared_requests'], items, condition, config, 'a' * 64)
+    assert len(loads) == 2  # One liability read and one allowance read, not one per output.
+    assert set(bounds.values()) == {10000}
+    fake = HookHaiku(config, failures=1)
+    result = subject.execute(**kwargs, judge_factory=lambda *_: fake)
+    assert json.loads(result.read_text())['judge_calls'] == 2
+    assert fake.http_calls == 3
+    assert (budget.root / 'plan.json').read_bytes() == original_plan
+    assert budget.call('judge-0')['bound_microusd'] == 1
+    assert budget.attempt_bound('judge-0') == 10000
+    with pytest.raises(money.BudgetError, match='outside'):
+        budget.attempt_bounds(['not-funded'])
+    with pytest.raises(money.BudgetError, match='sequence'):
+        budget.attempt_bounds('judge-0')
 
 
 def test_actual_target_preview_must_match_before_any_generation(tmp_path, monkeypatch):

@@ -403,14 +403,20 @@ class AttemptBudget:
 
     def attempt_bound(self, call_id: str) -> int:
         """Effective funded exposure, separate from the immutable request estimate."""
-        call_id = _name(call_id, "call ID")
+        return self.attempt_bounds([call_id])[call_id]
+
+    def attempt_bounds(self, call_ids: Sequence[str]) -> dict[str, int]:
+        """Read reviewed per-call allowances in one fresh ledger snapshot."""
+        if isinstance(call_ids, (str, bytes)) or not isinstance(call_ids, Sequence):
+            raise BudgetError("call IDs must be an explicit sequence")
+        selected = {_name(value, "call ID") for value in call_ids}
         with _budget_lock(self.root):
             _plan_value, ledger, calls = self._load()
-            if call_id not in calls:
+            if not selected <= calls.keys():
                 raise BudgetError("call ID is outside the immutable funded plan")
             allowances = {change["call_id"]: change["bound_microusd"]
                           for change in ledger.get("allowance_adjustments", [])}
-            return allowances.get(call_id, calls[call_id]["bound_microusd"])
+            return {key: allowances.get(key, calls[key]["bound_microusd"]) for key in selected}
 
     def snapshot(self) -> dict:
         """Return exposure and commitments without changing any retained state."""

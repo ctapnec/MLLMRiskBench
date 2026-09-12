@@ -351,14 +351,15 @@ def _shared_binding(budget, requests, items, condition, normalized_api, plan_sha
         raise ValueError("shared retained judge call IDs are not distinct funded slots")
     if budget.liability(call_ids) > condition["max_cost_microusd"]:
         raise ValueError("shared judge first commitments or retained exposure exceed this plan's ceiling")
+    effective_bounds = budget.attempt_bounds(call_ids)
     bounds = {}
     for key, receipt in expected.items():
         slot = budget.call(receipt["call_id"])
         bound = (receipt["input_tokens_estimate"] * condition["input_microusd_per_token"]
                  + receipt["max_output_tokens"] * condition["output_microusd_per_token"])
-        if slot["provider"] != "anthropic" or slot["pool"] != "judge" or slot["bound_microusd"] < bound:
+        if slot["provider"] != "anthropic" or slot["pool"] != "judge" or effective_bounds[receipt["call_id"]] < bound:
             raise ValueError("full Haiku request is not covered by its dedicated funded judge slot")
-        bounds[key] = slot["bound_microusd"]
+        bounds[key] = effective_bounds[receipt["call_id"]]
     return {"schema": "ura-retained-response-shared-budget/1", "plan_sha256": plan_sha256,
             "budget_root": str(budget.root), "budget_plan_sha256": budget.expected_plan_sha256,
             "input_token_estimate_method": ("per_request_token_count_receipt_v1" if counts else SHARED_ESTIMATE_METHOD),
@@ -922,7 +923,7 @@ def execute(
                     # The existing HTTP-only retry loop invoked this callback;
                     # this is not permission to reissue a crash-ambiguous call.
                     shared_budget.settle(receipt["call_id"], number - 1, None)
-                increment = shared_budget.call(receipt["call_id"])["bound_microusd"] if number > 1 else 0
+                increment = shared_bounds[row["retained_row_sha256"]] if number > 1 else 0
                 if (shared_budget.liability([value["call_id"] for value in shared_requests.values()]) + increment
                         > condition["max_cost_microusd"]):
                     raise ValueError("physical retry exceeds this retained judge plan's own ceiling")
