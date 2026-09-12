@@ -704,13 +704,19 @@ an executed cell:
   incorrect. Readiness schemas `/1` through `/3` remain readable historical
   evidence. Schema `/3` required the image response itself to exhaust the cap
   and cannot supply a current execution profile.
-  `ura-local-model-execution-profiles/3` is a machine-local operational
+  Readiness `/5` additionally admits a tested context ceiling: explicit vLLM
+  `max_model_len`, or Ollama `num_ctx: fit` with `context_ceiling`. The output
+  stress prefix, deadlines and survey thresholds are unchanged. Earlier
+  schemas retain their original hardware-fit-only interpretation.
+  `ura-local-model-execution-profiles/4` is a machine-local operational
   registry, not empirical evidence. Each row binds one vLLM revision or Ollama
   digest, modalities, hardware-fit context, selected generation tokens, exact
   vLLM tensor-parallel size and GPU memory utilization, Ollama thinking mode
-  where applicable, request deadline, and the exact `/4` readiness receipt
+  where applicable, an optional tested context ceiling, request deadline, and
+  the exact `/4` or `/5` readiness receipt
   path, ID, and digest. Registry schemas `/1` and `/2` are historical only;
   `/2` did not bind the vLLM topology that determines its resolved context.
+  Registry `/3` remains accepted unchanged; it cannot encode a new ceiling.
   Identity or modality drift fails rather than transferring a recommendation
   to another model.
 

@@ -3366,21 +3366,38 @@ It then runs the ten deterministic benign question calls and five deterministic
 synthetic-image calls at that selected cap. Admission requires at least five
 correct text answers and at least two correct image answers. The other five text
 responses and three image responses may be incorrect or empty. Store each
-passing `ura-local-model-readiness/4` receipt and its SHA-256 under the
+passing `ura-local-model-readiness/4` or `/5` receipt and its SHA-256 under the
 operator-bound `URA_LOCAL_MODEL_READINESS_ROOT`. Set
 `URA_LOCAL_MODEL_PROFILE_REGISTRY` to one regular file under `$URA_WORK` or pass
 `--profile-registry`; the command atomically records the proven allowance,
 hardware-fit context, exact vLLM tensor-parallel size and GPU memory
 utilization, and Ollama thinking mode bound to the exact
 revision/digest and modalities. CLI and Build require the current
-`ura-local-model-execution-profiles/3` registry and apply that execution profile
+`ura-local-model-execution-profiles/4` registry (with unchanged `/3` entries
+still accepted) and apply that execution profile
 even if a local config carries another value. Retained readiness schemas `/1`
 through `/3` and registry schemas `/1` and `/2` remain historical evidence but
 do not supply a current execution profile; registry `/2` did not bind the vLLM
-topology that determines hardware-fit context. Hosted
+topology that determines hardware-fit context.
+
+To assess whether a smaller KV-cache allocation permits a larger output
+allowance within the same 120-second generation limit, add
+`--context-ceiling 32768` to the readiness command, including its acquisition
+plan derivation for vLLM. The Tools readiness form exposes the same option.
+The ceiling must exceed 25,000 tokens so the unchanged descending stress
+protocol can exercise every candidate. vLLM tests that explicit context;
+Ollama tests hardware fit at or below it and still rejects CPU spill.
+Model loading occurs before the generation-start marker for both providers.
+The subsequent 10-text/5-image survey remains mandatory. Save the resulting
+profile to a separate `--profile-registry` while an older campaign is running;
+do not change its active profile or repeat its successful rows. A new profile
+is configuration evidence, not proof of recovery on the failed inputs.
+
+Hosted
 models and hosted judges never use this local registry; their explicit maximum
-output tokens are derived from the approved paid budget and they receive one
-attempt. Empty survey observations remain
+output tokens are derived from the approved paid budget. They receive no answer
+retry; classified transport failures follow the bounded HTTP retry policy.
+Empty survey observations remain
 typed `model_nonresponse` rows. Later campaign statistics likewise retain them
 as missing response counts and decision-coverage loss, not decided safety
 labels. A failed target remains failed. A

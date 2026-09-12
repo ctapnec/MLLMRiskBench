@@ -97,6 +97,16 @@ length stop. Required judging and the replacement-aware final analysis remain
 pending. The current first DeepSeek unit's generation-only forecast is about
 12:10 UTC at the observed throughput; it is not a whole-campaign completion date.
 
+Residual calibration follow-up, 12 September: the standard readiness command
+now supports a tested 32,768-token context ceiling without abandoning GPU-only
+fit. Its output stress and seeded responsiveness survey must pass before a
+larger allowance is used on residual inputs. Ollama loading is separated from
+the generation deadline. Keep the new profile private until the active recovery
+owners have finished, then recover only unresolved inputs under the tested
+condition and obtain fresh judgments for their actual new outputs. This is a
+targeted alternative for remaining misses, not a restart of successful rows or
+an automatic claim that all missing outputs were caused by context overflow.
+
 The unstarted 1,549-condition queue has moved to a clean isolated checkout of
 3c08b44 with its own validated project receipt. All existing profiles and exact
 input selections are unchanged. Its predecessor was stopped only while waiting,

@@ -567,8 +567,14 @@ before the next cell. No response is regenerated merely to change process
 ownership, and no framework closing seal is bypassed.
 
 Runner 2.32 leaves unified schema 1.5 and retained Runner artifacts unchanged.
-Its current pre-execution gate writes `ura-local-model-readiness/4` and the
-machine-local `ura-local-model-execution-profiles/3` registry. Readiness schemas
+Its default pre-execution gate writes `ura-local-model-readiness/4`; an optional
+tested context ceiling uses `/5`. The machine-local execution registry writes
+`ura-local-model-execution-profiles/4` and still reads unchanged `/3` profiles.
+The CLI and Tools readiness form expose `--context-ceiling`; Build preserves
+the tested allocation instead of silently dropping it. Ollama still performs
+GPU-only hardware fit within the ceiling. Model loading and residency checks
+precede the generation clock; the 120-second stress and responsiveness
+thresholds remain unchanged. No hosted token policy is affected. Readiness schemas
 `/1` through `/3` and registry schemas `/1` and `/2` remain historical records
 but cannot supply a current execution profile. Runner 2.32 also preserves typed answer and input failures
 across the sealed vLLM execution boundary, so the provider-independent retry,

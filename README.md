@@ -234,8 +234,15 @@ The vLLM-only `max_model_len` field is an engine-context and KV-cache
 allocation policy, not the response-generation `max_tokens` bound. Omission
 binds `-1`: vLLM derives the checkpoint ceiling and automatically reduces it to
 the largest allocation that fits live GPU memory. An explicit integer in
-1..1,000,000 remains available for a fixed experimental condition. An omitted
-`max_tokens` resolves through the identity-bound local readiness profile. A
+1..1,000,000 remains available for a fixed experimental condition.
+
+For a separately tested context/output trade-off, readiness accepts
+`--context-ceiling 32768` from the CLI or its Tools form. It still tests output
+throughput and the 10-text/5-image survey before saving a recommendation.
+Ollama remains hardware-fit within that ceiling, never knowingly CPU-spilled.
+Build and Runner reuse the same tested settings; existing profiles are unchanged.
+
+An omitted `max_tokens` resolves through the identity-bound local readiness profile. A
 model without that approval is rejected before a security campaign. The
 current profiler starts at 25,000 tokens and descends through 16,384, 8,192,
 4,096, 2,048, 1,024, 512, and 256. It stops at the first cap that is actually
@@ -249,8 +256,9 @@ measurement, while a CUDA call cannot delay enforcement until it returns. The
 parent then acquires the Ollama inference lock and unloads only a stale resident
 model whose exact tag and digest match the profiled target. Foreign or co-resident
 models remain a hard failure and are never mutated. The
-profile separately binds `max_model_len=-1`, vLLM tensor-parallel topology, and
-GPU memory utilization, so the engine selects the maximum hardware-fitting
+profile separately binds the tested context (normally `max_model_len=-1`),
+vLLM tensor-parallel topology and GPU memory utilization. By default the engine
+selects the maximum hardware-fitting
 context for the exact tested topology without treating it as a response allowance.
 Rig Web preserves the field in its selected local config, and the normalized
 value enters grid/run provenance. Each Build row labels either the explicit
