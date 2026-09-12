@@ -847,7 +847,8 @@ def test_ollama_model_load_precedes_generation_deadline_marker(tmp_path, monkeyp
 
     target = OllamaTarget("example:model", model_digest="d" * 64, context_ceiling=32768)
     events = []
-    monkeypatch.setattr(target, "prepare_isolated_probe", lambda: events.append("lease"))
+    monkeypatch.setattr(target, "_acquire_lifetime_leases", lambda **kw: events.append("lease"))
+    monkeypatch.setattr(target, "_verify_daemon_identity", lambda **kw: "d" * 64)
     monkeypatch.setattr(target, "_verify_pre_generation_residency", lambda **kw: "empty")
     def load(*, residency_prestate, deadline):
         assert residency_prestate == "empty" and deadline > target._monotonic()

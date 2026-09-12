@@ -573,10 +573,15 @@ def _prepare_probe_model(target: Any) -> None:
     elif isinstance(target, OllamaTarget):
         # The child owns the normal lifetime lease. Hardware-fit preloading
         # still rejects CPU spill; it is setup, not a survey or target answer.
-        target.prepare_isolated_probe()
         deadline = target._monotonic() + PROFILE_PROBE_SETUP_DEADLINE_SECONDS
-        prestate = target._verify_pre_generation_residency(deadline=deadline)
-        target._ensure_hardware_fit_context(residency_prestate=prestate, deadline=deadline)
+        target._acquire_transaction_lock(deadline=deadline)
+        try:
+            target._acquire_lifetime_leases(deadline=deadline)
+            target._verify_daemon_identity(deadline=deadline)
+            prestate = target._verify_pre_generation_residency(deadline=deadline)
+            target._ensure_hardware_fit_context(residency_prestate=prestate, deadline=deadline)
+        finally:
+            target._transaction_lock.release()
 
 
 def _run_marked_generation_stress(
