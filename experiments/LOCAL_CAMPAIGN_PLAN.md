@@ -180,6 +180,27 @@ This handoff does not load models, repeat targets or reconstruct historical
 corpora. Final source ownership and eligibility are checked against the retained
 native records before assessment and publication.
 
+Execution update, 12 September at 07:34 UTC: 635 recovery conditions have been
+attempted, with 630 normal, usable replacements, four missing outputs and one
+truncated output. All 64 new outcomes since 07:04 are usable and non-truncated.
+The other 2,001 conditions are still unattempted. Both GPUs continue serving the
+first DeepSeek recovery; its remaining 452 generations are forecast to finish
+around 11:20-11:40 UTC, before its scoring stage and the remaining model queue.
+
+Fresh Haiku judging has started on the first 243 checked replacement answers,
+all matching measured hosted inputs. Preparation reread those saved outputs,
+retained their current generation condition and generated new output-specific
+request identities. A changed answer produces a different judging identity.
+No model load, target request or provider count was needed for preparation.
+The conservative request-size estimate is USD 1.654744 for first attempts at
+512 output tokens; allowing four transport attempts gives USD 6.618976. These
+are forecasts, not charges or a new campaign ceiling. The new judging ledger is
+linked to all 17 predecessor ledgers under the unchanged shared spending caps.
+Actual execution has retained its first verdicts. Native local scoring remains
+pending after target release, and later replacement answers need their own
+judgments. The half-hour publication includes this judging prefix and its costs
+under Local campaign, without reusing earlier verdicts or interrupting recovery.
+
 Residual follow-up is queued behind both active recovery controllers. If
 DeepSeek still has unresolved outputs, run one 8,192-token throughput probe at
 32,768 context tokens, with model loading timed separately, full GPU residency
