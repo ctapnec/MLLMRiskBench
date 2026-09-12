@@ -158,3 +158,25 @@ def test_recovery_keeps_original_input_selection_not_the_filtered_corpus_identit
         publisher._rows(changed, "response")
     publisher.close()
     db.close()
+
+
+@pytest.mark.parametrize("model", ["ollama:example", "vllm:example"])
+def test_native_recovery_wrapper_uses_original_sampling_identity_without_operator_mapping(tmp_path, model):
+    db, campaign, manifest, dp, record, paths = example(tmp_path, model)
+    run = manifest["config"]["run"]
+    run["recovery_selection"] = {"remaining": [dp.id]}
+    run["sampling_audit"] = {"pre_recovery_converted_corpus_sha256": "b"*64}
+    expected = _sha(retained_input_identity(run, "b"*64, record["attempt"], vars(dp)))
+
+    class Runner:
+        def run(self, corpus, **options):
+            options["on_response"](record)
+            assert db._query("SELECT input_id FROM campaign_assignments")[0]["input_id"] == expected
+            return "same-execution"
+
+    assert subject.run_with_workspace_publication(Runner(), [dp], campaign_id=campaign,
+        database=db.path, **paths, run_config=run, manifest=SimpleNamespace(model_dump=lambda **k: manifest),
+        on_response=lambda row: append(paths["response_checkpoint"], row)) == "same-execution"
+    assert db.workspace_model_totals(campaign)[0]["assigned"] == 1
+    assert manifest["dataset_hashes"]["corpus"] == "a"*64
+    db.close()

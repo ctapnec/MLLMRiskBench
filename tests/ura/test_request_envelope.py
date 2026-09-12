@@ -332,6 +332,7 @@ def test_recovery_completed_prefix_keeps_only_exact_unfinished_suffix(
     assert [row.id for row in remaining] == selected_ids[3:]
     assert recovered_audit["selected_indices"] == [3, 4]
     assert recovered_audit["selected_records"] == 2
+    assert recovered_audit["pre_recovery_converted_corpus_sha256"] == "historical"
     assert recovered_audit["selection_method"] == (
         "content_bound_never_completed_suffix_v1"
     )
@@ -392,6 +393,7 @@ def test_multi_corpus_recovery_keeps_each_exact_unfinished_suffix(
             name, corpus, audit, loaded
         )
         assert [row.id for row in remaining] == selected_ids[3:]
+        assert recovered_audit["pre_recovery_converted_corpus_sha256"] == "historical"
         assert recovered_audit["recovery_completed_prefix"] == {
             "schema": "ura-recovery-completed-prefix/2",
             "corpus": name,
@@ -462,6 +464,7 @@ def test_completed_selection_keeps_only_noncontiguous_unfinished_rows(
     assert [row.id for row in remaining] == remaining_ids
     assert recovered_audit["selected_indices"] == [0, 2, 4]
     assert recovered_audit["selected_records"] == 3
+    assert recovered_audit["pre_recovery_converted_corpus_sha256"] == "historical"
     assert recovered_audit["selection_method"] == (
         "content_bound_never_completed_selection_v1"
     )

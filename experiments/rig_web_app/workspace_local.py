@@ -18,8 +18,15 @@ class LocalCheckpointPublication:
         self.manifest, self.run = manifest, manifest["config"]["run"]
         self.model, self.run_id = self.run["model_spec"], manifest["run_id"]
         self.input_selections = input_selections
-        if self.run.get("recovery_selection") and input_selections is None:
-            raise ValueError("Recovery publication requires its original retained input selection")
+        self.corpus_sha = manifest["dataset_hashes"]["corpus"]
+        if self.run.get("recovery_selection"):
+            original_corpus = self.run.get("sampling_audit", {}).get("pre_recovery_converted_corpus_sha256")
+            if original_corpus:
+                # Runner already computed this before excluding completed rows.
+                # Keep its input identity without another corpus scan or hash.
+                self.corpus_sha = original_corpus
+            elif input_selections is None:
+                raise ValueError("Recovery publication requires its original retained input selection")
         self.condition, self.judge = local_generation_condition(self.run), local_judge_condition(self.run)
         self.metadata = {dp.id: dict(source=dp.source, risk_category=dp.risk_category,
             expected_behavior=dp.expected_behavior) for dp in corpus}
@@ -43,7 +50,7 @@ class LocalCheckpointPublication:
                 or response["attempt_id"] != aid or attempt["target"] != self.model
                 or response["target"] != self.model):
             raise ValueError("Local checkpoint publication ownership differs")
-        choice = retained_input_identity(self.run, self.manifest["dataset_hashes"]["corpus"],
+        choice = retained_input_identity(self.run, self.corpus_sha,
             attempt, self.metadata[attempt["datapoint_id"]])
         if self.input_selections is not None:
             selected = self.input_selections[aid]

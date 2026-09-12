@@ -4048,6 +4048,7 @@ def apply_recovery_completed_prefix(
         **audit,
         "pre_recovery_selected_records": len(corpus),
         "pre_recovery_selected_datapoint_ids_sha256": _sha256_json(selected_ids),
+        "pre_recovery_converted_corpus_sha256": audit["selected_converted_corpus_sha256"],
         (
             "recovery_completed_selection"
             if schema == "ura-recovery-completed-selection/1"
