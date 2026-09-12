@@ -138,3 +138,23 @@ def test_judgment_checkpoint_promotes_to_final_without_changing_verdict(tmp_path
         db.publish_workspace_results(campaign, assignments=[], responses=[], judgments=[row])
     publisher.close()
     db.close()
+
+
+def test_recovery_keeps_original_input_selection_not_the_filtered_corpus_identity(tmp_path):
+    db, campaign, manifest, dp, record, paths = example(tmp_path, "ollama:example")
+    selected = retained_input_identity(manifest["config"]["run"], "b"*64, record["attempt"], vars(dp))
+    selected["input_identity_sha256"] = _sha(selected)
+    manifest["config"]["run"]["recovery_selection"] = {"remaining": [dp.id]}
+    with pytest.raises(ValueError, match="original retained input selection"):
+        subject.LocalCheckpointPublication(campaign_id=campaign, database=db.path, manifest=manifest, corpus=[dp], **paths)
+    append(paths["response_checkpoint"], record)
+    publisher = subject.LocalCheckpointPublication(campaign_id=campaign, database=db.path, manifest=manifest, corpus=[dp],
+        **paths, input_selections={record["attempt"]["id"]: selected})
+    publisher.accept(record, "response", restored=True)
+    assert db._query("SELECT input_id FROM campaign_assignments")[0]["input_id"] == selected["input_identity_sha256"]
+    changed = deepcopy(record)
+    changed["attempt"]["rendered_input"][0]["content"] = "Different question"
+    with pytest.raises(ValueError, match="original retained input"):
+        publisher._rows(changed, "response")
+    publisher.close()
+    db.close()

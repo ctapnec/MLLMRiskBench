@@ -13,10 +13,13 @@ from .workspace_import import _jsonl, local_generation_condition, local_judge_co
 
 
 class LocalCheckpointPublication:
-    def __init__(self, *, campaign_id, database, manifest, corpus, checkpoint, response_checkpoint):
+    def __init__(self, *, campaign_id, database, manifest, corpus, checkpoint, response_checkpoint, input_selections=None):
         self.campaign_id, self.database = campaign_id, database
         self.manifest, self.run = manifest, manifest["config"]["run"]
         self.model, self.run_id = self.run["model_spec"], manifest["run_id"]
+        self.input_selections = input_selections
+        if self.run.get("recovery_selection") and input_selections is None:
+            raise ValueError("Recovery publication requires its original retained input selection")
         self.condition, self.judge = local_generation_condition(self.run), local_judge_condition(self.run)
         self.metadata = {dp.id: dict(source=dp.source, risk_category=dp.risk_category,
             expected_behavior=dp.expected_behavior) for dp in corpus}
@@ -42,6 +45,13 @@ class LocalCheckpointPublication:
             raise ValueError("Local checkpoint publication ownership differs")
         choice = retained_input_identity(self.run, self.manifest["dataset_hashes"]["corpus"],
             attempt, self.metadata[attempt["datapoint_id"]])
+        if self.input_selections is not None:
+            selected = self.input_selections[aid]
+            original = {key: selected[key] for key in choice}
+            if (_sha(original) != selected["input_identity_sha256"]
+                    or any(choice[key] != original[key] for key in choice if key != "converted_corpus_sha256")):
+                raise ValueError("Recovery output differs from its original retained input")
+            choice = original
         identity = self.run_id + ":" + aid
         evidence = {"measured_run": "measured", "diagnostic_canary": "diagnostic",
             "attestation_probe": "diagnostic", "preflight": "preflight"}.get(self.run.get("execution_purpose"), "unknown")
