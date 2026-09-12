@@ -26,6 +26,30 @@ where selected for the matched hosted comparison, a fresh Haiku assessment.
 A judgment of another output cannot be reused. Hosted collection continues
 independently.
 
+Recovery update, 12 September at 14:30 UTC: 1,624 of the 2,636 selected
+conditions have been attempted. Of these, 1,566 have usable normal-ended
+replacements; 45 are missing and 14 are truncated, with one output in both
+groups. The remaining 1,012 inputs are now in a live successor queue: Gemma
+image 601, GraySwan RR image 367 and text 24, and LLaVA base text 20. The image
+selection keeps native privacy moderation separate from security scoring.
+Existing model receipts were reused without downloads or model-content hashing.
+Completed Gemma text and GPT-OSS answers are not repeated because their wrapper
+subsequently failed publication. Ministral's 31 image transport failures still
+need causal diagnosis; the generic deadline message does not establish that
+each request actually ran for 120 seconds.
+
+Assess visible truncated answers on their actual text. Truncation is a separate
+generation condition, not a reason to remove an otherwise eligible matched
+output from Haiku selection. Repetition alone is not a missing-output criterion;
+interpret it against the requested task. The correction to the recovery selector
+included two truncated outputs in the completed 535-answer followup. This batch
+retains 516 valid and 19 invalid verdicts and reported cost USD 0.718656, in
+addition to the earlier 243 replacement assessments. The new unstarted-input
+queue has a separate waiting, output-specific Haiku followup under the existing
+allowance. Its native assessments remain Runner's source-specific stage. Neither
+followup can reuse another answer's verdict or turn a publication error into
+permission to repeat a completed paid assessment.
+
 The 23:44 UTC audit inspected all 50,653 indexed response records. Of 6,103
 historical missing records, 3,263 have a normal-ended answer for the same model
 and exact input; 61 belong to the retired RWKV roster. The remaining selection

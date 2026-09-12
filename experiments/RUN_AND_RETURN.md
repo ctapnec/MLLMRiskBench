@@ -6682,12 +6682,21 @@ The equivalent paired CLI uses `--workspace-id`, `--matching-workspace-id` and
 generation conditions, HTTP retry policy or spending ceilings.
 
 Durable verdicts and their physical costs publish as they become available.
+Visible truncated answers remain eligible when their input and scoring scope
+qualify. Judge the saved text and retain its truncation flag separately; do not
+filter answers merely for repeated content. A new answer requires a new verdict,
+even when its input and model match a previously assessed response.
 Inspect `publication.json` separately from the judging completion. If indexing
 failed, repair the owner/database problem and resume the same execution directory;
 already completed judgments are republished without more provider calls. An
 unresolved paid reservation still requires its existing execution recovery, not
 a fresh output directory that could spend twice. Cost publication from this hook
 covers attempts with retained verdict artifacts, not failed calls lacking one.
+An HTTP page check is separate from both execution and database publication.
+If that check times out after successful indexing, inspect the retained result
+and indexed rows; do not restart generation or judging. Campaign judging totals
+use the saved assignment identity for indexed lookup and include only each
+assignment's explicitly selected response, preserving historical assessments.
 Normal Build preparation and judging management remain tracked separately in
 the workspace specification.
 
