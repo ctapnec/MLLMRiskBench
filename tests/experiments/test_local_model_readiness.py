@@ -842,6 +842,24 @@ def test_build_preserves_readiness_tested_ollama_context_ceiling():
         Builder()._selected_local_config_payload([spec])
 
 
+def test_ollama_model_load_precedes_generation_deadline_marker(tmp_path, monkeypatch):
+    from ura.targets.local import OllamaTarget
+
+    target = OllamaTarget("example:model", model_digest="d" * 64, context_ceiling=32768)
+    events = []
+    monkeypatch.setattr(target, "prepare_isolated_probe", lambda: events.append("lease"))
+    monkeypatch.setattr(target, "_verify_pre_generation_residency", lambda **kw: "empty")
+    def load(*, residency_prestate, deadline):
+        assert residency_prestate == "empty" and deadline > target._monotonic()
+        events.append("load-and-fit")
+    monkeypatch.setattr(target, "_ensure_hardware_fit_context", load)
+    monkeypatch.setattr(readiness_module, "_write_probe_start_marker", lambda *a, **kw: events.append("clock"))
+    monkeypatch.setattr(readiness_module, "_run_generation_stress", lambda *a, **kw: events.append("generate"))
+    readiness_module._run_marked_generation_stress(target, marker=tmp_path / "start",
+        kind="stress-text", requested_spec="ollama:example:model", generation_tokens=8192, image=False)
+    assert events == ["lease", "load-and-fit", "clock", "generate"]
+
+
 def test_retained_schema_two_readiness_receipts_remain_valid() -> None:
     value = readiness_receipt(vision=False)
     text = value["text"]

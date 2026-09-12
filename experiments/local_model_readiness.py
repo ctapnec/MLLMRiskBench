@@ -43,6 +43,7 @@ from ura.targets.local import (  # noqa: E402
     DEFAULT_LOCAL_REQUEST_TIMEOUT_SECONDS,
     MAX_OLLAMA_NUM_PREDICT,
     MAX_VLLM_GENERATION_TOKENS,
+    OllamaTarget,
     validate_ollama_think,
     validate_ollama_context_ceiling,
     validate_vllm_max_model_len,
@@ -564,6 +565,20 @@ def _write_probe_start_marker(
         temporary.unlink(missing_ok=True)
 
 
+def _prepare_probe_model(target: Any) -> None:
+    """Separate model loading from the 120-second generation assessment."""
+    preflight = getattr(target, "preflight_base", None)
+    if callable(preflight):
+        preflight()
+    elif isinstance(target, OllamaTarget):
+        # The child owns the normal lifetime lease. Hardware-fit preloading
+        # still rejects CPU spill; it is setup, not a survey or target answer.
+        target.prepare_isolated_probe()
+        deadline = target._monotonic() + PROFILE_PROBE_SETUP_DEADLINE_SECONDS
+        prestate = target._verify_pre_generation_residency(deadline=deadline)
+        target._ensure_hardware_fit_context(residency_prestate=prestate, deadline=deadline)
+
+
 def _run_marked_generation_stress(
     target: Any,
     *,
@@ -575,12 +590,7 @@ def _run_marked_generation_stress(
 ) -> dict[str, object]:
     """Prepare a lazy engine, publish request start, and run one stress call."""
 
-    preflight = getattr(target, "preflight_base", None)
-    if callable(preflight):
-        # vLLM constructs its engine lazily. Keep engine loading and graph
-        # capture outside request time; the first real generation remains the
-        # measured stress request.
-        preflight()
+    _prepare_probe_model(target)
     _write_probe_start_marker(
         marker,
         kind=kind,
@@ -1476,6 +1486,8 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("image readiness probe requires an image-capable target")
         _set_generation_tokens(target, args.local, args.generation_tokens)
         try:
+            if not stress_probe:
+                _prepare_probe_model(target)
             if args.isolated_probe == "stress-text":
                 result = _run_marked_generation_stress(
                     target,
