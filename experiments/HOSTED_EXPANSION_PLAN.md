@@ -117,6 +117,14 @@ input is purchased. Any partially started remainder stays with its existing
 checkpoint recovery. Tail collection, its judging and publication must still
 be verified after execution, not inferred from the queued controller.
 
+The scheduled observer and API workspace publisher follow the renewed full
+program after its selection record exists. This replaces only the selected
+jobs' output locations; it does not add another copy of their assignments.
+The primary Pro judging queue has separate completion, token and cost fields
+in the half-hour observation. Its verified waiting state is not reported as
+completed assessment. No running collector or observer was restarted for this
+read-view correction.
+
 ### Previous account observation: fifth update
 
 Operator-reported fifth update, recorded on 11 September 2026 at 23:11
