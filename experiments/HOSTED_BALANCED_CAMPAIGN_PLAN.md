@@ -166,6 +166,25 @@ approximation. This does not increase account balances, duplicate
 allowances, or remove per-call spending checks. Completed request counts are
 reused and no framework or model is downloaded during this continuation.
 
+Source-context reconciliation at 05:21 UTC on 12 September accounts for all
+189 additional hosted contexts without another target or judge call. Of these,
+157 have the same saved output, complete Haiku request and labeling criteria
+as an already assessed primary entry. They reference 84 distinct valid retained
+verdicts; they are source-membership links, not 157 additional independent
+observations or billed calls. The remaining contexts retain 20 typed provider
+refusals and 12 non-evaluable setup turns, without inventing Haiku verdicts.
+The extra funded slots are therefore unused, not evidence of execution.
+No verdict is transferred between different model answers. A wrong-output
+control is rejected, and removing that check defeats the control.
+
+This closes only the additional Haiku-context accounting. Native scoring has
+identical input criteria established for 56 contexts; 133 still need their
+source-specific criteria reconciled. Identical Haiku text requests alone do
+not establish identical native scoring references. The separate context-link
+artifact is retained for the final grouped comparison, without adding duplicate
+judgment or cost rows to the campaign database. Local recovery remains the GPU
+priority, and every new replacement answer still requires its own judgments.
+
 Recovery observation, 11 September at 19:07 UTC: 2,864 of the 3,719 request
 counts survived the interruption. A focused longer-timeout diagnostic completed
 one previously missing OpenAI image count in 57.7 seconds; Kimi returned a
