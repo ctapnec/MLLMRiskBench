@@ -1202,6 +1202,11 @@ class OllamaService:
     def close(self) -> None:
         """Best-effort cleanup of this process's daemon only."""
 
+        # An external daemon is not ours to clean up. In particular, a read-only
+        # console must not wait on an experiment's inference lock at shutdown.
+        with self._lock:
+            if self._owned_process is None:
+                return
         deadline = self._monotonic() + 20.0
         try:
             with OllamaProcessLock(
