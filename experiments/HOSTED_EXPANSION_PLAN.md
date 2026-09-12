@@ -10,6 +10,54 @@ collection continues while it is prepared.
 
 ## Current account balances
 
+Operator-reported sixth update, retained on 12 September 2026 at 17:17 UTC.
+This observation does not increase campaign allowances or launch an extension.
+
+| Provider | Previous credit (USD) | Latest credit (USD) | Net decrease (USD) |
+| --- | ---: | ---: | ---: |
+| Anthropic | 48.01 | 20.22 | 27.79 |
+| OpenAI | 14.36 | 4.59 | 9.77 |
+| Google | 17.14 | 11.22 | 5.92 |
+| Kimi | 4.11 | 1.45 | 2.66 |
+| DeepSeek | 3.43 | 2.68 | 0.75 |
+| Total | 87.05 | 40.16 | 46.89 |
+
+The decreases are account-level observations, not campaign-attributed bills.
+Historical balances and uncertain individual charges remain unchanged. Anthropic
+target generations and Haiku judging share the same USD 20.22 credit.
+
+The proposed next extension prioritizes a full Gemini Pro daily cohort on
+existing comparison inputs. A retained provider response reports 250 requests
+per day for Gemini 3.1 Pro. Subject to unchanged quota, other project usage and
+transport retries, the 20 pending inputs would leave at most 230 new inputs in
+a fresh daily allowance. This is a proposal, not an already-funded selection.
+Do not repeat completed Pro model-input conditions to fill the quota.
+
+Across 650 historical Pro attempts with reported token usage, mean input and
+output usage were 562 and 753 tokens. At standard prices of USD 2 and USD 12 per
+million tokens, respectively, 250 similar attempts would cost approximately
+USD 2.54; the 230 additional attempts account for approximately USD 2.34.
+These are token-priced estimates, not provider-confirmed charges or guarantees.
+At the retained 4,096-token output allowance, 250 maximum-length answers would
+instead cost approximately USD 12.57 at the same mean input length, before any
+transport retries. Consequently the cohort must remain subject to the actual
+spending limit; the mean-cost estimate cannot authorize an overrun.
+[Google pricing](https://ai.google.dev/gemini-api/docs/pricing).
+
+Every new generated answer requires its own local and Haiku assessment. Existing
+local answers on the same inputs can reuse only judgments of those exact saved
+answers, never judgments of a different model's response. Protect the remaining
+judging allocation before selecting further Anthropic target work. The current
+tracked Haiku allowance is USD 11.229735, not an additional account balance or
+a claim that this entire amount will be spent.
+
+Google documents the next daily reset as 13 September at 07:00 UTC, or 10:00
+Europe/Kyiv. A controller's earlier scheduled retry is not proof of a quota
+reset. Actual project quota and retry responses remain authoritative.
+[Google rate-limit documentation](https://ai.google.dev/gemini-api/docs/rate-limits).
+
+### Previous account observation: fifth update
+
 Operator-reported fifth update, recorded on 11 September 2026 at 23:11
 UTC (12 September locally). Earlier observations are retained below.
 
