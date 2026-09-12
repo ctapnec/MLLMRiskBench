@@ -13,7 +13,8 @@ from experiments.rig_web import RigWebApp
 
 @pytest.fixture
 def app(tmp_path):
-    app = RigWebApp(results_root=tmp_path / "runs", state_dir=tmp_path / "state", repo_root=tmp_path)
+    app = RigWebApp(results_root=tmp_path / "runs", state_dir=tmp_path / "state", repo_root=tmp_path,
+        gpu_hardware={}, system_hardware={})
     yield app
     app.close()
 

@@ -67,13 +67,16 @@ def test_responsive_labels_stay_outside_scaled_geometry_and_escape_html():
 
 
 def test_vector_and_table_exports_share_the_same_index_page(tmp_path):
-    app = RigWebApp(results_root=tmp_path / "runs", state_dir=tmp_path / "state", repo_root=tmp_path)
+    app = RigWebApp(results_root=tmp_path / "runs", state_dir=tmp_path / "state", repo_root=tmp_path,
+        gpu_hardware={}, system_hardware={})
     try:
         owner = app.db.create_workspace("API", "api")
         landing = app.handle("GET", "/stats")[2].decode()
-        assert "Create and open Build" in landing
+        assert "Build a campaign" in landing
+        assert "href='/build?work_kind=campaign#build-general'" in landing
+        assert "href='/build?work_kind=run#build-general'" in landing
         assert "href='/stats?view=legacy'" in landing
-        assert "href='/campaigns'" not in landing
+        assert "href='/campaigns'" in landing
         app.db.publish_workspace_results(owner,
             assignments=[dict(assignment_id="a", input_id="i", model="api", condition_id="c",
                               framework="replay", corpus="synth", modality="text", response_id=None, evidence_class="measured")],
