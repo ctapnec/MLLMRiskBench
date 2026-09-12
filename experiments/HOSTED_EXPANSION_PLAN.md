@@ -94,6 +94,18 @@ Preparation, counting and funding evidence is retained under
 `runs/engineering/google-pro-daily-extension-20260912`; execution is under
 `runs/engineering/google-pro-daily-extension-execute-20260912`.
 
+At 23:18 UTC the separate `google-pro-daily-judging` tmux controller was
+registered in the same API workspace and began waiting for collection. It
+prepares the exact saved Pro outputs, uses their existing funded Haiku slots,
+retains missing/invalid assessment coverage, and publishes primary Haiku and
+native verdicts with their physical costs. Native model work waits for the
+local recovery's device owners; this does not delay independent API collection.
+Only the paid/counting children source provider credentials. No model bytes
+are downloaded or fully hashed. This is a queued follow-up, not completed
+judging. Additional source-grading contexts remain separately pending and
+must not be conflated with primary output assessments or independent target
+generations. The worker records that remaining scope explicitly.
+
 ### Previous account observation: fifth update
 
 Operator-reported fifth update, recorded on 11 September 2026 at 23:11
