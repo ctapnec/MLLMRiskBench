@@ -6748,6 +6748,14 @@ integration is tracked in `docs/CAMPAIGN_WORKSPACES.md`.
 
 ### Prepare local judging of saved hosted answers
 
+For programs prepared in Build, use **Judge retained outputs locally -> Prepare
+remaining source runs**. The saved campaign supplies the exact program references;
+no filesystem paths need to be entered. Repeated preparation reopens an active
+job or adds only source runs not already prepared. Earlier valid subsets remain
+available in **Saved judging preparation**, including after a later subset is
+prepared. Incomplete source runs remain explicit and may be prepared after their
+collection finishes. This does not resume or regenerate target outputs.
+
 Use the `retained_native_judge_prepare` Tools form, or:
 
 ```bash
@@ -6770,6 +6778,16 @@ explicitly says judgments have not executed. Run the separate execution stage
 below after generation releases the local judge's configured device.
 
 ### Execute local judging of saved hosted answers
+
+In Build, choose a saved preparation and **Review local judging**. Inspect its
+original cascade, device, output allowance and unprepared-source count, then
+**Start or resume local judging**. Model and artifact checksum controls are
+optional and disabled by default. The one-use review binds the saved preparation
+and campaign owner. A continuation keeps the previous execution directory and
+model-verification setting; two open reviews cannot launch the same work twice.
+Use the same scoring revision when resuming. This action makes no hosted or
+target calls and does not allocate GPUs automatically: wait for the recorded
+device to become available. Haiku judging is separate and output-specific.
 
 Select the existing campaign in Tools and open `retained_native_judge_execute`.
 Supply the preparation's `result.json`, its recorded digest and a separate
@@ -6796,8 +6814,9 @@ an infrastructure failure retains its prefix and reports continuation required.
 `publication.json` independently reports campaign indexing. Repair an indexing
 problem and resume to republish completed assessments without new model calls.
 New assessments never overwrite the source generation or its original verdicts.
-The normal Build resource/scheduling and judging-management flow remains separate
-integration work; these are the executable advanced Tools/CLI stages.
+The same execution path is used by Build and Tools. Automatic local resource
+scheduling, readiness preparation and Haiku orchestration remain separate
+integration work; do not mistake these native judging controls for that completed flow.
 
 ### Publish retained-output judging into campaigns
 

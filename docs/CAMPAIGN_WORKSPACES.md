@@ -129,6 +129,24 @@ Build's General section now starts source preparation from the campaign index:
    rejected, including two review pages opened in different tabs. A changed
    software revision or spending plan needs an explicit recovery handoff rather
    than silently changing the old execution conditions.
+10. Under **Judge retained outputs locally**, choose **Prepare remaining source
+    runs**. Build uses the same saved programs. It reopens active preparation
+    instead of launching a duplicate, and excludes source runs already prepared.
+    An incomplete source remains listed as unprepared; completing other sources
+    does not hide that gap. This preparation makes no target or judge calls.
+11. Choose a **Saved judging preparation** and **Review local judging**. The review
+    shows its retained output count and original scoring model, device and token
+    allowance. It does not substitute settings from later draft edits. Model and
+    result-file checksum revalidation are separate optional controls, off by
+    default. Start after the recorded judge device becomes available; this panel
+    does not allocate or preempt GPUs automatically.
+12. **Start or resume local judging** executes the existing local scoring command
+    and publishes verdicts against this campaign's exact saved outputs. Resume
+    reuses the same checkpoint directory; original and completed new verdicts
+    are not judged again. Duplicate review submissions cannot launch another
+    active copy. After additional collection runs complete, prepare only the
+    remaining sources and keep earlier preparations available in the selector.
+    Haiku selection and assessment remain a separate output-specific stage.
 
 Eleven focused rig checks cover this collection handoff, including an actual
 browser form submission and duplicate-click control; two removed-fix controls
@@ -136,6 +154,16 @@ fail as required. A review of the actual two-model prepared source was rendered
 and visually inspected without starting its paid executor. This is not yet
 acceptance of a complete new UI campaign through readiness, paid generation,
 local/Haiku judging and final analysis.
+
+The native judging handoff adds nine focused checks, with the changed collection
+helper also covered by its eleven existing checks. Three removed-fix controls
+detect duplicate preparation, lost checkpoint continuation and stale launches.
+The actual browser flow launched the real local judging CLI on two previously
+verified retained outputs in an isolated campaign: one original verdict was
+restored and one rule-only assessment produced, and both were indexed. It made
+no target or judge-model calls and changed no live campaign database. Desktop
+and mobile views were inspected. A further narrow-layout regression and its
+removed-fix control cover the corrected table width.
 
 The forecast, replay and counted-program actions are rig-verified; console
 deployment is tracked in the development ledger. The
@@ -151,9 +179,9 @@ selected in Stats. It never chooses the newest or best answer automatically.
 It resolves only the selected artifact locations, then reuses the existing
 source-preparation command. Opening the page does not scan or hash result files.
 This is a separate preparation action, not a switch silently changing the
-current Runner pipeline's corpus. Readiness preparation and judging orchestration
-below are not yet assembled by the normal Build editor. The reviewed collection
-and continuation handoff is implemented and rig-verified, but not yet deployed;
+current Runner pipeline's corpus. Readiness preparation and Haiku orchestration
+below are not yet assembled by the normal Build editor. The reviewed collection,
+continuation and native judging handoffs are implemented and rig-verified, but not yet deployed;
 a forecast alone is not an executable collection.
 Replay preparation converts the union of required sources once across models,
 using the configured corpus and media locations without API credentials.
@@ -199,8 +227,8 @@ Unchanged source context is reused by provider workers; budgets remain checked
 at paid dispatch. Old programs retain their original reader and interpretation.
 
 These typed forms and reusable preparation APIs are not the finished normal
-Build workflow. Source/replay preparation and reviewed collection are connected;
-the remaining editor work must assemble readiness and requested judging stages from
+Build workflow. Source/replay preparation, reviewed collection and native judging are connected;
+the remaining editor work must assemble readiness and requested Haiku judging from
 its ordinary controls. Do not present manual JSON/path handoffs as that completed
 UX. The retained executor still owns provider concurrency and continuation;
 creating a second scheduler or independently funded per-model grids is not the
