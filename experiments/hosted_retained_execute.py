@@ -628,7 +628,8 @@ def _reviewed_completed_responses(program: Mapping[str, Any], budget: AttemptBud
     return completed
 
 
-def _retained_execution_counts(program: Mapping[str, Any], budget: AttemptBudget) -> tuple[int, int]:
+def _retained_execution_counts(program: Mapping[str, Any], budget: AttemptBudget, *,
+                               include_saved: bool = False) -> tuple[int, int] | tuple[int, int, int]:
     """Count logical target starts and durable usable responses for Jobs only."""
     from experiments import run_matrix
     from ura.data_models import Response
@@ -676,7 +677,7 @@ def _retained_execution_counts(program: Mapping[str, Any], budget: AttemptBudget
     )
     if len(responses) > attempted or successful > attempted:
         raise ValueError("hosted controller retained-response accounting exceeds funded starts")
-    return attempted, successful
+    return (attempted, successful, len(responses)) if include_saved else (attempted, successful)
 
 
 def execute_registered(

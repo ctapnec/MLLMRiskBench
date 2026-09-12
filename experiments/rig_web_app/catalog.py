@@ -1044,6 +1044,25 @@ def _commands() -> dict[str, Command]:
             ),
         ),
         Command(
+            "hosted_campaign_execute",
+            "experiments.hosted_campaign_execute",
+            "Collect prepared hosted programs in parallel; judge retained answers afterward",
+            (
+                CommandParam("--program", "path", required=True, repeat=True,
+                    help="Exact prepared/attested program files, one per selected model condition"),
+                CommandParam("--program-sha256", "str", required=True, repeat=True,
+                    help="Matching program digests, in the same order as the program files"),
+                CommandParam("--budget-root", "path", required=True),
+                CommandParam("--budget-plan-sha256", "str", required=True),
+                CommandParam("--project-root", "path", required=True),
+                CommandParam("--expected-commit", "str", required=True),
+                CommandParam("--out", "path", required=True),
+                CommandParam("--workers-per-provider", "int",
+                    help="Independent target workers per provider (default 2, maximum 8); providers run concurrently"),
+                CommandParam("--verify-artifact-sha256", "flag"),
+            ),
+        ),
+        Command(
             "hosted_campaign_budget",
             "experiments.hosted_campaign_budget",
             "Project the sealed hosted target and Haiku judge budget without calls",
@@ -1199,6 +1218,7 @@ COMMAND_GROUPS: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
         "runbook sections 19-20",
         (
             "hosted_campaign_budget",
+            "hosted_campaign_execute",
             "retained_response_judge_pair",
             "retained_response_judge_pair_execute",
         ),

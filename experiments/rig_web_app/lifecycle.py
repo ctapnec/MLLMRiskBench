@@ -1729,6 +1729,23 @@ class LifecycleMixin:
         """Minimal environment for every non-matrix allowlisted command."""
 
         allowed = set(self._MATRIX_BASE_ENV)
+        if command == "hosted_campaign_execute":
+            from .catalog import _param_values
+
+            parameters = {parameter.flag: parameter for parameter in self.commands[command].params}
+            paths = _param_values(parameters["--program"], values)
+            digests = _param_values(parameters["--program-sha256"], values)
+            if len(paths) != len(digests):
+                raise ValueError("Each selected hosted program needs its matching digest")
+            for path, digest in zip(paths, digests):
+                program = self._strict_config_document(path, digest)
+                for job in program["jobs"]:
+                    argv = job["argv"]
+                    selected = {flag: argv[index + 1] for index, flag in enumerate(argv[:-1])
+                        if flag.startswith("--") and not argv[index + 1].startswith("--")}
+                    allowed.update(self._selected_matrix_environment_names(selected))
+            allowed.update(self._MATRIX_OPTIONAL_ENV)
+            allowed.update(self._MATRIX_RECEIPT_ENV)
         if command == "retained_response_judge_pair_execute":
             plan = self._strict_config_document(str(values.get("--plan", "")))
             condition = plan.get("judge_condition")
