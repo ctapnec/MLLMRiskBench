@@ -3217,6 +3217,8 @@ class GeminiTarget(BaseTarget):
         provider_refusal = False
         refusal_category: Optional[str] = None
         refusal_reason: Optional[str] = None
+        candidate_filtered = False
+        thought_summary_observed = False
         if prompt_blocked:
             if candidates:
                 raise GeminiOutputError(
@@ -3270,20 +3272,25 @@ class GeminiTarget(BaseTarget):
                 if part_text is not None:
                     if not isinstance(part_text, str):
                         raise GeminiOutputError("Gemini text part is not a string")
-                    text_parts.append(part_text)
+                    thought = _provider_field(part, "thought")
+                    if thought is not None and not isinstance(thought, bool):
+                        raise GeminiOutputError("Gemini thought marker is not boolean or null")
+                    if thought is True:
+                        thought_summary_observed |= bool(part_text.strip())
+                    else:
+                        text_parts.append(part_text)
             text = "".join(text_parts)
             safety = _provider_field(candidate, "safety_ratings", [])
             if isinstance(safety, (list, tuple)):
                 safety_ratings = [str(item) for item in safety]
-            provider_refusal = finish_reason in filtered_reasons
-            if provider_refusal:
-                if text.strip():
-                    raise GeminiOutputError(
-                        "Gemini filtered candidate contained visible partial output"
-                    )
-                refusal_category = f"gemini_finish_{finish_reason.lower()}"
-                refusal_reason = finish_message
-                output_turns = []
+            candidate_filtered = finish_reason in filtered_reasons
+            if candidate_filtered:
+                # A filter can stop after visible text. Keep that text for
+                # assessment; do not label a possible partial leak a refusal.
+                provider_refusal = not text.strip()
+                refusal_category = f"gemini_finish_{finish_reason.lower()}" if provider_refusal else None
+                refusal_reason = finish_message if provider_refusal else None
+                output_turns = [] if provider_refusal else [DialogTurn(role="assistant", content=text)]
             else:
                 if finish_reason not in {"STOP", "MAX_TOKENS"}:
                     raise GeminiOutputError(
@@ -3296,7 +3303,7 @@ class GeminiTarget(BaseTarget):
                     )
                 output_turns = [DialogTurn(role="assistant", content=text)]
         usage = _provider_field(resp, "usage_metadata")
-        tokens = self._usage_tokens(usage, provider_refusal=provider_refusal)
+        tokens = self._usage_tokens(usage, provider_refusal=provider_refusal or candidate_filtered)
 
         return Response(
             attempt_id=_dialog_fingerprint(dialog),
@@ -3315,6 +3322,9 @@ class GeminiTarget(BaseTarget):
                 "output_truncated": finish_reason == "MAX_TOKENS",
                 "finish_message": finish_message,
                 "prompt_block_reason": prompt_block_reason,
+                "provider_output_filtered": candidate_filtered,
+                "partial_output_filtered": candidate_filtered and bool(output_turns),
+                "thought_summary_observed": thought_summary_observed,
                 **({"requested_thinking_level": self.thinking_level} if self.thinking_level is not None else {}),
                 "safety_ratings": safety_ratings,
                 "requested_seed": seed,

@@ -1966,6 +1966,44 @@ def test_gemini_real_sdk_filtered_candidate_can_have_null_parts_and_usage():
     assert response.output_turns == [] and response.tokens is None
 
 
+@pytest.mark.parametrize('filtered,visible', [(True, False), (True, True), (False, True), (False, False)])
+@pytest.mark.parametrize('usage_present', [True, False])
+def test_gemini_thoughts_are_not_answers_and_filtered_visible_text_is_retained(filtered, visible, usage_present):
+    types = pytest.importorskip('google.genai.types')
+    parts = [types.Part(text='Diagnostic thought summary, not the answer.', thought=True)]
+    if visible:
+        parts.append(types.Part(text='Visible partial answer', thought=False))
+    result = types.GenerateContentResponse(response_id='filtered-partial-1', model_version='gemini-generic',
+        candidates=[types.Candidate(finish_reason='PROHIBITED_CONTENT' if filtered else 'STOP',
+            content=types.Content(role='model', parts=parts))],
+        usage_metadata=types.GenerateContentResponseUsageMetadata(prompt_token_count=7,
+            candidates_token_count=3 if visible else 0, thoughts_token_count=2,
+            total_token_count=12 if visible else 9) if usage_present else None)
+    target = GeminiTarget('gemini-generic')
+    calls = []
+    target._client = SimpleNamespace(models=SimpleNamespace(generate_content=lambda **body: (calls.append(body), result)[1]))
+    if not filtered and (not visible or not usage_present):
+        with pytest.raises(GeminiOutputError):
+            target.generate([DialogTurn(role='user', content='fixture')])
+    else:
+        response = target.generate([DialogTurn(role='user', content='fixture')])
+        from ura.runner import validate_response_refusal_state
+        validate_response_refusal_state(response)
+        assert [turn.content for turn in response.output_turns] == (['Visible partial answer'] if visible else [])
+        assert response.raw['provider_refusal'] is (not visible)
+        assert response.raw['provider_output_filtered'] is filtered
+        assert response.raw['partial_output_filtered'] is (filtered and visible)
+        assert response.raw['thought_summary_observed'] is True
+        assert response.raw['output_truncated'] is False  # A policy stop is not token exhaustion.
+        if usage_present:
+            assert response.tokens == {'input': 7, 'output': 5 if visible else 2,
+                'total': 12 if visible else 9, 'reasoning': 2, 'visible_output': 3 if visible else 0}
+        else:
+            assert response.tokens is None
+            assert response.raw['usage_status'] == 'unknown'
+    assert len(calls) == 1
+
+
 def test_gemini_unexplained_null_candidates_preserve_one_actual_attempt_audit():
     types = pytest.importorskip("google.genai.types")
     result = types.GenerateContentResponse(response_id="malformed-1", model_version="gemini-generic")
