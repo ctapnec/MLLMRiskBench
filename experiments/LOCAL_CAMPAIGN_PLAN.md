@@ -15,6 +15,17 @@ controls remain open. These historical
 counts are not a pooled final-comparison population. No local generation was
 repeated by publication.
 
+Comparison publication, 12 September: Local and API now expose a **Compare**
+tab with explicit model, generation and judging conditions on each side.
+Matched, unmatched and ambiguous input support is visible before the paired
+outcome counts, with source/framework/modality facets and a matching CSV export.
+This read-only indexed view makes no new generation or judging calls. It is
+descriptive, not the final replacement-aware statistical analysis, and does
+not complete the remaining normal Build execution/continuation workflow.
+Focused rig tests, removed-fix controls and live HTTP/count agreement passed;
+interactive browser acceptance remains pending. Use the workspace runbook for
+the selection flow, keeping the older and corrected generation policies apart.
+
 Status, 12 September: the earlier execution and analysis are terminal, but the
 newly requested all-model missing-output recovery is open. Audit every retained
 missing output, distinguish input-context overflow, output-length exhaustion,

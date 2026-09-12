@@ -434,6 +434,34 @@ does not make two model outputs interchangeable. Reuse an existing verdict only
 for the same retained output and judging condition. Equal inputs do not imply
 equal local/API answer totals when the model rosters differ.
 
+The **Compare** tab now provides an indexed descriptive comparison within one
+campaign or between Local and API. Choose the right-hand campaign, both models,
+and one generation and judging condition per side. Use **Update choices /
+compare** to load the dependent choices. Conditions are explicit; the view
+never substitutes a newer or more favorable output. A selected replacement
+uses its own generation condition, not its predecessor's setting.
+
+Each corpus/framework/modality facet reports the input union, exact matched
+inputs, left-only and right-only inputs, and ambiguous shared inputs. More than
+one assignment for an input on either side is ambiguous and does not form a
+Cartesian set of pairs. For unambiguous shared inputs, the table keeps both
+output states, truncation flags, judgment states and labels. An absent index
+record is not proof that no request occurred. Diagnostic and unknown-evidence
+rows do not enter this measured comparison. These are descriptive counts, not
+independent-sample totals, a pooled ASR, a causal contrast or a completed paired
+statistical analysis.
+
+Twelve complete source facets appear on each page. **Download this page's
+counts** exports those exact facets and both selected conditions as CSV, using
+the shared request spinner and error handling. Selection and page reads use
+SQLite only; no source reconstruction, model calls or checksum scans occur.
+The new comparison passed 24 focused rig checks, three removed-fix controls,
+lint and an independent read-only reconciliation of real Local/API records.
+The actual comparison query took 0.17 seconds. Release 4aae439 is deployed;
+the live page and its CSV export agree on the same twelve displayed source
+facets. No campaign worker was restarted. Browser visual acceptance and the
+remaining normal Build execution workflow are still separate requirements.
+
 Charts compare per-model safety outcomes, missing outputs, truncation and judge
 agreement on their declared denominators. Show benign coverage beside
 over-refusal. Comparisons must not silently mix full local coverage with a
