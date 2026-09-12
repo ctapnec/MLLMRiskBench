@@ -7,6 +7,7 @@ authoritative. Run this detached command on the rig, including from Rig Web.
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack, contextmanager
 import json
 import os
 from pathlib import Path
@@ -20,10 +21,73 @@ from experiments.retained_response_judge_execute import _write_atomic, _write_ne
 from ura.artifact_checks import artifact_verification_cli
 
 
+@contextmanager
+def _collection_lock(root):
+    import fcntl
+
+    with (root / 'collection.lock').open('a+b') as handle:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise RuntimeError('This collection or its continuation is already active') from exc
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _saved_job_complete(admission):
+    """A terminal UI status alone cannot exclude paid work from continuation."""
+    from experiments.rig_web_app.workspace_import import _responses
+    from ura.adapters.replay import retained_dialog, retained_dialog_sha256
+
+    seen = set()
+    for attempt, response, _locator in _responses(admission.job):
+        origin = attempt.get('params', {}).get('retained_origin', {})
+        identity = origin.get('selection', {}).get('input_identity_sha256')
+        entry = admission.entries.get(identity)
+        if (entry is None or identity in seen or origin != entry['origin']
+                or response['target'] != attempt['target'] or response['target'] != admission.program['target']
+                or response['attempt_id'] != attempt['id'] or response['run_id'] != attempt['run_id']
+                or retained_dialog_sha256(retained_dialog(attempt['rendered_input'])) != origin['delivered_input_sha256']):
+            raise ValueError('Saved collection output differs from its admitted input/model')
+        seen.add(identity)
+    starts = admission.budget.reserved_attempt_counts([item['call_id'] for item in admission.requests.values()])
+    if any(starts[admission.requests[key]['call_id']] < 1 for key in seen):
+        raise ValueError('Saved collection output lacks its recorded physical attempt')
+    return seen == set(admission.entries)
+
+
+def _completed_continuation_jobs(root, selection, admitted):
+    if root.is_symlink() or not root.is_absolute() or root.resolve(strict=True) != root or not root.is_dir():
+        raise ValueError('Previous collection must be one resolved directory')
+    previous = json.loads((root / 'selection.json').read_text())
+    for key in ('programs', 'assigned_target_inputs', 'budget_root', 'budget_plan_sha256',
+                'project_root', 'expected_commit', 'workspace_id', 'console_db'):
+        if previous.get(key) != selection[key]:
+            raise ValueError('Continuation changed the selected programs, budget, revision or campaign owner')
+    path = root / 'result.json' if (root / 'result.json').is_file() else root / 'progress.json'
+    rows = json.loads(path.read_text()).get('jobs', []) if path.is_file() else []
+    completed = set()
+    for row in rows:
+        if row.get('status') != 'collected':
+            continue
+        p, j = row.get('program'), row.get('job')
+        if type(p) is not int or type(j) is not int or not 0 <= p < len(admitted) or not 0 <= j < len(admitted[p]):
+            raise ValueError('Previous collection job identity differs')
+        admission = admitted[p][j]
+        if row.get('name') != admission.job['name'] or row.get('target') != admission.program['target']:
+            raise ValueError('Previous collection job identity differs')
+        if _saved_job_complete(admission):
+            completed.add((p, j))
+    return frozenset(completed)
+
+
 def collect_campaign(*, programs: Sequence[tuple[Path, str]], budget_root: Path,
                      budget_plan_sha256: str, project_root: Path, expected_commit: str,
                      out: Path, workers_per_provider: int = 2,
-                     workspace_id: str = "", console_db: Path | None = None) -> dict:
+                     workspace_id: str = "", console_db: Path | None = None,
+                     resume_from: Path | None = None) -> dict:
     """Validate shared sources once, then collect without co-resident judges."""
     retained._validated_checkout(project_root, expected_commit)
     if not programs or len({str(path.resolve()) for path, _sha256 in programs}) != len(programs):
@@ -51,10 +115,32 @@ def collect_campaign(*, programs: Sequence[tuple[Path, str]], budget_root: Path,
         admitted.append(jobs)
         prepared_programs.append(program)
         references.append({"path": str(path.resolve()), **descriptor, "target": program["target"]})
-    out.mkdir(mode=0o700)
-    _write_new(out / "selection.json", dict(programs=references, assigned_target_inputs=len(call_ids),
+    selection = dict(programs=references, assigned_target_inputs=len(call_ids),
         workers_per_provider=workers_per_provider, budget_root=str(budget_root),
-        budget_plan_sha256=budget_plan_sha256, stage="target_collection", judgments="deferred"))
+        budget_plan_sha256=budget_plan_sha256, stage="target_collection", judgments="deferred",
+        project_root=str(project_root), expected_commit=expected_commit,
+        workspace_id=workspace_id, console_db=str(console_db) if console_db is not None else None)
+    completed = frozenset()
+    if resume_from is not None:
+        if (resume_from.is_symlink() or not resume_from.is_absolute()
+                or resume_from.resolve(strict=True) != resume_from or not resume_from.is_dir()):
+            raise ValueError('Previous collection must be one resolved directory')
+    with ExitStack() as owners:
+        if resume_from is not None:
+            owners.enter_context(_collection_lock(resume_from))
+            completed = _completed_continuation_jobs(resume_from, selection, admitted)
+            selection['resume_from'] = str(resume_from)
+        out.mkdir(mode=0o700)
+        owners.enter_context(_collection_lock(out))
+        _write_new(out / 'selection.json', selection)
+        return _collect_admitted(admitted=admitted, prepared_programs=prepared_programs,
+            budget_root=budget_root, project_root=project_root, out=out, workspace_id=workspace_id,
+            console_db=console_db, workers_per_provider=workers_per_provider, completed=completed,
+            assigned=len(call_ids))
+
+
+def _collect_admitted(*, admitted, prepared_programs, budget_root, project_root, out,
+                      workspace_id, console_db, workers_per_provider, completed, assigned):
     database, publisher, publication = None, None, None
     try:
         if workspace_id:
@@ -73,10 +159,10 @@ def collect_campaign(*, programs: Sequence[tuple[Path, str]], budget_root: Path,
             _write_atomic(out / "progress.json", progress)
 
         if publisher is not None:
-            progress_changed(dict(jobs=[dict(program=p, job=j, status="pending")
+            progress_changed(dict(jobs=[dict(program=p, job=j, status="collected" if (p, j) in completed else "pending")
                 for p, jobs in enumerate(admitted) for j in range(len(jobs))]))
         rows = dispatch_admitted(admitted, workers_per_provider=workers_per_provider, responses_only=True,
-            on_progress=progress_changed)
+            on_progress=progress_changed, completed_jobs=completed)
         if publisher is not None:
             progress_changed(dict(jobs=rows))
     finally:
@@ -84,8 +170,8 @@ def collect_campaign(*, programs: Sequence[tuple[Path, str]], budget_root: Path,
             database.close()
     complete = all(row["status"] == "collected" for row in rows)
     result = dict(status="responses_collected_awaiting_judging" if complete else "collection_needs_continuation",
-        jobs=rows, assigned_target_inputs=len(call_ids), judgments="not_executed_by_collection",
-        selection_changed=False, automatic_answer_retries_added=0)
+        jobs=rows, assigned_target_inputs=assigned, judgments="not_executed_by_collection",
+        selection_changed=False, automatic_answer_retries_added=0, completed_jobs_restored=len(completed))
     if publication is not None:
         result["publication"] = publication
     _write_new(out / "result.json", result)
@@ -102,6 +188,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--project-root", type=Path, required=True)
     parser.add_argument("--expected-commit", required=True)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument('--resume-from', type=Path,
+        help='Continue this previous collection with the same programs/budget; --out is a fresh successor directory')
     parser.add_argument("--workers-per-provider", type=int, default=2, choices=range(1, 9))
     parser.add_argument("--workspace-id", default=os.environ.get("URA_CAMPAIGN_WORKSPACE_ID", ""),
         help="Publish the admitted collection into this existing campaign workspace")
@@ -116,7 +204,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         budget_root=args.budget_root, budget_plan_sha256=args.budget_plan_sha256,
         project_root=args.project_root, expected_commit=args.expected_commit,
         out=args.out, workers_per_provider=args.workers_per_provider,
-        workspace_id=args.workspace_id, console_db=args.console_db)
+        workspace_id=args.workspace_id, console_db=args.console_db, resume_from=args.resume_from)
     print(json.dumps({key: value for key, value in result.items() if key != "jobs"}, sort_keys=True))
     return 0 if result["status"] == "responses_collected_awaiting_judging" else 1
 

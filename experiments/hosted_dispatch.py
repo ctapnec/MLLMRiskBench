@@ -65,6 +65,7 @@ def _pause_reason(admission) -> str | None:
 def dispatch_admitted(
     programs: Sequence[Sequence], *, workers_per_provider: int = 2,
     responses_only: bool = True, on_progress: Callable[[dict], None] | None = None,
+    completed_jobs: frozenset[tuple[int, int]] = frozenset(),
     _worker=run_admission, _pause=_pause_reason,
 ) -> list[dict]:
     """Run the fixed programs with isolated workers and provider-local limits.
@@ -112,6 +113,12 @@ def dispatch_admitted(
             tasks.append(dict(program=program_index, job=job_index,
                 name=admission.job["name"], target=route["target"], provider=_billing_provider(route["provider"]),
                 purpose=purpose, status="pending", output=output, admission=admission))
+    known = {(row['program'], row['job']) for row in tasks}
+    if not isinstance(completed_jobs, frozenset) or not completed_jobs <= known:
+        raise ValueError('Completed job selection differs from admitted programs')
+    for row in tasks:
+        if (row['program'], row['job']) in completed_jobs:
+            row.update(status='collected' if responses_only else 'complete', restored=True)
     active = {}
     last_publication = 0.0
 
@@ -127,6 +134,8 @@ def dispatch_admitted(
         last_publication = time.monotonic()
 
     try:
+        if completed_jobs:
+            publish()
         while any(row["status"] == "pending" for row in tasks) or active:
             changed = False
             for index, (process, receive) in list(active.items()):

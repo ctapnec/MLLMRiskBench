@@ -84,6 +84,25 @@ def test_provider_pause_prevents_calls_without_holding_other_provider(tmp_path):
     assert not (tmp_path / "paused.json").exists()
 
 
+def test_completed_pilot_and_job_are_not_dispatched_on_continuation(tmp_path):
+    jobs = [admission(tmp_path, 'openai', 'saved-pilot', purpose='diagnostic_canary'),
+        admission(tmp_path, 'openai', 'saved-measured'), admission(tmp_path, 'openai', 'remaining')]
+    result = subject.dispatch_admitted([jobs], _worker=worker, _pause=lambda _: None,
+        completed_jobs=frozenset({(0, 0), (0, 1)}))
+    assert [row['status'] for row in result] == ['collected'] * 3
+    assert result[0]['restored'] is result[1]['restored'] is True
+    assert not (tmp_path / 'saved-pilot.json').exists()
+    assert not (tmp_path / 'saved-measured.json').exists()
+    assert (tmp_path / 'remaining.json').exists()
+
+
+def test_completed_job_reference_cannot_select_outside_the_program(tmp_path):
+    with pytest.raises(ValueError, match='Completed job selection'):
+        subject.dispatch_admitted([[admission(tmp_path, 'openai', 'never')]],
+            completed_jobs=frozenset({(2, 0)}))
+    assert not list(tmp_path.iterdir())
+
+
 @pytest.mark.parametrize("value", [0, 9, True, 1.5])
 def test_invalid_parallelism_is_rejected_before_calls(tmp_path, value):
     with pytest.raises(ValueError, match="Workers per provider"):

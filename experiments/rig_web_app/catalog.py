@@ -1061,6 +1061,9 @@ def _commands() -> dict[str, Command]:
                 CommandParam("--out", "path", required=True),
                 CommandParam("--workers-per-provider", "int",
                     help="Independent target workers per provider (default 2, maximum 8); providers run concurrently"),
+                CommandParam("--resume-from", "path", help="Previous collection control directory. "
+                    "Keep its programs and budget; choose a fresh output directory for this continuation. "
+                    "Completed jobs are restored, not regenerated."),
                 CommandParam("--verify-artifact-sha256", "flag"),
             ),
         ),

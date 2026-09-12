@@ -61,7 +61,8 @@ def test_ui_command_preserves_program_pairing_parallelism_and_campaign_role(tmp_
         "--program-sha256": "a" * 64, "--program-sha256#1": "b" * 64,
         "--budget-root": str(tmp_path), "--budget-plan-sha256": "c" * 64,
         "--project-root": str(tmp_path), "--expected-commit": "d" * 40,
-        "--out": str(tmp_path / "out"), "--workers-per-provider": "2"}
+        "--out": str(tmp_path / "out"), "--workers-per-provider": "2",
+        "--resume-from": str(tmp_path / 'previous')}
     argv = build_argv("hosted_campaign_execute", values)
     marker = argv.index("experiments.hosted_campaign_execute") + 1
     observed = []
@@ -71,6 +72,7 @@ def test_ui_command_preserves_program_pairing_parallelism_and_campaign_role(tmp_
     assert observed[0]["programs"] == [(Path(values["--program"]), "a" * 64),
         (Path(values["--program#1"]), "b" * 64)]
     assert observed[0]["workers_per_provider"] == 2
+    assert observed[0]['resume_from'] == tmp_path / 'previous'
     assert activity_role("hosted_campaign_execute") == "collection"
     assert "--verify-artifact-sha256" not in argv
 
@@ -150,3 +152,77 @@ def test_cli_publication_binding_matches_owned_console_environment(tmp_path, mon
         "--project-root",str(tmp_path),"--expected-commit","c"*40,"--out",str(tmp_path/"out")])
     assert observed[0]["workspace_id"] == "selected-workspace"
     assert observed[0]["console_db"] == tmp_path/"console.db"
+
+
+def _saved_admission(tmp_path):
+    from test_hosted_retained_execute import _setup, _runner
+    from ura.runner import Runner
+
+    points, attacker, target, calls, admission = _setup(tmp_path)
+    out = tmp_path / 'answers'
+    out.mkdir()
+    admission.job.update(name='saved', argv=['--out', str(out)])
+    _runner(attacker, target, admission).run(points,
+        on_response=lambda record: Runner.append_checkpoint(out / 'saved.responses.checkpoint.jsonl', record))
+    return admission, calls
+
+
+def test_saved_completion_uses_real_checkpoint_identity_and_funded_attempts(tmp_path):
+    admission, calls = _saved_admission(tmp_path)
+    assert subject._saved_job_complete(admission)
+    assert len(calls) == len(admission.entries)
+    path = tmp_path / 'answers/saved.responses.checkpoint.jsonl'
+    original = path.read_bytes()
+    lines = original.decode().splitlines()
+    path.write_text(lines[0] + '\n')
+    assert not subject._saved_job_complete(admission)
+    path.write_bytes(original)
+    admission.program['target'] = 'openai:different-model'
+    with pytest.raises(ValueError, match='input/model'):
+        subject._saved_job_complete(admission)
+
+
+def test_collection_continuation_keeps_source_and_budget_and_skips_saved_work(tmp_path, monkeypatch):
+    admission, calls = _saved_admission(tmp_path)
+    path = tmp_path / 'program.json'
+    raw = json.dumps(admission.program).encode()
+    path.write_bytes(raw)
+    monkeypatch.setattr(subject.retained, '_validated_checkout', lambda *_: None)
+    monkeypatch.setattr(subject, 'AttemptBudget', lambda *_: admission.budget)
+    monkeypatch.setattr(subject.retained, '_validated_local_cells', lambda *_: object())
+    monkeypatch.setattr(subject.retained, '_validated_jobs', lambda *a, **k: [admission])
+    dispatched = []
+    def dispatch(_jobs, **kwargs):
+        dispatched.append(kwargs['completed_jobs'])
+        return [dict(program=0, job=0, name='saved', target=admission.program['target'],
+            status='collected', output=str(tmp_path / 'answers'))]
+    monkeypatch.setattr(subject, 'dispatch_admitted', dispatch)
+    common = dict(programs=[(path, hashlib.sha256(raw).hexdigest())], budget_root=tmp_path / 'money',
+        budget_plan_sha256=admission.budget.expected_plan_sha256, project_root=tmp_path, expected_commit='b' * 40)
+    first = tmp_path / 'first'
+    subject.collect_campaign(**common, out=first)
+    source_bytes = {name: (first / name).read_bytes() for name in ('selection.json', 'result.json')}
+    resumed = subject.collect_campaign(**common, out=tmp_path / 'successor', resume_from=first)
+    assert dispatched == [frozenset(), frozenset({(0, 0)})]
+    assert resumed['completed_jobs_restored'] == 1 and len(calls) == len(admission.entries)
+    assert source_bytes == {name: (first / name).read_bytes() for name in source_bytes}
+    with pytest.raises(ValueError, match='Continuation changed'):
+        subject.collect_campaign(**{**common, 'expected_commit': 'c' * 40},
+            out=tmp_path / 'wrong-revision', resume_from=first)
+    assert not (tmp_path / 'wrong-revision').exists()
+    with subject._collection_lock(first), pytest.raises(RuntimeError, match='already active'):
+        subject.collect_campaign(**common, out=tmp_path / 'concurrent', resume_from=first)
+    assert not (tmp_path / 'concurrent').exists()
+
+
+def test_missing_checkpoint_does_not_turn_a_ui_status_into_completed_work(tmp_path, monkeypatch):
+    job = SimpleNamespace(job={'name': 'saved'}, program={'target': 'openai:model'})
+    root = tmp_path / 'old'
+    root.mkdir()
+    selection = dict(programs=[], assigned_target_inputs=1, budget_root='budget', budget_plan_sha256='a' * 64,
+        project_root='project', expected_commit='b' * 40, workspace_id='', console_db=None)
+    (root / 'selection.json').write_text(json.dumps(selection))
+    (root / 'result.json').write_text(json.dumps(dict(jobs=[dict(program=0, job=0,
+        name='saved', target='openai:model', status='collected')])))
+    monkeypatch.setattr(subject, '_saved_job_complete', lambda _: False)
+    assert subject._completed_continuation_jobs(root, selection, [[job]]) == frozenset()
