@@ -156,6 +156,15 @@ class WorkspacePagesMixin:
     def _workspace_export(self, campaign_id: str, name: str, query: dict[str, str]) -> tuple[int, str, bytes]:
         self.db.require_workspace(campaign_id)
         page = max(0, int(query.get("page", "0")))
+        if name == "comparison.csv":
+            from .workspace_comparison import comparison_rows, comparison_groups, comparison_csv
+            rows = comparison_rows(self.db, campaign_id, query, offset=page * 12)
+            if rows is None:
+                return 503, "text/plain; charset=utf-8", b"Campaign comparison index unavailable"
+            rows = [row for group in comparison_groups(rows)[:12] for row in group]
+            if not rows:
+                return 404, "text/plain; charset=utf-8", b"No measured comparison inputs on this page"
+            return 200, "text/csv; charset=utf-8", comparison_csv(rows, campaign_id, query)
         model, condition = self._workspace_result_scope(query)
         if name in {"judgments.csv", "judgments.svg"}:
             rows = self.db.workspace_judgment_breakdown(campaign_id, offset=page * 12, model=model, condition=condition)
@@ -276,7 +285,7 @@ class WorkspacePagesMixin:
         self.db.require_workspace(campaign_id)
         campaign = self.db.workspace(campaign_id)
         section = query.get("section", "overview")
-        sections = ("overview", "definition", "results", "judging", "costs", "activity")
+        sections = ("overview", "definition", "results", "judging", "compare", "costs", "activity")
         if section not in sections:
             raise ValueError("Unknown campaign section")
         base = "/campaigns/" + campaign_id
@@ -299,6 +308,9 @@ class WorkspacePagesMixin:
                         ("attackers", "Frameworks / attacks"), ("seeds", "Seeds"), ("sampling_policy", "Sampling"),
                         ("limit", "Per-arm limit"), ("judges", "Judges"), ("judge_model", "Judge model"), ("out", "Output"))
                 ) + "</dl>"
+        elif section == "compare":
+            from .workspace_comparison import comparison_page
+            content = comparison_page(self.db, campaign_id, query)
         elif section == "activity":
             offset = max(0, int(query.get("page", "0"))) * 50
             rows = self.db.workspace_activity(campaign_id, offset=offset)
