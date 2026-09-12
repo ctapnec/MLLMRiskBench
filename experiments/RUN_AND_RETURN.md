@@ -6538,6 +6538,24 @@ already prepared/attested hosted programs. Required flags are repeatable paired
 the same order. `--workers-per-provider` defaults to 2 and accepts 1 through 8.
 The equivalent Tools form keeps the selected campaign owner on its real job.
 
+To continue an interrupted or partially collected queue, keep every program,
+digest, budget, execution revision and campaign owner unchanged. Add
+`--resume-from /resolved/previous-collection` and give `--out` a fresh successor
+directory. Previously collected jobs are skipped only after checking their saved
+input/model identities and recorded physical attempts. Partial jobs restore their
+existing Runner checkpoints. Neither original outputs nor the previous collection
+directory are rewritten, apart from acquiring its nonblocking ownership lock.
+An active parent or successor cannot run concurrently with a second continuation.
+This requires a collection record containing its source, revision and owner fields;
+older operational controllers keep their explicit recovery procedure.
+
+In Jobs, **Review continuation** on a terminal collection fills the same Tools
+form, retaining all repeated program/digest pairs and the campaign owner. Choose
+the fresh successor directory before submitting. Tools has add/remove controls
+for repeated values. Reviewing the form issues no calls. Existing HTTP attempt
+limits and spending stops are unchanged, and an uncertain charged attempt without
+a saved answer still needs resolution. No automatic paid answer retry is added.
+
 Campaign-owned console launches also publish the selected assignments, saved
 responses and physical-attempt costs into that campaign's SQLite view. For the
 same publication from CLI, pass `--workspace-id` and `--console-db` together.

@@ -133,12 +133,30 @@ stop observation reads stop metadata and the immutable plan, not the complete
 spending history; the live spending check still occurs before each paid attempt.
 Full retained-file checksum revalidation remains opt-in.
 
+For a terminal collection job, Jobs offers **Review continuation**. It opens the
+same typed form with all program/digest pairs, spending plan, execution revision
+and campaign owner preserved. Enter a fresh successor output directory; the
+previous collection directory becomes `--resume-from`. Opening the form makes
+no calls. Tools provides add/remove controls for repeated parameters, so multiple
+programs do not require hand-editing the URL or invoking the CLI.
+
+Continuation restores completed jobs only when their actual saved outputs match
+the original input/model and recorded paid starts. Partial jobs restore Runner
+checkpoints. Original responses and collection records stay unchanged. A live
+parent or continuation cannot be started a second time. HTTP attempt limits,
+spending stops and uncertain charged-but-unsaved attempts still apply; this
+action is not an automatic answer retry or an increase in the spending plan.
+Only collections recording the required source, revision and owner fields can
+use this action. Older imported controller jobs remain read-only until their
+own recovery path is supported; a terminal badge alone cannot authorize replay.
+
 This is the advanced prepared-program launch, not completed normal Build
 integration. Preparation, counting, reviewed spending, attestation, multi-local
 scheduling, judging and ongoing publication still need the end-to-end workflow
 acceptance above. Rig checks cover the rendered form, exact CLI mapping,
 campaign ownership, provider concurrency and real retained job metadata without
-issuing paid calls. Browser visual acceptance and deployment remain pending.
+issuing paid calls. Focused continuation checks additionally use actual retained
+paid output and removed-fix controls. Browser visual acceptance remains pending.
 
 Prepared hosted collection now publishes its explicitly selected assignments,
 retained response checkpoints and physical-attempt costs automatically. The
