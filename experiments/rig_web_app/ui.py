@@ -253,6 +253,11 @@ details.stagefiles li { margin:.12rem 0; overflow-wrap:anywhere; }
   color-mix(in srgb, var(--accent) 45%, transparent);
   border-color:var(--accent); }
 .fieldwrap { display:flex; flex-direction:column; gap:.15rem; }
+.repeat-fields { display:flex; flex-direction:column; gap:.5rem; min-width:0; }
+.repeat-row { display:flex; align-items:center; gap:.5rem; min-width:0; }
+.repeat-row input, .repeat-row select, .repeat-row textarea { flex:1; min-width:0; }
+.repeat-row button { flex:none; }
+.repeat-fields > button { align-self:flex-start; }
 .fieldcell { display:flex; flex-direction:column; min-width:0; }
 .fieldcell .fieldlabel { flex:1 0 auto; }
 .fieldcell select { align-self:flex-start; }

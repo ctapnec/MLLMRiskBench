@@ -10,12 +10,14 @@ import math
 import os
 import shutil
 import time
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Mapping
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 from ura.strict_json import strict_json_loads
+from .command_forms import REPEAT_FIELDS_SCRIPT
 
 from .catalog import (
     _MAX_RENDER_BYTES,
@@ -645,6 +647,12 @@ class PagesMixin:
 
     def _param_input(self, param: CommandParam) -> str:
         flag = html.escape(param.flag)
+        if param.repeat:
+            field = self._param_input(replace(param, repeat=False))
+            field = field.replace("name='" + flag + "'", "name='" + flag + "' aria-label='" + flag + " 1'")
+            return ("<div class='repeat-fields' data-repeat-flag='" + flag + "'><div class='repeat-row'>"
+                + field + "<button type='button' class='ghost' data-repeat-remove disabled>Remove</button></div>"
+                "<button type='button' class='ghost' data-repeat-add>Add another value</button></div>")
         if param.kind == "flag":
             return f"<input type='checkbox' name='{flag}'>"
         if param.choices:
@@ -813,14 +821,15 @@ class PagesMixin:
             # Playbook prefill: ?cmd=<name>&--flag=value opens and fills the
             # matching command form. Values still go through the typed form and
             # build_argv validation on submit; nothing is auto-run.
-            "var params=new URLSearchParams(window.location.search);"
+            + REPEAT_FIELDS_SCRIPT
+            + "var params=new URLSearchParams(window.location.search);"
             "var cmd=params.get('cmd');"
             "if(cmd){var card=document.querySelector("
             '"details.cmd input[name=command][value=\'"+cmd+"\']");'
             "if(card){var det=card.closest('details.cmd');det.open=true;"
             "params.forEach(function(val,key){"
             "if(key==='cmd'){return;}"
-            'var field=det.querySelector("[name=\'"+key+"\']");'
+            "var field=commandField(det,key);"
             "if(!field){return;}"
             "if(field.type==='checkbox'){field.checked="
             "(val==='on'||val==='true'||val==='1'||val==='yes');}"
@@ -1687,6 +1696,41 @@ class PagesMixin:
         )
         return _page(f"Job {job.job_id}", body, active="Jobs")
 
+    def _collection_continuation_action(self, job: Job) -> str:
+        if job.command != 'hosted_campaign_execute' or job.state() not in {'complete', 'failed', 'interrupted'}:
+            return ''
+        command = self.commands[job.command]
+        try:
+            argv = job.argv[job.argv.index(command.module) + 1:]
+        except ValueError:
+            return ''
+        allowed = {param.flag: param for param in command.params}
+        values, counts, index = {}, {}, 0
+        while index < len(argv):
+            flag = argv[index]
+            param = allowed.get(flag)
+            if param is None or (param.kind != 'flag' and index + 1 == len(argv)):
+                return ''
+            ordinal = counts.get(flag, 0)
+            if ordinal and not param.repeat:
+                return ''
+            key = flag + ('#' + str(ordinal) if ordinal else '')
+            values[key] = 'on' if param.kind == 'flag' else argv[index + 1]
+            counts[flag] = ordinal + 1
+            index += 1 if param.kind == 'flag' else 2
+        if not values.get('--out'):
+            return ''
+        values['--resume-from'] = values['--out']
+        values['--out'] = ''
+        values.update(cmd=job.command, campaign_id=self.db.workspace_for_job(job.job_id))
+        href = '/commands?' + urlencode(values)
+        return ("<section class='card'><h2>Continue collection</h2>"
+            "<p>Keep the saved model programs, inputs, budget and campaign. Completed jobs are restored; "
+            "partial jobs use their response checkpoints. Spending stops and HTTP retry limits remain active.</p>"
+            "<p><a class='button' href='" + html.escape(href, quote=True) + "'>Review continuation</a></p>"
+            "<p class='note'>Choose a fresh output directory for the continuation record. "
+            "Opening this form makes no calls and does not regenerate answers.</p></section>")
+
     def _job_page(self, job: Job) -> bytes:
         state = job.state()
         tone = {"running": "blue", "complete": "green", "failed": "red"}.get(state, "gray")
@@ -1808,6 +1852,7 @@ class PagesMixin:
             + self._campaign_banner(self.db.workspace_for_job(job.job_id))
             + meta
             + activity
+            + self._collection_continuation_action(job)
             + model_acquisition_actions
             + stop_failure
             + "<div class='card'><h2>"
