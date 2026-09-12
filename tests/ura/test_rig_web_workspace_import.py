@@ -108,6 +108,35 @@ def test_full_assignment_denominator_policy_and_truncation_survive_republication
     assert costs["output_tokens"] == 4096 and costs["input_unknown"] == 1
 
 
+def test_normal_publication_corrects_native_policy_metadata_without_repeating_calls(retained, monkeypatch):
+    from experiments.rig_web_app import workspace_import as subject
+    db, campaign, args, path, records = retained
+    target = "openai:gpt-5.6-terra"
+    args["program"]["target"] = target
+    config = args["program"]["sources"]["api_config"]["path"]
+    from pathlib import Path
+    Path(config).write_text(json.dumps({target:dict(max_tokens=4096, temperature=0)}))
+    for record in records:
+        record["response"]["target"] = target
+    records[2]["response"].update(tokens=None, raw=dict(model_stability_status="failed_output",
+        model_stability_category="transport_failure", call_audit=dict(provider="openai", operation="generate",
+            status_code=400, provider_error_code="cyber_policy")))
+    path.write_text("".join(json.dumps(row)+"\n" for row in records))
+    original_bytes = path.read_bytes()
+    classifier = subject.legacy_provider_policy_basis
+    monkeypatch.setattr(subject, "legacy_provider_policy_basis", lambda response:None)
+    publish_hosted_program(db, campaign, **args)
+    costs = [dict(row) for row in db.workspace_cost_totals(campaign)]
+    monkeypatch.setattr(subject, "legacy_provider_policy_basis", classifier)
+    publish_hosted_program(db, campaign, **args)
+    publish_hosted_program(db, campaign, **args)
+    total = db.workspace_model_totals(campaign)[0]
+    assert (total["assigned"], total["policy"], total["missing"], total["pending"]) == (4, 2, 0, 1)
+    assert path.read_bytes() == original_bytes
+    assert [dict(row) for row in db.workspace_cost_totals(campaign)] == costs
+    assert db.workspace_judging_totals(campaign) == []
+
+
 def test_transport_probe_outputs_remain_diagnostic_not_measured_or_unknown(retained):
     db, campaign, args, _, _ = retained
     args['program']['jobs'][0]['purpose']='attestation_probe'

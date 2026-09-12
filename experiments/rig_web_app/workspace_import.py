@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 
 from experiments.generation_conditions import _first, _stop, _usage
+from experiments.retained_outcomes import legacy_provider_policy_basis
 
 from .workspace_costs import budget_attempt_rows
 
@@ -140,7 +141,8 @@ def hosted_program_rows(program: dict, selections: list[dict], *, campaign_id: s
                 raise ValueError("Multiple outputs require explicit recovery selection")
             row["response_id"] = response_id
             raw, tokens = response.get("raw") or {}, response.get("tokens") or {}
-            policy = raw.get("provider_refusal") is True or raw.get("provider_policy_rejection") is True
+            legacy_policy = legacy_provider_policy_basis(response)
+            policy = raw.get("provider_refusal") is True or raw.get("provider_policy_rejection") is True or bool(legacy_policy)
             usable = any(isinstance(turn.get("content"), str) and turn["content"].strip()
                          for turn in response.get("output_turns", []))
             failed = raw.get("model_stability_status") == "failed_output" or raw.get("target_input_status") == "incompatible"
@@ -153,6 +155,8 @@ def hosted_program_rows(program: dict, selections: list[dict], *, campaign_id: s
                 output_tokens=tokens.get("output"), reasoning_tokens=tokens.get("reasoning"),
                 finish_reason=raw.get("finish_reason", audit.get("finish_reason")),
                 missing_category=raw.get("model_stability_category") if outcome == "missing" else None))
+            if legacy_policy:
+                responses[-1]["outcome_basis"] = legacy_policy
             # Only attach usage where the physical attempt is unambiguous.
             # Multi-attempt charges still publish; their reported ledger usage
             # is retained without copying the final answer onto earlier retries.

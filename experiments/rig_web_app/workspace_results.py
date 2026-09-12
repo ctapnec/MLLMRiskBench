@@ -10,6 +10,8 @@ import json
 import sqlite3
 import time
 
+from experiments.retained_outcomes import LEGACY_POLICY_BASES
+
 
 def canonical_response_source_ref(reference: str) -> str:
     """Comparison alias only, never the artifact locator shown to a reader."""
@@ -110,6 +112,10 @@ class WorkspaceResultsMixin:
                 if details[key] is not None and (type(details[key]) is not int or details[key] < 0):
                     raise ValueError("Token metadata must be reported counts or unknown")
             details["source_ref"] = text(row, "source_ref")
+            if row.get("outcome_basis") is not None:
+                if row["outcome"] != "policy" or row["outcome_basis"] not in LEGACY_POLICY_BASES:
+                    raise ValueError("Unknown retained policy classification basis")
+                details["outcome_basis"] = row["outcome_basis"]
             payload = json.dumps(details, sort_keys=True, allow_nan=False)
             if len(payload) > 16384:
                 raise ValueError("Response index metadata is too large")
@@ -155,12 +161,20 @@ class WorkspaceResultsMixin:
                             current = json.loads(row[6])
                             if _same_response_source(previous["source_ref"], current["source_ref"]):
                                 previous["source_ref"] = current["source_ref"]
-                            comparable = (*tuple(old)[:6], json.dumps(previous, sort_keys=True, allow_nan=False))
+                            correction = (old["outcome"] == "missing" and row[4] == "policy"
+                                and current.get("outcome_basis") in LEGACY_POLICY_BASES)
+                            if correction:
+                                # The publisher resolved the native error code from
+                                # the unchanged response, not from the prompt topic.
+                                previous["outcome_basis"] = current["outcome_basis"]
+                                previous["missing_category"] = None
+                            comparable = (*tuple(old)[:4], "policy" if correction else old["outcome"],
+                                old["truncated"], json.dumps(previous, sort_keys=True, allow_nan=False))
                             if comparable != row:
                                 raise ValueError("Retained response metadata changed; retain a separate condition")
                             self._conn.execute(
-                                "UPDATE campaign_responses SET details=? WHERE campaign_id=? AND response_id=?",
-                                (row[6], row[0], row[1]),
+                                "UPDATE campaign_responses SET outcome=?,details=? WHERE campaign_id=? AND response_id=?",
+                                (row[4], row[6], row[0], row[1]),
                             )
                         self._conn.execute("INSERT OR IGNORE INTO campaign_responses VALUES(?,?,?,?,?,?,?)", row)
                     for row in prepared_assignments:
