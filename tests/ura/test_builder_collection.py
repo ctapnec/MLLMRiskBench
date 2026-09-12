@@ -109,21 +109,24 @@ def test_continuation_uses_same_program_budget_and_previous_control(study):
     {'retained_collection_workers':'1.5'}, {'retained_programs_job':'unknown'}])
 def test_invalid_collection_options_do_not_launch(study,change):
     app,params,calls,_ = study
-    with pytest.raises(ValueError):subject.collection_review(app,dict(params,**change))
+    with pytest.raises(ValueError):
+        subject.collection_review(app,dict(params,**change))
     assert not calls
 
 
 def test_other_campaign_cannot_launch_prepared_work(study):
     app,params,calls,_ = study
     other=app.db.create_workspace('Other','api')
-    with pytest.raises(ValueError):subject.collection_review(app,dict(params,campaign_id=other))
+    with pytest.raises(ValueError):
+        subject.collection_review(app,dict(params,campaign_id=other))
     assert not calls
 
 
 def test_confirm_cannot_replace_reviewed_values(study):
     app,params,calls,_ = study
     _,ticket=review(app,params)
-    with pytest.raises(ValueError):subject.collect_prepared(app,{'launch_ticket':ticket,'campaign_id':'other'})
+    with pytest.raises(ValueError):
+        subject.collect_prepared(app,{'launch_ticket':ticket,'campaign_id':'other'})
     assert not calls
 
 
