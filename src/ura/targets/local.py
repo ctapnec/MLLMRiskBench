@@ -2169,6 +2169,24 @@ class OllamaTarget(BaseTarget):
                 )
         except LocalTargetOutputError:
             raise
+        except urllib.error.HTTPError as exc:
+            # An immediate daemon rejection is not evidence that generation ran
+            # until its deadline. Keep the status and a bounded native reason.
+            detail = ""
+            try:
+                with exc:
+                    body = read_bounded_response(
+                        exc, maximum=4096, deadline=deadline,
+                        monotonic=self._monotonic, label=f"Ollama {purpose} error",
+                    )
+                document = _strict_bounded_json_bytes(body)
+                if isinstance(document, dict) and isinstance(document.get("error"), str):
+                    detail = ": " + " ".join(document["error"].split())[:512]
+            except (OSError, ValueError, RecursionError):
+                pass  # The HTTP status remains known even without a readable body.
+            raise RuntimeError(
+                f"Ollama {purpose} returned HTTP {exc.code}{detail}"
+            ) from exc
         except ValueError as exc:
             if "byte limit" in str(exc):
                 raise LocalTargetOutputError(
@@ -2176,6 +2194,14 @@ class OllamaTarget(BaseTarget):
                 ) from exc
             raise LocalTargetOutputError(str(exc)) from exc
         except (TimeoutError, urllib.error.URLError, OSError) as exc:
+            cause = exc.reason if isinstance(exc, urllib.error.URLError) else exc
+            if not isinstance(cause, TimeoutError):
+                errno = getattr(cause, "errno", None)
+                detail = f" (errno {errno})" if isinstance(errno, int) else ""
+                raise RuntimeError(
+                    f"could not obtain Ollama {purpose} from {self.host}: "
+                    f"{type(cause).__name__}{detail}"
+                ) from exc
             raise RuntimeError(
                 f"could not obtain Ollama {purpose} from {self.host} within "
                 f"the configured hard {self.timeout:g}s deadline"
