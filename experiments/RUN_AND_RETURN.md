@@ -6538,6 +6538,15 @@ already prepared/attested hosted programs. Required flags are repeatable paired
 the same order. `--workers-per-provider` defaults to 2 and accepts 1 through 8.
 The equivalent Tools form keeps the selected campaign owner on its real job.
 
+Campaign-owned console launches also publish the selected assignments, saved
+responses and physical-attempt costs into that campaign's SQLite view. For the
+same publication from CLI, pass `--workspace-id` and `--console-db` together.
+Standalone work does not inherit another campaign's owner. Publication runs
+outside HTTP page reads, on job-state changes and a thirty-second heartbeat.
+Unchanged answers are not reparsed when only billing changes. Publication
+errors remain explicitly pending and do not cancel paid collection. These
+settings do not change input selection, generation or spending limits.
+
 Different providers execute concurrently. A program's attestation and canary
 precede its measured jobs; unrelated programs do not wait for their judging.
 The command collects target responses only. `selection.json` records the fixed

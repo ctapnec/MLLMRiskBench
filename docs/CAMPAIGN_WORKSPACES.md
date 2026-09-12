@@ -140,6 +140,24 @@ acceptance above. Rig checks cover the rendered form, exact CLI mapping,
 campaign ownership, provider concurrency and real retained job metadata without
 issuing paid calls. Browser visual acceptance and deployment remain pending.
 
+Prepared hosted collection now publishes its explicitly selected assignments,
+retained response checkpoints and physical-attempt costs automatically. The
+console passes the selected workspace and its SQLite index to that child only;
+standalone launches do not inherit a campaign owner. CLI users can supply
+`--workspace-id` together with `--console-db` for the same behavior. These are
+publication settings, not generation or budget parameters.
+
+The collection process refreshes after job-state changes and at thirty-second
+intervals while requests remain active. Unchanged checkpoint data are not
+reparsed, and a billing-only change updates costs without rereading answers.
+The shared ledger is read once when its metadata changes, with updates scoped
+to the program's own calls. No page request launches this work. Missing outputs,
+policy outcomes, truncation, unstarted inputs and diagnostic probes retain their
+distinct meanings. An index failure is retained as pending publication and does
+not cancel unrelated paid requests or imply that collection failed. This
+connection covers prepared hosted collection; normal Build preparation, local
+run publication and the complete judging/continuation flow remain unfinished.
+
 The active API index was refreshed from its seventeen explicit current program
 sources: 4,097 assignments, 3,908 retained outcomes and 3,917 physical-attempt cost
 records. This is the current continuation and Flash-extension subset, not the
