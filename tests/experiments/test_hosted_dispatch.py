@@ -134,3 +134,21 @@ def test_worker_crash_is_failed_not_an_unfinished_wait(tmp_path):
 def crash_worker(job, *, responses_only):
     import os
     os._exit(7)
+
+
+def admitted_metadata_worker(job, *, responses_only):
+    assert responses_only is True
+    assert set(job.requests) == set(job.entries)
+    assert all(job.budget.reserved_attempt_count(row["call_id"]) == 0 for row in job.requests.values())
+    return job.job["argv"][1]
+
+
+def test_real_admission_and_budget_transfer_without_reconstructing_sources(tmp_path):
+    from test_hosted_retained_execute import _setup
+
+    _points, _attacker, _target, calls, job = _setup(tmp_path)
+    job.job.update(name="transferred", argv=["--out", str(tmp_path / "out")])
+    result = subject.dispatch_admitted([[job]], _worker=admitted_metadata_worker, _pause=lambda _: None)
+    assert result[0]["status"] == "collected"
+    assert result[0]["output"] == str(tmp_path / "out")
+    assert calls == []
