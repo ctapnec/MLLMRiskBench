@@ -56,6 +56,44 @@ Europe/Kyiv. A controller's earlier scheduled retry is not proof of a quota
 reset. Actual project quota and retry responses remain authoritative.
 [Google rate-limit documentation](https://ai.google.dev/gemini-api/docs/rate-limits).
 
+### Approved Pro daily extension (12 September, 21:50 UTC)
+
+The operator's continuation request has now been prepared and queued on the
+rig. The new selection contains 230 inputs: 189 text and 41 image inputs across
+25 logical arms. It uses the existing fourth-cohort prefix already delivered
+to Flash and local models. All existing Pro request slots, including unfinished
+ones, were excluded. Whole source clusters, sampling seeds, rendered prompts
+and media are retained; output quality was not used for selection.
+
+Google counted 105,817 input tokens across these exact requests. With a
+4,096-token output allowance, the first-attempt maximum is USD 11.516594;
+using the historical mean of 753 output tokens gives USD 2.289914. Neither is
+a provider-confirmed bill. The combined Google continuation has a USD 10
+further-spending stop, including the existing 20 pending inputs, leaving
+USD 1.22 of the reported credit outside it. This is a reduction in the shared
+campaign stop, not another copy of the account balance. Reported-spend stopping
+does not guarantee a worst-case final bill when usage is unknown or calls are
+already in flight. Transport retries remain three; automatic answer retries
+remain zero. Budget exhaustion must remain a separate stopping reason.
+
+The detached `google-pro-daily-extension` worker on
+`ura-hosted-expansion-20260910` is scheduled no earlier than 13 September at
+07:00 UTC. It uses one Google worker, allowing at most two alongside the
+existing remainder. Fresh transport probes use untouched inputs within the
+230 selected requests, not extra requests, and are not replayed by subsequent
+collection. Quota responses remain authoritative. This queue is attached to
+the existing API campaign workspace; paid target generation has not started.
+
+Each eligible new Pro output requires its own native local and Haiku
+assessment. The selection also maps to 1,030 existing local outputs with
+already assigned Haiku slots. Reuse applies only to their exact saved answers,
+never to the new Pro response. Native/source-specific assessment and common
+comparison eligibility remain distinct. The half-hour aggregate now includes
+this 230-input extension separately and in its overall assignment count.
+Preparation, counting and funding evidence is retained under
+`runs/engineering/google-pro-daily-extension-20260912`; execution is under
+`runs/engineering/google-pro-daily-extension-execute-20260912`.
+
 ### Previous account observation: fifth update
 
 Operator-reported fifth update, recorded on 11 September 2026 at 23:11

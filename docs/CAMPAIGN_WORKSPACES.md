@@ -1048,9 +1048,11 @@ resolution; an omitted link is not evidence that the established link changed.
 
 Adding inputs to an existing API campaign must include their execution ledger in
 the same cumulative spending view. `AttemptBudget.use_campaign_spending` accepts
-an append-only extension of ledger references with unchanged provider/judge
-ceilings, retaining the previous scope before publication. It rejects removing
-historical ledgers, changing existing references or increasing ceilings through
+an append-only extension of ledger references with unchanged or lower
+provider/judge ceilings, retaining the previous scope before publication. A
+lower reported credit can therefore reduce the continuation's stop without
+resetting spending. It rejects removing historical ledgers, changing existing
+references or increasing ceilings through
 this operation. Existing plan and billing records remain unchanged. Active
 owners must receive the expanded scope before additional calls are dispatched;
 this avoids independent ledgers spending against separately counted allowances.

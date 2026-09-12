@@ -6820,6 +6820,20 @@ integration work; do not mistake these native judging controls for that complete
 
 ### Publish retained-output judging into campaigns
 
+The paired selector and executor also accept the saved Build preparation files
+at their existing view arguments: use `retained_local_sources`' output file for
+`--local-runner-view` and `retained_native_judge_prepare`'s `result.json` for
+`--hosted-runner-view`. Existing directory-based views remain supported. This
+reader reconstructs the original hosted response and generation settings from
+the recorded program; it does not manufacture a completed-generation manifest
+or require a favorable local verdict. Only the selected local run IDs are read
+into the comparison. Source-task exclusions, missing answers, diagnostic-only
+outputs and unprepared source counts remain explicit. Visible truncated answers
+remain eligible. The native preparation must be unchanged, but its local
+judging need not have finished before Haiku selection. Normal-Build Haiku
+selection and launch controls remain an integration task; file support alone
+does not complete that UI flow.
+
 In Tools, select the campaign owning the outputs and open
 `retained_response_judge_pair_execute`. Supply the retained plan, the local and
 hosted Runner views, source receipt, API/pricing configuration and execution
