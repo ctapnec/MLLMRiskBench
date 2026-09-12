@@ -4138,6 +4138,17 @@ class LifecycleMixin:
                 from .builder_native_judging import judge_retained_local
                 job = judge_retained_local(self,form or {})
                 return 303, "/jobs/" + job.job_id, b""
+            if method == "POST" and path == "/build/prepare-haiku-judging":
+                from .builder_haiku_judging import prepare_haiku_judging
+                job = prepare_haiku_judging(self,self._builder_params(form or {}))
+                return 303, "/jobs/" + job.job_id, b""
+            if method == "POST" and path == "/build/review-haiku-judging":
+                from .builder_haiku_judging import haiku_judging_review
+                return 200, "text/html; charset=utf-8", haiku_judging_review(self,self._builder_params(form or {}))
+            if method == "POST" and path == "/build/judge-retained-haiku":
+                from .builder_haiku_judging import judge_retained_haiku
+                job = judge_retained_haiku(self,form or {})
+                return 303, "/jobs/" + job.job_id, b""
             if method == "POST" and path == "/build/edit":
                 ticket = self._consume_launch_ticket((form or {}).get("edit_ticket", ""), purpose="build-edit")
                 if ticket is None:

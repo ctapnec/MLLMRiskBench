@@ -1,6 +1,6 @@
 """Seal matched local/hosted retained outputs for one Haiku comparison cohort.
 
-The selector consumes two already validated Phase 7 Runner views. It admits
+The selector consumes saved local and hosted response inventories. It admits
 only pairs whose rendered input identity is byte-equivalent after canonical
 normalization. New CLI plans share a local judgment across comparisons when
 needed, but judge each distinct retained output once. Historical /1 plans
@@ -589,6 +589,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--source-receipt-sha256", required=True)
     parser.add_argument("--judge-model", required=True)
     parser.add_argument("--api-config-sha256", required=True)
+    parser.add_argument("--api-config", type=Path, help="Required only when binding existing campaign funding")
+    parser.add_argument("--shared-budget-root", type=Path)
+    parser.add_argument("--shared-budget-sha256")
+    parser.add_argument("--program", type=Path, action="append", default=[])
+    parser.add_argument("--program-sha256", action="append", default=[])
     parser.add_argument("--pricing-config", type=Path, required=True)
     parser.add_argument("--pricing-config-sha256", required=True)
     parser.add_argument("--pricing-as-of", required=True)
@@ -600,6 +605,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not args.ack_hosted_judge_data_transfer:
         parser.error("--ack-hosted-judge-data-transfer is required")
+    funding=(args.api_config,args.shared_budget_root,args.shared_budget_sha256,args.program,args.program_sha256)
+    if any(funding) and (not all(funding) or len(args.program)!=len(args.program_sha256)):
+        parser.error("Existing funding needs API config, budget/digest and matching program/digest pairs")
     (local, local_audit), (hosted, hosted_audit), _metadata = load_pair_candidate_views(
         args.local_runner_view, args.hosted_runner_view,
     )
@@ -624,7 +632,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         max_cost_microusd=args.max_cost_microusd,
         share_local_judgments=True,
     )
-    print(_write_new(args.out, value))
+    plan_path=_write_new(args.out, value)
+    if all(funding):
+        from experiments.hosted_attempt_budget import AttemptBudget
+        from experiments.hosted_campaign_budget import load_bound_json
+        from experiments.hosted_retained_inputs import _descriptor
+        from experiments.hosted_retained_execute import build_matched_judge_requests
+        from experiments.retained_response_judge_execute import _load_api_config
+        config,_=_load_api_config(args.api_config,judge_model=args.judge_model,
+            expected_sha256=args.api_config_sha256)
+        if config['max_tokens']!=512:
+            raise ValueError('Matched Haiku judging requires a 512-token verdict allowance')
+        requests=build_matched_judge_requests(
+            programs=[load_bound_json(path,digest)[0] for path,digest in zip(args.program,args.program_sha256)],
+            budget=AttemptBudget(args.shared_budget_root,args.shared_budget_sha256),
+            plan_path=plan_path,plan_sha256=_descriptor(plan_path)['sha256'],
+            local_runner_view=args.local_runner_view,hosted_runner_view=args.hosted_runner_view,
+            source_receipt=args.source_receipt,api_config=args.api_config)
+        _write_new(plan_path.with_suffix('.shared-requests.json'),requests)
+    print(plan_path)
     return 0
 
 

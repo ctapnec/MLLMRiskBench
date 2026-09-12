@@ -1186,6 +1186,11 @@ def _commands() -> dict[str, Command]:
             "experiments.retained_response_judge_pair",
             "Select matched retained local and hosted outputs for bounded Haiku judging",
             (
+                CommandParam("--api-config", "path", help="Needed with an existing campaign judging budget."),
+                CommandParam("--shared-budget-root", "path"),
+                CommandParam("--shared-budget-sha256", "str"),
+                CommandParam("--program", "path", repeat=True),
+                CommandParam("--program-sha256", "str", repeat=True),
                 CommandParam("--local-runner-view", "path", required=True),
                 CommandParam("--hosted-runner-view", "path", required=True),
                 CommandParam("--source-receipt", "path", required=True),
