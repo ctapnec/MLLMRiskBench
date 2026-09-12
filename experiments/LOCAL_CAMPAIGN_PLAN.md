@@ -95,6 +95,14 @@ length stop. Required judging and the replacement-aware final analysis remain
 pending. The current first DeepSeek unit's generation-only forecast is about
 12:10 UTC at the observed throughput; it is not a whole-campaign completion date.
 
+The unstarted 1,549-condition queue has moved to a clean isolated checkout of
+3c08b44 with its own validated project receipt. All existing profiles and exact
+input selections are unchanged. Its predecessor was stopped only while waiting,
+before any unit or generation began; the active 1,087-input DeepSeek worker and
+the console were untouched. Subsequent units will therefore retain missing-output
+generation metadata. Both the handoff and successor appear in Local campaign
+Activity. No new runtime installation or model download is involved.
+
 Human audit and thesis evidence synthesis remain separate work. This plan was written
 20 August 2026 after the readiness audit
 of the big rig (Debian, 2x RTX 4090 24,564 MiB, 125 GiB RAM, /mnt/stor 7.1 TB
