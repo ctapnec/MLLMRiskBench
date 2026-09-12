@@ -9,6 +9,7 @@ from urllib.parse import quote
 
 from .ui import _page
 from .workspace_charts import coverage_html, coverage_svg, quality_svg, model_counts_csv, EXPORT_SCRIPT
+from .workspace_judging_charts import judgment_groups, judgment_breakdown_html, judgment_counts_csv, judgment_breakdown_svg
 
 
 class WorkspacePagesMixin:
@@ -156,6 +157,19 @@ class WorkspacePagesMixin:
         self.db.require_workspace(campaign_id)
         page = max(0, int(query.get("page", "0")))
         model, condition = self._workspace_result_scope(query)
+        if name in {"judgments.csv", "judgments.svg"}:
+            rows = self.db.workspace_judgment_breakdown(campaign_id, offset=page * 12, model=model, condition=condition)
+            if rows is None:
+                return 503, "text/plain; charset=utf-8", b"Campaign judgment index unavailable"
+            rows = [row for group in judgment_groups(rows)[:12] for row in group]
+            if not rows:
+                return 404, "text/plain; charset=utf-8", b"No indexed judgments for this page"
+            if name == "judgments.csv":
+                return 200, "text/csv; charset=utf-8", judgment_counts_csv(rows)
+            figure = judgment_breakdown_svg(rows, scope=f"Page {page + 1}. Retained assessment counts, not pooled security rates.")
+            from .ui import _STYLE  # noqa: PLC0415
+            figure = figure.replace("<style>", "<style>" + _STYLE.split("* { box-sizing:", 1)[0], 1)
+            return 200, "image/svg+xml; charset=utf-8", figure.encode("utf-8")
         rows = self.db.workspace_model_totals(campaign_id, offset=page * 25, model=model, condition=condition)
         if rows is None:
             return 503, "text/plain; charset=utf-8", b"Campaign result index unavailable"
@@ -380,10 +394,24 @@ class WorkspacePagesMixin:
             rows = self.db.workspace_judging_totals(campaign_id, model=model, condition=condition)
             if not rows:
                 return unknown
-            return "<p>Verdicts for the explicitly selected outputs. Other historical judgments remain retained.</p>" + table(
+            breakdown = self.db.workspace_judgment_breakdown(campaign_id, offset=page * 12, model=model, condition=condition)
+            if breakdown is None:
+                return "<p class='notice amber'>Judgment label index unavailable.</p>"
+            groups = judgment_groups(breakdown)
+            selected = [row for group in groups[:12] for row in group]
+            exports = "<p id='campaign-exports'>" + " ".join(
+                "<a class='button ghost' data-campaign-export download='campaign-" + name + "' href='/campaigns/" + campaign_id
+                + "/figures/" + name + "?page=" + str(page) + scope_query + "'>" + label + "</a>"
+                for name, label in (("judgments.svg", "Export judgment figure"), ("judgments.csv", "Export judgment table"))
+            ) + "</p><p id='campaign-export-status' role='status'></p>" + EXPORT_SCRIPT
+            return ("<p>Labels for the selected outputs, separated by model, source, framework, modality and generation/judging condition. "
+                "Each bar counts retained assessments, including invalid verdicts and missing-output assessments. "
+                "Pending judgments are not part of these bars. These are label distributions, not pooled security rates.</p>"
+                + exports + judgment_breakdown_html(selected) + pagination(len(groups) > 12)
+                + "<details><summary>All indexed judging totals for this selection</summary>" + table(
                 ("Judge condition", "Status", "Verdicts"),
                 [[html.escape(row["judge_id"]), html.escape(row["status"]), str(row["count"])] for row in rows],
-            )
+            ) + "</details>")
         if section == "overview":
             inputs = self.db.workspace_input_totals(campaign_id, offset=page * 25, model=model, condition=condition)
             input_coverage = ""

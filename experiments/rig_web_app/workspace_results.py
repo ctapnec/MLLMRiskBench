@@ -312,3 +312,20 @@ class WorkspaceResultsMixin:
             "GROUP BY j.judge_id,j.status ORDER BY j.judge_id,j.status",
             (campaign_id, model, model, condition, condition),
         )
+
+    def workspace_judgment_breakdown(self, campaign_id: str, *, offset: int = 0,
+                                     model: str = "", condition: str = "") -> list[sqlite3.Row] | None:
+        """Page complete label distributions, keeping scientific conditions separate."""
+        return self._query(
+            "WITH counts AS (SELECT a.model,a.evidence_class,r.condition_id,a.modality,a.framework,a.corpus,"
+            "j.judge_id,j.status,j.label,COUNT(*) AS count FROM campaign_judgments j "
+            "JOIN campaign_responses r ON r.campaign_id=j.campaign_id AND r.response_id=j.response_id "
+            "JOIN campaign_assignments a ON a.campaign_id=r.campaign_id AND a.assignment_id=r.assignment_id "
+            "AND a.response_id=r.response_id "
+            "WHERE j.campaign_id=? AND (?='' OR a.model=?) AND (?='' OR r.condition_id=?) "
+            "GROUP BY a.model,a.evidence_class,r.condition_id,a.modality,a.framework,a.corpus,j.judge_id,j.status,j.label), "
+            "ranked AS (SELECT *,DENSE_RANK() OVER (ORDER BY model,evidence_class,condition_id,modality,framework,corpus,judge_id) "
+            "AS group_number FROM counts) SELECT * FROM ranked WHERE group_number>? AND group_number<=? "
+            "ORDER BY group_number,status,label",
+            (campaign_id, model, model, condition, condition, max(0, offset), max(0, offset) + 13),
+        )
