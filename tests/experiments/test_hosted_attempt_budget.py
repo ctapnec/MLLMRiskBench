@@ -820,6 +820,12 @@ def _race_reserve(budget, barrier, results):
         results.put("refused")
 
 
+def test_funding_stop_observation_does_not_reload_spending_ledger(budget, monkeypatch):
+    budget.stop_provider_funding("openai", "O")
+    monkeypatch.setattr(budget, "_load", lambda: pytest.fail("Stop observation reread mutable spending ledger"))
+    assert [row["provider"] for row in budget.provider_funding_stops()] == ["openai"]
+
+
 def test_process_lock_prevents_duplicate_physical_admission(budget):
     context = multiprocessing.get_context("spawn")
     barrier, results = context.Barrier(2), context.Queue()

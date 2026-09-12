@@ -611,7 +611,10 @@ class AttemptBudget:
     def provider_funding_stops(self) -> list[dict]:
         """Read provider stops for controller scheduling and status reporting."""
         with _budget_lock(self.root):
-            plan, _ledger, calls = self._load()
+            # Stop records bind provider/call identity, not current spending.
+            # Paid admission still reloads the live ledger immediately before
+            # every request; a scheduler need not parse it just to read stops.
+            plan, calls = self._load_plan()
             stopped = []
             for provider in plan["provider_budgets_microusd"]:
                 path = self._provider_stop_path(provider)
