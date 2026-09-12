@@ -1729,6 +1729,14 @@ class LifecycleMixin:
         """Minimal environment for every non-matrix allowlisted command."""
 
         allowed = set(self._MATRIX_BASE_ENV)
+        if command == "hosted_campaign_prepare" and values.get("--allow-network-counts") in {"on", "true", "1", "yes"}:
+            request = self._strict_config_document(str(values.get("--request", "")),
+                str(values.get("--request-sha256", "")))
+            api = request["sources"]["api_config"]
+            allowed.update(self._selected_matrix_environment_names({
+                "--api": ",".join(route["target"] for route in request["routes"]),
+                "--api-config": api["path"], "--api-config-sha256": api["sha256"],
+            }))
         if command in {"hosted_campaign_execute", "retained_native_judge_prepare"}:
             from .catalog import _param_values
 

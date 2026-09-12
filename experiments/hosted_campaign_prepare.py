@@ -32,6 +32,7 @@ REQUEST_SCHEMA = "ura-hosted-retained-campaign-request/1"
 COUNTED_INPUT_REQUEST_SCHEMA = "ura-hosted-retained-campaign-request/2"
 DISTINCT_INPUT_REQUEST_SCHEMA = "ura-hosted-retained-campaign-request/3"
 COHORT_INPUT_REQUEST_SCHEMA = "ura-hosted-retained-campaign-request/4"
+LOCAL_SOURCES_REQUEST_SCHEMA = "ura-hosted-retained-campaign-request/5"
 RECEIPT_SCHEMA = "ura-hosted-retained-campaign-preparation/1"
 CACHED_RECEIPT_SCHEMA = "ura-hosted-retained-campaign-preparation/2"
 _REPLAY_SCHEMA = "ura-retained-input-replay/1"
@@ -356,16 +357,20 @@ def prepare_campaign(
         "runner_common_argv",
         "execution_root",
     }
+    selected_sources = isinstance(request, Mapping) and request.get("schema") == LOCAL_SOURCES_REQUEST_SCHEMA
+    if selected_sources:
+        required -= {"runner_view", "rr_analysis_root"}
     cohort = isinstance(request, Mapping) and request.get("schema") == COHORT_INPUT_REQUEST_SCHEMA
     distinct = isinstance(request, Mapping) and request.get("schema") in {
         DISTINCT_INPUT_REQUEST_SCHEMA, COHORT_INPUT_REQUEST_SCHEMA}
     counted_inputs = isinstance(request, Mapping) and request.get("schema") in {
-        COUNTED_INPUT_REQUEST_SCHEMA, DISTINCT_INPUT_REQUEST_SCHEMA, COHORT_INPUT_REQUEST_SCHEMA,
+        COUNTED_INPUT_REQUEST_SCHEMA, DISTINCT_INPUT_REQUEST_SCHEMA, COHORT_INPUT_REQUEST_SCHEMA, LOCAL_SOURCES_REQUEST_SCHEMA,
     }
     if counted_inputs:
         required.add("input_budget_policy")
     if (not isinstance(request, Mapping) or set(request) != required
-        or request["schema"] not in {REQUEST_SCHEMA, COUNTED_INPUT_REQUEST_SCHEMA, DISTINCT_INPUT_REQUEST_SCHEMA, COHORT_INPUT_REQUEST_SCHEMA}
+        or request["schema"] not in {REQUEST_SCHEMA, COUNTED_INPUT_REQUEST_SCHEMA, DISTINCT_INPUT_REQUEST_SCHEMA,
+                                   COHORT_INPUT_REQUEST_SCHEMA, LOCAL_SOURCES_REQUEST_SCHEMA}
         or (counted_inputs and request["input_budget_policy"] != executor.COUNTED_INPUT_POLICY)):
         raise ValueError("hosted campaign preparation request fields differ")
     root = _canonical_new_root(out_root, label="hosted preparation root")
@@ -381,6 +386,9 @@ def prepare_campaign(
     }
     if distinct:
         source_names.add("additional_funding")
+    if selected_sources:
+        source_names.remove("historical_result")
+        source_names.add("local_sources")
     if not isinstance(request["sources"], Mapping) or set(request["sources"]) != source_names:
         raise ValueError("hosted preparation source inventory differs")
     values, sources = {}, {}
@@ -413,12 +421,13 @@ def prepare_campaign(
             raise ValueError("supplied shared budget differs from the declared available allocation")
         shared_descriptor = {"path": str(plan_path), **{key: descriptor[key] for key in ("sha256", "bytes")}}
 
-    skeleton = {
+    skeleton = ({"schema": executor.LOCAL_SOURCES_SCHEMA, "sources": {"local_sources": sources["local_sources"]}}
+        if selected_sources else {
         "results_root": request["results_root"],
         "runner_view": request["runner_view"],
         "rr_analysis_root": request["rr_analysis_root"],
         "sources": {"historical_result": sources["historical_result"]},
-    }
+    })
     cells, historical_inventory = executor._validated_local_cells(skeleton)
     if not cells:
         raise ValueError("finished local campaign has no retained cells")
@@ -612,13 +621,13 @@ def prepare_campaign(
             )
         programs.append(
             {
-                "schema": (executor.COHORT_INPUT_SCHEMA if cohort else executor.DISTINCT_INPUT_SCHEMA if distinct else
+                "schema": (executor.LOCAL_SOURCES_SCHEMA if selected_sources else
+                           executor.COHORT_INPUT_SCHEMA if cohort else executor.DISTINCT_INPUT_SCHEMA if distinct else
                            executor.COUNTED_INPUT_SCHEMA if counted_inputs else executor.SCHEMA),
                 **({"input_budget_policy": executor.COUNTED_INPUT_POLICY} if counted_inputs else {}),
                 "sources": copy.deepcopy(sources),
                 "results_root": request["results_root"],
-                "runner_view": request["runner_view"],
-                "rr_analysis_root": request["rr_analysis_root"],
+                **({} if selected_sources else {"runner_view": request["runner_view"], "rr_analysis_root": request["rr_analysis_root"]}),
                 "target": target_spec,
                 "provider": funded["provider"],
                 "max_output_tokens": funded["maximum_output_tokens_per_call"],

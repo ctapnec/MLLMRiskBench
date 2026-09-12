@@ -36,6 +36,7 @@ ADAPTER_PREFIX_RECOVERY_SCHEMA = "ura-hosted-retained-execution-plan/5"
 DISTINCT_INPUT_SCHEMA = "ura-hosted-retained-execution-plan/6"
 COHORT_INPUT_SCHEMA = "ura-hosted-retained-execution-plan/7"
 COHORT_ADAPTER_RECOVERY_SCHEMA = "ura-hosted-retained-execution-plan/8"
+LOCAL_SOURCES_SCHEMA = "ura-hosted-retained-execution-plan/9"
 COUNTED_INPUT_POLICY = "counted_requests_within_route_reservation_v1"
 TOKEN_COUNT_POLICY = "surface_specific_counts_with_declared_estimates_v1"
 _HEX40 = re.compile(r"[0-9a-f]{40}\Z")
@@ -85,7 +86,7 @@ def _validate_input_budget(program: Mapping[str, Any], route: Mapping[str, Any])
     """Keep the original per-call contract or fund the explicit counted successor."""
     counted = program.get("schema") in {
         COUNTED_INPUT_SCHEMA, TRANSPORT_RECOVERY_SCHEMA, ADAPTER_RECOVERY_SCHEMA, ADAPTER_PREFIX_RECOVERY_SCHEMA,
-        DISTINCT_INPUT_SCHEMA, COHORT_INPUT_SCHEMA, COHORT_ADAPTER_RECOVERY_SCHEMA,
+        DISTINCT_INPUT_SCHEMA, COHORT_INPUT_SCHEMA, COHORT_ADAPTER_RECOVERY_SCHEMA, LOCAL_SOURCES_SCHEMA,
     }
     if counted:
         if program.get("input_budget_policy") != COUNTED_INPUT_POLICY:
@@ -747,12 +748,7 @@ def build_matched_judge_requests(*, programs: Sequence[dict], budget: AttemptBud
     funded = {}
     local_contexts = {}
     for program in programs:
-        source_key = _sha({
-            "results_root": program.get("results_root"),
-            "runner_view": program.get("runner_view"),
-            "rr_analysis_root": program.get("rr_analysis_root"),
-            "historical_result": program.get("sources", {}).get("historical_result"),
-        })
+        source_key = _local_context_key(program)
         if source_key not in local_contexts:
             local_contexts[source_key] = _validated_local_cells(program)
         for admission in _validated_jobs(program, budget, local_context=local_contexts[source_key]):
@@ -959,7 +955,7 @@ def _matched_judge_call_cap(projected_cap: int, routes: Sequence[dict], inventor
 
 
 def _validated_jobs(program: dict, budget: AttemptBudget, *, local_context: tuple | None = None) -> list[_Admission]:
-    """Rebuild fixed input selection from complete historical and RR evidence."""
+    """Rebuild fixed input selection from its recorded local source population."""
     from experiments import hosted_pending_condition
     if isinstance(program, dict) and program.get("schema") in {
         hosted_pending_condition.SCHEMA, hosted_pending_condition.CONTINUATION_SCHEMA,
@@ -967,7 +963,7 @@ def _validated_jobs(program: dict, budget: AttemptBudget, *, local_context: tupl
         return hosted_pending_condition.validated_jobs(program, budget, local_context=local_context)
     if (not isinstance(program, dict) or program.get("schema") not in {
         SCHEMA, COUNTED_INPUT_SCHEMA, TRANSPORT_RECOVERY_SCHEMA, ADAPTER_RECOVERY_SCHEMA, ADAPTER_PREFIX_RECOVERY_SCHEMA,
-        DISTINCT_INPUT_SCHEMA, COHORT_INPUT_SCHEMA, COHORT_ADAPTER_RECOVERY_SCHEMA,
+        DISTINCT_INPUT_SCHEMA, COHORT_INPUT_SCHEMA, COHORT_ADAPTER_RECOVERY_SCHEMA, LOCAL_SOURCES_SCHEMA,
     }
         or program.get("budget_plan_sha256") != budget.expected_plan_sha256
         or program.get("token_count_policy") != TOKEN_COUNT_POLICY
@@ -1201,6 +1197,13 @@ def _bound(raw: Mapping[str, Any]) -> tuple[dict, dict]:
 _LOCAL_CONTEXT_CACHE = ValidationCache(entries=1, copy_results=False)
 
 
+def _local_context_key(program: dict) -> str:
+    if program.get("schema") == LOCAL_SOURCES_SCHEMA:
+        return _sha({"local_sources": program["sources"]["local_sources"]})
+    return _sha({name: program.get(name) for name in ("results_root", "runner_view", "rr_analysis_root")}
+                | {"historical_result": program.get("sources", {}).get("historical_result")})
+
+
 def _validated_local_cells(program: dict) -> tuple[list[dict], dict]:
     """Read-only source context, reused until any observed dependency changes.
 
@@ -1209,14 +1212,22 @@ def _validated_local_cells(program: dict) -> tuple[list[dict], dict]:
     """
     if artifact_sha256_enabled():
         return _load_local_cells(program)
-    key = _sha({name: program[name] for name in ("results_root", "runner_view", "rr_analysis_root")}
-               | {"historical_result": program["sources"]["historical_result"]})
+    key = _local_context_key(program)
+    if program.get("schema") == LOCAL_SOURCES_SCHEMA:
+        inventory, descriptor = _bound(program["sources"]["local_sources"])
+        return _LOCAL_CONTEXT_CACHE.get(key, lambda: _load_local_cells(program),
+            paths=(Path(descriptor["path"]),),
+            trees=tuple(Path(root) for root in inventory["source_roots"]))
     return _LOCAL_CONTEXT_CACHE.get(key, lambda: _load_local_cells(program),
         paths=(Path(program["sources"]["historical_result"]["path"]),),
         trees=(Path(program["runner_view"]), Path(program["rr_analysis_root"])))
 
 
 def _load_local_cells(program: dict) -> tuple[list[dict], dict]:
+    if program.get("schema") == LOCAL_SOURCES_SCHEMA:
+        from experiments.retained_local_sources import load_sources
+        inventory, descriptor = _bound(program["sources"]["local_sources"])
+        return load_sources(inventory), descriptor
     from experiments.local_campaign.continuation_stats import retained_continuation_reports
     from experiments.local_campaign.execution_accounting import build_execution_accounting
     from experiments.local_campaign.rr_parallel_analysis import load_judge_view
