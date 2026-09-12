@@ -821,6 +821,7 @@ def _race_reserve(budget, barrier, results):
 
 
 def test_funding_stop_observation_does_not_reload_spending_ledger(budget, monkeypatch):
+    budget.reserve("O", 1, provider="openai")
     budget.stop_provider_funding("openai", "O")
     monkeypatch.setattr(budget, "_load", lambda: pytest.fail("Stop observation reread mutable spending ledger"))
     assert [row["provider"] for row in budget.provider_funding_stops()] == ["openai"]
