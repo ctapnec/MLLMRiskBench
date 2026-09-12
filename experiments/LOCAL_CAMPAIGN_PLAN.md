@@ -224,16 +224,41 @@ skip. Native local scoring remains pending after target release, and later
 replacement answers still need their own judgments. No target was repeated and
 the GPU recovery was not interrupted.
 
-Residual follow-up is queued behind both active recovery controllers. If
-DeepSeek still has unresolved outputs, run one 8,192-token throughput probe at
-32,768 context tokens, with model loading timed separately, full GPU residency
-and the unchanged 120-second generation requirement. This completes the missing
-cap-stress observation for the earlier diagnostic condition; it is not another
-campaign input or an approved profile change. A passing probe still requires its
-responsiveness survey and a native recovery selection containing only residual
-inputs. A failed probe remains diagnostic evidence, not a reason to repeat good
-answers. The deferred controller is visible under Local campaign Activity and
-is included in the half-hour aggregate. No runtime is reinstalled.
+Residual follow-up is queued behind both active recovery controllers. The
+standalone stress-only diagnostic was superseded before loading a model. If
+DeepSeek still has unresolved outputs, the native readiness procedure assesses
+its output allowance within a 32,768-token context ceiling. Model loading is
+timed separately; full GPU residency, the 120-second generation threshold and
+the ten-question responsiveness survey remain required. A passing assessment
+creates a private profile, leaving the active shared profiles unchanged.
+
+The exact residual replay controller is also queued. After assessment, it
+rereads the completed checkpoints and selects only still-missing or truncated
+answers for the larger tested output allowance. It retains the original input,
+media and seed. A smaller context is not used to repair input-context overflow.
+No larger approved allowance means no speculative replay. The actual no-call
+selection check selected five observed residuals and excluded a successful
+response deliberately injected by the negative control. The native corpus
+reconstruction is a filtering population, not additional campaign assignments.
+New-condition transport probes and canaries remain diagnostic observations,
+separate from measured replacements. Native local scoring follows target
+release; matching new outputs require fresh Haiku judgments. Both deferred
+controllers are visible under Local campaign Activity and included in the
+half-hour aggregate. No runtime is reinstalled or successful measured answer
+repeated. This is a queued correction, not a claim that residual recovery has
+already succeeded.
+
+The judging handoff is now queued as two independent workers after these four
+local recovery owners terminate. One completes the already prepared local
+judgments of saved API outputs on both GPUs. The other selects newly available
+matched local replacements and runs fresh Haiku assessments within the existing
+shared judging allowance. They do not wait on each other's verdicts. Selection
+uses saved generation settings for both Ollama and vLLM and excludes the exact
+243 already assessed outputs. The final number is determined from actual
+eligible replacements, not forced to the preceding batch size. Missing outputs
+and invalid verdicts remain explicit. Publication includes the new response
+owners, verdicts and physical-attempt costs. Queuing is not execution evidence;
+the live deferred workers report their wait and subsequent terminal results.
 
 Human audit and thesis evidence synthesis remain separate work. This plan was written
 20 August 2026 after the readiness audit
