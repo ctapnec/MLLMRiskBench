@@ -242,6 +242,21 @@ launcher error is retained as resolved history, not the current job state.
 Fourteen unprepared input entries still belong to the separate collection
 continuation and do not disappear from campaign coverage.
 
+At 03:32 UTC the remaining Pro source-context inventory was reconciled: nine
+contexts belong to six saved continuous-cohort answers, and eight belong to
+five inputs in the new cohort. Their reconstructed local and Haiku grading
+inputs are equivalent within each output's aliases. The nine saved contexts
+now reference the same answers' published native assessments and six existing
+valid Haiku verdicts. These links add neither generations nor judge calls,
+independent observations or cost. They never copy another model's verdict.
+The eight new contexts remain unassessed until their Pro answers and primary
+judgments exist. A queued follow-up resolves their exact output references
+after the existing judging controller; no extra generation is scheduled.
+The twenty untouched old-tail inputs and the one interrupted continuation
+carry no additional grading-context slots. Their primary judging obligations
+are unchanged. Evidence is retained under the four `google-pro-context-*`
+engineering directories, and the scheduled aggregate includes these counts.
+
 The initial counting launcher used a nested controller directory that the
 existing console registration does not support. It failed before any count
 or judging call. The corrected launcher reused the saved plans, and the same
