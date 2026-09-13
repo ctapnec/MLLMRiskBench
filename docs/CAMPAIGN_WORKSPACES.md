@@ -1111,6 +1111,22 @@ The bounded Build comparison above remains unchanged until its all-output
 execution and reuse integration is complete. Any later reuse must refer to the same saved output
 and judging condition, never merely to the same input or another model's answer.
 
+Build's **Prepare all-output judging funding** action now connects that saved
+inventory to the selected collection's existing budget. It reuses the exact
+source preparations that created the inventory, including earlier increments,
+and preserves every matching local and hosted output. CLI and Tools expose
+`retained_inventory_judge_items` with the same inputs and optional repeated
+existing budgets. Preparing does not allocate money or make provider calls.
+
+The responsive funding review separates pending funded outputs, ownership by
+existing judging executions, outputs without matching supplied funding, and
+missing response text. Existing execution ownership is not evidence of a valid
+verdict. The handoff retains exact output identities and original judging slots
+without spending again, discarding unfunded answers, or counting missing text
+as an assessment. Budgets are read once per preparation, with spending checked
+again at actual dispatch. Broader paid execution and verified cross-preparation
+verdict reuse remain open; the bounded paired execution flow is unchanged.
+
 For a hosted-only follow-up, `retained_hosted_judge_items` connects a saved
 native source preparation to the collection's original Haiku slots. It is
 available in CLI and Tools and creates no calls or funding. Missing answers

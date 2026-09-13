@@ -6934,6 +6934,35 @@ the most favorable recovery. It makes no target, judge or provider calls and
 does not grant funding or claim verdict reuse. Full Build execution of this
 broader selection remains separate from the bounded paired controls above.
 
+### Prepare funding for every matched output
+
+After reviewing all-output coverage in Build, choose **Prepare all-output
+judging funding**, then **Review all-output judging funding** when that job
+finishes. This uses the coverage job's saved local and hosted source selections
+and the selected collection's existing budget. It does not collapse the local
+population to one counterpart per hosted answer. Identical preparations reuse
+their original job. This step makes no provider calls or new allocations.
+
+The same CLI/Tools command is `retained_inventory_judge_items`: supply the saved
+`--inventory`, its original `--local-view` and `--hosted-view` selections,
+`--budget-root` and `--budget-plan-sha256`, and a new `--out` directory. Repeat
+the source options for each preparation and the two budget options in matching
+order when the selection spans existing budgets. Inputs, exact saved outputs
+and their original judging slots must agree. Budgets are read once for this
+preparation; dispatch still requires a current spending check.
+
+The review separates funded unstarted outputs, outputs owned by existing
+judging executions, outputs without matching funding in the supplied budgets,
+and missing response text. Existing ownership is not a completed or valid
+verdict. Resume that execution's retained artifacts rather than creating
+another paid assessment. Missing text stays in coverage but is unscored.
+Unfunded outputs are not silently dropped or funded from another pool.
+
+`validated-items.json` is the no-call handoff for pending funded outputs;
+the other three categories have separate output-level files. This is not yet
+an all-output paid execution control or verified cross-preparation verdict
+reuse. The separately reviewed bounded paired executor remains unchanged.
+
 ### Prepare funded hosted-only judging inputs
 
 `retained_hosted_judge_items` accepts `--preparation` from native judging
@@ -6978,6 +7007,7 @@ argument vectors; nothing below is console-only):
 | `retained_native_judge_execute` | Execute local judging of saved hosted answers |
 | `retained_response_judge_pair_execute` | Publish retained-output judging into campaigns |
 | `retained_judge_inventory` | Inventory all answers on the same input entries |
+| `retained_inventory_judge_items` | Prepare funding for every matched output |
 | `retained_hosted_judge_items` | Prepare funded hosted-only judging inputs |
 | `lane_canary` | 8.1, 9.1 |
 | `native_import` | 14.3, 16 |
