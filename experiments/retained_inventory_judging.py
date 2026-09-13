@@ -18,7 +18,6 @@ from experiments import retained_inventory_judge_items as handoff
 from experiments import retained_response_judge as retained
 from experiments import retained_response_judge_execute as execution
 from experiments.hosted_attempt_budget import AttemptBudget
-from experiments.hosted_campaign_budget import load_bound_json
 from experiments.hosted_request_tokens import cached_count_request
 from experiments.hosted_retained_inputs import _descriptor
 from ura.judges.llm import LLMJudge
@@ -28,6 +27,16 @@ from ura.artifact_checks import artifact_verification_cli
 
 def read(path):
     return json.loads(Path(path).read_text())
+
+
+def read_items(descriptor):
+    # The whole response selection can exceed the small budget document limit.
+    # Its saved byte length owns the read bound; do not impose an unrelated cap.
+    value, observed = execution._read_regular(Path(descriptor['path']), label='saved judging outputs',
+        max_bytes=descriptor['bytes'])
+    if observed['sha256'] != descriptor['sha256'] or not isinstance(value, list):
+        raise ValueError('Saved judging output list changed')
+    return value
 
 
 def _selected_items(plan, items):
@@ -192,7 +201,7 @@ def execute(*, preparation, out, workspace_ids=(), console_db=None, workers=2):
     if ready['status'] != 'ready_for_funded_judging':
         raise ValueError('Resolve the saved funding review before paid execution')
     request = ready['request']
-    raw, _ = load_bound_json(Path(request['items']['path']), request['items']['sha256'], expect_list=True)
+    raw = read_items(request['items'])
     originals = {item['row']['retained_row_sha256']: item for item in raw}
     # Source content is reconciled once per launch, not once per plan or call.
     observed, _ = _original_items(Path(request['items_root']))

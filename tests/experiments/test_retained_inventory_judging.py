@@ -146,3 +146,13 @@ def test_empty_pending_selection_does_not_claim_all_existing_verdicts_complete(p
     assert ready['selected_outputs'] == 0 and ready['plans'] == []
     result = subject.execute(preparation=kwargs['out'], out=kwargs['out'].parent/'judgments')
     assert result['whole_campaign_complete'] is False and result['coverage']['existing_execution_owned'] == 6
+
+
+def test_output_inventory_uses_its_saved_size_not_the_budget_file_size_cap(tmp_path):
+    path = tmp_path/'items.json'
+    path.write_text(json.dumps([{'text': 'a' * (17 * 1024 * 1024)}]))
+    descriptor = subject._descriptor(path)
+    assert len(subject.read_items(descriptor)[0]['text']) == 17 * 1024 * 1024
+    path.write_text('{}')
+    with pytest.raises(ValueError, match='list changed'):
+        subject.read_items(subject._descriptor(path))
