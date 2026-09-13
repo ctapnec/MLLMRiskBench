@@ -2130,6 +2130,15 @@ mid-lane.
 
 ## 8. Phase 7: read-only analysis (hours)
 
+Scope of retained accounting: the 144-condition lifecycle union and the
+42,882/49,537-call forecasts below describe the original local campaign and
+its named amendments. They are not the totals for every later recovery or
+hosted extension. Keep those historical forecasts intact. The dated recovery,
+portfolio and source-task observations in this section, the unified Local/API
+workspace indexes, and the separately funded API plan describe later additions.
+Likewise, the original 941-pair Haiku ceiling below is not the ceiling of the
+subsequently expanded hosted and matched-local judging programs.
+
 13 September retained-adaptivity update: the completed output-policy recovery
 contains both Qwen replay and Crescendo for seven 100-input arms. Its new
 read-only comparison supersedes the older non-estimable records only for this

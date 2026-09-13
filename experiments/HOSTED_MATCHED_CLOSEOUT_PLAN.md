@@ -186,7 +186,18 @@ The 84 newly owned funding slots did not imply 84 missing verdicts and were not
 spent again. Historical and corrected conditions remain separate.
 
 Live UI inspection confirms visible local/API charts, readable Results details,
-working figure/table exports and loading guards. Full paid end-to-end Build
-acceptance, the complete statistical synthesis and independent human assessment
-remain separate unfinished requirements. This update does not declare the whole
-campaign or thesis complete.
+working figure/table exports and loading guards. Later bounded end-to-end
+Build acceptance completed two Terra calls, saved-output local evaluation and
+one new output-specific Haiku assessment, then published their costs and
+judgments without repeating the target calls. The matching local output's
+existing same-condition Haiku verdict was reused. The separately accounted
+acceptance cost is USD 0.026256, outside production cohort totals. Evidence:
+`build-ui-closeout-20260913` and ledger RA-671/RA-672. This exercises the
+collection-to-judging-to-publication flow, not every model/framework combination.
+
+The completed statistical work now includes focal paired, local/hosted,
+same-base support, static/adaptive, portfolio, source-classification and
+same-response judge analyses, plus the approved response-SVM study. Their
+limitations remain explicit in Chapters V and VI. The Google remainder,
+independent human assessment and final thesis/reproducibility review are still
+open; this update does not declare the full study complete.
