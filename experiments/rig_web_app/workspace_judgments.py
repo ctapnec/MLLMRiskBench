@@ -91,10 +91,14 @@ def native_invalid_rows(unit: dict, artifacts: list[tuple[str, dict]], *,
 
 
 def retained_judge_identity(condition: dict) -> str:
+    # Execution takes the output allowance from the bound API configuration.
+    # Paired plans repeat that allowance as explanatory metadata; ordinary
+    # retained-output plans do not. It is not a second judging condition.
     identity = {key: value for key, value in condition.items()
                 if not key.startswith("pricing_") and key not in {
                     "max_cost_microusd", "input_microusd_per_token", "output_microusd_per_token",
-                    "independent_judge_rows", "same_model_judge_rows", "max_judge_calls", "max_http_attempts"}}
+                    "independent_judge_rows", "same_model_judge_rows", "max_judge_calls", "max_http_attempts"}
+                and not (key == "judge_max_output_tokens" and condition.get("api_config_sha256"))}
     digest = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:24]
     return condition["model"] + ":" + digest
 

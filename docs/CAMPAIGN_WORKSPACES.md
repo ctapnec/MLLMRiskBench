@@ -1259,3 +1259,12 @@ publish that physical attempt through the existing cost-index writer as part of
 the handoff. Preserve its unknown amount and uncertain exposure. Updating only
 the monetary ledger leaves a stale in-flight row in Costs; repeating publication
 must neither duplicate a bill nor repeat its request.
+
+Paired and ordinary retained-output judging use the same indexed judging
+condition when their judge model and bound API configuration agree. The paired
+plan's repeated output-token allowance is descriptive metadata, not a different
+setting: execution reads that allowance from the API configuration. Different
+configurations remain distinct. Correcting historical index identities must
+preserve every output-specific verdict, source reference and physical cost;
+it must not copy a verdict to another answer or choose between conflicting
+assessments. Original plans and judgment artifacts remain unchanged.

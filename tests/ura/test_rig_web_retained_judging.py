@@ -8,6 +8,21 @@ from experiments.rig_web import build_argv
 from test_rig_web_model_acquisition import _app
 
 
+def test_paired_and_unpaired_publication_share_the_actual_api_judge_condition():
+    from experiments.rig_web_app.workspace_judgments import retained_judge_identity
+
+    ordinary = dict(model="anthropic:claude-haiku-4-5-20251001", api_config_sha256="a" * 64,
+        answer_retries=0, transport_retries=3, max_judge_calls=2000)
+    paired = dict(ordinary, judge_max_output_tokens=512, max_judge_calls=1002)
+    assert retained_judge_identity(paired) == retained_judge_identity(ordinary)
+    # A different effective allowance changes the bound API configuration.
+    assert retained_judge_identity(dict(paired, api_config_sha256="b" * 64)) != retained_judge_identity(ordinary)
+    assert retained_judge_identity(dict(paired, model="another-judge")) != retained_judge_identity(ordinary)
+    assert retained_judge_identity(dict(paired, transport_retries=1)) != retained_judge_identity(ordinary)
+    unbound = {key: value for key, value in ordinary.items() if key != "api_config_sha256"}
+    assert retained_judge_identity(dict(unbound, judge_max_output_tokens=512)) != retained_judge_identity(unbound)
+
+
 @pytest.mark.parametrize("custom", [False, True])
 def test_retained_judging_child_receives_only_selected_provider_key(tmp_path, monkeypatch, custom):
     app = _app(tmp_path)
