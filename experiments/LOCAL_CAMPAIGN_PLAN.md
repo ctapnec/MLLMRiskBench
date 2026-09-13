@@ -423,6 +423,13 @@ outputs need Haiku assessment unless the exact output and judging condition
 already have one. This is new hosted/judging work, not a restart of completed
 local generation or a new local phase. Its selection and funding are pending.
 
+Approved final matching supplement, 13 September 2026: see
+[the bounded closeout plan](HOSTED_MATCHED_CLOSEOUT_PLAN.md). It selects 91 new
+hosted requests on retained local inputs, with local and Haiku output-specific
+judging and corresponding local-output coverage reconciliation. The USD 29
+allocation is a ceiling, not an expenditure target. The earlier observations
+below remain dated historical records, not the current execution status.
+
 Final hosted comparison, 10 September 2026 at 06:11 UTC: the separate
 supplement and Google extension have completed target collection and both
 judging obligations. Their published comparison includes every one of the
