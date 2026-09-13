@@ -98,7 +98,9 @@ def run_runtime_admission(admission, *, responses_only):
     if admission.job['purpose'] == 'attestation_probe':
         # A transport receipt needs the existing completed diagnostic grid.
         # These few funded probe calls are not measured campaign judgments.
-        output = run_admission(admission, responses_only=False)
+        from ura.hosted_scheduling import hosted_local_scoring_slot
+        with hosted_local_scoring_slot(Path(descriptor['path']).parent.parent/'transport-scoring.lock'):
+            output = run_admission(admission, responses_only=False)
         program, _ = load_bound_json(Path(descriptor['path']), descriptor['sha256'])
         number = next(i for i, job in enumerate(program['jobs']) if job['name'] == admission.job['name'])
         path = transport_path(descriptor['path'], number)

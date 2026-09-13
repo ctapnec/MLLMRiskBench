@@ -26,8 +26,13 @@ def test_funded_probe_finishes_native_grid_before_deriving_observation(tmp_path,
     program, descriptor = fixture_program(tmp_path)
     admission = SimpleNamespace(job=program['jobs'][0],runtime_program=descriptor)
     events = []
-    monkeypatch.setattr(hosted_dispatch, 'run_admission', lambda value,**kw:
-        events.append(('run',value.job['name'],kw['responses_only'])) or str(tmp_path/'outputs'/'probe'))
+    def run(value,**kw):
+        from ura.hosted_scheduling import _SCORING_SLOT
+        assert _SCORING_SLOT.get() is not None
+        assert _SCORING_SLOT.get().path == tmp_path.parent/'transport-scoring.lock'
+        events.append(('run',value.job['name'],kw['responses_only']))
+        return str(tmp_path/'outputs'/'probe')
+    monkeypatch.setattr(hosted_dispatch, 'run_admission', run)
     def observe(argv):
         events.append(('derive',argv))
         Path(argv[argv.index('--out')+1]).write_text('{}')
@@ -120,10 +125,18 @@ def offline_runtime_worker(admission, *, responses_only):
     def save(job, **kwargs):
         start = time.monotonic_ns()
         time.sleep(0.25)
+        judge_start = judge_end = None
+        if not kwargs['responses_only']:
+            from ura.hosted_scheduling import acquire_hosted_local_scoring_slot
+            acquire_hosted_local_scoring_slot()
+            judge_start = time.monotonic_ns()
+            time.sleep(0.25)
+            judge_end = time.monotonic_ns()
         output = Path(job.job['argv'][1])
         output.mkdir(parents=True,exist_ok=True)
         (output/'event.json').write_text(json.dumps(dict(start=start,end=time.monotonic_ns(),
-            responses_only=kwargs['responses_only'],argv=job.job['argv'])))
+            responses_only=kwargs['responses_only'],argv=job.job['argv'],
+            judge_start=judge_start,judge_end=judge_end)))
         return str(output)
     def observe(argv):
         Path(argv[argv.index('--out')+1]).write_text('{}')
@@ -155,3 +168,5 @@ def test_runtime_transport_uses_existing_parallel_dispatch_without_provider_barr
         assert events[provider]['probe']['end'] <= events[provider]['measured']['start']
         assert '--live-attestation' in events[provider]['measured']['argv']
     assert max(events[p]['probe']['start'] for p in events) < min(events[p]['probe']['end'] for p in events)
+    scoring = sorted((events[p]['probe']['judge_start'],events[p]['probe']['judge_end']) for p in events)
+    assert scoring[0][1] <= scoring[1][0]
