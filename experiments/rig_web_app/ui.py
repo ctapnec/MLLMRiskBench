@@ -60,6 +60,10 @@ h2 .ic { color:var(--muted); }
 .campaign-ownership-row { display:flex; flex-wrap:wrap; align-items:flex-end; gap:1rem; }
 .campaign-field { display:grid; gap:.5rem; min-width:0; font-weight:600; font-size:.9rem; }
 .haiku-judging-controls { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1rem; margin:1rem 0; }
+.judging-funding-summary { display:grid; grid-template-columns:repeat(auto-fit,minmax(14rem,1fr)); gap:1rem; margin:1.5rem 0; }
+.judging-funding-summary>div { background:#fff; border:1px solid var(--line); border-radius:.65rem; padding:1rem; }
+.judging-funding-summary dt { color:var(--muted); }
+.judging-funding-summary dd { margin:.5rem 0 0; font-size:1.6rem; font-weight:700; }
 .judging-inventory-table { width:100%; }
 .judging-inventory-table td:nth-child(2) { overflow-wrap:anywhere; }
 @media(max-width:640px) {

@@ -139,7 +139,7 @@ def inventory_judging_review(app, params):
     body = '<h1>Judging coverage and funding</h1>' + app._campaign_banner(owner)
     body += (f"<p>{value['input_entries']:,} input entries; {value['retained_outputs']:,} saved local and hosted outputs. "
         'Every matching model answer is accounted for, not one local counterpart per hosted answer.</p>'
-        '<dl>' + ''.join('<dt>' + label + f"</dt><dd>{value[field]:,}</dd>" for field, label in categories) + '</dl>'
+        "<dl class='judging-funding-summary'>" + ''.join('<div><dt>' + label + f"</dt><dd>{value[field]:,}</dd></div>" for field, label in categories) + '</dl>'
         '<p>This review made no calls and allocated no money. Existing execution ownership is not proof of a valid verdict. '
         'Resume its original judgment artifacts instead of charging that output again. Missing responses remain unscored. '
         'Unfunded answers have not been silently removed or funded from another pool.</p>'

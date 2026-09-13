@@ -67,6 +67,11 @@ def test_funding_panel_and_review_fit_narrow_screen(browser, inventory):  # noqa
         page.set_content(body.replace("<link rel='stylesheet' href='/static/style.css'>", '<style>'+ui._STYLE+'</style>'))
         assert page.get_by_role('heading', name='Judging coverage and funding').is_visible()
         assert page.locator('dt').count() == page.locator('dd').count() == 4
+        cards = page.locator('.judging-funding-summary>div')
+        assert cards.count() == 4
+        first, second = cards.nth(0).bounding_box(), cards.nth(1).bounding_box()
+        assert second['y'] >= first['y']+first['height']+15
+        assert float(page.locator('dd').first.evaluate('el=>getComputedStyle(el).fontSize').removesuffix('px')) >= 24
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
     finally:
         page.close()
