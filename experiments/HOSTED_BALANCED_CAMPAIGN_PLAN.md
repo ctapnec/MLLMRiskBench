@@ -334,3 +334,28 @@ is 8,768 outputs, with 189 additional context-specific hosted assessments in
 the exact retained plan, for 8,957 funded judging calls. Provider policy outcomes and missing outputs remain separate
 from judge-eligible generated text. The costed execution table remains pending
 request counting; these obligations share the existing Anthropic credit.
+
+## Completion reconciliation, 13 September 2026
+
+Completion is checked against every assignment's selected output in the API
+workspace, not only the latest target or judging controller. Existing valid or
+invalid assessments must first be linked to their original outputs and physical
+costs; absent index entries do not by themselves justify another paid request.
+Provider-policy outcomes without generated answer text remain separate from
+Haiku's answer-level assessments.
+
+The selected-output audit identified 224 saved historical Haiku assessments
+missing from the index and published them without new calls. It also found
+older continuous-cohort answers outside the earlier judging-gap audit's scope.
+Their source preparations and original funded slots are now being reconciled
+for completion through the existing retained-output workflow. This continuation
+does not increase the target population, rerun local models, or create additional
+credit. All selected local counterparts remain subject to the same output-level
+coverage check. The live new Pro cohort retains its independent collection and
+judging handoff; its completion cannot substitute for this historical coverage.
+
+The twenty old Pro tail inputs and one interrupted request are recovered, with
+their own local and Haiku assessments completed. The original unknown charge
+for the interrupted request is retained. Full analysis and thesis reporting must
+use the reconciled workspace population, distinguishing attempted, usable,
+policy-rejected, missing, assessed and unassessed outcomes explicitly.
