@@ -106,16 +106,23 @@ judging. Additional source-grading contexts remain separately pending and
 must not be conflated with primary output assessments or independent target
 generations. The worker records that remaining scope explicitly.
 
-The older remainder has a separate observation-age issue: fourteen untouched
-inputs sit behind an already-started job with six pending inputs. Its 24-hour
-transport observations expire before this quota reset. The transport-tail
-controller therefore waits for the old worker to end and the new Pro queue's
-fresh observations before dispatching only wholly untouched jobs. The target
-configurations were compared and are identical. Completed jobs and paid slots
+Terminal reconciliation after 00:00 UTC on 13 September locates the twenty
+older unattempted inputs in two places: fourteen in the continuous program
+and six in the earlier sixth batch. The formerly active eleven-input
+JailbreakBench job is complete. Its next job stopped before a target call
+because its 24-hour transport observations had expired. A checkpoint-only
+reading had incorrectly associated the other six pending inputs with that
+active job; they are two wholly untouched jobs in the earlier batch.
+
+The existing transport-tail controller covers the fourteen continuous inputs.
+The separate `google-pro-batch006-tail` queue covers the six older inputs using
+the same verified continuation path and their original paid slots. It waits
+for the fourteen-input tail to finish, so alongside the new 230-input queue
+there are at most two Google workers. Both reuse fresh observations from the
+new Pro queue after confirming identical target configurations. Completed jobs
 are preserved; the observation-age policy is not extended, and no extra probe
-input is purchased. Any partially started remainder stays with its existing
-checkpoint recovery. Tail collection, its judging and publication must still
-be verified after execution, not inferred from the queued controller.
+input is purchased. Tail collection, its judging and publication must still
+be verified after execution, not inferred from the queued controllers.
 
 The scheduled observer and API workspace publisher follow the renewed full
 program after its selection record exists. This replaces only the selected
