@@ -146,6 +146,22 @@ def test_export_detects_wrong_retained_line_identity(tmp_path):
         export_dataset(**args)
 
 
+def test_export_reads_actual_runner_checkpoint_response_shape(tmp_path):
+    args = dataset_fixture(tmp_path)
+    p = tmp_path / "responses.jsonl"
+    response = json.loads(p.read_text())
+    checkpoint = dict(schema_version="1", run_id=response["run_id"],
+        attempt=dict(id=response["attempt_id"], run_id=response["run_id"]),
+        response=response, budget_after_target=dict(target_calls=1))
+    p.write_text(json.dumps(checkpoint) + "\n")
+    rows, _ = export_dataset(**args)
+    assert len(rows) == 1 and rows[0]["response"] == "Visible retained text"
+    checkpoint["attempt"]["id"] = "different"
+    p.write_text(json.dumps(checkpoint) + "\n")
+    with pytest.raises(ValueError, match="Checkpoint"):
+        export_dataset(**args)
+
+
 def test_real_fitting_three_tasks_with_locked_group_split():
     pytest.importorskip("sklearn")
     rows = []

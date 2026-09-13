@@ -111,6 +111,14 @@ def export_dataset(*, database: Path, candidates: Path, campaigns: list[str], ju
         details = json.loads(row["details"])
         path, _, line = details["source_ref"].rpartition(":")
         raw = files[Path(path)][int(line)]
+        # Interrupted but durable Runner output is nested in a checkpoint row;
+        # completed runs store the same response object directly.
+        if isinstance(raw.get("response"), dict):
+            response = raw["response"]
+            if raw.get("run_id") != response.get("run_id") or \
+                    raw.get("attempt", {}).get("id") != response.get("attempt_id"):
+                raise ValueError("Checkpoint does not identify its nested response")
+            raw = response
         if key != str(raw["run_id"]) + ":" + str(raw["attempt_id"]):
             raise ValueError("Selected index does not identify the retained response line")
         text = visible_turns(raw["output_turns"], assistant_only=True)
