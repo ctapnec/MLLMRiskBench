@@ -190,6 +190,8 @@ class LifecycleMixin:
         # OllamaService.close() never touches an endpoint it did not start.
         self.ollama.close()
         with self._app_lock:
+            if hasattr(self, '_human_reviews'):
+                self._human_reviews.close()
             self._reconcile_locked()
             for job in self.jobs.values():
                 if job.process is None or job.process.poll() is not None:
@@ -3895,6 +3897,8 @@ class LifecycleMixin:
         path = parsed.path
         query = {key: values[0] for key, values in parse_qs(parsed.query).items() if values}
         try:
+            if path == '/human-evaluation' or path.startswith(('/human-evaluation/', '/review/')):
+                return self._human_route(method, path, query, dict(form or {}))
             if method == "GET" and path == "/campaigns":
                 return 200, "text/html; charset=utf-8", self._workspaces_page()
             if method == "GET" and path == "/campaigns/new":

@@ -88,7 +88,7 @@ def _make_server(app: RigWebApp, host: str, port: int):
             self.send_header("X-Frame-Options", "DENY")
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Referrer-Policy", "no-referrer")
-            if content_type is None or content_type.startswith("text/html"):
+            if content_type is None or content_type.startswith("text/html") or self.path.startswith('/review/'):
                 self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
@@ -151,7 +151,9 @@ def _make_server(app: RigWebApp, host: str, port: int):
             self._dispatch("POST")
 
         def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
-            sys.stderr.write("rig-web: " + format % args + "\n")
+            message = format % args
+            message = re.sub(r"/review/[A-Za-z0-9_-]+", "/review/[private]", message)
+            sys.stderr.write("rig-web: " + message + "\n")
 
     return ThreadingHTTPServer((host, port), Handler)
 

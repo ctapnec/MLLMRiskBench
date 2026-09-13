@@ -851,6 +851,7 @@ class PagesMixin:
             "form.addEventListener('change',function(){syncHumanAudit(form);});});"
             "})();</script>"
         )
+        body = "<p><a class='button ghost' href='/human-evaluation'>Human evaluation studies</a></p>" + body
         return _page("Run a command", body, active="Tools")
 
     @staticmethod

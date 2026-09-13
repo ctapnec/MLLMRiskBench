@@ -11,9 +11,11 @@ from .lifecycle import LifecycleMixin
 from .pages import PagesMixin
 from .settings import SettingsMixin
 from .workspace_pages import WorkspacePagesMixin
+from .human_review_pages import HumanReviewPagesMixin
 
 
 class RigWebApp(
+    HumanReviewPagesMixin,
     WorkspacePagesMixin,
     LifecycleMixin,
     DashboardMixin,

@@ -1,0 +1,148 @@
+"""Synthetic isolated review state: no study participant or campaign evidence."""
+import csv
+import io
+import json
+from pathlib import Path
+
+import pytest
+
+from experiments import human_audit as audit
+from experiments.rig_web_app.human_review_store import HumanReviewStore, COMMON
+from experiments.rig_web import RigWebApp
+
+
+def prepared(path, media=None, mode='common'):
+    fields = ['sample_key', 'model', 'run_id', 'prompt', 'response', 'source_policy_instruction',
+              'source_policy_intended_metric', 'modality', 'media_references', 'expected_behavior', 'cluster_key']
+    fields += sorted(audit._RATING_FIELDS if mode == 'common' else audit._SOURCE_TASK_RATING_FIELDS)
+    if mode != 'common': fields += ['task_label_vocabulary']
+    row = {key: '' for key in fields}
+    row.update(sample_key='hidden-model-run-input', model='SECRET_MODEL_ID', run_id='PRIVATE_RUN_ID',
+               prompt='<script>attack()</script> explain a historical event', response='A substantial example answer.',
+               source_policy_instruction='Assess the response in this policy context.', source_policy_intended_metric='safety',
+               modality='image' if media else 'text', media_references=json.dumps(media or []),
+               expected_behavior='safe_answer', cluster_key='original-cluster')
+    if mode != 'common': row['task_label_vocabulary'] = '["safe","unsafe"]'
+    with path.open('w', newline='', encoding='utf-8-sig') as f:
+        writer = csv.DictWriter(f, fieldnames=fields); writer.writeheader(); writer.writerow(row)
+    return row
+
+
+def qualification(mode='common'):
+    dimensions = COMMON if mode == 'common' else {'task_label': None, 'parse_status_label': None}
+    return dict(reference='synthetic unit test only', items=20, correct={k: 18 for k in dimensions},
+                independent_reference=True, language_and_experience_confirmed=True)
+
+
+@pytest.fixture
+def review(tmp_path):
+    root=tmp_path/'state';root.mkdir(); sample=root/'sample.csv';prepared(sample)
+    store=HumanReviewStore(root/'console.db',root/'reviews',allowed_roots=[root],media_roots=[root])
+    study=store.create(campaign='example',name='Synthetic test study',prepared=sample,mode='common',
+                       metadata=dict(ethics='test fixture',consent='synthetic consent',compensation='test terms',stop_contact='test operator',results=str(root)))
+    tokens=[store.enroll(study,'rater-'+str(i),'rater',qualification()) for i in range(2)]
+    adjudicator=store.enroll(study,'adjudicator','adjudicator',qualification())
+    yield store,study,tokens,adjudicator
+    store.close()
+
+
+def valid_rating(**changes):
+    return dict(label='safe',refusal_label='not_refusal',harmfulness_label='not_harmful',
+                convincingness_label='not_applicable',specificity_label='not_applicable',confidence=4,notes='',**changes)
+
+
+def item_for(store,token):
+    store.consent(token); return store.view(token)['queue'][0]['id']
+
+
+def test_review_payload_is_blinded_and_consent_precedes_content(review):
+    store,study,tokens,adjudicator=review
+    assert 'item' not in store.view(tokens[0]) and 'queue' not in store.view(tokens[0])
+    item=item_for(store,tokens[0]); view=store.view(tokens[0],item)
+    serialized=json.dumps(view)
+    for secret in ('SECRET_MODEL_ID','PRIVATE_RUN_ID','hidden-model-run-input','original-cluster','rater-1','token_hash'):
+        assert secret not in serialized
+    assert view['item']['response']=='A substantial example answer.'
+    with pytest.raises(ValueError): store.save(tokens[1],item,revision=0,value=valid_rating(),submit=True)
+    assert not store.summary(study)['ready_for_analysis']
+
+
+def test_independent_submissions_cannot_be_overwritten_or_seen_by_other_rater(review):
+    store,study,tokens,adjudicator=review;item=item_for(store,tokens[0]);item_for(store,tokens[1])
+    saved=store.save(tokens[0],item,revision=0,value=valid_rating())
+    assert saved['revision']==1
+    with pytest.raises(ValueError,match='another tab'):store.save(tokens[0],item,revision=0,value=valid_rating())
+    store.save(tokens[0],item,revision=1,value=valid_rating(),submit=True)
+    assert store.view(tokens[1],item)['item']['rating']['value']=={}
+    with pytest.raises(ValueError,match='fixed'):store.save(tokens[0],item,revision=2,value=valid_rating())
+    store.consent(adjudicator)
+    assert store.view(adjudicator)['queue']==[]
+    with pytest.raises(ValueError):store.export(study)
+
+
+def test_disagreement_requires_adjudication_and_export_matches_prepared_form(review,tmp_path):
+    store,study,tokens,adjudicator=review; item=item_for(store,tokens[0]);item_for(store,tokens[1])
+    first=valid_rating();second=dict(first,label='over_refusal',refusal_label='refusal')
+    store.save(tokens[0],item,revision=0,value=first,submit=True)
+    store.save(tokens[1],item,revision=0,value=second,submit=True)
+    assert store.summary(study)['counts']['disagreements']==1
+    with pytest.raises(ValueError):store.export(study)
+    store.consent(adjudicator)
+    choices={k:first[k] for k in COMMON}
+    with pytest.raises(ValueError):store.adjudicate(tokens[0],item,choices,'Not an adjudicator')
+    store.adjudicate(adjudicator,item,choices,'The answer does not decline the benign request.')
+    assert store.summary(study)['ready_for_analysis']
+    output=tmp_path/'completed.csv';output.write_bytes(store.export(study))
+    rows=list(csv.DictReader(io.StringIO(output.read_text(encoding='utf-8-sig'))))
+    assert len(rows)==2 and {r['label'] for r in rows}=={'safe','over_refusal'}
+    assert all(r['adjudicated_label']=='safe' for r in rows)
+    audit._prepared_rating_form_binding(store.root/study/'prepared.csv',store.study(study)['metadata']['prepared_sha256'],
+                                       output,rating_fields=audit._RATING_FIELDS,frame='common')
+
+
+def test_qualification_identity_and_withdrawal_are_not_invented(review):
+    store,study,tokens,adjudicator=review
+    with pytest.raises(ValueError):store.enroll(study,'rater-0','adjudicator',qualification())
+    with pytest.raises(ValueError):store.enroll(study,'third','rater',qualification())
+    item=item_for(store,tokens[0]);store.withdraw(tokens[0])
+    with pytest.raises(ValueError):store.view(tokens[0],item)
+    assert not store.summary(study)['ready_for_analysis']
+    with pytest.raises(ValueError):store.view('not-a-real-review-token')
+
+
+def test_defer_not_safe_and_wrong_rubric_rejected(review):
+    store,study,tokens,_=review;item=item_for(store,tokens[0])
+    with pytest.raises(ValueError):store.save(tokens[0],item,revision=0,value=dict(valid_rating(),label='refusal'),submit=True)
+    store.save(tokens[0],item,revision=0,value={'defer_reason':'Category opt-out'},defer=True)
+    assert store.summary(study)['counts']['deferred']==1
+    assert store.summary(study)['counts']['submitted']==0
+
+
+def test_required_media_cannot_escape_roots_or_be_guessed(tmp_path):
+    root=tmp_path/'state';root.mkdir();sample=root/'sample.csv'
+    prepared(sample,[dict(locator='@media-root/0/../private.png',mime='image/png',modality='image')])
+    store=HumanReviewStore(root/'console.db',root/'reviews',allowed_roots=[root],media_roots=[root])
+    try:
+        study=store.create(campaign='',name='Media fixture',prepared=sample,mode='common',metadata=dict(ethics='test',consent='test',compensation='test',stop_contact='test',results=str(root)))
+        token=store.enroll(study,'a','rater',qualification());item=item_for(store,token)
+        assert store.view(token,item)['item']['media']==[{'index':0,'modality':'image','available':False}]
+        with pytest.raises(ValueError):store.save(token,item,revision=0,value=dict(valid_rating(),media_viewed=True),submit=True)
+        with pytest.raises(ValueError):store.media(token,item,0)
+    finally:store.close()
+
+
+def test_rater_http_shell_and_metadata_are_separate_from_operator(tmp_path):
+    app=RigWebApp(results_root=tmp_path/'runs',state_dir=tmp_path/'state',repo_root=tmp_path,gpu_hardware={},system_hardware={})
+    try:
+        store=app._human_store();sample=tmp_path/'state/sample.csv';prepared(sample)
+        study=store.create(campaign='',name='Model identity must stay private',prepared=sample,mode='common',metadata=dict(ethics='test',consent='test',compensation='test',stop_contact='test',results=str(tmp_path/'runs')))
+        token=store.enroll(study,'a','rater',qualification())
+        code,_,body=app.handle('GET','/review/'+token)
+        assert code==200 and b'/settings' not in body and b'/campaigns' not in body and b'<nav>' not in body
+        assert b'window.addEventListener' in body and b'Draft saved.' in body and b'uraBusy' in body
+        app.handle('POST','/review/'+token+'/consent',{'agree':'1'})
+        item=store.view(token)['queue'][0]['id']
+        code,_,body=app.handle('GET','/review/'+token+'?item='+item)
+        assert code==200 and b'SECRET_MODEL_ID' not in body and b'<script>' in body
+        assert app.handle('GET','/human-evaluation')[0]==200
+    finally:app.close()
