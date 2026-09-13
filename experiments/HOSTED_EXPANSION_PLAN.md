@@ -1576,3 +1576,15 @@ and RUN_AND_RETURN.md. Focused rig and browser checks are not a claim that a
 new paid campaign has completed end to end through the deployed UI. Existing
 collectors, including the scheduled Pro quota-reset cohort, are not restarted
 to exercise these controls.
+
+The selected-output reconciliation on 13 September repaired 387 historical
+artifact locators and completed 433 previously unindexed native assessments
+without any target call. Another 123 saved outputs require partial-job or
+recovery-source reconciliation. The associated Haiku inventory selects 267
+eligible saved answers using their original unstarted judging slots, while
+keeping an unresolved older budget reference separate. This is completion
+of existing judging obligations, not an expansion of inputs or spending limits.
+These results must join the corresponding output condition in Stats; they do
+not authorize pooling historical and corrected generations. The 230-input
+new Pro cohort, twenty untouched old-tail inputs and separate interrupted
+physical-attempt recovery retain their existing quota-reset owners.

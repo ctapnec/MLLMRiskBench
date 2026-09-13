@@ -1216,3 +1216,13 @@ executors; the preparation does not equate them with completed judgments.
 Additional source-grading contexts are outside this primary answer selection
 and stay explicit. Native and Haiku verdict publication still belongs to each
 exact saved output in its existing campaign workspace.
+
+For a historical import, reconcile coverage against each assignment's selected
+response, not just a completed controller or a matching input. An absent native
+reference first requires inspection of the corresponding saved verdicts. Publish
+existing verdicts without another model call; assess only genuinely unjudged
+outputs. A source-specific `not_applicable` assessment is not a valid common-policy
+decision. Setup turns stay outside that denominator. Artifact links must identify
+the actual checkpoint or final-file row; comparison aliases are not file locators.
+Correcting a locator must preserve the response, its generation condition and
+all accounting records.
