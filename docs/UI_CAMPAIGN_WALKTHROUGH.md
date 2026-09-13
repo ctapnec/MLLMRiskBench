@@ -61,7 +61,7 @@ controls appear after their prerequisite artifacts become available.
 | Sources | **Prepare a matched follow-on -> Choose source runs -> Prepare selected inputs** | Prepares the retained local input inventory without generation |
 | Workload | Select hosted models, then **Forecast matched hosted work -> Prepare forecast** | Applies per-model limits/settings and forecasts generation and judging costs |
 | Inputs | **Prepare replay inputs** | Preserves prompts, media, seeds and whole source clusters |
-| Preparation | **Count inputs and prepare collection** | Prepares programs and spending; may use token-count endpoints, not generation endpoints |
+| Preparation | **Count inputs and prepare collection -> Prepare counted collection** | Prepares programs and spending; may use token-count endpoints, not generation endpoints |
 | Collection | **Review prepared collection -> Start prepared collection** | Runs the reviewed selection and publishes progress to the campaign |
 | Continuation | Reopen the same review, then **Continue saved collection** | Reuses completed jobs, checkpoints and installed-runtime bindings |
 

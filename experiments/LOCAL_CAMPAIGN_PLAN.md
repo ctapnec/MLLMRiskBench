@@ -2103,6 +2103,12 @@ mid-lane.
 
 ## 8. Phase 7: read-only analysis (hours)
 
+The approved response-classifier add-on uses the already retained, matched
+local/hosted text outputs and exact Haiku judgments. Follow
+[RESPONSE_SVM.md](../docs/RESPONSE_SVM.md) for the frozen grouping, three tasks,
+baselines and held-out evaluation. This adds no paid calls, does not change
+campaign metrics, and does not replace the remaining human assessment.
+
 `level1_evidence` over `runs/thesis/runner` authorizes the complete measured
 lifecycle, including complete, partial and failed Runner artifacts and their
 final eligibility or request-error records. The metric grid is deliberately

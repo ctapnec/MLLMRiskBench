@@ -5972,6 +5972,13 @@ output digest. Until that human-only record exists, keep `gate8_met: false`.
 
 ## 16. Read-only analysis and suite summary
 
+Optional retained-response classifiers are available through
+`python -m experiments.response_svm` and **Tools -> Analysis and native imports**.
+The [response-SVM protocol](../docs/RESPONSE_SVM.md) covers export, harmful
+compliance, over-refusal and judge-disagreement evaluation, with grouped input
+splits and no provider calls. These are automated-label fidelity experiments,
+not replacements for native metrics or independently validated judges.
+
 *Console equivalent: this section's commands are also launchable as the `judge_sensitivity`, `kappa`, `transfer_matrix`, `paired_compare`, `level1_evidence`, `native_import`, `suite_summary`, `level2_report` and `figures` form(s) in the rig console (section 18); identical argument vectors, gates and artifacts.*
 
 Run the implemented diagnostics only on completed, content-validated artifacts:

@@ -5352,6 +5352,14 @@ def test_every_ui_command_parses_with_its_real_module_parser() -> None:
     # separate variants.  Values satisfy argparse types/choices only (no
     # module logic runs).
     forms: dict[str, list[dict[str, str]]] = {
+        "response_svm": [
+            {"--export": "on", "--database": "/data/console.db", "--candidates": "/data/inputs.json.gz",
+             "--campaign": "local", "--campaign#1": "hosted", "--matched-campaign": "hosted",
+             "--judge-condition": "haiku", "--exclude-model": "retired:", "--out": "/data/export"},
+            {"--evaluate": "on", "--dataset": "/data/export/dataset.jsonl", "--out": "/data/report",
+             "--seed": "0", "--bootstrap": "1000", "--max-feature-characters": "20000",
+             "--holdout-model": "model:", "--holdout-corpus": "corpus"},
+        ],
         "project_revision": [
             {"--expected-revision": "a" * 40, "--out": "runs/pr"},
             {"--validate": "runs/pr/x.json", "--sha256": "b" * 64},
