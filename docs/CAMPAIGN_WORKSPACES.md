@@ -1124,8 +1124,31 @@ missing response text. Existing execution ownership is not evidence of a valid
 verdict. The handoff retains exact output identities and original judging slots
 without spending again, discarding unfunded answers, or counting missing text
 as an assessment. Budgets are read once per preparation, with spending checked
-again at actual dispatch. Broader paid execution and verified cross-preparation
-verdict reuse remain open; the bounded paired execution flow is unchanged.
+again at actual dispatch. The all-output execution control below uses this
+handoff; the bounded paired execution flow is unchanged.
+
+**Prepare all-output Haiku judging** uses the selected Haiku configuration and
+original funding to prepare every pending output. It contacts the token-count
+endpoint only for requests whose conservative estimate exceeds their slot;
+ordinary estimates and completed counts remain local. No verdict is generated
+during preparation. The review shows the full coverage, first-attempt estimate,
+512-token verdict allowance and original budget ownership. It does not offer
+paid execution for empty selections or unresolved funding reviews.
+
+**Start or resume all-output Haiku judging** launches `retained_inventory_judging`
+with the saved preparation, at most two network workers and the existing
+retained-response executor. Its internal groups do not shrink the selection
+or serialize independent providers' target collection. The executor retains
+invalid assessments, allows three HTTP-error retries and no answer retries,
+and publishes each verdict and cost to the exact local or hosted output owner.
+Resume uses the original directories and completed verdicts without another
+call. Repeated launch reviews cannot create a second active execution.
+
+The entire saved answer list uses its recorded size, not the smaller limit for
+budget documents. Source content is reconciled once per launch, not per call.
+Existing executions from other preparations remain owned and are not inferred
+complete; verified cross-preparation verdict reuse remains open. A terminal
+selected judging job is not proof that the whole campaign has been judged.
 
 For a hosted-only follow-up, `retained_hosted_judge_items` connects a saved
 native source preparation to the collection's original Haiku slots. It is

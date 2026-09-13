@@ -6959,9 +6959,48 @@ another paid assessment. Missing text stays in coverage but is unscored.
 Unfunded outputs are not silently dropped or funded from another pool.
 
 `validated-items.json` is the no-call handoff for pending funded outputs;
-the other three categories have separate output-level files. This is not yet
-an all-output paid execution control or verified cross-preparation verdict
-reuse. The separately reviewed bounded paired executor remains unchanged.
+the other three categories have separate output-level files. The all-output
+execution flow below uses that handoff. The separately reviewed bounded paired
+executor remains unchanged; cross-preparation verdict reuse is not inferred.
+
+### Execute the all-output judging selection
+
+In Build, select the Haiku model in the judging controls, then choose
+**Prepare all-output Haiku judging**. This reuses the saved all-output items,
+original slots and pricing selection. It performs no target or judge
+generation. When a conservative request estimate exceeds its funded slot,
+the preparation can contact the token-count endpoint; successful counts are
+cached and ordinary estimates require no network call.
+
+Choose **Review all-output Haiku judging** after preparation completes. The
+review shows saved coverage, pending answer count, first-attempt estimate,
+512 output tokens per verdict, no answer retries and three HTTP-error retries.
+Unresolved funding or no pending outputs means no paid launch button. Existing
+execution ownership is not displayed as completed or valid assessment.
+
+**Start or resume all-output Haiku judging** uses two network workers and the
+existing executor, original budget and campaign output owners. Completed
+judgments are restored without another call; invalid verdicts remain retained.
+All selected funded outputs are executed, with no one-local-counterpart cap.
+Internal groups of up to 2,000 outputs preserve the existing plan format; they
+are not manual campaign phases or collection-judging barriers. Target
+collection remains independent. The whole answer inventory uses its recorded
+size rather than the smaller budget-document size cap.
+
+The equivalent CLI/Tools command is `retained_inventory_judging`. Preparation
+uses `--items-root`, `--judge-model`, `--api-config`, `--pricing-config`,
+`--pricing-as-of`, `--allow-token-counts` when counts may contact the provider,
+and `--out`. Execution uses `--execute --preparation <saved-plan-directory>
+--ack-paid-execution --workers 2 --out <original-judgment-directory>`.
+For UI publication supply `--workspace-id`, `--matching-workspace-id` and
+`--console-db`; Build supplies the selected campaign owner automatically.
+Resume the same preparation and execution directories. Full-file checksum
+verification remains opt-in with `--verify-artifact-sha256`.
+
+Completion covers the selected pending answers only. Missing text, unfunded
+outputs and other executions' unresolved judgments remain separate. Verified
+cross-preparation verdict reuse and automatic all-campaign readiness remain
+open; no matching input alone can authorize copying another output's verdict.
 
 ### Prepare funded hosted-only judging inputs
 
@@ -7008,6 +7047,7 @@ argument vectors; nothing below is console-only):
 | `retained_response_judge_pair_execute` | Publish retained-output judging into campaigns |
 | `retained_judge_inventory` | Inventory all answers on the same input entries |
 | `retained_inventory_judge_items` | Prepare funding for every matched output |
+| `retained_inventory_judging` | Execute the all-output judging selection |
 | `retained_hosted_judge_items` | Prepare funded hosted-only judging inputs |
 | `lane_canary` | 8.1, 9.1 |
 | `native_import` | 14.3, 16 |
