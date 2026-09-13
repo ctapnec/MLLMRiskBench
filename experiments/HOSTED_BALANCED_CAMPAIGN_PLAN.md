@@ -359,3 +359,19 @@ their own local and Haiku assessments completed. The original unknown charge
 for the interrupted request is retained. Full analysis and thesis reporting must
 use the reconciled workspace population, distinguishing attempted, usable,
 policy-rejected, missing, assessed and unassessed outcomes explicitly.
+
+### Pro retry window and independent judging
+
+On 13 September at 08:15 UTC, the new Pro cohort retained 228 of its 230
+assigned outputs. The active worker was sleeping in its existing transport
+retry path until 23:59:59 UTC, rather than generating text. The underlying
+provider error category had not yet been persisted; this observation alone
+does not establish a particular quota response or a model refusal.
+
+Keep that request and its original attempt accounting intact. The remaining
+unstarted input follows it. Judge the 224 outputs in completed jobs independently
+of this wait; their 200 eligible Haiku assessments and local scoring are complete.
+Four already-saved outputs belong to the two unfinished jobs. A separate
+continuation judges those jobs' six assigned outputs after collection finishes,
+without repeating the completed prefix. The full collection ETA cannot precede
+the observed retry window. This does not delay older saved-output judging.
