@@ -159,6 +159,14 @@ Build's General section now starts source preparation from the campaign index:
     remaining sources and keep earlier preparations available in the selector.
     Haiku selection and assessment remain a separate output-specific stage.
 
+Both native preparation and execution resolve required local media directories
+from the selected program's retained media index. This is confined to the
+no-generation reader; it does not extend a live provider's file access or modify
+the environment. Existing root order and saved output conditions are preserved.
+The same reader supports the later Haiku output view. Programs without a media
+index still need their original configured roots. This avoids relying on a
+campaign-specific launcher to supply extra image directories.
+
 Eleven focused rig checks cover this collection handoff, including an actual
 browser form submission and duplicate-click control; two removed-fix controls
 fail as required. A review of the actual two-model prepared source was rendered

@@ -6777,8 +6777,12 @@ python -m experiments.retained_native_judge_prepare \
 ```
 
 Repeat matching program/digest pairs for several programs. Omit `--job` to select
-all their jobs. Supply the original source configuration's corpus/media locators,
-including `URA_MEDIA_ROOTS` for images. This operation needs no provider key and
+all their jobs. Supply the original source configuration's corpus locators.
+The no-generation reader obtains any additional image directories from the
+selected program's retained media index, preserving existing media-root order.
+It does not change a live provider's media access or the process environment.
+Programs without that index continue to require their configured media roots.
+This operation needs no provider key and
 makes no target or judge calls. Full artifact hashing remains opt-in through
 `--verify-artifact-sha256`.
 
@@ -6816,6 +6820,10 @@ provide both options or neither. Source locators are the same as preparation;
 provider keys are not needed. The command uses existing managed model bytes,
 preserves the original cascade, and processes source jobs sequentially on the
 recorded judge device. An unchanged judge remains resident across those jobs.
+The same retained media-index resolution applies during execution and during
+preparation of Haiku's saved-output view. A shared unchanged index is read once,
+and its cache is invalidated when the file metadata or checksum option changes;
+it does not scan a corpus directory or hash model files.
 It makes no target calls. Model and artifact checksum verification are off by
 default; `--verify-model-sha256` and `--verify-artifact-sha256` opt in separately.
 
