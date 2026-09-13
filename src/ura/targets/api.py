@@ -22,6 +22,7 @@ import binascii
 import hashlib
 import hmac
 import json
+import logging
 import re
 import math
 import mimetypes
@@ -543,7 +544,13 @@ def _call_with_retry(
                     provider=provider,
                     transport_attempts=audit,
                 ) from exc
-            time.sleep(_transport_retry_delay(exc, attempt_number))
+            delay = _transport_retry_delay(exc, attempt_number)
+            logging.getLogger(__name__).warning(
+                "%s transport retry %d/%d in %.3f seconds (HTTP %s; %s)",
+                provider, attempt_number + 1, max_retries + 1, delay,
+                _transport_status_code(exc), type(exc).__name__,
+            )
+            time.sleep(delay)
             continue
         elapsed_ms = (time.perf_counter() - started) * 1000.0
         audit.append({

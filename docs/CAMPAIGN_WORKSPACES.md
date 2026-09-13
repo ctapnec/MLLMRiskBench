@@ -1283,3 +1283,10 @@ the successor's completed handoff rather than in the old budget's stop marker.
 Both forms must identify the same predecessor and successor, preserve the
 selected call slots and retain their paid-attempt history. This applies to
 Build, Tools and the retained-answer CLI workflow.
+
+Provider retry waits are written to the job log before sleeping, with the
+provider, HTTP status when available, next attempt number and delay. Request
+content, response bodies, headers and credentials are not logged. A waiting
+retry is not an active generation or a model refusal. The existing retry limit
+and provider-directed delay remain unchanged; independent providers and saved
+output judging can continue.

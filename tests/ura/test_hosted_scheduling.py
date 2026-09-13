@@ -77,6 +77,25 @@ def test_past_http_date_uses_backoff(monkeypatch):
     assert api._transport_retry_delay(error, 1) == 0.75
 
 
+@pytest.mark.parametrize('provider',['openai','anthropic','google','kimi','deepseek'])
+def test_retry_wait_is_visible_before_sleep_without_logging_payloads(monkeypatch,caplog,provider):
+    error=RuntimeError('secret response body must not appear in logs')
+    error.status_code=429
+    error.response=SimpleNamespace(headers={'retry-after':'56687.5','Authorization':'secret header'})
+    calls=[];waits=[]
+    def call(**request):
+        calls.append(request)
+        if len(calls)==1:raise error
+        return 'answer'
+    def sleep(seconds):
+        assert provider+' transport retry 2/4 in 56687.500 seconds (HTTP 429; RuntimeError)' in caplog.text
+        assert 'secret' not in caplog.text
+        waits.append(seconds)
+    monkeypatch.setattr(api.time,'sleep',sleep)
+    result,audit=api._call_with_retry(call,{'prompt':'secret prompt','api_key':'secret key'},provider=provider,max_retries=3)
+    assert result=='answer' and len(calls)==len(audit)==2 and waits==[56687.5]
+
+
 @pytest.mark.parametrize("header", [None, "15", "900"])
 def test_google_retry_info_waits_before_next_funded_attempt(monkeypatch, header):
     errors = pytest.importorskip("google.genai.errors")
