@@ -1192,8 +1192,9 @@ the four executor binding fields must be supplied together.
 This control is a bounded paired comparison: at most one local counterpart is
 selected per hosted answer. Its paid execution does not yet manage the larger
 all-matching-local-output population or cross-preparation judgment reuse.
-Automatic readiness, device scheduling, complete incremental population
-reconciliation and final deployed UI acceptance remain open. In particular,
+Automatic readiness, device scheduling and complete incremental population
+reconciliation are outside this bounded control. The observed acceptance scope
+is recorded at the end of this guide. In particular,
 the existence of a selected Haiku job is not evidence that all campaign outputs
 have been judged. See the operator runbook for the exact Build flow and scope.
 
@@ -1220,8 +1221,8 @@ and label title rather than dominating the table.
 
 The inventory does not reuse verdicts, allocate money or claim that judging
 has finished. Text availability alone does not establish rubric eligibility.
-The bounded Build comparison above remains unchanged until its all-output
-execution and reuse integration is complete. Any later reuse must refer to the same saved output
+The bounded Build comparison above is distinct from the all-output execution
+controls below. Cross-preparation reuse must refer to the same saved output
 and judging condition, never merely to the same input or another model's answer.
 
 Build's **Prepare all-output judging funding** action now connects that saved
@@ -1368,3 +1369,21 @@ The matching Qwen answer already has a valid Haiku verdict under the same judgin
 condition, so it was not charged again. This acceptance is separate from the
 production experimental populations. Forty-five focused cost/import/judging
 tests, the removed-fix control and real saved-data publication pass on the rig.
+
+## Inspecting completed analyses
+
+Analyses can be attached to either campaign through Tools without generating
+new model answers. Select the owning campaign, the analysis command and its
+exact retained inputs. For completed historical results, use the offered
+historical-code repository field; it selects the corresponding original reader,
+not a new model version. Keep corrected conditions separate from predecessors.
+
+The completed Local examples include paired replay/Crescendo analysis
+(`job-ebb5f0582d4b`) and source-task classification export
+(`job-9238b9c4d1ab`). Open each job to inspect its arguments and retained output
+links. The latter supplies JSON, CSV and Markdown; its five moderation
+thresholds each have 404 records from 100 source conversations. The 40 exported
+metric/coverage rows do not represent 40 independent experiments or a common
+safety score. Both flows were executed through the live browser without new
+target or judge calls. See METRICS.md and RUN_AND_RETURN.md for the repeatable
+parameter choices and interpretation constraints.

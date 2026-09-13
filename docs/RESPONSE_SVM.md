@@ -86,8 +86,9 @@ on 13 September 2026. Focused regressions and leakage mutation checks passed.
 An actual browser-launched export produced 4,682 hosted records in four seconds
 on an isolated console; its job completed, with no JavaScript errors or stuck
 busy state. This covers export, not a paid campaign's full Build flow. The
-general Build acceptance and the waiting Google campaign remain separate
-obligations. Exact numerical results and split membership accompany each run;
+general Build acceptance and Google collection are separate from this SVM
+export check; their current state is recorded in the campaign plans. Exact
+numerical results and split membership accompany each run;
 the thesis reports observed limitations instead of selecting a universal winner.
 
 ## Reusable fitted classifiers
