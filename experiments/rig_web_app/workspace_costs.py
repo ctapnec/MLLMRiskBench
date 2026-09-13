@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 import time
+from pathlib import Path
 
 
 def budget_attempt_rows(plan: dict, ledger: dict, *, bindings: dict[str, dict], source_ref: str) -> dict[str, list[dict]]:
@@ -41,12 +42,33 @@ def budget_attempt_rows(plan: dict, ledger: dict, *, bindings: dict[str, dict], 
                 "role": slot["pool"], "state": state, "cost_microusd": retained["actual_cost_microusd"],
                 "exposure_microusd": 0 if state == "settled" else reported_bound.get(
                     "bound_microusd", bounds.get(call_id, slot["bound_microusd"])),
-                "source_ref": source_ref, **tokens}
+                "source_ref": source_ref, "budget_ref": str(Path(source_ref).resolve()), **tokens}
             result.setdefault(owner, []).append(row)
     return result
 
 
 class WorkspaceCostsMixin:
+    def _cost_attempt_key(self, row: tuple, budget_ref: str | None):
+        """Separate a campaign's independently funded use of a logical call ID.
+
+        Keep legacy keys and funding-transfer continuations stable. A copied
+        ledger or an already attributed answer is not another physical charge.
+        Only the budget translator supplies an explicit budget reference.
+        """
+        scoped = 'campaign:' + row[2] + ':' + row[0]
+        alternate = self._conn.execute(
+            'SELECT * FROM campaign_cost_attempts WHERE call_id=? AND attempt_number=?',
+            (scoped, row[1])).fetchone()
+        if alternate is not None:
+            return (scoped, *row[1:]), alternate
+        old = self._conn.execute(
+            'SELECT * FROM campaign_cost_attempts WHERE call_id=? AND attempt_number=?', row[:2]).fetchone()
+        if (old is not None and old['campaign_id'] != row[2] and budget_ref is not None
+                and str(Path(old['source_ref']).resolve()) != budget_ref
+                and not (row[4] is not None and old['response_id'] == row[4])):
+            return (scoped, *row[1:]), None
+        return row, old
+
     def _create_workspace_costs(self) -> None:
         self._conn.execute(
             "CREATE TABLE IF NOT EXISTS campaign_cost_attempts ("
@@ -102,15 +124,19 @@ class WorkspaceCostsMixin:
             response_id = text("response_id", optional=True)
             if role == "judge" and response_id is None:
                 raise ValueError("Judging cost must identify the judged output")
-            prepared.append((text("call_id"), number, campaign_id, text("assignment_id"), response_id,
-                provider, text("model"), role, state, *counts, text("source_ref")))
+            source_ref = text("source_ref")
+            budget_ref = text("budget_ref", optional=True)
+            if budget_ref is not None and budget_ref != str(Path(source_ref).resolve()):
+                raise ValueError("Cost budget reference differs from its source ledger")
+            prepared.append(((text("call_id"), number, campaign_id, text("assignment_id"), response_id,
+                provider, text("model"), role, state, *counts, source_ref), budget_ref))
 
         with self._lock:
             if self._conn is None:
                 raise ValueError("Campaign database is unavailable")
             try:
                 with self._conn:
-                    for row in prepared:
+                    for row, budget_ref in prepared:
                         if not self._conn.execute(
                             "SELECT 1 FROM campaign_assignments WHERE campaign_id=? AND assignment_id=?", row[2:4]
                         ).fetchone():
@@ -120,9 +146,7 @@ class WorkspaceCostsMixin:
                             row[2:5],
                         ).fetchone():
                             raise ValueError("Judged/generated output does not belong to this assignment")
-                        old = self._conn.execute(
-                            "SELECT * FROM campaign_cost_attempts WHERE call_id=? AND attempt_number=?", row[:2]
-                        ).fetchone()
+                        row, old = self._cost_attempt_key(row, budget_ref)
                         if old:
                             # One physical bill cannot be attributed to two outputs
                             # or campaigns merely because it appears in two reports.

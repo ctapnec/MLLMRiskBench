@@ -157,3 +157,39 @@ def test_retained_budget_translation_keeps_unknown_retry_usage_and_output_owners
     assert app.db.workspace_cost_totals(local)[0]['cost_microusd'] == 123
     assert app.db.workspace_cost_totals(hosted)[0]['cost_microusd'] is None
     assert app.db.workspace_cost_totals(hosted)[0]['http_attempts'] == 2
+
+
+def test_independent_campaign_budget_does_not_overwrite_historical_probe(app, tmp_path):
+    from experiments.rig_web_app.workspace_costs import budget_attempt_rows
+    historical, current = owner(app), owner(app)
+    old = {**attempt(), 'response_id': None, 'state': 'unknown', 'cost_microusd': None,
+        'input_tokens': None, 'output_tokens': None, 'exposure_microusd': 50000,
+        'source_ref': str(tmp_path/'historical/ledger.json')}
+    app.db.publish_workspace_costs(historical, [old])
+    before = dict(app.db.workspace_cost_totals(historical)[0])
+    plan = {'planned_calls':[dict(call_id='call',provider='openai',pool='target',bound_microusd=50000)]}
+    ledger = {'attempts':{'call':{'1':dict(state='settled',actual_cost_microusd=15282)}}}
+    binding = {'call':dict(campaign_id=current,assignment_id='a',response_id='answer',model='model')}
+    rows = budget_attempt_rows(plan,ledger,bindings=binding,source_ref=str(tmp_path/'current/ledger.json'))[current]
+    for _ in range(2):
+        app.db.publish_workspace_costs(current, rows)
+    assert dict(app.db.workspace_cost_totals(historical)[0]) == before
+    assert app.db.workspace_cost_totals(current)[0]['cost_microusd'] == 15282
+    assert app.db.workspace_cost_totals(current)[0]['http_attempts'] == 1
+    # A later funding transfer retains this campaign's same physical attempt.
+    moved = budget_attempt_rows(plan,ledger,bindings=binding,source_ref=str(tmp_path/'transferred/ledger.json'))[current]
+    app.db.publish_workspace_costs(current, moved)
+    assert app.db.workspace_cost_totals(current)[0]['http_attempts'] == 1
+    assert len(app.db._query('SELECT * FROM campaign_cost_attempts')) == 2
+
+
+@pytest.mark.parametrize('same_budget,same_output', [(True, False), (False, True)])
+def test_budget_scope_does_not_duplicate_a_shared_physical_bill(app, tmp_path, same_budget, same_output):
+    historical, current = owner(app), owner(app)
+    source = str(tmp_path/'original/ledger.json')
+    old = {**attempt(), 'source_ref': source, 'response_id': 'answer' if same_output else None}
+    app.db.publish_workspace_costs(historical, [old])
+    incoming = source if same_budget else str(tmp_path/'different/ledger.json')
+    with pytest.raises(ValueError, match='already belongs'):
+        app.db.publish_workspace_costs(current,[{**attempt(),'source_ref':incoming,'budget_ref':incoming}])
+    assert app.db.workspace_cost_totals(current) == []
