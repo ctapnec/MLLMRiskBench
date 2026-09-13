@@ -167,6 +167,23 @@ The same reader supports the later Haiku output view. Programs without a media
 index still need their original configured roots. This avoids relying on a
 campaign-specific launcher to supply extra image directories.
 
+The typed `hosted_program_runtime` command provides the installed-runtime part
+of the remaining readiness handoff. It accepts one untouched counted program,
+its existing spending plan, the current project revision and the managed-model
+store. It binds new request-specific acquisition plans to existing snapshots,
+with no downloads, target calls or judge calls. A matching interrupted output
+directory resumes its saved plans and receipts. Already-started programs must
+use checkpoint continuation instead; this step cannot create fresh execution
+arguments around paid work. Full model and artifact checksums are optional and
+off by default, and the console supplies source locators without provider keys.
+
+Its output is explicitly **transport observation pending**, not ready for
+collection. Whole selected jobs become prospective transport probes without
+adding inputs or changing the funded requests; a separate scoring-capable
+measured job remains. Completing their observations, exposing this step directly
+in the matched Build flow and carrying the resulting program files through
+collection and both judging stages remain part of the unfinished UI handoff.
+
 Eleven focused rig checks cover this collection handoff, including an actual
 browser form submission and duplicate-click control; two removed-fix controls
 fail as required. A review of the actual two-model prepared source was rendered

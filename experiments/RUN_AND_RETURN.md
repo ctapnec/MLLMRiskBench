@@ -7049,6 +7049,42 @@ helpers their own direct controller directories. If registration fails before
 calls, correct that path and reuse the completed plans and count receipts; do
 not regenerate targets or repeat completed judgments to repair the handoff.
 
+### Bind an untouched hosted program to installed models
+
+`hosted_program_runtime` replaces the installed-model portion of a custom
+retained-campaign launcher. Select an existing counted program and its spending
+plan. The program must have no started target attempts. The command preserves
+its requests and inputs, selects whole funded transport-probe jobs from fixed
+input metadata, and leaves a separate scoring-capable measured job. It creates
+request-specific acquisition plans and binds only model snapshots already in
+the managed store. It makes no provider, target or judge calls and cannot
+download missing resources.
+
+```bash
+python -m experiments.hosted_program_runtime \
+  --program "$PROGRAM" --program-sha256 "$PROGRAM_SHA" \
+  --budget-root "$BUDGET_ROOT" --budget-plan-sha256 "$BUDGET_SHA" \
+  --project-root "$PROJECT_ROOT" --expected-commit "$PROJECT_COMMIT" \
+  --store "$URA_MODEL_STORE" --out "$RUNTIME_PREPARATION"
+```
+
+The program, budget and output locators must be resolved absolute paths. Reuse
+the same output directory to continue an interrupted no-call preparation; the
+original program, project revision, store and options must still agree. Saved
+plans and receipts are reused rather than redownloaded. Checksum options
+`--verify-model-sha256` and `--verify-artifact-sha256` are separate, explicit
+opt-ins, both off by default. Missing models belong in the explicit installer,
+not a silent network fallback during runtime preparation. The typed console
+command receives source locators but no provider credentials.
+
+`runtime-program.json` is not yet a runnable measured collection: its status
+states that transport observations are still pending. Its selected probes must
+be executed against their original funded slots, their successful observations
+attached to the non-probe jobs, and the resulting program used consistently by
+collection and both judging stages. This complete Build handoff is still under
+implementation. Do not pass the unobserved runtime program off as an attested
+collection or reuse this operation to reset already-started paid work.
+
 Console-form to runbook-section mapping (the console builds the identical
 argument vectors; nothing below is console-only):
 
@@ -7062,6 +7098,7 @@ argument vectors; nothing below is console-only):
 | `run_matrix` (dry-run, probe, canary, measured) | 4.1, 8/8.1, 9/9.1, 10-13 |
 | `live_attestation` | 8.1, 9 |
 | `hosted_campaign_execute` | Collect prepared hosted programs concurrently |
+| `hosted_program_runtime` | Bind an untouched hosted program to installed models |
 | `retained_native_judge_prepare` | Prepare local judging of saved hosted answers |
 | `retained_native_judge_execute` | Execute local judging of saved hosted answers |
 | `retained_response_judge_pair_execute` | Publish retained-output judging into campaigns |
