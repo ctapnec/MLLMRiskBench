@@ -97,6 +97,60 @@ def judging_inventory_review(app, params):
     return _page('Same-input output coverage', body, active='Build')
 
 
+def prepare_inventory_judging(app, params):
+    owner = params.get('campaign_id', '')
+    receipt = prepared_collection(app, params)
+    argv = completed_argv(app, params.get('retained_inventory_job'), owner, 'retained_judge_inventory')
+    inventory_path = argument(argv, '--out')
+    values = {'--inventory': inventory_path, '--budget-root': str(Path(receipt['budget']['path']).parent),
+        '--budget-plan-sha256': receipt['budget']['sha256']}
+    for flag in ('--local-view', '--hosted-view'):
+        paths = [argv[index+1] for index, value in enumerate(argv[:-1]) if value == flag]
+        for index, path in enumerate(paths):
+            values[flag + (f'#{index}' if index else '')] = path
+    with app._app_lock:
+        previous = collection_history(app, owner, [inventory_path],
+            command='retained_inventory_judge_items', input_flag='--inventory')
+        if previous is not None:
+            old = json.loads(previous['argv'])
+            if (old == build_argv('retained_inventory_judge_items', dict(values, **{'--out': argument(old, '--out')}))
+                    and _state(app, previous) in {'running', 'starting', 'queued', 'complete'}):
+                app._save_build_campaign(dict(params, retained_inventory_items_job=previous['job_id']))
+                return SimpleNamespace(job_id=previous['job_id'])
+            if _state(app, previous) in {'running', 'starting', 'queued'}:
+                raise ValueError('This all-output funding review is still active; open its job')
+        folder = (app.results_root / 'rig-web' / 'judging-inventory' / uuid4().hex).resolve()
+        folder.mkdir(parents=True, mode=0o700)
+        values['--out'] = str(folder / 'judging-items')
+        job = app.start_job('retained_inventory_judge_items', values, campaign_id=owner)
+        app._save_build_campaign(dict(params, retained_inventory_items_job=job.job_id))
+        return job
+
+
+def inventory_judging_review(app, params):
+    owner = params.get('campaign_id', '')
+    argv = completed_argv(app, params.get('retained_inventory_items_job'), owner, 'retained_inventory_judge_items')
+    value = json.loads((Path(argument(argv, '--out')) / 'result.json').read_text())
+    if value.get('status') != 'prepared_no_calls' or value.get('scope') != 'all_saved_outputs_on_selected_inputs':
+        raise ValueError('The selected job has no completed all-output funding review')
+    categories = (('selected_outputs', 'Funded and not yet started'),
+        ('existing_execution_owned', 'Owned by existing judging executions'),
+        ('unfunded_outputs', 'No matching funding in this selection'), ('missing_outputs', 'Missing response text'))
+    body = '<h1>Judging coverage and funding</h1>' + app._campaign_banner(owner)
+    body += (f"<p>{value['input_entries']:,} input entries; {value['retained_outputs']:,} saved local and hosted outputs. "
+        'Every matching model answer is accounted for, not one local counterpart per hosted answer.</p>'
+        '<dl>' + ''.join('<dt>' + label + f"</dt><dd>{value[field]:,}</dd>" for field, label in categories) + '</dl>'
+        '<p>This review made no calls and allocated no money. Existing execution ownership is not proof of a valid verdict. '
+        'Resume its original judgment artifacts instead of charging that output again. Missing responses remain unscored. '
+        'Unfunded answers have not been silently removed or funded from another pool.</p>'
+        '<p>The full-output handoff is saved for judging preparation. It is not the separately reviewed paired selection, '
+        'and does not start paid execution.</p>'
+        "<details><summary>Exact command</summary><pre>" + html.escape(' '.join(argv)) + '</pre></details>'
+        + "<p><a href='/jobs/" + html.escape(params['retained_inventory_items_job'], quote=True) + "'>Open output-level details</a>"
+        + " | <a href='/build?campaign_id=" + html.escape(owner, quote=True) + "'>Return to Build</a></p>")
+    return _page('Judging coverage and funding', body, active='Build')
+
+
 def judging_inventory_panel(params):
     body = ("<section class='card'><h2>Same-input output coverage</h2>"
         '<p>Include all local models and every saved output on the hosted input entries. '
@@ -111,4 +165,8 @@ def judging_inventory_panel(params):
     if params.get('retained_inventory_job'):
         body += "<input form='builder' type='hidden' name='retained_inventory_job' value='" + html.escape(params['retained_inventory_job'], quote=True) + "'>"
         body += "<button form='builder' formaction='/build/review-judging-inventory'>Review all-output coverage</button>"
+        body += "<button form='builder' formaction='/build/prepare-inventory-judging'>Prepare all-output judging funding</button>"
+    if params.get('retained_inventory_items_job'):
+        body += "<input form='builder' type='hidden' name='retained_inventory_items_job' value='" + html.escape(params['retained_inventory_items_job'], quote=True) + "'>"
+        body += "<button form='builder' formaction='/build/review-inventory-judging'>Review all-output judging funding</button>"
     return body + '</section>'
