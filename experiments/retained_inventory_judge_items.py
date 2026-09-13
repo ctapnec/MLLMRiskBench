@@ -13,7 +13,8 @@ from pathlib import Path
 
 from experiments import retained_judge_inventory as inventory
 from experiments import retained_response_judge as retained
-from experiments.hosted_attempt_budget import AttemptBudget, _budget_lock
+from experiments import retained_hosted_judge_items as funding
+from experiments.hosted_attempt_budget import AttemptBudget
 from experiments.hosted_campaign_budget import load_bound_json
 from experiments.retained_response_judge_execute import _write_new
 
@@ -55,9 +56,9 @@ def budget_snapshots(budgets):
         if key in seen:
             continue
         seen.add(key)
-        with _budget_lock(budget.root):
-            _plan, ledger, slots = budget._load()
-        snapshots.append((dict(root=key[0], plan_sha256=key[1]), ledger, slots))
+        current, ledger, slots = funding.current_budget_snapshot(budget)
+        snapshots.append((dict(root=str(current.root), plan_sha256=current.expected_plan_sha256),
+            ledger, slots, key[1]))
     return snapshots
 
 
@@ -95,8 +96,8 @@ def collect_items(*, saved_inventory, local_views, hosted_views, budgets):
             expected_budget = program['budget_plan_sha256']
         else:
             call_id = 'judge-local-' + row['retained_row_sha256']
-        candidates = [(descriptor, ledger, slots[call_id]) for descriptor, ledger, slots in snapshots
-            if call_id in slots and (expected_budget is None or descriptor['plan_sha256'] == expected_budget)]
+        candidates = [(descriptor, ledger, slots[call_id]) for descriptor, ledger, slots, original_plan in snapshots
+            if call_id in slots and (expected_budget is None or expected_budget in {original_plan,descriptor['plan_sha256']})]
         if any(slot['provider'] != 'anthropic' or slot['pool'] != 'judge' for _, _, slot in candidates):
             raise ValueError('An output needs its existing Anthropic judging slot')
         started = [descriptor for descriptor, ledger, _ in candidates if ledger['attempts'].get(call_id)]

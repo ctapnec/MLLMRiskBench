@@ -36,7 +36,7 @@ def population(tmp_path, monkeypatch):
     monkeypatch.setattr(subject, 'source_population', lambda *_: (
         rows['local'], rows['hosted'], audit['local'], audit['hosted'], metadata, cells))
     monkeypatch.setattr(subject, 'hosted_sources', lambda _: owners)
-    monkeypatch.setattr(subject, '_budget_lock', lambda _: nullcontext())
+    monkeypatch.setattr(subject.funding, '_budget_lock', lambda _: nullcontext())
     ledger, reads = dict(attempts={}), []
     def load():
         reads.append(True)
@@ -97,6 +97,27 @@ def test_another_budget_cannot_stand_in_for_original_hosted_funding(population):
     pending, owned, unfunded, missing = population.collect()
     assert len(pending) == 3 and len(unfunded) == 2 and owned == missing == []
     assert all(row['cohort'] == 'hosted' for row in unfunded)
+
+
+def test_all_output_build_handoff_uses_recorded_successor_and_keeps_old_slot_ownership(population,tmp_path,monkeypatch):
+    old=population.budget
+    old.root.mkdir()
+    current=tmp_path/'current';current.mkdir()
+    (current/'plan.json').write_text('{}')
+    (old.root/'paid-circuit.json').write_text(json.dumps(dict(schema='ura-hosted-budget-superseded/1',
+        status='superseded_not_a_target_failure',predecessor_plan_sha256='a'*64,
+        successor=dict(path=str(current/'plan.json'),sha256='b'*64))))
+    ledger=copy.deepcopy(population.ledger)
+    ledger['attempts']['judge-hosted-0']={'1':{'state':'settled'}}
+    successor=SimpleNamespace(root=current,expected_plan_sha256='b'*64,
+        _load=lambda:({},ledger,population.slots))
+    monkeypatch.setattr(subject.funding,'AttemptBudget',lambda *a:successor)
+    monkeypatch.setattr(subject.funding,'load_bound_json',lambda *a:({},{}))
+    pending,owned,unfunded,missing=population.collect()
+    assert len(pending)==4 and len(owned)==1 and not unfunded and not missing
+    assert all(item['budget']==dict(root=str(current),plan_sha256='b'*64) for item in pending)
+    assert owned[0]['call_id']=='judge-hosted-0'
+    assert len(population.reads)==1
 
 
 def test_prepare_and_tools_preserve_all_output_coverage_without_calls(population, tmp_path, monkeypatch):

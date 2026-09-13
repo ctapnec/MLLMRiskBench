@@ -17,11 +17,13 @@ from experiments.hosted_campaign_budget import load_bound_json
 from experiments.retained_response_judge_execute import _write_new
 
 
-def current_budget_snapshot(budget, call_ids):
+def current_budget_snapshot(budget, call_ids=None):
     """Follow recorded funding transfers, preserving slots and physical history."""
     seen=set()
     with _budget_lock(budget.root):
         _plan,ledger,slots=budget._load()
+    if call_ids is None:
+        call_ids=[key for key,slot in slots.items() if slot['provider']=='anthropic' and slot['pool']=='judge']
     while True:
         identity=(str(budget.root.resolve()),budget.expected_plan_sha256)
         if identity in seen:

@@ -1250,6 +1250,9 @@ new preparation. Hosted judging follows an explicitly recorded budget transfer
 to its current ledger only when the selected original slots and physical attempt
 history are preserved. It never reopens a superseded pool or creates extra credit.
 Provider error circuits remain separate and are not cleared by this lookup.
+The same funding-transfer reader is used by Build's all-output judging handoff
+and its CLI/Tools counterpart. Existing executions stay owned in the current
+ledger; their presence alone still does not establish an output-specific verdict.
 
 When an interrupted paid attempt is reconciled from in-flight to unknown charge,
 publish that physical attempt through the existing cost-index writer as part of
