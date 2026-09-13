@@ -76,6 +76,10 @@ is still in offline mode. Its synthetic-only tool-input exclusion does not
 filter or invalidate this retained selection. Keep defense set to **none**;
 select **rules,guardrail** and the installed scoring guardrail in Evaluation.
 Collection and output-specific judging remain separate stages.
+The collection review includes the console's configured `URA_MODEL_STORE`
+location when installed-runtime preparation is needed. No installation is
+performed. A failed launch before collection initialization retries the same
+prepared inputs and budget; an initialized collection resumes its saved state.
 
 ## Judge the actual saved answers
 

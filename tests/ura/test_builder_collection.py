@@ -38,6 +38,10 @@ def study(tmp_path, monkeypatch):
         calls.append((command,dict(values),kw))
         app.db.upsert_job(job,state='running',exit_code=None)
         app.db.attach_workspace_member(kw['campaign_id'],'job',job.job_id,'collection')
+        # A started collector writes this before runtime preparation or calls.
+        control = __import__('pathlib').Path(values['--out'])
+        control.mkdir(parents=True)
+        (control/'selection.json').write_text('{}')
         return job
     monkeypatch.setattr(app,'start_job',launch)
     params=dict(work_kind='campaign',campaign_id=owner,retained_programs_job=preparation.job_id)
@@ -105,6 +109,25 @@ def test_continuation_uses_same_program_budget_and_previous_control(study):
         assert current[flag] == previous[flag]
 
 
+def test_failed_before_collection_initialization_can_retry_without_a_phantom_resume(study, monkeypatch):
+    from pathlib import Path
+    app,params,calls,_ = study
+    _,ticket = review(app,params)
+    subject.collect_prepared(app,{'launch_ticket':ticket})
+    prior = Path(calls[0][1]['--out'])
+    (prior/'selection.json').unlink()
+    prior.rmdir()
+    app.db._conn.execute("UPDATE jobs SET state='failed',exit_code=1 WHERE job_id='collection-0'")
+    app.db._conn.commit()
+    monkeypatch.setattr(subject.subprocess,'check_output',lambda *a,**kw:'c'*40+'\n')
+    _,ticket = review(app,params)
+    subject.collect_prepared(app,{'launch_ticket':ticket})
+    assert '--resume-from' not in calls[1][1]
+    assert calls[1][1]['--expected-commit'] == 'c'*40
+    assert calls[1][1]['--program'] == calls[0][1]['--program']
+    assert calls[1][1]['--budget-plan-sha256'] == calls[0][1]['--budget-plan-sha256']
+
+
 @pytest.mark.parametrize('change',[{'retained_collection_workers':'0'}, {'retained_collection_workers':'9'},
     {'retained_collection_workers':'1.5'}, {'retained_programs_job':'unknown'}])
 def test_invalid_collection_options_do_not_launch(study,change):
@@ -168,10 +191,13 @@ def test_collection_panel_uses_normal_build_form():
     assert "value='2'" in page
 
 
-def test_build_includes_runtime_and_both_judging_stages_use_actual_outputs(study):
+def test_build_includes_runtime_and_both_judging_stages_use_actual_outputs(study, monkeypatch, tmp_path):
     from pathlib import Path
     from experiments.hosted_retained_inputs import _descriptor
     app,params,calls,receipt = study
+    store = tmp_path/'installed-models'
+    store.mkdir()
+    monkeypatch.setenv('URA_MODEL_STORE', str(store))
     for descriptor in receipt['programs']:
         path = Path(descriptor['path'])
         program = json.loads(path.read_text())
@@ -181,6 +207,7 @@ def test_build_includes_runtime_and_both_judging_stages_use_actual_outputs(study
     assert b'Installed runtime binding and transport checks are included' in body
     subject.collect_prepared(app,{'launch_ticket':ticket})
     assert calls[0][1]['--prepare-runtime'] == 'on'
+    assert calls[0][1]['--model-store'] == str(store.resolve())
     control = Path(calls[0][1]['--out'])
     root = control/'runtime'
     root.mkdir(parents=True)
@@ -207,3 +234,13 @@ def test_build_includes_runtime_and_both_judging_stages_use_actual_outputs(study
     subject.collect_prepared(app,{'launch_ticket':ticket})
     assert calls[1][1]['--prepare-runtime'] == 'on'
     assert calls[1][1]['--program'] == receipt['programs'][0]['path']
+
+
+def test_collection_environment_keeps_installed_store_locator(study, monkeypatch):
+    app,_,_,_ = study
+    monkeypatch.setenv('URA_MODEL_STORE','/existing/models')
+    monkeypatch.setattr(app,'_strict_config_document',lambda *a: {'jobs':[{'argv':[]}]})
+    monkeypatch.setattr(app,'_selected_matrix_environment_names',lambda *a: set())
+    env = app._generic_child_environment('hosted_campaign_execute',
+        {'--program':'/prepared/model.json','--program-sha256':'a'*64})
+    assert env['URA_MODEL_STORE'] == '/existing/models'

@@ -1749,6 +1749,9 @@ class LifecycleMixin:
         if command in {"hosted_campaign_execute", "retained_native_judge_prepare", "hosted_program_runtime"}:
             from .catalog import _param_values
 
+            if command == "hosted_campaign_execute":
+                allowed.add("URA_MODEL_STORE")
+
             parameters = {parameter.flag: parameter for parameter in self.commands[command].params}
             paths = _param_values(parameters["--program"], values)
             digests = _param_values(parameters["--program-sha256"], values)

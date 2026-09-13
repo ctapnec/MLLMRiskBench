@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import html
 import json
+import os
 from pathlib import Path
 import subprocess
 from uuid import uuid4
@@ -85,18 +86,31 @@ def collection_review(app, params):
     history = collection_history(app,owner,[row['path'] for row in receipt['programs']])
     if needs_runtime:
         values['--prepare-runtime'] = 'on'
+        store = os.environ.get('URA_MODEL_STORE')
+        if store:
+            values['--model-store'] = str(Path(store).resolve(strict=True))
     if history is not None:
         old = json.loads(history['argv'])
+        previous_root = Path(argument(old, '--out'))
+        initialized = (previous_root/'selection.json').is_file()
+        failed_before_start = (not previous_root.exists() and history['state'] == 'failed'
+                               and history['exit_code'] == 1)
+        if not initialized and not failed_before_start:
+            raise ValueError('Previous collection control records are incomplete; inspect its job before continuing')
         # Continue the saved execution policy, not a newly inferred preparation.
         values.pop('--prepare-runtime', None)
         if '--prepare-runtime' in old:
             values['--prepare-runtime'] = 'on'
         if '--model-store' in old:
             values['--model-store'] = argument(old, '--model-store')
-        for flag in ('--budget-root','--budget-plan-sha256','--project-root','--expected-commit'):
+        flags = ('--budget-root','--budget-plan-sha256','--project-root')
+        if initialized:
+            flags += ('--expected-commit',)
+        for flag in flags:
             if argument(old,flag) != values[flag]:
                 raise ValueError('This collection needs a reviewed revision or budget recovery; its previous settings cannot change silently')
-        values['--resume-from'] = argument(old,'--out')
+        if initialized:
+            values['--resume-from'] = str(previous_root)
     action = 'Continue saved collection' if history is not None else 'Start prepared collection'
     ticket = app._new_launch_ticket({'campaign_id':owner,'values':json.dumps(values),
         'previous_job':history['job_id'] if history is not None else ''},purpose='matched-collection')
