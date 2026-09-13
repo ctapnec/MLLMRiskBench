@@ -12,20 +12,30 @@ at two. Use 4,096 output tokens, no automatic answer retry and three HTTP-error
 retries. Every eligible new Pro answer requires its own native and Haiku verdict;
 the 1,030 already-assessed local counterparts are comparison data, not Pro verdicts.
 
-At 05:34 UTC the combined collection has attempted 10,716 of 10,966 assignments,
+At 06:34 UTC the combined collection has attempted 10,716 of 10,966 assignments,
 with 10,703 usable answers or explicit policy outcomes. Remaining tracked Google
 allowance is USD 9.994216. The additional Pro spending ceiling is USD 10 within
 the existing account credit, including its older tails, not new money. The Haiku
-allowance at that snapshot is USD 10.795517; subsequent judgments reduce it.
+allowance at that snapshot is USD 10.721531.
 Preserve the dated account balance history below. Forecast Pro completion from
 post-reset throughput, rather than promising a finish before any quota observation.
 
 The selected-output gap audit subsequently published 38 saved native verdicts
 without calls and completed 62 additional native assessments. Its earlier
-123-output gap is reduced to 23 historical partial-run outputs requiring source
-reconciliation. Another 45 actual saved Opus answers received Haiku judgments,
+123-output gap is now resolved, including the last 23 historical references.
+Another 45 actual saved Opus answers received Haiku judgments,
 all valid, costing USD 0.052028. These supplement the completed 267-answer Haiku
 selection, not its input denominator. No target answer was regenerated.
+
+The final historical follow-up published 23 native assessments, preserving two
+original Sol judgments and two additional unindexed historical non-answer records.
+Eleven further Opus Haiku judgments completed for USD 0.008444. The apparent Sol
+paid stop referred to a superseded budget; its current funded slot already held
+the exact answer's verdict. Seven existing Sol/DeepSeek assessments were checked
+against their original judging selections, prompts, outputs and criteria. Paired
+and hosted-only grouping identifiers differ, but the assessed content does not.
+No extra judge call or funding increase was needed to resolve those references.
+The former DeepSeek budget-reference gap is closed.
 
 The Local and API workspaces, judging charts and Costs pages passed live
 desktop/mobile browser inspection on 13 September. Full new paid execution

@@ -1,6 +1,6 @@
 # All-local test campaign plan: every corpus arm, every framework runtime, free models only
 
-Current recovery observation, 13 September at 05:34 UTC: all 2,636 selected
+Current recovery observation, 13 September at 06:34 UTC: all 2,636 selected
 model-input conditions have been attempted. The lossless PNG correction returns
 normal-ended usable answers for all 62 affected Gemma/Ministral conditions.
 After applying those explicit replacement links, 2,196 conditions have normal
@@ -17,6 +17,14 @@ two completion tokens; increasing an output allowance does not establish a cure
 for those records. GraySwan additionally retains symbol-only length exhaustion.
 Keep causal interpretation separate from execution coverage and native scoring.
 Final replacement-aware analysis and thesis synthesis remain open.
+
+The response-status cross-tab has 2,196 usable non-truncated, 30 usable truncated,
+58 missing/unusable non-truncated and 352 missing/unusable truncated conditions.
+It sums to the 2,636 selected combinations without adding overlapping categories.
+Chapter V now reports these observed recovery counts and the 31-image, two-model
+lossless codec correction. They describe a selected recovery cohort, not a random
+whole-campaign sample or a safety ranking. The same distinction applies to UI
+exports and the later replacement-aware comparison.
 
 UI publication requirement, 11 September 2026: present all retained local work
 as one model-first Local campaign workspace, with recoveries and operational
