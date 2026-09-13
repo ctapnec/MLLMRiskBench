@@ -1436,6 +1436,7 @@ COMMAND_GROUPS: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
             "retained_local_sources",
             "hosted_campaign_budget",
             "hosted_retained_inputs",
+            "hosted_selected_replays",
             "hosted_campaign_prepare",
             "hosted_program_runtime",
             "hosted_campaign_execute",

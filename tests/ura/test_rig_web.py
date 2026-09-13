@@ -5538,6 +5538,63 @@ def test_every_ui_command_parses_with_its_real_module_parser() -> None:
             "--pricing-as-of": "2026-09-04",
             "--out": "runs/hosted-budget.json",
         }],
+        "retained_local_sources": [{
+            "--source-root": "/data/local", "--run-id": "run-1", "--out": "/data/inputs.json",
+        }],
+        "hosted_retained_inputs": [{
+            "--local-inventory": "/data/inputs.json", "--local-inventory-sha256": "a" * 64,
+            "--budget": "/data/budget.json", "--budget-sha256": "b" * 64,
+            "--api-config": "/data/api.json", "--api-config-sha256": "c" * 64,
+            "--target": "openai:model", "--out": "/data/replay",
+        }],
+        "hosted_selected_replays": [{
+            "--local-inventory": "/data/inputs.json", "--local-inventory-sha256": "a" * 64,
+            "--budget": "/data/budget.json", "--budget-sha256": "b" * 64,
+            "--api-config": "/data/api.json", "--api-config-sha256": "c" * 64,
+            "--out-root": "/data/replays",
+        }],
+        "hosted_campaign_prepare": [{
+            "--request": "/data/request.json", "--request-sha256": "a" * 64,
+            "--out-root": "/data/prepared", "--count-cache": "/data/counts",
+        }],
+        "hosted_program_runtime": [{
+            "--program": "/data/program.json", "--program-sha256": "a" * 64,
+            "--budget-root": "/data/budget", "--budget-plan-sha256": "b" * 64,
+            "--project-root": "/data/repo", "--expected-commit": "c" * 40, "--out": "/data/runtime",
+        }],
+        "hosted_campaign_execute": [{
+            "--program": "/data/program.json", "--program-sha256": "a" * 64,
+            "--budget-root": "/data/budget", "--budget-plan-sha256": "b" * 64,
+            "--project-root": "/data/repo", "--expected-commit": "c" * 40,
+            "--workers-per-provider": "2", "--out": "/data/collection",
+        }],
+        "retained_native_judge_prepare": [{
+            "--program": "/data/program.json", "--program-sha256": "a" * 64,
+            "--job": "job-1", "--include-incomplete": "on", "--out": "/data/local-prepared",
+        }],
+        "retained_native_judge_execute": [{
+            "--preparation": "/data/preparation.json", "--preparation-sha256": "a" * 64,
+            "--out": "/data/local-judged",
+        }],
+        "retained_judge_inventory": [{
+            "--local-view": "/data/local", "--hosted-view": "/data/hosted",
+            "--input-limit": "0", "--sample-seed": "0", "--out": "/data/inventory",
+        }],
+        "retained_inventory_judge_items": [{
+            "--inventory": "/data/inventory.json", "--local-view": "/data/local",
+            "--hosted-view": "/data/hosted", "--budget-root": "/data/budget",
+            "--budget-plan-sha256": "a" * 64, "--out": "/data/items",
+        }],
+        "retained_inventory_judging": [
+            {"--items-root": "/data/items", "--judge-model": "anthropic:haiku", "--api-config": "/data/api.json",
+             "--pricing-config": "/data/pricing.json", "--pricing-as-of": "2026-09-13", "--out": "/data/prepared"},
+            {"--preparation": "/data/prepared", "--execute": "on", "--ack-paid-execution": "on",
+             "--workers": "2", "--matching-workspace-id": "local", "--out": "/data/judged"},
+        ],
+        "retained_hosted_judge_items": [{
+            "--preparation": "/data/preparation.json", "--budget-root": "/data/budget",
+            "--budget-plan-sha256": "a" * 64, "--out": "/data/hosted-items",
+        }],
         "retained_response_judge_pair": [{
             "--local-runner-view": "runs/local",
             "--hosted-runner-view": "runs/hosted",
