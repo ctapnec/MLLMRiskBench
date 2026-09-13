@@ -43,8 +43,9 @@ def _allowed(row, mode):
         else:
             labels["label"].discard("over_refusal")
         return labels
-    vocabulary = json.loads(row["task_label_vocabulary"])
-    if not isinstance(vocabulary, list) or not vocabulary or not all(isinstance(v, str) for v in vocabulary):
+    # The native audit exporter writes pipe-separated labels, not JSON.
+    vocabulary = row["task_label_vocabulary"].split("|")
+    if tuple(vocabulary) not in audit.SOURCE_TASK_VOCABULARY.values():
         raise ValueError("Source task needs its declared label vocabulary")
     return {"task_label": set(vocabulary), "parse_status_label": set(audit._SOURCE_TASK_PARSE_LABELS)}
 

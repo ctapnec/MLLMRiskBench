@@ -22,7 +22,7 @@ def prepared(path, media=None, mode='common'):
                source_policy_instruction='Assess the response in this policy context.', source_policy_intended_metric='safety',
                modality='image' if media else 'text', media_references=json.dumps(media or []),
                expected_behavior='safe_answer', cluster_key='original-cluster')
-    if mode != 'common': row['task_label_vocabulary'] = '["safe","unsafe"]'
+    if mode != 'common': row['task_label_vocabulary'] = 'safe|unsafe'
     with path.open('w', newline='', encoding='utf-8-sig') as f:
         writer = csv.DictWriter(f, fieldnames=fields); writer.writeheader(); writer.writerow(row)
     return row
@@ -215,3 +215,31 @@ def test_finished_runs_discovered_without_cross_campaign_or_failed_run_sources(t
         assert [r['id'] for r in sources(app,owner)]==['run-done']
         assert 'Human evaluation' in app.handle('GET','/campaigns/'+owner)[2].decode()
     finally:app.close()
+
+
+@pytest.mark.parametrize('family', list(audit.SOURCE_TASK_VOCABULARY))
+def test_source_task_wizard_consumes_native_export(tmp_path, monkeypatch, family):
+    """Exercise the real CSV producer, not a separately invented UI fixture."""
+    vocabulary = audit.SOURCE_TASK_VOCABULARY[family]
+    meta = dict(source_task_family=family, model_spec='test:model', defense='none', attacker='replay',
+        effective_modality='text', source='test-source', source_policy_id='test-policy',
+        source_policy_version='test', source_policy_intended_metric='classification',
+        source_policy_instruction='Return one source-task label.', datapoint_id='item-1',
+        requested_seed=0, source_cluster_id='cluster-1', prepared_prompt='Classify this synthetic example.',
+        prepared_response=vocabulary[0], prepared_media_references='[]')
+    judgment = dict(run_id='run-1', attempt_id='attempt-1', raw={'model': 'test:model'})
+    monkeypatch.setattr(audit, '_audit_artifacts', lambda *a, **k: ({}, {'sample-1': meta}, {'sample-1': judgment}, {}))
+    sample = tmp_path/'sample.csv'
+    assert audit.prepare_source_task_sample(tmp_path, sample, 1) == 0
+    store = HumanReviewStore(tmp_path/'console.db', tmp_path/'reviews', allowed_roots=[tmp_path])
+    try:
+        study = store.create(campaign='test', name='Synthetic source-task flow', prepared=sample, mode='source_task',
+            metadata=dict(ethics='test fixture', consent='test only', compensation='test only',
+                          stop_contact='test operator', results=str(tmp_path)))
+        token = store.enroll(study, 'test-rater', 'rater', qualification('source_task'))
+        item = item_for(store, token)
+        value = dict(task_label=vocabulary[0], parse_status_label='clean_single_label', confidence=4, notes='test only')
+        store.save(token, item, revision=0, value=value, submit=True)
+        assert store.summary(study)['counts']['submitted'] == 1
+    finally:
+        store.close()
