@@ -94,6 +94,35 @@ def test_unfinished_paid_slot_stays_with_its_existing_executor_not_called_again(
     assert [item['call_id'] for item in items]==['judge-hosted-1']
 
 
+@pytest.mark.parametrize('change',[None,'missing-handoff','predecessor','path','successor','incomplete','history'])
+def test_original_transfer_marker_uses_its_explicit_completed_handoff(funded,tmp_path,monkeypatch,change):
+    old=funded.budget;old.root.mkdir()
+    current=tmp_path/'successor'/'budget';current.mkdir(parents=True)
+    descriptor=dict(path=str(current/'plan.json'),sha256='b'*64,bytes=2)
+    # Actual original marker shape: no repeated predecessor or status fields.
+    (old.root/'paid-circuit.json').write_text(json.dumps(dict(schema='ura-hosted-budget-superseded/1',successor=descriptor)))
+    handoff=dict(status='complete',all_paid_history_preserved=True,all_started_slots_unchanged=True,
+        old_spending_closed=True,predecessor_plan=dict(path=str(old.root/'plan.json'),sha256='a'*64),successor=descriptor)
+    if change=='predecessor':handoff['predecessor_plan']['sha256']='c'*64
+    if change=='path':handoff['predecessor_plan']['path']=str(tmp_path/'other'/'plan.json')
+    if change=='successor':handoff['successor']={**descriptor,'sha256':'c'*64}
+    if change=='incomplete':handoff['status']='pending'
+    if change=='history':handoff['all_paid_history_preserved']=False
+    if change!='missing-handoff':(current.parent/'budget-handoff.json').write_text(json.dumps(handoff))
+    successor=SimpleNamespace(root=current,expected_plan_sha256='b'*64,
+        _load=lambda:({},copy.deepcopy(funded.ledger),copy.deepcopy(funded.slots)))
+    monkeypatch.setattr(subject,'AttemptBudget',lambda path,digest:successor)
+    load_bound=subject.load_bound_json
+    monkeypatch.setattr(subject,'load_bound_json',lambda path,digest:
+        ({},{}) if Path(path).name=='plan.json' else load_bound(path,digest))
+    if change:
+        with pytest.raises(ValueError,match='another predecessor'):subject.collect_items(funded.prepared,old)
+    else:
+        pending,owned,_=subject.collect_items(funded.prepared,old)
+        assert len(pending)==2 and owned==[]
+        assert all(row['budget']==dict(root=str(current),plan_sha256='b'*64) for row in pending)
+
+
 def test_empty_outputs_remain_in_coverage_without_judging_or_budget_work(funded,tmp_path):
     for record in funded.records.responses.values():
         record['response']['output_turns']=[]

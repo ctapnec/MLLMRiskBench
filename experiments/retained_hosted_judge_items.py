@@ -35,8 +35,23 @@ def current_budget_snapshot(budget, call_ids=None):
         value=json.loads(marker.read_text())
         if value.get('schema')!='ura-hosted-budget-superseded/1':
             return budget,ledger,slots  # Real provider/funding stops remain active.
-        if (value.get('status')!='superseded_not_a_target_failure'
-            or value.get('predecessor_plan_sha256')!=budget.expected_plan_sha256):
+        predecessor_matches=(value.get('status')=='superseded_not_a_target_failure'
+            and value.get('predecessor_plan_sha256')==budget.expected_plan_sha256)
+        if set(value)=={'schema','successor'}:
+            # The original transfer marker kept its predecessor in the adjacent
+            # handoff record, rather than repeating it in the closed budget.
+            successor_path=Path(value['successor']['path'])
+            handoff_path=successor_path.parent.parent/'budget-handoff.json'
+            if handoff_path.is_file():
+                handoff=json.loads(handoff_path.read_text())
+                predecessor=handoff.get('predecessor_plan',{})
+                predecessor_matches=(handoff.get('status')=='complete'
+                    and all(handoff.get(key) is True for key in (
+                        'all_paid_history_preserved','all_started_slots_unchanged','old_spending_closed'))
+                    and predecessor.get('sha256')==budget.expected_plan_sha256
+                    and Path(predecessor.get('path','')).resolve()==(budget.root/'plan.json').resolve()
+                    and handoff.get('successor')==value['successor'])
+        if not predecessor_matches:
             raise ValueError('Judging funding transfer names another predecessor')
         descriptor=value['successor'];path=Path(descriptor['path'])
         if path.name!='plan.json':

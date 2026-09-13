@@ -1274,3 +1274,11 @@ terminal grid error omits the run identity. Retained judging uses the manifest's
 explicit grid reference for that anonymous error cell. It preserves the failed
 terminal status and original files. Without a unique matching manifest/grid,
 or when the cell names a different run, the source remains unresolved.
+# Historical funding transfers
+
+Saved-answer judging follows recorded budget transfers without creating new
+funding or repeating an owned call. Older transfers record the predecessor in
+the successor's completed handoff rather than in the old budget's stop marker.
+Both forms must identify the same predecessor and successor, preserve the
+selected call slots and retain their paid-attempt history. This applies to
+Build, Tools and the retained-answer CLI workflow.
