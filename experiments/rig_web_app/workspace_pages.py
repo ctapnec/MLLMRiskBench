@@ -78,7 +78,7 @@ class WorkspacePagesMixin:
     def _save_build_campaign(self, params: dict[str, str]) -> dict[str, str]:
         if params.get("work_kind") != "campaign" and not params.get("campaign_id"):
             return params
-        result = dict(params)
+        result = self._builder_params(params)
         campaign_id = result.get("campaign_id")
         if not campaign_id:
             campaign_id = self.db.create_workspace(result["campaign_name"], "mixed")
@@ -88,7 +88,7 @@ class WorkspacePagesMixin:
         # identities cannot be reopened as files. The builder allowlist excludes
         # credentials, and launched jobs still use their separate durable,
         # path-free snapshots and normal source/revision validation.
-        self.db.save_workspace_definition(campaign_id, self._builder_params(result))
+        self.db.save_workspace_definition(campaign_id, result)
         return result
 
     @staticmethod
