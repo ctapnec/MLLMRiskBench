@@ -58,7 +58,7 @@ def _saved_job_complete(admission):
     return seen == set(admission.entries)
 
 
-def _completed_continuation_jobs(root, selection, admitted):
+def _previous_selection(root, selection):
     if root.is_symlink() or not root.is_absolute() or root.resolve(strict=True) != root or not root.is_dir():
         raise ValueError('Previous collection must be one resolved directory')
     previous = json.loads((root / 'selection.json').read_text())
@@ -66,6 +66,14 @@ def _completed_continuation_jobs(root, selection, admitted):
                 'project_root', 'expected_commit', 'workspace_id', 'console_db'):
         if previous.get(key) != selection[key]:
             raise ValueError('Continuation changed the selected programs, budget, revision or campaign owner')
+    if (previous.get('prepare_runtime', False) != selection.get('prepare_runtime', False)
+            or previous.get('model_store') != selection.get('model_store')):
+        raise ValueError('Continuation changed its installed-runtime setting')
+    return previous
+
+
+def _completed_continuation_jobs(root, selection, admitted):
+    _previous_selection(root, selection)
     path = root / 'result.json' if (root / 'result.json').is_file() else root / 'progress.json'
     rows = json.loads(path.read_text()).get('jobs', []) if path.is_file() else []
     completed = set()
@@ -87,7 +95,8 @@ def collect_campaign(*, programs: Sequence[tuple[Path, str]], budget_root: Path,
                      budget_plan_sha256: str, project_root: Path, expected_commit: str,
                      out: Path, workers_per_provider: int = 2,
                      workspace_id: str = "", console_db: Path | None = None,
-                     resume_from: Path | None = None) -> dict:
+                     resume_from: Path | None = None, prepare_runtime: bool = False,
+                     model_store: Path | None = None) -> dict:
     """Validate shared sources once, then collect without co-resident judges."""
     retained._validated_checkout(project_root, expected_commit)
     if not programs or len({str(path.resolve()) for path, _sha256 in programs}) != len(programs):
@@ -98,6 +107,11 @@ def collect_campaign(*, programs: Sequence[tuple[Path, str]], budget_root: Path,
         raise ValueError("Workers per provider must be an integer from 1 to 8")
     if bool(workspace_id) != (console_db is not None):
         raise ValueError("Campaign publication requires both workspace ID and console database")
+    if type(prepare_runtime) is not bool:
+        raise ValueError('Choose explicitly whether installed runtime preparation is required')
+    if prepare_runtime and (model_store is None or not model_store.is_absolute()
+            or model_store.resolve(strict=True) != model_store or not model_store.is_dir()):
+        raise ValueError('Installed runtime preparation requires the existing resolved model store')
     budget = AttemptBudget(budget_root, budget_plan_sha256)
     contexts, admitted, references, call_ids = {}, [], [], set()
     prepared_programs = []
@@ -119,6 +133,8 @@ def collect_campaign(*, programs: Sequence[tuple[Path, str]], budget_root: Path,
         budget_plan_sha256=budget_plan_sha256, stage="target_collection", judgments="deferred",
         project_root=str(project_root), expected_commit=expected_commit,
         workspace_id=workspace_id, console_db=str(console_db) if console_db is not None else None)
+    if prepare_runtime:
+        selection.update(prepare_runtime=True, model_store=str(model_store), runtime_root=str(out/'runtime'))
     completed = frozenset()
     if resume_from is not None:
         if (resume_from.is_symlink() or not resume_from.is_absolute()
@@ -127,19 +143,44 @@ def collect_campaign(*, programs: Sequence[tuple[Path, str]], budget_root: Path,
     with ExitStack() as owners:
         if resume_from is not None:
             owners.enter_context(_collection_lock(resume_from))
-            completed = _completed_continuation_jobs(resume_from, selection, admitted)
+            previous = _previous_selection(resume_from, selection)
+            if prepare_runtime:
+                selection['runtime_root'] = previous['runtime_root']
+            else:
+                completed = _completed_continuation_jobs(resume_from, selection, admitted)
             selection['resume_from'] = str(resume_from)
         out.mkdir(mode=0o700)
         owners.enter_context(_collection_lock(out))
         _write_new(out / 'selection.json', selection)
+        worker = None
+        if prepare_runtime:
+            from experiments.hosted_runtime_collection import (
+                completed_runtime_jobs, run_runtime_admission, runtime_programs,
+            )
+            _write_atomic(out/'progress.json', dict(stage='binding_installed_runtime',
+                assigned_target_inputs=len(call_ids), target_calls=0, downloaded_bytes=0))
+            runtime_root = Path(selection['runtime_root'])
+            if runtime_root.is_symlink() or runtime_root.resolve() != runtime_root:
+                raise ValueError('Runtime continuation must use its resolved preparation directory')
+            runtime_root.mkdir(mode=0o700, exist_ok=True)
+            owners.enter_context(_collection_lock(runtime_root))
+            prepared_programs, admitted = runtime_programs(originals=prepared_programs, references=references,
+                contexts=[contexts[retained._local_context_key(program)] for program in prepared_programs],
+                admitted=admitted, budget=budget, project_root=project_root, expected_commit=expected_commit,
+                store=model_store, root=runtime_root)
+            if resume_from is not None:
+                completed = completed_runtime_jobs(
+                    _completed_continuation_jobs(resume_from, selection, admitted), admitted)
+            worker = run_runtime_admission
         return _collect_admitted(admitted=admitted, prepared_programs=prepared_programs,
             budget_root=budget_root, project_root=project_root, out=out, workspace_id=workspace_id,
             console_db=console_db, workers_per_provider=workers_per_provider, completed=completed,
-            assigned=len(call_ids))
+            assigned=len(call_ids), worker=worker, runtime_root=selection.get('runtime_root'))
 
 
 def _collect_admitted(*, admitted, prepared_programs, budget_root, project_root, out,
-                      workspace_id, console_db, workers_per_provider, completed, assigned):
+                      workspace_id, console_db, workers_per_provider, completed, assigned,
+                      worker=None, runtime_root=None):
     database, publisher, publication = None, None, None
     try:
         if workspace_id:
@@ -161,7 +202,8 @@ def _collect_admitted(*, admitted, prepared_programs, budget_root, project_root,
             progress_changed(dict(jobs=[dict(program=p, job=j, status="collected" if (p, j) in completed else "pending")
                 for p, jobs in enumerate(admitted) for j in range(len(jobs))]))
         rows = dispatch_admitted(admitted, workers_per_provider=workers_per_provider, responses_only=True,
-            on_progress=progress_changed, completed_jobs=completed)
+            on_progress=progress_changed, completed_jobs=completed,
+            **({'_worker': worker} if worker is not None else {}))
         if publisher is not None:
             progress_changed(dict(jobs=rows))
     finally:
@@ -173,6 +215,11 @@ def _collect_admitted(*, admitted, prepared_programs, budget_root, project_root,
         selection_changed=False, automatic_answer_retries_added=0, completed_jobs_restored=len(completed))
     if publication is not None:
         result["publication"] = publication
+    if runtime_root is not None:
+        from experiments.hosted_runtime_collection import effective_program_descriptors
+        result.update(runtime_root=runtime_root, execution_programs=effective_program_descriptors(Path(runtime_root)),
+            diagnostic_probe_judging='included_in_funded_transport_checks',
+            measured_judging='deferred')
     _write_new(out / "result.json", result)
     return result
 
@@ -187,6 +234,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--project-root", type=Path, required=True)
     parser.add_argument("--expected-commit", required=True)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument('--prepare-runtime', action='store_true',
+        help='Bind installed models and run already-funded transport probes before measured collection')
+    parser.add_argument('--model-store', type=Path, default=os.environ.get('URA_MODEL_STORE'))
     parser.add_argument('--resume-from', type=Path,
         help='Continue this previous collection with the same programs/budget; --out is a fresh successor directory')
     parser.add_argument("--workers-per-provider", type=int, default=2, choices=range(1, 9))
@@ -203,7 +253,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         budget_root=args.budget_root, budget_plan_sha256=args.budget_plan_sha256,
         project_root=args.project_root, expected_commit=args.expected_commit,
         out=args.out, workers_per_provider=args.workers_per_provider,
-        workspace_id=args.workspace_id, console_db=args.console_db, resume_from=args.resume_from)
+        workspace_id=args.workspace_id, console_db=args.console_db, resume_from=args.resume_from,
+        prepare_runtime=args.prepare_runtime, model_store=args.model_store)
     print(json.dumps({key: value for key, value in result.items() if key != "jobs"}, sort_keys=True))
     return 0 if result["status"] == "responses_collected_awaiting_judging" else 1
 

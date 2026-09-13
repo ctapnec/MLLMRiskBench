@@ -111,7 +111,8 @@ class InstalledOnly:
 
 
 def bind_installed_program(*, original, budget, project_root, expected_commit, store, out,
-                           max_age_hours=24, verify_model_sha256=False, local_context=None):
+                           max_age_hours=24, verify_model_sha256=False, local_context=None,
+                           original_admissions=None):
     from experiments import model_acquire, run_matrix
     from ura.model_acquisition import load_plan, load_receipt, verify_receipt_snapshots
     from ura.project_revision import create_project_revision, write_project_revision
@@ -129,7 +130,8 @@ def bind_installed_program(*, original, budget, project_root, expected_commit, s
     if any(starts.values()):
         raise ValueError('This program has started; continue its checkpoints instead of preparing new runtime arguments')
     context = retained._validated_local_cells(original) if local_context is None else local_context
-    admissions = retained._validated_jobs(original, budget, local_context=context)
+    admissions = (retained._validated_jobs(original, budget, local_context=context)
+                  if original_admissions is None else original_admissions)
     entries = {admission.job['name']: admission.attacker._selected_entries for admission in admissions}
     selection = dict(original=original, project_root=str(project_root), expected_commit=expected_commit,
         store=str(store), max_age_hours=max_age_hours, verify_model_sha256=verify_model_sha256)

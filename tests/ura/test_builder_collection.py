@@ -166,3 +166,44 @@ def test_collection_panel_uses_normal_build_form():
     assert "form='builder' name='retained_collection_workers'" in page
     assert "formaction='/build/review-collection'" in page
     assert "value='2'" in page
+
+
+def test_build_includes_runtime_and_both_judging_stages_use_actual_outputs(study):
+    from pathlib import Path
+    from experiments.hosted_retained_inputs import _descriptor
+    app,params,calls,receipt = study
+    for descriptor in receipt['programs']:
+        path = Path(descriptor['path'])
+        program = json.loads(path.read_text())
+        program['jobs'] = [dict(name='run',purpose='measured_run',argv=['--out','/old'])]
+        path.write_text(json.dumps(program))
+    body,ticket = review(app,params)
+    assert b'Installed runtime binding and transport checks are included' in body
+    subject.collect_prepared(app,{'launch_ticket':ticket})
+    assert calls[0][1]['--prepare-runtime'] == 'on'
+    control = Path(calls[0][1]['--out'])
+    root = control/'runtime'
+    root.mkdir(parents=True)
+    (control/'selection.json').write_text(json.dumps({'runtime_root':str(root)}))
+    descriptors = []
+    for number,descriptor in enumerate(receipt['programs']):
+        folder = root/str(number)
+        folder.mkdir()
+        path = folder/'runtime-program.json'
+        path.write_text(Path(descriptor['path']).read_text())
+        descriptors.append(_descriptor(path))
+        observed = json.loads(path.read_text())
+        observed['jobs'][0]['argv'] = ['--out','/actual-collected-output']
+        (folder/'attested-program.json').write_text(json.dumps(observed))
+    (root/'programs.json').write_text(json.dumps(dict(original_programs=receipt['programs'],programs=descriptors)))
+    effective = subject.prepared_collection(app,params)
+    assert all(Path(row['path']).name == 'attested-program.json' for row in effective['programs'])
+    assert all(json.loads(Path(row['path']).read_text())['jobs'][0]['argv'][1] == '/actual-collected-output'
+        for row in effective['programs'])
+    assert subject.prepared_collection(app,params,for_execution=True) == receipt
+    app.db._conn.execute("UPDATE jobs SET state='failed',exit_code=1 WHERE job_id='collection-0'")
+    app.db._conn.commit()
+    _,ticket = review(app,params)
+    subject.collect_prepared(app,{'launch_ticket':ticket})
+    assert calls[1][1]['--prepare-runtime'] == 'on'
+    assert calls[1][1]['--program'] == receipt['programs'][0]['path']

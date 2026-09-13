@@ -215,6 +215,42 @@ def test_collection_continuation_keeps_source_and_budget_and_skips_saved_work(tm
     assert not (tmp_path / 'concurrent').exists()
 
 
+def test_installed_runtime_collection_continuation_keeps_bindings_and_skips_saved_output(tmp_path,monkeypatch):
+    from experiments import hosted_runtime_collection as runtime
+    admission, calls = _saved_admission(tmp_path)
+    admission.program.setdefault('sources',{})
+    admission.program['jobs'] = [admission.job]
+    admission.program['requests'] = admission.requests
+    path = tmp_path/'program.json'
+    raw = json.dumps(admission.program).encode()
+    path.write_bytes(raw)
+    monkeypatch.setattr(subject.retained,'_validated_checkout',lambda *_:None)
+    monkeypatch.setattr(subject,'AttemptBudget',lambda *_:admission.budget)
+    monkeypatch.setattr(subject.retained,'_validated_local_cells',lambda *_:object())
+    monkeypatch.setattr(subject.retained,'_validated_jobs',lambda *a,**k:[admission])
+    bound = []
+    descriptor = dict(path=str(path),sha256=hashlib.sha256(raw).hexdigest(),bytes=len(raw))
+    monkeypatch.setattr(runtime,'bind_installed_program',lambda **kw:bound.append(kw) or {'program':descriptor})
+    dispatched = []
+    def dispatch(jobs,**kw):
+        assert kw['_worker'] is runtime.run_runtime_admission
+        assert jobs[0][0].runtime_program == descriptor
+        dispatched.append(kw['completed_jobs'])
+        return [dict(program=0,job=0,name='saved',target=admission.program['target'],status='collected')]
+    monkeypatch.setattr(subject,'dispatch_admitted',dispatch)
+    common = dict(programs=[(path,descriptor['sha256'])],budget_root=admission.budget.root,
+        budget_plan_sha256=admission.budget.expected_plan_sha256,project_root=tmp_path,
+        expected_commit='b'*40,prepare_runtime=True,model_store=tmp_path)
+    first = tmp_path/'first'
+    subject.collect_campaign(**common,out=first)
+    subject.collect_campaign(**common,out=tmp_path/'next',resume_from=first)
+    assert len(bound) == 1 and dispatched == [frozenset(),frozenset({(0,0)})]
+    assert len(calls) == len(admission.entries)
+    current = json.loads((tmp_path/'next'/'selection.json').read_text())
+    assert current['runtime_root'] == str(first/'runtime')
+    assert json.loads((tmp_path/'next'/'result.json').read_text())['execution_programs'] == [descriptor]
+
+
 def test_missing_checkpoint_does_not_turn_a_ui_status_into_completed_work(tmp_path, monkeypatch):
     job = SimpleNamespace(job={'name': 'saved'}, program={'target': 'openai:model'})
     root = tmp_path / 'old'

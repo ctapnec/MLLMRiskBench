@@ -29,19 +29,36 @@ def collection_history(app, owner, paths, *, command='hosted_campaign_execute', 
     return None
 
 
-def prepared_collection(app, params):
+def prepared_collection(app, params, *, for_execution=False):
     owner = params.get('campaign_id','')
     app.db.require_workspace(owner)
     argv = completed_argv(app,params.get('retained_programs_job'),owner,'hosted_campaign_prepare')
     receipt = json.loads((Path(argument(argv,'--out-root'))/'receipt.json').read_text())
     if receipt.get('status') != 'prepared_no_generation_calls' or not receipt.get('programs'):
         raise ValueError('Complete counted collection preparation first')
+    if not for_execution:
+        history = collection_history(app, owner, [row['path'] for row in receipt['programs']])
+        if history is not None:
+            collection_argv = json.loads(history['argv'])
+            if '--prepare-runtime' in collection_argv:
+                from experiments.hosted_runtime_collection import effective_program_descriptors
+                selection_path = Path(argument(collection_argv, '--out'))/'selection.json'
+                if not selection_path.is_file():
+                    raise ValueError('Runtime preparation has not published its execution settings yet')
+                selection = json.loads(selection_path.read_text())
+                root = Path(selection['runtime_root'])
+                if not (root/'programs.json').is_file():
+                    raise ValueError('Finish installed-runtime preparation before preparing output judging')
+                manifest = json.loads((root/'programs.json').read_text())
+                if [row['path'] for row in manifest['original_programs']] != [row['path'] for row in receipt['programs']]:
+                    raise ValueError('Collection runtime belongs to different prepared inputs')
+                receipt = dict(receipt, programs=effective_program_descriptors(root))
     return receipt
 
 
 def collection_review(app, params):
     owner = params.get('campaign_id','')
-    receipt = prepared_collection(app,params)
+    receipt = prepared_collection(app,params,for_execution=True)
     workers = params.get('retained_collection_workers','2') or '2'
     if workers not in {str(number) for number in range(1,9)}:
         raise ValueError('Choose 1 to 8 collection workers per provider')
@@ -51,19 +68,31 @@ def collection_review(app, params):
         '--budget-plan-sha256':receipt['budget']['sha256'],'--project-root':str(project),
         '--expected-commit':revision,'--workers-per-provider':workers}
     rows = []
+    needs_runtime = False
     for index,descriptor in enumerate(receipt['programs']):
         suffix = f'#{index}' if index else ''
         values['--program'+suffix] = descriptor['path']
         values['--program-sha256'+suffix] = descriptor['sha256']
         program = json.loads(Path(descriptor['path']).read_text())
+        needs_runtime |= any('--model-acquisition-plan' not in job['argv'] or (
+            job['purpose'] != 'attestation_probe' and '--live-attestation' not in job['argv'])
+            for job in program.get('jobs', []))
         rows.append((program['target'],len(program['requests']),program['max_output_tokens'],
             sum(request['bound_microusd'] for request in program['requests'].values())))
     parent = (app.results_root/'rig-web'/'hosted-collections').resolve()
     parent.mkdir(parents=True,exist_ok=True)
     values['--out'] = str(parent/uuid4().hex)
     history = collection_history(app,owner,[row['path'] for row in receipt['programs']])
+    if needs_runtime:
+        values['--prepare-runtime'] = 'on'
     if history is not None:
         old = json.loads(history['argv'])
+        # Continue the saved execution policy, not a newly inferred preparation.
+        values.pop('--prepare-runtime', None)
+        if '--prepare-runtime' in old:
+            values['--prepare-runtime'] = 'on'
+        if '--model-store' in old:
+            values['--model-store'] = argument(old, '--model-store')
         for flag in ('--budget-root','--budget-plan-sha256','--project-root','--expected-commit'):
             if argument(old,flag) != values[flag]:
                 raise ValueError('This collection needs a reviewed revision or budget recovery; its previous settings cannot change silently')
@@ -82,6 +111,12 @@ def collection_review(app, params):
                  for model,count,tokens,cost in rows)+'</table></div>'
         '<p>These ceilings are not reported charges. HTTP retries and judging use the shared prepared spending plan. '
         'A continuation restores completed jobs and resumes eligible checkpoints; it does not select replacement inputs.</p>')
+    if '--prepare-runtime' in values:
+        body += ("<p>Installed runtime binding and transport checks are included in this launch. "
+            "No models are downloaded. The input-derived transport probes use existing funded assignments, "
+            "not extra calls outside the reviewed population. Their diagnostic scoring completes the transport "
+            "check; measured outputs are judged afterward. Each provider can proceed independently. "
+            "A continuation reuses the saved runtime and completed probes.</p>")
     if history is not None:
         body += "<p>Previous collection: <a href='/jobs/"+history['job_id']+"'>Open job and retained results</a></p>"
     body += ("<details><summary>Exact command</summary><pre>"+html.escape(' '.join(build_argv('hosted_campaign_execute',values)))
@@ -121,7 +156,8 @@ def collection_panel(params):
     value = html.escape(params.get('retained_collection_workers','2'),quote=True)
     return ("<section class='card'><h2>Collect prepared inputs</h2>"
         "<p>Review the saved model assignments and costs, then start or continue the existing provider-parallel collection. "
-        "Later draft edits do not change a prepared collection. Judging follows separately.</p>"
+        "Missing runtime bindings and funded transport checks are handled in the same launch, without downloads. "
+        "Later draft edits do not change a prepared collection. Measured-output judging follows separately.</p>"
         "<label class='campaign-field'>Workers per provider<input type='number' min='1' max='8' step='1' "
         "form='builder' name='retained_collection_workers' value='"+value+"'></label>"
         "<button form='builder' formaction='/build/review-collection'>Review prepared collection</button></section>")

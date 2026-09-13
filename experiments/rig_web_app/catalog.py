@@ -1148,6 +1148,8 @@ def _commands() -> dict[str, Command]:
                 CommandParam("--project-root", "path", required=True),
                 CommandParam("--expected-commit", "str", required=True),
                 CommandParam("--out", "path", required=True),
+                CommandParam("--prepare-runtime", "flag", help="Bind installed models and complete the selected funded transport probes before collection"),
+                CommandParam("--model-store", "path", help="Existing resolved managed-model store; defaults to URA_MODEL_STORE"),
                 CommandParam("--workers-per-provider", "int",
                     help="Independent target workers per provider (default 2, maximum 8); providers run concurrently"),
                 CommandParam("--resume-from", "path", help="Previous collection control directory. "
