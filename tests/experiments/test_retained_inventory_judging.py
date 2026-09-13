@@ -60,6 +60,25 @@ def test_plans_include_every_model_without_new_funding_and_resume_preparation(pr
     assert (budget.root/'ledger.json').read_bytes() == before
 
 
+def test_preparation_consumes_current_budget_reader_with_original_plan_identity(prepared, monkeypatch):
+    kwargs, items, _, budget = prepared
+    # Do not replace the budget handoff with a shortened tuple fixture: its
+    # fourth field preserves the original plan after recorded funding transfers.
+    monkeypatch.setattr(subject.handoff.funding, '_budget_lock', money._budget_lock)
+    snapshots = subject.handoff.budget_snapshots([budget])
+    assert len(snapshots) == 1
+    current, ledger, slots, original_plan = snapshots[0]
+    assert current == dict(root=str(budget.root), plan_sha256=budget.expected_plan_sha256)
+    assert original_plan == budget.expected_plan_sha256 and not ledger['attempts']
+    assert all(item['call_id'] in slots for item in items)
+    before = {name: (budget.root/name).read_bytes() for name in ('plan.json','ledger.json')}
+    result = subject.prepare(**kwargs)
+    assert result['selected_outputs'] == len(items) == 5
+    assert result['target_calls'] == result['judge_calls'] == result['token_count_http_attempts'] == 0
+    assert all(entry['budget'] == current for entry in result['plans'])
+    assert before == {name: (budget.root/name).read_bytes() for name in before}
+
+
 def test_real_executor_keeps_retries_all_outputs_and_resume_without_duplicate_calls(prepared, monkeypatch):
     kwargs, _, _, budget = prepared
     subject.prepare(**kwargs)

@@ -140,7 +140,7 @@ def prepare(*, items_root, judge_model, api_config, pricing_config, pricing_as_o
             groups[(item['budget']['root'], item['budget']['plan_sha256'])].append(item)
         budgets = [AttemptBudget(Path(root), digest) for root, digest in groups]
         snapshots = {(d['root'], d['plan_sha256']): (ledger, slots)
-            for d, ledger, slots in handoff.budget_snapshots(budgets)}
+            for d, ledger, slots, _original_plan in handoff.budget_snapshots(budgets)}
         plans, pending, count_http = [], [], 0
         for key, group in sorted(groups.items()):
             ledger, slots = snapshots[key]
