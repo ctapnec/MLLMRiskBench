@@ -2175,6 +2175,30 @@ or adaptive executions. The retained nine native-project dispositions remain
 six failed, two unavailable and one not selected. Evidence:
 `portfolio-inventory-20260913` and `portfolio-synthesis-20260913`.
 
+The 17:50 UTC source-task inventory excludes 150 retired-model records and
+retains 11,914 records across 196 original-run/generation/source-policy/risk/
+moderation strata. It is a historical inventory, not the current best-recovery
+population. There are 11,290 source evaluations and 624 typed missing outputs
+without a classification prediction. R-Judge format validity and GPTGeoChat
+threshold prevalence/recall remain separate from common safety metrics.
+Evidence: `classification-inventory-20260913` and
+`classification-synthesis-20260913-r-missing-accounting`.
+
+The deployed Tools `level2_report` form accepts the historical code repository
+and fresh JSON/CSV/Markdown paths. Actual Local job `job-519fcc9bf751` exported
+the completed LLaVA GPTGeoChat grid in 10 seconds without inference or judging:
+2,020 responses, 100 conversations, five thresholds and 40 metric/coverage rows.
+Its points, intervals and supports match the separate retained analysis. The
+job-page output-link acceptance passed after exposing the three structured
+output flags. The subsequent threshold-coverage correction preserves all
+40 estimates but replaces the inappropriate whole-cell judgment counts with
+404 per threshold. Evidence: `source-task-live-ui-20260913-r-links` and
+`moderation-coverage-check-20260913`; the corrected live report is retained
+separately from the first export.
+Corrected Local job `job-9238b9c4d1ab` passed actual browser execution and
+artifact-link checks, with all 40 points/intervals unchanged and exactly 404
+judgments per threshold. Evidence: `source-task-live-ui-20260913-r-thresholds`.
+
 The approved response-classifier add-on uses the already retained, matched
 local/hosted text outputs and exact Haiku judgments. Follow
 [RESPONSE_SVM.md](../docs/RESPONSE_SVM.md) for the frozen grouping, three tasks,

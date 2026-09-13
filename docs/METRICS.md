@@ -92,6 +92,38 @@ rows fail scored preflight rather than borrowing a convenient common endpoint.
 Source-specific tracks use their implemented metric families and do not enter
 common endpoints merely because they share the schema.
 
+## Source-classification reporting
+
+R-Judge and GPTGeoChat retain three separate concepts: response availability,
+strict final-label validity and agreement with the source reference. An
+otherwise usable response with an invalid label format remains an evaluated
+observation and contributes zero correctness to all-output accuracy. Typed
+missing responses have no invented `source_evaluation` prediction; retain
+their assignment/missingness counts beside the evaluated denominator.
+Confusion-derived measures condition on valid predictions. If reporting
+correct labels divided by all assignments, name that additional denominator
+explicitly rather than relabelling the existing all-output accuracy metric.
+
+These source rates use item-level denominators; uncertainty resamples whole
+source clusters. GPTGeoChat preserves each moderation granularity separately,
+including its positive/negative support, recall and specificity. Five
+thresholds on one conversation do not constitute five independent samples.
+Each threshold's `judgments_*` coverage counts only its own records, including
+typed missing responses whose retained risk subtype identifies that threshold.
+Unrefined common/adaptive bucket coverage is unchanged.
+R-Judge's one-response analysis/final-label adaptation does not reproduce
+the official serial two-call protocol or explanation-effectiveness assessment.
+Neither task is a common harmfulness or attack-success metric.
+
+For completed historical source-task grids, Tools -> `level2_report` exposes
+`--historical-code-repository` as in the CLI. Select the campaign, supply the
+exact completed root(s), repository containing their original revisions, and
+fresh JSON/CSV/Markdown output paths under the results directory. The export
+reads retained observations and makes no target or judge calls. Jobs links
+existing outputs from `--out-json`, `--out-csv` and `--out-md`; paths outside
+the configured results directory are not published. Source-classification
+rows and implementation-coverage rows remain distinct semantic families.
+
 ## Response-conditioned endpoints
 
 Live Crescendo setup turns retain transcript/provenance state but have

@@ -4343,6 +4343,23 @@ requires the implemented source evaluator to be exercised and every planned
 observation to complete, not a positive count of valid predictions. GPTGeoChat reports
 threshold-conditioned moderation classification, not a target geolocation ASR.
 
+Missing responses are different from completed format-invalid answers. The
+former retain a typed `model_nonresponse` and no `source_evaluation`; report
+their assignment coverage separately. Never invent a parsed class or a source
+prediction for them. Source accuracy uses its evaluated item denominator,
+while confidence intervals resample complete source clusters. Preserve every
+GPTGeoChat moderation threshold and its positive/negative support separately.
+
+For an existing completed source-task grid, use Tools -> `level2_report`,
+select its owning campaign, and enter the exact `--results` root. For older
+records set `--historical-code-repository` to the repository containing their
+original revisions. Set fresh `--out-json`, `--out-csv` and `--out-md` paths
+under the configured results directory, then Start job. The job's retained
+output links open the generated files. This performs analysis only; it neither
+regenerates answers nor purchases judgments. Keep the classification-quality
+rows separate from implementation-coverage rows. Do not aggregate historical
+and corrected generation conditions because they display the same model name.
+
 ## 12. Tier 3: adaptive and transferred attacks
 
 *Console equivalent: this section's commands are also launchable as the `rig_check` and `run_matrix` form(s) in the rig console (section 18); identical argument vectors, gates and artifacts.*
