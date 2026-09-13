@@ -16,6 +16,8 @@ def prepared(population, tmp_path, monkeypatch):  # noqa: F811
     for rows in population.rows.values():
         for row in rows:
             row['risk'] = 'jailbreak'
+            row['input_identity_sha256'] = subject.retained._sha({
+                field: row[field] for field in subject.retained._MATCH_IDENTITY_FIELDS})
     for slot in population.slots.values():
         slot['bound_microusd'] = 100_000
     pending, _, _, _ = population.collect()
