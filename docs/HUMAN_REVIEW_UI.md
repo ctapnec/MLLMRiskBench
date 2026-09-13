@@ -6,8 +6,8 @@ local responses and indexed images have also been displayed successfully.
 Full local/API result-set acceptance remains incomplete: imported campaign
 inventories still need connection to the setup selector and audit analysis.
 The checked 167-output historical image sample now resolves all 167 references
-through the recorded source locations. These automatic preparation changes
-have focused rig verification; they are not yet in the deployed console.
+through the recorded source locations. The automatic media preparation and
+source-task format fixes have focused rig verification and are deployed.
 No actual human ratings have been collected.
 
 ## Purpose and scope
@@ -104,6 +104,9 @@ Source-task classification needs its separate existing rubric and analysis.
   Missing source context is reported, never filled from an unrelated output.
   Connecting this inventory to preparation, analysis and the production
   selector remains required before claiming full campaign acceptance.
+  Both actual campaign inventories have been read successfully. Setup turns
+  remain separately accounted, and additional source-policy judgments retain
+  their own contexts rather than becoming primary-rubric disagreement.
 - Source-task label vocabularies use the native exporter's pipe-separated
   format. Producer-to-consumer tests exercise both supported source-task
   families; an independently invented JSON fixture is not the export contract.
