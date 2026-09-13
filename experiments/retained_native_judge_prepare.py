@@ -14,6 +14,7 @@ from typing import Sequence
 
 from experiments import run_matrix
 from experiments.hosted_campaign_budget import load_bound_json
+from experiments.retained_judge_media import reader_media_roots
 from experiments.retained_response_judge_execute import _write_atomic, _write_new
 from experiments.rig_web_app.workspace_import import _responses
 from ura.adapters.base import AttackBudget
@@ -26,10 +27,10 @@ from ura.targets.base import BaseTarget
 
 class NoCalls(BaseTarget):
     """The existing retained-scoring pattern: no live target exists in Reader."""
-    def __init__(self, target):
+    def __init__(self, target, *, program=None):
         self.name = target.name
         self.modality_support = target.modality_support
-        self.media_roots = getattr(target, 'media_roots', ())
+        self.media_roots = reader_media_roots(program or {}, getattr(target, 'media_roots', ()))
 
     def generate(self, *args, **kwargs):
         raise RuntimeError('Retained judging cannot make a target call')
@@ -96,7 +97,7 @@ def load_program_job(program_path: Path, job_name: str, *, program: dict | None 
     corpus, _ = run_matrix.load_corpus_with_audit(args.corpora, 0, 0, source_instance=instances[args.corpora])
     corpus = attacker.select_corpus(args.corpora, corpus)
     budget = AttackBudget(max_queries=args.max_queries, max_turns=args.max_turns, seed=0)
-    reader = Runner(ReplayAttacker(), NoCalls(target), cascade, budget, [0], target_answer_retries=0,
+    reader = Runner(ReplayAttacker(), NoCalls(target, program=program), cascade, budget, [0], target_answer_retries=0,
                     execution_stage='judgments', stop_on_failed_output=False,
                     approximate_common_metrics=bool(args.approximate_common_metrics))
     reader.attacker = attacker
