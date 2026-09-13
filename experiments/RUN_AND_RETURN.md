@@ -2866,7 +2866,7 @@ Repeat `--source-root` for other completed job directories; optional repeated
 The corresponding Tools form follows the same CLI. Full artifact checksums are
 opt-in. Saved answers and verdict labels do not control the selected inputs.
 
-Build -> General -> Prepare a matched follow-on now obtains those explicit
+Build -> General -> Reuse local inputs for an API comparison obtains those explicit
 source runs from the selected campaign's SQLite index. Choose the source
 campaign, select exact local run IDs, and prepare the inventory as a background
 job owned by the destination campaign. The saved definition retains the source

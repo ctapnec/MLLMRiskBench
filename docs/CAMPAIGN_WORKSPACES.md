@@ -148,9 +148,9 @@ diagnostics or unclassified historical records.
 Build's General section now starts source preparation from the campaign index:
 
 1. Choose Campaign and name or reopen the destination campaign.
-2. Under **Prepare a matched follow-on**, choose the source campaign and press
-   **Choose source runs**. This reads SQLite only; it makes no model calls.
-3. Select the exact local runs, including the desired generation conditions,
+2. Under **Reuse local inputs for an API comparison**, choose the source campaign
+   and press **Show saved runs**. This reads SQLite only; it makes no model calls.
+3. Filter the list and check the exact local runs, including the desired generation conditions,
    and press **Prepare selected inputs**. The background preparation validates
    the original completed grids and writes their input inventory. Missing and
    truncated outputs are not filtered out. Only measured local runs are listed;

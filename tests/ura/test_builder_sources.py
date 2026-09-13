@@ -105,10 +105,13 @@ def test_build_renders_indexed_selection_and_distinct_prepare_action(study, monk
     page = body.decode()
     assert status == 200
     assert "formaction='/build/prepare-inputs'" in page
-    assert "<option value='saved' selected>" in page
+    assert "data-source-run value='saved' checked" in page
     assert 'Missing and truncated responses are included' in page
     assert 'does not change the current pipeline' in page
-    assert 'DOMContentLoaded' in page and 'selectedOptions' in page
+    assert 'DOMContentLoaded' in page and 'chosen.map(o=>o.value)' in page
+    assert 'Reuse local inputs for an API comparison' in page
+    assert 'Prepare a matched follow-on' not in page
+    assert "class='source-campaign-row'" in page and "type='search'" in page
     assert app.db.workspace_definition(api) == {}
 
 

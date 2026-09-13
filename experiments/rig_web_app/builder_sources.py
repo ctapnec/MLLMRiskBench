@@ -83,12 +83,14 @@ def source_panel(app, params: dict[str, str]) -> str:
         + ">" + escape(row["name"]) + "</option>" for row in campaigns
     )
     content = (
-        "<section class='card'><h2>Prepare a matched follow-on</h2>"
-        "<p>Select saved local runs to prepare the same inputs for a later hosted comparison. "
-        "This separate preparation does not change the current pipeline's corpus or launch any model.</p>"
-        "<div class='campaign-actions'><label class='campaign-field'>Source campaign "
+        "<section class='card source-preparation'><h2>Reuse local inputs for an API comparison</h2>"
+        "<p>Use the same questions, images and attack prompts from saved local runs to compare API models. "
+        "This prepares an input selection only: it does not change the current pipeline's corpus or launch any model.</p>"
+        "<div class='source-steps' aria-label='Input reuse workflow'><span>1. Choose a campaign</span>"
+        "<span>2. Select saved runs</span><span>3. Prepare inputs</span></div>"
+        "<div class='source-campaign-row'><label class='campaign-field'>Source campaign "
         "<select name='retained_source_campaign' form='builder'>" + options + "</select></label>"
-        "<button type='submit' form='builder' formaction='/build/source-runs' class='ghost'>Choose source runs</button></div>"
+        "<button type='submit' form='builder' formaction='/build/source-runs' class='ghost'>Show saved runs</button></div>"
     )
     if selected:
         rows = source_runs(app.db, selected)
@@ -100,23 +102,29 @@ def source_panel(app, params: dict[str, str]) -> str:
             chosen = []
         chosen = [key for key in chosen if any(row['run_id'] == key for row in rows)]
         content += (
-            "<label class='campaign-field'>Saved local runs "
-            "<select id='retained-source-run-select' multiple size='8' aria-describedby='retained-source-help'>"
-            + "".join("<option value='" + escape(row["run_id"]) + "'"
-                + (" selected" if row["run_id"] in chosen else "") + ">"
-                + escape(f"{row['model']} | {row['corpus']} | {row['responses']:,} saved outputs | {row['run_id']}")
-                + "</option>" for row in rows)
-            + "</select></label><input type='hidden' form='builder' name='retained_source_runs' "
+            "<fieldset class='source-run-fieldset'><legend>Saved local runs</legend>"
+            "<label class='campaign-field'>Find a model or corpus<input type='search' id='source-run-search' "
+            "placeholder='Filter saved runs'></label><div class='source-run-picker' aria-describedby='retained-source-help'>"
+            + "".join("<label class='source-run-choice'><input type='checkbox' data-source-run value='"
+                + escape(row["run_id"]) + "'" + (" checked" if row["run_id"] in chosen else "") + ">"
+                + "<span><strong>" + escape(row['model']) + "</strong><span>"
+                + escape(f"{row['corpus']} - {row['responses']:,} saved outputs")
+                + "</span><small>Run: " + escape(row['run_id']) + "</small></span></label>" for row in rows)
+            + ("<p>No measured local runs are indexed in this campaign.</p>" if not rows else "")
+            + "</div><p id='source-run-count' aria-live='polite'>" + str(len(chosen)) + " run(s) selected</p>"
+            "</fieldset><input type='hidden' form='builder' name='retained_source_runs' "
             "id='retained-source-runs' value='" + escape(json.dumps(chosen)) + "'>"
-            "<p class='note' id='retained-source-help'>Use Ctrl/Cmd or Shift to select several runs. "
-            "Missing and truncated responses are included. Only measured local records are listed; "
+            "<p class='note' id='retained-source-help'>Missing and truncated responses are included. Only measured local records are listed; "
             "the preparation job checks that the selected original grids are complete and usable as input sources. "
             "This list is not a model-quality filter.</p>"
-            "<button type='submit' form='builder' formaction='/build/prepare-inputs'>Prepare selected inputs</button>"
-            "<script>document.addEventListener('DOMContentLoaded',()=>{const select=document.getElementById('retained-source-run-select');"
+            "<div class='review-actions'><button type='submit' form='builder' formaction='/build/prepare-inputs'>Prepare selected inputs</button></div>"
+            "<script>document.addEventListener('DOMContentLoaded',()=>{const boxes=Array.from(document.querySelectorAll('[data-source-run]'));"
             "const hidden=document.getElementById('retained-source-runs');"
-            "const sync=()=>{hidden.value=JSON.stringify(Array.from(select.selectedOptions,o=>o.value));};"
-            "select.addEventListener('change',sync);document.getElementById('builder')?.addEventListener('submit',sync);"
+            "const sync=()=>{const chosen=boxes.filter(o=>o.checked);hidden.value=JSON.stringify(chosen.map(o=>o.value));"
+            "document.getElementById('source-run-count').textContent=chosen.length+' run(s) selected';};"
+            "boxes.forEach(o=>o.addEventListener('change',sync));document.getElementById('builder')?.addEventListener('submit',sync);"
+            "document.getElementById('source-run-search').addEventListener('input',e=>{const term=e.target.value.toLowerCase();"
+            "boxes.forEach(o=>{const row=o.closest('label');row.hidden=!row.textContent.toLowerCase().includes(term);});});"
             "});</script>"
         )
     job_id = params.get("retained_sources_job", "")
@@ -136,7 +144,7 @@ def source_panel(app, params: dict[str, str]) -> str:
 
 def prepare_selected_inputs(app, params: dict[str, str]):
     if params.get("work_kind") != "campaign" and not params.get("campaign_id"):
-        raise ValueError("Select Campaign to prepare a matched follow-on")
+        raise ValueError("Select Campaign to reuse saved local inputs for an API comparison")
     rows = selected_runs(params, source_runs(app.db, params.get("retained_source_campaign", "")))
     output_root = (app.results_root / "rig-web" / "prepared-inputs").resolve()
     values = source_arguments(rows, app.results_root, output_root / (uuid4().hex + ".json"))

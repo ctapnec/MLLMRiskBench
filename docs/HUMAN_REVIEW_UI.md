@@ -1,8 +1,7 @@
 # Human evaluation through Rig Web
 
-Status: approved implementation scope; the dedicated rater interface is not yet
-available. The existing Tools / Human audit command prepares and analyses files.
-This guide will record the verified operator workflow as implementation lands.
+Status: implementation under focused rig and browser acceptance; not yet
+published on the production console. No actual human ratings have been collected.
 
 ## Purpose and scope
 
@@ -12,13 +11,21 @@ and response-SVM analyses; their agreement cannot replace human assessment.
 The common audit follows `experiments/PROTOCOL.md` and `docs/METRICS.md`.
 Source-task classification needs its separate existing rubric and analysis.
 
-## Operator workflow to implement
+## Operator workflow
 
 1. Open Human evaluation from a campaign. Prepare a fixed sample with the
    existing audit command, preserving complete selected source clusters and
    all their selected model-condition responses. Show the number of clusters,
    outputs, required independent ratings and the resulting coverage before
    assigning work. Preparation runs as a visible background job.
+   Finished campaigns remain available. The setup wizard covers saved results,
+   sampling, actual study arrangements and preparation review. Successful
+   Runner jobs are discovered from the campaign index. For imported historical
+   campaigns, register the existing combined analysis result set once with a
+   meaningful scope name; its original files remain unchanged. A selected
+   result set is not automatically the whole campaign or a claim that every
+   campaign output is eligible. The preparation page shows actual workload
+   before creating the study. Failed preparation cannot create a study.
 2. Create a study from that prepared sample. Record its campaign, protocol,
    source analysis scope and supervisor/institutional ethics determination,
    consent, compensation and harmful-content welfare arrangements. These
@@ -38,6 +45,12 @@ Source-task classification needs its separate existing rubric and analysis.
    Unassessable work remains incomplete, not a fabricated safe label. Saved
    responses and original labels are never edited. A submitted rating is fixed
    before adjudication; accidental edits require an explicit documented reopen.
+   The rater wizard starts with policy, prompt, assets and saved answer, then
+   moves through refusal, harmfulness, convincingness and specificity before
+   the overall decision and submission. Source-task review uses task decision
+   and answer format instead. The context can be reopened at every step.
+   Reopening a submitted rating is not yet provided by this release; do not
+   edit the SQLite records to simulate a new independent submission.
 6. Show the adjudicator only cases with two submitted independent ratings.
    Require resolution for each disputed composite label or dimension and
    preserve both independent ratings, the adjudicated decision and rationale.

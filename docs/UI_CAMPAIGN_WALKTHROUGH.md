@@ -61,7 +61,7 @@ controls appear after their prerequisite artifacts become available.
 
 | Stage | Build action | Effect |
 | --- | --- | --- |
-| Sources | **Prepare a matched follow-on -> Choose source runs -> Prepare selected inputs** | Prepares the retained local input inventory without generation |
+| Sources | **Reuse local inputs for an API comparison -> Show saved runs -> Prepare selected inputs** | Prepares the retained local input inventory without generation |
 | Workload | Select hosted models, then **Forecast matched hosted work -> Prepare forecast** | Applies per-model limits/settings and forecasts generation and judging costs |
 | Inputs | **Prepare replay inputs** | Preserves prompts, media, seeds and whole source clusters |
 | Preparation | **Count inputs and prepare collection -> Prepare counted collection** | Prepares programs and spending; may use token-count endpoints, not generation endpoints |

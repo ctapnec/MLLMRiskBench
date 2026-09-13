@@ -89,6 +89,23 @@ h2 .ic { color:var(--muted); }
 .campaign-create-card { max-width:44rem; padding:1.5rem; margin:1.5rem 0; }
 .campaign-create-form { display:grid; gap:1.5rem; margin:0; }
 .campaign-actions { display:flex; flex-wrap:wrap; align-items:center; gap:.75rem; padding-top:1rem; border-top:1px solid var(--line); }
+.source-preparation { min-width:0; }
+.source-preparation > p { max-width:85ch; }
+.source-steps { display:flex; flex-wrap:wrap; gap:.6rem 1.25rem; margin:1.25rem 0; color:var(--muted); font-size:.85rem; }
+.source-campaign-row { display:flex; align-items:flex-end; flex-wrap:wrap; gap:.85rem; margin:1.25rem 0; }
+.source-campaign-row .campaign-field { flex:1 1 18rem; max-width:36rem; }
+.source-campaign-row button { min-height:2.65rem; margin:0; }
+.source-run-fieldset { min-width:0; border:0; padding:0; margin:1.5rem 0; }
+.source-run-fieldset legend { font-weight:700; margin-bottom:.75rem; }
+.source-run-picker { max-height:24rem; overflow:auto; margin-top:.8rem; border:1px solid var(--line); border-radius:8px; }
+.source-run-choice { display:flex; align-items:flex-start; gap:.8rem; padding:.9rem; border-bottom:1px solid var(--line); cursor:pointer; }
+.source-run-choice:last-child { border-bottom:0; }
+.source-run-choice[hidden] { display:none; }
+.source-run-choice:has(input:checked) { background:var(--soft); }
+.source-run-choice input { flex:0 0 auto; margin:.25rem 0 0; }
+.source-run-choice > span { min-width:0; display:grid; gap:.3rem; overflow-wrap:anywhere; }
+.source-run-choice small { color:var(--muted); }
+@media(max-width:540px) { .source-campaign-row .campaign-field { max-width:none; } .source-campaign-row button { width:100%; } }
 .work-kind-choices { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr)); gap:1rem; margin:1rem 0 1.5rem; }
 .work-kind-choice { display:flex; align-items:flex-start; gap:.75rem; padding:1rem; border:1px solid var(--line); border-radius:10px; cursor:pointer; min-width:0; }
 .work-kind-choice:has(input:checked) { border-color:var(--accent); background:var(--soft); }

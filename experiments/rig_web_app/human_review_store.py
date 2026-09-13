@@ -78,6 +78,12 @@ class HumanReviewStore:
                 CREATE TABLE IF NOT EXISTS human_review_events (
                     id INTEGER PRIMARY KEY AUTOINCREMENT, study TEXT NOT NULL, reviewer TEXT,
                     item TEXT, action TEXT NOT NULL, detail TEXT NOT NULL, created REAL NOT NULL);
+                CREATE TABLE IF NOT EXISTS human_review_sources (
+                    id TEXT PRIMARY KEY, campaign TEXT NOT NULL, name TEXT NOT NULL,
+                    metadata TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS human_review_preparations (
+                    id TEXT PRIMARY KEY, campaign TEXT NOT NULL, job TEXT NOT NULL,
+                    value TEXT NOT NULL, study TEXT);
             """)
 
     def close(self):
@@ -143,6 +149,54 @@ class HumanReviewStore:
     def studies(self, campaign=""):
         with self.lock:
             return [dict(r) for r in self.conn.execute("SELECT id,campaign,name,mode,created FROM human_studies WHERE (?='' OR campaign=?) ORDER BY created DESC", (campaign, campaign))]
+
+    def register_source(self, *, campaign, name, results, historical_code_repository='', judge_configuration_sha256=''):
+        """Associate an existing analysis scope without changing its results."""
+        path = Path(results).resolve(strict=True)
+        if not path.is_dir() or not any(path.is_relative_to(p) for p in self.allowed_roots):
+            raise ValueError('Select an existing results directory in the configured results store')
+        if not name.strip() or not campaign: raise ValueError('Name the analysis scope and its campaign')
+        metadata = dict(results=str(path), historical_code_repository=historical_code_repository,
+                        judge_configuration_sha256=judge_configuration_sha256)
+        with self.transaction():
+            existing = self.conn.execute('SELECT id FROM human_review_sources WHERE campaign=? AND name=? AND metadata=?',
+                (campaign, name.strip(), _json(metadata))).fetchone()
+            if existing: return existing['id']
+            key = secrets.token_hex(12)
+            self.conn.execute('INSERT INTO human_review_sources VALUES(?,?,?,?)', (key, campaign, name.strip(), _json(metadata)))
+        return key
+
+    def sources(self, campaign):
+        with self.lock:
+            return [dict(r, metadata=json.loads(r['metadata'])) for r in self.conn.execute(
+                'SELECT * FROM human_review_sources WHERE campaign=? ORDER BY name,id', (campaign,))]
+
+    def save_preparation(self, campaign, job, value):
+        key = secrets.token_hex(12)
+        with self.transaction():
+            self.conn.execute('INSERT INTO human_review_preparations VALUES(?,?,?,?,NULL)', (key, campaign, job, _json(value)))
+        return key
+
+    def preparations(self, campaign):
+        with self.lock:
+            return [dict(r, value=json.loads(r['value'])) for r in self.conn.execute(
+                'SELECT * FROM human_review_preparations WHERE campaign=? ORDER BY rowid DESC', (campaign,))]
+
+    def preparation(self, key):
+        with self.lock:
+            row = self.conn.execute('SELECT * FROM human_review_preparations WHERE id=?', (key,)).fetchone()
+            if row is None: raise ValueError('Unknown sample preparation')
+            return dict(row, value=json.loads(row['value']))
+
+    def create_prepared_study(self, key):
+        with self.lock:
+            preparation = self.preparation(key)
+            if preparation['study']: return preparation['study']
+            value = preparation['value']
+            study = self.create(campaign=preparation['campaign'], **value)
+            with self.conn:
+                self.conn.execute('UPDATE human_review_preparations SET study=? WHERE id=?', (study, key))
+            return study
 
     def study(self, study):
         row = self.conn.execute("SELECT * FROM human_studies WHERE id=?", (study,)).fetchone()

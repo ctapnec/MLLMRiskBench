@@ -146,3 +146,50 @@ def test_rater_http_shell_and_metadata_are_separate_from_operator(tmp_path):
         assert code==200 and b'SECRET_MODEL_ID' not in body and b'<script>' in body
         assert app.handle('GET','/human-evaluation')[0]==200
     finally:app.close()
+
+
+def test_finished_campaign_study_setup_uses_saved_results_and_reports_workload(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    app=RigWebApp(results_root=tmp_path/'runs',state_dir=tmp_path/'state',repo_root=tmp_path,gpu_hardware={},system_hardware={})
+    try:
+        campaign=app.db.create_workspace('Finished local campaign','local')
+        result_root=tmp_path/'runs'/'completed-results';result_root.mkdir()
+        store=app._human_store()
+        source=store.register_source(campaign=campaign,name='Completed local analysis',results=result_root)
+        page=app.handle('GET','/human-evaluation?campaign_id='+campaign)[2].decode()
+        assert 'Completed local analysis' in page and 'data-study-wizard' in page
+        assert 'No model is rerun' in page and "data-study-step='Arrangements'" in page
+        starts=[]
+        def launch(command,params,**kwargs):
+            starts.append((command,params,kwargs));prepared(Path(params['--output']))
+            return SimpleNamespace(job_id='human-sample-job')
+        monkeypatch.setattr(app,'start_job',launch)
+        data=dict(campaign_id=campaign,source='scope-'+source,name='Review finished outputs',mode='common',clusters='1',
+            ethics='synthetic fixture only',consent='test consent',compensation='test terms',stop_contact='test',acknowledge='1')
+        code,location,_=app.handle('POST','/human-evaluation/prepare-study',data)
+        assert code==303 and location.startswith('/human-evaluation/preparations/')
+        assert len(starts)==1 and starts[0][0]=='human_audit'
+        assert starts[0][1]['--results']==str(result_root.resolve()) and starts[0][2]['campaign_id']==campaign
+        assert not store.studies(campaign)
+        monkeypatch.setattr(app.db,'load_job',lambda key:dict(state='complete',exit_code=0))
+        body=app.handle('GET',location)[2].decode()
+        assert '1 saved outputs, 2 required independent ratings' in body
+        first=app.handle('POST',location,{})[1];second=app.handle('POST',location,{})[1]
+        assert first==second and len(store.studies(campaign))==1
+        assert not store.summary(first.rsplit('/',1)[-1])['ready_for_analysis']
+    finally:app.close()
+
+
+def test_finished_runs_discovered_without_cross_campaign_or_failed_run_sources(tmp_path):
+    from experiments.rig_web_app.human_review_setup import sources
+    app=RigWebApp(results_root=tmp_path/'runs',state_dir=tmp_path/'state',repo_root=tmp_path,gpu_hardware={},system_hardware={})
+    try:
+        owner=app.db.create_workspace('Finished API','api');other=app.db.create_workspace('Different campaign','local')
+        with app.db._conn:
+            for key,exit_code,campaign in [('done',0,owner),('failed',1,owner),('unrelated',0,other)]:
+                app.db._conn.execute('INSERT INTO runs VALUES(?,?,?,?,?,?,?,?,?)',
+                    (key,'measured','run_matrix',str(tmp_path/'runs'/key),'pin','complete' if exit_code==0 else 'failed',exit_code,1))
+                app.db._conn.execute('INSERT INTO campaign_members VALUES(?,?,?,?,?)',('external',key,campaign,'collection',1))
+        assert [r['id'] for r in sources(app,owner)]==['run-done']
+        assert 'Human evaluation' in app.handle('GET','/campaigns/'+owner)[2].decode()
+    finally:app.close()
