@@ -74,7 +74,7 @@ def test_create_returns_to_existing_build_and_selector_belongs_to_its_form(tmp_p
         tags = _Tags(page).tags
         selectors = [attrs for tag, attrs in tags if tag == "select" and attrs.get("name") == "campaign_id"]
         assert selectors == [{"name": "campaign_id", "form": "builder"}]
-        assert any(tag == "form" and attrs.get("id") == "builder" and attrs.get("action") == "/build" for tag, attrs in tags)
+        assert any(tag == "form" and attrs.get("id") == "builder" and attrs.get("action") == "/build/review" for tag, attrs in tags)
         assert f"value='{campaign}' selected" in page
         workspace = app.handle("GET", "/campaigns/" + campaign)[2].decode()
         assert "Configure in Build" in workspace
