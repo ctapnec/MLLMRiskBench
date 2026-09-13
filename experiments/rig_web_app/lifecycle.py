@@ -1780,6 +1780,18 @@ class LifecycleMixin:
                 allowed.update(self._declared_matrix_environment(selected))
             allowed.update(self._MATRIX_OPTIONAL_ENV)
             allowed.update(self._MATRIX_RECEIPT_ENV)
+        if command == "retained_inventory_judging":
+            from experiments.hosted_retained_inputs import _descriptor
+            if values.get('--execute'):
+                ready = self._strict_config_document(str(Path(str(values['--preparation'])) / 'result.json'))
+                request = ready['request']
+                model, api_path, api_sha = request['judge_model'], request['api']['path'], request['api']['sha256']
+            else:
+                model, api_path = str(values.get('--judge-model', '')), str(values.get('--api-config', ''))
+                api_sha = _descriptor(Path(api_path))['sha256']
+            allowed.update(self._selected_matrix_environment_names({
+                '--judges': 'llm', '--judge-model': model, '--api-config': api_path, '--api-config-sha256': api_sha}))
+            allowed.update(self._MATRIX_OPTIONAL_ENV)
         if command == "retained_response_judge_pair_execute":
             plan = self._strict_config_document(str(values.get("--plan", "")))
             condition = plan.get("judge_condition")
@@ -3343,7 +3355,7 @@ class LifecycleMixin:
             child_env.pop("URA_CAMPAIGN_WORKSPACE_ID", None)
             child_env.pop("URA_CAMPAIGN_CONSOLE_DB", None)
             if command in {"hosted_campaign_execute", "run_matrix", "retained_response_judge_pair_execute",
-                           "retained_native_judge_execute"} and campaign_id:
+                           "retained_native_judge_execute", "retained_inventory_judging"} and campaign_id:
                 child_env["URA_CAMPAIGN_WORKSPACE_ID"] = campaign_id
                 child_env["URA_CAMPAIGN_CONSOLE_DB"] = str(self.db.path.resolve())
             if transient_config is not None:
@@ -4156,6 +4168,17 @@ class LifecycleMixin:
             if method == "POST" and path == "/build/review-inventory-judging":
                 from .builder_judging_inventory import inventory_judging_review
                 return 200, "text/html; charset=utf-8", inventory_judging_review(self,self._builder_params(form or {}))
+            if method == "POST" and path == "/build/prepare-inventory-haiku":
+                from .builder_inventory_execution import prepare
+                job = prepare(self, self._builder_params(form or {}))
+                return 303, "/jobs/" + job.job_id, b""
+            if method == "POST" and path == "/build/review-inventory-haiku":
+                from .builder_inventory_execution import review
+                return 200, "text/html; charset=utf-8", review(self, self._builder_params(form or {}))
+            if method == "POST" and path == "/build/execute-inventory-haiku":
+                from .builder_inventory_execution import launch
+                job = launch(self, form or {})
+                return 303, "/jobs/" + job.job_id, b""
             if method == "POST" and path == "/build/review-haiku-judging":
                 from .builder_haiku_judging import haiku_judging_review
                 return 200, "text/html; charset=utf-8", haiku_judging_review(self,self._builder_params(form or {}))

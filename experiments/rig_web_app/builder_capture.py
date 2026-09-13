@@ -41,6 +41,7 @@ class BuilderCaptureMixin:
         "retained_haiku_job",
         "retained_inventory_job",
         "retained_inventory_items_job",
+        "retained_inventory_plan_job",
         "retained_inventory_limit",
         "retained_inventory_seed",
         "mode",

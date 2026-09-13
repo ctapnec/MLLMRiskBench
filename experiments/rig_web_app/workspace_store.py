@@ -175,7 +175,8 @@ class WorkspaceStoreMixin:
 def activity_role(command: str) -> str:
     if command in {"run_matrix", "hosted_retained_execute", "hosted_campaign_execute"}:
         return "collection"
-    if command in {"retained_response_judge_pair", "retained_response_judge_pair_execute", "retained_native_judge_execute"}:
+    if command in {"retained_response_judge_pair", "retained_response_judge_pair_execute", "retained_native_judge_execute",
+                   "retained_inventory_judging"}:
         return "judging"
     if command in {"level1_evidence", "level2_report", "figures"}:
         return "analysis"
