@@ -148,6 +148,28 @@ def test_rater_http_shell_and_metadata_are_separate_from_operator(tmp_path):
     finally:app.close()
 
 
+def test_saved_content_media_uses_retained_index_without_exposing_paths(tmp_path):
+    root=tmp_path/'state';root.mkdir();sample=root/'sample.csv'
+    media=root/'prompt.png';media.write_bytes(b'retained test media')
+    digest='a'*64;index=root/'media-index.json';index.write_text(json.dumps({digest:str(media)}))
+    prepared(sample,[dict(locator='@content-sha256/'+digest,sha256=digest,mime='image/png',modality='image')])
+    store=HumanReviewStore(root/'console.db',root/'reviews',allowed_roots=[root],media_roots=[root])
+    try:
+        study=store.create(campaign='local',name='Saved media fixture',prepared=sample,mode='common',metadata=dict(
+            ethics='test',consent='test',compensation='test',stop_contact='test',results=str(root),media_index=str(index)))
+        token=store.enroll(study,'a','rater',qualification());item=item_for(store,token)
+        view=store.view(token,item)
+        assert view['item']['media'][0]['available'] is True
+        assert str(media) not in json.dumps(view) and digest not in json.dumps(view)
+        assert store.media(token,item,0)==('image/png',b'retained test media')
+        store.save(token,item,revision=0,value=dict(valid_rating(),media_viewed=True),submit=True)
+        outside=tmp_path/'private.png';outside.write_bytes(b'private')
+        index.write_text(json.dumps({digest:str(outside)}))
+        assert store.view(token,item)['item']['media'][0]['available'] is False
+        with pytest.raises(ValueError):store.media(token,item,0)
+    finally:store.close()
+
+
 def test_finished_campaign_study_setup_uses_saved_results_and_reports_workload(tmp_path, monkeypatch):
     from types import SimpleNamespace
     app=RigWebApp(results_root=tmp_path/'runs',state_dir=tmp_path/'state',repo_root=tmp_path,gpu_hardware={},system_hardware={})

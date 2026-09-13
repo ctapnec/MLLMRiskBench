@@ -48,7 +48,7 @@ def setup_body(app, campaign, field):
     hidden = "<input type='hidden' name='campaign_id' value='"+escape(campaign)+"'>"
     body = "<section class='review-card'><h2>New human evaluation</h2><p>Use saved results from this campaign. Collection can already be finished. No model is rerun and no API credit is spent.</p><form method='post' action='/human-evaluation/prepare-study' data-study-wizard novalidate>"+hidden
     body += "<div class='review-steps' role='navigation' aria-label='Study setup steps'></div><section class='review-step' data-study-step='Saved results'><h2 tabindex='-1'>Choose the saved result set</h2><label>Saved results<select name='source' required>"+options+"</select></label><p class='review-help'>A result set may cover one run or a registered combined analysis. Its label describes the scope; choosing it does not imply every campaign output is eligible. Missing outputs remain in campaign statistics.</p></section>"
-    body += "<section class='review-step' data-study-step='Sample'><h2 tabindex='-1'>Define the assessment sample</h2>"+field('name','Study name')+"<div class='review-grid'><label>Rubric<select name='mode'><option value='common'>Common safety dimensions</option><option value='source_task'>Source-task classification</option></select></label>"+field('clusters','Source clusters',20,'number')+"</div><p>Whole selected clusters stay together. The prepared sample will show the actual output count and two-rater workload before the study is created.</p></section>"
+    body += "<section class='review-step' data-study-step='Sample'><h2 tabindex='-1'>Define the assessment sample</h2>"+field('name','Study name')+"<div class='review-grid'><label>Rubric<select name='mode'><option value='common'>Common safety dimensions</option><option value='source_task'>Source-task classification</option></select></label>"+field('clusters','Source clusters',20,'number')+"</div><p>Whole selected clusters stay together. The prepared sample will show the actual output count and two-rater workload before the study is created.</p><details><summary>Media lookup for imported results</summary>"+field('media_index','Existing retained media index (optional)',required=False)+"<p>Leave blank to use the selected result set's registered index. This connects saved image identities to their existing local files; it does not download media.</p></details></section>"
     body += "<section class='review-step' data-study-step='Arrangements'><h2 tabindex='-1'>Record the actual study arrangements</h2>"+field('ethics','Supervisor / institution determination and date')+field('compensation','Time, compensation and withdrawal terms')+field('stop_contact','Stop / escalation contact')+"<label>Consent and sensitive-content information<textarea name='consent' required></textarea></label><p>These fields record real decisions. They do not constitute institutional approval or replace consent from each reviewer.</p></section>"
     body += "<section class='review-step' data-study-step='Review'><h2 tabindex='-1'>Review sample preparation</h2><div data-study-summary></div><label class='review-check'><input type='checkbox' name='acknowledge' value='1' required><span>I understand the sample contains potentially harmful content and will be shared only with the assigned reviewers.</span></label><p>Preparation runs in Jobs. You will inspect the workload before creating the study and assigning raters.</p></section><div class='review-wizard-footer'><button type='button' class='ghost' data-study-back>Back</button><button type='button' data-study-next>Next</button><button type='submit'>Prepare review sample</button></div></form></section>"
     drafts=app._human_store().preparations(campaign)
@@ -62,7 +62,7 @@ def setup_route(app, method, path, data, style):
     store=app._human_store()
     if method=='POST' and path=='/human-evaluation/register-source':
         owner=data.get('campaign_id','');app.db.require_workspace(owner)
-        store.register_source(campaign=owner, **{k:data.get(k,'') for k in ('name','results','historical_code_repository','judge_configuration_sha256')})
+        store.register_source(campaign=owner, **{k:data.get(k,'') for k in ('name','results','historical_code_repository','judge_configuration_sha256','media_index')})
         return 303,'/human-evaluation?campaign_id='+owner,b''
     if method=='POST' and path=='/human-evaluation/prepare-study':
         owner=data.get('campaign_id',''); choices=sources(app,owner)
@@ -78,7 +78,8 @@ def setup_route(app, method, path, data, style):
             if source.get(key):params['--'+key.replace('_','-')]=source[key]
         job=app.start_job('human_audit',params,campaign_id=owner)
         metadata={k:data[k] for k in ('ethics','compensation','stop_contact','consent')}
-        metadata.update({k:source.get(k,'') for k in ('results','historical_code_repository','judge_configuration_sha256')})
+        metadata.update({k:source.get(k,'') for k in ('results','historical_code_repository','judge_configuration_sha256','media_index')})
+        if data.get('media_index','').strip(): metadata['media_index']=str(store._path(data['media_index']))
         key=store.save_preparation(owner,job.job_id,dict(name=data['name'],mode=data['mode'],prepared=str(directory/'sample.csv'),metadata=metadata))
         return 303,'/human-evaluation/preparations/'+key,b''
     if path.startswith('/human-evaluation/preparations/'):

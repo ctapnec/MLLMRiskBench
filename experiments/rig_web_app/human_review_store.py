@@ -55,6 +55,7 @@ class HumanReviewStore:
         self.allowed_roots = tuple(Path(p).resolve() for p in allowed_roots)
         self.media_roots = tuple(Path(p).resolve() for p in media_roots)
         self.lock = threading.RLock()
+        self._media_indexes = {}
         self.conn = sqlite3.connect(database, check_same_thread=False, timeout=10)
         self.conn.row_factory = sqlite3.Row
         with self.conn:
@@ -150,14 +151,14 @@ class HumanReviewStore:
         with self.lock:
             return [dict(r) for r in self.conn.execute("SELECT id,campaign,name,mode,created FROM human_studies WHERE (?='' OR campaign=?) ORDER BY created DESC", (campaign, campaign))]
 
-    def register_source(self, *, campaign, name, results, historical_code_repository='', judge_configuration_sha256=''):
+    def register_source(self, *, campaign, name, results, historical_code_repository='', judge_configuration_sha256='', media_index=''):
         """Associate an existing analysis scope without changing its results."""
         path = Path(results).resolve(strict=True)
         if not path.is_dir() or not any(path.is_relative_to(p) for p in self.allowed_roots):
             raise ValueError('Select an existing results directory in the configured results store')
         if not name.strip() or not campaign: raise ValueError('Name the analysis scope and its campaign')
         metadata = dict(results=str(path), historical_code_repository=historical_code_repository,
-                        judge_configuration_sha256=judge_configuration_sha256)
+                        judge_configuration_sha256=judge_configuration_sha256, media_index=str(self._path(media_index)) if media_index else '')
         with self.transaction():
             existing = self.conn.execute('SELECT id FROM human_review_sources WHERE campaign=? AND name=? AND metadata=?',
                 (campaign, name.strip(), _json(metadata))).fetchone()
@@ -248,15 +249,32 @@ class HumanReviewStore:
         if row is None: raise ValueError("Item is not assigned to this study")
         return dict(row, content=json.loads(row["content"]), media=json.loads(row["media"]))
 
-    def _media_path(self, reference):
+    def _media_path(self, reference, media_index=''):
         locator = reference.get("locator", "")
         parts = locator.split("/")
-        if len(parts) < 3 or parts[0] != "@media-root" or not parts[1].isdigit() or any(p in {"", ".", ".."} for p in parts[2:]) or "\\" in locator:
-            raise ValueError("Required media needs an operator-resolved local locator")
-        number = int(parts[1])
-        if number >= len(self.media_roots): raise ValueError("Required media root is unavailable")
-        root = self.media_roots[number]; path = root.joinpath(*parts[2:]).resolve(strict=True)
-        if not path.is_relative_to(root) or not path.is_file() or path.stat().st_size > 32*1024*1024:
+        if len(parts) == 2 and parts[0] in {'@content-sha256', '@inline-sha256'}:
+            digest = parts[1]
+            if len(digest) != 64 or any(c not in '0123456789abcdef' for c in digest) or reference.get('sha256') != digest or not media_index:
+                raise ValueError('Required media has no matching retained media index')
+            index = self._path(media_index); stat = index.stat()
+            if stat.st_size > 64*1024*1024: raise ValueError('Retained media index exceeds the reader limit')
+            stamp = (stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_ino)
+            cached = self._media_indexes.get(index)
+            if cached is None or cached[0] != stamp:
+                value = json.loads(index.read_text(encoding='utf-8'))
+                if not isinstance(value, dict): raise ValueError('Retained media index must map content identities to local files')
+                cached = (stamp, value); self._media_indexes[index] = cached
+            path = Path(cached[1].get(digest, ''))
+            if not path.is_absolute(): raise ValueError('Required media is absent from the retained index')
+            path = path.resolve(strict=True)
+        else:
+            if len(parts) < 3 or parts[0] != "@media-root" or not parts[1].isdigit() or any(p in {"", ".", ".."} for p in parts[2:]) or "\\" in locator:
+                raise ValueError("Required media needs an operator-resolved local locator")
+            number = int(parts[1])
+            if number >= len(self.media_roots): raise ValueError("Required media root is unavailable")
+            root = self.media_roots[number]; path = root.joinpath(*parts[2:]).resolve(strict=True)
+            if not path.is_relative_to(root): raise ValueError('Required media escaped its configured root')
+        if not any(path.is_relative_to(root) for root in self.media_roots) or not path.is_file() or path.stat().st_size > 32*1024*1024:
             raise ValueError("Required media is unavailable or exceeds the viewer limit")
         mime = reference.get("mime")
         if mime not in {"image/png", "image/jpeg", "image/webp", "image/gif", "audio/wav", "audio/mpeg", "video/mp4", "video/webm"}:
@@ -293,7 +311,7 @@ class HumanReviewStore:
             shown.update(id=item, choices={k: sorted(v) for k, v in _allowed(content, study["mode"]).items()})
             shown["media"] = []
             for index, reference in enumerate(selected["media"]):
-                try: self._media_path(reference); available = True
+                try: self._media_path(reference, study['metadata'].get('media_index', '')); available = True
                 except (OSError, ValueError): available = False
                 shown["media"].append({"index": index, "modality": reference.get("modality"), "available": available})
             if r["role"] == "rater":
@@ -310,7 +328,7 @@ class HumanReviewStore:
             if not shown["consented"]: raise ValueError("Consent is required")
             r = self._reviewer(token); references = self._item(r["study"], item)["media"]
             if type(index) is not int or not 0 <= index < len(references): raise ValueError("Unknown assigned media")
-            path, mime = self._media_path(references[index])
+            path, mime = self._media_path(references[index], self.study(r['study'])['metadata'].get('media_index', ''))
             return mime, path.read_bytes()
 
     def save(self, token, item, *, revision, value, submit=False, defer=False):
@@ -331,7 +349,7 @@ class HumanReviewStore:
                     raise ValueError("Complete every rubric dimension and confidence before submission")
                 if selected["media"]:
                     if value.get("media_viewed") is not True: raise ValueError("View every required asset before submitting")
-                    for media in selected["media"]: self._media_path(media)
+                    for media in selected["media"]: self._media_path(media, study['metadata'].get('media_index', ''))
             if defer and not str(value.get("defer_reason", "")).strip(): raise ValueError("Record why this item cannot be assessed")
             state = "submitted" if submit else "deferred" if defer else "draft"
             self.conn.execute("INSERT INTO human_ratings VALUES(?,?,?,?,?,?,?) ON CONFLICT(study,item,reviewer) DO UPDATE SET revision=excluded.revision,state=excluded.state,value=excluded.value,updated=excluded.updated",
