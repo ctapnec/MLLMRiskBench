@@ -5,7 +5,7 @@ import sqlite3
 import pytest
 
 from experiments.response_svm_dataset import export_dataset, visible_turns
-from ura.response_svm import (connected_groups, evaluate_study, feature_matrices,
+from ura.response_svm import (connected_groups, derived_disagreement_baselines, evaluate_study, feature_matrices,
                               split_groups, target_label)
 
 
@@ -45,6 +45,19 @@ def test_task_labels_do_not_turn_missing_native_decisions_into_agreement():
     assert target_label(row(expected_behavior="safe_answer", label="over_refusal"), "over_refusal") == 1
     assert target_label(row(expected_behavior="safe_answer"), "harmful_compliance") is None
     assert target_label(row(label="invalid"), "harmful_compliance") is None
+
+
+def test_derived_disagreement_flips_only_using_the_known_local_verdict():
+    pytest.importorskip("sklearn")
+    rows = [row(0, group="a", local_label="violation", label="safe"),
+            row(1, group="b", local_label="safe", label="safe")]
+    predictions = [dict(id=r["id"], task="harmful_compliance", estimator="linear_svm",
+        protocol="group_holdout", features="response", prediction=0, score=-2.0) for r in rows]
+    result = derived_disagreement_baselines(rows, predictions, bootstrap=100)[0]
+    assert result["test"]["confusion"] == [[1, 0], [0, 1]]
+    assert result["test"]["average_precision"] == 1.0
+    assert result["review_curve"][0]["captured"] == 1
+    assert result["additional_fits"] == 0
 
 
 def test_only_visible_assistant_text_not_reasoning_or_user_turns():

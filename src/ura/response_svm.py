@@ -159,6 +159,37 @@ def review_curve(rows: list[dict], y, score) -> list[dict]:
     return result
 
 
+def derived_disagreement_baselines(rows: list[dict], predictions: list[dict], *, bootstrap=1000, seed=0):
+    """Compare a third SVM with the first SVM plus the already known local verdict.
+
+    Operates only on saved out-of-sample predictions; no fitting or provider call.
+    Teacher labels are used to score this baseline, never to construct its score.
+    """
+    by_id = {row["id"]: row for row in rows}
+    candidates = defaultdict(list)
+    for prediction in predictions:
+        if prediction["task"] == "harmful_compliance" and prediction["estimator"] == "linear_svm":
+            original = by_id[prediction["id"]]
+            row = dict(original, group=prediction.get("group", original["group"]))
+            if target_label(row, "judge_disagreement") is not None:
+                candidates[(prediction["protocol"], prediction["features"])].append((row, prediction))
+    reports = []
+    for (protocol, features), pairs in sorted(candidates.items()):
+        selected = [r for r, _ in pairs]
+        truth = [target_label(r, "judge_disagreement") for r in selected]
+        native = [int(r["local_label"] == "violation") for r in selected]
+        predicted = [p["prediction"] ^ local for (_, p), local in zip(pairs, native)]
+        scores = [(-1 if local else 1) * p["score"] for (_, p), local in zip(pairs, native)]
+        summary = metric_summary(truth, predicted, scores)
+        summary["macro_f1_cluster_ci95"] = bootstrap_f1(truth, predicted,
+            [r["group"] for r in selected], repeats=bootstrap, seed=seed)
+        reports.append(dict(task="judge_disagreement", protocol=protocol, features=features,
+            estimator="harmful_svm_plus_local_verdict", support=support(selected, "judge_disagreement"),
+            test=summary, review_curve=review_curve(selected, truth, scores),
+            additional_fits=0, uses_local_verdict=True))
+    return reports
+
+
 def evaluate_study(rows: list[dict], *, seed=0, max_chars=20000, bootstrap=1000,
                    holdout_models=(), holdout_corpora=(), progress=None) -> tuple[dict, list[dict]]:
     import numpy as np
@@ -249,4 +280,6 @@ def evaluate_study(rows: list[dict], *, seed=0, max_chars=20000, bootstrap=1000,
         clipped_fields={field: sum(len(r[field]) > max_chars for r in rows) for field in ("prompt", "response")},
         split_membership=[dict(id=r["id"], group=r["group"], split=split[r["group"]]) for r in rows],
         experiments=records, runtime=dict(numpy=np.__version__, sklearn=__import__("sklearn").__version__))
+    report["derived_disagreement_baselines"] = derived_disagreement_baselines(
+        rows, predictions, bootstrap=bootstrap, seed=seed)
     return report, predictions

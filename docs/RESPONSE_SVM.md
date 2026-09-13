@@ -48,6 +48,13 @@ of independent response observations. Human accuracy is not established by
 fidelity to Haiku. Source policy identifiers remain metadata, not features:
 this study does not test generalization to unseen policy definitions.
 
+As an exploratory reuse baseline, combine the harmful-compliance SVM's saved
+test prediction with the already known local verdict. Disagreement is their
+binary difference; reverse the SVM's score when the local judge predicts a
+violation. This needs no new model fit and tests whether the third SVM adds
+value over the first classifier and existing local evaluation. Haiku labels
+score this baseline but do not determine its predictions or ranking.
+
 ## CLI and UI flow
 
 In **Tools -> Analysis and native imports -> Retained response classifiers**,
@@ -74,6 +81,11 @@ python -m experiments.response_svm --evaluate \
   --seed 0 --bootstrap 1000
 ```
 
-This interface is implemented; focused rig tests, actual retained-data results
-and browser acceptance are pending. The general Build preparation acceptance
-and the waiting Google campaign remain separate obligations.
+The three classifiers completed a rig evaluation on 7,541 static-text records
+on 13 September 2026. Focused regressions and leakage mutation checks passed.
+An actual browser-launched export produced 4,682 hosted records in four seconds
+on an isolated console; its job completed, with no JavaScript errors or stuck
+busy state. This covers export, not a paid campaign's full Build flow. The
+general Build acceptance and the waiting Google campaign remain separate
+obligations. Exact numerical results and split membership accompany each run;
+the thesis reports observed limitations instead of selecting a universal winner.
