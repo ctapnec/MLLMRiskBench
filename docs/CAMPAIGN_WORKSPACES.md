@@ -1,5 +1,13 @@
 # Campaign workspaces and the reproducible UI workflow
 
+Publication preserves a saved selected response when an older source is
+re-imported with no answer. Pending means that no outcome has been retained;
+it is not a command to clear a later recovery. Selecting a different retained
+response remains explicit, and its generation condition and output-specific
+judgments remain separate. This applies equally to UI launches, external
+campaign imports and periodic publication. Empty predecessor publication must
+not make completed work disappear from Results, Compare or judging totals.
+
 ## Campaign and run contract - whole-flow reassessment
 
 The user-facing distinction is **Campaign** versus **Single run**, not local

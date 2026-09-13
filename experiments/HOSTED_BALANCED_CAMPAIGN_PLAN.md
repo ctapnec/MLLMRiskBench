@@ -1,5 +1,23 @@
 # Fourth hosted campaign: balanced matched coverage
 
+Closeout, 13 September at 09:34 UTC: the whole measured API workspace has
+11,433 assignments on 2,888 distinct inputs. It retains 10,318 usable outputs,
+1,096 provider-policy outcomes, 16 missing responses and three assignments
+without retained outcomes. These whole-workspace counts differ from the
+expansion-only poll denominator. There are 9,296 Haiku-assessed eligible usable
+outputs, 9,245 with a valid verdict and 51 with only invalid verdicts; local
+evaluation records cover all 11,430 retained outcomes. Setup and source-task
+rows remain outside common Haiku judging.
+
+All 228 saved outputs in the 230-input Pro extension now have local evaluation;
+all 204 eligible outputs have Haiku assessments. The four saved partial-job
+answers were judged without waiting for the two outstanding inputs. The latter
+may retry in the background, but the operator explicitly declines waiting for
+them if other useful work finishes first. The older one-input Sol identity-
+validation failure is a separate unfinished recovery, not part of that Pro
+exception. Nine publication omissions were restored from saved outputs and
+existing assessments without target or judge calls (RA-642 and RA-643).
+
 Status: requested on 11 September 2026; the allocation below was fixed before
 selection. Exact whole-cluster selection and media materialization have retained
 3,719 assignments on 1,200 distinct inputs already used locally. All 3,719 exact
@@ -361,6 +379,14 @@ use the reconciled workspace population, distinguishing attempted, usable,
 policy-rejected, missing, assessed and unassessed outcomes explicitly.
 
 ### Pro retry window and independent judging
+
+The whole-workspace local counterpart check confirms that all 2,888 assigned
+measured hosted input identities also occur in the Local campaign. All 4,454
+eligible usable local answers in this overlap have their own Haiku assessments.
+Setup turns, source-specific scoring rows, missing responses and retired pilot
+models are reported separately; they are not extra common Haiku obligations.
+The two overlooked eligible Luna answers have also received their own verdicts
+under the original supplemental funding. No target requests were repeated.
 
 On 13 September at 08:15 UTC, the new Pro cohort retained 228 of its 230
 assigned outputs. The active worker was sleeping in its existing transport

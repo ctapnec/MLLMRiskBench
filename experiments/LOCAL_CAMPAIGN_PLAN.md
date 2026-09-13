@@ -1,5 +1,26 @@
 # All-local test campaign plan: every corpus arm, every framework runtime, free models only
 
+Closeout, 13 September at 09:34 UTC: the 2,636-condition recovery remains fully
+attempted, with 2,226 usable replacements and 410 residual missing outputs.
+All 786 selected recovery Haiku assessments are retained. Chapter V now includes
+the recovery cross-tab, per-model coverage and a measured figure. It does not
+treat the selected recovery population as a random sample or count missing
+GraySwan answers as successful defense. Final cluster-level inference and
+independent human auditing remain open. Two quota-waiting hosted Pro inputs
+must not block useful local analysis, UI acceptance or thesis work.
+
+Matched hosted-input coverage, 13 September at 08:53 UTC: all 2,888 measured
+hosted input identities have local counterparts in the campaign index. Among
+the usable matching local outputs, 4,454 have output-specific Haiku assessments,
+265 require source-specific scoring and 101 are non-evaluable setup turns.
+Three usable retired-model pilot outputs are excluded from paid judging.
+The overlap also retains 581 missing outputs, including three from retired
+models; these are historical generation conditions, not the separate 410 misses
+in the selected recovery population below. No eligible usable local answer in
+this overlap lacks an indexed Haiku assessment. Evidence:
+`engineering/local-matched-haiku-coverage-20260913`. This establishes response
+and judging coverage, not equally sized model populations or judge validity.
+
 Current recovery observation, 13 September at 06:34 UTC: all 2,636 selected
 model-input conditions have been attempted. The lossless PNG correction returns
 normal-ended usable answers for all 62 affected Gemma/Ministral conditions.
