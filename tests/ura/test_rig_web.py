@@ -5670,6 +5670,24 @@ def test_paired_comparison_ui_exposes_historical_reader(tmp_path: Path) -> None:
         app.close()
 
 
+def test_level2_ui_preserves_historical_reader_and_multiple_roots(tmp_path: Path) -> None:
+    values = {'--results': 'runs/first', '--results#1': 'runs/second',
+        '--historical-code-repository': '/home/ura/MLLMRiskBench',
+        '--out-json': 'runs/report.json', '--out-csv': 'runs/report.csv',
+        '--out-md': 'runs/report.md'}
+    argv = build_argv('level2_report', values)
+    assert argv[argv.index('--historical-code-repository') + 1] == '/home/ura/MLLMRiskBench'
+    assert [argv[index + 1] for index, value in enumerate(argv) if value == '--results'] == [
+        'runs/first', 'runs/second']
+    app = _app(tmp_path)
+    try:
+        card = app._command_card('level2_report')
+        assert "name='--historical-code-repository'" in card
+        assert 'original source revisions' in card
+    finally:
+        app.close()
+
+
 def test_human_audit_ui_preserves_historical_configuration_selector() -> None:
     values = {
         "--results": "runs/runner-view", "--prepare": "2",

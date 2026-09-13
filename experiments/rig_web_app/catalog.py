@@ -829,6 +829,8 @@ def _commands() -> dict[str, Command]:
             "Export deterministic Level-2 JSON/CSV/Markdown broad tables",
             (
                 CommandParam("--results", "path", repeat=True),
+                CommandParam("--historical-code-repository", "path",
+                    help="Repository containing the original source revisions for retained runs."),
                 CommandParam("--native", "path", repeat=True),
                 CommandParam("--out-json", "path", required=True),
                 CommandParam("--out-csv", "path", required=True),
