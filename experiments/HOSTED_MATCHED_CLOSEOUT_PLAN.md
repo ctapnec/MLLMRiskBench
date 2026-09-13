@@ -328,3 +328,35 @@ Evidence: `hosted-alignment-inventory-20260913`,
 The source selection, counted requests and output-specific judging obligations
 must be published to the existing API campaign when execution is prepared;
 preparation alone is not a completed campaign result.
+
+### Alignment execution handoff - 13 September, 21:20 UTC
+
+The 30 selected requests have executable counted programs. Preparation reused
+all existing count receipts without another counting or generation request.
+The legacy continuation format retains its original budget registry as
+historical context; it does not refresh those balances. The new spending
+configuration explicitly disables unused provider pools and limits this
+addition to the allocations above. Dispatch stops below those allocations
+leave room for two in-flight maximum-cost attempts per active provider pool.
+Existing Pro workers, funding and input ownership are unchanged.
+
+The historical source inventory used by preparation references 103 exact local
+answers with completed Haiku verdicts. Their saved verdict artifacts are now
+referenced directly instead of treating their closed funding records as pending
+judging work. This inventory is distinct from the 104 valid assessments in the
+current matching-local index described above. Neither count authorizes reuse
+of a local verdict on a new hosted output.
+
+An initial temporary launcher failed during Python worker initialization,
+before a paid attempt. The corrected launcher has an explicit process entry
+point and resumes the existing runtime preparation. This is a controller
+correction, not a target-model failure or a reason to regenerate completed
+answers. The collector uses two request workers per provider and publishes to
+the existing API campaign. Local and output-specific Haiku assessment are
+queued after collection. At 21:20 UTC, all 30 requests were indexed as assigned
+but no target or judge attempt had yet been reserved for the addition.
+
+The existing half-hour observer now reports this addition's own spending and
+progress separately from historical campaign ceilings. The recorded Pro retry
+at midnight UTC corresponds to 03:00 on 14 September in Kyiv; it is not the
+operator's local midnight.
