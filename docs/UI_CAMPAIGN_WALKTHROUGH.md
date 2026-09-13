@@ -121,3 +121,36 @@ For partial historical runs and advanced imports, use the typed Tools commands
 in [RUN_AND_RETURN](../experiments/RUN_AND_RETURN.md). Preserve original failed
 runs and attach recoveries separately. External campaigns must not be presented
 as fabricated console-created jobs.
+
+## Analyze and export without repeating collection
+
+1. Open the campaign in **Stats**. Choose the measured population, model,
+   generation condition and judging condition before exporting a chart or table.
+   Coverage diagrams describe assignments and outcomes; they are not pooled
+   safety scores. A local evaluation record can contain abstention or a
+   source-specific result rather than a common safety label.
+2. For paired comparisons, open **Compare**, select the two exact conditions
+   and keep corpus, framework and modality aligned. Check shared inputs and
+   jointly valid judgments before interpreting differences. A sparse or empty
+   intersection is reported as such, not filled with unrelated responses.
+3. For source-specific metric tables, open **Tools**, select the owning campaign
+   and `level2_report`, and enter the completed source results directory.
+   Historical results also need the offered historical-code repository path.
+   Set JSON, CSV and Markdown output paths inside the configured results root.
+   Starting this analysis creates a campaign-owned job but makes no model or
+   judge calls. The completed job exposes the resulting download links.
+4. The Local campaign's source-classification example is `job-9238b9c4d1ab`;
+   the static/adaptive comparison is `job-ebb5f0582d4b`. Their saved arguments
+   and outputs provide concrete parameter examples. Do not combine their
+   source-specific and common-response metrics into one score. Detailed
+   analysis commands and denominator conventions are documented in
+   [METRICS](METRICS.md) and
+   [RUN_AND_RETURN](../experiments/RUN_AND_RETURN.md).
+
+Keep a dated observation cutoff for each exported analysis. Later recoveries
+or judge assessments can change available support; export a new analysis with
+the revised selection rather than overwriting the earlier experimental condition.
+Final reporting accounts separately for unissued inputs, missing responses,
+truncation, invalid judgments and inapplicable scoring tasks. Human validity
+requires independent ratings; neither completed jobs nor automated agreement
+supplies them.

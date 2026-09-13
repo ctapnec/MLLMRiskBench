@@ -201,3 +201,31 @@ same-response judge analyses, plus the approved response-SVM study. Their
 limitations remain explicit in Chapters V and VI. The Google remainder,
 independent human assessment and final thesis/reproducibility review are still
 open; this update does not declare the full study complete.
+
+### Selected-output judging reconciliation - 13 September, 18:46 UTC
+
+The current measured hosted index has 10,347 usable outputs, 1,114 explicit
+provider-policy outcomes and 16 missing outputs. Every retained outcome has a
+local evaluation record; this does not mean every record is a valid common
+safety label. Of the usable outputs, 9,325 have output-specific Haiku
+assessments. The remaining 1,022 are not an unpaid judging backlog:
+
+| Reason outside the common Haiku rubric | Outputs |
+| --- | ---: |
+| Non-evaluable Crescendo setup turns | 546 |
+| GPTGeoChat source moderation | 380 |
+| R-Judge source risk classification | 69 |
+| PurpleLlama source-specific prompt-injection evaluation | 27 |
+| Total | 1,022 |
+
+These dispositions were checked against the actual indexed saved response and
+attempt context. They do not remove any response from coverage or assign a safe
+label to an unassessed answer. Invalid Haiku verdicts remain distinct from
+missing assessments. The matching-local reconciliation above remains separate
+from this hosted count.
+
+Two older Pro assignments lack retained outcomes in the measured index. The
+21 supplementary Pro inputs remain queued in their collection program rather
+than represented as completed or missing model responses. Their collection and
+applicable judging remain open. Evidence:
+`judging-reconciliation-final-20260913` and the existing Google controllers.

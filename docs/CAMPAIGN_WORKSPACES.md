@@ -19,11 +19,14 @@ or a displayed error. Results uses compact identifiers, while expandable details
 retain the full input/model identity, context, output allowance, usage and finish
 reason. Desktop and narrow layouts have no page-wide overflow in those checks.
 
-This is not yet acceptance of one new paid campaign created entirely in Build
-and taken through collection, both judging stages and final analysis. Component
-tests, CLI campaign execution and read-only page checks do not establish that
-stronger claim. Historical verification and deployment observations below must
-be read with this current status; exact evidence is in the development ledger.
+A bounded Build campaign has completed real collection, retained local scoring,
+all-output Haiku preparation/execution and publication. It used two Terra calls
+and one new Haiku assessment, separately accounted from the study populations.
+Completed production analyses were also exported through Tools. These are
+complementary acceptance observations, not one full-size multi-provider campaign
+repeated end to end or proof for every framework/model combination. Historical
+notes below do not supersede these scoped observations; exact evidence is in
+the development ledger.
 
 Publication preserves a saved selected response when an older source is
 re-imported with no answer. Pending means that no outcome has been retained;
@@ -93,14 +96,13 @@ browser errors. This verifies the draft and launch workflow, not a full paid
 collection/judging campaign: the diagnostic job's artifacts remain accessible
 through Activity, and this check does not establish measured result indexing.
 
-The audit found four connected gaps, not just bad labels: campaign records had
-no saved experiment definition; creation duplicated model-category choice;
-Jobs mixed campaign controllers and standalone runs; and Stats used a conditional
-landing page and called individual executions campaigns. Result publication and
-the retained-input provider-parallel scheduler also remain incompletely connected
-to UI launches. They must be finished using their existing execution paths, not a
-second scheduler or another pipeline editor. This section is the intended
-end-to-end contract, not a claim that all of it is already deployed.
+The original reassessment identified four connected gaps: absent saved campaign
+definitions, duplicated model-category selection, mixed campaign/standalone job
+lists and a Stats landing page that called individual executions campaigns.
+The implemented flow connects these concepts and the retained-input
+provider-parallel executor through Build. Its current acceptance scope is stated
+above. Remaining limitations must not be inferred from this historical diagnosis
+or resolved by introducing a second scheduler or another pipeline editor.
 
 Acceptance includes creating both kinds from Build, saving and reopening a
 multi-model/multi-arm campaign without losing selections, reviewing and launching
