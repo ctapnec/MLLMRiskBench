@@ -149,6 +149,34 @@ def test_same_judge_is_kept_resident_across_jobs(retained, monkeypatch):
     assert closed == [True]
 
 
+def test_partial_execution_keeps_original_pending_coverage_on_resume(retained,tmp_path,monkeypatch):
+    retained.source.update(incomplete_generation=True,generation_assigned=3,unsaved_input_ids=['not-saved'])
+    seen=[]
+    def load(*a,**kwargs):
+        seen.append(kwargs)
+        assert kwargs['include_incomplete'] is True
+        return retained.source,retained.reader(),retained.inputs,retained.responses
+    monkeypatch.setattr(subject.sources,'load_program_job',load)
+    judges,calls=cascade()
+    monkeypatch.setattr(subject,'source_cascade',lambda *a:judges)
+    monkeypatch.setattr(subject,'source_runtime',lambda *a,**k:object())
+    artifact=tmp_path/'source.json'
+    artifact.write_text('{}')
+    retained.source['files']=[subject.sources.metadata(artifact)]
+    path=tmp_path/'prepared.json'
+    path.write_text(json.dumps(dict(status='prepared',units=[retained.source],failed=[])))
+    kwargs=dict(preparation=path,preparation_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+        out=tmp_path/'judging',revision='c'*40)
+    for _ in range(2):
+        result=subject.execute(**kwargs)
+        assert result['status']=='complete' and result['units'][0]['source']['unsaved_input_ids']==['not-saved']
+        assert result['target_calls']==0
+    assert len(calls)==2 and len(seen)==2
+    artifact.write_text('appended response')
+    assert subject.execute(**kwargs)['status']=='continuation_required'
+    assert len(calls)==2 and len(seen)==2
+
+
 @pytest.mark.parametrize("index_failure", [False, True])
 def test_durable_judgments_publish_by_output_and_resume_repairs_index(retained, tmp_path, monkeypatch, index_failure):
     from experiments.rig_web_app.storage import ConsoleDB

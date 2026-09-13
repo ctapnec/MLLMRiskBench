@@ -70,7 +70,8 @@ def generation_artifacts(out: Path, run_id: str):
     return grid_path, grid, None, None
 
 
-def load_program_job(program_path: Path, job_name: str, *, program: dict | None = None):
+def load_program_job(program_path: Path, job_name: str, *, program: dict | None = None,
+                     include_incomplete: bool = False):
     program = read(program_path) if program is None else program
     job = next(item for item in program['jobs'] if item['name'] == job_name)
     args = run_matrix.build_parser().parse_args(job['argv'])
@@ -97,7 +98,8 @@ def load_program_job(program_path: Path, job_name: str, *, program: dict | None 
         records[attempt['id']] = dict(attempt=attempt, response=response)
         path = Path(locator.rsplit(':', 1)[0])
         files[str(path)] = metadata(path)
-    if observed_ids != set(job['input_ids']):
+    incomplete = observed_ids != set(job['input_ids'])
+    if not records or (incomplete and not include_incomplete):
         raise ValueError('Retained target population is incomplete')
     run_ids = {record['response']['run_id'] for record in records.values()}
     if len(run_ids) != 1:
@@ -131,6 +133,10 @@ def load_program_job(program_path: Path, job_name: str, *, program: dict | None 
         for index, proposed in enumerate(attacker.generate(point, budget)):
             attempt = reader._prepare_attempt(proposed, dp=point, seed=0, logical_turn=index,
                 run_id=run_id, corpus_hash=hashes['corpus'], stateful=False, input_contract=contracts[(point.id, 0)])
+            # Keep the original full selection and dataset identity. Only the
+            # saved response subset is scored; no absent answer is fabricated.
+            if incomplete and include_incomplete and attempt.id not in records:
+                continue
             if _portable_attempt_dump(attempt) != records[attempt.id]['attempt']:
                 raise ValueError('Reconstructed attempt differs')
             reader._restore_response(attempt, records[attempt.id], run_id)
@@ -157,10 +163,14 @@ def load_program_job(program_path: Path, job_name: str, *, program: dict | None 
         target_component=_component_config(target), judge_cascade=_component_config(cascade),
         dataset_hashes=hashes, files=list(files.values()), runner_argv=list(job['argv']),
         generation_start_reconstructed=False, target_calls=0, judge_calls=0)
+    if incomplete:
+        source.update(incomplete_generation=True, generation_assigned=len(job['input_ids']),
+            unsaved_input_ids=[key for key in job['input_ids'] if key not in observed_ids])
     return source, reader, inputs, records
 
 
-def prepare(*, programs: Sequence[tuple[Path, str]], out: Path, jobs: Sequence[str] = ()) -> dict:
+def prepare(*, programs: Sequence[tuple[Path, str]], out: Path, jobs: Sequence[str] = (),
+            include_incomplete: bool = False) -> dict:
     """Retain an exact source inventory for the separate local scoring stage."""
     if not programs or len({str(path.resolve()) for path, _ in programs}) != len(programs):
         raise ValueError("Select each retained program exactly once")
@@ -178,7 +188,8 @@ def prepare(*, programs: Sequence[tuple[Path, str]], out: Path, jobs: Sequence[s
             if requested and job["name"] not in requested:
                 continue
             try:
-                source, _reader, inputs, _records = load_program_job(path, job["name"], program=program)
+                options = {"include_incomplete": True} if include_incomplete else {}
+                source, _reader, inputs, _records = load_program_job(path, job["name"], program=program, **options)
                 identities = {source["run_id"]+":"+key for key in inputs}
                 if seen & identities:
                     raise ValueError("One output was selected through several jobs")
@@ -207,12 +218,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--program", type=Path, action="append", required=True)
     parser.add_argument("--program-sha256", action="append", required=True)
     parser.add_argument("--job", action="append", default=[], help="Optional exact job names; defaults to all supplied jobs")
+    parser.add_argument("--include-incomplete", action="store_true",
+        help="Judge only saved outputs of interrupted jobs; retain their unsaved input coverage separately")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--verify-artifact-sha256", action="store_true")
     args = parser.parse_args(argv)
     if len(args.program) != len(args.program_sha256):
         parser.error("Supply one matching program digest for each program")
-    result = prepare(programs=list(zip(args.program, args.program_sha256)), out=args.out, jobs=args.job)
+    result = prepare(programs=list(zip(args.program, args.program_sha256)), out=args.out, jobs=args.job,
+        include_incomplete=args.include_incomplete)
     print(json.dumps({key:value for key,value in result.items() if key not in {"units", "programs"}}))
     return 0 if result["status"] == "prepared" else 1
 

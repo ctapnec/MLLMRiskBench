@@ -249,7 +249,8 @@ def execute(*, preparation, preparation_sha256, out, revision, workspace_id="", 
                 for entry in expected["files"]:
                     if sources.metadata(Path(entry["path"])) != entry:
                         raise ValueError("Prepared generation source changed")
-                source, reader, inputs, responses = sources.load_program_job(Path(expected["program"]), expected["job"])
+                options = {"include_incomplete": True} if expected.get("incomplete_generation") is True else {}
+                source, reader, inputs, responses = sources.load_program_job(Path(expected["program"]), expected["job"], **options)
                 if source != expected:
                     raise ValueError("Prepared source condition changed")
                 completed.append(score_unit(source, reader, inputs, responses, out=unit, revision=revision,

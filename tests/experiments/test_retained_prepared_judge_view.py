@@ -120,6 +120,21 @@ def test_incomplete_source_count_remains_in_the_population(prepared):
     assert audit['unprepared_outputs']==3
 
 
+def test_partial_source_passes_exact_opt_in_and_keeps_unsaved_coverage(prepared,monkeypatch):
+    from experiments.retained_judge_inventory import read_sources
+    records,value,path=prepared
+    records.source.update(incomplete_generation=True,generation_assigned=3,unsaved_input_ids=['pending'])
+    def load(*a,**kwargs):
+        assert kwargs['include_incomplete'] is True
+        return records.source,records.reader(),records.inputs,records.responses
+    monkeypatch.setattr(subject.sources,'load_program_job',load)
+    rows,audit=judge._candidates_from_view(*subject.read_hosted_preparation(value))
+    assert len(rows)==2 and audit['unprepared_outputs']==1
+    assert audit['eligible_usable_outputs']==2
+    path.write_text(json.dumps(value))
+    assert read_sources([path])[3]['unprepared_outputs']==1
+
+
 def test_generation_context_cannot_be_passed_as_a_manifest(prepared):
     _,_,path=prepared
     cells,*_=judge._read_view(path)

@@ -55,6 +55,7 @@ def read_hosted_preparation(value):
     seen=set()
     excluded_source=excluded_diagnostic=0
     assigned=0
+    unsaved=0
     for expected in value['units']:
         if expected['program'] not in programs:
             raise ValueError('Native judging source has no prepared program')
@@ -63,11 +64,13 @@ def read_hosted_preparation(value):
                 raise ValueError('Prepared judging source changed')
         path=Path(expected['program'])
         program,_=sources.load_bound_json(path,programs[str(path)]['sha256'])
-        source,reader,inputs,responses=sources.load_program_job(path,expected['job'],program=program)
+        options={'include_incomplete':True} if expected.get('incomplete_generation') is True else {}
+        source,reader,inputs,responses=sources.load_program_job(path,expected['job'],program=program,**options)
         if source!=expected or source['run_id'] in seen:
             raise ValueError('Prepared judging source differs or repeats a run')
         seen.add(source['run_id'])
         assigned+=len(inputs)
+        unsaved+=len(source.get('unsaved_input_ids',[]))
         job=next(job for job in program['jobs'] if job['name']==source['job'])
         # Readiness probes and canaries cannot enter the measured Haiku cohort.
         if job['purpose']!='measured_run':
@@ -108,10 +111,13 @@ def read_hosted_preparation(value):
     return cells,metadata,identities,dict(policy_evaluable_samples=len(metadata),
         common_ineligible_evaluable_rows_excluded=excluded_source,
         excluded_diagnostic_outputs=excluded_diagnostic,
-        unprepared_outputs=sum(source['assigned'] for source in value.get('failed',[])),
-        prepared_source_jobs=[(source['program'],source['job']) for source in value['units']],
+        unprepared_outputs=unsaved+sum(source['assigned'] for source in value.get('failed',[])),
+        prepared_source_jobs=[(source['program'],source['job']) for source in value['units']
+            if not source.get('incomplete_generation')],
         unprepared_source_jobs=[dict(program=source['program'],job=source['job'],assigned=source['assigned'])
-            for source in value.get('failed',[])])
+            for source in value.get('failed',[])]+[
+            dict(program=source['program'],job=source['job'],assigned=len(source['unsaved_input_ids']))
+            for source in value['units'] if source.get('incomplete_generation')])
 
 
 def read_prepared_view(path):

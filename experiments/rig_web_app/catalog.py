@@ -1186,6 +1186,8 @@ def _commands() -> dict[str, Command]:
                 CommandParam("--program", "path", required=True, repeat=True),
                 CommandParam("--program-sha256", "str", required=True, repeat=True),
                 CommandParam("--job", "str", repeat=True, help="Optional exact job names; blank selects all supplied jobs."),
+                CommandParam("--include-incomplete", "flag",
+                    help="Include saved outputs from interrupted jobs; unsaved inputs remain pending, not judged."),
                 CommandParam("--out", "path", required=True),
                 CommandParam("--verify-artifact-sha256", "flag"),
             ),

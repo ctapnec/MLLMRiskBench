@@ -1234,6 +1234,16 @@ unfinished grid can still accompany response-only checkpoints; this does not
 claim that its generation finished. Ambiguous ownership and conflicting manifest
 links remain source errors. The same reader is used by Build/Tools and CLI.
 
+For a historical interrupted job, Tools' `retained_native_judge_prepare` also
+offers `--include-incomplete`. This explicitly selects the saved responses while
+keeping the original full corpus, prompts, model settings and generation history.
+The preparation reports the original assignment count and unsaved input identities
+separately. Its later native and Haiku stages assess only actual saved outputs;
+completion of that assessment does not complete the original generation job.
+Sources must remain unchanged between preparation and judging. The normal Build
+incremental collection flow still prepares complete jobs; use this explicit
+historical import for a stable interrupted source, not a live growing output file.
+
 When an interrupted paid attempt is reconciled from in-flight to unknown charge,
 publish that physical attempt through the existing cost-index writer as part of
 the handoff. Preserve its unknown amount and uncertain exposure. Updating only

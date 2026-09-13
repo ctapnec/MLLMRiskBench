@@ -96,6 +96,95 @@ def test_reader_target_is_not_capable_of_generation():
         reader.generate([])
 
 
+@pytest.fixture
+def partial_source(tmp_path, monkeypatch):
+    """Exercise selection reconstruction with a missing middle response."""
+    root = tmp_path/'original'
+    root.mkdir()
+    for name in ('responses.jsonl', 'api.json', 'attacker.json', 'source.json'):
+        (root/name).write_text('{}')
+    grid = dict(grid_id='original', cells=[dict(run_id='run')], status='partial',
+        request=dict(project_revision='original-revision'))
+    (root/'original.grid.json').write_text(json.dumps(grid))
+    points = [SimpleNamespace(id=key) for key in ('a', 'b', 'c')]
+    attempts = {p.id:SimpleNamespace(id=p.id) for p in points}
+    rows = {key:dict(attempt=dict(id=key,run_id='run',target='openai:saved',
+        params=dict(retained_origin=dict(selection=dict(input_identity_sha256=key)))),
+        response=dict(run_id='run',target='openai:saved',text='saved '+key)) for key in ('a','c')}
+    dumps = {key:json.loads(json.dumps(row['attempt'])) for key,row in rows.items()}
+    monkeypatch.setattr(subject, '_responses', lambda job:[
+        (row['attempt'],row['response'],str(root/'responses.jsonl')+':1') for row in rows.values()])
+    argv=['--api','openai:saved','--corpora','synth','--judges','rules,guardrail',
+        '--attackers','replay','--target-answer-retries','0','--out',str(root)]
+    for flag,name in (('--api-config','api.json'),('--source-config','source.json'),('--attacker-config','attacker.json')):
+        argv.extend([flag,str(root/name)])
+    value=dict(target='openai:saved',jobs=[dict(name='unit',argv=argv,input_ids=['a','b','c'])])
+    monkeypatch.setattr(subject.run_matrix,'_load_api_config',lambda *a:({},{}))
+    monkeypatch.setattr(subject.run_matrix,'build_target',lambda *a,**k:
+        SimpleNamespace(name='openai:saved',modality_support=('text',)))
+    monkeypatch.setattr(subject.run_matrix,'build_judges',lambda *a,**k:object())
+    monkeypatch.setattr(subject.run_matrix,'_load_attacker_config',lambda *a:({'replay':{}},{}))
+    monkeypatch.setattr(subject.run_matrix,'_load_source_config',lambda *a:({'synth':{}},{}))
+    monkeypatch.setattr(subject.run_matrix,'load_corpus_with_audit',lambda *a,**k:(points,{}))
+    monkeypatch.setattr(subject,'ReplayAttacker',lambda **k:SimpleNamespace(
+        select_corpus=lambda name,corpus:corpus,generate=lambda point,budget:[attempts[point.id]]))
+    reconstructed=[]
+    def hashes(corpus, media):
+        assert corpus==points  # Never hash the shortened retained subset.
+        return {'corpus':'full-original-corpus'}
+    def make_reader(attacker,target,*a,**k):
+        return SimpleNamespace(target=target,
+            _plan_attacker_input_contracts=lambda corpus:{(p.id,0):{} for p in corpus},
+            _prepare_corpus=lambda corpus:(corpus,{}),_dataset_hashes=hashes,
+            _prepare_attempt=lambda proposed,**kwargs:reconstructed.append(kwargs) or proposed,
+            _restore_response=lambda attempt,record,run:None)
+    monkeypatch.setattr(subject,'Runner',make_reader)
+    monkeypatch.setattr(subject,'_portable_attempt_dump',lambda attempt:dumps[attempt.id])
+    monkeypatch.setattr(subject,'_component_config',lambda component:{})
+    return SimpleNamespace(path=tmp_path/'program.json',value=value,rows=rows,root=root,reconstructed=reconstructed)
+
+
+def test_partial_reader_requires_opt_in_and_preserves_full_generation_condition(partial_source):
+    f=partial_source
+    original=(f.root/'original.grid.json').read_bytes()
+    with pytest.raises(ValueError,match='population is incomplete'):
+        subject.load_program_job(f.path,'unit',program=f.value)
+    assert f.reconstructed==[]
+    source,reader,inputs,records=subject.load_program_job(f.path,'unit',program=f.value,include_incomplete=True)
+    assert set(inputs)==set(records)=={'a','c'}
+    assert source['assigned']==2 and source['generation_assigned']==3
+    assert source['unsaved_input_ids']==['b'] and source['incomplete_generation'] is True
+    assert source['dataset_hashes']=={'corpus':'full-original-corpus'}
+    assert source['runner_argv']==f.value['jobs'][0]['argv'] and len(f.reconstructed)==3
+    assert (f.root/'original.grid.json').read_bytes()==original
+    with pytest.raises(RuntimeError,match='cannot make a target call'):
+        reader.target.generate([])
+
+
+@pytest.mark.parametrize('mutation',['empty','foreign','duplicate','wrong-model','changed-attempt'])
+def test_partial_opt_in_does_not_accept_invalid_saved_outputs(partial_source,mutation):
+    f=partial_source
+    if mutation=='empty':f.rows.clear()
+    elif mutation=='foreign':
+        f.rows['a']['attempt']['params']['retained_origin']['selection']['input_identity_sha256']='foreign'
+    elif mutation=='duplicate':f.rows['duplicate']=f.rows['a']
+    elif mutation=='wrong-model':f.rows['a']['response']['target']='openai:other'
+    else:f.rows['a']['attempt']['extra']='changed'
+    with pytest.raises(ValueError):
+        subject.load_program_job(f.path,'unit',program=f.value,include_incomplete=True)
+
+
+def test_tools_partial_option_reaches_preparation(tmp_path,monkeypatch):
+    path,digest=program(tmp_path)
+    argv=build_argv('retained_native_judge_prepare',{'--program':str(path),'--program-sha256':digest,
+        '--out':str(tmp_path/'out'),'--include-incomplete':True})
+    seen=[]
+    monkeypatch.setattr(subject,'load_program_job',lambda *a,**k:seen.append(k) or (
+        dict(run_id='run'),object(),{'a':object()},{}))
+    assert subject.main(argv[argv.index('experiments.retained_native_judge_prepare')+1:])==0
+    assert seen[0]['include_incomplete'] is True
+
+
 def test_generation_artifacts_select_actual_run_among_failed_retries(tmp_path):
     # Real recovery directories retain both the responding run and a later
     # zero-response failure. Neither directory order nor latest timestamp owns
