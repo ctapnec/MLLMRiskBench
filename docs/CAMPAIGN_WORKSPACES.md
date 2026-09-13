@@ -48,6 +48,26 @@ campaign owner even if another tab edits the draft. Editing a draft never change
 an already running job or its historical results. A saved draft alone is not a
 running, completed or fully scheduled campaign.
 
+Editable campaign definitions retain the validated, non-secret file locators
+needed to reopen and compose the same experiment. They do not reuse the
+path-redacted job/report representation: a content identifier is not a readable
+source or project file. Unknown fields and credential fields are rejected before
+a new campaign owner is created. Launched jobs retain their separate durable
+representation and continue to validate the selected files at execution.
+
+**Compose & review** uses an explicit review route for every mode, including
+offline tests. It never starts a job by itself. An offline review identifies mock
+output and the absence of provider charges; a live review retains the workload
+and spending checks. The final start action consumes the reviewed choices once.
+The direct legacy dry-run submission remains available for existing clients,
+but the browser form always follows review before launch.
+
+A rig browser exercised save, reopen, review, start and Jobs/Stats navigation
+with an actual offline Runner job. The run completed without provider calls or
+browser errors. This verifies the draft and launch workflow, not a full paid
+collection/judging campaign: the diagnostic job's artifacts remain accessible
+through Activity, and this check does not establish measured result indexing.
+
 The audit found four connected gaps, not just bad labels: campaign records had
 no saved experiment definition; creation duplicated model-category choice;
 Jobs mixed campaign controllers and standalone runs; and Stats used a conditional
