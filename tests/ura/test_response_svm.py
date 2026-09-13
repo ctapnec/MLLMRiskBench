@@ -108,6 +108,24 @@ def test_real_index_export_preserves_text_truncation_and_read_only_source(tmp_pa
     assert args["database"].read_bytes() == before
 
 
+def test_export_materializes_matched_inputs_once(tmp_path, monkeypatch):
+    from experiments import response_svm_dataset
+    args = dataset_fixture(tmp_path)
+    original = response_svm_dataset.sqlite3.connect
+    statements = []
+    def connect(*a, **kw):
+        connection = original(*a, **kw)
+        connection.set_trace_callback(statements.append)
+        return connection
+    monkeypatch.setattr(response_svm_dataset.sqlite3, "connect", connect)
+    export_dataset(**args)
+    query = next(s for s in statements if "FROM campaign_assignments a" in s)
+    with original(args["database"]) as connection:
+        plan = connection.execute("EXPLAIN QUERY PLAN " + query).fetchall()
+    assert "LIST SUBQUERY" in " ".join(r[-1] for r in plan)
+    assert "b.input_id=a.input_id" not in query
+
+
 def test_multiple_native_conditions_do_not_duplicate_or_fabricate_disagreement(tmp_path):
     args = dataset_fixture(tmp_path)
     with sqlite3.connect(args["database"]) as c:

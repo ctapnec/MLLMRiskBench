@@ -59,8 +59,8 @@ def export_dataset(*, database: Path, candidates: Path, campaigns: list[str], ju
         LEFT JOIN campaign_judgments n
         ON n.campaign_id=r.campaign_id AND n.response_id=r.response_id AND n.judge_id LIKE 'local-cascade-%'
         WHERE a.campaign_id IN ({placeholders}) AND a.evidence_class='measured'
-        AND EXISTS (SELECT 1 FROM campaign_assignments b WHERE b.campaign_id=?
-                    AND b.input_id=a.input_id AND b.evidence_class='measured')
+        AND a.input_id IN (SELECT b.input_id FROM campaign_assignments b WHERE b.campaign_id=?
+                          AND b.evidence_class='measured')
         ORDER BY a.campaign_id,a.assignment_id,n.judge_id"""
     try:
         indexed = [dict(row) for row in connection.execute(query, (judge, *campaigns, matched_campaign))]
@@ -97,11 +97,12 @@ def export_dataset(*, database: Path, candidates: Path, campaigns: list[str], ju
     for path, wanted in files.items():
         if not path.is_absolute():
             raise ValueError("Response export needs resolved absolute source locations")
+        last_line = max(wanted)
         with path.open(encoding="utf-8") as stream:
             for number, text in enumerate(stream, 1):
                 if number in wanted:
                     wanted[number] = json.loads(text)
-                if number >= max(wanted):
+                if number >= last_line:
                     break
         if any(row is None for row in wanted.values()):
             raise ValueError("A selected retained response line is missing")
