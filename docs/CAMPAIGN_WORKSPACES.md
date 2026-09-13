@@ -131,17 +131,25 @@ Build's General section now starts source preparation from the campaign index:
    model assignments, output allowances and initial-attempt cost ceilings, not
    later edits to the draft. **Start prepared collection** launches the existing
    provider-parallel executor with this campaign's ownership and publication.
-   It does not start local or Haiku judging. Required execution readiness and
-   admission inputs must already be present in the prepared programs.
+   When runtime bindings or transport observations are absent, this same launch
+   binds installed models and executes the already funded input-derived probes.
+   It downloads nothing and does not add target inputs. Probe diagnostic scoring
+   finishes the transport evidence; measured-output local and Haiku judging remain
+   separate. Probe network calls can overlap across providers. Their local scoring
+   uses the existing shared scoring slot, acquired only when a judge loads.
 9. For the same saved programs, reopen this review after a stopped collection.
    **Continue saved collection** selects the previous control directory
    automatically. Completed jobs are restored and eligible checkpoints resumed;
-   the inputs and spending plan do not change. Active or duplicate launches are
+   saved runtime bindings and completed probes are reused, and the inputs and
+   spending plan do not change. Active or duplicate launches are
    rejected, including two review pages opened in different tabs. A changed
    software revision or spending plan needs an explicit recovery handoff rather
    than silently changing the old execution conditions.
 10. Under **Judge retained outputs locally**, choose **Prepare remaining source
-    runs**. Build uses the same saved programs. It reopens active preparation
+    runs**. Build obtains the actual execution programs from that collection,
+    including its observed transport and output paths. The later Haiku selection
+    uses these same output owners, not the earlier no-call preparation paths.
+    Build reopens active preparation
     instead of launching a duplicate, and excludes source runs already prepared.
     An incomplete source remains listed as unprepared; completing other sources
     does not hide that gap. This preparation makes no target or judge calls.
@@ -180,9 +188,23 @@ off by default, and the console supplies source locators without provider keys.
 Its output is explicitly **transport observation pending**, not ready for
 collection. Whole selected jobs become prospective transport probes without
 adding inputs or changing the funded requests; a separate scoring-capable
-measured job remains. Completing their observations, exposing this step directly
-in the matched Build flow and carrying the resulting program files through
-collection and both judging stages remain part of the unfinished UI handoff.
+measured job remains. For a complete collection launch, use
+`hosted_campaign_execute --prepare-runtime` with the existing managed-model
+store. Build selects this mode when its saved programs need the handoff. The
+existing provider-limited dispatcher completes each program's probes before its
+own measured jobs; independent providers are not held behind another provider's
+judging. This launch preserves the original funded requests and supplies the
+resulting execution program paths to both judging stages. A stopped preparation
+or collection resumes its saved runtime, not a new selection or installation.
+Already attested CLI programs remain supported without this option.
+
+The installed-runtime collection handoff has thirty focused rig checks and
+three removed-fix controls. Its transport publication was checked against two
+completed Pro probe grids in an existing 72-input program, without new calls.
+The actual 230-input Pro review was inspected on desktop and mobile. A burst
+of 1,000 button clicks submitted one launch and the busy indicator cleared;
+that test intercepted process creation and spent no provider credit. Deployment
+and complete paid end-to-end acceptance are tracked separately in the ledger.
 
 Eleven focused rig checks cover this collection handoff, including an actual
 browser form submission and duplicate-click control; two removed-fix controls

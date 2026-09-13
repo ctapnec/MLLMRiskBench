@@ -7081,9 +7081,38 @@ command receives source locators but no provider credentials.
 states that transport observations are still pending. Its selected probes must
 be executed against their original funded slots, their successful observations
 attached to the non-probe jobs, and the resulting program used consistently by
-collection and both judging stages. This complete Build handoff is still under
-implementation. Do not pass the unobserved runtime program off as an attested
+collection and both judging stages, as the integrated launch below does.
+Do not pass the unobserved runtime program off as an attested
 collection or reuse this operation to reset already-started paid work.
+
+The complete collection handoff is available through the existing executor:
+
+```bash
+python -m experiments.hosted_campaign_execute \
+  --program "$PROGRAM" --program-sha256 "$PROGRAM_SHA" \
+  --budget-root "$BUDGET_ROOT" --budget-plan-sha256 "$BUDGET_SHA" \
+  --project-root "$PROJECT_ROOT" --expected-commit "$PROJECT_COMMIT" \
+  --prepare-runtime --model-store "$URA_MODEL_STORE" \
+  --workers-per-provider 2 --out "$COLLECTION"
+```
+
+Repeat each program/digest pair for multiple models. Source reconstruction is
+shared across programs with the same retained source binding. Installed-model
+preparation has no download fallback and does not enable full checksums. The
+existing dispatcher executes funded transport probes before their own program's
+measured jobs. Probe network calls can overlap; their local diagnostic scoring
+uses the existing lazy shared GPU slot. Measured outputs are collected without
+co-resident judges. No extra probe inputs or answer retries are added.
+
+Continue with the same original program files, budget, revision and runtime
+options, `--resume-from "$COLLECTION"`, and a fresh successor `--out` directory.
+The successor retains the original runtime directory and completed observations.
+A probe answer without its finished observation resumes its existing checkpoint;
+it is not treated as a completed transport check. Result files list the actual
+execution programs. Use these for output judging. Build obtains those program
+paths automatically for both native judging and the later Haiku output view.
+Starting, stopping or resuming collection does not replace the selected inputs.
+Already attested programs still work without `--prepare-runtime`.
 
 Console-form to runbook-section mapping (the console builds the identical
 argument vectors; nothing below is console-only):

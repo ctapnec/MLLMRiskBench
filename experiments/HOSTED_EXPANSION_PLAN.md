@@ -1563,3 +1563,16 @@ current and historical retained work without new generations. Publish progress,
 outcomes, costs and output-specific judgments as durable data changes, keeping
 historical and corrected conditions available. The current scoped index refresh
 is not the full combined campaign import or a completed automatic UI workflow.
+
+Build's prepared-collection launch now includes installed-runtime binding and
+the input-derived funded transport probes when its saved programs need them.
+It uses the existing provider-parallel collector, with no downloads, added
+inputs or automatic answer retries. Probe scoring uses the existing lazy shared
+GPU slot; measured-output judging remains deferred. A continuation retains
+the original runtime and completed observations. Both native and subsequent
+Haiku preparation obtain the actual execution output paths from that collection.
+The detailed operator sequence is maintained in the campaign-workspace guide
+and RUN_AND_RETURN.md. Focused rig and browser checks are not a claim that a
+new paid campaign has completed end to end through the deployed UI. Existing
+collectors, including the scheduled Pro quota-reset cohort, are not restarted
+to exercise these controls.
