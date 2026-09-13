@@ -2619,7 +2619,12 @@ class BuilderValidationMixin:
         )
         params = reviewed_params
         mode = params.get("mode", "measured")
-        ceilings_html, caps_ok = self._ceilings_card(params)
+        offline = mode == "dry_run" or (mode == "diagnostic_canary" and params.get("canary_dry") == "on")
+        ceilings_html, caps_ok = (
+            ("<p class='notice blue'>Offline test: no provider calls or charges. "
+             "Mock outputs are diagnostic evidence, not measured model results.</p>", True)
+            if offline else self._ceilings_card(params)
+        )
         needs_acquisition = self._builder_model_acquisition_required(params)
 
         def ticket_input(token: str) -> str:
@@ -2683,6 +2688,8 @@ class BuilderValidationMixin:
             + html.escape(preflight_label)
             + "</button></form> "
         )
+        if offline:
+            preflight_form = ""
         start_button = (
             "<button type='submit'>"
             + _icon("play", size=15)
@@ -2695,8 +2702,10 @@ class BuilderValidationMixin:
         )
         body = (
             "<h1>" + _icon("play", size=22) + "Review execution</h1>"
-            "<div class='notice amber'><strong>This execution makes real model calls. "
-            "API calls may incur charges.</strong><p class='note'>Mode: "
+            + ("<div class='notice blue'><strong>This is an offline test.</strong>"
+               if offline else "<div class='notice amber'><strong>This execution makes real model calls. "
+               "API calls may incur charges.</strong>")
+            + "<p class='note'>Mode: "
             f"<code>{html.escape(mode)}</code>. Review the exact command and "
             "ceilings below; nothing has started yet.</p></div>"
             + acquisition_notice

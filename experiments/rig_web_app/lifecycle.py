@@ -4275,7 +4275,7 @@ class LifecycleMixin:
                         }),
                     )
                 return 303, f"/jobs/{job.job_id}", b""
-            if method == "POST" and path == "/build":
+            if method == "POST" and path in {"/build", "/build/review"}:
                 data = dict(form or {})
                 confirm_value = data.pop("confirm", "")
                 preflight_value = data.pop("preflight_only", "")
@@ -4429,7 +4429,7 @@ class LifecycleMixin:
                     mode == "dry_run"
                     or (mode == "diagnostic_canary" and params.get("canary_dry") == "on")
                 )
-                if spends_money and not confirmed:
+                if (spends_money or path == "/build/review") and not confirmed:
                     try:
                         page = self._preview_page(
                             command,

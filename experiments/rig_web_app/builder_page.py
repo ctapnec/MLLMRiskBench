@@ -2325,7 +2325,7 @@ class BuilderPageMixin:
             + _page_tablist("Builder sections", build_tabs, default=build_default)
             + _page_tabpanel("build-general", general_panel)
             + _page_tabpanel("build-runtimes", hardware_card + ollama_card + framework_runtime_panel)
-            + "<form method='post' action='/build' id='builder'>"
+            + "<form method='post' action='/build/review' id='builder'>"
             # hidden composed fields
             "<input type='hidden' name='corpora'><input type='hidden' name='api'>"
             "<input type='hidden' name='local'>"

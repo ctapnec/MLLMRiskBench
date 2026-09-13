@@ -1,5 +1,7 @@
 """Editable campaign definitions must survive reopening without losing files."""
 from pathlib import Path
+import re
+from types import SimpleNamespace
 
 from experiments.rig_web import RigWebApp
 
@@ -61,5 +63,45 @@ def test_saved_draft_never_accepts_api_key_fields(tmp_path):
             raise AssertionError('A credential field was accepted in an editable draft')
         for workspace in app.db.workspaces():
             assert 'api_key' not in app.db.workspace_definition(workspace['campaign_id'])
+    finally:
+        app.close()
+
+
+def test_offline_builder_review_is_no_launch_and_keeps_its_saved_choices(tmp_path, monkeypatch):
+    app = RigWebApp(results_root=tmp_path / 'runs', state_dir=tmp_path / 'state',
+        repo_root=tmp_path, gpu_hardware={}, system_hardware={})
+    launches = []
+
+    def start(command, values, **kwargs):
+        launches.append((command, values, kwargs))
+        return SimpleNamespace(job_id='reviewed-dry')
+
+    monkeypatch.setattr(app, 'start_job', start)
+    params = dict(work_kind='campaign', campaign_name='Review before launch', mode='dry_run',
+        corpora='synth', attackers='replay', judges='rules,llm', limit='1',
+        out=str(tmp_path / 'runs' / 'dry'))
+    try:
+        page = app.handle('GET', '/build')[2].decode()
+        assert "action='/build/review' id='builder'" in page
+        status, _, content = app.handle('POST', '/build/review', params)
+        page = content.decode()
+        assert status == 200 and 'Review execution' in page
+        assert 'This is an offline test.' in page
+        assert 'API calls may incur charges' not in page
+        assert 'Start campaign run' in page and 'Start blocked' not in page
+        assert not launches and not app.db.load_jobs()
+        owner = app.db.workspaces()[0]['campaign_id']
+        changed = app.db.workspace_definition(owner)
+        changed['limit'] = '2'
+        app._save_build_campaign(changed)
+        ticket = re.search("name='launch_ticket' value='([^']+)'", page).group(1)
+        status, location, _ = app.handle('POST', '/build', dict(launch_ticket=ticket, confirm='yes'))
+        assert status == 303 and location == '/jobs/reviewed-dry'
+        assert len(launches) == 1
+        assert launches[0][2]['builder_params']['limit'] == '1'
+        assert launches[0][2]['builder_params']['campaign_id'] == owner
+        assert '--dry-run' in launches[0][1]
+        app.handle('POST', '/build', dict(launch_ticket=ticket, confirm='yes'))
+        assert len(launches) == 1
     finally:
         app.close()
