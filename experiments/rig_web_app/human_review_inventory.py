@@ -117,6 +117,8 @@ def read_campaign(database: Path, campaign: str, results_root: Path) -> dict:
         attached, contexts, supplementary_contexts = {}, [], {}
         for item in judges[identity]:
             value = record(item['source_ref']); judgment = value.get('judgment',value)
+            if item['status']=='valid' and item['label']!=judgment.get('label'):
+                raise ValueError('Indexed judgment label differs from its artifact')
             if 'response' in value and value['response']!=response:
                 raise ValueError('Post-hoc verdict refers to a different saved answer')
             if item['status']=='valid':
@@ -138,8 +140,6 @@ def read_campaign(database: Path, campaign: str, results_root: Path) -> dict:
             if raw.get('source') and raw.get('risk_category'):
                 contexts.append(raw)
             attached[item['judge_id']] = dict(status=item['status'], label=item['label'], source_ref=item['source_ref'])
-            if item['status']=='valid' and item['label']!=judgment.get('label'):
-                raise ValueError('Indexed judgment label differs from its artifact')
         params = attempt['params']; origin=params.get('retained_origin',{}).get('selection',{})
         context = contexts[0] if contexts else {}
         source = params.get('planning_source',origin.get('source',context.get('source')))

@@ -5802,6 +5802,14 @@ returning the envelope alone is not.
 
 *Console equivalent: this section's commands are also launchable as the `human_audit` form(s) in the rig console (section 18); identical argument vectors, gates and artifacts.*
 
+Sample preparation also writes a `.MEDIA.json` lookup and `.MEDIA-REPORT.json`
+beside the CSV. It resolves the selected media from recorded source locations,
+without changing the CSV, downloading assets or hashing model weights. Supply
+`--media-index /absolute/path/to/existing-index.json` to reuse retained mappings.
+The human-review wizard uses the prepared lookup automatically and shows any
+unavailable references before assignment. Missing assets do not remove outputs;
+restore them before rating the affected items.
+
 Prepare the blinded audit only after all intended runner grids are terminal. For
 a direct all-success cohort, the common `runs/thesis/runner` parent lets the
 sample include broad roster, source, policy, modality, and attack strata. The

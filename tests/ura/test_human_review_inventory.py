@@ -129,5 +129,8 @@ def test_separate_source_context_keeps_output_binding_and_its_own_rubric(indexed
     assert output['metadata']['source']=='fixture'
     assert 'local-context-test' not in output['judgments']
     assert output['supplementary_contexts']['local-context-test']['context']=='alternate-policy'
+    context['judgment']['label']='refusal';path.write_text(json.dumps(context))
+    with pytest.raises(ValueError,match='label differs'):read_campaign(database,owner,root)
+    context['judgment']['label']='safe'
     context['response_identity']='different-output';path.write_text(json.dumps(context))
     with pytest.raises(ValueError,match='output identity'):read_campaign(database,owner,root)

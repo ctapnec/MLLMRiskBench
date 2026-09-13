@@ -3,9 +3,12 @@
 Status: the setup and rating wizards are deployed on the production console.
 Focused rig tests and isolated desktop/mobile browser checks pass. Real saved
 local responses and indexed images have also been displayed successfully.
-Full local/API result-set acceptance remains incomplete: the checked historical
-image sample still has assets absent from its selected media index. No actual
-human ratings have been collected.
+Full local/API result-set acceptance remains incomplete: imported campaign
+inventories still need connection to the setup selector and audit analysis.
+The checked 167-output historical image sample now resolves all 167 references
+through the recorded source locations. These automatic preparation changes
+have focused rig verification; they are not yet in the deployed console.
+No actual human ratings have been collected.
 
 ## Purpose and scope
 
@@ -30,8 +33,12 @@ Source-task classification needs its separate existing rubric and analysis.
    result set is not automatically the whole campaign or a claim that every
    campaign output is eligible. The preparation page shows actual workload
    before creating the study. Failed preparation cannot create a study.
-   For content-addressed images, use the existing retained media index in the
-   sample wizard's media-lookup section. The viewer resolves only assigned
+   Preparation connects content-addressed images using the selected results'
+   recorded source locations and writes a media lookup beside the sample.
+   An existing retained index can be supplied to avoid rebuilding mappings
+   already available. The preparation page reports connected references and
+   outputs with unavailable assets; it never removes those output rows.
+   The viewer resolves only assigned
    identities to files inside configured media roots. An unchanged index is
    cached; it does not scan corpora, hash model weights or fetch remote media.
    A missing mapping remains visibly unavailable, not a lost model response.
@@ -89,6 +96,17 @@ Source-task classification needs its separate existing rubric and analysis.
   and automated-versus-human comparison. Sampling support and undecided cases
   accompany estimates. Do not pool source-task outcomes with common labels or
   present the deterministic achieved sample as a population-validity estimate.
+- Imported campaigns include completed final files and durable checkpoints
+  scored after generation. Their review inventory follows the assignment's
+  explicit selected answer, retains generation conditions and separate judge
+  identities, and reads each referenced artifact file once per preparation.
+  It must not manufacture a successful original grid from post-hoc judgments.
+  Missing source context is reported, never filled from an unrelated output.
+  Connecting this inventory to preparation, analysis and the production
+  selector remains required before claiming full campaign acceptance.
+- Source-task label vocabularies use the native exporter's pipe-separated
+  format. Producer-to-consumer tests exercise both supported source-task
+  families; an independently invented JSON fixture is not the export contract.
 
 ## Acceptance required before deployment
 
