@@ -12,6 +12,58 @@ import time
 
 from experiments.hosted_attempt_budget import _budget_lock
 
+RENEWAL_SCHEMA = 'ura-hosted-interrupted-continuation/1'
+
+
+def validated_renewal_jobs(program: dict, budget, *, local_context=None):
+    """Validate the original program and derive its single inspected continuation."""
+    from experiments import hosted_retained_execute as retained, run_matrix
+    from experiments.rig_web_app.workspace_import import _responses
+    from ura.adapters.replay import ReplayAttacker
+
+    predecessor = program.get('interrupted_predecessor')
+    if (program.get('schema') != RENEWAL_SCHEMA or not isinstance(predecessor, dict)
+        or set(predecessor) != {'program', 'job', 'logical_budget', 'prior_http_attempts'}):
+        raise ValueError('Interrupted continuation requires its original run evidence')
+    previous, _ = retained._bound(predecessor['program'])
+    if previous.get('schema') == RENEWAL_SCHEMA:
+        raise ValueError('Interrupted continuation must name its original admitted program')
+    changed = {'schema', 'jobs', 'requests', 'interrupted_predecessor'}
+    if ({k: v for k, v in program.items() if k not in changed}
+        != {k: v for k, v in previous.items() if k not in changed}
+        or len(program.get('jobs', [])) != 1 or len(program.get('requests', {})) != 1):
+        raise ValueError('Interrupted continuation changed original source or funding conditions')
+    originals = retained._validated_jobs(previous, budget, local_context=local_context)
+    matches = [row for row in originals if row.job['name'] == predecessor['job']]
+    if len(matches) != 1:
+        raise ValueError('Interrupted continuation original job is not unique')
+    original = matches[0]
+    found = set()
+    for attempt, response, _locator in _responses(original.job):
+        key = attempt['params']['retained_origin']['selection']['input_identity_sha256']
+        if (key not in original.entries or response['target'] != original.program['target']
+            or attempt['params']['retained_origin'] != original.entries[key]['origin']):
+            raise ValueError('Original response inventory changed its admitted input')
+        found.add(key)
+    snapshot, _ = retained._bound(predecessor['logical_budget'])
+    original_args = run_matrix.build_parser().parse_args(original.job['argv'])
+    expected_budget = Path(original_args.out) / (str(snapshot.get('budget_id')) + '.budget.json')
+    if Path(predecessor['logical_budget']['path']) != expected_budget:
+        raise ValueError('Interrupted logical budget is not from the original output directory')
+    job = program['jobs'][0]
+    args = run_matrix.build_parser().parse_args(job['argv'])
+    config, _ = run_matrix._load_attacker_config(args.attacker_config, ['replay'], args.attacker_config_sha256)
+    resumed = retained._Admission(program=program, job=job, budget=budget,
+        attacker=ReplayAttacker(**config['replay']), requests=program['requests'], prices=original.prices)
+    resumed.validate_cli(job['argv'], args)
+    key = next(iter(program['requests']))
+    review = renew_interrupted_transport(original, resumed, input_id=key,
+        retained_input_ids=found, held_snapshot=snapshot)
+    if (type(predecessor['prior_http_attempts']) is not int
+        or review['prior_http_attempts'] != predecessor['prior_http_attempts']):
+        raise ValueError('Interrupted physical attempt prefix advanced after inspection')
+    return [resumed]
+
 
 def renew_interrupted_transport(original, resumed, *, input_id: str,
                                 retained_input_ids: set[str], held_snapshot: dict) -> dict:

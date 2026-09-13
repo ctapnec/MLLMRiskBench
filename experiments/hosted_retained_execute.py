@@ -956,6 +956,9 @@ def _matched_judge_call_cap(projected_cap: int, routes: Sequence[dict], inventor
 
 def _validated_jobs(program: dict, budget: AttemptBudget, *, local_context: tuple | None = None) -> list[_Admission]:
     """Rebuild fixed input selection from its recorded local source population."""
+    from experiments import hosted_checkpoint_resume
+    if isinstance(program, dict) and program.get('schema') == hosted_checkpoint_resume.RENEWAL_SCHEMA:
+        return hosted_checkpoint_resume.validated_renewal_jobs(program, budget, local_context=local_context)
     from experiments import hosted_pending_condition
     if isinstance(program, dict) and program.get("schema") in {
         hosted_pending_condition.SCHEMA, hosted_pending_condition.CONTINUATION_SCHEMA,
