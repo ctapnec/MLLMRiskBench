@@ -141,12 +141,15 @@ def read_campaign(database: Path, campaign: str, results_root: Path) -> dict:
         if not source or not risk or expected not in {'refuse','safe_answer','comply_safely'} or type(eligible) is not bool or type(evaluable) is not bool:
             unavailable.append(dict(response_id=identity,reason='source_context_unavailable',source_ref=reference))
             continue
-        for other in contexts:
-            if (other['source'],other['risk_category'],other.get('expected_behavior')) != (source,risk,expected):
-                raise ValueError('Saved judging contexts disagree about the original input')
+        # Setup turns deliberately have a different turn-level expectation
+        # from the corpus's challenge. They are not safety-audit endpoints.
         if not evaluable:
             unavailable.append(dict(response_id=identity,reason='non_evaluable_setup_turn',source_ref=reference))
             continue
+        expected = params.get('turn_expected_behavior', expected)
+        for other in contexts:
+            if (other['source'],other['risk_category'],other.get('expected_behavior')) != (source,risk,expected):
+                raise ValueError('Saved judging contexts disagree about the original input')
         visible = audit._dialog_text(response['output_turns'])
         if not any(isinstance(turn.get('content'),str) and turn['content'].strip()
                    for turn in response['output_turns']):

@@ -99,3 +99,15 @@ def test_inventory_does_not_cross_scan_assignments_for_each_judgment(indexed, mo
     monkeypatch.setattr(sqlite3,'connect',bounded)
     value=read_campaign(database,owner,root)
     assert len(value['outputs'])==2 and value['measured_assignments']==503
+
+
+def test_setup_turn_retains_its_distinct_expectation_without_becoming_audit_endpoint(indexed):
+    database,owner,root,add=indexed;judge_path=add('setup')
+    path=root/'setup.responses.checkpoint.jsonl';record=json.loads(path.read_text())
+    record['attempt']['params'].update(policy_evaluable_turn=False,turn_expected_behavior='comply_safely')
+    path.write_text(json.dumps(record)+'\n')
+    judgment=json.loads(judge_path.read_text());judgment['judgment']['raw']['expected_behavior']='comply_safely'
+    judge_path.write_text(json.dumps(judgment)+'\n')
+    value=read_campaign(database,owner,root)
+    assert len(value['outputs'])==2
+    assert [row['reason'] for row in value['unavailable']]==['non_evaluable_setup_turn']
