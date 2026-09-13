@@ -14,6 +14,7 @@ only when the declared base ``model_spec`` is identical in both arms.
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import math
@@ -362,6 +363,11 @@ def _comparison_payload(
         payload.pop("adapters", None)
         if isinstance(components, dict):
             components.pop("attacker", None)
+            # The shared transfer key intentionally removes target components
+            # for cross-model comparisons. Adaptivity varies only the attack:
+            # preserve the complete target configuration, including generation
+            # settings, so a token-window change cannot masquerade as adaptivity.
+            components["target"] = copy.deepcopy(manifest["config"]["components"]["target"])
         if isinstance(budget, dict):
             budget.pop("max_queries", None)
             budget.pop("max_turns", None)
