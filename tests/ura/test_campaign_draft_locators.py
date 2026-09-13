@@ -17,7 +17,7 @@ def test_save_reopen_keeps_editable_locators_but_durable_job_state_is_redacted(t
         'att_path1': 'att_sha1',
     }
     params = dict(work_kind='campaign', campaign_name='Reopen my experiment',
-        mode='dry_run', corpora='synth', attackers='replay', judges='rules,llm',
+        mode='dry_run', corpora='synth', attackers='replay,ideator,t3mp3st', judges='rules,llm',
         limit='1', sample_seed='0', seeds='0')
     for field, digest_field in fields.items():
         path = tmp_path / (field + '.json')
