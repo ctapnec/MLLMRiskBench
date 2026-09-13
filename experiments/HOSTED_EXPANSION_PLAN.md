@@ -154,11 +154,13 @@ Google workers in total. A new answer requires its own local and Haiku
 judgments, not reuse of another Pro or local model's verdict.
 
 The standard retained executor supports this inspected continuation and its
-original-source validation. The real-source preparation and separate judging
-handoff are in progress under `google-pro-interrupted-renewal-20260913`.
-This is not a claimed recovered answer or permission to retry the distinct
-four-attempt HTTP 429 outcome. The original campaign assignment total does
-not increase, and no additional provider allowance is created.
+original-source validation. Real-source preparation passed on the rig with no
+calls or downloads. At 02:37 UTC the `google-pro-interrupted-renewal` collection
+owner and `google-pro-interrupted-judging` follow-up were queued in the existing
+API workspace. Their artifacts are under the corresponding dated controller
+directories. This is not a claimed recovered answer or permission to retry the
+distinct four-attempt HTTP 429 outcome. The original campaign assignment total
+does not increase, and no additional provider allowance is created.
 
 The twenty wholly unstarted older inputs now have an output-specific judging
 follow-up attached to the API workspace. The `google-pro-tail-judging` tmux
