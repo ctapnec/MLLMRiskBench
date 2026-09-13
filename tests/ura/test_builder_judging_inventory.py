@@ -61,6 +61,24 @@ def test_all_preparation_increments_are_included_and_duplicate_click_is_reused(i
     assert len(calls) == before+1
 
 
+@pytest.mark.parametrize('command', ['retained_judge_inventory', 'retained_inventory_judge_items',
+    'retained_inventory_judging', 'retained_response_judge_pair', 'retained_response_judge_pair_execute'])
+def test_retained_output_commands_keep_corpus_locators_not_unselected_credentials(inventory, monkeypatch, tmp_path, command):
+    app, _, _, _ = inventory
+    monkeypatch.setattr(app, '_load_registry', lambda *_: {'source': {'path_env': 'URA_TEST_CORPUS_PATH'}})
+    monkeypatch.setenv('URA_TEST_CORPUS_PATH', '/retained/corpus')
+    monkeypatch.setenv('OPENAI_API_KEY', 'unselected-provider-secret')
+    monkeypatch.setenv('HF_TOKEN', 'unneeded-download-secret')
+    monkeypatch.setattr(app, '_selected_matrix_environment_names', lambda *_: set())
+    monkeypatch.setattr(app, '_strict_config_document', lambda *_: {
+        'judge_condition': {'model': 'anthropic:judge', 'api_config_sha256': 'a'*64}})
+    api = tmp_path/'judge-config.json'
+    api.write_text('{}')
+    child = app._generic_child_environment(command, {'--api-config': str(api), '--judge-model': 'anthropic:judge'})
+    assert child['URA_TEST_CORPUS_PATH'] == '/retained/corpus'
+    assert 'OPENAI_API_KEY' not in child and 'HF_TOKEN' not in child
+
+
 @pytest.mark.parametrize('change', [dict(retained_inventory_limit='-1'), dict(retained_inventory_limit='1.5'),
     dict(retained_inventory_seed='bad'), dict(retained_native_judging_job='not-this-campaign')])
 def test_invalid_selection_does_not_start_work(inventory, change):
