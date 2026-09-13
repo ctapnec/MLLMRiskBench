@@ -883,6 +883,8 @@ def _commands() -> dict[str, Command]:
             "Paired cluster comparison between two exact conditions",
             (
                 CommandParam("--results", "path", required=True),
+                CommandParam("--historical-code-repository", "path",
+                    help="Repository containing the original source revisions for retained runs."),
                 CommandParam("--left-model", "str", required=True),
                 CommandParam("--right-model", "str", required=True),
                 CommandParam("--left-defense", "str"),

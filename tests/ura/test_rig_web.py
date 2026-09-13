@@ -5655,6 +5655,21 @@ def test_every_ui_command_parses_with_its_real_module_parser() -> None:
             parser.parse_args(argv[3:])
 
 
+def test_paired_comparison_ui_exposes_historical_reader(tmp_path: Path) -> None:
+    values = {'--results': 'runs/comparison-inputs', '--left-model': 'qwen',
+        '--right-model': 'qwen', '--right-attacker': 'crescendo',
+        '--historical-code-repository': '/home/ura/MLLMRiskBench'}
+    argv = build_argv('paired_compare', values)
+    assert argv[argv.index('--historical-code-repository') + 1] == '/home/ura/MLLMRiskBench'
+    app = _app(tmp_path)
+    try:
+        card = app._command_card('paired_compare')
+        assert "name='--historical-code-repository'" in card
+        assert 'original source revisions' in card
+    finally:
+        app.close()
+
+
 def test_human_audit_ui_preserves_historical_configuration_selector() -> None:
     values = {
         "--results": "runs/runner-view", "--prepare": "2",

@@ -128,6 +128,14 @@ comparison criteria. In particular, changing a generation allowance is not an
 attack-only contrast. Original manifests and their execution records remain
 linked in the report.
 
+The web console exposes the same optional history repository on Commands >
+`paired_compare`. Select a completed comparison input directory, the exact left
+and right model selectors, `replay` and `crescendo` as the two attackers, and the
+repository containing the retained revisions. The command uses saved records
+only. A directory containing several competing runs for the same condition is
+ambiguous and must be reduced to the intended retained cohort before comparison;
+the interface does not choose a favourable run automatically.
+
 A paired comparison uses clusters observed under both exact conditions and gives
 each source cluster equal weight. The primary binary effect is the risk
 difference on the relevant endpoint; graded-score and false-refusal differences
