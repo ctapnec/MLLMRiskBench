@@ -2130,6 +2130,28 @@ mid-lane.
 
 ## 8. Phase 7: read-only analysis (hours)
 
+13 September retained-adaptivity update: the completed output-policy recovery
+contains both Qwen replay and Crescendo for seven 100-input arms. Its new
+read-only comparison supersedes the older non-estimable records only for this
+explicit recovery condition; it does not rewrite the original failed grids.
+Six harmful arms have 100 decided pairs each. The benign insecure-coding arm
+has no jointly decided pair. The recovered trajectory inventory has 2,493
+responses, including 1,400 unscored setup turns, and supports the separately
+reported two-challenge stopping-time analysis. No generation or judging was
+repeated. Evidence: `adaptive-recovery-analysis-20260913-r-pair-key` and
+`adaptive-synthesis-20260913`.
+
+Interpretation is deliberately limited to the retained local evaluator.
+Selected apparent violations contain general discussion or mixed refusal and
+illustrative code. Objective-aware independent assessment is required before
+calling these successful harmful-goal completions. The 307 first-challenge
+stops also leave later answers unobserved; post-hoc judging cannot reconstruct
+them. Do not launch another target campaign or purchase a new judging cohort
+merely to replace this limitation. Record any future replication as a separate
+design and condition. Generic historical comparison now uses the existing
+revision-specific reader through `paired_compare --historical-code-repository`;
+its strict source, judging and target-setting checks remain active.
+
 The approved response-classifier add-on uses the already retained, matched
 local/hosted text outputs and exact Haiku judgments. Follow
 [RESPONSE_SVM.md](../docs/RESPONSE_SVM.md) for the frozen grouping, three tasks,

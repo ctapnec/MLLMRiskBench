@@ -1,7 +1,8 @@
 # Metrics and analysis contract
 
-Experiments and the human audit are pending. The functions described here are
-implemented analysis capabilities, not empirical findings.
+This document specifies the implemented analysis capabilities. Observed campaign
+results are reported separately in Chapter V; independent human assessment is
+still required for claims about evaluator validity.
 
 RUN-001/MET-001 request and selection accounting is implemented at the offline
 software-contract boundary; a real-input MET-001 report is still pending.
@@ -111,6 +112,21 @@ The first harmful authoritative violation ends the session. Static ASR and live
 conversation ASR are distinct endpoint constructions and are not pooled.
 
 ## Paired model and defense effects
+
+`experiments.paired_compare --historical-code-repository <repository>` uses the
+existing revision-specific retained-artifact reader for older completed runs.
+It does not change their files or treat an old run as a current execution.
+Ambiguous repeated conditions and incompatible scientific settings still fail
+comparison rather than being silently pooled.
+
+For a within-target replay-versus-adaptive contrast, the attack's input plan and
+query/turn horizon are the declared intervention. Separate request and transport
+receipt descriptors identify the two executions, not different target settings.
+Each side is independently validated before comparison. Source population,
+sampling, policy, judge, transport policy and the full target configuration remain
+comparison criteria. In particular, changing a generation allowance is not an
+attack-only contrast. Original manifests and their execution records remain
+linked in the report.
 
 A paired comparison uses clusters observed under both exact conditions and gives
 each source cluster equal weight. The primary binary effect is the risk
