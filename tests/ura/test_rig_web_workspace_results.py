@@ -53,6 +53,24 @@ def test_equal_inputs_different_outputs_do_not_share_verdicts(app):
             judgments=[dict(response_id="same-input", judge_id="haiku-condition", status="valid", label="safe", source_ref="judge.jsonl:1")])
 
 
+def test_pending_predecessor_publication_cannot_clear_a_saved_or_corrected_answer(app):
+    owner = app.db.create_workspace("Recovered API", "api")
+    pending = dict(assignments=[assignment(response=None)], responses=[], judgments=[])
+    app.db.publish_workspace_results(owner, **pending)
+    assert app.db.workspace_model_totals(owner)[0]["pending"] == 1
+    for identity in ("r1", "r2"):
+        app.db.publish_workspace_results(owner, assignments=[assignment(response=identity)],
+            responses=[response(identity)], judgments=[])
+        before = dict(app.db._query("SELECT * FROM campaign_assignments")[0])
+        # The historical program is still imported by a recurring publisher;
+        # its empty output directory is not evidence that recovery disappeared.
+        app.db.publish_workspace_results(owner, **pending)
+        assert dict(app.db._query("SELECT * FROM campaign_assignments")[0]) == before
+        totals = app.db.workspace_model_totals(owner)[0]
+        assert (totals["assigned"], totals["usable"], totals["pending"]) == (1, 1, 0)
+    assert len(app.db._query("SELECT * FROM campaign_responses")) == 2
+
+
 def test_invalid_cross_assignment_selection_rolls_back_whole_publication(app):
     owner = app.db.create_workspace("API", "api")
     with pytest.raises(ValueError, match="Selected response"):

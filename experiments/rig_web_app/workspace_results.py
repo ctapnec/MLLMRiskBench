@@ -123,7 +123,9 @@ class WorkspaceResultsMixin:
         """One publication transaction, retaining historical response references.
 
         ``response_id`` on each assignment explicitly selects its displayed
-        outcome (or None for pending). A publication cannot rename an existing
+        outcome (or None for a newly pending assignment). Replaying a source
+        without an answer cannot clear an already selected retained answer.
+        A publication cannot rename an existing
         assignment, mutate a retained response or attach a verdict by input ID.
         This index does not authorize calls or replace scientific validation.
         """
@@ -191,7 +193,8 @@ class WorkspaceResultsMixin:
                             "INSERT INTO campaign_assignments VALUES(?,?,?,?,?,?,?,?,?,?,?) "
                             "ON CONFLICT(campaign_id,assignment_id) DO UPDATE SET "
                             "response_id=excluded.response_id,updated_at=excluded.updated_at "
-                            "WHERE campaign_assignments.response_id IS NOT excluded.response_id", row,
+                            "WHERE excluded.response_id IS NOT NULL "
+                            "AND campaign_assignments.response_id IS NOT excluded.response_id", row,
                         )
                     for row in prepared_responses:
                         if not self._conn.execute(
