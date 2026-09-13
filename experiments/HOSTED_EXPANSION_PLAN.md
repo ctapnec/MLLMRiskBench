@@ -142,6 +142,24 @@ made. New Pro answers still require their separate assessment queue.
 
 ### Older Pro tail judging (13 September, 01:50 UTC)
 
+The separate abandoned-request recovery is not an additional selected input.
+It retains the original question, output settings, paid slot and future
+judging slots, and will continue with HTTP attempt two, at most four in total.
+It uses a new run window without rewriting the expired run or releasing its
+earlier unknown charge. Its one extra physical attempt shares the Google
+spending and daily request limits; the 230-plus-20 untouched-input quota
+forecast therefore does not guarantee that this recovery also fits the same
+daily window. It must run behind existing tail owners, with no more than two
+Google workers in total. A new answer requires its own local and Haiku
+judgments, not reuse of another Pro or local model's verdict.
+
+The standard retained executor supports this inspected continuation and its
+original-source validation. The real-source preparation and separate judging
+handoff are in progress under `google-pro-interrupted-renewal-20260913`.
+This is not a claimed recovered answer or permission to retry the distinct
+four-attempt HTTP 429 outcome. The original campaign assignment total does
+not increase, and no additional provider allowance is created.
+
 The twenty wholly unstarted older inputs now have an output-specific judging
 follow-up attached to the API workspace. The `google-pro-tail-judging` tmux
 controller waits for the existing fourteen-input and six-input collection

@@ -80,6 +80,18 @@ original request-identity and funding checks. The already-held logical input
 slot is consumed once; earlier unknown charges are not refunded. This helper is
 not an automatic permission to retry a generated empty answer, and the caller
 must establish that the former worker is no longer active on this job.
+If that original run's window has expired, use an inspected interrupted
+continuation through the same retained-execution command. It names the original
+program, job and durable logical budget, selects only the absent response, and
+retains its original paid request and future judge slots. The old window is not
+extended and its files are not overwritten. The new output directory must be
+unexecuted. The original source admission is reused within that invocation,
+and the current physical attempt count must still match the reviewed count.
+The next HTTP call continues that count, with at most four attempts in total;
+earlier unknown charges remain unknown. A saved answer, a saved failed output,
+an active request or exhausted retries cannot use this path. The recovered
+answer needs its own local and hosted judgments. Do not count its continuation
+as a new campaign input or as another independent observation.
 Immutable budget caches are process-local: omit their locks when transferring
 a budget object to a spawned worker and recreate the cache in that worker.
 
