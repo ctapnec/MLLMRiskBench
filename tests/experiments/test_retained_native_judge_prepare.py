@@ -234,6 +234,33 @@ def test_response_only_source_keeps_its_single_unfinished_grid(tmp_path):
         subject.generation_artifacts(tmp_path, 'saved-run')
 
 
+def test_error_cell_without_run_id_uses_its_saved_manifest_link(tmp_path):
+    grid = dict(grid_id='original', cells=[dict(status='error')], status='failed')
+    manifest = dict(run_id='saved-run', config=dict(run=dict(grid_id='original')))
+    (tmp_path/'failed.grid.json').write_text(json.dumps(grid))
+    (tmp_path/'saved.manifest.json').write_text(json.dumps(manifest))
+    path, selected, manifest_path, saved = subject.generation_artifacts(tmp_path, 'saved-run')
+    assert selected == grid and selected['status'] == 'failed'
+    assert saved == manifest and path.name == 'failed.grid.json'
+    assert manifest_path.name == 'saved.manifest.json'
+    # The manifest is evidence of ownership, not a successful terminal cell.
+    assert 'run_id' not in selected['cells'][0]
+
+
+@pytest.mark.parametrize('mutation', ['no-manifest', 'wrong-grid', 'duplicate-grid', 'named-other-run', 'not-error'])
+def test_anonymous_error_cell_requires_unambiguous_manifest_ownership(tmp_path, mutation):
+    grid = dict(grid_id='original', cells=[dict(status='error')])
+    if mutation == 'named-other-run':grid['cells'][0]['run_id'] = 'other'
+    if mutation == 'not-error':grid['cells'][0]['status'] = 'complete'
+    (tmp_path/'failed.grid.json').write_text(json.dumps(grid))
+    if mutation != 'no-manifest':
+        manifest = dict(run_id='saved-run', config=dict(run=dict(grid_id='wrong' if mutation == 'wrong-grid' else 'original')))
+        (tmp_path/'saved.manifest.json').write_text(json.dumps(manifest))
+    if mutation == 'duplicate-grid':(tmp_path/'duplicate.grid.json').write_text(json.dumps(grid))
+    with pytest.raises(ValueError, match='one original grid'):
+        subject.generation_artifacts(tmp_path, 'saved-run')
+
+
 def test_preparation_environment_forwards_source_locators_not_provider_credentials():
     from experiments.rig_web_app.catalog import COMMANDS
     from experiments.rig_web_app.lifecycle import LifecycleMixin

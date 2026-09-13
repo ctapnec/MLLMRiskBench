@@ -56,8 +56,20 @@ def same_source_condition(actual, expected):
 def generation_artifacts(out: Path, run_id: str):
     """Select the saved generation, not an unrelated retry in its directory."""
     grids = [(path, read(path)) for path in sorted(out.glob('*.grid.json'))]
+    manifests = [(path, read(path)) for path in sorted(out.glob('*.manifest.json'))]
+    matching_manifests = [(path, value) for path, value in manifests if value.get('run_id') == run_id]
+    if len(matching_manifests) > 1:
+        raise ValueError('Retained generation has several native manifests')
     matching = [(path, value) for path, value in grids
                 if any(cell.get('run_id') == run_id for cell in value.get('cells', []))]
+    if not matching and matching_manifests:
+        # A terminal error cell can omit run_id even after durable responses
+        # and their manifest were saved. Use that manifest's explicit grid
+        # link; do not guess from file order or accept a different named run.
+        grid_id = matching_manifests[0][1]['config']['run']['grid_id']
+        matching = [(path, value) for path, value in grids if value.get('grid_id') == grid_id
+            and value.get('cells') and all(cell.get('run_id') is None and cell.get('status') == 'error'
+                                         for cell in value['cells'])]
     # Response-only checkpoints can precede final cell publication. Preserve
     # the existing unambiguous single-grid path; this is not completion evidence.
     if not matching and len(grids) == 1 and grids[0][1].get('cells') == []:
@@ -65,10 +77,6 @@ def generation_artifacts(out: Path, run_id: str):
     if len(matching) != 1:
         raise ValueError('Expected one original grid for the retained generation run')
     grid_path, grid = matching[0]
-    manifests = [(path, read(path)) for path in sorted(out.glob('*.manifest.json'))]
-    matching_manifests = [(path, value) for path, value in manifests if value.get('run_id') == run_id]
-    if len(matching_manifests) > 1:
-        raise ValueError('Retained generation has several native manifests')
     if matching_manifests:
         manifest_path, manifest = matching_manifests[0]
         if manifest['config']['run']['grid_id'] != grid['grid_id']:

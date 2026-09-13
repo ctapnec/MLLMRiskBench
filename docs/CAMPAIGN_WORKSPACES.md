@@ -1268,3 +1268,9 @@ configurations remain distinct. Correcting historical index identities must
 preserve every output-specific verdict, source reference and physical cost;
 it must not copy a verdict to another answer or choose between conflicting
 assessments. Original plans and judgment artifacts remain unchanged.
+
+A failed generation may still have saved answers and a manifest even when its
+terminal grid error omits the run identity. Retained judging uses the manifest's
+explicit grid reference for that anonymous error cell. It preserves the failed
+terminal status and original files. Without a unique matching manifest/grid,
+or when the cell names a different run, the source remains unresolved.
