@@ -111,3 +111,47 @@ def test_saved_runtime_cannot_change_funded_requests(tmp_path,monkeypatch):
             admitted=[[SimpleNamespace(job=job) for job in original['jobs']]],
             budget=SimpleNamespace(root=tmp_path,expected_plan_sha256='a'*64),
             project_root=tmp_path,expected_commit='b'*40,store=tmp_path,root=tmp_path/'runtime')
+
+
+def offline_runtime_worker(admission, *, responses_only):
+    from experiments import hosted_dispatch, live_attestation
+    import time
+
+    def save(job, **kwargs):
+        start = time.monotonic_ns()
+        time.sleep(0.25)
+        output = Path(job.job['argv'][1])
+        output.mkdir(parents=True,exist_ok=True)
+        (output/'event.json').write_text(json.dumps(dict(start=start,end=time.monotonic_ns(),
+            responses_only=kwargs['responses_only'],argv=job.job['argv'])))
+        return str(output)
+    def observe(argv):
+        Path(argv[argv.index('--out')+1]).write_text('{}')
+        return 0
+    hosted_dispatch.run_admission = save
+    live_attestation.main = observe
+    return subject.run_runtime_admission(admission,responses_only=responses_only)
+
+
+def test_runtime_transport_uses_existing_parallel_dispatch_without_provider_barrier(tmp_path):
+    from experiments.hosted_dispatch import dispatch_admitted
+    programs = []
+    for provider in ('google','openai'):
+        folder = tmp_path/provider
+        folder.mkdir()
+        program,descriptor = fixture_program(folder)
+        program.update(provider=provider,target=provider+':model')
+        Path(descriptor['path']).write_text(json.dumps(program))
+        descriptor = _descriptor(Path(descriptor['path']))
+        programs.append([SimpleNamespace(program=program,job=job,runtime_program=descriptor)
+            for job in program['jobs']])
+    rows = dispatch_admitted(programs,_worker=offline_runtime_worker,_pause=lambda _:None)
+    assert {row['status'] for row in rows} == {'collected'}
+    events = {provider:{name:json.loads((tmp_path/provider/'outputs'/name/'event.json').read_text())
+        for name in ('probe','measured')} for provider in ('google','openai')}
+    for provider in events:
+        assert events[provider]['probe']['responses_only'] is False
+        assert events[provider]['measured']['responses_only'] is True
+        assert events[provider]['probe']['end'] <= events[provider]['measured']['start']
+        assert '--live-attestation' in events[provider]['measured']['argv']
+    assert max(events[p]['probe']['start'] for p in events) < min(events[p]['probe']['end'] for p in events)
