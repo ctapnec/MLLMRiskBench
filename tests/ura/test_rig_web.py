@@ -2813,10 +2813,10 @@ def test_builder_paid_modes_preview_exact_argv_then_confirm(
     status, _, body = app.handle("POST", "/build", form)
     text = body.decode("utf-8")
     assert status == 200 and len(app.jobs) == started  # preview, no job
-    assert "Confirm paid execution" in text
+    assert "Review execution" in text
     assert "--attestation-probe" in text
     assert "--max-total-target-calls" in text and ">4<" in text
-    assert "spends real money" in text
+    assert "API calls may incur charges" in text
     # The confirmation submits only its opaque, one-shot exact-parameter ticket.
     assert "name='confirm' value='yes'" in text
     ticket_match = re.search(r"name='launch_ticket' value='([^']+)'", text)
