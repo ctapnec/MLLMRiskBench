@@ -9,7 +9,7 @@ import pytest
 playwright = pytest.importorskip('playwright.sync_api')
 from experiments.rig_web import RigWebApp
 from experiments.rig_web_app.server import _make_server
-from tests.ura.test_human_review_ui import prepared, qualification
+from test_human_review_ui import prepared, qualification
 
 
 def test_finished_campaign_setup_and_independent_rating_wizard(tmp_path, monkeypatch):
