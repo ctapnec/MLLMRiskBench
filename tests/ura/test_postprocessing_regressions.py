@@ -4200,6 +4200,64 @@ def test_split_grid_adaptivity_normalizes_only_execution_bookkeeping(
     facet = result["facets"]["fixture"]
     assert facet["right"]["global_call_budget"]["max_target_calls"] == 101
 
+def test_adaptivity_keeps_intervention_plans_and_execution_receipts_out_of_condition_key(
+    tmp_path: Path,
+) -> None:
+    for attacker in ('replay', 'crescendo'):
+        _write_completed_cell(tmp_path, attacker, model='A', run_id='r-'+attacker,
+            key=attacker, attacker=attacker, response_conditioned=attacker == 'crescendo')
+    _, cells = paired_compare._validated_artifacts(tmp_path)
+    cells = {cell['manifest']['config']['run']['attacker']: cell for cell in cells}
+    for attacker, cell in cells.items():
+        config = cell['manifest']['config']
+        config['attacker_input_plan'] = {'entries': [{'attacker': attacker,
+            'datapoint_id': 'p1', 'seed': 0, 'turns': [0] if attacker == 'replay' else [0, 1, 2, 3]}]}
+        config['attacker_input_plan_sha256'] = hashlib.sha256(attacker.encode()).hexdigest()
+        config['run']['request_envelope'] = {'file': attacker+'.json', 'bytes': len(attacker),
+            'sha256': hashlib.sha256(attacker.encode()).hexdigest()}
+        config['run']['live_attestation'] = {'scope': 'same-local-route', 'max_age_seconds': 3600,
+            'artifacts': [{'file': attacker+'-attestation.json'}]}
+    before = json.dumps([cell['manifest'] for cell in cells.values()], sort_keys=True)
+    result = paired_compare.compare_cells(cells['replay'], cells['crescendo'],
+        comparison_axis='attacker', n_resamples=20)
+    assert result['unit_mode'] == 'static_vs_live_adaptivity'
+    assert before == json.dumps([cell['manifest'] for cell in cells.values()], sort_keys=True)
+
+    # Neither a route-policy change nor a generation change is bookkeeping.
+    right = cells['crescendo']['manifest']['config']
+    right['run']['live_attestation']['scope'] = 'another-route'
+    with pytest.raises(ValueError, match='incompatible manifests'):
+        paired_compare.compare_cells(cells['replay'], cells['crescendo'], comparison_axis='attacker')
+    right['run']['live_attestation']['scope'] = 'same-local-route'
+    right['components']['target']['max_tokens'] = 8192
+    with pytest.raises(ValueError, match='incompatible manifests'):
+        paired_compare.compare_cells(cells['replay'], cells['crescendo'], comparison_axis='attacker')
+
+
+def test_adaptivity_cli_uses_original_revision_reader_when_requested(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for attacker in ('replay', 'crescendo'):
+        _write_completed_cell(tmp_path, attacker, model='A', run_id='r-'+attacker,
+            key=attacker, attacker=attacker, response_conditioned=attacker == 'crescendo')
+    _, cells = paired_compare._validated_artifacts(tmp_path)
+    repository = tmp_path/'history'
+    calls = []
+    def read(root: Path, *, code_repository: Path) -> list[dict]:
+        calls.append((root, code_repository))
+        return cells
+    def current_reader(*args):
+        pytest.fail('historical selection must not enter the current-only reader')
+    monkeypatch.setattr(paired_compare, 'load_analysis_cells', read)
+    monkeypatch.setattr(paired_compare, '_validated_artifacts', current_reader)
+    assert paired_main(['--results', str(tmp_path), '--historical-code-repository', str(repository),
+        '--left-model', 'A', '--right-model', 'A', '--right-attacker', 'crescendo',
+        '--bootstrap', '20', '--output', str(tmp_path/'comparison.json')]) == 0
+    assert calls == [(tmp_path, repository)]
+    result = json.loads((tmp_path/'comparison.json').read_text())
+    assert result['facets']['fixture']['unit_mode'] == 'static_vs_live_adaptivity'
+
+
 def test_common_parent_split_grids_cover_all_achieved_human_audit_arms(
     tmp_path: Path,
 ) -> None:

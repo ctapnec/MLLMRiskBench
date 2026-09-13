@@ -33,6 +33,7 @@ from experiments.analysis_integrity import (  # noqa: E402
     source_policy_token,
 )
 from experiments.transfer_matrix import _cohort_payload  # noqa: E402
+from experiments.retained_artifact_reader import load_analysis_cells  # noqa: E402
 from ura.metrics import (  # noqa: E402
     holm_bonferroni,
     paired_cluster_permutation_test,
@@ -332,6 +333,19 @@ def _comparison_payload(
         if "attacker" not in run:
             raise ValueError("adaptivity comparison manifest lacks run.attacker")
         run.pop("attacker")
+        # These plans describe the declared attack intervention, including its
+        # setup/challenge turns. Their independently validated source population
+        # and the shared unit metadata remain checked below; the two attack
+        # renderings must not be required to have identical plan identities.
+        config.pop("attacker_input_plan", None)
+        config.pop("attacker_input_plan_sha256", None)
+        # Request and transport receipt descriptors identify separate executions,
+        # not different model settings. Original readers validate each receipt;
+        # all other transport policy fields and effective settings remain here.
+        run.pop("request_envelope", None)
+        live_attestation = run.get("live_attestation")
+        if isinstance(live_attestation, dict):
+            live_attestation.pop("artifacts", None)
         # Replay and adaptive arms may be executed as separate grids so the
         # expensive replay parent is not called again for a StrongREJECT-only
         # adaptive child. These fields describe that enclosing execution suite,
@@ -1348,6 +1362,14 @@ def compare_cells(
     }
 
 
+def _comparison_cells(
+    results: Path, historical_code_repository: Path | None,
+) -> list[dict[str, Any]]:
+    if historical_code_repository is None:
+        return _validated_artifacts(results)[1]
+    return load_analysis_cells(results, code_repository=historical_code_repository)
+
+
 def compare(
     results: Path,
     *,
@@ -1363,8 +1385,9 @@ def compare(
     n_permutations: int = 10000,
     assume_exchangeable: bool = False,
     alpha: float = 0.05,
+    historical_code_repository: Path | None = None,
 ) -> dict[str, Any]:
-    _, cells = _validated_artifacts(results)
+    cells = _comparison_cells(results, historical_code_repository)
     by_corpus: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for cell in cells:
         run = _run_config(cell)
@@ -1473,6 +1496,7 @@ def compare_adaptivity(
     n_permutations: int = 10000,
     assume_exchangeable: bool = False,
     alpha: float = 0.05,
+    historical_code_repository: Path | None = None,
 ) -> dict[str, Any]:
     """Compare a static replay endpoint with a live adaptive endpoint.
 
@@ -1483,7 +1507,7 @@ def compare_adaptivity(
     """
     if left_attacker == right_attacker:
         raise ValueError("adaptivity contrast requires two different attackers")
-    _, cells = _validated_artifacts(results)
+    cells = _comparison_cells(results, historical_code_repository)
     by_corpus: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for cell in cells:
         run = _run_config(cell)
@@ -1566,6 +1590,10 @@ def main(argv: list[str] | None = None) -> int:
         description="Paired datapoint-cluster target or defense comparison"
     )
     parser.add_argument("--results", type=Path, required=True)
+    parser.add_argument(
+        "--historical-code-repository", type=Path,
+        help="validate retained cells with their original source revisions; never pool revisions",
+    )
     parser.add_argument("--left-model", required=True, help="exact manifest run.model_spec")
     parser.add_argument("--right-model", required=True, help="exact manifest run.model_spec")
     parser.add_argument("--left-defense", default="none")
@@ -1607,6 +1635,7 @@ def main(argv: list[str] | None = None) -> int:
                 n_permutations=args.permutations,
                 assume_exchangeable=args.assume_exchangeable,
                 alpha=args.alpha,
+                historical_code_repository=args.historical_code_repository,
             )
         else:
             result = compare(
@@ -1623,6 +1652,7 @@ def main(argv: list[str] | None = None) -> int:
                 n_permutations=args.permutations,
                 assume_exchangeable=args.assume_exchangeable,
                 alpha=args.alpha,
+                historical_code_repository=args.historical_code_repository,
             )
     except ValueError as exc:
         print(f"paired comparison validation failed: {exc}", file=sys.stderr)
