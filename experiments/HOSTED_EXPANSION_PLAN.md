@@ -12,13 +12,23 @@ at two. Use 4,096 output tokens, no automatic answer retry and three HTTP-error
 retries. Every eligible new Pro answer requires its own native and Haiku verdict;
 the 1,030 already-assessed local counterparts are comparison data, not Pro verdicts.
 
-At 06:34 UTC the combined collection has attempted 10,716 of 10,966 assignments,
+At 07:04 UTC the expansion and its continuations have attempted 10,716 of 10,966 assignments,
 with 10,703 usable answers or explicit policy outcomes. Remaining tracked Google
 allowance is USD 9.994216. The additional Pro spending ceiling is USD 10 within
 the existing account credit, including its older tails, not new money. The Haiku
 allowance at that snapshot is USD 10.721531.
 Preserve the dated account balance history below. Forecast Pro completion from
 post-reset throughput, rather than promising a finish before any quota observation.
+
+The quota wait has ended. Seven new Pro answers were saved before the external
+wrapper failed during multiprocessing import. Its guarded CLI continuation
+restores those answers and continues the other 223 inputs without repeating
+probes. A missing basename in its saved selection was supplied in an explicit
+compatibility view, leaving original files and execution conditions unchanged.
+The fourteen-input older tail has completed under the same Runner revision as
+its transport observations. The six-input tail and single interrupted attempt
+have separate continuations; original failures and uncertain charges remain.
+Local and Haiku judging follow the actual new outputs, not predecessor verdicts.
 
 The selected-output gap audit subsequently published 38 saved native verdicts
 without calls and completed 62 additional native assessments. Its earlier
