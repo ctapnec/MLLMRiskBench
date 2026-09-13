@@ -66,7 +66,7 @@ def read_hosted_preparation(value):
         program,_=sources.load_bound_json(path,programs[str(path)]['sha256'])
         options={'include_incomplete':True} if expected.get('incomplete_generation') is True else {}
         source,reader,inputs,responses=sources.load_program_job(path,expected['job'],program=program,**options)
-        if source!=expected or source['run_id'] in seen:
+        if not sources.same_source_condition(source,expected) or source['run_id'] in seen:
             raise ValueError('Prepared judging source differs or repeats a run')
         seen.add(source['run_id'])
         assigned+=len(inputs)

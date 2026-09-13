@@ -53,6 +53,37 @@ def test_saved_outputs_bind_their_own_funded_calls_with_one_ledger_read(funded):
     assert len(funded.reads)==1
 
 
+@pytest.mark.parametrize('change',[None,'predecessor','slot','lost-attempt','cycle'])
+def test_recorded_funding_successor_preserves_slots_and_existing_execution(funded,tmp_path,monkeypatch,change):
+    old=funded.budget
+    old.root.mkdir()
+    current=tmp_path/'current';current.mkdir()
+    (current/'plan.json').write_text('{}')
+    marker=dict(schema='ura-hosted-budget-superseded/1',status='superseded_not_a_target_failure',
+        predecessor_plan_sha256='a'*64,successor=dict(path=str(current/'plan.json'),sha256='b'*64))
+    if change=='predecessor':marker['predecessor_plan_sha256']='c'*64
+    (old.root/'paid-circuit.json').write_text(json.dumps(marker))
+    funded.ledger['attempts']['judge-hosted-0']={'1':{'state':'settled'}}
+    ledger=copy.deepcopy(funded.ledger);slots=copy.deepcopy(funded.slots)
+    if change=='slot':slots['judge-hosted-1']['pool']='target'
+    if change=='lost-attempt':ledger['attempts'].clear()
+    successor=SimpleNamespace(root=current,expected_plan_sha256='b'*64,_load=lambda:({},ledger,slots))
+    if change=='cycle':
+        (current/'paid-circuit.json').write_text(json.dumps({**marker,
+            'predecessor_plan_sha256':'b'*64,'successor':dict(path=str(old.root/'plan.json'),sha256='a'*64)}))
+    monkeypatch.setattr(subject,'AttemptBudget',lambda path,digest:successor if path==current else old)
+    load_bound=subject.load_bound_json
+    monkeypatch.setattr(subject,'load_bound_json',lambda path,digest:
+        ({},{}) if Path(path).name=='plan.json' else load_bound(path,digest))
+    if change:
+        with pytest.raises(ValueError):subject.collect_items(funded.prepared,old)
+    else:
+        pending,owned,_=subject.collect_items(funded.prepared,old)
+        assert len(pending)==len(owned)==1
+        assert pending[0]['budget']==dict(root=str(current),plan_sha256='b'*64)
+        assert owned[0]['call_id']=='judge-hosted-0'
+
+
 def test_unfinished_paid_slot_stays_with_its_existing_executor_not_called_again(funded,tmp_path):
     funded.ledger['attempts']['judge-hosted-0']={'1':{'state':'reserved'}}
     result=subject.prepare(preparation=funded.prepared,budget=funded.budget,out=tmp_path/'items')

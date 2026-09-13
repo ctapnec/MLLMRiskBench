@@ -17,6 +17,40 @@ from experiments.hosted_campaign_budget import load_bound_json
 from experiments.retained_response_judge_execute import _write_new
 
 
+def current_budget_snapshot(budget, call_ids):
+    """Follow recorded funding transfers, preserving slots and physical history."""
+    seen=set()
+    with _budget_lock(budget.root):
+        _plan,ledger,slots=budget._load()
+    while True:
+        identity=(str(budget.root.resolve()),budget.expected_plan_sha256)
+        if identity in seen:
+            raise ValueError('Judging funding successor chain repeats a budget')
+        seen.add(identity)
+        marker=budget.root/'paid-circuit.json'
+        if not marker.exists():
+            return budget,ledger,slots
+        value=json.loads(marker.read_text())
+        if value.get('schema')!='ura-hosted-budget-superseded/1':
+            return budget,ledger,slots  # Real provider/funding stops remain active.
+        if (value.get('status')!='superseded_not_a_target_failure'
+            or value.get('predecessor_plan_sha256')!=budget.expected_plan_sha256):
+            raise ValueError('Judging funding transfer names another predecessor')
+        descriptor=value['successor'];path=Path(descriptor['path'])
+        if path.name!='plan.json':
+            raise ValueError('Judging funding transfer needs its recorded successor plan')
+        load_bound_json(path,descriptor['sha256'])
+        successor=AttemptBudget(path.parent,descriptor['sha256'])
+        with _budget_lock(successor.root):
+            _next_plan,next_ledger,next_slots=successor._load()
+        for key in call_ids:
+            if next_slots.get(key)!=slots.get(key) or key not in slots:
+                raise ValueError('Judging funding transfer changed an original slot')
+            if not set(ledger['attempts'].get(key,{})) <= set(next_ledger['attempts'].get(key,{})):
+                raise ValueError('Judging funding transfer lost physical attempt history')
+        budget,ledger,slots=successor,next_ledger,next_slots
+
+
 def collect_items(preparation: Path, budget: AttemptBudget):
     value=json.loads(preparation.read_text())
     view=retained._read_view(preparation)
@@ -55,10 +89,10 @@ def collect_items(preparation: Path, budget: AttemptBudget):
             budget=dict(root=str(budget.root),plan_sha256=budget.expected_plan_sha256),
             input_identity=identity,source_unit=unit['job'],source_program=unit['program']))
     # One snapshot per preparation, not a full ledger reread per answer.
-    with _budget_lock(budget.root):
-        _plan,ledger,slots=budget._load()
+    budget,ledger,slots=current_budget_snapshot(budget,[item['call_id'] for item in mapped])
     items,owned=[],[]
     for item in mapped:
+        item['budget']=dict(root=str(budget.root),plan_sha256=budget.expected_plan_sha256)
         slot=slots[item['call_id']]
         if slot['provider']!='anthropic' or slot['pool']!='judge':
             raise ValueError('Saved output needs its existing Anthropic judging slot')

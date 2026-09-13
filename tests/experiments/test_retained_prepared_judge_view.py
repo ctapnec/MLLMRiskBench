@@ -120,6 +120,22 @@ def test_incomplete_source_count_remains_in_the_population(prepared):
     assert audit['unprepared_outputs']==3
 
 
+def test_old_preparation_accepts_only_inventory_order_difference(prepared,monkeypatch):
+    records,value,_=prepared
+    # Repeat a second actual file entry with its own path, as real grid/response inventories do.
+    from pathlib import Path
+    second=Path(records.source['out'])/'grid.json'
+    second.write_text('{}')
+    records.source['files'].append(subject.sources.metadata(second))
+    actual={**records.source,'files':list(reversed(records.source['files']))}
+    monkeypatch.setattr(subject.sources,'load_program_job',lambda *a,**k:
+        (actual,records.reader(),records.inputs,records.responses))
+    assert len(subject.read_hosted_preparation(value)[1])==2
+    actual['runner_argv']=['changed']
+    with pytest.raises(ValueError,match='source differs'):
+        subject.read_hosted_preparation(value)
+
+
 def test_partial_source_passes_exact_opt_in_and_keeps_unsaved_coverage(prepared,monkeypatch):
     from experiments.retained_judge_inventory import read_sources
     records,value,path=prepared

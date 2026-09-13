@@ -96,6 +96,15 @@ def test_reader_target_is_not_capable_of_generation():
         reader.generate([])
 
 
+def test_source_file_inventory_order_is_not_a_changed_condition():
+    original=dict(run_id='saved',files=[dict(path='grid',bytes=7),dict(path='responses',bytes=11)])
+    reordered={**original,'files':list(reversed(original['files']))}
+    assert subject.same_source_condition(reordered,original)
+    assert not subject.same_source_condition({**reordered,'run_id':'other'},original)
+    assert not subject.same_source_condition({**reordered,'files':[dict(path='grid',bytes=8),original['files'][1]]},original)
+    assert not subject.same_source_condition({**reordered,'files':original['files']+[original['files'][0]]},original)
+
+
 @pytest.fixture
 def partial_source(tmp_path, monkeypatch):
     """Exercise selection reconstruction with a missing middle response."""

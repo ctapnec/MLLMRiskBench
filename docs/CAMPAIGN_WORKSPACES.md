@@ -1244,6 +1244,13 @@ Sources must remain unchanged between preparation and judging. The normal Build
 incremental collection flow still prepares complete jobs; use this explicit
 historical import for a stable interrupted source, not a live growing output file.
 
+File inventories are compared by exact file metadata, not directory-list order.
+Reordered entries do not change a saved generation; changed files still require
+new preparation. Hosted judging follows an explicitly recorded budget transfer
+to its current ledger only when the selected original slots and physical attempt
+history are preserved. It never reopens a superseded pool or creates extra credit.
+Provider error circuits remain separate and are not cleared by this lookup.
+
 When an interrupted paid attempt is reconciled from in-flight to unknown charge,
 publish that physical attempt through the existing cost-index writer as part of
 the handoff. Preserve its unknown amount and uncertain exposure. Updating only

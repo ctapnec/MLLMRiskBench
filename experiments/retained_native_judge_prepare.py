@@ -46,6 +46,13 @@ def metadata(path):
                 mtime_ns=stat.st_mtime_ns, ctime_ns=stat.st_ctime_ns)
 
 
+def same_source_condition(actual, expected):
+    """Inventory order is not a generation setting; every file stamp still is."""
+    def ordered(value):
+        return {**value, 'files':sorted(value['files'], key=lambda entry:entry['path'])}
+    return ordered(actual) == ordered(expected)
+
+
 def generation_artifacts(out: Path, run_id: str):
     """Select the saved generation, not an unrelated retry in its directory."""
     grids = [(path, read(path)) for path in sorted(out.glob('*.grid.json'))]

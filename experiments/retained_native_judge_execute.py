@@ -251,8 +251,9 @@ def execute(*, preparation, preparation_sha256, out, revision, workspace_id="", 
                         raise ValueError("Prepared generation source changed")
                 options = {"include_incomplete": True} if expected.get("incomplete_generation") is True else {}
                 source, reader, inputs, responses = sources.load_program_job(Path(expected["program"]), expected["job"], **options)
-                if source != expected:
+                if not sources.same_source_condition(source, expected):
                     raise ValueError("Prepared source condition changed")
+                source = expected
                 completed.append(score_unit(source, reader, inputs, responses, out=unit, revision=revision,
                     publication=publication, verify_model_sha256=verify_model_sha256, cascade_cache=cascade_cache))
             except (OSError, ValueError, KeyError, TypeError, RuntimeError) as exc:
