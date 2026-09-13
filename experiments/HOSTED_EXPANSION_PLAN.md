@@ -220,9 +220,22 @@ The 29 earlier outputs already have original local assessment artifacts,
 verified against their exact saved answers: 27 valid and two marked missing.
 They are not selected for another local scoring pass. The other 175 saved
 outputs have a separate native-scoring queue, attached to the same API workspace.
-It waits for existing GPU owners and the already-queued Pro local judging;
-this dependency does not hold up any paid target collection. Its completion
-will not close the fourteen unprepared continuous inputs or later tail outputs.
+The original queue waited for existing GPU owners and the already-queued Pro
+local judging. On 13 September at 03:00 UTC that unnecessary global wait was
+replaced with an isolated physical-GPU1 launch while local recovery continued
+on GPU0. CUDA exposes that selected physical card as the source configuration's
+logical `cuda:0`; the saved judge, rubric, input/output pairs and twenty-token
+classifier allowance are unchanged. Physical placement is recorded in the
+controller's device handoff. No paid collection depends on this judging job.
+Its completion will not close the fourteen unprepared continuous inputs or
+later tail outputs.
+
+Eight judgments were saved before the launcher encountered a missing retained
+media-root configuration. The actual image path reproduced that error without
+model calls. Applying the existing campaign media configuration resolved it,
+and the controller resumed its original checkpoints. The image files, earlier
+outputs and completed verdicts were not modified. This operational correction
+does not establish completion of the remaining judgments.
 
 The initial counting launcher used a nested controller directory that the
 existing console registration does not support. It failed before any count

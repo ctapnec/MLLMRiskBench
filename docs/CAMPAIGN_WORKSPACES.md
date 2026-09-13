@@ -75,6 +75,17 @@ visually inspected renders of actual indexed costs verify this candidate fix;
 its console deployment remains pending. Unknown charges and token reports
 remain explicitly unknown rather than being converted to zero.
 
+A read-only live check on 13 September also covered the Stats and Jobs landing
+pages. All seven desktop pages loaded in under one second, with no script
+errors. Actual navigation showed the common spinner, blocked a second
+navigation, and cleared after loading. The mobile Local Results route was
+checked separately after correcting a mislabeled diagnostic screenshot; it
+had no page-wide overflow. A held-navigation test was abandoned because its
+observation method interfered with navigation; it is not evidence of a UI
+failure. These checks do not replace acceptance of the newer Build workflow.
+The deployed cost-column clipping and diagnostic-first order remain the known
+pending-release issues described above.
+
 ### Selected local inputs for a hosted follow-on
 
 Build's General section now starts source preparation from the campaign index:
