@@ -171,7 +171,9 @@ def _judgment_bucket(cell: dict[str, Any], raw: Mapping[str, Any]) -> str:
     })
 
 
-def _coverage_by_bucket(cell: dict[str, Any]) -> dict[str, dict[str, Any]]:
+def _coverage_by_bucket(
+    cell: dict[str, Any], *, moderation_granularity: str | None = None,
+) -> dict[str, dict[str, Any]]:
     coverage: dict[str, dict[str, Any]] = defaultdict(lambda: {
         "source_judgments_completed": 0,
         "source_judgments_evaluable": 0,
@@ -196,6 +198,16 @@ def _coverage_by_bucket(cell: dict[str, Any]) -> dict[str, dict[str, Any]]:
         raw = judgment.get("raw")
         if not isinstance(raw, dict):
             raise ValueError("completed judgment lacks raw provenance")
+        if moderation_granularity is not None:
+            source = raw.get("source_evaluation")
+            dimension = (
+                source.get("moderation_granularity")
+                if isinstance(source, dict) else None
+            ) or raw.get("risk_subtype")
+            # Missing source responses still belong to their declared
+            # threshold, but not to every other threshold in the same cell.
+            if dimension != moderation_granularity:
+                continue
         record = coverage[_judgment_bucket(cell, raw)]
         record["source_judgments_completed"] += 1
         state = _decision_state(judgment)
@@ -290,6 +302,7 @@ def _estimate_rows(cell: dict[str, Any]) -> list[dict[str, Any]]:
     run = cell["manifest"]["config"]["run"]
     manifest = cell["manifest"]
     coverage = _coverage_by_bucket(cell)
+    moderation_coverage: dict[str, dict[str, dict[str, Any]]] = {}
     rows: list[dict[str, Any]] = []
     for result in cell["aggregate_results"]:
         group_by = result.get("group_by")
@@ -307,7 +320,15 @@ def _estimate_rows(cell: dict[str, Any]) -> list[dict[str, Any]]:
             for key in sorted(set(group_by) - _REQUIRED_GROUP_KEYS)
         }
         bucket = _bucket_key(group_by)
-        bucket_coverage = coverage.get(bucket)
+        dimension = refinements.get("moderation_granularity")
+        if dimension is not None:
+            if dimension not in moderation_coverage:
+                moderation_coverage[dimension] = _coverage_by_bucket(
+                    cell, moderation_granularity=dimension,
+                )
+            bucket_coverage = moderation_coverage[dimension].get(bucket)
+        else:
+            bucket_coverage = coverage.get(bucket)
         if bucket_coverage is None:
             raise ValueError(
                 "aggregate bucket has no completed judgment support: "

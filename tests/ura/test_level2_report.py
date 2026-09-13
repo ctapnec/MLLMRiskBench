@@ -763,6 +763,41 @@ def test_classification_rows_export_with_source_evaluator_status() -> None:
     assert rows[0]["endpoint_status"] == "source_specific_evaluator"
 
 
+def test_moderation_coverage_matches_threshold_and_retains_missing_responses() -> None:
+    cell = _classification_cell(official=False)
+    cell["manifest"]["config"]["run"]["corpus"] = "gptgeochat_release"
+    base = cell["judgments"][0]
+    base["raw"].update(source="gptgeochat", risk_category="geo",
+                       effective_modality="image", planning_expected_behavior="safe_answer")
+    base["raw"]["source_evaluation"].update(family="gptgeochat_binary_moderation", implemented=True)
+    country = copy.deepcopy(base)
+    country["raw"]["risk_subtype"] = "country"
+    country["raw"]["source_evaluation"]["moderation_granularity"] = "country"
+    city = copy.deepcopy(base)
+    city["raw"]["risk_subtype"] = "city"
+    city["raw"]["source_evaluation"].update(moderation_granularity="city", valid=False)
+    missing = copy.deepcopy(country)
+    missing["raw"]["source_evaluation"] = None
+    missing["raw"]["policy_evaluation_status"] = "model_nonresponse"
+    cell["judgments"] = [country, city, missing]
+    result = cell["aggregate_results"][0]
+    result["metric"] = "gptgeochat_all_output_accuracy"
+    result["group_by"].update(source="gptgeochat", risk="geo", effective_modality="image",
+                              expected_behavior="safe_answer", source_metric_family="gptgeochat_binary_moderation",
+                              source_metric_status="implemented")
+    result["group_by"]["moderation_granularity"] = "country"
+    other = copy.deepcopy(result)
+    other["group_by"]["moderation_granularity"] = "city"
+    cell["aggregate_results"] = [result, other]
+    rows = level2_report._estimate_rows(cell)
+    assert rows[0]["judgments_completed"] == 2
+    assert rows[0]["judgments_decided"] == 1
+    assert rows[0]["judgments_missing_responses"] == 1
+    assert rows[1]["judgments_completed"] == 1
+    assert rows[1]["judgments_decided"] == 0
+    assert rows[1]["judgments_missing_responses"] == 0
+
+
 def test_level2_retains_explicit_sampling_policy() -> None:
     from experiments.level2_report import _csv_text, _estimate_rows
     from ura.sampling import SOURCE_ORDER_CLUSTER_PREFIX
