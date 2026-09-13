@@ -2152,6 +2152,29 @@ Generic historical comparison now uses the existing
 revision-specific reader through `paired_compare --historical-code-repository`;
 its strict source, judging and target-setting checks remain active.
 
+The deployed Tools flow was executed under the Local campaign at 17:40 UTC.
+Job `job-ebb5f0582d4b` completed in 31 seconds, reproduced all seven corpus
+reports (six estimable metrics), and exposes its saved JSON from the job page.
+Use `paired_compare`, select Local campaign, and set the input directory to
+`runs/engineering/adaptive-comparison-live-ui-20260913/inputs`, both exact model
+selectors to the retained Qwen identity, attackers to `replay` and `crescendo`,
+historical code repository to `/home/ura/MLLMRiskBench`, bootstrap to 2000 and
+seed to 0. Use a fresh output file. The retained view contains separate regular
+copies of the two original completed grids; the first hard-linked view was
+rejected and was corrected without changing original artifacts. Evidence:
+`adaptive-comparison-live-ui-20260913-r-regular-files`.
+
+The 17:36 UTC portfolio inventory represents the same 28 logical arms and
+20 converter families in local and hosted collections. The 45-arm universe
+partitions into 13 common text arms, 12 common image-text arms, two source
+classification arms, one transferred injection arm without a native oracle,
+three unexecuted audio/video arms and fourteen other unexecuted source-task
+arms. Eleven attack-method paths are represented, including replay. Hosted
+contexts transferred from Crescendo or prepared attacks are not fresh native
+or adaptive executions. The retained nine native-project dispositions remain
+six failed, two unavailable and one not selected. Evidence:
+`portfolio-inventory-20260913` and `portfolio-synthesis-20260913`.
+
 The approved response-classifier add-on uses the already retained, matched
 local/hosted text outputs and exact Haiku judgments. Follow
 [RESPONSE_SVM.md](../docs/RESPONSE_SVM.md) for the frozen grouping, three tasks,

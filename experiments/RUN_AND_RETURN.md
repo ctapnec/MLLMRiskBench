@@ -6017,6 +6017,30 @@ unavailable, and include no estimate. Never treat a length-capped canary, a
 no-call projection, a partial measured root or the successful base lane alone as
 RR evidence.
 
+For completed historical runs, supply `--historical-code-repository` with the
+repository containing their original revisions. The retained reader checks each
+grid using its original implementation; the comparison still checks scientific
+compatibility. A copied comparison view must contain complete grids as separate
+regular files, not hard links or symlinks. Do not alter their manifests.
+
+To reproduce a static-versus-adaptive analysis through the UI:
+
+1. Open **Tools**, then `paired_compare`, and choose **Save under campaign**.
+2. Enter the directory containing only the intended completed grids and the
+   historical repository when required.
+3. Enter the same exact model and defense on both sides. Set `--attacker` to
+   `replay` and `--right-attacker` to `crescendo` for that contrast.
+4. Set the corpus for one arm, or leave it empty for separate corpus facets.
+   Retain the specified bootstrap count and seed, and choose a fresh output file
+   under the console's results root.
+5. Select **Start job**. The completed job retains its command and output link
+   and appears under that campaign. This operation makes no target or judge calls.
+
+The estimator reports effects as left minus right. No jointly decided outcomes
+means no estimate, not a zero effect. A full adaptive contrast still requires
+matching source, sampling, judging and target-generation conditions. Transferred
+hosted contexts are not interchangeable with newly response-conditioned runs.
+
 Build the mandatory Level-1 lifecycle inventory from one explicitly selected
 runner cohort. Supply every final eligibility plan in that scope, including
 plan-only structural-`N/A` or preflight-blocked requests that have no grid. Use

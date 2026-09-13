@@ -128,13 +128,26 @@ comparison criteria. In particular, changing a generation allowance is not an
 attack-only contrast. Original manifests and their execution records remain
 linked in the report.
 
-The web console exposes the same optional history repository on Commands >
+The web console exposes the same optional history repository on Tools >
 `paired_compare`. Select a completed comparison input directory, the exact left
 and right model selectors, `replay` and `crescendo` as the two attackers, and the
 repository containing the retained revisions. The command uses saved records
 only. A directory containing several competing runs for the same condition is
 ambiguous and must be reduced to the intended retained cohort before comparison;
 the interface does not choose a favourable run automatically.
+
+The comparison directory can contain the two exact completed grid directories
+as siblings. Retain all files required by each grid and use separate regular
+files when making an analysis-only copy. Do not use symlinks or hard links:
+historical acquisition readers may require a single-link regular file. These
+copies do not become new generations. Keep an input inventory identifying the
+original roots, and never edit their manifests or request settings.
+
+Choose **Save under campaign** before starting the job. On completion, the job
+page retains its exact command and a working `--output` artifact link; the job
+belongs to the selected campaign's Activity. A missing arm is reported as an
+unavailable facet, while an arm with insufficient jointly decided outcomes
+remains non-estimable. Neither condition is filled with a zero effect.
 
 A paired comparison uses clusters observed under both exact conditions and gives
 each source cluster equal weight. The primary binary effect is the risk
