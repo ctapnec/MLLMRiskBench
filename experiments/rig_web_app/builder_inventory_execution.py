@@ -101,7 +101,9 @@ def review(app, params):
 
 
 def launch(app, params):
-    saved = app._consume_launch_ticket(params.get('launch_ticket', ''), purpose='all-output-haiku')
+    saved = app._launch_ticket_params(params.get('launch_ticket', ''), purpose='all-output-haiku')
+    if saved is None:
+        raise ValueError('The all-output judging review expired or was already used')
     owner, values = saved['campaign_id'], json.loads(saved['values'])
     with app._app_lock:
         previous = collection_history(app, owner, [values['--preparation']], command=COMMAND, input_flag='--preparation')

@@ -17,7 +17,7 @@ def prepared(population, tmp_path, monkeypatch):  # noqa: F811
         slot['bound_microusd'] = 100_000
     pending, _, _, _ = population.collect()
     budget_path = tmp_path / 'actual-budget'
-    descriptor = money.create_budget(budget_path, provider_budgets_microusd={'anthropic': 40_000_000},
+    descriptor = money.create_budget(budget_path, provider_budgets_microusd={'anthropic': 90_000_000},
         planned_calls=[dict(call_id=key, **value) for key, value in population.slots.items()])
     for item in pending:
         item['budget'] = dict(root=str(budget_path), plan_sha256=descriptor['sha256'])
