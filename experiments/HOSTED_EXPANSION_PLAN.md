@@ -234,8 +234,13 @@ Eight judgments were saved before the launcher encountered a missing retained
 media-root configuration. The actual image path reproduced that error without
 model calls. Applying the existing campaign media configuration resolved it,
 and the controller resumed its original checkpoints. The image files, earlier
-outputs and completed verdicts were not modified. This operational correction
-does not establish completion of the remaining judgments.
+outputs and completed verdicts were not modified. By 03:04 UTC all 175 selected
+assessments across 35 source units were complete and published, with no invalid
+classifier verdicts, no target calls and no hosted calls. Missing-output
+assessments remain distinct from substantive safety decisions. The earlier
+launcher error is retained as resolved history, not the current job state.
+Fourteen unprepared input entries still belong to the separate collection
+continuation and do not disappear from campaign coverage.
 
 The initial counting launcher used a nested controller directory that the
 existing console registration does not support. It failed before any count
