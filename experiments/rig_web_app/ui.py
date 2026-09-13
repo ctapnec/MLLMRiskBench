@@ -152,6 +152,7 @@ details.cmd > summary::-webkit-details-marker { display:none; }
 details.cmd > summary .ic { color:var(--accent); align-self:center; }
 details.cmd > summary .name { font-weight:700; }
 details.cmd > summary .desc { color:var(--muted); font-size:.86rem; }
+details.cmd > summary .name, details.cmd > summary .desc { min-width:0; overflow-wrap:anywhere; }
 details.cmd[open] > summary { border-bottom:1px solid var(--line); }
 details.cmd .inner { padding:.9rem 1.1rem 1.1rem; }
 .group-head { display:flex; gap:.55rem; align-items:center;
@@ -159,8 +160,10 @@ details.cmd .inner { padding:.9rem 1.1rem 1.1rem; }
 .group-head .ic { color:var(--accent); }
 .group-head h2 { margin:0; }
 .group-head .ref { color:var(--muted); font-size:.8rem; }
-form.cmd { display:grid; grid-template-columns:minmax(200px,260px) 1fr;
+form.cmd { display:grid; grid-template-columns:minmax(200px,260px) minmax(0,1fr);
   gap:.4rem .8rem; align-items:center; }
+form.cmd > .campaign-ownership, form.cmd > .notice { grid-column:1 / -1; }
+form.cmd > label, form.cmd > .fieldwrap { min-width:0; overflow-wrap:anywhere; }
 form.cmd label { color:var(--muted); font-size:.84rem; }
 .req { color:#c0392b; font-weight:700; }
 form.cmd label .kind { color:var(--muted); opacity:.7; font-size:.75rem; }
@@ -171,6 +174,13 @@ form.cmd input[type=text], form.cmd input[type=number] {
 form.cmd select { width:100%; }
 form.cmd input:focus, form.cmd select:focus { outline:2px solid
   color-mix(in srgb, var(--accent) 45%, transparent); border-color:var(--accent); }
+@media (max-width:640px) {
+  form.cmd { grid-template-columns:minmax(0,1fr); }
+  form.cmd > label { margin-top:.6rem; }
+  form.cmd > span:empty { display:none; }
+  details.cmd > summary { flex-wrap:wrap; }
+  details.cmd > summary .desc { flex-basis:100%; }
+}
 button { display:inline-flex; gap:.4rem; align-items:center;
   background:var(--accent); border:0; color:var(--accent-ink);
   font-weight:600; border-radius:9px; padding:.48rem 1rem; cursor:pointer;
