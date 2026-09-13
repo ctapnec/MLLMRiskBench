@@ -187,7 +187,7 @@ def test_finished_runs_discovered_without_cross_campaign_or_failed_run_sources(t
         owner=app.db.create_workspace('Finished API','api');other=app.db.create_workspace('Different campaign','local')
         with app.db._conn:
             for key,exit_code,campaign in [('done',0,owner),('failed',1,owner),('unrelated',0,other)]:
-                app.db._conn.execute('INSERT INTO runs VALUES(?,?,?,?,?,?,?,?,?)',
+                app.db._conn.execute('INSERT INTO runs VALUES(?,?,?,?,?,?,?,?)',
                     (key,'measured','run_matrix',str(tmp_path/'runs'/key),'pin','complete' if exit_code==0 else 'failed',exit_code,1))
                 app.db._conn.execute('INSERT INTO campaign_members VALUES(?,?,?,?,?)',('external',key,campaign,'collection',1))
         assert [r['id'] for r in sources(app,owner)]==['run-done']
