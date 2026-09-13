@@ -1,5 +1,17 @@
 # All-local test campaign plan: every corpus arm, every framework runtime, free models only
 
+Residual assessment, 13 September at 15:50 UTC: at the user's request, test
+DeepSeek, GraySwan RR and LLaVA base with a 16,384-token output allowance,
+32,768-token context and both GPUs, without a concurrent judge. Retain the
+120-second request assessment, ten-question and applicable five-image survey.
+Selected exact failed inputs are diagnostic contrasts before a measured
+recovery decision. Do not infer that larger allowances are unusable merely
+because a throughput prompt stops voluntarily before consuming the allowance.
+Keep the old profiles, responses and judgments unchanged; any actual replacement
+needs its own local and matched Haiku assessment. Evidence:
+`engineering/local-larger-allowance-20260913`. The existing 410 misses are not
+declared irrecoverable, and diagnostics do not change the campaign denominator.
+
 Closeout, 13 September at 09:34 UTC: the 2,636-condition recovery remains fully
 attempted, with 2,226 usable replacements and 410 residual missing outputs.
 All 786 selected recovery Haiku assessments are retained. Chapter V now includes
@@ -40,7 +52,8 @@ Keep causal interpretation separate from execution coverage and native scoring.
 Final replacement-aware analysis and thesis synthesis remain open.
 
 The response-status cross-tab has 2,196 usable non-truncated, 30 usable truncated,
-58 missing/unusable non-truncated and 352 missing/unusable truncated conditions.
+45 missing/unusable non-truncated, 352 missing/unusable truncated and thirteen
+missing/unusable conditions without explicit stopping information.
 It sums to the 2,636 selected combinations without adding overlapping categories.
 Chapter V now reports these observed recovery counts and the 31-image, two-model
 lossless codec correction. They describe a selected recovery cohort, not a random
