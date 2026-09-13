@@ -125,6 +125,17 @@ def test_generation_artifacts_never_guess_an_ambiguous_binding(tmp_path, mutatio
         subject.generation_artifacts(tmp_path, 'run')
 
 
+def test_response_only_source_keeps_its_single_unfinished_grid(tmp_path):
+    grid = dict(grid_id='unfinished', cells=[], status='running')
+    (tmp_path/'unfinished.grid.json').write_text(json.dumps(grid))
+    path, selected, manifest_path, manifest = subject.generation_artifacts(tmp_path, 'saved-run')
+    assert selected == grid and path.name == 'unfinished.grid.json'
+    assert manifest_path is manifest is None
+    (tmp_path/'ambiguous.grid.json').write_text(json.dumps(grid))
+    with pytest.raises(ValueError, match='one original grid'):
+        subject.generation_artifacts(tmp_path, 'saved-run')
+
+
 def test_preparation_environment_forwards_source_locators_not_provider_credentials():
     from experiments.rig_web_app.catalog import COMMANDS
     from experiments.rig_web_app.lifecycle import LifecycleMixin

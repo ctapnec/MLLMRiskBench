@@ -51,6 +51,10 @@ def generation_artifacts(out: Path, run_id: str):
     grids = [(path, read(path)) for path in sorted(out.glob('*.grid.json'))]
     matching = [(path, value) for path, value in grids
                 if any(cell.get('run_id') == run_id for cell in value.get('cells', []))]
+    # Response-only checkpoints can precede final cell publication. Preserve
+    # the existing unambiguous single-grid path; this is not completion evidence.
+    if not matching and len(grids) == 1 and grids[0][1].get('cells') == []:
+        matching = grids
     if len(matching) != 1:
         raise ValueError('Expected one original grid for the retained generation run')
     grid_path, grid = matching[0]
