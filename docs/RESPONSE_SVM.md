@@ -89,3 +89,43 @@ busy state. This covers export, not a paid campaign's full Build flow. The
 general Build acceptance and the waiting Google campaign remain separate
 obligations. Exact numerical results and split membership accompany each run;
 the thesis reports observed limitations instead of selecting a universal winner.
+
+## Reusable fitted classifiers
+
+The study runner fits real scikit-learn LinearSVC classifiers, not heuristic
+rules or synthetic label stand-ins. Each of the three tasks has prompt-only,
+response-only and combined feature representations. The combined representation
+keeps prompt and response vocabularies separate. Scores are signed,
+uncalibrated decision margins, never confidence probabilities.
+
+Use **package** with the exported dataset, completed study report and saved
+predictions. It reconstructs only the nine validation-selected primary fits
+on their original training partition. It does not repeat the C search,
+held-out-model trials, bootstrap or generation. Every reconstructed held-out
+decision and score must reproduce the original study before the fitted
+classifiers and TF-IDF transformations are saved. Packaging also verifies
+predictions after serialization and reload.
+
+Use **predict** to apply that saved artifact to new retained static-text rows.
+This performs no fitting and needs no Haiku label. Minimum fields are `id`,
+`response`, `expected_behavior`, `modality: text`, and `framework: replay`;
+prompt-based representations also need `prompt`. Disagreement prediction needs
+a valid `local_label` because an absent local decision is not agreement.
+Missing responses, unsupported modalities and inapplicable tasks receive
+explicit dispositions rather than invented predictions. The optional derived
+disagreement score uses the harmful classifier and the known local verdict.
+
+```bash
+python -m experiments.response_svm --package --dataset /path/svm-dataset/dataset.jsonl \
+  --study-result /path/svm-analysis/result.json \
+  --study-predictions /path/svm-analysis/predictions.json --out /path/svm-fitted
+python -m experiments.response_svm --predict --models /path/svm-fitted/models.joblib \
+  --dataset /path/new-retained-rows.jsonl --features response --out /path/svm-predictions
+```
+
+All four modes are available through the same Tools form. Load only fitted
+artifacts created by this trusted workflow: joblib uses Python object
+serialization and must not load untrusted files. Reuse the recorded scikit-learn
+version. These exploratory classifications remain separate from campaign
+judgments and are never installed as automatic safety gates or replacements
+for local, hosted or independent human evaluation.

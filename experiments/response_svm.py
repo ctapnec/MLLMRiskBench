@@ -1,4 +1,4 @@
-"""Export or evaluate retained-response SVMs without provider calls."""
+"""Export, evaluate, package or apply retained-response SVMs without provider calls."""
 from __future__ import annotations
 
 import argparse
@@ -21,6 +21,8 @@ def main(argv=None):
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--export", action="store_true")
     mode.add_argument("--evaluate", action="store_true")
+    mode.add_argument("--package", action="store_true")
+    mode.add_argument("--predict", action="store_true")
     parser.add_argument("--database", type=Path)
     parser.add_argument("--candidates", type=Path)
     parser.add_argument("--campaign", action="append", default=[])
@@ -28,6 +30,10 @@ def main(argv=None):
     parser.add_argument("--judge-condition")
     parser.add_argument("--exclude-model", action="append", default=[])
     parser.add_argument("--dataset", type=Path)
+    parser.add_argument("--study-result", type=Path)
+    parser.add_argument("--study-predictions", type=Path)
+    parser.add_argument("--models", type=Path, help="Trusted fitted model.joblib created by this command; never load untrusted pickle files")
+    parser.add_argument("--features", choices=("prompt", "response", "prompt_response"), default="response")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--max-feature-characters", type=int, default=20000)
@@ -38,8 +44,12 @@ def main(argv=None):
     if args.export and not all((args.database, args.candidates, args.campaign,
                                 args.matched_campaign, args.judge_condition)):
         parser.error("Export needs database, candidates, campaign, matched-campaign and judge-condition")
-    if args.evaluate and not args.dataset:
-        parser.error("Evaluation needs --dataset")
+    if not args.export and not args.dataset:
+        parser.error("Evaluation, packaging and prediction need --dataset")
+    if args.package and not (args.study_result and args.study_predictions):
+        parser.error("Packaging needs --study-result and --study-predictions")
+    if args.predict and not args.models:
+        parser.error("Prediction needs --models")
     args.out.mkdir(parents=True, exist_ok=False)
     try:
         if args.export:
@@ -50,6 +60,38 @@ def main(argv=None):
             with (args.out / "dataset.jsonl").open("x", encoding="utf-8") as stream:
                 for row in rows:
                     stream.write(json.dumps(row, ensure_ascii=False, allow_nan=False) + "\n")
+        elif args.package or args.predict:
+            import joblib
+            from ura.response_svm import CLAIM
+            from ura.response_svm_models import package_study, predict_models
+            with args.dataset.open(encoding="utf-8") as stream:
+                rows = [json.loads(line) for line in stream if line.strip()]
+            if args.package:
+                bundle = package_study(rows, json.loads(args.study_result.read_text(encoding="utf-8")),
+                    json.loads(args.study_predictions.read_text(encoding="utf-8")),
+                    progress=lambda value: print(json.dumps(value), flush=True))
+                path = args.out / "models.joblib"
+                joblib.dump(bundle, path)
+                # Verify serialization, not only the in-memory fitted object.
+                loaded = joblib.load(path)
+                held = {r['id'] for r in json.loads(args.study_result.read_text(encoding="utf-8"))['split_membership']
+                        if r['split'] == 'test'}
+                held_rows = [r for r in rows if r['id'] in held]
+                for variant in ("prompt", "response", "prompt_response"):
+                    if predict_models(bundle, held_rows, features=variant) != predict_models(loaded, held_rows, features=variant):
+                        raise ValueError("Reloaded classifier predictions differ")
+                report = dict(status="models_packaged", models=len(bundle['models']),
+                    reference_predictions_matched=bundle['reference_predictions_matched'],
+                    reload_predictions_equal=True, runtime=bundle['runtime'],
+                    fitted_model_path=str(path.resolve()))
+            else:
+                predictions = predict_models(joblib.load(args.models), rows, features=args.features)
+                write_json(args.out / "predictions.json", predictions)
+                report = dict(status="prediction_complete", input_responses=len(rows),
+                    predictions=sum(r['status'] == 'predicted' for r in predictions),
+                    features=args.features, scores="uncalibrated margins, not probabilities")
+            report.update(claim_scope=CLAIM, human_validated=False, target_calls=0, judge_calls=0,
+                          campaign_judgments_modified=False)
         else:
             from ura.response_svm import evaluate_study
             with args.dataset.open(encoding="utf-8") as stream:

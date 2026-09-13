@@ -80,7 +80,7 @@ def clip_text(text: str, limit: int) -> str:
     return text[:limit // 2] + "\n" + text[-(limit - limit // 2):]
 
 
-def feature_matrices(parts: dict[str, list[dict]], variant: str, max_chars: int):
+def feature_matrices(parts: dict[str, list[dict]], variant: str, max_chars: int, *, retain_transformers=False):
     """Explicit field allowlist. Never fit vocabulary/IDF on validation or test."""
     from scipy.sparse import hstack
     from sklearn.feature_extraction.text import TfidfVectorizer
@@ -90,6 +90,7 @@ def feature_matrices(parts: dict[str, list[dict]], variant: str, max_chars: int)
         raise ValueError("Unknown text feature set")
     matrices = {part: [] for part in parts}
     vocabulary = []
+    transformers = []
     for field in fields:
         texts = {part: [clip_text(row[field], max_chars) for row in rows]
                  for part, rows in parts.items()}
@@ -98,10 +99,12 @@ def feature_matrices(parts: dict[str, list[dict]], variant: str, max_chars: int)
                                         sublinear_tf=True, max_features=30000,
                                         dtype=__import__("numpy").float64)
             matrices["train"].append(vectorizer.fit_transform(texts["train"]))
+            transformers.append((field, vectorizer))
             vocabulary.extend(field + ":" + value for value in vectorizer.get_feature_names_out())
             for part in ("validation", "test"):
                 matrices[part].append(vectorizer.transform(texts[part]))
-    return {part: hstack(blocks, format="csr") for part, blocks in matrices.items()}, vocabulary
+    result = {part: hstack(blocks, format="csr") for part, blocks in matrices.items()}
+    return (result, vocabulary, transformers) if retain_transformers else (result, vocabulary)
 
 
 def support(rows: list[dict], task: str) -> dict:

@@ -5359,6 +5359,10 @@ def test_every_ui_command_parses_with_its_real_module_parser() -> None:
             {"--evaluate": "on", "--dataset": "/data/export/dataset.jsonl", "--out": "/data/report",
              "--seed": "0", "--bootstrap": "1000", "--max-feature-characters": "20000",
              "--holdout-model": "model:", "--holdout-corpus": "corpus"},
+            {"--package": "on", "--dataset": "/data/export/dataset.jsonl", "--study-result": "/data/report/result.json",
+             "--study-predictions": "/data/report/predictions.json", "--out": "/data/fitted"},
+            {"--predict": "on", "--dataset": "/data/new.jsonl", "--models": "/data/fitted/models.joblib",
+             "--features": "response", "--out": "/data/new-predictions"},
         ],
         "project_revision": [
             {"--expected-revision": "a" * 40, "--out": "runs/pr"},
