@@ -37,6 +37,12 @@ def prepare_programs(app, params):
         raise ValueError('Matched collection retains rules,guardrail for local post-hoc scoring; select this cascade in Evaluation')
     if params.get('target_answer_retries','0') not in {'','0'}:
         raise ValueError('Matched hosted work uses zero answer retries; HTTP retries remain separate')
+    try:
+        deadline = int(params.get('deadline', ''))
+    except (TypeError, ValueError):
+        deadline = 0
+    if deadline <= 0:
+        raise ValueError('Set a positive whole-number call-start window (--deadline-seconds) in Execution before counted preparation')
     # The replay job, not the unrelated ordinary Runner arm picker, determines
     # the exact source arms. Keep this composition separate from the saved draft.
     arms = sorted({arm for row in replay['route_summary'] for arm in row['source_arms']})
@@ -90,7 +96,8 @@ def program_panel(params):
         "<p>Prepare one shared spending plan and executable programs for the saved replay selection. "
         "Output allowances and request caps remain those of the forecast. No answers are generated or judged. "
         "Select rules,guardrail in Evaluation for the existing local post-hoc scoring path; "
-        "Haiku judgments are a separate output-specific stage.</p>"
+        "Haiku judgments are a separate output-specific stage. Set a positive call-start window "
+        "in Execution before preparation; this is not a per-answer timeout.</p>"
         "<label><input type='checkbox' form='builder' name='retained_network_counts'" + checked + ">"
         "Allow provider token counting for these selected inputs</label>"
         "<p class='note'>When required, counting sends the saved prompts and images to their selected provider. "

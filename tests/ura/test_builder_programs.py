@@ -15,7 +15,7 @@ def prepared(study, monkeypatch, tmp_path):  # noqa: F811 - imported pytest fixt
     app, params, calls, jobs = study
     params = dict(params, judges='rules,guardrail', retained_replays_job='replay-ready',
                   corpora='unrelated-draft-arm', attackers='unrelated-draft-attacker',
-                  approximate_common_metrics='on', guardrail_model='local-guard')
+                  approximate_common_metrics='on', guardrail_model='local-guard', deadline='3600')
     forecast = json.loads(jobs['budget-job']['argv'])
     for flag in ('--pricing-config', '--budgets'):
         path = tmp_path/(flag[2:]+'.json')
@@ -42,6 +42,7 @@ def prepared(study, monkeypatch, tmp_path):  # noqa: F811 - imported pytest fixt
         return 'run_matrix', {'--api':draft['api'],'--corpora':draft['corpora'],'--out':'not-used',
             '--limit':draft['limit'],'--attackers':draft['attackers'],'--judges':draft['judges'],
             '--target-answer-retries':draft['target_answer_retries'],'--approximate-common-metrics':'on',
+            '--deadline-seconds':draft.get('deadline',''),
             '--guardrail-model':'local-guard','--guardrail-device':'cuda:1',
             **({'--exclude-tool-conditioned':'on'} if draft.get('exclude_tool_conditioned') == 'on' else {})}, draft
     monkeypatch.setattr(app,'_compose_from_builder',compose)
@@ -66,6 +67,7 @@ def test_build_prepares_existing_counted_command_not_generation(prepared):
     assert not any(flag in request['runner_common_argv'] for flag in subject.prepare._CONTROLLED)
     assert '--approximate-common-metrics' in request['runner_common_argv']
     assert subject.argument(request['runner_common_argv'],'--guardrail-model') == 'local-guard'
+    assert subject.argument(request['runner_common_argv'],'--deadline-seconds') == '3600'
     assert Path(request['execution_root']).is_dir() and Path(values['--count-cache']).is_dir()
     assert params == before and composed[0]['corpora'] == 'source-arm'
     assert composed[0]['attackers'] == 'replay' and composed[0]['target_answer_retries'] == '0'
@@ -77,6 +79,14 @@ def test_network_counting_is_an_explicit_separate_option(prepared):
     subject.prepare_programs(app,dict(params,retained_network_counts='on'))
     assert calls[0][1]['--allow-network-counts'] == 'on'
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize('deadline', ['', None, '0', '-1', '1.5', 'nan', 'inf', 'later'])
+def test_missing_or_invalid_deadline_is_reported_before_counting(prepared, deadline):
+    app, params, calls, _, composed = prepared
+    with pytest.raises(ValueError, match='call-start window'):
+        subject.prepare_programs(app, dict(params, deadline=deadline))
+    assert not calls and not composed
 
 
 def test_matched_preparation_drops_only_the_synthetic_draft_exclusion(prepared):

@@ -75,6 +75,12 @@ Matched preparation uses the saved replay inputs, even when the general draft
 is still in offline mode. Its synthetic-only tool-input exclusion does not
 filter or invalidate this retained selection. Keep defense set to **none**;
 select **rules,guardrail** and the installed scoring guardrail in Evaluation.
+In **Execution**, set a positive whole-number **--deadline-seconds** before
+counted preparation. This is the durable window for starting calls, not a
+per-answer timeout. The prepared programs retain this value; later draft edits
+do not change an already prepared collection. If a preparation must be corrected
+before any provider attempt, retain the old jobs and prepare a new version from
+the same saved source, forecast and replay jobs. Do not edit retained programs.
 Collection and output-specific judging remain separate stages.
 The collection review includes the console's configured `URA_MODEL_STORE`
 location when installed-runtime preparation is needed. No installation is
