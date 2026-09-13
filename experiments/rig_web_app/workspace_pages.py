@@ -84,7 +84,11 @@ class WorkspacePagesMixin:
             campaign_id = self.db.create_workspace(result["campaign_name"], "mixed")
         result.update(campaign_id=campaign_id, work_kind="campaign")
         result.pop("campaign_name", None)
-        self.db.save_workspace_definition(campaign_id, self._durable_builder_params(result))
+        # An editable draft must retain its configured locators. Report-only
+        # identities cannot be reopened as files. The builder allowlist excludes
+        # credentials, and launched jobs still use their separate durable,
+        # path-free snapshots and normal source/revision validation.
+        self.db.save_workspace_definition(campaign_id, self._builder_params(result))
         return result
 
     @staticmethod
