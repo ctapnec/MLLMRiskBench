@@ -68,10 +68,12 @@ def prospective_program(original, entries, *, root, project_revision, max_age_ho
         argv, clean, index = job['argv'], [], 0
         while index < len(argv):
             if argv[index] in remove:
-                if index+1 >= len(argv): raise ValueError('Runtime argument has no value')
+                if index+1 >= len(argv):
+                    raise ValueError('Runtime argument has no value')
                 index += 2
             else:
-                clean.append(argv[index]); index += 1
+                clean.append(argv[index])
+                index += 1
         job['argv'] = argv = clean
         set_argument(argv, '--project-revision', project_revision['path'])
         set_argument(argv, '--project-revision-sha256', project_revision['sha256'])
@@ -79,8 +81,10 @@ def prospective_program(original, entries, *, root, project_revision, max_age_ho
         set_argument(argv, '--execution-scope-id', scope)
         if job['name'] in probes:
             job['purpose'] = 'attestation_probe'
-            if '--diagnostic-canary' in argv: argv.remove('--diagnostic-canary')
-            if '--attestation-probe' not in argv: argv.append('--attestation-probe')
+            if '--diagnostic-canary' in argv:
+                argv.remove('--diagnostic-canary')
+            if '--attestation-probe' not in argv:
+                argv.append('--attestation-probe')
             for flag, value in (('--limit', probes[job['name']]), ('--max-queries', 1), ('--max-turns', 1)):
                 set_argument(argv, flag, value)
         else:
@@ -135,7 +139,8 @@ def bind_installed_program(*, original, budget, project_root, expected_commit, s
         if json.loads(binding.read_text()) != selection:
             raise ValueError('Runtime continuation changed its program, project, store or options')
     else:
-        if any(out.iterdir()): raise ValueError('Runtime directory has no matching preparation')
+        if any(out.iterdir()):
+            raise ValueError('Runtime directory has no matching preparation')
         _write_new(binding, selection)
     revision_path = out/'revision-reference.json'
     if revision_path.exists():
@@ -143,7 +148,8 @@ def bind_installed_program(*, original, budget, project_root, expected_commit, s
     else:
         document = create_project_revision(expected_commit, project_root/'experiments/run_matrix.py')
         # The existing writer supplies the complete document; retain its original name.
-        directory = out/'revision'; directory.mkdir(mode=0o700, exist_ok=True)
+        directory = out/'revision'
+        directory.mkdir(mode=0o700, exist_ok=True)
         revision = _descriptor(write_project_revision(directory, document))
         _write_new(revision_path, revision)
     program = prospective_program(original, entries, root=out, project_revision=revision,
@@ -162,15 +168,19 @@ def bind_installed_program(*, original, budget, project_root, expected_commit, s
         plans = list((unit/'plans').glob('*.plan.json'))
         if not plans:
             with (unit/'planning.log').open('a') as stream, redirect_stdout(stream), redirect_stderr(stream):
-                with retained_execution_admission(admission): code = run_matrix.main(admission.job['argv'])
-            if code: raise RuntimeError('Runtime planning failed; inspect '+str(unit/'planning.log'))
+                with retained_execution_admission(admission):
+                    code = run_matrix.main(admission.job['argv'])
+            if code:
+                raise RuntimeError('Runtime planning failed; inspect '+str(unit/'planning.log'))
             plans = list((unit/'plans').glob('*.plan.json'))
-        if len(plans)!=1: raise ValueError('Runtime job needs one exact acquisition plan')
+        if len(plans)!=1:
+            raise ValueError('Runtime job needs one exact acquisition plan')
         descriptor = _descriptor(plans[0])
         plan = load_plan(plans[0], expected_sha256=descriptor['sha256'])
         receipts = list((unit/'receipts').glob('*.receipt.json'))
         if receipts:
-            if len(receipts)!=1: raise ValueError('Runtime job has ambiguous installed-model receipts')
+            if len(receipts)!=1:
+                raise ValueError('Runtime job has ambiguous installed-model receipts')
             receipt = _descriptor(receipts[0])
             value = load_receipt(receipts[0], expected_sha256=receipt['sha256'], plan=plan)
             verify_receipt_snapshots(plan, value, managed_store=store, verify_sha256=verify_model_sha256)
@@ -178,7 +188,8 @@ def bind_installed_program(*, original, budget, project_root, expected_commit, s
             acquired = model_acquire.acquire(plan, store=store, receipts_dir=unit/'receipts',
                 max_download_bytes=0, min_free_bytes=0, deadline_seconds=1800, backend=InstalledOnly(),
                 verify_model_sha256=verify_model_sha256)
-            if acquired.downloaded_bytes: raise RuntimeError('Installed-only preparation downloaded model bytes')
+            if acquired.downloaded_bytes:
+                raise RuntimeError('Installed-only preparation downloaded model bytes')
             receipt = _descriptor(acquired.receipt_path)
         argv = program['jobs'][number]['argv']
         for flag, value in (('--model-acquisition-plan', descriptor['path']),
@@ -188,8 +199,10 @@ def bind_installed_program(*, original, budget, project_root, expected_commit, s
     retained._validated_jobs(program, budget, local_context=context)
     destination = out/'runtime-program.json'
     if destination.exists():
-        if json.loads(destination.read_text())!=program: raise ValueError('Prepared runtime program changed')
-    else: _write_new(destination, program)
+        if json.loads(destination.read_text())!=program:
+            raise ValueError('Prepared runtime program changed')
+    else:
+        _write_new(destination, program)
     result = dict(status='installed_runtime_bound_transport_pending', program=_descriptor(destination),
         assigned_inputs=len(program['requests']), probe_inputs=sum(len(job['input_ids']) for job in program['jobs']
             if job['purpose']=='attestation_probe'), target_calls=0, judge_calls=0, downloaded_bytes=0,
@@ -217,7 +230,8 @@ def main(argv=None):
     parser.add_argument('--verify-model-sha256', action='store_true')
     parser.add_argument('--verify-artifact-sha256', action='store_true')
     args = parser.parse_args(argv)
-    if args.store is None: parser.error('Select the existing managed-model --store or URA_MODEL_STORE')
+    if args.store is None:
+        parser.error('Select the existing managed-model --store or URA_MODEL_STORE')
     original, _ = load_bound_json(args.program, args.program_sha256)
     result = bind_installed_program(original=original,
         budget=AttemptBudget(args.budget_root, args.budget_plan_sha256),

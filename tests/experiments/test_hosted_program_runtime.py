@@ -91,19 +91,26 @@ def fixture_runtime(tmp_path, monkeypatch):
     from experiments import model_acquire, run_matrix
     from ura import model_acquisition, project_revision, runner
     program, entries = source()
-    store = tmp_path/'store'; store.mkdir()
+    store = tmp_path/'store'
+    store.mkdir()
     starts = {request['call_id']:0 for request in program['requests'].values()}
     budget = SimpleNamespace(reserved_attempt_counts=lambda ids:{key:starts[key] for key in ids})
     calls = dict(plans=0, acquire=0, verify=0, contexts=0, revisions=0)
     monkeypatch.setattr(subject.retained,'_validated_checkout',lambda *args:None)
-    def context(original): calls['contexts']+=1; return object()
+    def context(original):
+        calls['contexts']+=1
+        return object()
     monkeypatch.setattr(subject.retained,'_validated_local_cells',context)
     monkeypatch.setattr(subject.retained,'_validated_jobs',lambda value,budget,**kwargs:[
         SimpleNamespace(job=job,attacker=SimpleNamespace(_selected_entries=entries[job['name']])) for job in value['jobs']])
-    def revision(*args): calls['revisions']+=1; return dict(revision='fixed')
+    def revision(*args):
+        calls['revisions']+=1
+        return dict(revision='fixed')
     monkeypatch.setattr(project_revision,'create_project_revision',revision)
     def write_revision(directory,value):
-        path=directory/'revision.json'; path.write_text(json.dumps(value)); return path
+        path=directory/'revision.json'
+        path.write_text(json.dumps(value))
+        return path
     monkeypatch.setattr(project_revision,'write_project_revision',write_revision)
     monkeypatch.setattr(runner,'retained_execution_admission',lambda admission:nullcontext())
     def planning(argv):
@@ -115,13 +122,15 @@ def fixture_runtime(tmp_path, monkeypatch):
     monkeypatch.setattr(model_acquisition,'load_plan',lambda path,**kwargs:json.loads(path.read_text()))
     monkeypatch.setattr(model_acquisition,'load_receipt',lambda path,**kwargs:json.loads(path.read_text()))
     def verify(*args,**kwargs):
-        calls['verify']+=1; assert kwargs['verify_sha256'] is False
+        calls['verify']+=1
+        assert kwargs['verify_sha256'] is False
     monkeypatch.setattr(model_acquisition,'verify_receipt_snapshots',verify)
     def acquire(plan,**kwargs):
         calls['acquire']+=1
         assert isinstance(kwargs['backend'],subject.InstalledOnly)
         assert kwargs['max_download_bytes']==0 and kwargs['verify_model_sha256'] is False
-        path=kwargs['receipts_dir']/'installed.receipt.json'; path.write_text('{}')
+        path=kwargs['receipts_dir']/'installed.receipt.json'
+        path.write_text('{}')
         return SimpleNamespace(receipt_path=path,downloaded_bytes=0)
     monkeypatch.setattr(model_acquire,'acquire',acquire)
     kwargs=dict(original=program,budget=budget,project_root=tmp_path,expected_commit='b'*40,
