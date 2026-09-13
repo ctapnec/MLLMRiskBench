@@ -6952,6 +6952,15 @@ immediately before calls. `validated-items.json` is a no-call handoff to the
 funded judging planner, not an executable allocation. Additional source-grading
 contexts remain separately required when the collection planned them.
 
+Campaign-only wrappers that register external controllers must use a direct
+child of the engineering runs directory for each controller. A generic command's
+support for nested plan or result directories does not imply that the external
+controller registration supports the same path. Keep plans and judging artifacts
+under their owner as needed, but give separately registered counting/execution
+helpers their own direct controller directories. If registration fails before
+calls, correct that path and reuse the completed plans and count receipts; do
+not regenerate targets or repeat completed judgments to repair the handoff.
+
 Console-form to runbook-section mapping (the console builds the identical
 argument vectors; nothing below is console-only):
 

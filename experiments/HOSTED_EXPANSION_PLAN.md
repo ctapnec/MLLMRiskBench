@@ -140,6 +140,46 @@ question. These are references to existing local-answer assessments, not new
 Pro verdicts or additional independent judgments. No new call or charge was
 made. New Pro answers still require their separate assessment queue.
 
+### Saved Pro judging update (13 September, 00:34 UTC)
+
+The older Pro answers are assessed independently of the quota-waiting new
+cohort. The saved-source preparation contains 175 continuous-program outputs
+and 29 complete-job outputs from the earlier sixth batch. Their primary common
+Haiku selection contains 129 eligible answers: 125 and four, respectively.
+Missing answers, diagnostic probes and source-authoritative tasks retain their
+own coverage categories; they are not silently counted as common verdicts.
+Two additional attempted outputs belong to an incomplete source job and remain
+outside this prepared population, separately from the six wholly unstarted
+inputs. Source-context assessments and future tail outputs also remain separate.
+
+All 129 selected Haiku assessments are now complete and published in the API
+workspace: 128 valid verdicts, one invalid reply, 107,248 input tokens and 3,535
+output tokens, costing USD 0.124923 as reported by the provider. There were 129
+physical judging attempts, no unknown usage and no repeated target generation.
+The first-attempt forecast was USD 0.697097; the forecast is not the actual
+bill. Eight oversized-request counts reused the original funded slots without
+increasing any campaign ceiling. Remaining tracked Haiku allowance is
+USD 11.104812 at this observation, not an updated account balance.
+
+The 29 earlier outputs already have original local assessment artifacts,
+verified against their exact saved answers: 27 valid and two marked missing.
+They are not selected for another local scoring pass. The other 175 saved
+outputs have a separate native-scoring queue, attached to the same API workspace.
+It waits for existing GPU owners and the already-queued Pro local judging;
+this dependency does not hold up any paid target collection. Its completion
+will not close the fourteen unprepared continuous inputs or later tail outputs.
+
+The initial counting launcher used a nested controller directory that the
+existing console registration does not support. It failed before any count
+or judging call. The corrected launcher reused the saved plans, and the same
+path correction was applied to the still-waiting new-Pro judging launcher.
+Only that no-call waiter was replaced; collectors and the observer were not
+restarted. Keep controller directories directly under the engineering runs
+directory, while plans and judging artifacts may remain beneath their owner.
+Execution records are under `google-pro-retained-judging-20260913` and
+`google-pro-retained-haiku-execute-20260913`. The half-hour report includes this
+completed primary cohort separately from the new Pro queue and local recovery.
+
 ### Previous account observation: fifth update
 
 Operator-reported fifth update, recorded on 11 September 2026 at 23:11
