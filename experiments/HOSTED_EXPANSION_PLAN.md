@@ -140,6 +140,32 @@ question. These are references to existing local-answer assessments, not new
 Pro verdicts or additional independent judgments. No new call or charge was
 made. New Pro answers still require their separate assessment queue.
 
+### Older Pro tail judging (13 September, 01:50 UTC)
+
+The twenty wholly unstarted older inputs now have an output-specific judging
+follow-up attached to the API workspace. The `google-pro-tail-judging` tmux
+controller waits for the existing fourteen-input and six-input collection
+owners, then prepares only those eight selected jobs and their original funded
+Haiku slots. It excludes the 129 already-assessed older outputs and does not
+add target calls or allocation. Program identity qualifies job names because
+different programs can use the same descriptive job name.
+
+Haiku judging follows the saved outputs; native judging waits for existing GPU
+owners. Missing answers and inputs outside the common grading population remain
+explicit. Additional source-grading contexts and the two incomplete older input
+slots are separate outstanding work, not implicitly covered by this queue.
+The half-hour aggregate includes this controller and its two native groups.
+
+New Haiku plans account for the configured first attempt plus three HTTP-error
+retries in their internal execution ceiling. This fixes a planner allowance
+that could otherwise prevent the configured retry; it does not increase the
+shared campaign spending stop or add answer retries. Existing plans and
+completed calls are unchanged. The actual twenty-input selection and two
+removed-fix checks passed on the rig without model loads or paid calls.
+Control and evidence are under `google-pro-tail-judging-20260913` and
+`google-pro-tail-judging-check-20260913`. The queue is waiting for collection,
+not completed judging.
+
 ### Saved Pro judging update (13 September, 00:34 UTC)
 
 The older Pro answers are assessed independently of the quota-waiting new
@@ -148,9 +174,14 @@ and 29 complete-job outputs from the earlier sixth batch. Their primary common
 Haiku selection contains 129 eligible answers: 125 and four, respectively.
 Missing answers, diagnostic probes and source-authoritative tasks retain their
 own coverage categories; they are not silently counted as common verdicts.
-Two additional attempted outputs belong to an incomplete source job and remain
-outside this prepared population, separately from the six wholly unstarted
-inputs. Source-context assessments and future tail outputs also remain separate.
+Two additional attempted input slots belong to an incomplete source job and
+remain outside this prepared population, separately from the six wholly
+unstarted inputs. They are not two available answers: the later source audit
+found one retained empty HTTP 429 outcome after four physical attempts and one
+unresolved first-attempt budget entry without a saved answer in that job.
+Neither has a usable output to judge. The unresolved charge must not be treated
+as free, and the exhausted rate limit is not a security refusal. Source-context
+assessments and future tail outputs also remain separate.
 
 All 129 selected Haiku assessments are now complete and published in the API
 workspace: 128 valid verdicts, one invalid reply, 107,248 input tokens and 3,535
