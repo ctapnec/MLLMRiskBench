@@ -53,23 +53,32 @@ def test_expired_run_continues_exact_paid_prefix_once_and_preserves_original(tmp
     'exhausted', 'deadline', 'logical', 'same_output', 'used_output', 'recovery'])
 def test_renewal_rejects_changed_condition_or_existing_output_before_http(tmp_path, change):
     _, _, _, calls, old, new, key, retained, snapshot = prepared(tmp_path)
-    if change == 'retained': retained.add(key)
-    if change == 'request': new.requests[key]['request_sha256'] = '0' * 64
-    if change == 'origin': new.entries[key]['origin']['delivered_input_sha256'] = '0' * 64
-    if change == 'active': new.budget.reserve(key, 2, provider='openai')
-    if change == 'settled': new.budget.settle(key, 1, 1)
+    if change == 'retained':
+        retained.add(key)
+    if change == 'request':
+        new.requests[key]['request_sha256'] = '0' * 64
+    if change == 'origin':
+        new.entries[key]['origin']['delivered_input_sha256'] = '0' * 64
+    if change == 'active':
+        new.budget.reserve(key, 2, provider='openai')
+    if change == 'settled':
+        new.budget.settle(key, 1, 1)
     if change == 'exhausted':
         for ordinal in range(2, 5):
             new.budget.reserve(key, ordinal, provider='openai')
             new.budget.settle(key, ordinal, None)
-    if change == 'deadline': snapshot['deadline_epoch'] = 1e20
-    if change == 'logical': snapshot['target_calls'] -= 1
-    if change == 'same_output': new.job['argv'] = old.job['argv'][:]
+    if change == 'deadline':
+        snapshot['deadline_epoch'] = 1e20
+    if change == 'logical':
+        snapshot['target_calls'] -= 1
+    if change == 'same_output':
+        new.job['argv'] = old.job['argv'][:]
     if change == 'used_output':
         directory = tmp_path / 'new'
         directory.mkdir()
         (directory / 'grid.budget.json').write_text('{}')
-    if change == 'recovery': new.transport_recoveries[key] = 1
+    if change == 'recovery':
+        new.transport_recoveries[key] = 1
     with pytest.raises(ValueError):
         renew_interrupted_transport(old, new, input_id=key,
             retained_input_ids=retained, held_snapshot=snapshot)
