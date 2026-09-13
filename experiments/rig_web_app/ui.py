@@ -123,12 +123,16 @@ tr:hover td { background:var(--soft); }
 .campaign-costs th:nth-child(6) { width:20%; }
 .campaign-output-table table { table-layout:fixed; min-width:58rem; }
 .campaign-output-table th, .campaign-output-table td { overflow-wrap:anywhere; }
-.campaign-output-table th:nth-child(1) { width:20%; }
+.campaign-output-table th { white-space:nowrap; font-size:.7rem; letter-spacing:.02em; }
+.campaign-output-table td:nth-child(3), .campaign-output-table td:nth-child(4) { white-space:nowrap; }
+.campaign-output-table th:nth-child(1) { width:19%; }
 .campaign-output-table th:nth-child(2) { width:13%; }
-.campaign-output-table th:nth-child(3), .campaign-output-table th:nth-child(4) { width:8%; }
+.campaign-output-table th:nth-child(3) { width:9%; }
+.campaign-output-table th:nth-child(4) { width:8%; }
 .campaign-output-table th:nth-child(5) { width:17%; }
-.campaign-output-table th:nth-child(6), .campaign-output-table th:nth-child(7) { width:9%; }
-.campaign-output-table th:nth-child(8) { width:16%; }
+.campaign-output-table th:nth-child(6) { width:9%; }
+.campaign-output-table th:nth-child(7) { width:10%; }
+.campaign-output-table th:nth-child(8) { width:15%; }
 pre { background:var(--soft); border:1px solid var(--line);
   border-radius:10px; padding:.8rem .95rem; overflow-x:auto;
   font-size:.82rem; white-space:pre-wrap; word-break:break-word; }

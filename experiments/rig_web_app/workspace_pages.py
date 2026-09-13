@@ -493,7 +493,8 @@ class WorkspacePagesMixin:
             metadata += "<p>Condition: " + html.escape(row["response_condition"] or row["condition_id"]) + "</p>"
             metadata += "<p>Source: " + (self._workspace_source_link(details["source_ref"]) if details.get("source_ref") else "unknown") + "</p></details>"
             input_label = row["input_id"] if len(row["input_id"]) <= 16 else row["input_id"][:12] + "..."
-            output.append([html.escape(row["model"].partition(";")[0]),
+            model_label = row["model"].partition(";")[0].partition("@sha256:")[0]
+            output.append([html.escape(model_label),
                            "<span title='" + html.escape(row["input_id"], quote=True) + "'>" + html.escape(input_label) + "</span>",
                            html.escape(row["evidence_class"]), html.escape(row["modality"]), html.escape(row["framework"] + " / " + row["corpus"]),
                            html.escape(row["outcome"] or "pending"),
