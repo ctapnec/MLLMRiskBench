@@ -244,3 +244,17 @@ def test_collection_environment_keeps_installed_store_locator(study, monkeypatch
     env = app._generic_child_environment('hosted_campaign_execute',
         {'--program':'/prepared/model.json','--program-sha256':'a'*64})
     assert env['URA_MODEL_STORE'] == '/existing/models'
+
+
+def test_generic_child_imports_the_console_selected_checkout(study, tmp_path):
+    import subprocess
+    import sys
+    app,_,_,_ = study
+    package = tmp_path/'src'/'ura'
+    package.mkdir(parents=True)
+    (package/'__init__.py').write_text("checkout_marker = 'selected-code'\n")
+    env = app._generic_child_environment('response_svm', {})
+    result = subprocess.run([sys.executable, '-c', 'import ura; print(ura.checkout_marker)'],
+        env=env, cwd=tmp_path, text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == 'selected-code'

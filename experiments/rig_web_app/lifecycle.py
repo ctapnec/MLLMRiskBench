@@ -1847,6 +1847,10 @@ class LifecycleMixin:
                     ):
                         allowed.add(path_env)
         child = self._selected_child_environment(allowed)
+        # A console may dispatch from a different checkout than the editable
+        # installation of its Python interpreter. Honor the selected project.
+        child["PYTHONPATH"] = os.pathsep.join((str(self.repo_root.resolve()),
+                                              str(self.repo_root.resolve() / "src")))
         if command == "export_aggregators":
             # The aggregator export is the second acquisition child: the gated
             # DecodingTrust/HoliSafe sources read HF_TOKEN from their own
