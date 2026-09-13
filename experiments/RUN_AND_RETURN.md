@@ -1,5 +1,9 @@
 # Run and return: broad thesis experiment program
 
+For the normal graphical workflow, use the
+[UI campaign walkthrough](../docs/UI_CAMPAIGN_WALKTHROUGH.md). This runbook keeps
+the detailed CLI equivalents and historical execution distinctions.
+
 Local image transport: preserve source files and input identities. The tested
 Ollama adapter can deliver a static RGB/RGBA WebP image as lossless PNG when
 the installed serving backend cannot decode WebP. It does not resize images

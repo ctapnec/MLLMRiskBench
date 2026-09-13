@@ -1,5 +1,8 @@
 # Campaign workspaces and the reproducible UI workflow
 
+For the compact operator sequence, start with the
+[UI campaign walkthrough](UI_CAMPAIGN_WALKTHROUGH.md).
+
 ## Current deployed scope
 
 Build connects saved campaign definitions, selected local sources, forecasts,

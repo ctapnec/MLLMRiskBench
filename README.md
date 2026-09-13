@@ -6,21 +6,24 @@ corpora to one typed schema, runs static or response-conditioned attacks against
 hosted or local targets, shadow-scores every response, and retains auditable
 lineage for later analysis.
 
-Experiments are pending. The repository establishes no model ranking, defense
-effect, compliance finding, or other empirical result yet.
+Local and hosted experiments have produced retained responses and output-specific
+automated assessments. The thesis reports dated collection coverage, selected
+recovery outcomes and exploratory comparisons. Full statistical synthesis and
+independent human assessment remain unfinished; these observations do not
+establish a universal model ranking, a causal defense effect or a compliance
+finding.
 
-The development tree implements the RUN-001 prospective-request and MET-001
-exact-selection interfaces described below, with offline contract tests.
-Generated local/rig logs and engineering-campaign records stay under ignored
-operator state; they are diagnostics, are not committed, and are not usable
-thesis evidence or authority for a software revision. Exact revision identity
-comes from the tracked checkout and the typed receipts described below. A retained
-26-arm receipt is historical acquisition/conversion
-traceability, not current admission or a result: the current audit found no new
-issue in 19 entries; the SIUO, VLSBench, MLLMGuard position-swapping and
-noise-injection, and both Video-SafetyBench mapping reviews are superseded; and
-VLSBench/JALMBench upstream export accounting needs refreshed retained
-summaries. No provider, human-audit, or real-input MET-001 result exists.
+Measured campaign records are retained outside Git and remain distinct from
+software verification logs, transport diagnostics and unexecuted preparations.
+Their evidence classification and experimental conditions, not the directory's
+name, determine their analytical role. Verification artifacts are not committed
+or treated as measured model results. Source availability, conversion fidelity,
+execution and scoring eligibility are also separate: use the current retained
+source review, not a historical acquisition record, to determine admission.
+
+Start with the [UI campaign walkthrough](docs/UI_CAMPAIGN_WALKTHROUGH.md).
+The detailed [campaign workspace guide](docs/CAMPAIGN_WORKSPACES.md) records the
+current integration and its remaining acceptance limits.
 
 ## What is measured
 
