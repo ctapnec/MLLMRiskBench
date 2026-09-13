@@ -1345,3 +1345,10 @@ content, response bodies, headers and credentials are not logged. A waiting
 retry is not an active generation or a model refusal. The existing retry limit
 and provider-directed delay remain unchanged; independent providers and saved
 output judging can continue.
+
+Build's retained-output inventory, funding and judging subprocesses inherit the
+configured corpus locations and media roots needed to reconstruct saved inputs.
+They import code from the console-selected checkout. Neither setting grants
+unselected provider credentials or downloads a framework. A handoff failure
+before judging must reuse completed collection and local judgments; it is not
+a reason to regenerate target answers.

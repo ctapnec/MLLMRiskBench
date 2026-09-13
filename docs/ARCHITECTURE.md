@@ -273,6 +273,12 @@ to current GPU capacity. An explicit integer in 1..1,000,000 must be at least
 `max_tokens`, is passed at engine construction, and is retained in normalized
 execution provenance.
 
+Managed vLLM startup uses fresh `spawn` workers for tensor parallelism, while
+keeping the engine core in-process. Native-output capture has reader threads
+before engine construction, so CUDA workers must not fork that threaded parent.
+The startup context restores the caller's previous multiprocessing environment
+on exit. This is independent of the selected model's context and output limits.
+
 Runner 2.32 uses one provider-independent execution-profile boundary for local
 generative models. `local_model_readiness` starts at the 25,000-token local
 ceiling and descends until a forced generation reaches its cap below 120

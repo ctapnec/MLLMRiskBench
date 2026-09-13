@@ -1,5 +1,19 @@
 # All-local test campaign plan: every corpus arm, every framework runtime, free models only
 
+Larger-allowance diagnostic results, 13 September at 16:30 UTC: all three models
+passed their existing responsiveness survey with a 16,384-token allowance and
+32,768-token context. The vLLM models used both GPUs; no judge ran concurrently.
+Across five selected residual model-input conditions, the 16,384/8,192 contrasts
+produced no usable replacement. DeepSeek's selected input timed out at 120 seconds
+at both allowances. GraySwan's symbol-only text and image cases timed out at
+16,384 and exhausted 8,192 on symbols. GraySwan's empty text case and LLaVA's
+empty text case stopped after two tokens at both allowances. These are targeted
+diagnostics, not a remeasurement of all 410 residual conditions or evidence that
+every residual is irrecoverable. Campaign counts and approved profiles remain
+unchanged. Evidence: `engineering/local-larger-allowance-20260913`, its
+`-r-spawn` continuation and image-only `-r-image` continuation. The latter reused
+the completed survey after resolving the original retained image location.
+
 Residual assessment, 13 September at 15:50 UTC: at the user's request, test
 DeepSeek, GraySwan RR and LLaVA base with a 16,384-token output allowance,
 32,768-token context and both GPUs, without a concurrent judge. Retain the
