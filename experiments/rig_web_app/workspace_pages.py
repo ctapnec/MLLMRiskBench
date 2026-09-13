@@ -488,10 +488,14 @@ class WorkspacePagesMixin:
                     ("input_tokens", "Reported input tokens"), ("output_tokens", "Reported output tokens"),
                     ("reasoning_tokens", "Reported reasoning tokens"), ("finish_reason", "Finish reason"),
                     ("missing_category", "Missing-output category"))) + "</dl>"
+            metadata += "<p>Exact model: " + html.escape(row["model"]) + "</p>"
+            metadata += "<p>Input identity: " + html.escape(row["input_id"]) + "</p>"
             metadata += "<p>Condition: " + html.escape(row["response_condition"] or row["condition_id"]) + "</p>"
             metadata += "<p>Source: " + (self._workspace_source_link(details["source_ref"]) if details.get("source_ref") else "unknown") + "</p></details>"
-            output.append([html.escape(row["model"]), html.escape(row["input_id"]),
+            input_label = row["input_id"] if len(row["input_id"]) <= 16 else row["input_id"][:12] + "..."
+            output.append([html.escape(row["model"].partition(";")[0]),
+                           "<span title='" + html.escape(row["input_id"], quote=True) + "'>" + html.escape(input_label) + "</span>",
                            html.escape(row["evidence_class"]), html.escape(row["modality"]), html.escape(row["framework"] + " / " + row["corpus"]),
                            html.escape(row["outcome"] or "pending"),
                            "unknown" if row["truncated"] is None else "yes" if row["truncated"] else "no", metadata])
-        return table(("Model", "Input", "Evidence", "Modality", "Framework / corpus", "Outcome", "Truncated", "Details"), output) + pagination(len(rows) > 50)
+        return "<div class='campaign-output-table'>" + table(("Model", "Input", "Evidence", "Modality", "Framework / corpus", "Outcome", "Truncated", "Details"), output) + "</div>" + pagination(len(rows) > 50)

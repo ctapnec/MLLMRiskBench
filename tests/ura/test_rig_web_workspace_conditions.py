@@ -77,6 +77,23 @@ def test_condition_labels_show_reported_ranges_native_maximum_and_unknown_settin
     assert "Choose model" in body and "View condition" in body
 
 
+def test_results_keep_full_identities_in_details_without_widening_summary_columns(app):
+    owner = app.db.create_workspace("API", "api")
+    model = "provider:example;max_tokens=8192"
+    identity = "ab" * 32
+    app.db.publish_workspace_results(owner, assignments=[dict(assignment_id="long-id", model=model,
+        input_id=identity, condition_id="condition", modality="image", framework="replay",
+        corpus="corpus", response_id=None, evidence_class="measured")], responses=[], judgments=[])
+    page = app._workspace_results(owner, "results", {})
+    assert "class='campaign-output-table'" in page
+    assert "<td>provider:example</td>" in page
+    assert "<span title='" + identity + "'>abababababab...</span>" in page
+    assert "Exact model: " + model in page and "Input identity: " + identity in page
+    from experiments.rig_web_app.ui import _STYLE
+    assert ".campaign-output-table table { table-layout:fixed;" in _STYLE
+    assert ".campaign-output-table th, .campaign-output-table td { overflow-wrap:anywhere; }" in _STYLE
+
+
 def test_filters_persist_in_tabs_output_pagination_and_matching_exports(app):
     owner = app.db.create_workspace("Local", "local")
     condition = "corrected / & 8192"
