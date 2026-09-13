@@ -71,6 +71,12 @@ actual shared inputs. Providers can collect concurrently; another provider's
 judging need not delay generation. A recorded retry wait is not a model refusal
 or an instruction to submit the same work again.
 
+Matched preparation uses the saved replay inputs, even when the general draft
+is still in offline mode. Its synthetic-only tool-input exclusion does not
+filter or invalidate this retained selection. Keep defense set to **none**;
+select **rules,guardrail** and the installed scoring guardrail in Evaluation.
+Collection and output-specific judging remain separate stages.
+
 ## Judge the actual saved answers
 
 1. Under **Judge retained outputs locally**, use **Prepare remaining source

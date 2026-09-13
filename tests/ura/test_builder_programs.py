@@ -42,7 +42,8 @@ def prepared(study, monkeypatch, tmp_path):  # noqa: F811 - imported pytest fixt
         return 'run_matrix', {'--api':draft['api'],'--corpora':draft['corpora'],'--out':'not-used',
             '--limit':draft['limit'],'--attackers':draft['attackers'],'--judges':draft['judges'],
             '--target-answer-retries':draft['target_answer_retries'],'--approximate-common-metrics':'on',
-            '--guardrail-model':'local-guard','--guardrail-device':'cuda:1'}, draft
+            '--guardrail-model':'local-guard','--guardrail-device':'cuda:1',
+            **({'--exclude-tool-conditioned':'on'} if draft.get('exclude_tool_conditioned') == 'on' else {})}, draft
     monkeypatch.setattr(app,'_compose_from_builder',compose)
     return app,params,calls,jobs,composed
 
@@ -78,9 +79,23 @@ def test_network_counting_is_an_explicit_separate_option(prepared):
     assert len(calls) == 1
 
 
+def test_matched_preparation_drops_only_the_synthetic_draft_exclusion(prepared):
+    app, params, calls, _, composed = prepared
+    # A fresh real Build page checks this while its general mode is dry_run.
+    draft = dict(params, mode='dry_run', exclude_tool_conditioned='on')
+    original = copy.deepcopy(draft)
+    subject.prepare_programs(app, draft)
+    request = json.loads(Path(calls[0][1]['--request']).read_text())
+    assert '--exclude-tool-conditioned' not in request['runner_common_argv']
+    assert composed[0]['mode'] == 'measured'
+    assert 'exclude_tool_conditioned' not in composed[0]
+    assert draft == original
+
+
 @pytest.mark.parametrize('change',[
     {'retained_replays_job':'unknown'}, {'retained_budget_caps':'{"example:model":13}'},
     {'judges':'rules,llm'}, {'local':'vllm:other'}, {'target_answer_retries':'1'},
+    {'defense':'input'},
 ])
 def test_incompatible_settings_do_not_start_counting(prepared,change):
     app,params,calls,_,_ = prepared

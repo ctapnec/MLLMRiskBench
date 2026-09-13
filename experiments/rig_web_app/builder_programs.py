@@ -31,6 +31,8 @@ def prepare_programs(app, params):
         raise ValueError('Finish matched replay preparation first')
     if params.get('local'):
         raise ValueError('This matched follow-on prepares hosted targets; keep local source models in the source selection')
+    if params.get('defense', 'none') not in {'', 'none'}:
+        raise ValueError('Matched hosted collection requires defense none; its saved inputs define the comparison')
     if params.get('judges') != 'rules,guardrail':
         raise ValueError('Matched collection retains rules,guardrail for local post-hoc scoring; select this cascade in Evaluation')
     if params.get('target_answer_retries','0') not in {'','0'}:
@@ -41,6 +43,9 @@ def prepare_programs(app, params):
     draft = {key:value for key,value in params.items() if not key.startswith('_')}
     draft.update(mode='measured',corpora=','.join(arms),attackers='replay',limit='0',
                  seeds='0',sample_seed='0',target_answer_retries='0')
+    # This is a standalone synthetic dry-run option, initially checked in
+    # Build. The retained replay selection already fixes the actual inputs.
+    draft.pop('exclude_tool_conditioned', None)
     command, values, _ = app._compose_from_builder(draft)
     if command != 'run_matrix':
         raise ValueError('Matched preparation requires the ordinary Runner composition')
