@@ -179,7 +179,12 @@ def _vllm_in_process_environment() -> Iterator[None]:
 
     with _VLLM_ENVIRONMENT_LOCK:
         previous = os.environ.get(_VLLM_MULTIPROCESSING_ENV)
+        worker_method = os.environ.get("VLLM_WORKER_MULTIPROC_METHOD")
         os.environ[_VLLM_MULTIPROCESSING_ENV] = "0"
+        # Managed model loading captures native output through reader threads.
+        # Forking tensor-parallel workers here can inherit locked thread state.
+        # Keep EngineCore in-process, but start CUDA workers in fresh processes.
+        os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
         try:
             yield
         finally:
@@ -187,6 +192,10 @@ def _vllm_in_process_environment() -> Iterator[None]:
                 os.environ.pop(_VLLM_MULTIPROCESSING_ENV, None)
             else:
                 os.environ[_VLLM_MULTIPROCESSING_ENV] = previous
+            if worker_method is None:
+                os.environ.pop("VLLM_WORKER_MULTIPROC_METHOD", None)
+            else:
+                os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = worker_method
 
 
 def canonical_local_model_identity(

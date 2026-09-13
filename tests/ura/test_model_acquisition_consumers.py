@@ -165,6 +165,7 @@ def test_vllm_construction_forces_in_process_mode_restores_env_and_keeps_tp2(
                 (
                     "construct",
                     os.environ.get("VLLM_ENABLE_V1_MULTIPROCESSING"),
+                    os.environ.get("VLLM_WORKER_MULTIPROC_METHOD"),
                     kwargs["tensor_parallel_size"],
                 )
             )
@@ -174,6 +175,7 @@ def test_vllm_construction_forces_in_process_mode_restores_env_and_keeps_tp2(
 
     monkeypatch.setitem(sys.modules, "vllm", SimpleNamespace(LLM=LLM))
     monkeypatch.setenv("VLLM_ENABLE_V1_MULTIPROCESSING", "1")
+    monkeypatch.setenv("VLLM_WORKER_MULTIPROC_METHOD", "fork")
     target = VLLMTarget(
         "Org/Target",
         revision="a" * 40,
@@ -184,8 +186,9 @@ def test_vllm_construction_forces_in_process_mode_restores_env_and_keeps_tp2(
 
     target.preflight_base()
 
-    assert events == [("construct", "0", 2)]
+    assert events == [("construct", "0", "spawn", 2)]
     assert os.environ["VLLM_ENABLE_V1_MULTIPROCESSING"] == "1"
+    assert os.environ["VLLM_WORKER_MULTIPROC_METHOD"] == "fork"
     assert _component_config(target)["engine_core_execution_mode"] == "in_process"
     target.close()
     assert events[-1] == "engine-core-shutdown"
@@ -218,10 +221,12 @@ def test_vllm_construction_rejects_sync_mp_client_and_restores_env(
     class LLM:
         def __init__(self, **_kwargs: object) -> None:
             assert os.environ["VLLM_ENABLE_V1_MULTIPROCESSING"] == "0"
+            assert os.environ["VLLM_WORKER_MULTIPROC_METHOD"] == "spawn"
             self.llm_engine = SimpleNamespace(engine_core=SyncMPClient())
 
     monkeypatch.setitem(sys.modules, "vllm", SimpleNamespace(LLM=LLM))
     monkeypatch.delenv("VLLM_ENABLE_V1_MULTIPROCESSING", raising=False)
+    monkeypatch.delenv("VLLM_WORKER_MULTIPROC_METHOD", raising=False)
     target = VLLMTarget(
         "Org/Target",
         revision="a" * 40,
@@ -234,6 +239,7 @@ def test_vllm_construction_rejects_sync_mp_client_and_restores_env(
 
     assert events == ["sync-mp-shutdown"]
     assert "VLLM_ENABLE_V1_MULTIPROCESSING" not in os.environ
+    assert "VLLM_WORKER_MULTIPROC_METHOD" not in os.environ
     assert target._llm is None
 
 
