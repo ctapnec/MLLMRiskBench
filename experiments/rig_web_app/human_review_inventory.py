@@ -11,6 +11,7 @@ from pathlib import Path
 import sqlite3
 
 from experiments import human_audit as audit
+from .workspace_contexts import response_identity
 
 
 def _location(reference, root):
@@ -113,7 +114,7 @@ def read_campaign(database: Path, campaign: str, results_root: Path) -> dict:
             attempt = attempts_by_file[attempts_path][(response['run_id'],response['attempt_id'])]
         if (attempt['run_id'],attempt['id'],attempt['target']) != (response['run_id'],response['attempt_id'],response['target']):
             raise ValueError('Saved input and answer do not match')
-        attached, contexts = {}, []
+        attached, contexts, supplementary_contexts = {}, [], {}
         for item in judges[identity]:
             value = record(item['source_ref']); judgment = value.get('judgment',value)
             if 'response' in value and value['response']!=response:
@@ -122,10 +123,18 @@ def read_campaign(database: Path, campaign: str, results_root: Path) -> dict:
                 # Hosted post-hoc verdicts retain their generation identity in
                 # the wrapper's sample key; the judge itself has no run_id.
                 same_run = judgment.get('run_id') == response['run_id'] or (
-                    judgment.get('run_id') is None and value.get('sample_key') == audit._record_key(response))
+                    judgment.get('run_id') is None and (value.get('sample_key') == audit._record_key(response)
+                    or (value.get('response_id') == identity and value.get('response_identity') == response_identity(response))))
                 if not same_run or judgment.get('attempt_id') != response['attempt_id']:
                     raise ValueError('Judgment changed its output identity')
             raw = judgment.get('raw',{})
+            if value.get('context') and 'alias_input_ids' in value:
+                # A separately scored source-policy context is not the input's
+                # primary rubric. Preserve it, but do not mix it into the
+                # primary metadata or its judge-disagreement strata.
+                supplementary_contexts[item['judge_id']] = dict(status=item['status'],label=item['label'],
+                    source_ref=item['source_ref'],context=value['context'],alias_input_ids=value['alias_input_ids'])
+                continue
             if raw.get('source') and raw.get('risk_category'):
                 contexts.append(raw)
             attached[item['judge_id']] = dict(status=item['status'], label=item['label'], source_ref=item['source_ref'])
@@ -181,7 +190,7 @@ def read_campaign(database: Path, campaign: str, results_root: Path) -> dict:
             meta['source_task_family']=context.get('source_evaluation',{}).get('family')
             meta['source_task_evaluation']=context.get('source_evaluation')
         outputs.append(dict(response_id=identity,input_id=assignment['input_id'],sample_key=audit._record_key(response),
-            metadata=meta,judgments=attached,source_ref=reference,truncated=assignment['truncated'],
+            metadata=meta,judgments=attached,supplementary_contexts=supplementary_contexts,source_ref=reference,truncated=assignment['truncated'],
             media_bindings=origin.get('media_bindings',[]),generation_metadata=details))
     return dict(campaign_id=campaign,campaign_name=owner['name'],measured_assignments=len(assignments),
         assignment_outcomes=dict(dispositions),outputs=outputs,unavailable=unavailable,

@@ -111,3 +111,23 @@ def test_setup_turn_retains_its_distinct_expectation_without_becoming_audit_endp
     value=read_campaign(database,owner,root)
     assert len(value['outputs'])==2
     assert [row['reason'] for row in value['unavailable']]==['non_evaluable_setup_turn']
+
+
+def test_separate_source_context_keeps_output_binding_and_its_own_rubric(indexed):
+    from experiments.rig_web_app.workspace_contexts import response_identity
+    database,owner,root,_=indexed
+    response=json.loads((root/'checkpoint.responses.checkpoint.jsonl').read_text())['response']
+    context=dict(response_id='checkpoint:attempt',response_identity=response_identity(response),
+        context='alternate-policy',alias_input_ids=['another-policy-input'],
+        judgment=dict(run_id=None,attempt_id='attempt',label='safe',raw=dict(source='different-context',
+                      risk_category='privacy',expected_behavior='safe_answer')))
+    path=root/'context.json';path.write_text(json.dumps(context))
+    with sqlite3.connect(database) as db:
+        db.execute('INSERT INTO campaign_judgments VALUES(?,?,?,?,?,?)',
+                   (owner,'checkpoint:attempt','local-context-test','valid','safe',str(path)))
+    output=next(row for row in read_campaign(database,owner,root)['outputs'] if row['response_id']=='checkpoint:attempt')
+    assert output['metadata']['source']=='fixture'
+    assert 'local-context-test' not in output['judgments']
+    assert output['supplementary_contexts']['local-context-test']['context']=='alternate-policy'
+    context['response_identity']='different-output';path.write_text(json.dumps(context))
+    with pytest.raises(ValueError,match='output identity'):read_campaign(database,owner,root)
