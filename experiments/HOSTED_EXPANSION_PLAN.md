@@ -125,6 +125,14 @@ in the half-hour observation. Its verified waiting state is not reported as
 completed assessment. No running collector or observer was restarted for this
 read-view correction.
 
+The exact-output counterpart audit subsequently located retained Haiku
+assessments for all 1,030 selected local answers: 1,015 have valid verdicts and
+15 have only invalid, unscored assessments. The checks matched the saved model,
+response, prompt, generation condition and grading criteria, not just the
+question. These are references to existing local-answer assessments, not new
+Pro verdicts or additional independent judgments. No new call or charge was
+made. New Pro answers still require their separate assessment queue.
+
 ### Previous account observation: fifth update
 
 Operator-reported fifth update, recorded on 11 September 2026 at 23:11
