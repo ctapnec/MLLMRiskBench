@@ -74,3 +74,33 @@ def test_renewed_program_rejects_changed_history_before_dispatch(tmp_path, monke
     with pytest.raises(ValueError):
         dispatch(program, budget, local_context=context)
     assert not calls
+
+
+@pytest.mark.parametrize('full_checks', [False, True])
+def test_renewal_keeps_modern_local_source_context_and_cache(tmp_path, monkeypatch, full_checks):
+    inventory = tmp_path / 'sources.json'
+    inventory.write_text(json.dumps(dict(source_roots=[str(tmp_path / 'retained')])) )
+    previous = dict(schema=retained.LOCAL_SOURCES_SCHEMA, sources=dict(local_sources=_descriptor(inventory)))
+    original = tmp_path / 'original.json'
+    original.write_text(json.dumps(previous))
+    program = dict(schema=subject.RENEWAL_SCHEMA, interrupted_predecessor=dict(program=_descriptor(original)))
+    expected_key = retained._local_context_key(previous)
+    assert retained._local_context_key(program) == expected_key
+    sentinel, calls = object(), []
+
+    def load(value):
+        assert value == previous
+        calls.append('load')
+        return sentinel
+
+    def cached(key, loader, *, paths, trees):
+        assert key == expected_key and paths == (inventory,)
+        assert trees == (tmp_path / 'retained',)
+        calls.append('cache')
+        return loader()
+
+    monkeypatch.setattr(retained, 'artifact_sha256_enabled', lambda: full_checks)
+    monkeypatch.setattr(retained, '_load_local_cells', load)
+    monkeypatch.setattr(retained._LOCAL_CONTEXT_CACHE, 'get', cached)
+    assert retained._validated_local_cells(program) is sentinel
+    assert calls == (['load'] if full_checks else ['cache', 'load'])

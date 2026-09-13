@@ -1201,6 +1201,9 @@ _LOCAL_CONTEXT_CACHE = ValidationCache(entries=1, copy_results=False)
 
 
 def _local_context_key(program: dict) -> str:
+    from experiments.hosted_checkpoint_resume import RENEWAL_SCHEMA
+    if program.get('schema') == RENEWAL_SCHEMA:
+        return _local_context_key(_bound(program['interrupted_predecessor']['program'])[0])
     if program.get("schema") == LOCAL_SOURCES_SCHEMA:
         return _sha({"local_sources": program["sources"]["local_sources"]})
     return _sha({name: program.get(name) for name in ("results_root", "runner_view", "rr_analysis_root")}
@@ -1213,6 +1216,9 @@ def _validated_local_cells(program: dict) -> tuple[list[dict], dict]:
     Paid ledgers are deliberately outside this cache. A hosted controller may
     prewarm it before forking its workers; source data are then shared read-only.
     """
+    from experiments.hosted_checkpoint_resume import RENEWAL_SCHEMA
+    if program.get('schema') == RENEWAL_SCHEMA:
+        return _validated_local_cells(_bound(program['interrupted_predecessor']['program'])[0])
     if artifact_sha256_enabled():
         return _load_local_cells(program)
     key = _local_context_key(program)
