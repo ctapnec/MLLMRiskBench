@@ -7,9 +7,9 @@ from experiments.rig_web_app import builder_judging_inventory as subject, ui
 from test_builder_judging_inventory import completed, inventory, native, study, browser  # noqa: F401
 
 
-def complete_items(inventory):
-    app, _, _, _ = inventory
-    params = completed(inventory)
+def complete_items(state):
+    app, _, _, _ = state
+    params = completed(state)
     job = subject.prepare_inventory_judging(app, params)
     argv = json.loads(app.db.load_job(job.job_id)['argv'])
     out = Path(subject.argument(argv, '--out'))
@@ -68,4 +68,5 @@ def test_funding_panel_and_review_fit_narrow_screen(browser, inventory):  # noqa
         assert page.get_by_role('heading', name='Judging coverage and funding').is_visible()
         assert page.locator('dt').count() == page.locator('dd').count() == 4
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
-    finally:page.close()
+    finally:
+        page.close()
