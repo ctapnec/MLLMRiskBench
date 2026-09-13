@@ -2146,9 +2146,9 @@ Selected apparent violations contain general discussion or mixed refusal and
 illustrative code. Objective-aware independent assessment is required before
 calling these successful harmful-goal completions. The 307 first-challenge
 stops also leave later answers unobserved; post-hoc judging cannot reconstruct
-them. Do not launch another target campaign or purchase a new judging cohort
-merely to replace this limitation. Record any future replication as a separate
-design and condition. Generic historical comparison now uses the existing
+them. A replication with different stopping or judging settings is a separate
+experimental condition, not a correction to the historical trajectory.
+Generic historical comparison now uses the existing
 revision-specific reader through `paired_compare --historical-code-repository`;
 its strict source, judging and target-setting checks remain active.
 
