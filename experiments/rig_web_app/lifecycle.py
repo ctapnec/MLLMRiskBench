@@ -1746,7 +1746,7 @@ class LifecycleMixin:
                 "--api": ",".join(route["target"] for route in request["routes"]),
                 "--api-config": api["path"], "--api-config-sha256": api["sha256"],
             }))
-        if command in {"hosted_campaign_execute", "retained_native_judge_prepare"}:
+        if command in {"hosted_campaign_execute", "retained_native_judge_prepare", "hosted_program_runtime"}:
             from .catalog import _param_values
 
             parameters = {parameter.flag: parameter for parameter in self.commands[command].params}
@@ -1760,7 +1760,7 @@ class LifecycleMixin:
                     argv = job["argv"]
                     selected = {flag: argv[index + 1] for index, flag in enumerate(argv[:-1])
                         if flag.startswith("--") and not argv[index + 1].startswith("--")}
-                    if command == "retained_native_judge_prepare":
+                    if command in {"retained_native_judge_prepare", "hosted_program_runtime"}:
                         # Source locators are needed, provider/capture credentials
                         # are not: this command constructs no callable target.
                         selected = {key:value for key,value in selected.items()
