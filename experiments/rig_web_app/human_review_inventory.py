@@ -117,8 +117,13 @@ def read_campaign(database: Path, campaign: str, results_root: Path) -> dict:
             value = record(item['source_ref']); judgment = value.get('judgment',value)
             if 'response' in value and value['response']!=response:
                 raise ValueError('Post-hoc verdict refers to a different saved answer')
-            if item['status']=='valid' and (judgment.get('run_id'),judgment.get('attempt_id'))!=(response['run_id'],response['attempt_id']):
-                raise ValueError('Judgment changed its output identity')
+            if item['status']=='valid':
+                # Hosted post-hoc verdicts retain their generation identity in
+                # the wrapper's sample key; the judge itself has no run_id.
+                same_run = judgment.get('run_id') == response['run_id'] or (
+                    judgment.get('run_id') is None and value.get('sample_key') == audit._record_key(response))
+                if not same_run or judgment.get('attempt_id') != response['attempt_id']:
+                    raise ValueError('Judgment changed its output identity')
             raw = judgment.get('raw',{})
             if raw.get('source') and raw.get('risk_category'):
                 contexts.append(raw)

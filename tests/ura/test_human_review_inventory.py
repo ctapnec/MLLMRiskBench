@@ -63,3 +63,15 @@ def test_absent_input_context_is_reported_not_fabricated(indexed):
     value=read_campaign(database,owner,root)
     assert len(value['outputs'])==2
     assert [row['reason'] for row in value['unavailable']]==['source_context_unavailable']
+
+
+def test_hosted_posthoc_verdict_uses_exact_saved_sample_key(indexed):
+    database,owner,root,add=indexed;path=add('hosted-judge')
+    record=json.loads(path.read_text());record.pop('response')
+    record['judgment']['run_id']=None
+    record['sample_key']='hosted-judge|test:model|attempt'
+    path.write_text(json.dumps(record)+'\n')
+    assert len(read_campaign(database,owner,root)['outputs'])==3
+    record['sample_key']='different-run|test:model|attempt'
+    path.write_text(json.dumps(record)+'\n')
+    with pytest.raises(ValueError,match='output identity'):read_campaign(database,owner,root)
