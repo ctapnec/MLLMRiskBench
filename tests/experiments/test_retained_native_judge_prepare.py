@@ -177,7 +177,7 @@ def test_partial_opt_in_does_not_accept_invalid_saved_outputs(partial_source,mut
 def test_tools_partial_option_reaches_preparation(tmp_path,monkeypatch):
     path,digest=program(tmp_path)
     argv=build_argv('retained_native_judge_prepare',{'--program':str(path),'--program-sha256':digest,
-        '--out':str(tmp_path/'out'),'--include-incomplete':True})
+        '--out':str(tmp_path/'out'),'--include-incomplete':'on'})
     seen=[]
     monkeypatch.setattr(subject,'load_program_job',lambda *a,**k:seen.append(k) or (
         dict(run_id='run'),object(),{'a':object()},{}))
