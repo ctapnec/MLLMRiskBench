@@ -96,6 +96,35 @@ def test_reader_target_is_not_capable_of_generation():
         reader.generate([])
 
 
+def test_generation_artifacts_select_actual_run_among_failed_retries(tmp_path):
+    # Real recovery directories retain both the responding run and a later
+    # zero-response failure. Neither directory order nor latest timestamp owns
+    # the earlier response's generation condition.
+    for grid, run in [('grid-c907', 'run-bfa1'), ('grid-c50f', 'run-cecf')]:
+        (tmp_path/(grid+'.grid.json')).write_text(json.dumps(dict(grid_id=grid,
+            cells=[dict(run_id=run, status='error')], request=dict(project_revision=run))))
+        (tmp_path/(run+'.manifest.json')).write_text(json.dumps(dict(run_id=run,
+            config=dict(run=dict(grid_id=grid)))))
+    path, grid, manifest_path, manifest = subject.generation_artifacts(tmp_path, 'run-bfa1')
+    assert path.name == 'grid-c907.grid.json'
+    assert grid['request']['project_revision'] == 'run-bfa1'
+    assert manifest_path.name == 'run-bfa1.manifest.json' and manifest['run_id'] == 'run-bfa1'
+
+
+@pytest.mark.parametrize('mutation', ['unrelated', 'duplicate-grid', 'wrong-manifest-grid', 'duplicate-manifest'])
+def test_generation_artifacts_never_guess_an_ambiguous_binding(tmp_path, mutation):
+    grid = dict(grid_id='original', cells=[dict(run_id='run')])
+    manifest = dict(run_id='run', config=dict(run=dict(grid_id='original')))
+    if mutation == 'unrelated':grid['cells'][0]['run_id'] = 'other'
+    if mutation == 'wrong-manifest-grid':manifest['config']['run']['grid_id'] = 'other'
+    (tmp_path/'original.grid.json').write_text(json.dumps(grid))
+    (tmp_path/'original.manifest.json').write_text(json.dumps(manifest))
+    if mutation == 'duplicate-grid':(tmp_path/'duplicate.grid.json').write_text(json.dumps(grid))
+    if mutation == 'duplicate-manifest':(tmp_path/'duplicate.manifest.json').write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match='original grid|several native manifests|different original grid'):
+        subject.generation_artifacts(tmp_path, 'run')
+
+
 def test_preparation_environment_forwards_source_locators_not_provider_credentials():
     from experiments.rig_web_app.catalog import COMMANDS
     from experiments.rig_web_app.lifecycle import LifecycleMixin

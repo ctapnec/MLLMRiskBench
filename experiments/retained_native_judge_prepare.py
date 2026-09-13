@@ -46,6 +46,26 @@ def metadata(path):
                 mtime_ns=stat.st_mtime_ns, ctime_ns=stat.st_ctime_ns)
 
 
+def generation_artifacts(out: Path, run_id: str):
+    """Select the saved generation, not an unrelated retry in its directory."""
+    grids = [(path, read(path)) for path in sorted(out.glob('*.grid.json'))]
+    matching = [(path, value) for path, value in grids
+                if any(cell.get('run_id') == run_id for cell in value.get('cells', []))]
+    if len(matching) != 1:
+        raise ValueError('Expected one original grid for the retained generation run')
+    grid_path, grid = matching[0]
+    manifests = [(path, read(path)) for path in sorted(out.glob('*.manifest.json'))]
+    matching_manifests = [(path, value) for path, value in manifests if value.get('run_id') == run_id]
+    if len(matching_manifests) > 1:
+        raise ValueError('Retained generation has several native manifests')
+    if matching_manifests:
+        manifest_path, manifest = matching_manifests[0]
+        if manifest['config']['run']['grid_id'] != grid['grid_id']:
+            raise ValueError('Retained manifest names a different original grid')
+        return grid_path, grid, manifest_path, manifest
+    return grid_path, grid, None, None
+
+
 def load_program_job(program_path: Path, job_name: str, *, program: dict | None = None):
     program = read(program_path) if program is None else program
     job = next(item for item in program['jobs'] if item['name'] == job_name)
@@ -58,12 +78,8 @@ def load_program_job(program_path: Path, job_name: str, *, program: dict | None 
             or len(set(job['input_ids'])) != len(job['input_ids'])):
         raise ValueError('Retained program target or exact input selection differs')
     out = Path(args.out)
-    grids = list(out.glob('*.grid.json'))
-    if len(grids) != 1:
-        raise ValueError('Expected one original grid')
-    grid = read(grids[0])
     records = {}
-    files = {str(grids[0]): metadata(grids[0])}
+    files = {}
     observed_ids = set()
     for attempt, response, locator in _responses(job):
         key = attempt['params']['retained_origin']['selection']['input_identity_sha256']
@@ -83,6 +99,8 @@ def load_program_job(program_path: Path, job_name: str, *, program: dict | None 
     if len(run_ids) != 1:
         raise ValueError('Retained responses do not belong to one generation run')
     run_id = next(iter(run_ids))
+    grid_path, grid, manifest_path, manifest_document = generation_artifacts(out, run_id)
+    files[str(grid_path)] = metadata(grid_path)
     configs, _ = run_matrix._load_api_config(args.api_config, [program['target']], args.api_config_sha256)
     target = run_matrix.build_target(program['target'], api_config=configs.get(program['target']))
     def no_generation(*args, **kwargs):
@@ -115,11 +133,8 @@ def load_program_job(program_path: Path, job_name: str, *, program: dict | None 
             inputs[attempt.id] = (point, attempt)
     if set(inputs) != set(records):
         raise ValueError('Reconstructed input population differs from its saved responses')
-    manifests = list(out.glob('*.manifest.json'))
-    if len(manifests) > 1:
-        raise ValueError('Retained source has several native manifests')
-    if manifests:
-        manifest = RunManifest.model_validate(read(manifests[0]), strict=True)
+    if manifest_path is not None:
+        manifest = RunManifest.model_validate(manifest_document, strict=True)
         if manifest.run_id != run_id or manifest.dataset_hashes != hashes:
             raise ValueError('Manifest dataset identity differs')
         if manifest.config['components']['attacker'] != _component_config(attacker):
@@ -128,11 +143,11 @@ def load_program_job(program_path: Path, job_name: str, *, program: dict | None 
             raise ValueError('Manifest target condition differs')
         if manifest.config['components']['judge_cascade'] != _component_config(cascade):
             raise ValueError('Manifest judge condition differs')
-        files[str(manifests[0])] = metadata(manifests[0])
+        files[str(manifest_path)] = metadata(manifest_path)
     for path in (Path(args.attacker_config), Path(args.source_config), Path(args.api_config)):
         files[str(path)] = metadata(path)
     source = dict(program=str(program_path), job=job_name, out=str(out), run_id=run_id,
-        assigned=len(inputs), target=program['target'], has_native_manifest=bool(manifests),
+        assigned=len(inputs), target=program['target'], has_native_manifest=manifest_path is not None,
         generation_project_revision=grid['request']['project_revision'],
         approximate_common_metrics=bool(args.approximate_common_metrics),
         target_component=_component_config(target), judge_cascade=_component_config(cascade),
