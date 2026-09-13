@@ -25,12 +25,13 @@ objective: refusals and missingness are outcomes, not reasons to resample.
 
 ## Approved spending allocation
 
-The latest operator-reported provider purses total USD 32.90. They are a new
+At supplement approval, the operator-reported provider purses totalled USD
+32.90. They were a new
 dated observation, not a replacement for earlier observations or an addition
 to existing credit. Account changes can include other projects and are not
 automatically attributed to this campaign.
 
-| Provider or role | Current purse (USD) | Supplement ceiling (USD) | Priority |
+| Provider or role | Purse at approval (USD) | Supplement ceiling (USD) | Priority |
 |---|---:|---:|---|
 | Anthropic targets | 16.15 shared with judging | 10.00 | Fable first, then Opus |
 | Haiku judging | same Anthropic purse | 5.00 | Every new eligible answer and missing matched-local assessments |
@@ -53,6 +54,27 @@ generation. Output allowances are not reduced simply to equalize sample sizes.
 Reported usage and actual charges remain separate from forecasts and bounds.
 The approved allocations are spending ceilings, not a promise that every dollar
 can or should be exhausted.
+
+### Later purse observation - 13 September, 20:29 UTC
+
+This update is appended to the account history, not substituted for the earlier
+snapshot or added to existing funding. The decreases below are account-level
+changes, not an attribution of charges to this campaign alone.
+
+| Provider | Previous purse (USD) | Updated purse (USD) | Decrease (USD) |
+| --- | ---: | ---: | ---: |
+| Anthropic, targets and Haiku combined | 16.15 | 15.15 | 1.00 |
+| OpenAI | 4.59 | 4.17 | 0.42 |
+| Google | 8.03 | 8.03 | 0.00 |
+| Kimi | 1.45 | 1.45 | 0.00 |
+| DeepSeek | 2.68 | 2.68 | 0.00 |
+| Total | 32.90 | 31.48 | 1.42 |
+
+The approved Google collection and required output-specific judging remain
+scheduled. This observation does not issue a new campaign, repeat completed
+inputs, settle unknown per-attempt charges or increase the existing ceilings.
+The remaining Anthropic purse is shared between all Anthropic uses; it is not
+an additional judging-only balance.
 
 ### Selected supplement
 
@@ -229,3 +251,80 @@ Two older Pro assignments lack retained outcomes in the measured index. The
 than represented as completed or missing model responses. Their collection and
 applicable judging remain open. Evidence:
 `judging-reconciliation-final-20260913` and the existing Google controllers.
+
+## Focused re-alignment addition - 13 September, 20:48 UTC
+
+The operator requested a useful alignment addition within the remaining
+provider purses. Input-only inspection, payload deduplication, prior-attempt
+reconciliation and the normal whole-cluster selector have prepared the
+following selection. Token-count endpoints have been used; no new target
+generation or judge request has yet been issued for this addition.
+
+| Model | Distinct requests | Text / image | Source clusters | Output allowance | Mean-length forecast (USD) | Full-output first-attempt cost (USD) |
+| --- | ---: | --- | ---: | ---: | ---: | ---: |
+| GPT-5.6 Sol | 8 | 0 / 8 | 8 | 8,192 | 0.325880 | 1.343320 |
+| GPT-6 Astra | 6 | 0 / 6 | 6 | 8,192 | 0.166501 | 2.521801 |
+| Gemini 3.8 Flash | 16 | 6 / 10 | 12 | 4,096 | 0.043737 | 0.254756 |
+| Total | 30 | 6 / 24 | model-specific | unchanged | 0.536118 | 4.119877 |
+
+The requests represent 64 model/source-context assignments on 58 distinct
+source-input identities. Flash's 16 distinct payloads preserve 50 source
+contexts. These counts must not be presented as 64 independent generations.
+Cluster counts likewise belong to each model; the same cluster may occur for
+more than one model. The added image conditions address focal-model coverage
+gaps without changing generation or judging settings. This remains a selected
+extension, not a random sample or a remedy for inadequate independent support.
+
+The forecasts use the exact counted input totals of 6,520 tokens for Sol,
+5,136 for Astra and 11,987 for Flash. Historical mean output lengths are
+1,833, 341 and 579 tokens, respectively; they are cost assumptions, not
+predictions of individual responses. The upper column assumes every first
+attempt uses the complete output allowance and includes the conservative
+OpenAI cache-write input rate. It excludes transport retries and judging.
+The rates agree with the official pages inspected on 13 September:
+[Sol](https://developers.openai.com/api/docs/models/gpt-5.6-sol),
+[Astra](https://developers.openai.com/api/docs/models/gpt-6-astra) and
+[Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing).
+
+Proposed additional spending stops are USD 3.90 for OpenAI targets, USD 0.60
+for Flash and USD 1.50 for Haiku judging. These are ceilings within the current
+purses, not added credit or money reserved for every unstarted request.
+Every physical attempt must remain accounted for, including retry exposure.
+The OpenAI first-attempt maximum is USD 3.865121; if long answers and charged
+transport retries consume the remaining allowance, unfinished requests receive
+an explicit budget-limited disposition. Existing Google Pro obligations keep
+their ownership and priority, with at most two active request workers across
+the Google programs. No new Pro input is assigned by this addition.
+
+Every new outcome requires local evaluation. Up to 29 actual answers are
+eligible for a new output-specific Haiku assessment; the remaining Flash
+request is source-specific R-Judge classification. At the recorded judging
+assumptions of 8,192 input and 256 output tokens, 29 assessments cost about
+USD 0.275. At 12,288 input and 512 output tokens they cost about USD 0.431,
+before transport retries. Actual saved answers must be counted before judging;
+these assumptions do not authorize clipping an answer to fit the estimate.
+Haiku's current standard rate is USD 1 per million input tokens and USD 5 per
+million output tokens [Claude pricing](https://platform.claude.com/docs/en/about-claude/pricing).
+
+The matching-local index contains 129 assignments on this selected input
+population: 104 usable common-rubric answers already have valid assessments
+under the exact Haiku condition, seven are source-specific, 15 have no usable
+answer and three belong to the retired model. No additional eligible local
+Haiku assessment is currently missing. Only the identical already assessed
+local output can reuse that assessment; a newly generated API answer cannot.
+
+No Fable target call is added: all 27 apparent missing source identifiers in
+its partially represented groups resolve to payloads already owned or
+attempted. The corresponding apparent Pro gaps have the same disposition.
+Kimi, DeepSeek, Haiku, Sonnet and Luna have no newly uncovered compatible
+complete cluster in this specific focal comparison pool. GPT-5.5 and Terra
+have further candidate gaps, but the remaining OpenAI purse is prioritized
+for the frontier conditions. This is not a claim that the entire local corpus
+has been executed by every hosted model.
+
+Evidence: `hosted-alignment-inventory-20260913`,
+`hosted-alignment-aliases-20260913-r-current-scope` and
+`hosted-alignment-supplement-20260913/{selection-result,count-result,judging-scope}.json`.
+The source selection, counted requests and output-specific judging obligations
+must be published to the existing API campaign when execution is prepared;
+preparation alone is not a completed campaign result.
