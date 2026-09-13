@@ -1584,6 +1584,9 @@ recovery-source reconciliation. The associated Haiku inventory selects 267
 eligible saved answers using their original unstarted judging slots, while
 keeping an unresolved older budget reference separate. This is completion
 of existing judging obligations, not an expansion of inputs or spending limits.
+All 267 subsequent Haiku assessments completed and were published, including
+265 valid and two invalid verdicts, at a reported USD 0.309295. No answer was
+retried and no allowance or campaign ceiling was increased.
 These results must join the corresponding output condition in Stats; they do
 not authorize pooling historical and corrected generations. The 230-input
 new Pro cohort, twenty untouched old-tail inputs and separate interrupted
