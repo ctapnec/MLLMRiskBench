@@ -1795,7 +1795,8 @@ class PagesMixin:
             + "</div>"
         )
         retained_links: list[str] = []
-        for flag in ("--out", "--output", "--artifact-out", "--attacker-config-out"):
+        for flag in ("--out", "--output", "--out-json", "--out-csv", "--out-md",
+                     "--artifact-out", "--attacker-config-out"):
             if flag not in job.argv:
                 continue
             index = job.argv.index(flag)

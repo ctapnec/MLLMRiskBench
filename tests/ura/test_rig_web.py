@@ -7665,6 +7665,31 @@ def test_stop_error_surfaced_when_tree_cannot_be_confirmed(tmp_path: Path) -> No
     app.close()
 
 
+@pytest.mark.parametrize("flag,suffix", [
+    ("--out-json", "json"), ("--out-csv", "csv"), ("--out-md", "md"),
+])
+def test_job_links_structured_report_outputs_within_results_root(
+    tmp_path: Path, flag: str, suffix: str,
+) -> None:
+    app = _isolated_app(tmp_path)
+    target = app.results_root / f"classification-report.{suffix}"
+    target.write_text("{}\n", encoding="utf-8")
+    outside = tmp_path / f"private.{suffix}"
+    outside.write_text("not a published output", encoding="utf-8")
+    try:
+        job = Job(job_id="source-report", command="level2_report",
+                  argv=[flag, str(target)], directory=tmp_path, process=None)
+        page = app._job_page(job).decode("utf-8")
+        assert f"href='/artifacts?path={target.name}'" in page
+        assert f"{flag}: {target.name}</a>" in page
+        job.argv = [flag, str(outside)]
+        assert "Retained output:" not in app._job_page(job).decode("utf-8")
+        job.argv = [flag, str(app.results_root / "not-yet-created.json")]
+        assert "Retained output:" not in app._job_page(job).decode("utf-8")
+    finally:
+        app.close()
+
+
 def test_http_post_body_limit_enforced(tmp_path: Path) -> None:
     from experiments.rig_web import _make_server
 
