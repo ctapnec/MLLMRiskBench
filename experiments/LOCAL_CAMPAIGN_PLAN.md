@@ -2411,9 +2411,11 @@ retrospectively fabricated child starts.
 
 ## 12. Records and ledger
 
-Each phase writes its receipts, logs and summaries under `/data/ura-work`
-(`runs/thesis/...` for admissible evidence, `runs/engineering/...` for
-diagnostics) and appends one dated entry to the convergence ledger
+Each phase writes its receipts, logs and summaries under the resolved campaign
+work directory and appends one dated entry to the convergence ledger
 (`Thesis-EN/Codex_Reaudit.md`) with the commit, gate results and any
-operator decision. Retain the clean-env suite log and the repin output for the
-pinned commit in `Thesis-EN/verification/<date>-local-campaign/RECORD.md`.
+operator decision. Classify measured evidence and diagnostics from their actual
+execution records, not the directory name: retained measured controllers and
+analysis views also exist under `runs/engineering/`. Keep original records and
+their relationships. Store local verification copies in the ignored
+`Thesis-EN/verification/` directory; do not commit or push them.

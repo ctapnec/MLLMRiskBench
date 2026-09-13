@@ -24,9 +24,10 @@ def study(tmp_path):
 
 
 def put(app, owner, aid, input_id, *, model='local', condition='lc', corpus='corpus', evidence='measured',
-        outcome='usable', label='safe', status='valid', judge='judge', pending=False, truncated=False):
+        outcome='usable', label='safe', status='valid', judge='judge', pending=False, truncated=False,
+        modality='text', framework='replay'):
     assignment = dict(assignment_id=aid, model=model, input_id=input_id, condition_id=condition,
-        modality='text', framework='replay', corpus=corpus, response_id=None if pending else 'r'+aid,
+        modality=modality, framework=framework, corpus=corpus, response_id=None if pending else 'r'+aid,
         evidence_class=evidence)
     response = dict(response_id='r'+aid, assignment_id=aid, condition_id=condition, outcome=outcome,
         truncated=truncated, source_ref='responses.jsonl:'+aid)
@@ -164,3 +165,41 @@ def test_comparison_has_bounded_index_work(study):
     finally:
         if app.db._conn is not None:
             app.db._conn.set_progress_handler(None, 0)
+
+
+@pytest.mark.parametrize('facet,chosen,other', [
+    ('corpus', 'chosen-source', 'other-source'), ('framework', 'replay', 'crescendo'), ('modality', 'image', 'text')])
+def test_scope_filters_both_conditions_before_pairing_and_exports(study, facet, chosen, other):
+    app, left, right, query = study
+    for name, value in [('selected', chosen), ('excluded', other)]:
+        put(app, left, 'l'+name, name, **{facet: value})
+        put(app, right, 'r'+name, name, model='api', condition='rc', **{facet: value})
+    filtered = dict(query, **{'compare_'+facet: chosen})
+    rows = comparison_rows(app.db, left, filtered)
+    assert totals(rows) == dict(matched=1, left_only=0, right_only=0, ambiguous=0)
+    assert all(row[facet] == chosen for row in rows)
+    status, _, body = app.handle('GET', f'/campaigns/{left}?'+urlencode(dict(filtered, section='compare')))
+    page = body.decode()
+    assert status == 200 and f"name='compare_{facet}'" in page and f"value='{chosen}' selected" in page
+    assert f'compare_{facet}={chosen}' in page and 'matched: 1' in page
+    status, _, body = app.handle('GET', f'/campaigns/{left}/figures/comparison.csv?'+urlencode(filtered))
+    exported = list(csv.DictReader(io.StringIO(body.decode('utf-8-sig'))))
+    assert status == 200 and sum(int(row['count']) for row in exported) == 1
+    assert all(row['compare_'+facet] == chosen and row[facet] == chosen for row in exported)
+    assert comparison_rows(app.db, left, dict(query, **{'compare_'+facet: "absent' OR 1=1 --"})) == []
+
+
+def test_scope_filters_survive_pagination_and_do_not_reset_empty_selections(study):
+    app, left, right, query = study
+    for index in range(14):
+        key = str(index)
+        put(app, left, 'l'+key, key, corpus='source-'+key, modality='image')
+        put(app, right, 'r'+key, key, corpus='source-'+key, modality='image', model='api', condition='rc')
+    filtered = dict(query, compare_modality='image', compare_framework='replay')
+    status, _, body = app.handle('GET', f'/campaigns/{left}?'+urlencode(dict(filtered, section='compare')))
+    page = body.decode()
+    assert status == 200 and 'compare_modality=image' in page and 'compare_framework=replay' in page
+    assert 'page=1' in page and 'Next</a>' in page
+    status, _, body = app.handle('GET', f'/campaigns/{left}?'+urlencode(dict(filtered, section='compare', compare_corpus='empty-source')))
+    assert status == 200 and "value='empty-source' selected" in body.decode()
+    assert 'No measured inputs on this comparison page' in body.decode()

@@ -15,6 +15,7 @@ FIELDS = ("match_status", "left_outcome", "right_outcome", "left_truncated", "ri
           "left_status", "left_label", "right_status", "right_label")
 CHOICES = ("left_model", "left_condition", "left_judge", "right_campaign",
            "right_model", "right_condition", "right_judge")
+FILTERS = tuple("compare_" + facet for facet in FACETS)
 
 
 def judge_choices(db, campaign, model, condition):
@@ -45,6 +46,7 @@ def comparison_rows(db, campaign, query, *, offset=0):
             return None
         if query[side + "_judge"] not in {row["judge_id"] for row in judges}:
             raise ValueError("Select an indexed judging condition for each model and generation condition")
+        filters = "".join(" AND a." + facet + "=?" for facet, name in zip(FACETS, FILTERS) if query.get(name))
         sides.append(side + "_inputs AS (SELECT a.input_id,a.corpus,a.framework,a.modality,COUNT(*) AS n,"
             "CASE WHEN COUNT(*)=1 THEN MAX(r.outcome) END AS outcome,"
             "CASE WHEN COUNT(*)=1 THEN MAX(r.truncated) END AS truncated,"
@@ -55,8 +57,9 @@ def comparison_rows(db, campaign, query, *, offset=0):
             "AND r.assignment_id=a.assignment_id "
             "LEFT JOIN campaign_judgments j ON j.campaign_id=r.campaign_id AND j.response_id=r.response_id "
             "AND j.judge_id=? WHERE a.campaign_id=? AND a.model=? AND COALESCE(r.condition_id,a.condition_id)=? "
-            "AND a.evidence_class='measured' GROUP BY a.input_id,a.corpus,a.framework,a.modality)")
+            "AND a.evidence_class='measured'" + filters + " GROUP BY a.input_id,a.corpus,a.framework,a.modality)")
         params.extend((query[side + "_judge"], owner, query[side + "_model"], query[side + "_condition"]))
+        params.extend(query[name] for name in FILTERS if query.get(name))
     keys = "input_id,corpus,framework,modality"
     fields = ",".join(FACETS + FIELDS)
     sql = "WITH " + ",".join(sides) + ", input_keys AS (SELECT " + keys + " FROM left_inputs UNION SELECT " + keys + " FROM right_inputs), paired AS (SELECT k.corpus,k.framework,k.modality,"
@@ -78,20 +81,40 @@ def comparison_groups(rows):
 def comparison_csv(rows, campaign, query):
     stream = io.StringIO(newline="")
     writer = csv.writer(stream)
-    fields = ("left_campaign", *CHOICES, *FACETS, *FIELDS, "count")
+    fields = ("left_campaign", *CHOICES, *FILTERS, *FACETS, *FIELDS, "count")
     writer.writerow(fields)
     for row in rows:
-        value = {"left_campaign": campaign, **{key: query[key] for key in CHOICES}, **dict(row)}
+        value = {"left_campaign": campaign, **{key: query[key] for key in CHOICES},
+                 **{key: query.get(key, "") for key in FILTERS}, **dict(row)}
         writer.writerow(["'" + value[key] if isinstance(value[key], str) and value[key].startswith(("=", "+", "-", "@"))
                          else value[key] for key in fields])
     return stream.getvalue().encode("utf-8-sig")
 
 
-def _select(name, label, values, selected):
-    options = "<option value=''>Choose " + html.escape(label.lower()) + "</option>"
+def _select(name, label, values, selected, *, optional=False):
+    options = "<option value=''>" + ("All" if optional else "Choose " + html.escape(label.lower())) + "</option>"
     options += "".join("<option value='" + html.escape(value, quote=True) + "'"
         + (" selected" if value == selected else "") + ">" + html.escape(text) + "</option>" for value, text in values)
     return "<label class='campaign-field'>" + html.escape(label) + "<select name='" + name + "'>" + options + "</select></label>"
+
+
+def facet_choices(db, campaign, query):
+    values = {facet: set() for facet in FACETS}
+    for side, owner in (("left", campaign), ("right", query.get("right_campaign", ""))):
+        if not owner or not query.get(side + "_model") or not query.get(side + "_condition"):
+            continue
+        db.require_workspace(owner)
+        rows = db._query("SELECT DISTINCT a.corpus,a.framework,a.modality FROM campaign_assignments a "
+            "LEFT JOIN campaign_responses r ON r.campaign_id=a.campaign_id AND r.response_id=a.response_id "
+            "AND r.assignment_id=a.assignment_id WHERE a.campaign_id=? AND a.model=? "
+            "AND COALESCE(r.condition_id,a.condition_id)=? AND a.evidence_class='measured'",
+            (owner, query[side + "_model"], query[side + "_condition"]))
+        if rows is None:
+            return None
+        for row in rows:
+            for facet in FACETS:
+                values[facet].add(row[facet])
+    return values
 
 
 def comparison_page(db, campaign, query):
@@ -121,8 +144,22 @@ def comparison_page(db, campaign, query):
             for number, row in enumerate(conditions, 1)], condition)
         form += _select(side + "_judge", "Judging condition", [(row["judge_id"], f"Condition {number}: " + _judge_name(row["judge_id"]))
             for number, row in enumerate(judges, 1)], query.get(side + "_judge", "")) + "</fieldset>"
+    form += "</div>"
+    try:
+        facets = facet_choices(db, campaign, query)
+    except ValueError:
+        facets = {facet: set() for facet in FACETS}
+    if facets is None:
+        return "<p class='notice red'>Comparison filter index unavailable.</p>"
+    form += "<div class='cols' style='margin-top:1rem'>"
+    for facet, name in zip(FACETS, FILTERS):
+        # Preserve a previously selected empty slice rather than substituting
+        # another source when the selected model or condition changes.
+        values = facets[facet] | ({query[name]} if query.get(name) else set())
+        form += _select(name, facet.title(), [(v, v) for v in sorted(values)], query.get(name, ""), optional=True)
     form += ("</div><p>Choose campaigns and models, then update the choices to select generation and judging conditions. "
         "Each side has one explicit condition; historical and corrected settings are not combined.</p>"
+        "<p>Corpus, framework and modality filters apply to both sides and remain in exported counts.</p>"
         "<button type='submit'>Update choices / compare</button></form>")
     explanation = ("<p>Read-only comparison of measured, indexed inputs. Matching uses the exact retained input identity "
         "and the same corpus, framework and modality. Multiple assignments for an input are ambiguous and excluded "
@@ -143,7 +180,7 @@ def comparison_page(db, campaign, query):
     groups = comparison_groups(rows)
     if not groups:
         return form + explanation + "<p>No measured inputs on this comparison page.</p>"
-    saved = {key: query[key] for key in CHOICES}
+    saved = {key: query[key] for key in (*CHOICES, *FILTERS) if query.get(key)}
     export = base + "/figures/comparison.csv?" + urlencode({**saved, "page": page})
     content = ("<p id='campaign-exports'><a class='button ghost' data-campaign-export download='comparison.csv' href='"
         + html.escape(export, quote=True) + "'>Download this page's counts</a></p>"

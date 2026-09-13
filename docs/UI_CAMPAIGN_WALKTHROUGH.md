@@ -18,6 +18,11 @@ component tests and existing CLI results do not replace it.
 4. Use **Judging** and **Compare** for output-specific decisions and matching.
    Missing, invalid and inapplicable decisions remain visible. One model's
    answer cannot inherit another answer's verdict on the same question.
+   In **Compare**, choose each model's generation and judging condition, then
+   use **Corpus**, **Framework** and **Modality** to narrow both sides. For a
+   static comparison choose `replay`; keep adaptive frameworks separate. The
+   filters remain in subsequent pages and CSV exports. An empty selection is
+   shown as empty, not replaced with a different source.
 5. **Costs** records physical attempts and charges. Unknown is not zero, and a
    provider purse update is not an invoice breakdown. **Activity** and
    **Campaign jobs** link to the original executions.
