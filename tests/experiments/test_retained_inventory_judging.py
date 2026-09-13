@@ -13,6 +13,9 @@ from ura.targets import api
 
 @pytest.fixture
 def prepared(population, tmp_path, monkeypatch):  # noqa: F811
+    for rows in population.rows.values():
+        for row in rows:
+            row['risk'] = 'jailbreak'
     for slot in population.slots.values():
         slot['bound_microusd'] = 100_000
     pending, _, _, _ = population.collect()

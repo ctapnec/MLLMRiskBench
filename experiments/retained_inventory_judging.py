@@ -192,7 +192,7 @@ def execute(*, preparation, out, workspace_ids=(), console_db=None, workers=2):
     if ready['status'] != 'ready_for_funded_judging':
         raise ValueError('Resolve the saved funding review before paid execution')
     request = ready['request']
-    raw, _ = load_bound_json(Path(request['items']['path']), request['items']['sha256'])
+    raw, _ = load_bound_json(Path(request['items']['path']), request['items']['sha256'], expect_list=True)
     originals = {item['row']['retained_row_sha256']: item for item in raw}
     # Source content is reconciled once per launch, not once per plan or call.
     observed, _ = _original_items(Path(request['items_root']))
