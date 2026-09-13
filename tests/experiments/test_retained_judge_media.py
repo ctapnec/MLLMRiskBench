@@ -63,7 +63,7 @@ def test_index_is_read_once_until_metadata_or_checking_mode_changes(tmp_path, mo
     assert len(calls) == 2
     path = tmp_path/'media-index.json'
     path.write_bytes(path.read_bytes()+b' ')
-    with pytest.raises(ValueError, match='differs'):
+    with pytest.raises(ValueError, match='differs|changed'):
         subject.reader_media_roots(program)
     assert len(calls) == 3
 
