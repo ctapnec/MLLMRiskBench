@@ -1,5 +1,36 @@
 # Third hosted campaign: provider-scaled expansion
 
+## Active continuation - 13 September 2026
+
+The updated Gemini Pro queue contains 230 additional matched inputs (189 text,
+41 image, 25 arms), plus twenty untouched inputs owned by the older collectors.
+The new cohort starts no earlier than 07:00 UTC on 13 September, after the
+recorded quota window. One interrupted physical attempt is recovered separately
+and adds no input to these totals. Keep the existing tmux owners; do not restart
+them because another task finishes. The Google workers together remain capped
+at two. Use 4,096 output tokens, no automatic answer retry and three HTTP-error
+retries. Every eligible new Pro answer requires its own native and Haiku verdict;
+the 1,030 already-assessed local counterparts are comparison data, not Pro verdicts.
+
+At 05:34 UTC the combined collection has attempted 10,716 of 10,966 assignments,
+with 10,703 usable answers or explicit policy outcomes. Remaining tracked Google
+allowance is USD 9.994216. The additional Pro spending ceiling is USD 10 within
+the existing account credit, including its older tails, not new money. The Haiku
+allowance at that snapshot is USD 10.795517; subsequent judgments reduce it.
+Preserve the dated account balance history below. Forecast Pro completion from
+post-reset throughput, rather than promising a finish before any quota observation.
+
+The selected-output gap audit subsequently published 38 saved native verdicts
+without calls and completed 62 additional native assessments. Its earlier
+123-output gap is reduced to 23 historical partial-run outputs requiring source
+reconciliation. Another 45 actual saved Opus answers received Haiku judgments,
+all valid, costing USD 0.052028. These supplement the completed 267-answer Haiku
+selection, not its input denominator. No target answer was regenerated.
+
+The Local and API workspaces, judging charts and Costs pages passed live
+desktop/mobile browser inspection on 13 September. Full new paid execution
+through Build and final cross-condition analysis remain separate acceptance work.
+
 UI publication requirement, 11 September 2026: original, supplemental, Google
 and expansion work will appear in one API campaign workspace, not as separate
 top-level campaigns or a long job list. Local/Haiku judging and costs belong to

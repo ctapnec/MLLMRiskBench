@@ -1226,3 +1226,16 @@ decision. Setup turns stay outside that denominator. Artifact links must identif
 the actual checkpoint or final-file row; comparison aliases are not file locators.
 Correcting a locator must preserve the response, its generation condition and
 all accounting records.
+
+When a historical output directory contains several generation attempts, native
+judging selects its grid and optional manifest by the saved response's run identity.
+An unrelated zero-response retry must not hide the earlier answers. A unique
+unfinished grid can still accompany response-only checkpoints; this does not
+claim that its generation finished. Ambiguous ownership and conflicting manifest
+links remain source errors. The same reader is used by Build/Tools and CLI.
+
+When an interrupted paid attempt is reconciled from in-flight to unknown charge,
+publish that physical attempt through the existing cost-index writer as part of
+the handoff. Preserve its unknown amount and uncertain exposure. Updating only
+the monetary ledger leaves a stale in-flight row in Costs; repeating publication
+must neither duplicate a bill nor repeat its request.

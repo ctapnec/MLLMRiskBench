@@ -1,5 +1,23 @@
 # All-local test campaign plan: every corpus arm, every framework runtime, free models only
 
+Current recovery observation, 13 September at 05:34 UTC: all 2,636 selected
+model-input conditions have been attempted. The lossless PNG correction returns
+normal-ended usable answers for all 62 affected Gemma/Ministral conditions.
+After applying those explicit replacement links, 2,196 conditions have normal
+usable replacements; 410 retain missing outputs and 382 retain truncation,
+with overlap. These are not 2,636 successful recoveries. Historical responses
+remain available under their original generation conditions.
+
+The final eight eligible follow-up answers were judged by Haiku and published,
+all with valid verdicts, for USD 0.013514. The 05:49 matched-output audit finds
+zero unjudged eligible saved replacements and 786 retained output-specific
+assessments. Its historical missing rows are not additional verdicts or a unique
+recovery denominator. LLaVA base's twenty text misses include normal stops after
+two completion tokens; increasing an output allowance does not establish a cure
+for those records. GraySwan additionally retains symbol-only length exhaustion.
+Keep causal interpretation separate from execution coverage and native scoring.
+Final replacement-aware analysis and thesis synthesis remain open.
+
 UI publication requirement, 11 September 2026: present all retained local work
 as one model-first Local campaign workspace, with recoveries and operational
 jobs under Activity, not a fragmented job-card list. The
