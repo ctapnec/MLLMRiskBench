@@ -167,3 +167,26 @@ Independent human assessment remains a separate requirement for validity claims.
 The same prepared selections and execution configuration must be inspectable
 through Build, Jobs and campaign Stats. Diagnostic Build acceptance alone does
 not demonstrate the full collection, retrospective judging and publication flow.
+
+## Observed completion update - 13 September 2026
+
+All 70 selected non-Google inputs are collected: Fable 34, Opus 20, Sol 7 and
+Astra 9. Each saved outcome has its required local evaluation record; the 29
+new eligible Haiku assessments are valid. A separately accounted benign Astra
+transport observation is diagnostic evidence, not an extra measured study input.
+The 21 selected Pro inputs remain queued for the recorded provider retry time;
+the two older Pro inputs remain a separate obligation.
+
+Matching-local coverage was reconciled by actual saved output and judging
+condition. The 112 represented source-input identities match 189 local
+assignments: 162 have valid Haiku verdicts, 15 have no usable answer, three belong
+to the retired model, and nine are source-specific tasks outside the common
+rubric. No eligible local Haiku answer in this population remains unassessed.
+The 84 newly owned funding slots did not imply 84 missing verdicts and were not
+spent again. Historical and corrected conditions remain separate.
+
+Live UI inspection confirms visible local/API charts, readable Results details,
+working figure/table exports and loading guards. Full paid end-to-end Build
+acceptance, the complete statistical synthesis and independent human assessment
+remain separate unfinished requirements. This update does not declare the whole
+campaign or thesis complete.

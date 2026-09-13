@@ -1,5 +1,27 @@
 # Campaign workspaces and the reproducible UI workflow
 
+## Current deployed scope
+
+Build connects saved campaign definitions, selected local sources, forecasts,
+replay preparation, counted hosted programs, reviewed collection and continuation,
+retained local judging, matched output inventories and all-output Haiku judging.
+Tools exposes their advanced equivalents. These are the same execution and
+publication paths used by the CLI, not a second campaign scheduler.
+
+The deployed pages have live rig-browser acceptance for local/API Results,
+Overview charts, Judging, Costs, Build, Campaigns and Stats. Actual SVG figures
+and CSV tables download successfully. A 1,000-click export burst sends one
+request; the busy indicator blocks further interaction and clears after success
+or a displayed error. Results uses compact identifiers, while expandable details
+retain the full input/model identity, context, output allowance, usage and finish
+reason. Desktop and narrow layouts have no page-wide overflow in those checks.
+
+This is not yet acceptance of one new paid campaign created entirely in Build
+and taken through collection, both judging stages and final analysis. Component
+tests, CLI campaign execution and read-only page checks do not establish that
+stronger claim. Historical verification and deployment observations below must
+be read with this current status; exact evidence is in the development ledger.
+
 Publication preserves a saved selected response when an older source is
 re-imported with no answer. Pending means that no outcome has been retained;
 it is not a command to clear a later recovery. Selecting a different retained
@@ -111,8 +133,10 @@ checked separately after correcting a mislabeled diagnostic screenshot; it
 had no page-wide overflow. A held-navigation test was abandoned because its
 observation method interfered with navigation; it is not evidence of a UI
 failure. These checks do not replace acceptance of the newer Build workflow.
-The deployed cost-column clipping and diagnostic-first order remain the known
-pending-release issues described above.
+Later live acceptance supersedes the pending-release notes above for column
+layout. Overview still exposes each evidence class explicitly; users must select
+the measured population for scientific comparisons rather than combine it with
+diagnostics or unclassified historical records.
 
 ### Selected local inputs for a hosted follow-on
 
@@ -265,10 +289,10 @@ selected in Stats. It never chooses the newest or best answer automatically.
 It resolves only the selected artifact locations, then reuses the existing
 source-preparation command. Opening the page does not scan or hash result files.
 This is a separate preparation action, not a switch silently changing the
-current Runner pipeline's corpus. Readiness preparation and Haiku orchestration
-below are not yet assembled by the normal Build editor. The reviewed collection,
-continuation and native judging handoffs are implemented and rig-verified, but not yet deployed;
-a forecast alone is not an executable collection.
+current Runner pipeline's corpus. Build connects readiness through reviewed
+collection and connects the separate native and Haiku judging preparations.
+A forecast alone is not an executable collection; use the reviewed collection
+handoff before proceeding to output-specific judging.
 Replay preparation converts the union of required sources once across models,
 using the configured corpus and media locations without API credentials.
 Its request caps can leave unused space when the next whole cluster does not
@@ -312,11 +336,11 @@ Its explicit network option permits token counting, not answer generation.
 Unchanged source context is reused by provider workers; budgets remain checked
 at paid dispatch. Old programs retain their original reader and interpretation.
 
-These typed forms and reusable preparation APIs are not the finished normal
-Build workflow. Source/replay preparation, reviewed collection and native judging are connected;
-the remaining editor work must assemble readiness and requested Haiku judging from
-its ordinary controls. Do not present manual JSON/path handoffs as that completed
-UX. The retained executor still owns provider concurrency and continuation;
+These typed forms and reusable preparation APIs also support the normal
+Build workflow described above. Readiness and requested Haiku judging use its
+saved preparation and review controls; manual JSON/path handoffs are not the
+normal user flow. Complete paid end-to-end acceptance remains separate from
+their component verification. The retained executor still owns provider concurrency and continuation;
 creating a second scheduler or independently funded per-model grids is not the
 integration. Rig verification covers 181 focused tests, removed-fix controls
 and the real 568-input Gemma source, with no generation, judging or full-artifact
