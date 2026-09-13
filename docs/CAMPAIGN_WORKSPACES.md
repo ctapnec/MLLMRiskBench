@@ -1352,3 +1352,19 @@ They import code from the console-selected checkout. Neither setting grants
 unselected provider credentials or downloads a framework. A handoff failure
 before judging must reuse completed collection and local judgments; it is not
 a reason to regenerate target answers.
+
+Budget-derived cost rows carry their source-ledger reference. Logical call IDs
+are not assumed globally unique across independently funded campaigns. If such
+an ID is already owned by another campaign, publication uses a campaign-scoped
+index key for the distinct budget/answer, leaving the original bill untouched.
+The same ledger or the same attributed answer cannot be republished as a second
+campaign's physical bill. Existing keys, repeated publication and same-campaign
+funding-transfer continuations remain stable; no budget or response is rewritten.
+
+The bounded real browser acceptance on 13 September completed retained-source
+selection, forecast, replay, counted preparation, two Terra calls, native judging,
+one new measured-output Haiku verdict and Results/Judging/Costs/Activity inspection.
+The matching Qwen answer already has a valid Haiku verdict under the same judging
+condition, so it was not charged again. This acceptance is separate from the
+production experimental populations. Forty-five focused cost/import/judging
+tests, the removed-fix control and real saved-data publication pass on the rig.

@@ -2,8 +2,11 @@
 
 Build is the experiment editor. Campaigns groups related work; Jobs shows its
 execution; Stats shows retained results. Local and hosted are model choices,
-not separate creation wizards. Complete paid end-to-end acceptance remains open;
-component tests and existing CLI results do not replace it.
+not separate creation wizards. The retained-input hosted flow has been exercised
+through the browser: source selection, forecasting, prepared replay, collection,
+local judging, Haiku judging and result/cost inspection. This bounded acceptance
+used one diagnostic and one measured Terra input; it is not evidence that every
+model/framework combination has completed a new UI campaign.
 
 ## Inspect the retained studies
 
@@ -104,6 +107,15 @@ prepared inputs and budget; an initialized collection resumes its saved state.
 5. Inspect output-specific coverage in both campaigns. A finished selected job
    does not prove all campaign obligations complete. Reuse requires the same
    saved answer and judging condition, not merely a shared input or funding row.
+   An output without funding in the new plan may already have a suitable verdict
+   in its original campaign. Check **Compare** using the same judging condition
+   and exact saved output before allocating or executing another judgment.
+
+If the same logical request is independently funded in a different campaign,
+Costs retains both physical executions. Reopening or republishing one execution
+does not charge or count it twice, and a historical unknown charge stays unknown.
+Results and cost publication can be repaired from saved artifacts without
+repeating generation.
 
 For partial historical runs and advanced imports, use the typed Tools commands
 in [RUN_AND_RETURN](../experiments/RUN_AND_RETURN.md). Preserve original failed
