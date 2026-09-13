@@ -39,9 +39,10 @@ def study(tmp_path, monkeypatch):
         app.db.upsert_job(job,state='running',exit_code=None)
         app.db.attach_workspace_member(kw['campaign_id'],'job',job.job_id,'collection')
         # A started collector writes this before runtime preparation or calls.
-        control = __import__('pathlib').Path(values['--out'])
-        control.mkdir(parents=True)
-        (control/'selection.json').write_text('{}')
+        if command == 'hosted_campaign_execute':
+            control = __import__('pathlib').Path(values['--out'])
+            control.mkdir(parents=True)
+            (control/'selection.json').write_text('{}')
         return job
     monkeypatch.setattr(app,'start_job',launch)
     params=dict(work_kind='campaign',campaign_id=owner,retained_programs_job=preparation.job_id)
