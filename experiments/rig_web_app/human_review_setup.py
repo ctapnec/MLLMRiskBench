@@ -1,6 +1,7 @@
 """Campaign-aware human study setup, separate from the blinded rater wizard."""
 import csv
 import html
+import json
 import secrets
 from pathlib import Path
 
@@ -76,6 +77,8 @@ def setup_route(app, method, path, data, style):
                 '--prepare-source-task' if data['mode']=='source_task' else '--prepare':data['clusters']}
         for key in ('historical_code_repository','judge_configuration_sha256'):
             if source.get(key):params['--'+key.replace('_','-')]=source[key]
+        supplied_index=data.get('media_index','').strip() or source.get('media_index','')
+        if supplied_index: params['--media-index']=str(store._path(supplied_index))
         job=app.start_job('human_audit',params,campaign_id=owner)
         metadata={k:data[k] for k in ('ethics','compensation','stop_contact','consent')}
         metadata.update({k:source.get(k,'') for k in ('results','historical_code_repository','judge_configuration_sha256','media_index')})
@@ -95,6 +98,12 @@ def setup_route(app, method, path, data, style):
             with Path(draft['value']['prepared']).open(encoding='utf-8-sig',newline='') as f:rows=list(csv.DictReader(f))
             count=len({r['sample_key'] for r in rows});clusters=len({r.get('cluster_key',r['sample_key']) for r in rows})
             body+=f"<h2>Check the review workload</h2><p>{clusters:,} source clusters, {count:,} saved outputs, {2*count:,} required independent ratings, plus any adjudication.</p><p>No human ratings have been created by preparation.</p><form method='post'><button>Create study and assign reviewers</button></form>"
+            media_report=Path(draft['value']['prepared']).with_suffix('.MEDIA-REPORT.json')
+            if media_report.is_file():
+                report=json.loads(media_report.read_text(encoding='utf-8'))
+                body+=f"<p>Saved media: {report.get('resolved_references',0):,} / {report.get('media_references',0):,} references connected.</p>"
+                if report.get('outputs_with_unavailable_media'):
+                    body+=f"<p class='review-error'>{report['outputs_with_unavailable_media']:,} outputs have unavailable media. Restore these assets before rating affected items; those rows have not been removed.</p>"
         elif state in {'running','starting','queued'}:
             body+="<p>The sample is preparing in the background. Refresh this page when the job finishes.</p><a class='button ghost' href=''>Refresh preparation</a>"
         else:body+="<p class='review-error'>Preparation did not finish successfully. Inspect the job before continuing; no study has been created.</p>"

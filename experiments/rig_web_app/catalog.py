@@ -843,6 +843,7 @@ def _commands() -> dict[str, Command]:
             "Prepare or analyse the human-audit frames",
             (
                 CommandParam("--results", "path", required=True),
+                CommandParam("--media-index", "path"),
                 CommandParam("--historical-code-repository", "path"),
                 CommandParam("--judge-configuration-sha256", "str"),
                 CommandParam("--prepare", "int"),

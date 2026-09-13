@@ -111,6 +111,9 @@ class HumanReviewStore:
         if mode not in {"common", "source_task"} or not name.strip() or len(name) > 200:
             raise ValueError("Choose a study name and audit frame")
         path = self._path(prepared)
+        resolved_media = path.with_suffix('.MEDIA.json')
+        if resolved_media.is_file():
+            metadata = dict(metadata, media_index=str(self._path(resolved_media)))
         if path.stat().st_size > 64 * 1024 * 1024: raise ValueError("Prepared sample exceeds 64 MiB")
         reader = csv.DictReader(io.StringIO(path.read_text(encoding="utf-8-sig")))
         fields = reader.fieldnames or []

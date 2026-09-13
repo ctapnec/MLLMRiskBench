@@ -4182,6 +4182,7 @@ def analyse(
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Prepare or analyse a stratified human audit.")
     parser.add_argument("--results", type=Path, required=True)
+    parser.add_argument("--media-index", type=Path, help="existing local media lookup to reuse during sample preparation")
     parser.add_argument(
         "--historical-code-repository", type=Path,
         help="trusted Git repository for exact retained-source artifact joins",
@@ -4275,6 +4276,8 @@ def main(argv=None) -> int:
     )
     if preparation_mode and args.allow_single_rater:
         parser.error("--allow-single-rater is valid only for a labels mode")
+    if args.media_index is not None and not preparation_mode:
+        parser.error("--media-index is valid only for sample preparation")
     preparation_analysis_options = [
         option
         for option, value in (
@@ -4300,7 +4303,10 @@ def main(argv=None) -> int:
         if not args.acknowledge_sensitive_content:
             raise SystemExit("preparation exports harmful content; pass --acknowledge-sensitive-content")
         output = args.output or args.results / "human_audit_sample.csv"
-        return prepare_sample(args.results, output, args.prepare, **historical_options)
+        status = prepare_sample(args.results, output, args.prepare, **historical_options)
+        from experiments.human_audit_media import prepare_media_index
+        prepare_media_index(args.results, output, args.media_index)
+        return status
     if args.prepare_source_task is not None:
         if not args.acknowledge_sensitive_content:
             raise SystemExit(
@@ -4308,9 +4314,12 @@ def main(argv=None) -> int:
                 "--acknowledge-sensitive-content"
             )
         output = args.output or args.results / "source_task_audit_sample.csv"
-        return prepare_source_task_sample(
+        status = prepare_source_task_sample(
             args.results, output, args.prepare_source_task, **historical_options,
         )
+        from experiments.human_audit_media import prepare_media_index
+        prepare_media_index(args.results, output, args.media_index)
+        return status
     if args.source_task_labels is not None:
         return analyse_source_task(
             args.results, args.source_task_labels,
