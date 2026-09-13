@@ -1,7 +1,11 @@
 # Human evaluation through Rig Web
 
-Status: implementation under focused rig and browser acceptance; not yet
-published on the production console. No actual human ratings have been collected.
+Status: the setup and rating wizards are deployed on the production console.
+Focused rig tests and isolated desktop/mobile browser checks pass. Real saved
+local responses and indexed images have also been displayed successfully.
+Full local/API result-set acceptance remains incomplete: the checked historical
+image sample still has assets absent from its selected media index. No actual
+human ratings have been collected.
 
 ## Purpose and scope
 
@@ -26,6 +30,13 @@ Source-task classification needs its separate existing rubric and analysis.
    result set is not automatically the whole campaign or a claim that every
    campaign output is eligible. The preparation page shows actual workload
    before creating the study. Failed preparation cannot create a study.
+   For content-addressed images, use the existing retained media index in the
+   sample wizard's media-lookup section. The viewer resolves only assigned
+   identities to files inside configured media roots. An unchanged index is
+   cached; it does not scan corpora, hash model weights or fetch remote media.
+   A missing mapping remains visibly unavailable, not a lost model response.
+   The cluster count must be sufficient for the selected scope's sensitivity
+   categories; 20 is a starting value, not a universally valid sample size.
 2. Create a study from that prepared sample. Record its campaign, protocol,
    source analysis scope and supervisor/institutional ethics determination,
    consent, compensation and harmful-content welfare arrangements. These
