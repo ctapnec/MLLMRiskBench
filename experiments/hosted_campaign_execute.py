@@ -97,7 +97,7 @@ def collect_campaign(*, programs: Sequence[tuple[Path, str]], budget_root: Path,
                      workspace_id: str = "", console_db: Path | None = None,
                      resume_from: Path | None = None, prepare_runtime: bool = False,
                      model_store: Path | None = None) -> dict:
-    """Validate shared sources once, then collect without co-resident judges."""
+    """Validate shared sources once; defer measured-output judging until later."""
     retained._validated_checkout(project_root, expected_commit)
     if not programs or len({str(path.resolve()) for path, _sha256 in programs}) != len(programs):
         raise ValueError("Select each funded program exactly once")
@@ -218,6 +218,7 @@ def _collect_admitted(*, admitted, prepared_programs, budget_root, project_root,
     if runtime_root is not None:
         from experiments.hosted_runtime_collection import effective_program_descriptors
         result.update(runtime_root=runtime_root, execution_programs=effective_program_descriptors(Path(runtime_root)),
+            judgments='diagnostic_probes_only_measured_judging_deferred',
             diagnostic_probe_judging='included_in_funded_transport_checks',
             measured_judging='deferred')
     _write_new(out / "result.json", result)

@@ -248,7 +248,9 @@ def test_installed_runtime_collection_continuation_keeps_bindings_and_skips_save
     assert len(calls) == len(admission.entries)
     current = json.loads((tmp_path/'next'/'selection.json').read_text())
     assert current['runtime_root'] == str(first/'runtime')
-    assert json.loads((tmp_path/'next'/'result.json').read_text())['execution_programs'] == [descriptor]
+    result = json.loads((tmp_path/'next'/'result.json').read_text())
+    assert result['execution_programs'] == [descriptor]
+    assert result['judgments'] == 'diagnostic_probes_only_measured_judging_deferred'
 
 
 def test_missing_checkpoint_does_not_turn_a_ui_status_into_completed_work(tmp_path, monkeypatch):
