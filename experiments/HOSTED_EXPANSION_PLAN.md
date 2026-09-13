@@ -179,9 +179,13 @@ remain outside this prepared population, separately from the six wholly
 unstarted inputs. They are not two available answers: the later source audit
 found one retained empty HTTP 429 outcome after four physical attempts and one
 unresolved first-attempt budget entry without a saved answer in that job.
-Neither has a usable output to judge. The unresolved charge must not be treated
-as free, and the exhausted rate limit is not a security refusal. Source-context
-assessments and future tail outputs also remain separate.
+Neither has a usable output to judge. At 02:03 UTC the absent original process
+and tmux owner were confirmed, and its stale in-flight entry was settled as an
+unknown charge through the existing budget API. Its USD 0.049184 uncertain
+exposure is unchanged; no money was released and no call was reissued. Recovery
+of that interrupted input remains outstanding. The exhausted rate limit is not
+a security refusal. Source-context assessments and future tail outputs also
+remain separate.
 
 All 129 selected Haiku assessments are now complete and published in the API
 workspace: 128 valid verdicts, one invalid reply, 107,248 input tokens and 3,535
