@@ -1,5 +1,6 @@
 """Actual final/checkpoint shapes feed campaign review, not synthetic grids."""
 import json
+import sqlite3
 
 import pytest
 
@@ -75,3 +76,26 @@ def test_hosted_posthoc_verdict_uses_exact_saved_sample_key(indexed):
     record['sample_key']='different-run|test:model|attempt'
     path.write_text(json.dumps(record)+'\n')
     with pytest.raises(ValueError,match='output identity'):read_campaign(database,owner,root)
+
+
+def test_inventory_does_not_cross_scan_assignments_for_each_judgment(indexed, monkeypatch):
+    database,owner,root,_=indexed
+    with sqlite3.connect(database) as db:
+        db.executemany('INSERT INTO campaign_assignments '
+            '(campaign_id,assignment_id,model,input_id,condition_id,modality,framework,corpus,response_id,updated_at,evidence_class) '
+            'VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+            [(owner,f'bulk-{i}','test:model',f'input-{i}','condition','text','replay','arm',f'bulk-{i}:attempt',1,'measured') for i in range(500)])
+        db.executemany('INSERT INTO campaign_judgments VALUES(?,?,?,?,?,?)',
+            [(owner,f'bulk-{i}:attempt','local-cascade-test','missing',None,'not-opened') for i in range(500)])
+    connect=sqlite3.connect
+    def bounded(*args, **kwargs):
+        connection=connect(*args,**kwargs);ticks=0
+        def progress():
+            nonlocal ticks
+            ticks+=1
+            return int(ticks>100)
+        connection.set_progress_handler(progress,1000)
+        return connection
+    monkeypatch.setattr(sqlite3,'connect',bounded)
+    value=read_campaign(database,owner,root)
+    assert len(value['outputs'])==2 and value['measured_assignments']==503

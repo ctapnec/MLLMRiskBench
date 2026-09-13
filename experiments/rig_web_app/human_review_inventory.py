@@ -70,10 +70,11 @@ def read_campaign(database: Path, campaign: str, results_root: Path) -> dict:
             'LEFT JOIN campaign_responses r ON r.campaign_id=a.campaign_id '
             'AND r.assignment_id=a.assignment_id AND r.response_id=a.response_id '
             "WHERE a.campaign_id=? AND a.evidence_class='measured' ORDER BY a.assignment_id", (campaign,))]
+        # The assignment index is keyed by assignment, not response. Joining
+        # every judgment to it makes historical campaigns quadratic in size.
+        # The snapshot's selected-response map below performs the exact join.
         judgments = [dict(row) for row in connection.execute(
-            'SELECT j.* FROM campaign_judgments j JOIN campaign_assignments a '
-            'ON a.campaign_id=j.campaign_id AND a.response_id=j.response_id '
-            "WHERE a.campaign_id=? AND a.evidence_class='measured' ORDER BY j.response_id,j.judge_id", (campaign,))]
+            'SELECT * FROM campaign_judgments WHERE campaign_id=? ORDER BY response_id,judge_id', (campaign,))]
     finally:
         connection.close()
     dispositions = Counter(row['outcome'] or 'unstarted' for row in assignments)
