@@ -181,6 +181,8 @@ def test_finished_campaign_study_setup_uses_saved_results_and_reports_workload(t
         page=app.handle('GET','/human-evaluation?campaign_id='+campaign)[2].decode()
         assert 'Completed local analysis' in page and 'data-study-wizard' in page
         assert 'No model is rerun' in page and "data-study-step='Arrangements'" in page
+        assert "select name='ethics_status'" in page and "select name='compensation_type'" in page
+        assert 'This page sets up the study; it is not the rating form.' in page
         starts=[]
         def launch(command,params,**kwargs):
             starts.append((command,params,kwargs));prepared(Path(params['--output']))
@@ -200,6 +202,19 @@ def test_finished_campaign_study_setup_uses_saved_results_and_reports_workload(t
         assert first==second and len(store.studies(campaign))==1
         assert not store.summary(first.rsplit('/',1)[-1])['ready_for_analysis']
     finally:app.close()
+
+
+def test_setup_arrangement_choices_record_actual_status_and_reject_unknowns():
+    from experiments.rig_web_app.human_review_setup import arrangements
+    data=dict(ethics_status='pending',ethics='',compensation_type='unpaid',compensation='30 minutes; test withdrawal terms',stop_contact='Test operator',consent='Test only')
+    assert arrangements(data)['ethics_status']=='pending'
+    assert arrangements(data)['compensation'].startswith('Voluntary, unpaid')
+    with pytest.raises(ValueError,match='determination and its date'):
+        arrangements(dict(data,ethics_status='approved'))
+    with pytest.raises(ValueError,match='actual ethics'):
+        arrangements(dict(data,ethics_status='invented'))
+    with pytest.raises(ValueError,match='participation arrangement'):
+        arrangements(dict(data,compensation_type='invented'))
 
 
 def test_finished_runs_discovered_without_cross_campaign_or_failed_run_sources(tmp_path):

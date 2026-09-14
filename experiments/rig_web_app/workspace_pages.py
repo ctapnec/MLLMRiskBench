@@ -474,6 +474,18 @@ class WorkspacePagesMixin:
         rows = self.db.workspace_result_rows(campaign_id, offset=page * 50, model=model, condition=condition)
         if not rows:
             return unknown
+        recoveries=self.db.workspace_recovery_rows(campaign_id,model=model,condition=condition,offset=page*50)
+        recovery_html=''
+        if recoveries:
+            recovery_rows=[]
+            for link in recoveries[:50]:
+                old=json.loads(link['old_details']);new=json.loads(link['new_details'])
+                recovery_rows.append([html.escape(link['model'].partition(';')[0]),
+                    html.escape(link['corpus']+' / '+link['modality']),
+                    html.escape(link['old_outcome'])+' - '+self._workspace_source_link(old['source_ref']),
+                    html.escape(link['new_outcome'])+' - '+self._workspace_source_link(new['source_ref']),
+                    html.escape(link['reason'])+' '+self._workspace_source_link(link['evidence_ref'])])
+            recovery_html="<section><h2>Recovery history</h2><p>Explicit links connect original outcomes to saved recovery answers for the same model and input. Both executions remain in the historical counts and costs. Each answer keeps its own judgments; a link does not select the best answer or transfer a verdict.</p>"+table(('Model','Corpus / modality','Original outcome','Recovery outcome','Reason / evidence'),recovery_rows)+"</section>"
         output = []
         for row in rows[:50]:
             details = json.loads(row["details"]) if row["details"] else {}
@@ -499,4 +511,4 @@ class WorkspacePagesMixin:
                            html.escape(row["evidence_class"]), html.escape(row["modality"]), html.escape(row["framework"] + " / " + row["corpus"]),
                            html.escape(row["outcome"] or "pending"),
                            "unknown" if row["truncated"] is None else "yes" if row["truncated"] else "no", metadata])
-        return "<div class='campaign-output-table'>" + table(("Model", "Input", "Evidence", "Modality", "Framework / corpus", "Outcome", "Truncated", "Details"), output) + "</div>" + pagination(len(rows) > 50)
+        return recovery_html+"<div class='campaign-output-table'>" + table(("Model", "Input", "Evidence", "Modality", "Framework / corpus", "Outcome", "Truncated", "Details"), output) + "</div>" + pagination(len(rows) > 50 or len(recoveries or [])>50)

@@ -1,5 +1,10 @@
 # Running and examining campaigns in the web UI
 
+For the exact rig-specific first campaign, use the
+[click-by-click small Flash guide](SMALL_API_CAMPAIGN.md). It names each tab,
+value, button, preparation wait and paid start action. The overview below is
+not a substitute for that first-time walkthrough.
+
 Build is the experiment editor. Campaigns groups related work; Jobs shows its
 execution; Stats shows retained results. Local and hosted are model choices,
 not separate creation wizards. The retained-input hosted flow has been exercised
@@ -22,6 +27,10 @@ an extension of the thesis study population.
 3. In **Results**, expand **Generation settings and usage** for context, output
    allowance, reported tokens, finish reason and the original artifact. A
    truncated answer can still contain usable text.
+   **Recovery history** links explicitly recorded original outcomes to saved
+   successor answers and their source artifacts. It preserves both executions
+   and costs; it does not silently select the best output, merge generation
+   conditions or copy a judgment between different answers.
 4. Use **Judging** and **Compare** for output-specific decisions and matching.
    Missing, invalid and inapplicable decisions remain visible. One model's
    answer cannot inherit another answer's verdict on the same question.

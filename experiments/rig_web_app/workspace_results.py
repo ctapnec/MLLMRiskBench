@@ -77,6 +77,46 @@ class WorkspaceResultsMixin:
             "condition_id TEXT NOT NULL, evidence_class TEXT NOT NULL, planned INTEGER NOT NULL, "
             "reached INTEGER NOT NULL, updated_at REAL NOT NULL, PRIMARY KEY(campaign_id,run_id))"
         )
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS campaign_recoveries (campaign_id TEXT NOT NULL, "
+            "predecessor TEXT NOT NULL, successor TEXT NOT NULL, reason TEXT NOT NULL, evidence_ref TEXT NOT NULL, "
+            "PRIMARY KEY(campaign_id,successor))"
+        )
+
+    def link_workspace_recovery(self, campaign_id: str, *, predecessor: str, successor: str,
+                                reason: str, evidence_ref: str) -> None:
+        """Annotate an explicit saved recovery, without selecting or rewriting outputs."""
+        self.require_workspace(campaign_id)
+        if predecessor == successor or any(not isinstance(v,str) or not v.strip() or len(v)>4096
+                                            for v in (predecessor,successor,reason,evidence_ref)):
+            raise ValueError('Recovery needs two distinct saved outputs and its evidence')
+        with self._lock, self._conn:
+            rows = self._conn.execute(
+                'SELECT r.response_id,a.model,a.input_id,a.modality,a.framework,a.corpus,a.evidence_class '
+                'FROM campaign_responses r JOIN campaign_assignments a '
+                'ON a.campaign_id=r.campaign_id AND a.assignment_id=r.assignment_id '
+                'WHERE r.campaign_id=? AND r.response_id IN (?,?)',
+                (campaign_id,predecessor,successor)).fetchall()
+            if len(rows)!=2 or tuple(rows[0])[1:] != tuple(rows[1])[1:]:
+                raise ValueError('Recovery must refer to the same model, input and task in this campaign')
+            record=(campaign_id,predecessor,successor,reason,evidence_ref)
+            old=self._conn.execute('SELECT * FROM campaign_recoveries WHERE campaign_id=? AND successor=?',
+                                   (campaign_id,successor)).fetchone()
+            if old and tuple(old)!=record: raise ValueError('Retained recovery link cannot be changed')
+            if not old:self._conn.execute('INSERT INTO campaign_recoveries VALUES(?,?,?,?,?)',record)
+
+    def workspace_recovery_rows(self, campaign_id: str, *, model: str='', condition: str='', offset: int=0):
+        return self._query(
+            'SELECT l.*,a.model,a.input_id,a.corpus,a.modality,p.outcome AS old_outcome,'
+            's.outcome AS new_outcome,p.details AS old_details,s.details AS new_details,'
+            'p.condition_id AS old_condition,s.condition_id AS new_condition '
+            'FROM campaign_recoveries l JOIN campaign_responses p '
+            'ON p.campaign_id=l.campaign_id AND p.response_id=l.predecessor '
+            'JOIN campaign_responses s ON s.campaign_id=l.campaign_id AND s.response_id=l.successor '
+            'JOIN campaign_assignments a ON a.campaign_id=s.campaign_id AND a.assignment_id=s.assignment_id '
+            "WHERE l.campaign_id=? AND (?='' OR a.model=?) "
+            "AND (?='' OR p.condition_id=? OR s.condition_id=?) ORDER BY a.model,l.successor LIMIT 51 OFFSET ?",
+            (campaign_id,model,model,condition,condition,condition,max(0,offset)))
 
     def publish_workspace_inputs(self, campaign_id: str, *, run_id: str, model: str,
                                  condition_id: str, evidence_class: str, planned: int, reached: int) -> None:

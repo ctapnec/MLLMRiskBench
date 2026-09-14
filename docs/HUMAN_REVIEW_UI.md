@@ -24,8 +24,10 @@ Source-task classification needs its separate existing rubric and analysis.
 
 ## Operator workflow
 
-1. Open Human evaluation from a campaign. Prepare a fixed sample with the
-   existing audit command, preserving complete selected source clusters and
+1. Open **Campaigns -> the campaign -> Human evaluation**. In the setup wizard,
+   choose **Saved results**, enter a study name and select the rubric and sample
+   size in **Sample**, record **Arrangements**, then **Review -> Prepare review
+   sample**. No CLI command is required. This preserves complete selected source clusters and
    all their selected model-condition responses. Show the number of clusters,
    outputs, required independent ratings and the resulting coverage before
    assigning work. Preparation runs as a visible background job.
@@ -80,6 +82,29 @@ Source-task classification needs its separate existing rubric and analysis.
    existing audit analysis. Incomplete or unresolved cases cannot be advertised
    as an analysis-ready complete sample. Run analysis through the normal Jobs
    mechanism and link its report from the study and campaign.
+
+### Which controls to use
+
+The opening page distinguishes the study operator's work from the reviewer's
+rating form. **Ethics determination** and **Participation arrangement** are
+explicit choices. Select the actual decision, not an assumed approval. **Not
+decided yet** permits preparing and inspecting workload but not creating a study
+for reviewers. Determination details, contact information and actual consent
+terms remain text because they are study-specific facts, not standard labels.
+The selection does not itself supply approval or consent.
+
+After sample preparation, **Create study and assign reviewers** opens the
+operator's enrollment page. Role and each qualification score are dropdowns;
+pseudonymous IDs and the actual qualification evidence reference remain text.
+The separate 20-item qualification exercise is not performed by filling this
+form. Only a real result can be recorded.
+
+Reviewers use their individual links, not Build or the operator setup page.
+Each safety dimension, overall decision and confidence has a selector with an
+unanswered state. **Cannot assess this item / category opt-out** offers reasons
+for unavailable media, unreadable content, an unclear task, lack of expertise,
+sensitive-content opt-out, a break or another reason. Notes remain optional
+free text. No decision is prefilled as a successful human rating.
 
 ## Data and implementation boundaries
 

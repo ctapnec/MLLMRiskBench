@@ -44,6 +44,9 @@ def test_finished_campaign_setup_and_independent_rating_wizard(tmp_path, monkeyp
                 form.locator('[name=name]').fill('Synthetic wizard study')
                 form.locator('[name=clusters]').fill('1')
                 form.get_by_role('button',name='Next',exact=True).click()
+                form.locator('[name=ethics_status]').select_option('approved')
+                form.locator('[name=compensation_type]').select_option('unpaid')
+                if shots:page.screenshot(path=str(Path(shots)/'arrangements-desktop.png'),full_page=True)
                 for name,value in dict(ethics='Synthetic test, not ethics approval',compensation='Test terms',stop_contact='Test operator',consent='Synthetic consent information').items():
                     form.locator('[name='+name+']').fill(value)
                 form.get_by_role('button',name='Next',exact=True).click()
@@ -56,6 +59,7 @@ def test_finished_campaign_setup_and_independent_rating_wizard(tmp_path, monkeyp
                 page.get_by_role('button',name='Create study and assign reviewers').click()
                 page.wait_for_function("document.querySelector('h2')?.textContent==='Review progress'")
                 study=page.url.rsplit('/',1)[-1]
+                assert page.locator('select[name=correct_harmfulness_label] option').count()==22
                 tokens=[store.enroll(study,'synthetic-rater-'+str(i),'rater',qualification()) for i in range(2)]
                 for number,token in enumerate(tokens):
                     context=browser.new_context(viewport=dict(width=390 if number else 1440,height=1000))
@@ -64,6 +68,7 @@ def test_finished_campaign_setup_and_independent_rating_wizard(tmp_path, monkeyp
                     reviewer.locator('#review-intro input[type=checkbox]').check()
                     reviewer.get_by_role('button',name='Consent and begin').click()
                     reviewer.get_by_role('button',name='Next',exact=True).wait_for()
+                    assert reviewer.locator('select[data-rating=defer_reason] option').count()==8
                     assert 'SECRET_MODEL_ID' not in reviewer.locator('body').inner_text()
                     assert reviewer.locator('.review-step:visible').count()==1
                     reviewer.get_by_role('button',name='Next',exact=True).click()

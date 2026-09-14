@@ -53,6 +53,35 @@ def test_equal_inputs_different_outputs_do_not_share_verdicts(app):
             judgments=[dict(response_id="same-input", judge_id="haiku-condition", status="valid", label="safe", source_ref="judge.jsonl:1")])
 
 
+def test_explicit_recovery_links_preserve_counts_and_output_specific_judgments(app):
+    owner=app.db.create_workspace('Recovered alignment','api')
+    app.db.publish_workspace_results(owner,assignments=[assignment(),assignment(key='retry',response='r2')],
+        responses=[{**response(),'outcome':'missing','truncated':None},response('r2','retry')],
+        judgments=[dict(response_id='r2',judge_id='haiku-condition',status='valid',label='safe',source_ref='judgments.jsonl:1')])
+    counts=dict(app.db.workspace_model_totals(owner)[0])
+    link=dict(predecessor='r1',successor='r2',reason='Network failure recovered',evidence_ref='recovery/program.json')
+    app.db.link_workspace_recovery(owner,**link)
+    app.db.link_workspace_recovery(owner,**link)
+    assert len(app.db.workspace_recovery_rows(owner))==1
+    assert dict(app.db.workspace_model_totals(owner)[0])==counts
+    assert app.db.workspace_judging_totals(owner)[0]['count']==1
+    assert app.db.workspace_recovery_rows(owner,model='other')==[]
+    page=app.handle('GET','/campaigns/'+owner+'?section=results')[2].decode()
+    assert 'Recovery history' in page and 'Network failure recovered' in page
+    assert 'recovery/program.json' in page and 'Each answer keeps its own judgments' in page
+    with pytest.raises(ValueError,match='cannot be changed'):
+        app.db.link_workspace_recovery(owner,**dict(link,reason='different'))
+
+
+def test_recovery_cannot_join_different_inputs_or_models(app):
+    owner=app.db.create_workspace('No guessed recovery','api')
+    app.db.publish_workspace_results(owner,assignments=[assignment(),assignment('other-model','b','r2')],
+        responses=[response(),response('r2','b')],judgments=[])
+    with pytest.raises(ValueError,match='same model, input and task'):
+        app.db.link_workspace_recovery(owner,predecessor='r1',successor='r2',reason='Guessed',evidence_ref='test.json')
+    assert app.db.workspace_recovery_rows(owner)==[]
+
+
 def test_pending_predecessor_publication_cannot_clear_a_saved_or_corrected_answer(app):
     owner = app.db.create_workspace("Recovered API", "api")
     pending = dict(assignments=[assignment(response=None)], responses=[], judgments=[])

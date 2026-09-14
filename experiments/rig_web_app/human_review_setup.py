@@ -7,6 +7,34 @@ from pathlib import Path
 
 from .ui import _page
 
+ETHICS_CHOICES = {'pending': 'Not decided yet - prepare a sample only',
+    'approved': 'Approved by the responsible institution / supervisor',
+    'exempt': 'Exemption confirmed by the responsible institution',
+    'not_required': 'Formal review not required, as confirmed by the responsible institution'}
+COMPENSATION_CHOICES = {'unpaid': 'Voluntary, unpaid participation',
+    'paid': 'Paid participation', 'credit': 'Academic credit', 'other': 'Other agreed arrangement'}
+
+
+def select_field(name, label, choices):
+    return ("<label>"+html.escape(label)+"<select name='"+name+"' required><option value=''>Choose...</option>"
+        + ''.join("<option value='"+key+"'>"+html.escape(value)+"</option>" for key,value in choices.items())
+        + "</select></label>")
+
+
+def arrangements(data):
+    """Keep legacy submissions readable; new UI records explicit actual choices."""
+    result={k:data.get(k,'').strip() for k in ('ethics','compensation','stop_contact','consent')}
+    if 'ethics_status' in data:
+        status=data['ethics_status']
+        if status not in ETHICS_CHOICES: raise ValueError('Choose the actual ethics determination status')
+        if status!='pending' and not result['ethics']: raise ValueError('Record who made the determination and its date')
+        result.update(ethics_status=status,ethics=ETHICS_CHOICES[status]+(': '+result['ethics'] if result['ethics'] else ''))
+    if 'compensation_type' in data:
+        kind=data['compensation_type']
+        if kind not in COMPENSATION_CHOICES: raise ValueError('Choose the participation arrangement')
+        result.update(compensation_type=kind,compensation=COMPENSATION_CHOICES[kind]+': '+result['compensation'])
+    return result
+
 
 def sources(app, campaign):
     app.db.require_workspace(campaign)
@@ -53,10 +81,10 @@ def setup_body(app, campaign, field):
     choices = sources(app,campaign)
     options = "<option value=''>Choose saved results</option>"+''.join("<option value='"+escape(r['id'])+"'>"+escape(r['name'])+"</option>" for r in choices)
     hidden = "<input type='hidden' name='campaign_id' value='"+escape(campaign)+"'>"
-    body = "<section class='review-card'><h2>New human evaluation</h2><p>Use saved results from this campaign. Collection can already be finished. No model is rerun and no API credit is spent.</p><form method='post' action='/human-evaluation/prepare-study' data-study-wizard novalidate>"+hidden
+    body = "<section class='review-card'><h2>New human evaluation</h2><p>Use saved results from this campaign. Collection can already be finished. No model is rerun and no API credit is spent.</p><ol><li><strong>You, the study operator:</strong> choose saved answers, inspect the sample size and record participation arrangements.</li><li><strong>You:</strong> assign two independent raters and a separate adjudicator, then share each person's private review link.</li><li><strong>Each reviewer:</strong> read the prompt and answer, choose ratings in the guided review, then submit.</li></ol><p>This page sets up the study; it is not the rating form.</p><form method='post' action='/human-evaluation/prepare-study' data-study-wizard novalidate>"+hidden
     body += "<div class='review-steps' role='navigation' aria-label='Study setup steps'></div><section class='review-step' data-study-step='Saved results'><h2 tabindex='-1'>Choose the saved result set</h2><label>Saved results<select name='source' required>"+options+"</select></label><p class='review-help'>A result set may cover one run or a registered combined analysis. Its label describes the scope; choosing it does not imply every campaign output is eligible. Missing outputs remain in campaign statistics.</p></section>"
     body += "<section class='review-step' data-study-step='Sample'><h2 tabindex='-1'>Define the assessment sample</h2>"+field('name','Study name')+"<div class='review-grid'><label>Rubric<select name='mode'><option value='common'>Common safety dimensions</option><option value='source_task'>Source-task classification</option></select></label>"+field('clusters','Source clusters',0 if any(r.get('source_kind')=='campaign_index' for r in choices) else 20,'number')+"</div><p>For indexed campaign outputs, zero selects the smallest sample produced by the deterministic coverage procedure. For a registered result set, enter a positive count. Whole selected clusters stay together across models and conditions. The prepared sample shows the actual output count and two-rater workload before a study is created; a broad campaign can require substantial review.</p><details><summary>Media lookup for imported results</summary>"+field('media_index','Existing retained media index (optional)',required=False)+"<p>Leave blank to use the selected result set's registered index. This connects saved image identities to their existing local files; it does not download media.</p></details></section>"
-    body += "<section class='review-step' data-study-step='Arrangements'><h2 tabindex='-1'>Record the actual study arrangements</h2>"+field('ethics','Supervisor / institution determination and date')+field('compensation','Time, compensation and withdrawal terms')+field('stop_contact','Stop / escalation contact')+"<label>Consent and sensitive-content information<textarea name='consent' required></textarea></label><p>These fields record real decisions. They do not constitute institutional approval or replace consent from each reviewer.</p></section>"
+    body += "<section class='review-step' data-study-step='Arrangements'><h2 tabindex='-1'>Record the actual study arrangements</h2>"+select_field('ethics_status','Ethics determination',ETHICS_CHOICES)+field('ethics','Who made the determination, and when? (leave blank if not decided)',required=False)+"<p class='review-help'>Choose the decision actually received, not the one you expect. Not decided yet allows sample preparation and workload inspection, but not reviewer enrollment.</p>"+select_field('compensation_type','Participation arrangement',COMPENSATION_CHOICES)+field('compensation','Expected time, any payment / credit, and recorded-data withdrawal terms')+field('stop_contact','Contact person and email for questions or stopping participation')+"<label>Information shown before a reviewer consents<textarea name='consent' required placeholder='Explain the study purpose, sensitive content, voluntary participation, breaks, and how to withdraw.'></textarea></label><p>Only actual decisions and participation terms belong here. These choices do not grant institutional approval or constitute a reviewer's consent.</p></section>"
     body += "<section class='review-step' data-study-step='Review'><h2 tabindex='-1'>Review sample preparation</h2><div data-study-summary></div><label class='review-check'><input type='checkbox' name='acknowledge' value='1' required><span>I understand the sample contains potentially harmful content and will be shared only with the assigned reviewers.</span></label><p>Preparation runs in Jobs. You will inspect the workload before creating the study and assigning raters.</p></section><div class='review-wizard-footer'><button type='button' class='ghost' data-study-back>Back</button><button type='button' data-study-next>Next</button><button type='submit'>Prepare review sample</button></div></form></section>"
     drafts=app._human_store().preparations(campaign)
     if drafts:
@@ -79,7 +107,10 @@ def setup_route(app, method, path, data, style):
         indexed = source.get('source_kind')=='campaign_index'
         if data.get('mode') not in {'common','source_task'} or int(data.get('clusters','0')) < (0 if indexed else 1):
             raise ValueError('Choose a rubric and cluster count; zero selects minimum coverage for indexed campaigns')
-        if any(not data.get(k,'').strip() for k in ('name','ethics','compensation','stop_contact','consent')): raise ValueError('Complete the study name and actual review arrangements')
+        metadata=arrangements(data)
+        if not data.get('name','').strip() or any(not metadata[k] for k in ('ethics','compensation','stop_contact','consent')):
+            raise ValueError('Complete the study name and actual review arrangements')
+        if not data.get('compensation','').strip(): raise ValueError('Record participation time and withdrawal terms')
         directory=store.root/('preparation-'+secrets.token_hex(8));directory.mkdir(mode=0o700)
         params={'--results':source['results'],'--output':str(directory/'sample.csv'),'--acknowledge-sensitive-content':'1',
                 '--prepare-source-task' if data['mode']=='source_task' else '--prepare':data['clusters']}
@@ -92,7 +123,6 @@ def setup_route(app, method, path, data, style):
                 '--output':str(directory/'sample.csv'),'--mode':data['mode'],'--clusters':data['clusters'],
                 '--acknowledge-sensitive-content':'1',**({'--media-index':params['--media-index']} if '--media-index' in params else {})}
         job=app.start_job('human_review_campaign' if indexed else 'human_audit',params,campaign_id=owner)
-        metadata={k:data[k] for k in ('ethics','compensation','stop_contact','consent')}
         metadata.update({k:source.get(k,'') for k in ('results','historical_code_repository','judge_configuration_sha256','media_index')})
         if indexed:
             metadata.update(source_kind='campaign_index',snapshot=str(directory/'sample.SNAPSHOT.json.gz'))
@@ -111,14 +141,19 @@ def setup_route(app, method, path, data, style):
         else:
             state,exit_code=job['state'],job['exit_code']
         ready=state=='complete' and exit_code==0
+        pending_ethics=draft['value']['metadata'].get('ethics_status')=='pending'
         if method=='POST':
             if not ready:raise ValueError('Finish sample preparation before creating the study')
+            if pending_ethics:raise ValueError('Record the actual ethics determination before creating a study for reviewers')
             return 303,'/human-evaluation/'+store.create_prepared_study(key),b''
         body=style+"<div class='review-stack'><section class='review-card'><h1>"+html.escape(draft['value']['name'])+"</h1><p>Sample preparation: "+html.escape(state)+"</p><p><a href='/jobs/"+draft['job']+"'>Open preparation job</a> | <a href='/human-evaluation?campaign_id="+draft['campaign']+"'>Human evaluation</a></p>"
         if ready:
             with Path(draft['value']['prepared']).open(encoding='utf-8-sig',newline='') as f:rows=list(csv.DictReader(f))
             count=len({r['sample_key'] for r in rows});clusters=len({r.get('cluster_key',r['sample_key']) for r in rows})
-            body+=f"<h2>Check the review workload</h2><p>{clusters:,} source clusters, {count:,} saved outputs, {2*count:,} required independent ratings, plus any adjudication.</p><p>No human ratings have been created by preparation.</p><form method='post'><button>Create study and assign reviewers</button></form>"
+            body+=f"<h2>Check the review workload</h2><p>{clusters:,} source clusters, {count:,} saved outputs, {2*count:,} required independent ratings, plus any adjudication.</p><p>No human ratings have been created by preparation.</p>"
+            if pending_ethics:
+                body+="<p>Ethics determination is not decided yet. You can inspect this sample, but cannot invite reviewers. Return to study setup when the actual determination is available.</p>"
+            else:body+="<form method='post'><button>Create study and assign reviewers</button></form>"
             frame_path=Path(draft['value']['prepared']).with_suffix('.FRAME.json')
             if frame_path.is_file():
                 frame=json.loads(frame_path.read_text(encoding='utf-8'))
