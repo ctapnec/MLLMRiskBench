@@ -62,7 +62,7 @@ h2 .ic { color:var(--muted); }
 .campaign-field.separated-field { margin-top:1rem; }
 .haiku-judging-controls { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1rem; margin:1rem 0; }
 .judging-funding-summary { display:grid; grid-template-columns:repeat(auto-fit,minmax(14rem,1fr)); gap:1rem; margin:1.5rem 0; }
-.judging-funding-summary>div { background:#fff; border:1px solid var(--line); border-radius:.65rem; padding:1rem; }
+.judging-funding-summary>div { background:var(--card); border:1px solid var(--line); border-radius:.65rem; padding:1rem; }
 .judging-funding-summary dt { color:var(--muted); }
 .judging-funding-summary dd { margin:.5rem 0 0; font-size:1.6rem; font-weight:700; }
 .judging-inventory-table { width:100%; }
@@ -86,6 +86,10 @@ h2 .ic { color:var(--muted); }
 .campaign-result-filters form { display:flex; flex-wrap:wrap; gap:.75rem; align-items:flex-end; margin:0; }
 .campaign-result-filters .campaign-field { flex:1 1 20rem; max-width:48rem; }
 .campaign-result-filters button { margin:0; min-height:2.65rem; }
+.comparison-condition { min-width:0; overflow-wrap:anywhere; margin:0; padding:1rem;
+  border:1px solid var(--line); border-radius:10px; }
+.comparison-condition legend { padding:0 .4rem; font-weight:600; }
+.comparison-condition .campaign-field + .campaign-field { margin-top:1rem; }
 .campaign-ownership > .note { margin:0; line-height:1.55; }
 .campaign-create-card { max-width:44rem; padding:1.5rem; margin:1.5rem 0; }
 .campaign-create-form { display:grid; gap:1.5rem; margin:0; }
@@ -194,7 +198,7 @@ form.cmd { display:grid; grid-template-columns:minmax(200px,260px) minmax(0,1fr)
   gap:.4rem .8rem; align-items:center; }
 form.cmd > .campaign-ownership, form.cmd > .notice { grid-column:1 / -1; }
 form.cmd > label, form.cmd > .fieldwrap { min-width:0; overflow-wrap:anywhere; }
-form.cmd > button { margin-top:.6rem; }
+form.cmd > button { margin-top:.75rem; justify-self:start; }
 form.cmd label { color:var(--muted); font-size:.84rem; }
 .req { color:#c0392b; font-weight:700; }
 form.cmd label .kind { color:var(--muted); opacity:.7; font-size:.75rem; }
@@ -327,8 +331,8 @@ details.stagefiles li { margin:.12rem 0; overflow-wrap:anywhere; }
   color-mix(in srgb, var(--accent) 45%, transparent);
   border-color:var(--accent); }
 .fieldwrap { display:flex; flex-direction:column; gap:.15rem; }
-.repeat-fields { display:flex; flex-direction:column; gap:.5rem; min-width:0; }
-.repeat-row { display:flex; align-items:center; gap:.5rem; min-width:0; }
+.repeat-fields { display:flex; flex-direction:column; gap:.75rem; min-width:0; }
+.repeat-row { display:flex; align-items:center; gap:.75rem; min-width:0; }
 .repeat-row input, .repeat-row select, .repeat-row textarea { flex:1; min-width:0; }
 .repeat-row button { flex:none; }
 .repeat-fields > button { align-self:flex-start; }
@@ -405,6 +409,10 @@ button.ghost { background:transparent; color:var(--accent);
   border-radius:10px; }
 .targetfilters > * { min-width:0; max-width:100%; }
 .targetfilters .fieldlabel { margin:0 0 .25rem; }
+.targetfilters input[type=text] { width:100%; min-width:0; padding:.55rem .7rem;
+  font:inherit; font-size:.86rem; border:1px solid var(--line); border-radius:8px;
+  background:var(--bg); color:var(--ink); }
+.targetfilters input[type=text]:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
 .targetfilters input[type=range] { width:100%; min-width:0; accent-color:var(--accent); }
 .paramfilter { display:grid; grid-template-columns:minmax(0,1fr) minmax(5.5rem,7rem);
   gap:.55rem; align-items:center; min-width:0; max-width:100%; }
@@ -582,7 +590,7 @@ body.model-picker-open { overflow:hidden; }
   padding:.65rem; }
 .workflow-panel details summary { cursor:pointer; font-weight:600; }
 .workflow-panel details[open] summary { margin-bottom:.75rem; }
-.workflow-actions { display:flex; align-items:center; flex-wrap:wrap; gap:.65rem;
+.workflow-actions { display:flex; align-items:center; flex-wrap:wrap; gap:.75rem;
   margin:0; }
 .sample-size-control { display:grid; gap:.7rem; margin:0 0 1rem;
   padding:.85rem; background:var(--soft); border:1px solid var(--line);

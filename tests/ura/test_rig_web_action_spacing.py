@@ -254,6 +254,10 @@ def test_tools_submit_is_separated_from_last_control(browser, study, width):
           return button.getBoundingClientRect().top-previous.getBoundingClientRect().bottom;
         }""")
         assert gap >= 16
+        rows = page.locator('.repeat-row')
+        assert rows.count()
+        for row in rows.all():
+            assert row.evaluate('row=>getComputedStyle(row).gap') == '12px'
         assert not calls
         assert not page.evaluate('document.documentElement.scrollWidth>innerWidth')
     finally:
@@ -272,5 +276,82 @@ def test_human_setup_footer_keeps_action_spacing_on_mobile(browser, study, width
         assert footer.evaluate('row=>getComputedStyle(row).gap') == '12px'
         assert not calls
         assert not page.evaluate('document.documentElement.scrollWidth>innerWidth')
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize('width', [390, 768, 1440])
+def test_comparison_conditions_have_spaced_fields(browser, study, width):
+    from experiments.rig_web_app.workspace_comparison import comparison_page
+    app, params, calls, _ = study
+    page = browser.new_page(viewport={'width':width, 'height':1000})
+    try:
+        render(page, ui._page('Compare', comparison_page(app.db, params['campaign_id'], {})))
+        fields = page.locator('.comparison-condition')
+        assert fields.count() == 2
+        for fieldset in fields.all():
+            assert fieldset.evaluate('e=>getComputedStyle(e).padding') == '16px'
+            boxes = [field.bounding_box() for field in fieldset.locator('.campaign-field').all()]
+            assert all(b['y']-a['y']-a['height'] >= 16 for a,b in zip(boxes, boxes[1:]))
+        assert not page.evaluate('document.documentElement.scrollWidth>innerWidth')
+        assert not calls
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize('width', [390, 1440])
+@pytest.mark.parametrize('scheme', ['light', 'dark'])
+def test_provider_key_editor_has_padded_fields_and_action_gaps(browser, study, monkeypatch, width, scheme):
+    app, _, calls, _ = study
+    monkeypatch.setattr(app, 'secret_status', lambda: [dict(name='GEMINI_API_KEY', label='Google', funded=True, present=True, hint='synthetic configured state')])
+    page = browser.new_page(viewport={'width':width, 'height':1000}, color_scheme=scheme)
+    try:
+        render(page, app._secrets_page())
+        page.locator('.provider-key-editor summary').click()
+        row = page.locator('.provider-key-input-row')
+        assert row.evaluate('e=>getComputedStyle(e).gap') == '12px'
+        field = row.locator('input')
+        assert field.evaluate('e=>parseFloat(getComputedStyle(e).paddingLeft)') >= 12
+        assert field.evaluate('e=>getComputedStyle(e).backgroundColor') == page.locator('body').evaluate('e=>getComputedStyle(e).backgroundColor')
+        assert field.input_value() == ''
+        clear = page.locator('.provider-key-clear')
+        a, b = row.bounding_box(), clear.bounding_box()
+        assert b['y']-a['y']-a['height'] >= 16
+        assert clear.locator('[name=action]').input_value() == 'clear'
+        assert not page.evaluate('document.documentElement.scrollWidth>innerWidth')
+        assert not calls
+    finally:
+        page.close()
+
+
+def test_judging_funding_cards_follow_dark_palette(browser):
+    page = browser.new_page(color_scheme='dark')
+    try:
+        panel = builder_judging_inventory.judging_inventory_panel(dict(retained_inventory_job='coverage', retained_inventory_items_job='funding'))
+        # Funding cards are conditional; the shared CSS must also cover that state.
+        render(page, ui._page('Judging', panel+"<dl class='judging-funding-summary'><div><dt>Budget</dt><dd>0</dd></div></dl><section class='card'>Reference</section>"))
+        assert page.locator('.judging-funding-summary>div').last.evaluate('e=>getComputedStyle(e).backgroundColor') == page.locator('.card').last.evaluate('e=>getComputedStyle(e).backgroundColor')
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize('width', [390, 1440])
+def test_model_search_and_framework_action_spacing(browser, study, width):
+    app, _, calls, _ = study
+    page = browser.new_page(viewport={'width':width, 'height':1000})
+    try:
+        render(page, app._build_page())
+        page.locator('#build-pipeline-tab').click()
+        page.locator('[data-open-model-picker=target]').click()
+        page.locator('[data-picker-kind=local]').click()
+        search = page.locator('.picker-model-panel[data-picker-panel=local] .targetfilters input[type=text]')
+        assert search.count()
+        for field in search.all():
+            assert field.evaluate('e=>parseFloat(getComputedStyle(e).paddingLeft)') >= 10
+        page.locator('[data-close-model-picker]:visible').first.click()
+        for row in page.locator('.workflow-actions').all():
+            assert row.evaluate('e=>getComputedStyle(e).gap') == '12px'
+        assert not page.evaluate('document.documentElement.scrollWidth>innerWidth')
+        assert not calls
     finally:
         page.close()

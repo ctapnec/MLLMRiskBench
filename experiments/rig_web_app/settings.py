@@ -370,7 +370,7 @@ class SettingsMixin:
             tone = "green" if row["present"] else ("gray" if not row["funded"] else "amber")
             state = html.escape(row["hint"])
             clear = (
-                "<form class='inline' method='post' action='/config/secrets'>"
+                "<form class='action-row provider-key-clear' method='post' action='/config/secrets'>"
                 f"<input type='hidden' name='name' value='{html.escape(row['name'])}'>"
                 "<input type='hidden' name='action' value='clear'>"
                 "<button type='submit' class='danger small'>Clear</button></form>"
@@ -434,7 +434,11 @@ class SettingsMixin:
             ".provider-key-card{min-width:0;margin:0}.provider-key-heading{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px}"
             ".provider-key-heading h3{margin:0}.provider-key-variable{display:block;overflow-wrap:anywhere;margin:12px 0}"
             ".provider-key-editor summary{cursor:pointer}.provider-key-editor form{margin-top:12px}.provider-key-editor label{display:block;margin-bottom:6px}"
-            ".provider-key-input-row{display:flex;flex-wrap:wrap;gap:8px}.provider-key-input-row input{min-width:0;flex:1 1 180px;width:auto}"
+            ".provider-key-input-row{display:flex;flex-wrap:wrap;gap:12px;align-items:center}"
+            ".provider-key-input-row input{min-width:0;flex:1 1 180px;width:auto;font:inherit;min-height:2.65rem;"
+            "padding:.65rem .8rem;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)}"
+            ".provider-key-input-row input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}"
+            ".provider-key-editor form.provider-key-clear{margin-top:16px}"
             ".provider-key-input-row button{flex:0 0 auto}.provider-key-section{margin:24px 0}</style>"
             + "".join("<section class='provider-key-section'><h2>" + heading + "</h2><div class='provider-key-grid'>"
                       + "".join(cards) + "</div></section>" for heading, cards in groups.items())

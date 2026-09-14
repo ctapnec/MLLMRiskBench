@@ -125,7 +125,7 @@ def comparison_page(db, campaign, query):
     owners = {row["campaign_id"]: row["name"] for row in campaigns}
     form = "<form method='get' action='" + base + "'><input type='hidden' name='section' value='compare'><div class='cols'>"
     for side, owner in (("left", campaign), ("right", query.get("right_campaign", ""))):
-        form += "<fieldset style='min-width:0;overflow-wrap:anywhere'><legend>" + side.title() + " condition</legend>"
+        form += "<fieldset class='comparison-condition'><legend>" + side.title() + " condition</legend>"
         if side == "right":
             form += _select("right_campaign", "Campaign", list(owners.items()), owner)
         else:
