@@ -15,6 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Mapping
 from urllib.parse import quote, urlencode
+from uuid import uuid4
 
 from ura.strict_json import strict_json_loads
 from .command_forms import REPEAT_FIELDS_SCRIPT
@@ -1722,7 +1723,7 @@ class PagesMixin:
         if not values.get('--out'):
             return ''
         values['--resume-from'] = values['--out']
-        values['--out'] = ''
+        values['--out'] = str(Path(values['--out']).parent/uuid4().hex)
         values.update(cmd=job.command, campaign_id=self.db.workspace_for_job(job.job_id))
         href = '/commands?' + urlencode(values)
         return ("<section class='card'><h2>Continue collection</h2>"
@@ -1731,7 +1732,7 @@ class PagesMixin:
             "the original execution revision in a separate source-only checkout. Do not change the saved revision. "
             "Spending stops and HTTP retry limits remain active.</p>"
             "<p><a class='button' href='" + html.escape(href, quote=True) + "'>Review continuation</a></p>"
-            "<p class='note'>Choose a fresh output directory for the continuation record. "
+            "<p class='note'>A fresh output directory is filled in for the continuation record. "
             "Opening this form makes no calls and does not regenerate answers.</p></section>")
 
     def _job_page(self, job: Job) -> bytes:

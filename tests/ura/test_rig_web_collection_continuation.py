@@ -42,7 +42,9 @@ def test_collection_action_preserves_all_programs_and_current_owner(tmp_path):
     query = parse_qs(urlsplit(link).query, keep_blank_values=True)
     assert query['campaign_id'] == ['existing-campaign']
     assert query['--resume-from'] == ['/collection/old']
-    assert query['--out'] == ['']
+    assert query['--out'][0].startswith('/collection/')
+    assert query['--out'][0] != '/collection/old'
+    assert 'original execution revision' in page
     for key, value in values.items():
         if key != '--out':
             assert query[key] == [value]

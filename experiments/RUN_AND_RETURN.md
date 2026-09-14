@@ -7245,6 +7245,19 @@ paths automatically for both native judging and the later Haiku output view.
 Starting, stopping or resuming collection does not replace the selected inputs.
 Already attested programs still work without `--prepare-runtime`.
 
+When the deployed checkout has advanced, an initialized continuation keeps its
+saved `--expected-commit` and logical `--project-root`. The collector creates or
+reuses a clean detached Git worktree under the repository's Git metadata and
+runs the admitted jobs with that original Runner in a separate process. It
+records the actual execution checkout in the successor selection. The runtime
+manifest, funded requests and original checkpoint paths do not change. The
+current console and controller remain on the deployed version. Fresh collection
+cannot silently fall back to an older revision, and dirty checkouts are rejected.
+No model copy, runtime installation or full model checksum scan is involved.
+The worker is tied to its dispatch owner's lifetime on Linux to avoid leaving an
+orphan after Stop or controller termination. Build and the failed job's Review
+continuation action supply these saved settings without manual revision edits.
+
 Completed local jobs can reopen their receipt-bearing configuration from the
 job's **Review this exact lane** action. The console uses the small receipt
 snapshots retained with the matching preparation, including for standalone

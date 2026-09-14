@@ -13,7 +13,7 @@ def git(repo, *argv):
     return subprocess.check_output(['git', '-C', str(repo), *argv], text=True).strip()
 
 
-def repository(tmp_path):
+def repository(tmp_path, worker_body=None):
     repo = tmp_path/'repo'
     repo.mkdir()
     git(repo, 'init', '-q')
@@ -27,14 +27,14 @@ def repository(tmp_path):
     (repo/'experiments/hosted_retained_execute.py').write_text(
         'import re, subprocess\nfrom pathlib import Path\n_HEX40 = re.compile(r"[0-9a-f]{40}")\n'
         +inspect.getsource(_validated_checkout))
-    (repo/'experiments/hosted_dispatch.py').write_text(
+    (repo/'experiments/hosted_dispatch.py').write_text(worker_body or (
         'import json\nfrom pathlib import Path\n'
         'def run_admission(admission, *, responses_only):\n'
         '    assert responses_only is True\n'
         '    assert Path(__file__).parents[1] == Path(admission.execution_checkout)\n'
         '    assert json.loads(Path(admission.checkpoint).read_text()) == admission.saved_response\n'
         '    assert admission.requests == {"input": {"call_id": "already-paid"}}\n'
-        '    return admission.job["output"]\n')
+        '    return admission.job["output"]\n'))
     git(repo, 'add', '.')
     git(repo, 'commit', '-qm', 'original')
     original = git(repo, 'rev-parse', 'HEAD')
@@ -103,3 +103,50 @@ def test_incomplete_runtime_is_not_reprepared_after_paid_start(tmp_path):
     with pytest.raises(ValueError, match='original runtime preparation is incomplete'):
         subject.execution_checkout(repo, original, previous)
     assert not (repo/'.git/ura-continuations').exists()
+
+
+def test_killed_dispatch_owner_does_not_leave_pinned_runner(tmp_path):
+    import os
+    import pickle
+    import signal
+    import sys
+    import time
+    if sys.platform != 'linux':
+        pytest.skip('Linux parent-death process ownership')
+    repo, original, previous = repository(tmp_path, worker_body=(
+        'import os,time\nfrom pathlib import Path\n'
+        'def run_admission(admission, **kwargs):\n'
+        '    Path(admission.marker).write_text(str(os.getpid()))\n'
+        '    time.sleep(30)\n'))
+    checkout = subject.execution_checkout(repo, original, previous)
+    marker = tmp_path/'child-pid'
+    admission = SimpleNamespace(execution_checkout=str(checkout),execution_commit=original,marker=str(marker))
+    launcher = subprocess.Popen([sys.executable,'-c',
+        'import sys,pickle; from experiments.hosted_execution_checkout import run_pinned_admission; '
+        'run_pinned_admission(pickle.load(sys.stdin.buffer),responses_only=True)'],stdin=subprocess.PIPE)
+    child = None
+    def active(pid):
+        try:
+            return Path(f'/proc/{pid}/stat').read_text().rsplit(')',1)[1].split()[0] != 'Z'
+        except FileNotFoundError:
+            return False
+    try:
+        launcher.stdin.write(pickle.dumps(admission))
+        launcher.stdin.close()
+        end = time.monotonic()+10
+        while not marker.exists() and launcher.poll() is None and time.monotonic()<end:
+            time.sleep(.05)
+        assert marker.exists(), 'Pinned worker did not start'
+        child = int(marker.read_text())
+        launcher.kill()
+        launcher.wait(timeout=5)
+        end = time.monotonic()+5
+        while active(child) and time.monotonic()<end:
+            time.sleep(.05)
+        assert not active(child), 'Pinned Runner survived its terminated dispatch owner'
+    finally:
+        if launcher.poll() is None:
+            launcher.kill()
+        launcher.wait(timeout=5)
+        if child and active(child):
+            os.kill(child, signal.SIGKILL)

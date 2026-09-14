@@ -84,6 +84,20 @@ automatically repeats model calls. Saved outputs remain available for review.
 Older hosted collections can recover their terminal state from their retained
 collection result, including **failed** collections that need continuation.
 
+To resume a failed hosted collection, open its job and select **Review
+continuation**, then **Start job**. A fresh continuation output directory is
+filled in automatically. Keep the supplied programs, budget and revision.
+Alternatively, reopen the saved campaign in Build, select **Review prepared
+collection**, then **Continue saved collection**. Both routes reuse completed
+responses and spending records; do not repeat input or runtime preparation.
+
+If the console was updated since collection began, the continuation automatically
+uses a separate checkout of the original execution revision. The live console
+stays on its current version. Only source files are retained in this checkout;
+models and virtual environments are neither copied nor reinstalled. Existing
+request, checkpoint and transport checks remain active. This preserves the old
+execution conditions; it does not silently apply newer adapter changes.
+
 Deployment must not change a checkout while jobs use it. Linux console jobs
 retain a lightweight shared checkout lock, and `distro/repin.sh` declines an
 in-place deployment while that lock is held. This does not hash models, scan
