@@ -409,10 +409,10 @@ button.ghost { background:transparent; color:var(--accent);
   border-radius:10px; }
 .targetfilters > * { min-width:0; max-width:100%; }
 .targetfilters .fieldlabel { margin:0 0 .25rem; }
-.targetfilters input[type=text] { width:100%; min-width:0; padding:.55rem .7rem;
+.targetfilters input[type=search] { width:100%; min-width:0; padding:.55rem .7rem;
   font:inherit; font-size:.86rem; border:1px solid var(--line); border-radius:8px;
   background:var(--bg); color:var(--ink); }
-.targetfilters input[type=text]:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.targetfilters input[type=search]:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
 .targetfilters input[type=range] { width:100%; min-width:0; accent-color:var(--accent); }
 .paramfilter { display:grid; grid-template-columns:minmax(0,1fr) minmax(5.5rem,7rem);
   gap:.55rem; align-items:center; min-width:0; max-width:100%; }

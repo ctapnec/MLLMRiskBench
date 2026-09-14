@@ -347,7 +347,7 @@ def test_model_search_and_framework_action_spacing(browser, tmp_path, monkeypatc
         page.locator('#build-pipeline-tab').click()
         page.locator('[data-open-model-picker=target]').click()
         page.locator('[data-picker-kind=local]').click()
-        search = page.locator('.picker-model-panel[data-picker-panel=local] .targetfilters input[type=text]')
+        search = page.locator('.picker-model-panel[data-picker-panel=local] .targetfilters input[type=search]')
         assert search.count()
         for field in search.all():
             assert field.evaluate('e=>parseFloat(getComputedStyle(e).paddingLeft)') >= 10
