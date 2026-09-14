@@ -76,6 +76,22 @@ inputs, settle unknown per-attempt charges or increase the existing ceilings.
 The remaining Anthropic purse is shared between all Anthropic uses; it is not
 an additional judging-only balance.
 
+### Later purse observation - 14 September, 00:24 UTC
+
+This additional operator report preserves both preceding observations. It does
+not add credit, settle unknown charges or change the running collection and
+output-specific judging allocations. Differences are account-level changes,
+not necessarily charges attributable only to this campaign.
+
+| Provider | Previous purse (USD) | Updated purse (USD) | Decrease (USD) |
+| --- | ---: | ---: | ---: |
+| Anthropic, targets and Haiku combined | 15.15 | 15.04 | 0.11 |
+| OpenAI | 4.17 | 3.50 | 0.67 |
+| Google | 8.03 | 7.96 | 0.07 |
+| Kimi | 1.45 | 1.45 | 0.00 |
+| DeepSeek | 2.68 | 2.68 | 0.00 |
+| Total | 31.48 | 30.63 | 0.85 |
+
 ### Selected supplement
 
 Input-only selection and request counting identified the following additions.

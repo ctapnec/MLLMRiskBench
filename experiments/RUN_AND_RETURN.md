@@ -5802,6 +5802,24 @@ returning the envelope alone is not.
 
 *Console equivalent: this section's commands are also launchable as the `human_audit` form(s) in the rig console (section 18); identical argument vectors, gates and artifacts.*
 
+For an imported local or hosted campaign, open **Campaigns -> the saved campaign
+-> Human evaluation -> All indexed measured campaign outputs**. The wizard
+prepares a frozen whole-cluster sample from the campaign's selected saved
+answers and their output-specific post-hoc judgments; it does not require a
+successful original generation grid. Choose the common or source-task rubric.
+Zero clusters requests minimum deterministic coverage, then the next page
+shows the actual two-rater workload before study creation. Historical conditions
+remain distinct; this is not a population-representative sample. Missing
+outputs, unavailable source context and unsupported rubrics remain accounted.
+See `docs/HUMAN_REVIEW_UI.md` for the identical `human_review_campaign` CLI,
+arrangements, individual reviewer flow and saved-sample analysis. This report
+does not automatically satisfy Gate 8 or substitute for actual human raters.
+
+Retained hosted request bindings also locate attacker-added images. If an older
+local capture stripped its physical locators, supply the existing retained
+media index in the wizard. Preparation restores only the selected mappings;
+it neither downloads images nor searches and hashes the entire media store.
+
 Sample preparation also writes a `.MEDIA.json` lookup and `.MEDIA-REPORT.json`
 beside the CSV. It resolves the selected media from recorded source locations,
 without changing the CSV, downloading assets or hashing model weights. Supply

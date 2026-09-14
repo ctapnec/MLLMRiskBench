@@ -3,8 +3,11 @@
 Status: the setup and rating wizards are deployed on the production console.
 Focused rig tests and isolated desktop/mobile browser checks pass. Real saved
 local responses and indexed images have also been displayed successfully.
-Full local/API result-set acceptance remains incomplete: imported campaign
-inventories still need connection to the setup selector and audit analysis.
+The indexed-campaign selector, preparation and saved-sample analysis now have
+focused rig acceptance. The real browser flow prepared 8,059 API outputs,
+registered the sample in an isolated database and displayed saved media on
+desktop and mobile. No production study or human verdict was created. These
+latest connection fixes are awaiting the console-only deployment.
 The checked 167-output historical image sample now resolves all 167 references
 through the recorded source locations. The automatic media preparation and
 source-task format fixes have focused rig verification and are deployed.
