@@ -336,8 +336,11 @@ def test_judging_funding_cards_follow_dark_palette(browser):
 
 
 @pytest.mark.parametrize('width', [390, 1440])
-def test_model_search_and_framework_action_spacing(browser, study, width):
-    app, _, calls, _ = study
+def test_model_search_and_framework_action_spacing(browser, tmp_path, monkeypatch, width):
+    from test_rig_web_model_picker import _repo_app
+    app = _repo_app(tmp_path)
+    calls = []
+    monkeypatch.setattr(app, 'start_job', lambda *a, **kw: calls.append((a,kw)))
     page = browser.new_page(viewport={'width':width, 'height':1000})
     try:
         render(page, app._build_page())
@@ -355,3 +358,4 @@ def test_model_search_and_framework_action_spacing(browser, study, width):
         assert not calls
     finally:
         page.close()
+        app.close()

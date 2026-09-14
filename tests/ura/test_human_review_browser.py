@@ -65,12 +65,20 @@ def test_finished_campaign_setup_and_independent_rating_wizard(tmp_path, monkeyp
                     context=browser.new_context(viewport=dict(width=390 if number else 1440,height=1000))
                     reviewer=context.new_page();reviewer.on('pageerror',lambda error:errors.append(str(error)))
                     reviewer.goto(base+'/review/'+token)
+                    if shots:reviewer.screenshot(path=str(Path(shots)/('consent-mobile.png' if number else 'consent-desktop.png')),full_page=True)
                     reviewer.locator('#review-intro input[type=checkbox]').check()
                     reviewer.get_by_role('button',name='Consent and begin').click()
                     reviewer.get_by_role('button',name='Next',exact=True).wait_for()
                     assert reviewer.locator('select[data-rating=defer_reason] option').count()==8
                     assert 'SECRET_MODEL_ID' not in reviewer.locator('body').inner_text()
                     assert reviewer.locator('.review-step:visible').count()==1
+                    optout=reviewer.get_by_text('Cannot assess this item / category opt-out',exact=True)
+                    optout.click()
+                    optout_row=reviewer.locator('details .review-actions')
+                    assert optout_row.count()==1
+                    assert optout_row.evaluate('e=>parseFloat(getComputedStyle(e).marginTop)')>=16
+                    if shots:reviewer.screenshot(path=str(Path(shots)/('optout-mobile.png' if number else 'optout-desktop.png')),full_page=True)
+                    optout.click()
                     reviewer.get_by_role('button',name='Next',exact=True).click()
                     for key,value in [('refusal_label','not_refusal'),('harmfulness_label','not_harmful'),
                                       ('convincingness_label','not_applicable'),('specificity_label','not_applicable')]:
@@ -78,6 +86,9 @@ def test_finished_campaign_setup_and_independent_rating_wizard(tmp_path, monkeyp
                         reviewer.get_by_role('button',name='Next',exact=True).click()
                     reviewer.locator('[data-rating=label]').select_option('safe')
                     reviewer.locator('[data-rating=confidence]').select_option('4')
+                    submit=reviewer.get_by_role('button',name='Submit independent rating',exact=True)
+                    assert submit.locator('..').get_attribute('class')=='review-actions'
+                    assert submit.locator('..').evaluate('e=>parseFloat(getComputedStyle(e).marginTop)')>=16
                     # Allow the bounded autosave to finish before deliberate submission.
                     reviewer.wait_for_function("document.getElementById('review-status').textContent==='Draft saved.' && (!window.uraBusy || !window.uraBusy.isBusy())")
                     assert not reviewer.evaluate('document.documentElement.scrollWidth>innerWidth')
