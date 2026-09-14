@@ -73,7 +73,8 @@ def prepare_native_judging(app, params):
 def scoring_description(source):
     stages = source['judge_cascade']['stages']
     guard = stages[1]
-    return (f"Rules, then {guard['model_id']} on {guard['device']}; "
+    device = guard.get('device') or 'automatic GPU placement'
+    return (f"Rules, then {guard['model_id']} on {device}; "
         f"classifier output allowance {guard['max_new_tokens']:,} tokens")
 
 

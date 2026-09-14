@@ -2,6 +2,7 @@
 import copy
 import hashlib
 import json
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -254,8 +255,10 @@ def test_ui_cli_and_environment_have_judging_role_without_provider_keys(tmp_path
     assert subject.main(argv[argv.index("experiments.retained_native_judge_execute")+1:]) == 0
     assert seen[0]["workspace_id"] == "selected" and seen[0]["console_db"] == tmp_path/"console.db"
     assert activity_role("retained_native_judge_execute") == "judging"
-    fake = SimpleNamespace(_MATRIX_BASE_ENV={"PATH"}, _MATRIX_OPTIONAL_ENV={"URA_MEDIA_ROOTS"}, _MATRIX_RECEIPT_ENV=set(),
+    fake = SimpleNamespace(repo_root=tmp_path,_MATRIX_BASE_ENV={"PATH"}, _MATRIX_OPTIONAL_ENV={"URA_MEDIA_ROOTS"}, _MATRIX_RECEIPT_ENV=set(),
         _strict_config_document=lambda *a:dict(units=[dict(runner_argv=["--api", "openai:example", "--source-config", "source.json", "--corpora", "sample"])]),
         _declared_matrix_environment=lambda values: {"SOURCE_ROOT"} if set(values) == {"--source-config", "--corpora"} else pytest.fail("unneeded environment"),
-        _selected_child_environment=lambda names:names)
-    assert LifecycleMixin._generic_child_environment(fake, "retained_native_judge_execute", values) == {"PATH", "URA_MEDIA_ROOTS", "SOURCE_ROOT"}
+        _selected_child_environment=lambda names:dict.fromkeys(names,'test-value'))
+    child=LifecycleMixin._generic_child_environment(fake, "retained_native_judge_execute", values)
+    assert set(child) == {"PATH", "URA_MEDIA_ROOTS", "SOURCE_ROOT","PYTHONPATH"}
+    assert child['PYTHONPATH']==os.pathsep.join((str(tmp_path),str(tmp_path/'src')))

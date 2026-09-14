@@ -968,11 +968,7 @@ def test_guardrail_does_not_settle_over_refusal_on_a_benign_probe() -> None:
     rate toward zero for every benign refusal the rules bank did not match.
     """
 
-    guard = GuardrailJudge.__new__(GuardrailJudge)   # no weights are loaded
-    guard.name = "guardrail"
-    guard.model_id = "meta-llama/Llama-Guard-3-8B"
-    guard.revision = "a" * 40
-    guard.escalate_below = 0.75
+    guard = GuardrailJudge(revision="a" * 40)  # construction does not load weights
 
     safe_verdict = guard._make_judgment(
         "safe", attempt_id="attempt", subject="assistant_response"
