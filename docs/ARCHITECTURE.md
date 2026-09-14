@@ -969,9 +969,12 @@ explicitly selected response references and judgments keyed to distinct outputs.
 Stats provides paginated model coverage, quality flags and vector/table exports;
 diagnostic and measured evidence remain separate. Rendering these pages does not
 scan corpora or reconstruct historical results. Original outputs, generation
-conditions and verdicts remain filesystem artifacts. Historical import, complete
-cost attribution and matched-comparison publication remain in progress; this
-extension is not yet deployed.
+conditions and verdicts remain filesystem artifacts. The deployed workspaces
+include the retained local and hosted campaigns, output-specific judging,
+operational costs and matched-input comparisons. Historical execution counts
+remain distinct from explicitly selected scientific analysis populations.
+Recovery links annotate saved predecessor and successor outputs without
+rewriting either answer, changing costs or inheriting a predecessor's verdict.
 
 Precalculated hosted execution uses one campaign-wide spending ceiling, not
 successive batch allowances. Existing execution ledgers contribute reported

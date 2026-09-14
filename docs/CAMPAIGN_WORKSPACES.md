@@ -1374,6 +1374,31 @@ tests, the removed-fix control and real saved-data publication pass on the rig.
 
 ## Inspecting completed analyses
 
+### Explicit recovery links
+
+`ConsoleDB.link_workspace_recovery` records a declared predecessor/successor
+pair with its reason and retained evidence reference. Both outputs must already
+exist in the same campaign and belong to the same model, input, modality,
+framework, corpus and evidence class. Generation conditions may differ; the
+method never changes them. Repeating the same publication is idempotent, while
+changing a retained link is rejected. This is a compact indexed relationship,
+not a scan of historical files or a search for the newest successful answer.
+
+Results renders these pairs in **Recovery history**, with working links to the
+original output, the successor and the recovery evidence. Model and condition
+filters apply to this display. Historical assignment counts and physical costs
+still include both executions. Judgments remain attached to their own output
+identities. Use an explicitly defined analysis selection when a comparison
+requires one answer per condition; a recovery annotation does not silently
+change that denominator. The three alignment transport recoveries are published
+this way; no target or judge request was repeated to connect their records.
+
+For a first-time manual campaign, use the
+[small API campaign instructions](SMALL_API_CAMPAIGN.md), including the return
+from Save campaign's Definition page to Configure in Build.
+
+### Saved analysis reports
+
 Analyses can be attached to either campaign through Tools without generating
 new model answers. Select the owning campaign, the analysis command and its
 exact retained inputs. For completed historical results, use the offered
