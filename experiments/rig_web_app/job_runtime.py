@@ -30,7 +30,10 @@ def alive(identity: dict | None) -> bool:
 
 def read_state(directory: Path) -> dict | None:
     try:
-        value = json.loads((directory / STATE_FILE).read_text())
+        path = directory / STATE_FILE
+        if not path.exists():
+            path = directory / "execution-start.json"
+        value = json.loads(path.read_text())
         if value.get("job_id") == directory.name and value.get("state") in {"running", "complete", "failed"}:
             return value
     except (OSError, ValueError, TypeError, AttributeError):
@@ -38,14 +41,14 @@ def read_state(directory: Path) -> dict | None:
     return None
 
 
-def write_state(directory: Path, value: dict) -> None:
-    temporary = directory / (STATE_FILE + ".tmp")
+def write_state(directory: Path, value: dict, name: str = STATE_FILE) -> None:
+    temporary = directory / (name + ".tmp")
     with temporary.open("w", encoding="utf-8") as stream:
         os.chmod(temporary, 0o600)
         json.dump(value, stream)
         stream.flush()
         os.fsync(stream.fileno())
-    os.replace(temporary, directory / STATE_FILE)
+    os.replace(temporary, directory / name)
 
 
 def repository_lease(repo: Path):
@@ -102,8 +105,21 @@ class RecoveredProcess:
         return self.poll()
 
     def send_signal(self, sig):
-        if alive(self.identity):
-            os.kill(self.pid, sig)
+        group = self.process_group()
+        if group is not None:
+            os.killpg(group, sig)
+
+    def process_group(self):
+        record = read_state(self.directory) or {}
+        for identity in (self.identity, record.get("child")):
+            if alive(identity):
+                try:
+                    group = os.getpgid(identity["pid"])
+                    if group == self.pid:
+                        return group
+                except ProcessLookupError:
+                    pass
+        return None
 
     def terminate(self):
         self.send_signal(signal.SIGTERM)

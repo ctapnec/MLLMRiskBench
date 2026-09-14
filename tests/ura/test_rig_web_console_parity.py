@@ -751,6 +751,9 @@ def test_start_job_launches_but_does_not_retain_wall_time_wrapper(
     )
     try:
         job = app.start_job("run_matrix", {}, builder_params=params)
+        if os.name == "posix":
+            assert Path(launched[0][1]).name == 'job_runtime.py'
+            launched[0] = launched[0][launched[0].index('--') + 1:]
         assert launched == [[
             "/usr/bin/timeout",
             "--verbose",
@@ -766,6 +769,7 @@ def test_start_job_launches_but_does_not_retain_wall_time_wrapper(
             "job_id": job.job_id,
             "command": "run_matrix",
             "argv": retained,
+            "supervised": os.name == "posix",
             "controller_wall_time_seconds": 10800,
         }
         assert job.argv == retained

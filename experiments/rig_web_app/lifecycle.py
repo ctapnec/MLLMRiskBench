@@ -273,6 +273,17 @@ class LifecycleMixin:
             job.process = RecoveredProcess(job.directory, record)
             job.ended_at = record.get("ended_at") or job.ended_at
             return
+        try:
+            launch = json.loads((job.directory / "command.json").read_text())
+        except (OSError, ValueError):
+            launch = {}
+        if launch.get("supervised") and job.restored_state in {"orphaned", "unknown"}:
+            job.restored_state = "interrupted"
+            job.restored_exit = None
+            job.failure = "Console launch was interrupted before its durable process handshake. No automatic relaunch was made."
+            job.ended_at = job.ended_at or time.time()
+            self.db.upsert_job(job)
+            return
         # Older hosted collections predate the supervisor. Their final result
         # is a CLI-owned terminal contract, not a guessed log sentinel.
         if job.command != "hosted_campaign_execute" or job.restored_state not in {"orphaned", "unknown"}:
@@ -353,6 +364,8 @@ class LifecycleMixin:
         self._reconcile()
         job = self.jobs.get(job_id)
         if job is not None:
+            if job.process is not None and job.state() != "running" and not job.run_recorded:
+                self._reconcile()
             return job
         row = self.db.load_job(job_id)
         if row is None:
@@ -3573,6 +3586,7 @@ class LifecycleMixin:
                 "job_id": job_id,
                 "command": command,
                 "argv": argv,
+                "supervised": os.name == "posix",
             }
             if campaign_id:
                 from .workspace_store import activity_role  # noqa: PLC0415
@@ -3609,13 +3623,21 @@ class LifecycleMixin:
             popen_kwargs["env"] = child_env
             log_writers: tuple[Any, Any] | None = None
             lease = None
+            job = None
             try:
-                from .job_runtime import repository_lease, supervisor_argv
+                from .job_runtime import repository_lease, supervisor_argv, process_identity, write_state
                 lease = repository_lease(self.repo_root)
                 if os.name == "posix":
                     launch_argv = supervisor_argv(directory, launch_argv, lease.fileno() if lease else None)
                     if lease:
                         popen_kwargs["pass_fds"] = (lease.fileno(),)
+                job = Job(job_id=job_id, command=command, argv=argv, directory=directory,
+                    stdout_handle=stdout_handle, stderr_handle=stderr_handle,
+                    builder_params=retained_params, pin=os.environ.get("REF_URA", ""),
+                    activity=activity, restored_state="running")
+                self.jobs[job_id] = job
+                if not self.db.upsert_job(job):
+                    raise OSError("Could not retain job identity before process launch")
                 if capture_logs:
                     log_writers = self._start_log_capture(
                         job_id,
@@ -3633,7 +3655,17 @@ class LifecycleMixin:
                     shell=False,
                     **popen_kwargs,
                 )
+                job.process = process
+                identity = process_identity(process.pid) if os.name == "posix" else None
+                if identity:
+                    write_state(directory, dict(job_id=job_id, state="running", supervisor=identity,
+                        started_at=job.started_at, exit_code=None), "execution-start.json")
             except (OSError, ValueError):
+                if job is not None and job.process is None:
+                    job.restored_state = "failed"
+                    job.failure = "Job launch did not complete; inspect retained logs before retrying."
+                    job.ended_at = time.time()
+                    self.db.upsert_job(job)
                 if log_writers is not None:
                     for writer in log_writers:
                         try:
@@ -3669,19 +3701,10 @@ class LifecycleMixin:
             if job_handle is not None and not _win_assign_job(job_handle, process):
                 _win_close_handle(job_handle)
                 job_handle = None
-            job = Job(
-                job_id=job_id,
-                command=command,
-                argv=argv,
-                directory=directory,
-                process=process,
-                stdout_handle=stdout_handle,
-                stderr_handle=stderr_handle,
-                builder_params=retained_params,
-                pin=os.environ.get("REF_URA", ""),
-                job_handle=job_handle,
-                activity=activity,
-            )
+            assert job is not None
+            job.process = process
+            job.restored_state = None
+            job.job_handle = job_handle
             if transient_config is not None:
                 self._transient_local_configs[job_id] = transient_config
             if transient_api_config is not None:
@@ -3731,7 +3754,7 @@ class LifecycleMixin:
         # and is reaped, os.getpgid(pid) raises ESRCH and any surviving group
         # member could no longer be addressed.
         try:
-            pgid: int | None = os.getpgid(process.pid)
+            pgid: int | None = process.process_group() if hasattr(process, "process_group") else os.getpgid(process.pid)
         except (OSError, ProcessLookupError):
             pgid = None
         self._signal_group(process, signal.SIGTERM, pgid)
@@ -3825,6 +3848,9 @@ class LifecycleMixin:
         """
 
         try:
+            if hasattr(process, "process_group") and pgid is None:
+                process.send_signal(sig)
+                return
             os.killpg(pgid if pgid is not None else os.getpgid(process.pid), sig)
         except (OSError, ProcessLookupError):
             try:

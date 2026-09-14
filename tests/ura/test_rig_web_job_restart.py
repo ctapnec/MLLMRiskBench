@@ -57,6 +57,7 @@ def test_restart_keeps_running_then_records_actual_exit_and_logs(tmp_path, exit_
         until(lambda: second._job_for_id(job.job_id).state() != 'running')
         assert restored.state() == ('complete' if exit_code == 0 else 'failed')
         assert restored.exit_code() == exit_code
+        second._job_for_id(job.job_id)
         assert second.db.load_job(job.job_id)['exit_code'] == exit_code
         until(lambda: 'Finished child' in (job.directory/'stdout.log').read_text())
     finally:
@@ -137,3 +138,20 @@ def test_repository_lease_excludes_in_place_deployment(tmp_path):
             repository_lease(tmp_path)
     finally:
         lease.close();other.close()
+
+
+def test_running_job_holds_checkout_lease_after_console_closes(tmp_path):
+    import fcntl
+    app=make_app(tmp_path);(app.repo_root/'.git').mkdir()
+    job=app.start_job('webui_selftest',{})
+    until(lambda: bool((read_state(job.directory) or {}).get('child')))
+    app.close()
+    lock=(app.repo_root/'.git/ura-execution.lock').open('a')
+    try:
+        with pytest.raises(BlockingIOError):
+            fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        (app.repo_root/'release').touch()
+        job.process.wait(timeout=5)
+        fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+    finally:
+        lock.close()
