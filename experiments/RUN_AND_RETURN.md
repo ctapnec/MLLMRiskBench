@@ -6932,9 +6932,10 @@ original cascade, device, output allowance and unprepared-source count, then
 optional and disabled by default. The one-use review binds the saved preparation
 and campaign owner. A continuation keeps the previous execution directory and
 model-verification setting; two open reviews cannot launch the same work twice.
-Use the same scoring revision when resuming. This action makes no hosted or
-target calls and does not allocate GPUs automatically: wait for the recorded
-device to become available. Haiku judging is separate and output-specific.
+The saved placement policy is preserved: an omitted device means automatic
+placement, while an explicit device remains explicit. Check GPU availability
+before starting; this action does not schedule around other local workloads.
+It makes no hosted or target calls. Haiku judging is separate and output-specific.
 
 Select the existing campaign in Tools and open `retained_native_judge_execute`.
 Supply the preparation's `result.json`, its recorded digest and a separate
@@ -6949,8 +6950,8 @@ python -m experiments.retained_native_judge_execute \
 The console supplies the owner and database itself. CLI publication is optional;
 provide both options or neither. Source locators are the same as preparation;
 provider keys are not needed. The command uses existing managed model bytes,
-preserves the original cascade, and processes source jobs sequentially on the
-recorded judge device. An unchanged judge remains resident across those jobs.
+preserves the original cascade, and processes source jobs sequentially using
+the saved judge placement policy. An unchanged judge remains resident across those jobs.
 The same retained media-index resolution applies during execution and during
 preparation of Haiku's saved-output view. A shared unchanged index is read once,
 and its cache is invalidated when the file metadata or checksum option changes;
@@ -6962,6 +6963,13 @@ For continuation, repeat the same command from the same clean scoring revision
 and reuse the execution directory. Original verdicts and completed new records
 are not judged again. Unparsed classifier results remain completed but unscored;
 an infrastructure failure retains its prefix and reports continuation required.
+If execution failed before producing any new assessment or evaluator-failure
+record, a corrected scoring revision may resume that same directory. The old
+execution identity is retained in its history; preparation and verification
+settings must stay unchanged. Once new assessments exist, the scoring revision
+must remain the same. In Build, repeat **Review local judging -> Start or resume
+local judging** with the same saved preparation. Do not repeat collection or
+source preparation for a pre-scoring device error.
 `publication.json` independently reports campaign indexing. Repair an indexing
 problem and resume to republish completed assessments without new model calls.
 New assessments never overwrite the source generation or its original verdicts.
