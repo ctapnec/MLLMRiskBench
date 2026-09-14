@@ -54,6 +54,28 @@ def test_stop_action_is_separated_from_command(browser, study, tmp_path, width):
 
 
 @pytest.mark.parametrize('width', [390, 1440])
+def test_job_command_wraps_long_paths_and_identifiers(browser, study, tmp_path, width):
+    app, _, calls, _ = study
+    argv = ['python', '-m', 'experiments.run_matrix', '--out',
+            '/mnt/stor/data/ura-work/runs/rig-web/matched-programs/'+'a'*32+'/prepared/programs/google-gemini-3-8-flash.json',
+            '--project-revision-sha256', 'b'*64]
+    job = Job(job_id='long-command', command='run_matrix', argv=argv,
+              directory=tmp_path, process=SimpleNamespace(poll=lambda: 2))
+    page = browser.new_page(viewport={'width': width, 'height': 1000})
+    try:
+        render(page, app._job_page(job))
+        assert page.locator('.argv code').all_text_contents() == argv
+        bounds = page.locator('.argv').bounding_box()
+        for chip in page.locator('.argv code').all():
+            box = chip.bounding_box()
+            assert box['x']+box['width'] <= bounds['x']+bounds['width']+1
+        assert not page.evaluate('document.documentElement.scrollWidth>innerWidth')
+        assert not calls
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize('width', [390, 1440])
 @pytest.mark.parametrize('kind', ['collection', 'native', 'haiku', 'inventory'])
 def test_review_actions_have_clear_spacing(browser, request, kind, width):
     if kind == 'collection':

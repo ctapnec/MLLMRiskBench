@@ -302,7 +302,8 @@ footer.note { color:var(--muted); font-size:.8rem; margin-top:2rem;
   border:1px solid var(--line); overflow:hidden; margin:.35rem 0 .15rem; }
 .meter > div { height:100%; background:var(--accent); }
 .argv { display:flex; flex-wrap:wrap; gap:.3rem; }
-.argv code { border:1px solid var(--line); padding:.12rem .45rem; }
+.argv code { border:1px solid var(--line); padding:.12rem .45rem;
+  min-width:0; max-width:100%; overflow-wrap:anywhere; }
 .filelist td .ic { color:var(--muted); vertical-align:-3px;
   margin-right:.45rem; }
 .notice { border-left:4px solid var(--line); border-radius:8px;
