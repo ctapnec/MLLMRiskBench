@@ -261,7 +261,7 @@ def test_anonymous_error_cell_requires_unambiguous_manifest_ownership(tmp_path, 
         subject.generation_artifacts(tmp_path, 'saved-run')
 
 
-def test_preparation_environment_forwards_source_locators_not_provider_credentials():
+def test_preparation_environment_forwards_source_locators_not_provider_credentials(tmp_path):
     from experiments.rig_web_app.catalog import COMMANDS
     from experiments.rig_web_app.lifecycle import LifecycleMixin
     seen = []
@@ -269,15 +269,16 @@ def test_preparation_environment_forwards_source_locators_not_provider_credentia
         seen.append(values)
         assert set(values) == {"--source-config", "--corpora"}
         return {"SOURCE_DATA_ROOT"}
-    fake = SimpleNamespace(commands=COMMANDS, _MATRIX_BASE_ENV={"PATH"},
+    fake = SimpleNamespace(repo_root=tmp_path, commands=COMMANDS, _MATRIX_BASE_ENV={"PATH"},
         _MATRIX_OPTIONAL_ENV={"URA_MEDIA_ROOTS"}, _MATRIX_RECEIPT_ENV=set(),
         _strict_config_document=lambda *a: dict(jobs=[dict(argv=["--api", "openai:example",
             "--api-config", "private-api.json", "--source-config", "source.json", "--corpora", "sample",
             "--attacker-config", "attacker.json", "--out", "out"])]),
         _declared_matrix_environment=source_environment,
         _selected_matrix_environment_names=lambda *a: pytest.fail("preparation requested provider credentials"),
-        _selected_child_environment=lambda values: values)
+        _selected_child_environment=lambda values: dict.fromkeys(values, 'test-value'))
     result = LifecycleMixin._generic_child_environment(fake, "retained_native_judge_prepare",
         {"--program": "program.json", "--program-sha256": "a"*64})
-    assert result == {"PATH", "URA_MEDIA_ROOTS", "SOURCE_DATA_ROOT"}
+    assert set(result) == {"PATH", "URA_MEDIA_ROOTS", "SOURCE_DATA_ROOT", "PYTHONPATH"}
+    assert result['PYTHONPATH'] == __import__('os').pathsep.join((str(tmp_path),str(tmp_path/'src')))
     assert len(seen) == 1
