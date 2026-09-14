@@ -105,6 +105,12 @@ the deployed software and is not a step to reproduce.
 
 Deriving this receipt makes no additional target or judge call. It establishes
 the observed transport path, not benchmark performance or human validity.
+Keep the deployed revision unchanged between the probes and measured execution.
+If Runner is updated during this sequence, an earlier receipt does not establish
+transport under the new code. Refresh only the affected diagnostic probe in a
+new output directory, then derive its new receipt; retain its original result.
+When returning from measured mode to a probe, clear both live-attestation path
+and digest rows and the maximum-age field in Admission.
 
 ## 5. Repeat for one image input
 
