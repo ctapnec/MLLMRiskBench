@@ -761,6 +761,41 @@ class LifecycleMixin:
                 # Reopen the same receipt, never substitute a changed one.
                 # Normal composition still validates its actual file content.
                 runtime[field] = configured_path
+        unresolved = {
+            index: str(runtime.get(f"att_sha{index}", "")).strip().lower()
+            for index in range(1, self._MAX_ATT_ROWS + 1)
+            if str(runtime.get(f"att_path{index}", "")).startswith(
+                "private-live-attestation@sha256:"
+            )
+        }
+        if unresolved:
+            # Reuse the already retained small receipt files, not the consumed
+            # one-shot copies. This also works for standalone acquired jobs.
+            candidates: dict[str, str] = {}
+            bundle = runtime.get("_execution_config_bundle_sha256", "")
+            if re.fullmatch(r"[0-9a-f]{64}", bundle):
+                for workflow in self._model_acquisition_workflows.values():
+                    if workflow.get("execution_config_bundle_sha256") != bundle:
+                        continue
+                    for name, entry in workflow.get("snapshot_manifest", {}).items():
+                        if re.fullmatch(r"live_attestation_\d{2}", name):
+                            candidates.setdefault(entry["sha256"], str(
+                                Path(workflow["root"]) / f"snapshot-{name}.bin"
+                            ))
+            owner = runtime.get("campaign_id", "")
+            if owner:
+                definition = self.db.workspace_definition(owner)
+                for index in range(1, self._MAX_ATT_ROWS + 1):
+                    path = definition.get(f"att_path{index}", "")
+                    digest = definition.get(f"att_sha{index}", "").strip().lower()
+                    if path and not path.startswith("private-live-attestation"):
+                        candidates.setdefault(digest, path)
+            for index, digest in unresolved.items():
+                if (re.fullmatch(r"[0-9a-f]{64}", digest)
+                        and runtime[f"att_path{index}"] == f"private-live-attestation@sha256:{digest}"
+                        and digest in candidates):
+                    # Composition still checks the bytes, route and revision.
+                    runtime[f"att_path{index}"] = candidates[digest]
         return runtime
 
     def _local_config_projection(

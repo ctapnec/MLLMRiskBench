@@ -99,6 +99,55 @@ def test_reopened_builder_resolves_only_the_same_configured_receipt(
         app.close()
 
 
+@pytest.mark.parametrize("origin", ["standalone_workflow", "campaign_workflow", "campaign_definition"])
+def test_reopened_measured_job_resolves_retained_live_receipt(tmp_path, origin):
+    app = _app(tmp_path)
+    # This fixture exercises receipt location/content retention. Semantic
+    # transport admission is unchanged and is covered by its own tests.
+    payload = b'{"retained":"live transport receipt"}\n'
+    digest = hashlib.sha256(payload).hexdigest()
+    original = tmp_path / "operator-receipt.json"
+    original.write_bytes(payload)
+    params = {"att_path1": str(original), "att_sha1": digest,
+              "_execution_config_bundle_sha256": "a" * 64}
+    try:
+        if origin.startswith("campaign"):
+            owner = app.db.create_workspace("Receipt reopening", "local")
+            params["campaign_id"] = owner
+            app.db.save_workspace_definition(owner, params)
+        durable = app._durable_builder_params(params)
+        if origin.endswith("workflow"):
+            root = tmp_path / "retained-workflow"
+            root.mkdir()
+            saved = root / "snapshot-live_attestation_01.bin"
+            saved.write_bytes(payload)
+            workflow = {"root": root, "execution_config_bundle_sha256": "a" * 64,
+                "snapshot_manifest": {"live_attestation_01": {"sha256": digest, "bytes": len(payload)}}}
+            app._model_acquisition_workflows["job-retained-plan"] = workflow
+            original.unlink()
+            if origin.startswith("campaign"):
+                app.db.save_workspace_definition(owner, dict(params, att_path1="new-choice.json", att_sha1="b" * 64))
+        else:
+            saved = original
+        reopened = app._runtime_builder_params(durable)
+        assert reopened["att_path1"] == str(saved)
+        assert reopened["att_sha1"] == digest
+        materialized = app._materialize_selected_live_attestations(reopened)
+        assert materialized[0][0].read_bytes() == payload
+        for path, _digest in materialized:
+            path.unlink()
+        saved.write_bytes(b'{"retained":"changed"}\n')
+        with pytest.raises(ValueError, match="digest|SHA-256|sha256"):
+            app._materialize_selected_live_attestations(app._runtime_builder_params(durable))
+        if origin.endswith("workflow"):
+            workflow["execution_config_bundle_sha256"] = "c" * 64
+        else:
+            app.db.save_workspace_definition(owner, dict(params, att_sha1="b" * 64))
+        assert app._runtime_builder_params(durable)["att_path1"] == durable["att_path1"]
+    finally:
+        app.close()
+
+
 def test_ui_acquisition_reuses_configured_store_without_redirecting_old_work(tmp_path, monkeypatch):
     installed = tmp_path / "installed-models"
     installed.mkdir()
