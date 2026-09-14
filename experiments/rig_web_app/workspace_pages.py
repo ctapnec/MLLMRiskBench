@@ -401,7 +401,7 @@ class WorkspacePagesMixin:
                 "Judging costs belong to the campaign whose output was judged. "
                 "Recorded costs are not account balances; uncertain exposure is not a money hold. "
                 "Local work has no API charge; electricity and hardware costs are not estimated.</p>"
-                + "<p><a class='button ghost' data-campaign-export download='campaign-costs.csv' href='/campaigns/"+campaign_id+"/figures/costs.csv'>Download full campaign cost table</a></p>"+EXPORT_SCRIPT
+                + "<p id='campaign-exports'><a class='button ghost' data-campaign-export download='campaign-costs.csv' href='/campaigns/"+campaign_id+"/figures/costs.csv'>Download full campaign cost table</a></p><p id='campaign-export-status' role='status'></p>"+EXPORT_SCRIPT
                 + "<div class='campaign-costs'>" + table(("Provider / model", "Role", "HTTP attempts / local evaluations", "Recorded cost (USD)",
                          "Uncertain charge exposure (USD)", "Reported tokens: input / output / reasoning"),
                     [[html.escape(row["provider"] + " / " + row["model"]), html.escape(row["role"]),

@@ -153,7 +153,9 @@ def test_full_cost_export_includes_all_pages_and_preserves_unknowns(app,monkeypa
     assert uncertain['unknown_attempts']=='1' and uncertain['unknown_exposure_count']=='1'
     assert sum(int(r['cost_microusd'] or 0) for r in rows)==30*12345
     assert all(r['campaign_id']==campaign and 'historical' in r['scope'] for r in rows)
-    assert 'Download full campaign cost table' in app._workspace_results(campaign,'costs',{})
+    page=app._workspace_results(campaign,'costs',{})
+    assert 'Download full campaign cost table' in page
+    assert "id='campaign-exports'" in page and "id='campaign-export-status'" in page
 
 
 def test_cost_export_unavailable_is_not_an_empty_success(app,monkeypatch):
