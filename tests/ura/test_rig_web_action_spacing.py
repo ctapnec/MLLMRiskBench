@@ -54,6 +54,25 @@ def test_stop_action_is_separated_from_command(browser, study, tmp_path, width):
 
 
 @pytest.mark.parametrize('width', [390, 1440])
+def test_collection_review_button_is_separated_from_workers_control(browser, width):
+    params = {'retained_programs_job':'prepared', 'retained_collection_workers':'3'}
+    page = browser.new_page(viewport={'width':width, 'height':1000})
+    try:
+        render(page, ui._page('Collection', "<form id='builder'></form>"+
+                             builder_collection.collection_panel(params)))
+        workers = page.locator('[name=retained_collection_workers]')
+        button = page.get_by_role('button', name='Review prepared collection', exact=True)
+        field_box, button_box = workers.bounding_box(), button.bounding_box()
+        assert button_box['y'] - (field_box['y']+field_box['height']) >= 16
+        assert workers.input_value() == '3'
+        assert button.get_attribute('form') == workers.get_attribute('form') == 'builder'
+        assert button.get_attribute('formaction') == '/build/review-collection'
+        assert not page.evaluate('document.documentElement.scrollWidth>innerWidth')
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize('width', [390, 1440])
 def test_job_command_wraps_long_paths_and_identifiers(browser, study, tmp_path, width):
     app, _, calls, _ = study
     argv = ['python', '-m', 'experiments.run_matrix', '--out',

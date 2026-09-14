@@ -174,4 +174,5 @@ def collection_panel(params):
         "Later draft edits do not change a prepared collection. Measured-output judging follows separately.</p>"
         "<label class='campaign-field'>Workers per provider<input type='number' min='1' max='8' step='1' "
         "form='builder' name='retained_collection_workers' value='"+value+"'></label>"
-        "<button form='builder' formaction='/build/review-collection'>Review prepared collection</button></section>")
+        "<div class='action-row'><button form='builder' formaction='/build/review-collection'>"
+        "Review prepared collection</button></div></section>")

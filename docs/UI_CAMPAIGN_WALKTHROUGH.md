@@ -241,6 +241,8 @@ hosted preparation share this revision resolution.
 Standalone action rows have space above them and between buttons, and wrap on
 narrow screens. This includes Stop job, prepared collection and judging starts,
 and the saved-input preparation actions. Configuration editor actions also wrap.
+In Collect prepared inputs, Review prepared collection has its own action row
+below Workers per provider; preserve that separation when editing the panel.
 Optional checkbox rows align the checkbox with the first line of their label;
 the full label is clickable and long explanations wrap without overlapping.
 
