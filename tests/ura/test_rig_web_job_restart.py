@@ -28,9 +28,12 @@ def until(condition, seconds=10):
 def make_app(tmp_path):
     repo = tmp_path / 'repo'; repo.mkdir(exist_ok=True)
     (repo / 'fixture_job.py').write_text(
-        "import argparse,time\n"
+        "import argparse,time\nfrom pathlib import Path\n"
         "p=argparse.ArgumentParser();p.add_argument('--exit',type=int,default=0);a=p.parse_args()\n"
-        "print('Started live job',flush=True);time.sleep(1.5);print('Finished child',flush=True);raise SystemExit(a.exit)\n")
+        "print('Started live job'+'.'*4096,flush=True)\n"
+        "until=time.monotonic()+10\n"
+        "while not Path('release').exists() and time.monotonic()<until: time.sleep(.03)\n"
+        "print('Finished child',flush=True);raise SystemExit(a.exit)\n")
     return RigWebApp(results_root=tmp_path/'runs', state_dir=tmp_path/'state', repo_root=repo,
         gpu_hardware={}, system_hardware={}, commands={'webui_selftest':Command('webui_selftest','fixture_job','test',
             (CommandParam('--exit','int'),))})
@@ -50,6 +53,7 @@ def test_restart_keeps_running_then_records_actual_exit_and_logs(tmp_path, exit_
         restored = second._job_for_id(job.job_id)
         assert restored.state() == 'running'
         assert b'Stop job' in second._job_page(restored)
+        (second.repo_root/'release').touch()
         until(lambda: second._job_for_id(job.job_id).state() != 'running')
         assert restored.state() == ('complete' if exit_code == 0 else 'failed')
         assert restored.exit_code() == exit_code

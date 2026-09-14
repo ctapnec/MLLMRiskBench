@@ -74,6 +74,10 @@ git checkout --detach "$REF" --quiet
 # invocation only (pkill -f patterns are EREs: an unescaped '.' would also
 # match a path like experiments/rig_web_app/... open in an editor or tail).
 pkill -f -- '-m experiments\.rig_web( |$)' 2>/dev/null || true
+# The old launcher is stopped and the checkout switch is complete. Release
+# before isolated test children acquire their own shared execution leases.
+flock -u "$DEPLOY_LOCK_FD"
+exec {DEPLOY_LOCK_FD}>&-
 sleep 1
 
 # Atomic controller-install tests deliberately make generated controller trees

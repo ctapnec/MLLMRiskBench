@@ -271,7 +271,7 @@ class LifecycleMixin:
         record = read_state(job.directory)
         if record and record.get("supervisor"):
             job.process = RecoveredProcess(job.directory, record)
-            job.ended_at = record.get("ended_at")
+            job.ended_at = record.get("ended_at") or job.ended_at
             return
         # Older hosted collections predate the supervisor. Their final result
         # is a CLI-owned terminal contract, not a guessed log sentinel.
