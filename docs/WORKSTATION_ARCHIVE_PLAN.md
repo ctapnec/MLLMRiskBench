@@ -29,6 +29,28 @@ No additional broad local campaign is approved by this demonstration plan.
 Do not silently spend the remaining purses on a new experiment. Retained
 human-review preparation is separate from generating demonstration outputs.
 
+### Approved Flash example - 14 September
+
+The operator approved a small Gemini Flash demonstration using approximately
+20 matched text/image inputs, with a USD 1.00 Google spending cap. The latest
+reported Google purse is USD 7.95. This example does not inherit the cancelled
+Pro supplement's allocation or inputs automatically. Keep it in a separately
+named demonstration campaign, outside the thesis study's statistical population.
+
+Select whole retained source clusters and preserve actual prompts, media and
+seeds. Record the achieved request count before execution; source-context rows
+are not additional independent generations. Use the previously established
+Flash configuration and check the counted first-attempt maximum against the
+cap. Transport retries use the same cap; an output retry is not automatic.
+Do not wait another day for quota to complete a demonstration.
+
+Apply local evaluation and output-specific Haiku assessment to new eligible
+answers. Count their actual saved text before judging. Haiku uses the separate
+Anthropic purse, not the Google dollar. Existing local verdicts may be reused
+only for the identical saved local answer and judging condition. The exact
+selection, forecast, achieved spending and tested UI steps remain to be added
+after the demonstration is prepared and executed.
+
 ## Archive contents and acceptance
 
 Keep the console SQLite data, selected and historical responses, attempts,

@@ -1,5 +1,16 @@
 # Final matched-input supplement
 
+Current disposition, 14 September: the two previously outstanding Pro answers
+were saved after midnight. The separate 21-input Pro supplement was cancelled
+by the operator after its first transport probe returned HTTP 429 and requested
+a retry delay of almost one day. It produced no supplement answers. Original
+records and uncertain attempt charges remain retained; the unissued inputs
+are operator-cancelled work, not missing model responses. Output-specific
+judging of already saved answers remains required. The small approved Flash
+UI demonstration is documented separately in
+[the workstation and demonstration plan](../docs/WORKSTATION_ARCHIVE_PLAN.md)
+and does not enlarge this study population.
+
 Approved by the operator on 13 September 2026, after the 11:12 UTC campaign
 snapshot. This is a bounded supplement to the existing API campaign, not a new
 independent sample or permission to repeat completed target calls. Statistical

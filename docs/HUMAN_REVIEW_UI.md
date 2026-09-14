@@ -6,8 +6,9 @@ local responses and indexed images have also been displayed successfully.
 The indexed-campaign selector, preparation and saved-sample analysis now have
 focused rig acceptance. The real browser flow prepared 8,059 API outputs,
 registered the sample in an isolated database and displayed saved media on
-desktop and mobile. No production study or human verdict was created. These
-latest connection fixes are awaiting the console-only deployment.
+desktop and mobile. No production study or human verdict was created. The
+indexed-campaign connection fixes were deployed on 14 September; the console
+database and existing campaign workers were preserved.
 The checked 167-output historical image sample now resolves all 167 references
 through the recorded source locations. The automatic media preparation and
 source-task format fixes have focused rig verification and are deployed.
