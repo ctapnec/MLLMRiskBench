@@ -510,14 +510,14 @@ _BUILD_MODES: tuple[tuple[str, str, str], ...] = (
     (
         "attestation_probe",
         "--attestation-probe",
-        "Attestation probe (one paid call per model; cost anchor)",
+        "Attestation probe (one real call per model; usage baseline)",
     ),
     (
         "diagnostic_canary",
         "--diagnostic-canary",
-        "Diagnostic canary (small paid slice; observed tokens/spend only)",
+        "Diagnostic canary (small live slice; observed usage only)",
     ),
-    ("measured", "", "Measured lane (paid; produces campaign evidence)"),
+    ("measured", "", "Measured lane (real calls; produces campaign evidence)"),
 )
 
 

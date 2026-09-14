@@ -29,6 +29,20 @@ def _app(tmp_path: Path) -> RigWebApp:
     )
 
 
+def test_build_modes_do_not_describe_local_inference_as_paid(tmp_path):
+    app = _app(tmp_path)
+    try:
+        page = app._build_page().decode()
+        assert "Attestation probe (one real call per model; usage baseline)" in page
+        assert "Diagnostic canary (small live slice; observed usage only)" in page
+        assert "Measured lane (real calls; produces campaign evidence)" in page
+        assert "one paid call per model" not in page
+        assert "small paid slice" not in page
+        assert "Measured lane (paid;" not in page
+    finally:
+        app.close()
+
+
 @pytest.mark.parametrize("full_sha", [False, True])
 def test_builder_full_model_sha_is_optional_and_composes_real_cli(tmp_path, full_sha):
     from experiments import model_acquire, run_matrix
