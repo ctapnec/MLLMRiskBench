@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -273,3 +274,66 @@ def test_parent_accepts_strict_response_progress_before_any_completion(tmp_path,
     assert run_matrix._run_recyclable_vllm_grid(argv, out=out, cell_bound=1) == 0
     assert len(calls) == 2
     assert all(command[2:] == argv for command in calls)
+
+
+@pytest.mark.parametrize("kind", ["local", "api", "source", "attacker"])
+def test_ui_transient_inputs_survive_target_to_judge_then_are_removed(tmp_path, monkeypatch, kind):
+    monkeypatch.delenv(run_matrix._VLLM_GRID_CHILD_ENV, raising=False)
+    for key in list(run_matrix._PROCESS_ENVIRON):
+        if key.startswith("URA_PRIVATE_TRANSIENT_"):
+            monkeypatch.delenv(key)
+    directory = tmp_path / (".private-" + kind + "-configs")
+    directory.mkdir()
+    filename = "selected-" + ("" if kind == "local" else kind + "-") + "a" * 24 + "-" + "b" * 16 + ".json"
+    path = directory / filename
+    spec = "vllm:Org/Model"
+    data = {spec: {"revision": "a" * 40, "modalities": ["text"]}} if kind == "local" else {}
+    artifact = None
+    if kind == "attacker":
+        artifact_dir = tmp_path / ".private-attacker-artifacts"
+        artifact_dir.mkdir()
+        artifact = artifact_dir / ("selected-harmbench-artifact-" + "c" * 24 + "-" + "d" * 16 + ".json")
+        artifact.write_bytes(b'{}\n')
+        data = {"harmbench": {"replay_artifact": str(artifact)}}
+    payload = json.dumps(data).encode()
+    path.write_bytes(payload)
+    digest = hashlib.sha256(payload).hexdigest()
+    marker = "URA_PRIVATE_TRANSIENT_" + kind.upper() + "_CONFIG"
+    monkeypatch.setenv(marker, str(path))
+    argv = ["--" + kind + "-config", str(path), "--" + kind + "-config-sha256", digest]
+    calls = []
+
+    def consume():
+        if kind == "local":
+            run_matrix._load_local_config(str(path), [spec], expected_sha256=digest)
+        elif kind == "api":
+            run_matrix._load_api_config(str(path), [], digest)
+        else:
+            run_matrix._read_optional_bound_config(str(path), digest,
+                flag_name="--" + kind + "-config", transient_environment=marker,
+                transient_directory=directory.name, transient_prefix=kind, max_bytes=4096)
+
+    def child(command, *, env, check):
+        calls.append(command)
+        with monkeypatch.context() as child_env:
+            child_env.setenv(run_matrix._VLLM_GRID_CHILD_ENV, env[run_matrix._VLLM_GRID_CHILD_ENV])
+            child_env.setenv(marker, env[marker])
+            consume()
+            assert path.read_bytes() == payload
+            if artifact:
+                owned = run_matrix._transient_attacker_artifact_identities(data, path)
+                run_matrix._cleanup_transient_attacker_artifacts(owned)
+                assert artifact.exists()
+        return SimpleNamespace(returncode=76 if len(calls) == 1 else 0)
+
+    monkeypatch.setattr(run_matrix.subprocess, "run", child)
+    monkeypatch.setattr(run_matrix, "_response_checkpoint_count", lambda _root: len(calls))
+    assert run_matrix._run_recyclable_vllm_grid(argv, out=tmp_path, cell_bound=1) == 0
+    assert len(calls) == 2
+    assert not path.exists()
+    assert artifact is None or not artifact.exists()
+    # Ordinary single-process startup still consumes the one-shot file.
+    path.write_bytes(payload)
+    monkeypatch.setenv(marker, str(path))
+    consume()
+    assert not path.exists()

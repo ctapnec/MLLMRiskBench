@@ -966,6 +966,10 @@ def _consume_exact_transient_file(
 ) -> None:
     """Move the opened inode into a private quarantine, verify it, then unlink."""
 
+    if _PROCESS_ENVIRON.get(_VLLM_GRID_CHILD_ENV) == "1":
+        # The grid supervisor owns these inputs until both target and judge
+        # children finish. Each child still validates the same selected bytes.
+        return
     quarantine = path.parent / (".ura-consumed-" + secrets.token_hex(16))
     destination = quarantine / path.name
     try:
@@ -1196,6 +1200,8 @@ def _cleanup_transient_attacker_artifacts(
 ) -> None:
     """Remove only the unchanged private artifacts owned by this Runner child."""
 
+    if _PROCESS_ENVIRON.get(_VLLM_GRID_CHILD_ENV) == "1":
+        return
     for path, device, inode, mode, size in identities:
         try:
             if path.is_symlink() or path.is_junction():
@@ -1224,12 +1230,21 @@ def _register_transient_attacker_artifact_cleanup(
 ) -> None:
     """Give a detached Runner ownership of exact Builder-held attacker files."""
 
+    identities = _transient_attacker_artifact_identities(configs, transient_config_path)
+    if identities:
+        atexit.register(_cleanup_transient_attacker_artifacts, identities)
+
+
+def _transient_attacker_artifact_identities(
+    configs: dict[str, dict[str, object]], transient_config_path: Path,
+) -> tuple[tuple[Path, int, int, int, int], ...]:
+    """Identify only the generated artifacts owned by this private config."""
     try:
         root = (
             transient_config_path.parent.parent / ".private-attacker-artifacts"
         ).resolve(strict=True)
     except OSError:
-        return
+        return ()
     candidates: list[str] = []
     for config in configs.values():
         for field in ("response_artifact", "replay_artifact"):
@@ -1272,11 +1287,7 @@ def _register_transient_attacker_artifact_cleanup(
             opened.st_mode,
             opened.st_size,
         ))
-    if identities:
-        atexit.register(
-            _cleanup_transient_attacker_artifacts,
-            tuple(identities),
-        )
+    return tuple(identities)
 
 
 def _load_engine_runtime_config(
@@ -1379,7 +1390,8 @@ def _load_api_config(
                 "private transient API config marker does not match the selected config"
             )
         try:
-            path.unlink()
+            if _PROCESS_ENVIRON.get(_VLLM_GRID_CHILD_ENV) != "1":
+                path.unlink()
         except OSError as exc:
             raise ValueError(
                 "private transient API config could not be removed after startup read"
@@ -1707,7 +1719,8 @@ def _load_local_config(
                 "generated selected config"
             )
         try:
-            path.unlink()
+            if _PROCESS_ENVIRON.get(_VLLM_GRID_CHILD_ENV) != "1":
+                path.unlink()
         except OSError as exc:
             raise ValueError(
                 "private transient local config could not be removed after startup read"
@@ -8246,7 +8259,58 @@ def _response_checkpoint_count(root: Path) -> int:
     return count
 
 
+def _recycling_transient_input_ownership(
+    argv: list[str],
+) -> tuple[tuple[Path, int, int, int, int], ...]:
+    """Keep exact UI-generated inputs alive for the complete child sequence."""
+    if not any(key.startswith("URA_PRIVATE_TRANSIENT_") for key in _PROCESS_ENVIRON):
+        return ()
+    args = build_parser().parse_args(argv)
+    selections = [
+        ("LOCAL_CONFIG", args.local_config, (".private-local-configs", "generated-local-configs")),
+        ("API_CONFIG", args.api_config, (".private-api-configs",)),
+        ("SOURCE_CONFIG", args.source_config, (".private-source-configs",)),
+        ("ATTACKER_CONFIG", args.attacker_config, (".private-attacker-configs",)),
+        ("ENGINE_RUNTIME_CONFIG", args.engine_runtime_config, (".private-engine-runtime-configs",)),
+        ("PROJECT_REVISION", args.project_revision, (".private-project-revision",)),
+        ("SOURCE_CONFORMANCE", args.source_conformance, (".private-source-conformance",)),
+    ]
+    selections.extend(
+        (f"LIVE_ATTESTATION_{index:02d}", value, (".private-live-attestations",))
+        for index, value in enumerate(args.live_attestation, 1)
+    )
+    identities = []
+    for suffix, selected, directories in selections:
+        marker = _PROCESS_ENVIRON.get("URA_PRIVATE_TRANSIENT_" + suffix, "").strip()
+        if not marker:
+            continue
+        path = Path(marker).expanduser()
+        if (not selected or path != Path(selected).expanduser()
+                or not path.is_absolute() or path.parent.name not in directories
+                or re.fullmatch(r"selected-[a-z0-9-]+\.json", path.name) is None):
+            raise ValueError("private recycling input does not match the selected UI file")
+        raw, opened = _bounded_nofollow_read(
+            path, label="private recycling input", max_bytes=4 * 1024 * 1024,
+        )
+        identities.append((path, opened.st_dev, opened.st_ino, opened.st_mode, opened.st_size))
+        if suffix == "ATTACKER_CONFIG":
+            configs = _json_loads_strict(raw.decode("utf-8"))
+            if not isinstance(configs, dict) or not all(isinstance(v, dict) for v in configs.values()):
+                raise ValueError("private recycling attacker config is invalid")
+            identities.extend(_transient_attacker_artifact_identities(configs, path))
+    return tuple(identities)
+
+
 def _run_recyclable_vllm_grid(argv: list[str], *, out: Path, cell_bound: int) -> int:
+    """Own UI inputs until the target and judging processes have both ended."""
+    identities = _recycling_transient_input_ownership(argv)
+    try:
+        return _run_recyclable_vllm_grid_children(argv, out=out, cell_bound=cell_bound)
+    finally:
+        _cleanup_transient_attacker_artifacts(identities)
+
+
+def _run_recyclable_vllm_grid_children(argv: list[str], *, out: Path, cell_bound: int) -> int:
     """Resume a multi-cell vLLM grid across bounded fresh child processes."""
 
     environment = dict(_PROCESS_ENVIRON)
