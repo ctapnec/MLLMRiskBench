@@ -134,7 +134,7 @@ def collection_review(app, params):
     if history is not None:
         body += "<p>Previous collection: <a href='/jobs/"+history['job_id']+"'>Open job and retained results</a></p>"
     body += ("<details><summary>Exact command</summary><pre>"+html.escape(' '.join(build_argv('hosted_campaign_execute',values)))
-        +"</pre></details><form method='post' action='/build/collect-prepared'>"
+        +"</pre></details><form class='action-row' method='post' action='/build/collect-prepared'>"
         "<input type='hidden' name='launch_ticket' value='"+html.escape(ticket,quote=True)+"'>"
         "<button type='submit'>"+action+"</button></form>"
         "<p><a href='/build?campaign_id="+owner+"'>Return to Build</a></p>")

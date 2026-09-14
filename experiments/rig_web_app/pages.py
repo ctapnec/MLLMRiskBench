@@ -228,8 +228,8 @@ class PagesMixin:
             f"schema v{health['schema_version']} - {html.escape(count_text)}"
             "</p>" + error + "<form method='post' action='/db/reindex' "
             "data-busy='Rebuilding the index from retained artifacts...'>"
-            "<label><input type='checkbox' name='verify_artifact_sha256'> "
-            "Also verify file checksums (slow; off by default)</label> "
+            "<label class='checkrow'><input type='checkbox' name='verify_artifact_sha256'>"
+            "<span>Also verify file checksums (slow; off by default)</span></label> "
             "<button type='submit' class='small'>Reindex from artifacts"
             "</button></form>"
             "<p class='note'>Operational state only (jobs, runs, recorded "
@@ -1739,7 +1739,7 @@ class PagesMixin:
         stdout_tail = self._log_tail(job, "stdout") or "(empty)"
         stderr_tail = self._log_tail(job, "stderr") or "(empty)"
         stop_form = (
-            f"<form method='post' action='/jobs/{html.escape(job.job_id)}/stop'>"
+            f"<form class='action-row' method='post' action='/jobs/{html.escape(job.job_id)}/stop'>"
             "<button class='danger' type='submit'>Stop job</button></form>"
             if state == "running" and job.process is not None
             else ""

@@ -91,7 +91,7 @@ def review(app, params):
                 raise ValueError('Resume the original all-output judging campaigns and execution settings')
         ticket = app._new_launch_ticket(dict(campaign_id=owner, values=json.dumps(values)), purpose='all-output-haiku')
         body += ("<details><summary>Exact command</summary><pre>" + html.escape(' '.join(build_argv(COMMAND, values)))
-            + "</pre></details><form method='post' action='/build/execute-inventory-haiku'>"
+            + "</pre></details><form class='action-row' method='post' action='/build/execute-inventory-haiku'>"
             "<input type='hidden' name='launch_ticket' value='" + html.escape(ticket, quote=True) + "'>"
             '<button type="submit">Start or resume all-output Haiku judging</button></form>')
     else:

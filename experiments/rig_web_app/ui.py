@@ -218,6 +218,14 @@ button:hover { filter:brightness(1.08); }
 button.danger { background:#a4262f; color:#fff; }
 button.small { padding:.28rem .6rem; font-size:.8rem; border-radius:7px; }
 form.inline { display:inline; margin:0; }
+.action-row, .review-actions { display:flex; flex-wrap:wrap; align-items:center;
+  gap:.75rem; margin:1rem 0 0; }
+.action-row > form { margin:0; }
+.action-row > button, .review-actions > button { max-width:100%; }
+.checkrow { display:flex; align-items:flex-start; gap:.65rem;
+  margin:.75rem 0; padding:.25rem 0; cursor:pointer; }
+.checkrow > input[type=checkbox] { flex:0 0 auto; margin:.2rem 0 0; }
+.checkrow > span { min-width:0; overflow-wrap:anywhere; }
 .chips { display:flex; flex-wrap:wrap; gap:.4rem; margin:.2rem 0 .6rem; }
 .chip { background:var(--card); color:var(--muted); border:1px solid var(--line);
   border-radius:999px; padding:.3rem .8rem; font-size:.82rem; font-weight:600;
@@ -366,7 +374,7 @@ textarea.editor { width:100%; min-height:60vh; font:.82rem/1.5
   color:var(--ink); resize:vertical; }
 textarea.editor:focus { outline:2px solid
   color-mix(in srgb, var(--accent) 45%, transparent); border-color:var(--accent); }
-.editor-actions { display:flex; gap:.6rem; margin:.7rem 0; }
+.editor-actions { display:flex; flex-wrap:wrap; gap:.6rem; margin:.7rem 0; }
 button.ghost { background:transparent; color:var(--accent);
   border:1px solid var(--line); }
 .playbook { margin:.4rem 0 0; padding-left:0; list-style:none; }

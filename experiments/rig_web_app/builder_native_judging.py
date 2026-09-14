@@ -120,7 +120,7 @@ def native_judging_review(app, params):
         +"<div class='scroll'><table style='min-width:54rem'><tr><th>Target model</th><th>Source run</th><th>Outputs</th>"
         "<th>Saved scoring condition</th></tr>"+rows+'</table></div>'
         +"<details><summary>Exact command</summary><pre>"+html.escape(' '.join(build_argv('retained_native_judge_execute',values)))
-        +"</pre></details><form method='post' action='/build/judge-retained-local'>"
+        +"</pre></details><form class='action-row' method='post' action='/build/judge-retained-local'>"
         "<input type='hidden' name='launch_ticket' value='"+html.escape(ticket,quote=True)+"'>"
         '<button type="submit">Start or resume local judging</button></form>'
         +"<p><a href='/build?campaign_id="+owner+"'>Return to Build</a></p>")
@@ -170,7 +170,7 @@ def native_judging_panel(app, params):
         body += "<p><a href='/jobs/"+escaped+"'>Open judging preparation and source errors</a></p>"
         for field,label in [('retained_native_verify_model','Full model checksum revalidation'),
             ('retained_native_verify_artifacts','Full result-file checksum revalidation')]:
-            body += "<label><input type='checkbox' form='builder' name='"+field+"'"+(
-                ' checked' if params.get(field)=='on' else '')+'>'+label+' (optional)</label>'
+            body += "<label class='checkrow'><input type='checkbox' form='builder' name='"+field+"'"+(
+                ' checked' if params.get(field)=='on' else '')+'><span>'+label+' (optional)</span></label>'
         body += "<button form='builder' formaction='/build/review-native-judging'>Review local judging</button>"
     return body+'</section>'

@@ -164,14 +164,14 @@ def judging_inventory_panel(params):
     body += "</div><div class='campaign-actions'><button form='builder' formaction='/build/prepare-judging-inventory'>Prepare all-output coverage</button></div>"
     if params.get('retained_inventory_job'):
         body += "<input form='builder' type='hidden' name='retained_inventory_job' value='" + html.escape(params['retained_inventory_job'], quote=True) + "'>"
-        body += "<button form='builder' formaction='/build/review-judging-inventory'>Review all-output coverage</button>"
-        body += "<button form='builder' formaction='/build/prepare-inventory-judging'>Prepare all-output judging funding</button>"
+        body += "<div class='action-row'><button form='builder' formaction='/build/review-judging-inventory'>Review all-output coverage</button>"
+        body += "<button form='builder' formaction='/build/prepare-inventory-judging'>Prepare all-output judging funding</button></div>"
     if params.get('retained_inventory_items_job'):
         body += "<input form='builder' type='hidden' name='retained_inventory_items_job' value='" + html.escape(params['retained_inventory_items_job'], quote=True) + "'>"
-        body += "<button form='builder' formaction='/build/review-inventory-judging'>Review all-output judging funding</button>"
-        body += "<button form='builder' formaction='/build/prepare-inventory-haiku'>Prepare all-output Haiku judging</button>"
+        body += "<div class='action-row'><button form='builder' formaction='/build/review-inventory-judging'>Review all-output judging funding</button>"
+        body += "<button form='builder' formaction='/build/prepare-inventory-haiku'>Prepare all-output Haiku judging</button></div>"
         body += '<p>Uses the Haiku model selected in the judging controls. Counts oversized requests when needed, without generating verdicts.</p>'
     if params.get('retained_inventory_plan_job'):
         body += "<input form='builder' type='hidden' name='retained_inventory_plan_job' value='" + html.escape(params['retained_inventory_plan_job'], quote=True) + "'>"
-        body += "<button form='builder' formaction='/build/review-inventory-haiku'>Review all-output Haiku judging</button>"
+        body += "<div class='action-row'><button form='builder' formaction='/build/review-inventory-haiku'>Review all-output Haiku judging</button></div>"
     return body + '</section>'

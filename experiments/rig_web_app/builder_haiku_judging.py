@@ -151,7 +151,7 @@ def haiku_judging_review(app,params):
         'The prepared population and exclusions remain available in the plan artifact.</p>'
         "<div class='scroll'><table><tr><th>Population</th><th>Model</th><th>Answers</th></tr>"+rows+'</table></div>'
         "<details><summary>Exact command</summary><pre>"+html.escape(' '.join(build_argv('retained_response_judge_pair_execute',values)))
-        +"</pre></details><form method='post' action='/build/judge-retained-haiku'>"
+        +"</pre></details><form class='action-row' method='post' action='/build/judge-retained-haiku'>"
         "<input type='hidden' name='launch_ticket' value='"+html.escape(ticket,quote=True)+"'>"
         '<button type="submit">Start or resume Haiku judging</button></form>'
         +"<p><a href='/build?campaign_id="+owner+"'>Return to Build</a></p>")
