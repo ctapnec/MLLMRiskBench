@@ -6,9 +6,11 @@ The destination is a new demonstration campaign, not the thesis Local campaign.
 Use a new name and output directory when reproducing the example.
 
 Acceptance status, 14 September: the text and image probes, saved-answer
-recovery and both transport-receipt forms have passed in production. The final
-measured text/image example is still undergoing acceptance. Step 6 describes
-the intended sequence, not a claim that it has passed.
+recovery, transport-receipt forms and four-input measured example have passed
+in production. Results, local decisions, generation details, charts and exports
+were checked on desktop and mobile. The completed reference is
+[UI demonstration - Qwen local text and images](http://localhost:8642/campaigns/f082ba4833644521b51eade324ccf94d).
+Inspect that campaign without restarting it; use a new campaign for your own run.
 
 ## 1. Create the draft and select the installed models
 
@@ -146,9 +148,25 @@ Reopen the same saved campaign in Build:
    **Results**, **Judging**, **Costs** and **Campaign jobs**. Probes remain
    diagnostic records; do not pool them with the measured cases.
 
+In **Results**, open a row's **Generation settings and usage** to see its context,
+output allowance, actual token usage and finish reason. The **Truncated** column
+is separate. On a narrow screen, scroll the result table horizontally to reach
+those columns. **Overview** exports coverage and missing/truncation figures and
+their table; **Judging** exports its figure and counts.
+
+The completed reference has two text and two image answers, all usable,
+untruncated and locally evaluated, with four target calls and no answer retries.
+Its three diagnostic records remain separate. The local rules stage supplied
+the decisions; this example did not require a model-backed guardrail call.
+Local monetary cost was not measured. The Costs page therefore reports unknown
+totals, not zero-cost computing. Job duration remains available in Campaign jobs.
+
 Use saved run selection for any subsequent hosted comparison, as explained in
 [the Flash guide](SMALL_API_CAMPAIGN.md). Selecting the same seed independently
 does not by itself prove identical prompts and images. Haiku must assess each
 new selected answer separately; the verdict for another model's answer cannot
 be copied onto it. Hosted execution and Haiku assessment require their own
 forecast and spending controls.
+The completed Flash guide already demonstrates output-specific Haiku assessment
+and comparison against its original saved local counterparts. Those are not
+Haiku verdicts on the four newly generated answers in this local-only example.

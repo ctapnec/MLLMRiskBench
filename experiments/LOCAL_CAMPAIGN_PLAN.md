@@ -5,8 +5,11 @@ attempted, with 2,226 usable replacements and 410 residual misses. The larger-
 allowance diagnostics below did not change this cohort. The current 2,888-input
 hosted population still has local counterparts and 4,454 eligible usable local
 answers with output-specific Haiku assessments. Collection is not being rerun.
-The remaining work is final statistical/publication reconciliation, manual
-local UI-flow acceptance and actual independent human assessment. The deployed
+The separate four-input local UI demonstration has passed collection, local
+evaluation and desktop/mobile result/export acceptance; its concrete procedure
+is in `docs/SMALL_LOCAL_CAMPAIGN.md`. It does not change the study populations.
+The remaining work is final publication review, the operator's own UI
+reproduction and actual independent human assessment. The deployed
 human-review wizard can prepare saved campaign samples and issue qualified
 reviewer links, but no actual human ratings have been collected. Historical
 status entries below remain dated records, not instructions to restart them.

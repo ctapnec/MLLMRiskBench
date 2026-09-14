@@ -63,15 +63,20 @@ seven measured answers for a recorded USD 0.007470: six valid verdicts and one
 invalid-format assessment. Seven existing local Haiku verdicts remain attached
 to their original answers, with no duplicate paid judging. Live desktop/mobile
 acceptance passed for results, charts, costs, exports and the seven-input
-comparison. The separate small local-run demonstration and the operator's own
-walkthrough remain outstanding; archive transfer has not started.
+comparison. The separate small local-run demonstration is also complete as
+described below. The operator's own walkthrough remains outstanding; archive
+transfer has not started.
 
 The [local Build guide](SMALL_LOCAL_CAMPAIGN.md) records concrete fields and
-buttons while its end-to-end acceptance proceeds. The text and image probes,
-saved-answer continuation and transport-receipt forms have passed on the rig.
-The small measured run remains a separate acceptance step; the guide marks
-that boundary explicitly. Completed thesis generations are not rerun by this
-demonstration.
+buttons accepted on the rig. Text/image probes, saved-answer continuation and
+transport-receipt forms passed, followed by two measured text and two measured
+image answers. All four were usable, untruncated and locally evaluated, with
+four target calls and no retries. Desktop/mobile results, generation details,
+charts and exports passed. Three diagnostic records remain separate. Local
+monetary cost was not measured and is shown as unknown, not zero. This local-only
+example does not claim Haiku judgments on its new answers; the earlier Flash
+example establishes the matched hosted/local judging flow on its own retained
+inputs. Completed thesis generations were not rerun by either demonstration.
 
 ## Archive contents and acceptance
 
