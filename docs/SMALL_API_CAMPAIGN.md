@@ -210,7 +210,11 @@ claiming a paired result. Otherwise report this as a separate campaign.
    date, using the prices already configured on the rig.
 4. Click **Prepare forecast**. Wait for its job to complete, then return to the
    saved campaign's General tab.
-5. Click **Prepare replay inputs**. Wait for that job to complete, then return.
+5. Below the forecast panel, find **Prepare matched replay inputs** and click
+   **Prepare replay inputs**. This is **not** the earlier **Prepare selected
+   inputs** button. Wait for the replay job to complete, then reopen this saved
+   campaign through **Configure in Build -> General**. The **Count inputs and
+   prepare collection** panel is now available below replay preparation.
 
 The reference selection, with the retained seed-zero inputs, contains **seven
 measured inputs (three text, four image) and five diagnostic inputs**. Twelve
@@ -240,8 +244,13 @@ counts or source selection halfway through preparation.
 
 ## 5. Count, review and start the paid collection
 
-1. Find **Count inputs and prepare collection**. Enable the provider token-count
-   option (the checkbox allowing network counting).
+1. In **General**, below **Prepare matched replay inputs**, find **Count inputs
+   and prepare collection**. Enable **Allow provider token counting for these
+   selected inputs**. If this panel is missing, section 3's replay-preparation
+   step has not been saved in this campaign: click **Prepare replay inputs**,
+   wait for completion and reopen the same saved campaign in Build. Input
+   preparation and the forecast alone do not reveal this panel. Do not repeat
+   **Prepare selected inputs** or **Prepare forecast** for an unchanged selection.
 2. Click **Prepare counted collection**. This constructs exact requests and
    counts their inputs; it does not generate answers. Wait for completion.
    If the scoring model is not installed, Build returns to **Evaluation** with
