@@ -33,7 +33,7 @@ _STYLE = """
     --m-image-bg:#12301f; --m-audio:#f0b25e; --m-audio-bg:#3a2a10;
     --m-video:#c89df3; --m-video-bg:#2d1b41;
     --chevron:url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%2392a3b4'%20stroke-width='2.2'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M6%209l6%206%206-6'/%3E%3C/svg%3E"); } }
-/* HotAAI's four named palettes, mapped onto the console's existing tokens. */
+/* Four named palettes, mapped onto the console's existing tokens. */
 :root[data-theme=slate] {
   --bg:#eef1f4; --card:#ffffff; --ink:#16191c; --muted:#57616b; --line:#d4dae0;
   --accent:#0e7c96; --accent-ink:#ffffff; --soft:#dcf0f5;

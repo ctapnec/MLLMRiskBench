@@ -229,7 +229,7 @@ supplies them.
 ## Shared control layout
 
 The header's **Theme** selector offers **Slate**, **Parchment**, **Midnight**,
-**Ash** and **Harbor**. The first four reuse the HotAAI UI palettes: Slate and
+**Ash** and **Harbor**. The first four are fixed palettes: Slate and
 Parchment are light; Midnight and Ash are dark. Harbor preserves this console's
 original palette and follows the operating system's light/dark preference.
 The choice applies immediately and is remembered in this browser across pages
