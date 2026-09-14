@@ -5,10 +5,10 @@ not require a framework installation, a model download or a hosted API call.
 The destination is a new demonstration campaign, not the thesis Local campaign.
 Use a new name and output directory when reproducing the example.
 
-Acceptance status, 14 September: the text probe, saved-answer recovery and
-transport-receipt form have passed in production. The image probe and the final
-measured text/image example are still undergoing acceptance. The remaining
-steps below describe the intended sequence, not a claim that they have passed.
+Acceptance status, 14 September: the text and image probes, saved-answer
+recovery and both transport-receipt forms have passed in production. The final
+measured text/image example is still undergoing acceptance. Step 6 describes
+the intended sequence, not a claim that it has passed.
 
 ## 1. Create the draft and select the installed models
 
@@ -123,16 +123,19 @@ Reopen the same saved campaign in Build:
 
 1. In **Pipeline**, choose **measured** and select `xstest_full` and
    `vlsbench_release`. Keep only Qwen selected as a target.
-2. In **Admission**, enter the text and image receipt paths and their printed
-   digests in two separate rows. Keep the same scope and set maximum age to
-   `24` hours. Refresh only receipts that have actually expired or changed.
+2. In **Admission**, enter the text receipt path and its printed digest. Click
+   **Add receipt row** for the image receipt and digest. Keep the same scope and
+   set maximum age to `24` hours. Refresh only receipts that have actually
+   expired or changed.
 3. In **Execution**, change the per-arm limit to `2`, set the local process
    wall-time cap to `1` hour and change Output to
    `/mnt/stor/data/ura-work/runs/demonstrations/my-qwen-demonstration/measured`.
    Keep the other bounds and the one-answer-retry policy unchanged.
 4. Save, return through **Configure in Build**, and **Compose & review**.
    Follow step 3's preparation sequence for this new measured selection.
-   Confirm the exact no-call projection before the real start.
+   After preflight, return through the saved campaign's **Configure in Build**
+   and **Compose & review**, retaining its entered live-receipt paths. Confirm
+   the exact no-call projection before the real start.
 5. Wait for collection and local evaluation to finish. Inspect the campaign's
    **Results**, **Judging**, **Costs** and **Campaign jobs**. Probes remain
    diagnostic records; do not pool them with the measured cases.
