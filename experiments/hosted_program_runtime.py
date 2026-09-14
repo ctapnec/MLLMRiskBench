@@ -169,11 +169,19 @@ def bind_installed_program(*, original, budget, project_root, expected_commit, s
             completed=number, assigned=len(planned), target_calls=0, judge_calls=0, downloaded_bytes=0))
         plans = list((unit/'plans').glob('*.plan.json'))
         if not plans:
-            with (unit/'planning.log').open('a') as stream, redirect_stdout(stream), redirect_stderr(stream):
-                with retained_execution_admission(admission):
-                    code = run_matrix.main(admission.job['argv'])
+            log = unit/'planning.log'
+            try:
+                with log.open('a') as stream, redirect_stdout(stream), redirect_stderr(stream):
+                    with retained_execution_admission(admission):
+                        code = run_matrix.main(admission.job['argv'])
+            except SystemExit as exc:
+                # argparse exits from nested Runner validation. Do not let it
+                # terminate the parent silently while its error is redirected.
+                raise RuntimeError('Runtime planning failed for '+admission.job['name']+
+                    '; '+_log_tail(log)+'\nPlanner log: '+str(log)) from exc
             if code:
-                raise RuntimeError('Runtime planning failed; inspect '+str(unit/'planning.log'))
+                raise RuntimeError('Runtime planning failed for '+admission.job['name']+
+                    '; '+_log_tail(log)+'\nPlanner log: '+str(log))
             plans = list((unit/'plans').glob('*.plan.json'))
         if len(plans)!=1:
             raise ValueError('Runtime job needs one exact acquisition plan')
@@ -211,6 +219,39 @@ def bind_installed_program(*, original, budget, project_root, expected_commit, s
         verify_model_sha256=verify_model_sha256, original_requests_unchanged=program['requests']==original['requests'])
     _write_atomic(out/'result.json', result)
     return result
+
+
+def _log_tail(path: Path) -> str:
+    with path.open('rb') as stream:
+        stream.seek(0, 2)
+        stream.seek(max(0,stream.tell()-6000))
+        return stream.read().decode('utf-8',errors='replace').strip()
+
+
+def retained_planning_failure(root: Path, allowed_root: Path) -> str:
+    """Expose the active nested planner log, including older silent failures."""
+    try:
+        root = root.resolve(strict=True)
+        if not root.is_relative_to(allowed_root.resolve(strict=True)):
+            return ''
+        selection = json.loads((root/'selection.json').read_text())
+        runtime = Path(selection['runtime_root']).resolve(strict=True)
+        if not runtime.is_relative_to(allowed_root.resolve(strict=True)):
+            return ''
+        for number, _ in enumerate(selection['programs']):
+            program = runtime/f'program-{number:04d}'
+            progress = json.loads((program/'progress.json').read_text())
+            unit = progress.get('completed')
+            if progress.get('stage')!='binding_installed_runtime' or type(unit) is not int or unit<0:
+                continue
+            log = (program/f'unit-{unit:04d}'/'planning.log').resolve(strict=True)
+            if log.is_relative_to(runtime):
+                content = _log_tail(log)
+                if content:
+                    return 'Installed-runtime preparation: '+str(progress.get('job',''))+'\n'+content
+    except (OSError,ValueError,KeyError,TypeError):
+        return ''
+    return ''
 
 
 @artifact_verification_cli

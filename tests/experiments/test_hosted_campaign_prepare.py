@@ -50,10 +50,28 @@ def _request(tmp_path: Path, monkeypatch, **program_options) -> tuple[dict, Path
         "pricing_as_of": program["pricing_as_of"],
         "sources": {**program["sources"], "historical_result": historical},
         "routes": [{"target": program["target"], "replay_artifacts": [replay]}],
-        "runner_common_argv": [],
+        "runner_common_argv": ['--guardrail-model','meta-llama/Llama-Guard-3-8B','--guardrail-revision','a'*40],
         "execution_root": str(execution_root),
     }
     return request, execution_root
+
+
+@pytest.mark.parametrize('common',[[],['--guardrail-revision','main'],
+    ['--guardrail-revision'],['--guardrail-model',' ','--guardrail-revision','a'*40]])
+def test_cli_rejects_incomplete_scoring_before_network_counts(tmp_path,monkeypatch,common):
+    request,_ = _request(tmp_path,monkeypatch)
+    request['runner_common_argv']=common
+    descriptor=_save(tmp_path/'invalid-request.json',request)
+    monkeypatch.setattr(subject,'count_request',lambda *a,**kw:pytest.fail('Provider counting was reached'))
+    with pytest.raises(ValueError,match='guardrail'):
+        subject.main(['--request',descriptor['path'],'--request-sha256',descriptor['sha256'],
+                      '--out-root',str(tmp_path/'invalid-prepared'),'--allow-network-counts'])
+    assert not (tmp_path/'invalid-prepared').exists()
+
+
+def test_common_scoring_accepts_runner_default_model_and_equals_revision():
+    argv=['--guardrail-revision='+'a'*40,'--guardrail-device','cuda:0']
+    assert subject._common_argv(argv)==argv
 
 
 def test_preparation_creates_funded_disjoint_pilot_and_measured_program_without_generation(

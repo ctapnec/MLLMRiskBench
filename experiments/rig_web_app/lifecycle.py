@@ -4235,7 +4235,12 @@ class LifecycleMixin:
                 return 303, "/jobs/" + job.job_id, b""
             if method == "POST" and path == "/build/prepare-programs":
                 from .builder_programs import prepare_programs
-                job = prepare_programs(self, self._builder_params(form or {}))
+                from experiments.hosted_campaign_prepare import scoring_settings_errors
+                params = self._builder_params(form or {})
+                errors = scoring_settings_errors(params.get('guardrail_model',''),params.get('guardrail_revision',''))
+                if errors:
+                    return 400, "text/html; charset=utf-8", self._build_page(prefill=params,errors=errors)
+                job = prepare_programs(self, params)
                 return 303, "/jobs/" + job.job_id, b""
             if method == "POST" and path == "/build/review-collection":
                 from .builder_collection import collection_review

@@ -104,6 +104,17 @@ def _canonical_existing_root(path_value: object, *, label: str) -> Path:
     return path
 
 
+def scoring_settings_errors(model: str, revision: str) -> dict[str, str]:
+    """The local scorer must be executable before any provider token counting."""
+    errors = {}
+    if not model.strip():
+        errors['guardrail_model'] = 'Set the scoring guardrail model in Evaluation (--guardrail-model).'
+    if re.fullmatch(r'[0-9a-fA-F]{40,64}', revision) is None:
+        errors['guardrail_revision'] = ('Set the scoring guardrail revision in Evaluation '
+            '(--guardrail-revision, the installed model\'s 40-64 hex commit).')
+    return errors
+
+
 def _common_argv(raw: object) -> list[str]:
     if (
         not isinstance(raw, list)
@@ -113,6 +124,16 @@ def _common_argv(raw: object) -> list[str]:
     for value in raw:
         if value in _CONTROLLED or any(value.startswith(flag + "=") for flag in _CONTROLLED):
             raise ValueError(f"runner_common_argv cannot override {value.split('=', 1)[0]}")
+    parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False, exit_on_error=False)
+    parser.add_argument('--guardrail-model', default='meta-llama/Llama-Guard-3-8B')
+    parser.add_argument('--guardrail-revision', default='')
+    try:
+        scoring, _ = parser.parse_known_args(raw)
+    except argparse.ArgumentError as exc:
+        raise ValueError(str(exc)) from exc
+    errors = scoring_settings_errors(scoring.guardrail_model, scoring.guardrail_revision)
+    if errors:
+        raise ValueError(' '.join(errors.values()))
     return list(raw)
 
 

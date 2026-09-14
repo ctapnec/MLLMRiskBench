@@ -8,6 +8,7 @@ import pytest
 from experiments.rig_web_app import builder_programs as subject
 from experiments.rig_web_app.catalog import build_argv
 from test_builder_replays import study  # noqa: F401
+from test_rig_web_busy_browser import browser  # noqa: F401
 
 
 @pytest.fixture
@@ -15,7 +16,7 @@ def prepared(study, monkeypatch, tmp_path):  # noqa: F811 - imported pytest fixt
     app, params, calls, jobs = study
     params = dict(params, judges='rules,guardrail', retained_replays_job='replay-ready',
                   corpora='unrelated-draft-arm', attackers='unrelated-draft-attacker',
-                  approximate_common_metrics='on', guardrail_model='local-guard', deadline='3600')
+                  approximate_common_metrics='on', guardrail_model='local-guard', guardrail_revision='a'*40, deadline='3600')
     forecast = json.loads(jobs['budget-job']['argv'])
     for flag in ('--pricing-config', '--budgets'):
         path = tmp_path/(flag[2:]+'.json')
@@ -43,7 +44,8 @@ def prepared(study, monkeypatch, tmp_path):  # noqa: F811 - imported pytest fixt
             '--limit':draft['limit'],'--attackers':draft['attackers'],'--judges':draft['judges'],
             '--target-answer-retries':draft['target_answer_retries'],'--approximate-common-metrics':'on',
             '--deadline-seconds':draft.get('deadline',''),
-            '--guardrail-model':'local-guard','--guardrail-device':'cuda:1',
+            '--guardrail-model':draft.get('guardrail_model',''),'--guardrail-revision':draft.get('guardrail_revision',''),
+            '--guardrail-device':'cuda:1',
             **({'--exclude-tool-conditioned':'on'} if draft.get('exclude_tool_conditioned') == 'on' else {})}, draft
     monkeypatch.setattr(app,'_compose_from_builder',compose)
     return app,params,calls,jobs,composed
@@ -152,3 +154,34 @@ def test_preparation_panel_explains_network_and_retains_job():
     assert "form='builder' name='retained_network_counts'" in page
     assert "name='retained_programs_job' value='programs'" in page
     assert 'No answers are generated or judged' in page and 'prompts and images' in page
+
+
+@pytest.mark.parametrize('field,value', [('guardrail_model',''),('guardrail_revision',''),
+                                      ('guardrail_revision','main'),('guardrail_revision','not-a-commit')])
+def test_incomplete_scorer_cannot_create_preparation(prepared,field,value):
+    app,params,calls,_,composed = prepared
+    with pytest.raises(ValueError,match='scoring guardrail'):
+        subject.prepare_programs(app,dict(params,**{field:value}))
+    assert not calls and not composed
+
+
+@pytest.mark.parametrize('width',[390,1440])
+def test_prepare_error_keeps_draft_and_opens_scoring_fields(browser,prepared,width):
+    from experiments.rig_web_app import ui
+    app,params,calls,_,composed = prepared
+    params = dict(params,guardrail_model='',guardrail_revision='',retained_network_counts='on')
+    status,_,body = app.handle('POST','/build/prepare-programs',params)
+    assert status==400 and not calls and not composed
+    page=browser.new_page(viewport={'width':width,'height':1000})
+    try:
+        content=body.decode().replace("<link rel='stylesheet' href='/static/style.css'>",'<style>'+ui._STYLE+'</style>')
+        page.set_content(content)
+        assert page.locator('#build-evaluation-tab').get_attribute('aria-selected')=='true'
+        assert page.locator('input[name=guardrail_revision]').is_visible()
+        assert page.locator('input[name=guardrail_model]').is_visible()
+        assert page.locator('input[name=campaign_id]').input_value()==params['campaign_id']
+        assert page.locator('input[name=retained_replays_job]').input_value()=='replay-ready'
+        assert 'Set the scoring guardrail revision' in page.locator('main').inner_text()
+        assert not page.evaluate('document.documentElement.scrollWidth>innerWidth')
+    finally:
+        page.close()

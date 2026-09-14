@@ -148,6 +148,47 @@ def test_runtime_resumes_without_replanning_or_reinstalling(tmp_path,monkeypatch
     assert first['target_calls']==first['judge_calls']==first['downloaded_bytes']==0
 
 
+@pytest.mark.parametrize('exit_style',['system_exit','returned_code'])
+def test_nested_runner_error_reaches_cli_stderr(tmp_path,monkeypatch,exit_style,capsys):
+    import sys
+    from experiments import run_matrix
+    kwargs,calls,_ = fixture_runtime(tmp_path,monkeypatch)
+    def rejected(argv):
+        print('Runner configuration error: missing --guardrail-revision',file=sys.stderr)
+        if exit_style=='system_exit':
+            raise SystemExit(2)
+        return 2
+    monkeypatch.setattr(run_matrix,'main',rejected)
+    with pytest.raises(RuntimeError,match='missing --guardrail-revision') as exc:
+        subject.bind_installed_program(**kwargs)
+    assert 'Planner log:' in str(exc.value) and 'text-pilot' in str(exc.value)
+    assert not calls['acquire']
+    # Redirection was restored, so an outer CLI can report the actual error.
+    print(str(exc.value),file=sys.stderr)
+    assert 'missing --guardrail-revision' in capsys.readouterr().err
+
+
+def test_historical_nested_error_is_visible_on_job_page(tmp_path):
+    from experiments.rig_web import Job,RigWebApp
+    root=tmp_path/'runs'
+    unit=root/'collection/runtime/program-0000/unit-0000'
+    unit.mkdir(parents=True)
+    (unit/'planning.log').write_text('Runner error: missing --guardrail-revision <details>')
+    (unit.parent/'progress.json').write_text(json.dumps(dict(stage='binding_installed_runtime',completed=0,job='pilot')))
+    (root/'collection/selection.json').write_text(json.dumps(dict(runtime_root=str(unit.parent.parent),programs=[{}])))
+    app=RigWebApp(results_root=root,state_dir=tmp_path/'state',repo_root=tmp_path,gpu_hardware={},system_hardware={})
+    try:
+        job=Job(job_id='silent-failure',command='hosted_campaign_execute',argv=['--out',str(root/'collection')],
+                directory=tmp_path/'logs',restored_state='failed',restored_exit=2)
+        page=app._job_page(job).decode()
+        assert 'Runtime preparation error' in page
+        assert 'missing --guardrail-revision &lt;details&gt;' in page
+        assert 'Standard error is shown below' not in page
+        assert subject.retained_planning_failure(root/'collection',tmp_path/'state')==''
+    finally:
+        app.close()
+
+
 def test_started_program_cannot_get_fresh_runtime_arguments(tmp_path,monkeypatch):
     kwargs,calls,starts=fixture_runtime(tmp_path,monkeypatch)
     starts[next(iter(starts))]=1

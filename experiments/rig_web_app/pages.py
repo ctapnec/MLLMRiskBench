@@ -1738,6 +1738,11 @@ class PagesMixin:
         state_tag = self._job_status_tag(state)
         stdout_tail = self._log_tail(job, "stdout") or "(empty)"
         stderr_tail = self._log_tail(job, "stderr") or "(empty)"
+        nested_failure = ''
+        if state == 'failed' and job.command == 'hosted_campaign_execute' and '--out' in job.argv:
+            from experiments.hosted_program_runtime import retained_planning_failure
+            nested_failure = retained_planning_failure(
+                Path(job.argv[job.argv.index('--out')+1]), self.results_root)
         stop_form = (
             f"<form class='action-row' method='post' action='/jobs/{html.escape(job.job_id)}/stop'>"
             "<button class='danger' type='submit'>Stop job</button></form>"
@@ -1752,9 +1757,11 @@ class PagesMixin:
         failure = (
             "<div class='card'><h2>" + _icon("pulse") + "Failure</h2>"
             "<p>The command exited with "
-            f"code {job.exit_code()}. Standard error is shown below; the "
-            "underlying CLI message is authoritative.</p>"
+            f"code {job.exit_code()}. Retained error details are shown below.</p>"
             + (f"<pre>{html.escape(job.failure)}</pre>" if job.failure else "")
+            + ("<h3>Runtime preparation error</h3><pre>"+html.escape(nested_failure)+"</pre>"
+               if nested_failure else "")
+            + (f"<pre>{html.escape(stderr_tail)}</pre>" if not nested_failure and stderr_tail != '(empty)' else '')
             + "</div>"
             if state == "failed"
             else ""
