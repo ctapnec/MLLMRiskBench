@@ -186,6 +186,11 @@ def test_historical_nested_error_is_visible_on_job_page(tmp_path):
         assert 'missing --guardrail-revision &lt;details&gt;' in page
         assert 'Standard error is shown below' not in page
         assert subject.retained_planning_failure(root/'collection',tmp_path/'state')==''
+        (unit.parent/'result.json').write_text('{}')
+        assert subject.retained_planning_failure(root/'collection',root)==''
+        (unit.parent/'result.json').unlink()
+        (unit.parent.parent/'programs.json').write_text('{}')
+        assert subject.retained_planning_failure(root/'collection',root)==''
     finally:
         app.close()
 

@@ -238,8 +238,12 @@ def retained_planning_failure(root: Path, allowed_root: Path) -> str:
         runtime = Path(selection['runtime_root']).resolve(strict=True)
         if not runtime.is_relative_to(allowed_root.resolve(strict=True)):
             return ''
+        if (runtime/'programs.json').is_file():
+            return ''  # A later collection failure is not a planning failure.
         for number, _ in enumerate(selection['programs']):
             program = runtime/f'program-{number:04d}'
+            if (program/'result.json').is_file():
+                continue
             progress = json.loads((program/'progress.json').read_text())
             unit = progress.get('completed')
             if progress.get('stage')!='binding_installed_runtime' or type(unit) is not int or unit<0:
