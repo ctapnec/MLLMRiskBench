@@ -209,12 +209,68 @@ def test_config_editor_actions_wrap_without_overflow(browser, study, monkeypatch
         render(page, app._config_page('api-targets', ''))
         row = page.locator('.editor-actions')
         assert row.evaluate('row=>getComputedStyle(row).flexWrap') == 'wrap'
+        assert row.evaluate('row=>getComputedStyle(row).gap') == '12px'
         assert len(row.get_by_role('button').all()) == 3
         bounds = row.bounding_box()
         for button in row.get_by_role('button').all():
             box = button.bounding_box()
             assert box['x'] >= bounds['x']
             assert box['x']+box['width'] <= bounds['x']+bounds['width']+1
+        assert not page.evaluate('document.documentElement.scrollWidth>innerWidth')
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize('width', [390, 1440])
+def test_saved_judging_field_is_separated_from_preparation_action(browser, native, width):
+    app, _, calls, _ = native
+    params = complete_preparation(native)
+    before = len(calls)
+    page = browser.new_page(viewport={'width':width, 'height':1000})
+    try:
+        render(page, ui._page('Local judging', "<form id='builder'></form>"+
+                             builder_native_judging.native_judging_panel(app, params)))
+        button = page.get_by_role('button', name='Prepare remaining source runs', exact=True)
+        field = page.locator('[name=retained_native_judging_job]').locator('..')
+        a, b = button.bounding_box(), field.bounding_box()
+        assert b['y']-a['y']-a['height'] >= 16
+        assert len(calls) == before
+        assert not page.evaluate('document.documentElement.scrollWidth>innerWidth')
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize('width', [390, 1440])
+def test_tools_submit_is_separated_from_last_control(browser, study, width):
+    app, _, calls, _ = study
+    page = browser.new_page(viewport={'width':width, 'height':1000})
+    try:
+        render(page, ui._page('Tools', app._command_card('retained_native_judge_prepare')))
+        page.locator('details.cmd > summary').click()
+        gap = page.locator('form.cmd > button[type=submit]').evaluate("""button => {
+          let previous=button.previousElementSibling;
+          while(previous && (!previous.getClientRects().length || previous.matches('span:empty')))
+            previous=previous.previousElementSibling;
+          return button.getBoundingClientRect().top-previous.getBoundingClientRect().bottom;
+        }""")
+        assert gap >= 16
+        assert not calls
+        assert not page.evaluate('document.documentElement.scrollWidth>innerWidth')
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize('width', [390, 1440])
+def test_human_setup_footer_keeps_action_spacing_on_mobile(browser, study, width):
+    app, params, calls, _ = study
+    status, _, body = app.handle('GET', '/human-evaluation?campaign_id='+params['campaign_id'])
+    assert status == 200
+    page = browser.new_page(viewport={'width':width, 'height':1000})
+    try:
+        render(page, body)
+        footer = page.locator('[data-study-wizard] .review-wizard-footer')
+        assert footer.evaluate('row=>getComputedStyle(row).gap') == '12px'
+        assert not calls
         assert not page.evaluate('document.documentElement.scrollWidth>innerWidth')
     finally:
         page.close()

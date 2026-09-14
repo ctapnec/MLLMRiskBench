@@ -163,7 +163,7 @@ def native_judging_panel(app, params):
         except (ValueError,OSError,KeyError):
             return body+"<p>Finish the selected collection preparation to review its judging. Previous jobs remain in Jobs.</p></section>"
         history = preparation_history(app,params['campaign_id'],receipt['programs'])
-        body += "<label class='campaign-field'>Saved judging preparation<select form='builder' name='retained_native_judging_job'>"
+        body += "<label class='campaign-field separated-field'>Saved judging preparation<select form='builder' name='retained_native_judging_job'>"
         body += ''.join("<option value='"+html.escape(row['job_id'],quote=True)+"'"+(
             ' selected' if row['job_id']==job else '')+'>'+html.escape(row['job_id']+' - '+_state(app,row))+'</option>'
             for row in history)

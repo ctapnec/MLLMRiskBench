@@ -59,6 +59,7 @@ h2 .ic { color:var(--muted); }
 .campaign-ownership { display:grid; gap:.65rem; }
 .campaign-ownership-row { display:flex; flex-wrap:wrap; align-items:flex-end; gap:1rem; }
 .campaign-field { display:grid; gap:.5rem; min-width:0; font-weight:600; font-size:.9rem; }
+.campaign-field.separated-field { margin-top:1rem; }
 .haiku-judging-controls { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1rem; margin:1rem 0; }
 .judging-funding-summary { display:grid; grid-template-columns:repeat(auto-fit,minmax(14rem,1fr)); gap:1rem; margin:1.5rem 0; }
 .judging-funding-summary>div { background:#fff; border:1px solid var(--line); border-radius:.65rem; padding:1rem; }
@@ -193,6 +194,7 @@ form.cmd { display:grid; grid-template-columns:minmax(200px,260px) minmax(0,1fr)
   gap:.4rem .8rem; align-items:center; }
 form.cmd > .campaign-ownership, form.cmd > .notice { grid-column:1 / -1; }
 form.cmd > label, form.cmd > .fieldwrap { min-width:0; overflow-wrap:anywhere; }
+form.cmd > button { margin-top:.6rem; }
 form.cmd label { color:var(--muted); font-size:.84rem; }
 .req { color:#c0392b; font-weight:700; }
 form.cmd label .kind { color:var(--muted); opacity:.7; font-size:.75rem; }
@@ -375,7 +377,7 @@ textarea.editor { width:100%; min-height:60vh; font:.82rem/1.5
   color:var(--ink); resize:vertical; }
 textarea.editor:focus { outline:2px solid
   color-mix(in srgb, var(--accent) 45%, transparent); border-color:var(--accent); }
-.editor-actions { display:flex; flex-wrap:wrap; gap:.6rem; margin:.7rem 0; }
+.editor-actions { display:flex; flex-wrap:wrap; gap:.75rem; margin:1rem 0; }
 button.ghost { background:transparent; color:var(--accent);
   border:1px solid var(--line); }
 .playbook { margin:.4rem 0 0; padding-left:0; list-style:none; }
