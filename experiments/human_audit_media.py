@@ -11,7 +11,7 @@ from pathlib import Path
 from experiments.retained_replay_sources import source_populations, source_media_index
 
 
-def prepare_media_index(results: Path, sample: Path, supplied: Path | None = None) -> dict:
+def prepare_media_index(results: Path, sample: Path, supplied: Path | None = None, *, manifest_paths=None) -> dict:
     with sample.open(encoding='utf-8-sig', newline='') as stream:
         rows = list(csv.DictReader(stream))
     original = json.loads(supplied.read_text(encoding='utf-8')) if supplied else {}
@@ -30,7 +30,8 @@ def prepare_media_index(results: Path, sample: Path, supplied: Path | None = Non
     # These are only the result manifests in the explicitly selected scope,
     # not a recursive inventory of the data/model store.
     if unresolved_runs:
-        for path in results.rglob('*.manifest.json'):
+        paths = results.rglob('*.manifest.json') if manifest_paths is None else manifest_paths
+        for path in paths:
             run = path.name.removesuffix('.manifest.json').rsplit('__', 1)[-1]
             if run in unresolved_runs:
                 value = json.loads(path.read_text(encoding='utf-8'))

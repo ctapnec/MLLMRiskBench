@@ -181,5 +181,9 @@ class HumanReviewPagesMixin:
                 '--prepared-rating-form':str(store.root/study/'prepared.csv'),'--prepared-rating-form-sha256':info['metadata']['prepared_sha256'],'--output':str(directory/'analysis.json')}
             for key in ('historical_code_repository','judge_configuration_sha256'):
                 if info['metadata'].get(key):params['--'+key.replace('_','-')]=info['metadata'][key]
-            job=self.start_job('human_audit',params,campaign_id=info['campaign']);return 303,'/jobs/'+job.job_id,b''
+            indexed=info['metadata'].get('source_kind')=='campaign_index'
+            if indexed:
+                params={'--snapshot':info['metadata']['snapshot'],'--prepared-rating-form':str(store.root/study/'prepared.csv'),
+                    '--labels':str(directory/'labels.csv'),'--output':str(directory/'analysis.json')}
+            job=self.start_job('human_review_campaign' if indexed else 'human_audit',params,campaign_id=info['campaign']);return 303,'/jobs/'+job.job_id,b''
         return 404,'text/plain; charset=utf-8',b'Unknown human evaluation action'

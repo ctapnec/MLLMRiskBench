@@ -102,8 +102,16 @@ Source-task classification needs its separate existing rubric and analysis.
   identities, and reads each referenced artifact file once per preparation.
   It must not manufacture a successful original grid from post-hoc judgments.
   Missing source context is reported, never filled from an unrelated output.
-  Connecting this inventory to preparation, analysis and the production
-  selector remains required before claiming full campaign acceptance.
+  The campaign selector offers all indexed measured outputs, including those
+  from finished imported campaigns. Preparation freezes the selected outputs
+  and their output-specific judgments. Zero clusters requests the minimum
+  produced by deterministic coverage selection; it is not a mathematical
+  minimum or a representative random sample. Inspect the actual two-rater
+  workload before creating a study. Common and supported source-task frames
+  remain separate. Unsupported rubrics and unavailable context stay reported.
+  The indexed-campaign analysis reports saved-output agreement and decision
+  coverage against the frozen sample, not completion of the original Runner
+  grid, live-trajectory ASR or automatic satisfaction of the human-audit gate.
   Both actual campaign inventories have been read successfully. Setup turns
   remain separately accounted, and additional source-policy judgments retain
   their own contexts rather than becoming primary-rubric disagreement.
@@ -121,3 +129,18 @@ Reverse the relevant fix in a bounded regression to demonstrate sensitivity.
 Perform browser acceptance with isolated synthetic study data, including error
 and busy-state handling, mobile layout, independent sessions, restart/resume and
 export. Synthetic ratings must never enter an actual campaign's human evidence.
+
+## Equivalent indexed-campaign CLI
+
+`python -m experiments.human_review_campaign --database <console.db> --campaign
+<campaign-id> --results-root <runs-root> --mode common --clusters 0 --output
+<new-directory>/sample.csv --acknowledge-sensitive-content` prepares the same
+sample as the wizard. Use `source_task` for the supported classification rubrics.
+The adjacent frozen snapshot is an operator artifact, not a rater handout.
+The wizard conceals identities and automated labels that the operator CSV
+retains. After actual independent assessment and adjudication, run the same
+module with `--snapshot <sample.SNAPSHOT.json.gz> --prepared-rating-form
+<sample.csv> --labels <completed.csv> --output <new-analysis.json>`.
+Preparation and analysis make no model or judge calls. Indexed media lookup
+visits only the selected response files' neighboring manifests, not the whole
+campaign store. Unchanged source files are not rewritten.

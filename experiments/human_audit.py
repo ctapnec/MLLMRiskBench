@@ -992,7 +992,7 @@ def _observed_coverage_requirements(
 
 
 def _select_sample_clusters(
-    candidates: list[dict[str, Any]], n: int,
+    candidates: list[dict[str, Any]], n: int | None,
     requirements: list[dict[str, Any]],
     *, minimum_clusters_per_requirement: int = 1,
 ) -> tuple[list[dict[str, Any]], set[str], dict[str, dict[str, float | int]], dict[str, Any]]:
@@ -1006,18 +1006,34 @@ def _select_sample_clusters(
     clusters: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for candidate in candidates:
         clusters[candidate["cluster_key"]].append(candidate)
-    if len(clusters) < n:
+    if n is not None and len(clusters) < n:
         raise ValueError(
             f"human-audit frame has {len(clusters)} unique clusters; requested design "
             f"requires {n}"
         )
+    # Match only the four exact/wildcard risk-modality keys for each row.
+    # Scanning every requirement for every historical output is quadratic.
+    fields = ("run_id", "corpus", "model_spec", "defense", "attacker", "source",
+              "source_policy_id", "source_policy_version", "expected_population")
+    lookup: dict[tuple, set[str]] = defaultdict(set)
+    for requirement in requirements:
+        base = tuple(requirement[field] for field in fields)
+        lookup[base + (requirement.get("risk_category"), requirement.get("modality"))].add(requirement["requirement_id"])
     coverage: dict[str, set[str]] = {}
     for cluster_key, rows in clusters.items():
-        coverage[cluster_key] = {
-            requirement["requirement_id"]
-            for requirement in requirements
-            if any(_candidate_matches_requirement(row, requirement) for row in rows)
-        }
+        covered: set[str] = set()
+        for row in rows:
+            expected = row["expected_behavior"]
+            if row.get("common_metrics_eligible") is not True or expected not in {"refuse", "safe_answer", "comply_safely"}:
+                continue
+            base = (row["run_id"], row.get("_corpus"), row.get("_model_spec"),
+                    row.get("_defense"), row.get("_attacker"), row["source"],
+                    row["source_policy_id"], row["source_policy_version"],
+                    "harmful_expected_refusal" if expected == "refuse" else "benign_expected_answer")
+            for risk in (None, row["risk_category"]):
+                for modality in (None, row["modality"]):
+                    covered.update(lookup.get(base + (risk, modality), ()))
+        coverage[cluster_key] = covered
     requirement_ids = {item["requirement_id"] for item in requirements}
     missing_from_frame = sorted(
         requirement_ids - set().union(*coverage.values())
@@ -1046,7 +1062,7 @@ def _select_sample_clusters(
                 and coverage[key] & unmet
             )
         )
-        if not ranked or len(selected_cluster_ids) >= n:
+        if not ranked or (n is not None and len(selected_cluster_ids) >= n):
             raise ValueError(
                 f"human sample size {n} cannot cover every requested sensitivity cell"
             )
@@ -1055,6 +1071,8 @@ def _select_sample_clusters(
         for requirement_id in coverage[selected]:
             coverage_counts[requirement_id] += 1
 
+    if n is None:
+        n = max(1, len(selected_cluster_ids))
     cluster_strata: dict[str, list[str]] = defaultdict(list)
     for cluster_key, rows in clusters.items():
         signature = ";".join(sorted({row["_stratum"] for row in rows}))
@@ -1867,10 +1885,12 @@ def prepare_sample(
     results: Path, output: Path, n: int, *,
     historical_code_repository: Path | None = None,
     judge_configuration_sha256: str | None = None,
+    artifact_view: tuple | None = None,
+    minimum_coverage: bool = False,
 ) -> int:
     if n < 1:
         raise ValueError("human-audit unique-cluster sample size must be positive")
-    per_judge, joined_meta, judgments_by_key, _ = _audit_artifacts(
+    per_judge, joined_meta, judgments_by_key, _ = artifact_view if artifact_view is not None else _audit_artifacts(
         results, historical_code_repository=historical_code_repository,
         judge_configuration_sha256=judge_configuration_sha256,
     )
@@ -1943,7 +1963,7 @@ def prepare_sample(
 
     selected, selected_cluster_ids, selection_metadata, coverage_audit = (
         _select_sample_clusters(
-            candidates, n, requirements,
+            candidates, None if minimum_coverage else n, requirements,
         )
     )
     for row in selected:
@@ -2073,7 +2093,7 @@ _SOURCE_TASK_SELECTION_SCHEMA = "ura-source-task-audit-selection/1"
 
 
 def _select_source_task_clusters(
-    candidates: list[dict[str, Any]], n: int,
+    candidates: list[dict[str, Any]], n: int | None,
 ) -> tuple[
     dict[str, list[dict[str, Any]]],
     list[str],
@@ -2082,12 +2102,12 @@ def _select_source_task_clusters(
 ]:
     """Select source-task clusters with the versioned deterministic policy."""
 
-    if n < 1:
+    if n is not None and n < 1:
         raise ValueError("source-task audit unique-cluster sample size must be positive")
     clusters: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for candidate in candidates:
         clusters[str(candidate["cluster_key"])].append(candidate)
-    if len(clusters) < n:
+    if n is not None and len(clusters) < n:
         raise ValueError(
             f"source-task frame has {len(clusters)} unique clusters; requested "
             f"design requires {n}"
@@ -2112,6 +2132,8 @@ def _select_source_task_clusters(
         if cluster_key not in selected_keys:
             selected_keys.append(cluster_key)
     coverage_required_clusters = len(selected_keys)
+    if n is None:
+        n = max(1, coverage_required_clusters)
     if coverage_required_clusters > n:
         raise ValueError(
             f"source-task coverage requires {coverage_required_clusters} clusters; "
@@ -2165,6 +2187,8 @@ def _select_source_task_clusters(
 def prepare_source_task_sample(
     results: Path, output: Path, n: int, *,
     historical_code_repository: Path | None = None,
+    artifact_view: tuple | None = None,
+    minimum_coverage: bool = False,
 ) -> int:
     """Export a source-task classification audit frame.
 
@@ -2175,7 +2199,7 @@ def prepare_source_task_sample(
     parser output and the source reference so raters answer independently.
     """
 
-    _, joined_meta, judgments_by_key, _ = _audit_artifacts(
+    _, joined_meta, judgments_by_key, _ = artifact_view if artifact_view is not None else _audit_artifacts(
         results, frame="source_task", historical_code_repository=historical_code_repository,
     )
 
@@ -2229,7 +2253,7 @@ def prepare_source_task_sample(
         )
 
     clusters, selected_keys, sampling, _selection = (
-        _select_source_task_clusters(candidates, n)
+        _select_source_task_clusters(candidates, None if minimum_coverage else n)
     )
 
     selected: list[dict] = []

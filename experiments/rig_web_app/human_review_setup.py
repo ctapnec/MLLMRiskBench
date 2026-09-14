@@ -12,6 +12,11 @@ def sources(app, campaign):
     app.db.require_workspace(campaign)
     rows = app._human_store().sources(campaign)
     result = [dict(id='scope-'+r['id'], name=r['name'], **r['metadata']) for r in rows]
+    indexed = app.db._query("SELECT 1 FROM campaign_assignments WHERE campaign_id=? "
+        "AND evidence_class='measured' AND response_id IS NOT NULL LIMIT 1", (campaign,))
+    if indexed:
+        result.insert(0, dict(id='campaign-index', name='All indexed measured campaign outputs',
+            source_kind='campaign_index', results=str(app.results_root)))
     # Terminal result directories only. Do not scan corpora or reopen artifacts
     # when displaying a page. Imported historical campaigns use registered scopes.
     runs = app.db._query("SELECT r.job_id,r.out_dir FROM runs r JOIN campaign_members m "
@@ -45,11 +50,12 @@ def setup_body(app, campaign, field):
     if not campaign:
         return "<section class='review-card'><h2>Choose a campaign</h2><p>Open an existing local or API campaign, including a finished campaign, to review its saved outputs.</p><div class='review-actions'>" + ''.join(
             "<a class='button ghost' href='/human-evaluation?campaign_id="+r['campaign_id']+"'>"+escape(r['name'])+"</a>" for r in app.db.workspaces() or []) + '</div></section>'
-    options = "<option value=''>Choose saved results</option>"+''.join("<option value='"+escape(r['id'])+"'>"+escape(r['name'])+"</option>" for r in sources(app,campaign))
+    choices = sources(app,campaign)
+    options = "<option value=''>Choose saved results</option>"+''.join("<option value='"+escape(r['id'])+"'>"+escape(r['name'])+"</option>" for r in choices)
     hidden = "<input type='hidden' name='campaign_id' value='"+escape(campaign)+"'>"
     body = "<section class='review-card'><h2>New human evaluation</h2><p>Use saved results from this campaign. Collection can already be finished. No model is rerun and no API credit is spent.</p><form method='post' action='/human-evaluation/prepare-study' data-study-wizard novalidate>"+hidden
     body += "<div class='review-steps' role='navigation' aria-label='Study setup steps'></div><section class='review-step' data-study-step='Saved results'><h2 tabindex='-1'>Choose the saved result set</h2><label>Saved results<select name='source' required>"+options+"</select></label><p class='review-help'>A result set may cover one run or a registered combined analysis. Its label describes the scope; choosing it does not imply every campaign output is eligible. Missing outputs remain in campaign statistics.</p></section>"
-    body += "<section class='review-step' data-study-step='Sample'><h2 tabindex='-1'>Define the assessment sample</h2>"+field('name','Study name')+"<div class='review-grid'><label>Rubric<select name='mode'><option value='common'>Common safety dimensions</option><option value='source_task'>Source-task classification</option></select></label>"+field('clusters','Source clusters',20,'number')+"</div><p>Whole selected clusters stay together. The prepared sample will show the actual output count and two-rater workload before the study is created.</p><details><summary>Media lookup for imported results</summary>"+field('media_index','Existing retained media index (optional)',required=False)+"<p>Leave blank to use the selected result set's registered index. This connects saved image identities to their existing local files; it does not download media.</p></details></section>"
+    body += "<section class='review-step' data-study-step='Sample'><h2 tabindex='-1'>Define the assessment sample</h2>"+field('name','Study name')+"<div class='review-grid'><label>Rubric<select name='mode'><option value='common'>Common safety dimensions</option><option value='source_task'>Source-task classification</option></select></label>"+field('clusters','Source clusters',0 if any(r.get('source_kind')=='campaign_index' for r in choices) else 20,'number')+"</div><p>For indexed campaign outputs, zero selects the smallest sample produced by the deterministic coverage procedure. For a registered result set, enter a positive count. Whole selected clusters stay together across models and conditions. The prepared sample shows the actual output count and two-rater workload before a study is created; a broad campaign can require substantial review.</p><details><summary>Media lookup for imported results</summary>"+field('media_index','Existing retained media index (optional)',required=False)+"<p>Leave blank to use the selected result set's registered index. This connects saved image identities to their existing local files; it does not download media.</p></details></section>"
     body += "<section class='review-step' data-study-step='Arrangements'><h2 tabindex='-1'>Record the actual study arrangements</h2>"+field('ethics','Supervisor / institution determination and date')+field('compensation','Time, compensation and withdrawal terms')+field('stop_contact','Stop / escalation contact')+"<label>Consent and sensitive-content information<textarea name='consent' required></textarea></label><p>These fields record real decisions. They do not constitute institutional approval or replace consent from each reviewer.</p></section>"
     body += "<section class='review-step' data-study-step='Review'><h2 tabindex='-1'>Review sample preparation</h2><div data-study-summary></div><label class='review-check'><input type='checkbox' name='acknowledge' value='1' required><span>I understand the sample contains potentially harmful content and will be shared only with the assigned reviewers.</span></label><p>Preparation runs in Jobs. You will inspect the workload before creating the study and assigning raters.</p></section><div class='review-wizard-footer'><button type='button' class='ghost' data-study-back>Back</button><button type='button' data-study-next>Next</button><button type='submit'>Prepare review sample</button></div></form></section>"
     drafts=app._human_store().preparations(campaign)
@@ -70,7 +76,9 @@ def setup_route(app, method, path, data, style):
         source=next((r for r in choices if r['id']==data.get('source')),None)
         if source is None: raise ValueError('Choose saved results from this campaign')
         if data.get('acknowledge')!='1': raise ValueError('Acknowledge sensitive content before preparing a sample')
-        if data.get('mode') not in {'common','source_task'} or int(data.get('clusters','0'))<1: raise ValueError('Choose a rubric and a positive cluster count')
+        indexed = source.get('source_kind')=='campaign_index'
+        if data.get('mode') not in {'common','source_task'} or int(data.get('clusters','0')) < (0 if indexed else 1):
+            raise ValueError('Choose a rubric and cluster count; zero selects minimum coverage for indexed campaigns')
         if any(not data.get(k,'').strip() for k in ('name','ethics','compensation','stop_contact','consent')): raise ValueError('Complete the study name and actual review arrangements')
         directory=store.root/('preparation-'+secrets.token_hex(8));directory.mkdir(mode=0o700)
         params={'--results':source['results'],'--output':str(directory/'sample.csv'),'--acknowledge-sensitive-content':'1',
@@ -79,9 +87,15 @@ def setup_route(app, method, path, data, style):
             if source.get(key):params['--'+key.replace('_','-')]=source[key]
         supplied_index=data.get('media_index','').strip() or source.get('media_index','')
         if supplied_index: params['--media-index']=str(store._path(supplied_index))
-        job=app.start_job('human_audit',params,campaign_id=owner)
+        if indexed:
+            params={'--database':str(app.db.path),'--campaign':owner,'--results-root':str(app.results_root),
+                '--output':str(directory/'sample.csv'),'--mode':data['mode'],'--clusters':data['clusters'],
+                '--acknowledge-sensitive-content':'1',**({'--media-index':params['--media-index']} if '--media-index' in params else {})}
+        job=app.start_job('human_review_campaign' if indexed else 'human_audit',params,campaign_id=owner)
         metadata={k:data[k] for k in ('ethics','compensation','stop_contact','consent')}
         metadata.update({k:source.get(k,'') for k in ('results','historical_code_repository','judge_configuration_sha256','media_index')})
+        if indexed:
+            metadata.update(source_kind='campaign_index',snapshot=str(directory/'sample.SNAPSHOT.json.gz'))
         if data.get('media_index','').strip(): metadata['media_index']=str(store._path(data['media_index']))
         key=store.save_preparation(owner,job.job_id,dict(name=data['name'],mode=data['mode'],prepared=str(directory/'sample.csv'),metadata=metadata))
         return 303,'/human-evaluation/preparations/'+key,b''
@@ -98,6 +112,11 @@ def setup_route(app, method, path, data, style):
             with Path(draft['value']['prepared']).open(encoding='utf-8-sig',newline='') as f:rows=list(csv.DictReader(f))
             count=len({r['sample_key'] for r in rows});clusters=len({r.get('cluster_key',r['sample_key']) for r in rows})
             body+=f"<h2>Check the review workload</h2><p>{clusters:,} source clusters, {count:,} saved outputs, {2*count:,} required independent ratings, plus any adjudication.</p><p>No human ratings have been created by preparation.</p><form method='post'><button>Create study and assign reviewers</button></form>"
+            frame_path=Path(draft['value']['prepared']).with_suffix('.FRAME.json')
+            if frame_path.is_file():
+                frame=json.loads(frame_path.read_text(encoding='utf-8'))
+                body+=f"<p>Eligible source frame: {frame['population_outputs']:,} outputs in {frame['population_clusters']:,} clusters. This is a deterministic achieved sample, not a representative population estimate. Historical generation conditions remain separate.</p>"
+                body+="<p>Campaign outcome accounting: "+html.escape(', '.join(f'{k}: {v:,}' for k,v in frame['assignment_outcomes'].items()))+".</p>"
             media_report=Path(draft['value']['prepared']).with_suffix('.MEDIA-REPORT.json')
             if media_report.is_file():
                 report=json.loads(media_report.read_text(encoding='utf-8'))

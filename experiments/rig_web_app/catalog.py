@@ -838,6 +838,25 @@ def _commands() -> dict[str, Command]:
             ),
         ),
         Command(
+            "human_review_campaign",
+            "experiments.human_review_campaign",
+            "Prepare or analyse saved campaign outputs for independent review",
+            (
+                CommandParam("--database", "path"),
+                CommandParam("--campaign", "str"),
+                CommandParam("--results-root", "path"),
+                CommandParam("--mode", "str"),
+                CommandParam("--clusters", "int"),
+                CommandParam("--media-index", "path"),
+                CommandParam("--snapshot", "path"),
+                CommandParam("--prepared-rating-form", "path"),
+                CommandParam("--labels", "path"),
+                CommandParam("--bootstrap-resamples", "int"),
+                CommandParam("--output", "path", required=True),
+                CommandParam("--acknowledge-sensitive-content", "flag"),
+            ),
+        ),
+        Command(
             "human_audit",
             "experiments.human_audit",
             "Prepare or analyse the human-audit frames",
@@ -1461,7 +1480,7 @@ COMMAND_GROUPS: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
             "retained_response_judge_pair_execute",
         ),
     ),
-    ("Human audit", "users", "runbook sections 15, 15.1", ("human_audit",)),
+    ("Human audit", "users", "runbook sections 15, 15.1", ("human_review_campaign", "human_audit")),
     ("Console diagnostics", "pulse", "runbook section 18", ("webui_selftest",)),
 )
 
