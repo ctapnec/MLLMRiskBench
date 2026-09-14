@@ -104,12 +104,13 @@ def collection_review(app, params):
         if '--model-store' in old:
             values['--model-store'] = argument(old, '--model-store')
         flags = ('--budget-root','--budget-plan-sha256','--project-root')
-        if initialized:
-            flags += ('--expected-commit',)
         for flag in flags:
             if argument(old,flag) != values[flag]:
                 raise ValueError('This collection needs a reviewed revision or budget recovery; its previous settings cannot change silently')
         if initialized:
+            # Deployment does not change the saved experiment. The collector
+            # runs its original revision in a detached source-only checkout.
+            values['--expected-commit'] = argument(old, '--expected-commit')
             values['--resume-from'] = str(previous_root)
     action = 'Continue saved collection' if history is not None else 'Start prepared collection'
     ticket = app._new_launch_ticket({'campaign_id':owner,'values':json.dumps(values),
@@ -133,6 +134,8 @@ def collection_review(app, params):
             "A continuation reuses the saved runtime and completed probes.</p>")
     if history is not None:
         body += "<p>Previous collection: <a href='/jobs/"+history['job_id']+"'>Open job and retained results</a></p>"
+        body += ('<p>Continuation keeps the original execution revision, even after a console update. '
+            'Its saved responses, runtime bindings and spending records are reused; no model installation is repeated.</p>')
     body += ("<details><summary>Exact command</summary><pre>"+html.escape(' '.join(build_argv('hosted_campaign_execute',values)))
         +"</pre></details><form class='action-row' method='post' action='/build/collect-prepared'>"
         "<input type='hidden' name='launch_ticket' value='"+html.escape(ticket,quote=True)+"'>"

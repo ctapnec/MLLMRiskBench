@@ -253,6 +253,24 @@ def test_installed_runtime_collection_continuation_keeps_bindings_and_skips_save
     result = json.loads((tmp_path/'next'/'result.json').read_text())
     assert result['execution_programs'] == [descriptor]
     assert result['judgments'] == 'diagnostic_probes_only_measured_judging_deferred'
+    # A later console deployment changes only the execution location. Runtime
+    # preparation, saved responses and funded call identities are still reused.
+    from experiments import hosted_execution_checkout as pinned
+    monkeypatch.setattr(pinned,'execution_checkout',lambda *args:tmp_path/'original-source')
+    def dispatched_at_original(jobs,**kwargs):
+        assert kwargs['_worker'] is pinned.run_pinned_admission
+        assert jobs[0][0].runtime_program == descriptor
+        assert jobs[0][0].execution_checkout == str(tmp_path/'original-source')
+        assert jobs[0][0].execution_commit == 'b'*40
+        assert kwargs['completed_jobs'] == frozenset({(0,0)})
+        return [dict(program=0,job=0,name='saved',target=admission.program['target'],status='collected')]
+    monkeypatch.setattr(subject,'dispatch_admitted',dispatched_at_original)
+    subject.collect_campaign(**common,out=tmp_path/'after-deployment',resume_from=first)
+    assert len(bound) == 1 and len(calls) == len(admission.entries)
+    current = json.loads((tmp_path/'after-deployment/selection.json').read_text())
+    assert current['runtime_root'] == str(first/'runtime')
+    assert current['expected_commit'] == 'b'*40
+    assert current['execution_checkout'] == str(tmp_path/'original-source')
 
 
 def test_missing_checkpoint_does_not_turn_a_ui_status_into_completed_work(tmp_path, monkeypatch):

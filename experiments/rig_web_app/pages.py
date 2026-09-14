@@ -1727,7 +1727,9 @@ class PagesMixin:
         href = '/commands?' + urlencode(values)
         return ("<section class='card'><h2>Continue collection</h2>"
             "<p>Keep the saved model programs, inputs, budget and campaign. Completed jobs are restored; "
-            "partial jobs use their response checkpoints. Spending stops and HTTP retry limits remain active.</p>"
+            "partial jobs use their response checkpoints. After a console update, continuation automatically uses "
+            "the original execution revision in a separate source-only checkout. Do not change the saved revision. "
+            "Spending stops and HTTP retry limits remain active.</p>"
             "<p><a class='button' href='" + html.escape(href, quote=True) + "'>Review continuation</a></p>"
             "<p class='note'>Choose a fresh output directory for the continuation record. "
             "Opening this form makes no calls and does not regenerate answers.</p></section>")

@@ -129,6 +129,24 @@ def test_failed_before_collection_initialization_can_retry_without_a_phantom_res
     assert calls[1][1]['--budget-plan-sha256'] == calls[0][1]['--budget-plan-sha256']
 
 
+def test_deployment_keeps_original_revision_for_initialized_continuation(study, monkeypatch):
+    app,params,calls,_ = study
+    _,ticket = review(app,params)
+    subject.collect_prepared(app,{'launch_ticket':ticket})
+    old = calls[0][1]
+    app.db._conn.execute("UPDATE jobs SET state='failed',exit_code=1 WHERE job_id='collection-0'")
+    app.db._conn.commit()
+    monkeypatch.setattr(subject.subprocess,'check_output',lambda *a,**kw:'c'*40+'\n')
+    body,ticket = review(app,params)
+    assert b'original execution revision' in body
+    subject.collect_prepared(app,{'launch_ticket':ticket})
+    current = calls[1][1]
+    assert current['--expected-commit'] == old['--expected-commit'] == 'a'*40
+    assert current['--resume-from'] == old['--out']
+    assert current['--out'] != old['--out']
+    assert current['--program'] == old['--program']
+
+
 @pytest.mark.parametrize('change',[{'retained_collection_workers':'0'}, {'retained_collection_workers':'9'},
     {'retained_collection_workers':'1.5'}, {'retained_programs_job':'unknown'}])
 def test_invalid_collection_options_do_not_launch(study,change):

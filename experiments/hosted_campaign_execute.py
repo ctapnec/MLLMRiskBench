@@ -98,7 +98,8 @@ def collect_campaign(*, programs: Sequence[tuple[Path, str]], budget_root: Path,
                      resume_from: Path | None = None, prepare_runtime: bool = False,
                      model_store: Path | None = None) -> dict:
     """Validate shared sources once; defer measured-output judging until later."""
-    retained._validated_checkout(project_root, expected_commit)
+    from experiments.hosted_execution_checkout import execution_checkout, run_pinned_admission
+    execution_root = execution_checkout(project_root, expected_commit, resume_from)
     if not programs or len({str(path.resolve()) for path, _sha256 in programs}) != len(programs):
         raise ValueError("Select each funded program exactly once")
     if out.exists() or out.is_symlink() or not out.is_absolute() or out.parent.resolve(strict=True) != out.parent:
@@ -133,6 +134,8 @@ def collect_campaign(*, programs: Sequence[tuple[Path, str]], budget_root: Path,
         budget_plan_sha256=budget_plan_sha256, stage="target_collection", judgments="deferred",
         project_root=str(project_root), expected_commit=expected_commit,
         workspace_id=workspace_id, console_db=str(console_db) if console_db is not None else None)
+    if execution_root != project_root:
+        selection['execution_checkout'] = str(execution_root)
     if prepare_runtime:
         selection.update(prepare_runtime=True, model_store=str(model_store), runtime_root=str(out/'runtime'))
     completed = frozenset()
@@ -172,6 +175,12 @@ def collect_campaign(*, programs: Sequence[tuple[Path, str]], budget_root: Path,
                 completed = completed_runtime_jobs(
                     _completed_continuation_jobs(resume_from, selection, admitted), admitted)
             worker = run_runtime_admission
+        if execution_root != project_root:
+            for jobs in admitted:
+                for admission in jobs:
+                    admission.execution_checkout = str(execution_root)
+                    admission.execution_commit = expected_commit
+            worker = run_pinned_admission
         return _collect_admitted(admitted=admitted, prepared_programs=prepared_programs,
             budget_root=budget_root, project_root=project_root, out=out, workspace_id=workspace_id,
             console_db=console_db, workers_per_provider=workers_per_provider, completed=completed,
