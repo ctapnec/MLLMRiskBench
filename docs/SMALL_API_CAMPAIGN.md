@@ -130,8 +130,8 @@ zero work. This is different from section 3's total hosted request cap of 12.
 ### Set judging and establish the route
 
 8. In **Evaluation**, select **rules** and **guardrail**, uncheck **llm**, keep
-   defense **none**, and use the installed Llama Guard model, revision and device
-   from section 4. Its installed revision and placement are automatic.
+   defense **none**, and use the installed Llama Guard model from section 4.
+   Its installed revision and placement are automatic.
    Ordinary Runner evaluates through this selected cascade as
    part of the job; it is not the retained collection's separate step-6 job.
 9. In **Admission**, keep the current project/source receipts supplied by the
@@ -268,8 +268,8 @@ authorization to bypass it or switch to the ordinary compose button.
 
 If an older collection failed during installed-runtime preparation because its
 scoring model/revision was absent, run **Prepare counted collection** again in
-the same campaign after the automatic-setup update. Reuse the saved source, forecast and
-replay preparation; do not rebuild them. Review the new prepared collection
+the same campaign after the automatic-setup update. Reuse the saved source,
+forecast and replay preparation; do not rebuild them. Review the new prepared collection
 before starting it. Changing draft fields alone does not amend an already saved
 program. Keep the original failed job as the record of that attempt. A runtime
 planning failure is shown with its underlying Runner error on the job page.
@@ -281,8 +281,8 @@ planning failure is shown with its underlying Runner error on the job page.
    runs**. Wait for completion, then return to the same page.
 3. Choose its completed **Saved judging preparation**, then click **Review
    local judging**.
-4. Confirm the existing guardrail and automatic placement, then **Start or resume local
-   judging**. Wait for completion. This scores saved Flash answers; it does
+4. Confirm the existing guardrail and automatic placement, then **Start or resume
+   local judging**. Wait for completion. This scores saved Flash answers; it does
    not repeat Flash target calls or require a new framework installation.
 5. Inspect the campaign's **Judging** tab. A local evaluation record can be an
    abstention or inapplicable result; coverage alone is not a valid safety score.

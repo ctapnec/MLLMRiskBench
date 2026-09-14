@@ -4,6 +4,17 @@ For the normal graphical workflow, use the
 [UI campaign walkthrough](../docs/UI_CAMPAIGN_WALKTHROUGH.md). This runbook keeps
 the detailed CLI equivalents and historical execution distinctions.
 
+Scoring guardrail setup is automatic in Build and the CLI. Select the installed
+model; its revision is resolved from the model store's small installation
+manifests before preparation and retained in the prepared configuration. At
+load time, the judge selects a visible GPU with sufficient free memory, or
+splits across visible GPUs when necessary without CPU offload. CPU-only hosts
+remain supported. Build has no scoring revision or device fields. Explicit CLI
+revision/device flags in historical examples remain supported overrides, not
+required setup steps. This resolution does not download models or scan weight
+contents. Missing installations are reported before hosted input counting;
+nested Runner planning errors are shown on the collection job page.
+
 Local image transport: preserve source files and input identities. The tested
 Ollama adapter can deliver a static RGB/RGBA WebP image as lossless PNG when
 the installed serving backend cannot decode WebP. It does not resize images
