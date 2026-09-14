@@ -24,8 +24,10 @@ That button composes the ordinary pipeline, not the prepared matched collection.
 5. Click the **Pipeline** tab. Open the target-model picker, choose **Hosted
    API**, and select only `google:gemini-3.8-flash`. Click **Done**. Do not select
    Haiku as a target unless you deliberately want Haiku to answer the questions.
-6. Click **General**, then **Save campaign**. This creates a saved draft; it
-   does not start calls. Keep working in this saved campaign.
+6. Click **General**, then **Save campaign**. This creates a saved draft and
+   opens the campaign's **Definition** page; it does not start calls.
+7. Click **Configure in Build** on that page, then **General** to continue.
+   Saving does not leave you in Build automatically.
 
 Flash is already configured on this rig for text and images, low thinking and
 4,096 output tokens. The forecast in step 3 shows the actual output allowance.
