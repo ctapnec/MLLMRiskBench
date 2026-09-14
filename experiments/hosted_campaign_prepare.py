@@ -104,17 +104,6 @@ def _canonical_existing_root(path_value: object, *, label: str) -> Path:
     return path
 
 
-def scoring_settings_errors(model: str, revision: str) -> dict[str, str]:
-    """The local scorer must be executable before any provider token counting."""
-    errors = {}
-    if not model.strip():
-        errors['guardrail_model'] = 'Set the scoring guardrail model in Evaluation (--guardrail-model).'
-    if re.fullmatch(r'[0-9a-fA-F]{40,64}', revision) is None:
-        errors['guardrail_revision'] = ('Set the scoring guardrail revision in Evaluation '
-            '(--guardrail-revision, the installed model\'s 40-64 hex commit).')
-    return errors
-
-
 def _common_argv(raw: object) -> list[str]:
     if (
         not isinstance(raw, list)
@@ -131,10 +120,12 @@ def _common_argv(raw: object) -> list[str]:
         scoring, _ = parser.parse_known_args(raw)
     except argparse.ArgumentError as exc:
         raise ValueError(str(exc)) from exc
-    errors = scoring_settings_errors(scoring.guardrail_model, scoring.guardrail_revision)
-    if errors:
-        raise ValueError(' '.join(errors.values()))
-    return list(raw)
+    from ura.guardrail_setup import installed_guardrail_revision
+    revision = installed_guardrail_revision(scoring.guardrail_model,scoring.guardrail_revision)
+    result = list(raw)
+    if not scoring.guardrail_revision:
+        result += ['--guardrail-revision',revision]
+    return result
 
 
 def _portable(raw: Mapping[str, Any]) -> dict[str, Any]:

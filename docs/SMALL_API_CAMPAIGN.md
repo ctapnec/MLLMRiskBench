@@ -131,7 +131,8 @@ zero work. This is different from section 3's total hosted request cap of 12.
 
 8. In **Evaluation**, select **rules** and **guardrail**, uncheck **llm**, keep
    defense **none**, and use the installed Llama Guard model, revision and device
-   from section 4. Ordinary Runner evaluates through this selected cascade as
+   from section 4. Its installed revision and placement are automatic.
+   Ordinary Runner evaluates through this selected cascade as
    part of the job; it is not the retained collection's separate step-6 job.
 9. In **Admission**, keep the current project/source receipts supplied by the
    console. Enter a new execution scope, such as `my-flash-direct`. Measured
@@ -222,12 +223,11 @@ counts or source selection halfway through preparation.
 1. Click **Evaluation**. Under judges, uncheck **llm** and select **rules** and
    **guardrail**. Keep the defense **none**. Target collection and retained-output
    judging are separate stages in this flow.
-2. Set the scoring guardrail model to `meta-llama/Llama-Guard-3-8B` and its
-   scoring device to `cuda:0`. The installed revision on this rig is:
-   `7327bd9f6efbbe6101dc6cc4736302b3cbb6e425`.
-   Use the scoring guardrail fields, not the defense guardrail fields.
-   Type the model ID into the field: the example shown in an empty field is
-   a placeholder, not a saved selection. Both model and revision must be filled.
+2. Use scoring guardrail `meta-llama/Llama-Guard-3-8B` (the default).
+   Its revision is resolved from the installed model store and saved with the
+   preparation. Its device is chosen automatically when the judge loads.
+   There are no revision or device fields to select. Use the scoring model,
+   not the separate defense guardrail model.
 3. Click **Execution**. Under **Call ceilings & deadline (budget guards)**, set
    **--deadline-seconds** to **3600**. This allows one hour in which to start
    calls; it is not an hour-long timeout for an individual answer.
@@ -244,9 +244,9 @@ counts or source selection halfway through preparation.
    option (the checkbox allowing network counting).
 2. Click **Prepare counted collection**. This constructs exact requests and
    counts their inputs; it does not generate answers. Wait for completion.
-   If scoring settings are missing, Build returns to **Evaluation** with the
-   missing fields marked. Correct them before preparing. The CLI preparer
-   likewise rejects an incomplete scoring revision before provider counting.
+   If the scoring model is not installed, Build returns to **Evaluation** with
+   that problem marked before counting. The CLI uses the same automatic
+   revision resolution. Neither route downloads the model implicitly.
 3. Return to the saved Build draft. Click **Review prepared collection**.
 4. Check the destination name, Flash model, text/image selection and call count.
    Review the cost bound including transport retries, not just expected spend.
@@ -267,8 +267,8 @@ preparation fails, open its job error first; an incomplete preparation is not
 authorization to bypass it or switch to the ordinary compose button.
 
 If an older collection failed during installed-runtime preparation because its
-scoring model/revision was absent, correct those fields and run **Prepare counted
-collection** again in the same campaign. Reuse the saved source, forecast and
+scoring model/revision was absent, run **Prepare counted collection** again in
+the same campaign after the automatic-setup update. Reuse the saved source, forecast and
 replay preparation; do not rebuild them. Review the new prepared collection
 before starting it. Changing draft fields alone does not amend an already saved
 program. Keep the original failed job as the record of that attempt. A runtime
@@ -281,7 +281,7 @@ planning failure is shown with its underlying Runner error on the job page.
    runs**. Wait for completion, then return to the same page.
 3. Choose its completed **Saved judging preparation**, then click **Review
    local judging**.
-4. Confirm the existing guardrail and `cuda:0`, then **Start or resume local
+4. Confirm the existing guardrail and automatic placement, then **Start or resume local
    judging**. Wait for completion. This scores saved Flash answers; it does
    not repeat Flash target calls or require a new framework installation.
 5. Inspect the campaign's **Judging** tab. A local evaluation record can be an

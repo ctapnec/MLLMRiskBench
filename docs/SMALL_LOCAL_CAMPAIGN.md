@@ -28,8 +28,10 @@ Inspect that campaign without restarting it; use a new campaign for your own run
 | Scoring field | Value |
 | --- | --- |
 | Model | `meta-llama/Llama-Guard-3-8B` |
-| Revision | `7327bd9f6efbbe6101dc6cc4736302b3cbb6e425` |
-| Device | `cuda:0` |
+
+Revision and device are automatic, without selection fields. Preparation records
+the installed revision; the judge is placed using available GPU memory when it
+loads. Saved verdicts retain its actual placement.
 
 Static local collection releases the target process before local scoring.
 Do not manually start another GPU model beside this job. The selected Qwen

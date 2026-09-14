@@ -156,19 +156,21 @@ def test_preparation_panel_explains_network_and_retains_job():
     assert 'No answers are generated or judged' in page and 'prompts and images' in page
 
 
-@pytest.mark.parametrize('field,value', [('guardrail_model',''),('guardrail_revision',''),
-                                      ('guardrail_revision','main'),('guardrail_revision','not-a-commit')])
-def test_incomplete_scorer_cannot_create_preparation(prepared,field,value):
+@pytest.mark.parametrize('field,value', [('guardrail_revision',''),('guardrail_revision','main'),
+                                      ('guardrail_revision','not-a-commit')])
+def test_incomplete_scorer_cannot_create_preparation(prepared,field,value,monkeypatch,tmp_path):
     app,params,calls,_,composed = prepared
+    monkeypatch.setenv('URA_MODEL_STORE',str(tmp_path/'not-installed'))
     with pytest.raises(ValueError,match='scoring guardrail'):
         subject.prepare_programs(app,dict(params,**{field:value}))
     assert not calls and not composed
 
 
 @pytest.mark.parametrize('width',[390,1440])
-def test_prepare_error_keeps_draft_and_opens_scoring_fields(browser,prepared,width):
+def test_prepare_error_keeps_draft_and_opens_scoring_fields(browser,prepared,width,monkeypatch,tmp_path):
     from experiments.rig_web_app import ui
     app,params,calls,_,composed = prepared
+    monkeypatch.setenv('URA_MODEL_STORE',str(tmp_path/'not-installed'))
     params = dict(params,guardrail_model='',guardrail_revision='',retained_network_counts='on')
     status,_,body = app.handle('POST','/build/prepare-programs',params)
     assert status==400 and not calls and not composed
@@ -177,11 +179,30 @@ def test_prepare_error_keeps_draft_and_opens_scoring_fields(browser,prepared,wid
         content=body.decode().replace("<link rel='stylesheet' href='/static/style.css'>",'<style>'+ui._STYLE+'</style>')
         page.set_content(content)
         assert page.locator('#build-evaluation-tab').get_attribute('aria-selected')=='true'
-        assert page.locator('input[name=guardrail_revision]').is_visible()
+        assert page.locator('input[name=guardrail_revision]').count()==0
+        assert page.locator('input[name=guardrail_device]').count()==0
         assert page.locator('input[name=guardrail_model]').is_visible()
         assert page.locator('input[name=campaign_id]').input_value()==params['campaign_id']
         assert page.locator('input[name=retained_replays_job]').input_value()=='replay-ready'
-        assert 'Set the scoring guardrail revision' in page.locator('main').inner_text()
+        assert 'revision and device are configured automatically' in page.locator('main').inner_text()
         assert not page.evaluate('document.documentElement.scrollWidth>innerWidth')
     finally:
         page.close()
+
+
+def test_ui_and_cli_prepare_resolve_same_installed_revision_without_device(prepared,monkeypatch,tmp_path):
+    from test_guardrail_setup import installed
+    app,params,calls,_,composed=prepared
+    store=tmp_path/'models'
+    installed(store,model='local-guard',revision='b'*40)
+    monkeypatch.setenv('URA_MODEL_STORE',str(store))
+    params=dict(params)
+    params.pop('guardrail_revision')
+    subject.prepare_programs(app,params)
+    request=json.loads(Path(calls[0][1]['--request']).read_text())
+    assert subject.argument(request['runner_common_argv'],'--guardrail-revision')=='b'*40
+    assert composed[0]['guardrail_revision']=='b'*40
+    assert 'guardrail_revision' not in params
+    common=subject.prepare._common_argv(['--guardrail-model','local-guard'])
+    assert subject.argument(common,'--guardrail-revision')=='b'*40
+    assert '--guardrail-device' not in common

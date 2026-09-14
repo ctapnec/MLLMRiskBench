@@ -228,6 +228,16 @@ supplies them.
 
 ## Shared control layout
 
+The scoring guardrail model has automatic revision and device configuration.
+No revision or device selector is shown in Build. Preparation reads the installed
+model's completion metadata and records its revision without downloads or weight
+checksums. Existing explicit CLI pins remain supported for historical reproduction.
+At loading time, automatic placement prefers one visible GPU with sufficient free
+memory, or splits across visible GPUs when needed; it does not spill to CPU when
+GPU capacity is insufficient. CPU-only hosts remain supported. Effective device
+placement is retained with guardrail verdicts. The ordinary Runner and matched
+hosted preparation share this revision resolution.
+
 Standalone action rows have space above them and between buttons, and wrap on
 narrow screens. This includes Stop job, prepared collection and judging starts,
 and the saved-input preparation actions. Configuration editor actions also wrap.

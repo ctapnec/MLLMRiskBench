@@ -113,7 +113,7 @@ class GuardrailJudge(BaseJudge):
         emits ``safe``/``unsafe`` output works; the parser is Llama-Guard-shaped.
     device:
         Torch device string (``"cuda"``, ``"cpu"``, ...). ``None`` lets
-        ``device_map="auto"`` place the weights.
+        ``None`` fits the installed weights to available GPU memory automatically.
     revision:
         Immutable 40-64 hexadecimal Hugging Face commit for both tokenizer and
         model weights. Branches and mutable tags are deliberately rejected.
@@ -160,6 +160,7 @@ class GuardrailJudge(BaseJudge):
         self._tokenizer: Any = None
         self._model: Any = None
         self._generation_output_trace: Optional[dict[str, Any]] = None
+        self._effective_device_map: dict[str,str] = {}
 
     @staticmethod
     def _release_loaded(tokenizer: Any, model: Any) -> None:
@@ -289,10 +290,13 @@ class GuardrailJudge(BaseJudge):
                 **local_only,
             }
             if self.device is None:
-                kwargs["device_map"] = "auto"
+                from ura.guardrail_setup import automatic_guardrail_placement
+                kwargs.update(automatic_guardrail_placement(torch,local_model))
             model = AutoModelForCausalLM.from_pretrained(local_model, **kwargs)
             if self.device is not None:
                 model = model.to(self.device)
+            self._effective_device_map = {str(key):str(value) for key,value in
+                getattr(model,'hf_device_map',{'':str(getattr(model,'device',self.device or 'unknown'))}).items()}
             model.eval()
             return tokenizer, model
 
@@ -307,7 +311,7 @@ class GuardrailJudge(BaseJudge):
         self._tokenizer = tokenizer
         self._model = model
 
-    def preflight(self) -> dict[str, str]:
+    def preflight(self) -> dict[str, Any]:
         """Load the pinned tokenizer and model without evaluating a response.
 
         The experiment driver calls this before any paid target request.  It
@@ -321,6 +325,7 @@ class GuardrailJudge(BaseJudge):
             "model": self.model_id,
             "revision": self.revision,
             "device": self.device or "auto",
+            "effective_device_map": dict(self._effective_device_map),
         }
 
     # ------------------------------------------------------------------ #
@@ -669,6 +674,7 @@ class GuardrailJudge(BaseJudge):
                 "model_revision": self.revision,
                 "model_identity": f"{self.model_id}@{self.revision}",
                 "unsafe": is_unsafe,
+                "effective_device_map": dict(self._effective_device_map),
                 "parsed": parsed,
                 "codes": codes,
                 "categories": categories,

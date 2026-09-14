@@ -415,6 +415,7 @@ def test_guardrail_preflight_loads_without_generating(
         "model": "meta-llama/Llama-Guard-3-8B",
         "revision": "a" * 40,
         "device": "cuda:0",
+        "effective_device_map": {},
     }
     assert loaded == 1
 

@@ -612,6 +612,9 @@ class BuilderCaptureMixin:
         """
 
         params = self._builder_params(form)
+        if 'guardrail' in params.get('judges','').split(','):
+            from ura.guardrail_setup import resolve_scoring_settings
+            params = resolve_scoring_settings(params)
         mode = params.get("mode", "measured")
         dry = mode == "dry_run" or (
             mode == "diagnostic_canary" and params.get("canary_dry") == "on"

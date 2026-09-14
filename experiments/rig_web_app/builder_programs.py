@@ -16,9 +16,8 @@ from .catalog import build_argv
 
 
 def prepare_programs(app, params):
-    errors = prepare.scoring_settings_errors(params.get('guardrail_model',''), params.get('guardrail_revision',''))
-    if errors:
-        raise ValueError(' '.join(errors.values()))
+    from ura.guardrail_setup import resolve_scoring_settings
+    params = resolve_scoring_settings(params)
     source, forecast = prepared_sources(app, params)
     owner = params['campaign_id']
     replay_argv = completed_argv(app,params.get('retained_replays_job'),owner,'hosted_selected_replays')
@@ -98,8 +97,8 @@ def program_panel(params):
         "<section class='card'><h2>Count inputs and prepare collection</h2>"
         "<p>Prepare one shared spending plan and executable programs for the saved replay selection. "
         "Output allowances and request caps remain those of the forecast. No answers are generated or judged. "
-        "Select rules,guardrail in Evaluation and set its scoring model, installed revision and device. "
-        "These settings are required for transport checks and the local post-hoc scoring path; "
+        "Select rules,guardrail in Evaluation. The scoring model's installed revision and GPU placement "
+        "are resolved automatically for transport checks and local post-hoc scoring; "
         "Haiku judgments are a separate output-specific stage. Set a positive call-start window "
         "in Execution before preparation; this is not a per-answer timeout.</p>"
         "<label class='checkrow'><input type='checkbox' form='builder' name='retained_network_counts'" + checked + ">"

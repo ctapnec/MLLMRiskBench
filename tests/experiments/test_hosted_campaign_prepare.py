@@ -163,12 +163,12 @@ def test_preparation_typed_form_and_counting_environment_are_explicit(tmp_path):
         _selected_matrix_environment_names=lambda selected: seen.append(selected) or {"SELECTED_PROVIDER_KEY"},
         _selected_child_environment=lambda allowed: dict.fromkeys(allowed,'test-value'))
     child = LifecycleMixin._generic_child_environment(fake, "hosted_campaign_prepare", values)
-    assert set(child) == {"PATH","PYTHONPATH"}
+    assert set(child) == {"PATH","PYTHONPATH","URA_MEDIA_ROOTS"}
     assert child['PYTHONPATH'] == os.pathsep.join((str(tmp_path),str(tmp_path/'src')))
     assert not seen
     values["--allow-network-counts"] = "on"
     assert "--allow-network-counts" in build_argv("hosted_campaign_prepare", values)
-    assert set(LifecycleMixin._generic_child_environment(fake, "hosted_campaign_prepare", values)) == {"PATH", "SELECTED_PROVIDER_KEY","PYTHONPATH"}
+    assert set(LifecycleMixin._generic_child_environment(fake, "hosted_campaign_prepare", values)) == {"PATH", "SELECTED_PROVIDER_KEY","PYTHONPATH","URA_MEDIA_ROOTS"}
     assert seen == [{"--api": "anthropic:judge,openai:target", "--api-config": "api.json", "--api-config-sha256": "b"*64}]
 
 

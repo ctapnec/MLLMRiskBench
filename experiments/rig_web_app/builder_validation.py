@@ -2142,19 +2142,17 @@ class BuilderValidationMixin:
                         f"attacker {attacker} drives {sorted(can)} but arm "
                         f"{arm} requires all of {sorted(needed)}"
                     )
-        if "guardrail" in judges_list and not params.get("guardrail_model", ""):
-            errors["guardrail_model"] = "the scoring guardrail judge requires a guardrail model"
+        if "guardrail" in judges_list:
+            from ura.guardrail_setup import resolve_scoring_settings, GuardrailSetupError
+            try:
+                params = resolve_scoring_settings(dict(params))
+            except GuardrailSetupError as exc:
+                errors['guardrail_model'] = str(exc)
+                return errors
         scoring_guardrail = "guardrail" in judges_list
         defense_guardrail = params.get("defense_guard", "") == "guardrail" and params.get(
             "defense", ""
         ) not in ("", "none")
-        if (
-            scoring_guardrail
-            and re.fullmatch(r"[0-9a-fA-F]{40,64}", params.get("guardrail_revision", "")) is None
-        ):
-            errors["guardrail_revision"] = (
-                "the scoring guardrail requires an immutable 40-64 hex revision"
-            )
         if defense_guardrail:
             if not params.get("defense_guardrail_model", ""):
                 errors["defense_guardrail_model"] = (

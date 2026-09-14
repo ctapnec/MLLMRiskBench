@@ -2421,13 +2421,9 @@ class BuilderPageMixin:
                 "scoring guardrail model id",
                 placeholder="meta-llama/Llama-Guard-3-8B",
             )
-            + text_field(
-                "guardrail_revision",
-                "--guardrail-revision",
-                "required immutable 40-64 hex revision",
-            )
-            + text_field("guardrail_device", "--guardrail-device", "device, e.g. cuda:0 (optional)")
-            + "</div>"
+            + "</div><p class='note'>Revision and device are automatic. The installed model revision is "
+            "saved with the prepared work. Available GPU memory determines placement when the judge loads; "
+            "the effective placement is recorded with its verdicts. No revision or device selection is needed.</p>"
             "<h3>Defense guardrail <span class='fieldhint'>the model-backed "
             "defense guard (defense-guard = guardrail); MUST be a different "
             "model from the scoring guardrail - a guard never grades its own "

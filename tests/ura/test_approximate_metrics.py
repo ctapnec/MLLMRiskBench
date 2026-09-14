@@ -168,6 +168,7 @@ class _FixtureGuardrail(GuardrailJudge):
         self.revision = "a" * 40
         self.escalate_below = 0.0
         self.last_conversation: list[dict[str, str]] = []
+        self._effective_device_map = {}
 
     def _ensure_loaded(self) -> None:
         return None

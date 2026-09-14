@@ -93,7 +93,7 @@ def test_ui_environment_uses_each_selected_program_not_all_provider_keys(tmp_pat
     values = {"--program": "openai", "--program#1": "google",
         "--program-sha256": "a" * 64, "--program-sha256#1": "b" * 64}
     allowed = LifecycleMixin._generic_child_environment(fake, "hosted_campaign_execute", values)
-    assert set(allowed) == {"BASE", "OPTIONAL", "RECEIPT", "openai_KEY", "google_KEY","PYTHONPATH"}
+    assert set(allowed) == {"BASE", "OPTIONAL", "RECEIPT", "openai_KEY", "google_KEY","PYTHONPATH","URA_MODEL_STORE"}
     assert allowed['PYTHONPATH'] == os.pathsep.join((str(tmp_path),str(tmp_path/'src')))
     assert documents == [("openai", "a" * 64), ("google", "b" * 64)]
     assert [item["--api"] for item in seen] == ["openai", "google"]

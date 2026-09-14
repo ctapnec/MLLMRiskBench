@@ -4427,12 +4427,12 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "--guardrail-revision",
         default="",
-        help="required immutable 40-64 hex Hugging Face commit for guardrail cells",
+        help="optional historical pin; omitted revision is resolved from the installed model store",
     )
     ap.add_argument(
         "--guardrail-device",
         default="",
-        help="optional torch device for guardrail inference (empty uses device_map=auto)",
+        help="optional historical placement; omitted device fits the judge to available GPU memory automatically",
     )
     ap.add_argument(
         "--defense-guardrail-model",
@@ -4716,6 +4716,13 @@ def _main(argv=None) -> int:
     os.environ.pop("HF_TOKEN", None)
     os.environ.pop("HUGGING_FACE_HUB_TOKEN", None)
     _apply_model_selection(ap, args)
+    if 'guardrail' in args.judges.split(',') and not args.guardrail_revision:
+        from ura.guardrail_setup import installed_guardrail_revision
+        try:
+            args.guardrail_revision = installed_guardrail_revision(
+                args.guardrail_model,args.guardrail_revision,store=args.model_acquisition_store or None)
+        except ValueError as exc:
+            ap.error(str(exc))
 
     for left, right in (
         (
