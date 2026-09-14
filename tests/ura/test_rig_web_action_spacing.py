@@ -363,7 +363,7 @@ def test_model_search_and_framework_action_spacing(browser, tmp_path, monkeypatc
 
 @pytest.mark.parametrize('width', [390, 768, 1440])
 @pytest.mark.parametrize('kind', ['campaigns', 'workspace', 'exports', 'runtime', 'legacy-stats'])
-def test_action_links_are_spaced_as_actions(browser, study, width, kind):
+def test_action_links_are_spaced_as_actions(browser, study, monkeypatch, width, kind):
     from test_rig_web_workspace_results import assignment, response
     app, params, calls, _ = study
     owner = params['campaign_id']
@@ -378,6 +378,8 @@ def test_action_links_are_spaced_as_actions(browser, study, width, kind):
         body = ui._page('Results', app._workspace_results(owner, 'overview', {}))
         selector = '#campaign-exports a'
     elif kind == 'runtime':
+        monkeypatch.setattr(app.framework_runtimes, 'snapshot', lambda: SimpleNamespace(
+            available=True, campaign_state='idle', campaign_status_tag='idle', lock_id='synthetic', rows=()))
         body = ui._page('Runtimes', app._framework_runtime_panel())
         selector = "a[href='/build#build-runtimes']"
     else:
@@ -386,6 +388,7 @@ def test_action_links_are_spaced_as_actions(browser, study, width, kind):
     page = browser.new_page(viewport={'width':width, 'height':1000})
     try:
         render(page, body)
+        assert page.locator(selector).count()
         row = page.locator(selector).first.locator('..')
         assert row.evaluate('e=>getComputedStyle(e).display') == 'flex'
         assert row.evaluate('e=>getComputedStyle(e).gap') == '12px'
@@ -393,7 +396,8 @@ def test_action_links_are_spaced_as_actions(browser, study, width, kind):
         if kind!='legacy-stats':assert row.evaluate('e=>getComputedStyle(e).marginBottom') == '16px'
         assert len(boxes)>=2
         for a,b in zip(boxes, boxes[1:]):
-            assert (b['x']-a['x']-a['width'] if abs(a['y']-b['y'])<1 else b['y']-a['y']-a['height'])>=12
+            same_row = b['y'] < a['y']+a['height'] and a['y'] < b['y']+b['height']
+            assert (b['x']-a['x']-a['width'] if same_row else b['y']-a['y']-a['height'])>=12
         if kind=='legacy-stats':assert page.locator('.stats-pagination').evaluate('e=>getComputedStyle(e).gap')=='12px'
         assert not page.evaluate('document.documentElement.scrollWidth>innerWidth')
         assert not calls

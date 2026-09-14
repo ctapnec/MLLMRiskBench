@@ -250,3 +250,36 @@ For UI maintenance, reuse the shared `action-row` or `review-actions` classes
 for these action groups and `checkrow` with a text `span` for standalone checkbox
 labels. Keep compact model selectors and table actions in their existing layouts.
 The spacing rules do not change defaults, submitted parameters or job actions.
+
+These conventions apply across the console, not only to Build:
+
+- Separate standalone actions from preceding fields by at least 1rem. Use
+  0.75rem gaps between action buttons or button-like links, with wrapping at
+  narrow widths. Paragraph action groups also keep space below them.
+- Use the shared field layout for saved selections. Compare condition groups
+  have padded borders and 1rem between successive selectors. Tools submit
+  actions, repeatable-field controls and configuration actions use the same
+  spacing scale.
+- Provider-key editors use padded, theme-aware password fields. Keep Clear
+  separated from Save, and never populate the field with a saved credential.
+- Preserve action containers when the human-review wizard moves submission
+  and deferral controls between steps. Desktop and mobile footers use the
+  same action gap. Disabled prerequisites remain visibly disabled.
+- Keep dismiss buttons clear of notice titles. Model search fields and
+  funding cards must use the active light/dark palette.
+- Compact navigation, filter chips and model-choice lists have their own
+  deliberate spacing; review them for collisions and wrapping rather than
+  treating them as standalone form actions. Wide result tables scroll inside
+  their cards, not across the entire page.
+
+For a styling acceptance pass, inspect Dashboard, every Build tab and expanded
+framework panel, target and judge dialogs, Campaigns and all campaign sections,
+Tools forms, Jobs and job details, Stats and its detail dialog, configuration
+editors, provider keys, artifacts, and human evaluation. Check phone, tablet
+and desktop widths, plus dark mode. Include ready, pending, failed, empty and
+disabled states. Use isolated fixtures for rating/submission flows; inspecting
+production styling must not create campaign work, paid calls or human ratings.
+The rig-only browser checks in `test_rig_web_action_spacing.py`, the command,
+cost and provider layout checks, `test_human_review_browser.py` and the shared
+backend-wait checks cover these layout and interaction contracts. Verify new
+regressions against the previous implementation as well as the corrected one.
