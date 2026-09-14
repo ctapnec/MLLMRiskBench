@@ -66,6 +66,13 @@ acceptance passed for results, charts, costs, exports and the seven-input
 comparison. The separate small local-run demonstration and the operator's own
 walkthrough remain outstanding; archive transfer has not started.
 
+The [local Build guide](SMALL_LOCAL_CAMPAIGN.md) records concrete fields and
+buttons while its end-to-end acceptance proceeds. The text probe, saved-answer
+continuation and transport-receipt form have passed on the rig. Image collection
+and the small measured run remain separate acceptance steps; the guide marks
+that boundary explicitly. Completed thesis generations are not rerun by this
+demonstration.
+
 ## Archive contents and acceptance
 
 Keep the console SQLite data, selected and historical responses, attempts,
