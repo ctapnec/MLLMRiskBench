@@ -68,7 +68,7 @@ def test_explicit_recovery_links_preserve_counts_and_output_specific_judgments(a
     assert app.db.workspace_recovery_rows(owner,model='other')==[]
     page=app.handle('GET','/campaigns/'+owner+'?section=results')[2].decode()
     assert 'Recovery history' in page and 'Network failure recovered' in page
-    assert 'recovery/program.json' in page and 'Each answer keeps its own judgments' in page
+    assert 'recovery%2Fprogram.json' in page and 'Each answer keeps its own judgments' in page
     with pytest.raises(ValueError,match='cannot be changed'):
         app.db.link_workspace_recovery(owner,**dict(link,reason='different'))
 
