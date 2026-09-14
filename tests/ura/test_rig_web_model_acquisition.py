@@ -63,6 +63,42 @@ def test_local_matrix_child_preserves_profile_registry_and_blas_bound(tmp_path, 
         app.close()
 
 
+@pytest.mark.parametrize("field,digest_field,label,path_env,digest_env", [
+    ("source_conformance", "source_conformance_sha", "private-source-conformance",
+     "URA_SOURCE_CONFORMANCE_MANIFEST", "URA_SOURCE_CONFORMANCE_SHA256"),
+    ("project_revision", "project_revision_sha", "private-project-revision",
+     "URA_PROJECT_REVISION_MANIFEST", "URA_PROJECT_REVISION_SHA256"),
+])
+def test_reopened_builder_resolves_only_the_same_configured_receipt(
+    tmp_path, monkeypatch, field, digest_field, label, path_env, digest_env,
+):
+    receipt = tmp_path / "configured-receipt.json"
+    payload = b'{"retained":"receipt"}\n'
+    receipt.write_bytes(payload)
+    digest = hashlib.sha256(payload).hexdigest()
+    monkeypatch.setenv(path_env, str(receipt))
+    monkeypatch.setenv(digest_env, digest)
+    app = _app(tmp_path)
+    try:
+        original = {field: str(receipt), digest_field: digest}
+        durable = app._durable_builder_params(original)
+        assert durable[field] == f"{label}@sha256:{digest}"
+        reopened = app._runtime_builder_params(durable)
+        assert reopened == original
+        reader = (app._source_conformance_snapshot if field == "source_conformance"
+                  else app._project_revision_snapshot)
+        assert reader(reopened) == (payload, digest)
+        receipt.write_bytes(b'{"retained":"changed"}\n')
+        with pytest.raises(ValueError, match="SHA-256|sha256|digest"):
+            reader(app._runtime_builder_params(durable))
+        monkeypatch.setenv(digest_env, "f" * 64)
+        assert app._runtime_builder_params(durable)[field] == durable[field]
+        monkeypatch.delenv(path_env)
+        assert app._runtime_builder_params(durable)[field] == durable[field]
+    finally:
+        app.close()
+
+
 def test_ui_acquisition_reuses_configured_store_without_redirecting_old_work(tmp_path, monkeypatch):
     installed = tmp_path / "installed-models"
     installed.mkdir()

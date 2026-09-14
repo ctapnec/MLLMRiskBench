@@ -742,7 +742,26 @@ class LifecycleMixin:
             for identity, runtime_specs in candidates.items()
             if len(runtime_specs) == 1
         }
-        return self._project_local_specs(params, inverse)
+        runtime = self._project_local_specs(params, inverse)
+        for field, digest_field, label, path_env, digest_env in (
+            ("source_conformance", "source_conformance_sha", "private-source-conformance",
+             "URA_SOURCE_CONFORMANCE_MANIFEST", "URA_SOURCE_CONFORMANCE_SHA256"),
+            ("project_revision", "project_revision_sha", "private-project-revision",
+             "URA_PROJECT_REVISION_MANIFEST", "URA_PROJECT_REVISION_SHA256"),
+        ):
+            digest = str(runtime.get(digest_field, "")).strip().lower()
+            configured_digest = os.environ.get(digest_env, "").strip().lower()
+            configured_path = os.environ.get(path_env, "").strip()
+            if (
+                re.fullmatch(r"[0-9a-f]{64}", digest)
+                and runtime.get(field) == f"{label}@sha256:{digest}"
+                and digest == configured_digest
+                and configured_path
+            ):
+                # Reopen the same receipt, never substitute a changed one.
+                # Normal composition still validates its actual file content.
+                runtime[field] = configured_path
+        return runtime
 
     def _local_config_projection(
         self,
