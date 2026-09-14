@@ -89,25 +89,40 @@ def prepare_programs(app, params):
 
 
 def program_panel(params):
-    if not params.get('retained_replays_job'):
+    if not any(params.get(key) for key in ('retained_sources_job','retained_budget_job','retained_replays_job')):
         return ''
+    ready = bool(params.get('retained_replays_job'))
+    disabled = '' if ready else ' disabled'
+    prerequisite = ''
+    if not ready:
+        if params.get('retained_budget_job'):
+            prerequisite = ("<p class='notice amber'>Waiting for replay preparation. "
+                "Click <strong>Prepare replay inputs</strong> in the panel above, wait for its job to complete, "
+                "then reopen this campaign in Build. This is different from Prepare selected inputs. "
+                "Your existing input selection and forecast do not need to be repeated. "
+                "<a href='#matched-replay-inputs'>Go to replay preparation</a>.</p>")
+        else:
+            prerequisite = ("<p class='notice amber'>Waiting for the forecast and replay preparation. "
+                "Use <strong>Prepare forecast</strong>, followed by <strong>Prepare replay inputs</strong>, "
+                "then return to this step. No counting or generation has started.</p>")
     job = html.escape(params.get('retained_programs_job',''),quote=True)
     checked = ' checked' if params.get('retained_network_counts') == 'on' else ''
     return (
-        "<section class='card'><h2>Count inputs and prepare collection</h2>"
+        "<section class='card' id='counted-collection'><h2>Count inputs and prepare collection</h2>"
+        + prerequisite +
         "<p>Prepare one shared spending plan and executable programs for the saved replay selection. "
         "Output allowances and request caps remain those of the forecast. No answers are generated or judged. "
         "Select rules,guardrail in Evaluation. The scoring model's installed revision and GPU placement "
         "are resolved automatically for transport checks and local post-hoc scoring; "
         "Haiku judgments are a separate output-specific stage. Set a positive call-start window "
         "in Execution before preparation; this is not a per-answer timeout.</p>"
-        "<label class='checkrow'><input type='checkbox' form='builder' name='retained_network_counts'" + checked + ">"
+        "<label class='checkrow'><input type='checkbox' form='builder' name='retained_network_counts'" + checked + disabled + ">"
         "<span>Allow provider token counting for these selected inputs</span></label>"
         "<p class='note'>When required, counting sends the saved prompts and images to their selected provider. "
         "It does not call a generation endpoint. Without this option, only locally supported counts and "
         "existing count receipts are usable. Review actual prepared costs before collection; the initial "
         "Haiku estimate is not a completed judging selection.</p>"
-        "<button form='builder' formaction='/build/prepare-programs'>Prepare counted collection</button>"
+        "<button form='builder' formaction='/build/prepare-programs'" + disabled + ">Prepare counted collection</button>"
         + ("<p><a href='/jobs/" + job + "'>Open collection preparation and its artifacts</a></p>"
            "<input type='hidden' form='builder' name='retained_programs_job' value='"+job+"'>" if job else '')
         + "</section>"

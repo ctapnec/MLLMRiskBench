@@ -214,7 +214,7 @@ claiming a paired result. Otherwise report this as a separate campaign.
    **Prepare replay inputs**. This is **not** the earlier **Prepare selected
    inputs** button. Wait for the replay job to complete, then reopen this saved
    campaign through **Configure in Build -> General**. The **Count inputs and
-   prepare collection** panel is now available below replay preparation.
+   prepare collection** controls below replay preparation are now enabled.
 
 The reference selection, with the retained seed-zero inputs, contains **seven
 measured inputs (three text, four image) and five diagnostic inputs**. Twelve
@@ -246,10 +246,12 @@ counts or source selection halfway through preparation.
 
 1. In **General**, below **Prepare matched replay inputs**, find **Count inputs
    and prepare collection**. Enable **Allow provider token counting for these
-   selected inputs**. If this panel is missing, section 3's replay-preparation
-   step has not been saved in this campaign: click **Prepare replay inputs**,
-   wait for completion and reopen the same saved campaign in Build. Input
-   preparation and the forecast alone do not reveal this panel. Do not repeat
+   selected inputs**. The panel stays visible after input preparation; while
+   prerequisites are pending, it explains the next action and disables counting.
+   If it says **Waiting for replay preparation**, use its **Go to replay
+   preparation** link, click **Prepare replay inputs**, wait for completion and
+   reopen the same saved campaign in Build. On an older open browser page,
+   refresh the saved campaign to load the current controls. Do not repeat
    **Prepare selected inputs** or **Prepare forecast** for an unchanged selection.
 2. Click **Prepare counted collection**. This constructs exact requests and
    counts their inputs; it does not generate answers. Wait for completion.

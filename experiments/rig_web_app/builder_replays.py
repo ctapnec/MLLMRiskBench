@@ -74,7 +74,7 @@ def replay_panel(params):
         return ''
     job = html.escape(params.get('retained_replays_job',''),quote=True)
     return (
-        "<section class='card'><h2>Prepare matched replay inputs</h2>"
+        "<section class='card' id='matched-replay-inputs'><h2>Prepare matched replay inputs</h2>"
         "<p>Use the completed source selection and forecast to prepare every selected model and source arm. "
         "Prompts, earlier conversation turns, images and sampling remain those of the saved local runs. "
         "This makes no target or judge calls and does not start execution.</p>"

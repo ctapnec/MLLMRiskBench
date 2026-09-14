@@ -156,6 +156,39 @@ def test_preparation_panel_explains_network_and_retains_job():
     assert 'No answers are generated or judged' in page and 'prompts and images' in page
 
 
+@pytest.mark.parametrize('width',[390,1440])
+@pytest.mark.parametrize('forecast',[False,True])
+def test_counted_step_remains_visible_until_replay_is_prepared(browser,width,forecast):
+    from experiments.rig_web_app import ui,builder_replays
+    params={'retained_sources_job':'inputs'}
+    if forecast:params['retained_budget_job']='forecast'
+    page=browser.new_page(viewport={'width':width,'height':1000})
+    try:
+        def render():
+            body="<form id='builder'></form>"+builder_replays.replay_panel(params)+subject.program_panel(params)
+            page.set_content(ui._page('Preparation',body).decode().replace(
+                "<link rel='stylesheet' href='/static/style.css'>",'<style>'+ui._STYLE+'</style>'))
+        render()
+        assert page.get_by_role('heading',name='Count inputs and prepare collection').is_visible()
+        assert page.locator('[name=retained_network_counts]').is_disabled()
+        assert page.get_by_role('button',name='Prepare counted collection',exact=True).is_disabled()
+        if forecast:
+            link=page.get_by_role('link',name='Go to replay preparation')
+            assert link.get_attribute('href')=='#matched-replay-inputs'
+            assert page.locator('#matched-replay-inputs').is_visible()
+        else:
+            assert 'Waiting for the forecast' in page.locator('#counted-collection').inner_text()
+        assert not page.evaluate('document.documentElement.scrollWidth>innerWidth')
+        params['retained_replays_job']='replay-job'
+        render()
+        assert page.locator('[name=retained_network_counts]').is_enabled()
+        assert page.get_by_role('button',name='Prepare counted collection',exact=True).is_enabled()
+        if forecast:
+            assert page.locator('[name=retained_replays_job]').input_value()=='replay-job'
+        assert 'Waiting for' not in page.locator('#counted-collection').inner_text()
+    finally:page.close()
+
+
 @pytest.mark.parametrize('field,value', [('guardrail_revision',''),('guardrail_revision','main'),
                                       ('guardrail_revision','not-a-commit')])
 def test_incomplete_scorer_cannot_create_preparation(prepared,field,value,monkeypatch,tmp_path):
