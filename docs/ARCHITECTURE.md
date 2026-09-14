@@ -19,8 +19,9 @@ flowchart LR
     D --> X[Post-experiment analysis and figures]
 ```
 
-Experiments are pending. This architecture describes implemented control flow,
-not model performance or judge validity.
+This architecture describes implemented control flow, not model performance or
+judge validity. Campaign-specific completion and findings belong in their
+dated study records and the thesis experiments chapter.
 
 ## Boundaries
 

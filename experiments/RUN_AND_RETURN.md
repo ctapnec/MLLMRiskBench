@@ -3529,6 +3529,22 @@ through `/3` and registry schemas `/1` and `/2` remain historical evidence but
 do not supply a current execution profile; registry `/2` did not bind the vLLM
 topology that determines hardware-fit context.
 
+The console must start with the same `URA_LOCAL_MODEL_PROFILE_REGISTRY` as the
+campaign shell. Build forwards that non-secret locator to its acquisition-plan,
+preflight and Runner children, so selecting an already assessed model does not
+require repeating its survey. It also preserves an explicitly configured
+`OPENBLAS_NUM_THREADS` bound. A missing profile in a UI child must be investigated
+as a configuration handoff before downloading or assessing the model again.
+
+Build's model-acquisition workflow uses the existing `URA_MODEL_STORE` when
+configured. The selected resolved store is retained with the workflow and is
+not redirected by later environment changes. Older workflows retain their
+original UI-managed store; re-review a failed, never-executed lane to create a
+new workflow when correcting that location. Acquisition jobs remain owned by
+the campaign that requested them. Existing model bytes are reused under the
+selected metadata-check policy; this is not a runtime reinstall or another
+readiness survey.
+
 To assess whether a smaller KV-cache allocation permits a larger output
 allowance within the same 120-second generation limit, add
 `--context-ceiling 32768` to the readiness command, including its acquisition
