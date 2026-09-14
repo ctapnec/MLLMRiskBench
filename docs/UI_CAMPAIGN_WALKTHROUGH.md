@@ -42,6 +42,11 @@ an extension of the thesis study population.
 5. **Costs** records physical attempts and charges. Unknown is not zero, and a
    provider purse update is not an invoice breakdown. **Activity** and
    **Campaign jobs** link to the original executions.
+   **Download full campaign cost table** exports every model/role row, including
+   rows on later table pages. It includes nominal charges, unresolved bounds,
+   settlement coverage and reported token totals with missing-usage counts.
+   Blank amounts mean unknown. The export is campaign-wide, includes historical
+   and diagnostic work, and does not adopt the Results model/condition filters.
 6. **Configure in Build** opens the saved draft. Editing it does not alter past
    or running jobs; that draft is not every historical recovery configuration.
 

@@ -6,7 +6,16 @@ by the operator after its first transport probe returned HTTP 429 and requested
 a retry delay of almost one day. It produced no supplement answers. Original
 records and uncertain attempt charges remain retained; the unissued inputs
 are operator-cancelled work, not missing model responses. Output-specific
-judging of already saved answers remains required. The small approved Flash
+judging of saved eligible answers has since completed. At the 14 September
+01:41 UTC cutoff, all 11,503 saved measured outcomes have local evaluation
+records, and all 9,346 eligible usable hosted answers have Haiku assessment
+records. Fifty-one have only invalid Haiku verdicts; these are not pending
+paid retries. The three alignment transport failures have saved, separately
+judged successors and explicit links in the API campaign's Recovery history.
+The one cancelled Pro attempt formerly displayed as in flight has been
+reconciled to an unknown charge with its original bound, without another call.
+Historical preparation and pending-status entries below are dated records,
+not current collection obligations. The small approved Flash
 UI demonstration is documented separately in
 [the workstation and demonstration plan](../docs/WORKSTATION_ARCHIVE_PLAN.md)
 and does not enlarge this study population.

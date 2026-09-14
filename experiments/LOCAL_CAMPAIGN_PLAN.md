@@ -1,5 +1,16 @@
 # All-local test campaign plan: every corpus arm, every framework runtime, free models only
 
+Closeout update, 14 September: all 2,636 selected recovery conditions have been
+attempted, with 2,226 usable replacements and 410 residual misses. The larger-
+allowance diagnostics below did not change this cohort. The current 2,888-input
+hosted population still has local counterparts and 4,454 eligible usable local
+answers with output-specific Haiku assessments. Collection is not being rerun.
+The remaining work is final statistical/publication reconciliation, manual
+local UI-flow acceptance and actual independent human assessment. The deployed
+human-review wizard can prepare saved campaign samples and issue qualified
+reviewer links, but no actual human ratings have been collected. Historical
+status entries below remain dated records, not instructions to restart them.
+
 Larger-allowance diagnostic results, 13 September at 16:30 UTC: all three models
 passed their existing responsiveness survey with a 16,384-token allowance and
 32,768-token context. The vLLM models used both GPUs; no judge ran concurrently.
