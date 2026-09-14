@@ -1698,7 +1698,7 @@ class PagesMixin:
         return _page(f"Job {job.job_id}", body, active="Jobs")
 
     def _collection_continuation_action(self, job: Job) -> str:
-        if job.command != 'hosted_campaign_execute' or job.state() not in {'complete', 'failed', 'interrupted'}:
+        if job.command != 'hosted_campaign_execute' or job.state() not in {'complete', 'failed', 'interrupted', 'stopped'}:
             return ''
         command = self.commands[job.command]
         try:
@@ -1734,7 +1734,7 @@ class PagesMixin:
 
     def _job_page(self, job: Job) -> bytes:
         state = job.state()
-        tone = {"running": "blue", "complete": "green", "failed": "red", "interrupted": "amber"}.get(state, "gray")
+        tone = {"running": "blue", "complete": "green", "failed": "red", "interrupted": "amber", "stopped": "amber"}.get(state, "gray")
         state_tag = self._job_status_tag(state)
         stdout_tail = self._log_tail(job, "stdout") or "(empty)"
         stderr_tail = self._log_tail(job, "stderr") or "(empty)"
@@ -1766,8 +1766,8 @@ class PagesMixin:
             if state == "failed"
             else ""
         )
-        if state == "interrupted":
-            failure = ("<div class='notice amber'><strong>Execution interrupted.</strong><p>"
+        if state in {"interrupted", "stopped"}:
+            failure = ("<div class='notice amber'><strong>Execution " + state + ".</strong><p>"
                        + html.escape(job.failure or "No terminal process record is available. Saved outputs remain available; review them before continuing.")
                        + "</p></div>")
         activity = (

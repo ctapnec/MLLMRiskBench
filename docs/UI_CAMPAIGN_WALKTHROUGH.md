@@ -72,6 +72,24 @@ controls. Local answer retries default to one retry; paid campaigns use no
 answer retry and up to three retries for eligible transport errors. Full
 model-weight checksum checks are optional and off by default.
 
+### Console restarts and interrupted jobs
+
+On the Linux rig, a console restart does not relaunch a running job. Its
+separate supervisor retains process identity, exit status and completion time.
+Reopen **Jobs** to monitor it or use **Stop job**. Logs stream while work runs,
+with a short privacy-redaction tail retained until safe to emit. A process
+lost without a completion record is **interrupted**, not successful; an
+explicit early Stop is **stopped**. Neither state invents an exit code or
+automatically repeats model calls. Saved outputs remain available for review.
+Older hosted collections can recover their terminal state from their retained
+collection result, including **failed** collections that need continuation.
+
+Deployment must not change a checkout while jobs use it. Linux console jobs
+retain a lightweight shared checkout lock, and `distro/repin.sh` declines an
+in-place deployment while that lock is held. This does not hash models, scan
+corpora or reinstall runtimes. Custom deployment helpers must honor the same
+lock; pre-existing CLI processes also need a live-process check before updating.
+
 ## Create a hosted comparison from saved local inputs
 
 Keep the destination campaign's source and preparation choices saved. Later

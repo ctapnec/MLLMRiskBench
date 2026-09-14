@@ -193,7 +193,7 @@ class Job:
             return self.restored_state or "unknown"
         code = self.exit_code()
         if getattr(self.process, "interrupted", False):
-            return "interrupted"
+            return "stopped" if (self.directory / "stop-request.json").exists() else "interrupted"
         if code is None:
             return "running"
         if self.ended_at is None:

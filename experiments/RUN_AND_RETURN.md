@@ -4,6 +4,15 @@ For the normal graphical workflow, use the
 [UI campaign walkthrough](../docs/UI_CAMPAIGN_WALKTHROUGH.md). This runbook keeps
 the detailed CLI equivalents and historical execution distinctions.
 
+Console-managed Linux jobs retain their own lifecycle state across console
+restarts. Monitoring resumes without repeating the command. An unexpected
+process loss is reported as interrupted, with saved outputs preserved; an
+unknown exit code is not fabricated. Review a partial hosted collection before
+continuation. Never replace the checkout of an active run: use the shared
+`.git/ura-execution.lock` convention in `distro/repin.sh` for deployments, and
+check older unsupervised CLI processes separately. This is process coordination,
+not checksum verification; no model or historical-result scan is introduced.
+
 Scoring guardrail setup is automatic in Build and the CLI. Select the installed
 model; its revision is resolved from the model store's small installation
 manifests before preparation and retained in the prepared configuration. At

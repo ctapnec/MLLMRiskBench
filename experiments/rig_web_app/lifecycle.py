@@ -493,10 +493,12 @@ class LifecycleMixin:
                 self.db.upsert_job(job, state="running", exit_code=None)
                 continue
             interrupted = bool(getattr(job.process, "interrupted", False))
-            state = "interrupted" if interrupted else "complete" if code == 0 else "failed"
+            stopped = interrupted and (job.directory / "stop-request.json").exists()
+            state = "stopped" if stopped else "interrupted" if interrupted else "complete" if code == 0 else "failed"
             if interrupted:
                 code = None
-                job.failure = "Execution process disappeared without a terminal record. Saved outputs are preserved; review before continuing."
+                job.failure = ("Execution stopped by operator request. No child exit code was retained; saved outputs are preserved."
+                               if stopped else "Execution process disappeared without a terminal record. Saved outputs are preserved; review before continuing.")
             from .job_runtime import read_state
             execution = read_state(job.directory)
             if execution and execution.get("ended_at"):
@@ -3742,6 +3744,8 @@ class LifecycleMixin:
         if process is None or process.poll() is not None:
             self._release_job_handle(job)
             return
+        from .job_runtime import write_state
+        write_state(job.directory, dict(job_id=job.job_id, requested_at=time.time()), "stop-request.json")
         if os.name == "nt":
             self._terminate_tree_windows(job, process)
         else:

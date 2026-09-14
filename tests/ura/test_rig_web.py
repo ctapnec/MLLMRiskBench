@@ -498,7 +498,7 @@ def test_engine_runtime_private_config_is_consumed_and_restart_state_is_path_fre
         app_closed = True
         restarted = _app(tmp_path)
         restored = restarted.jobs[job.job_id]
-        assert restored.state() == "orphaned"
+        assert restored.state() == "interrupted"
         retained = json.dumps(
             {
                 "argv": restored.argv,
@@ -617,7 +617,7 @@ def test_job_lifecycle_start_monitor_stop(tmp_path: Path) -> None:
     deadline = time.time() + 15
     while job.state() == "running" and time.time() < deadline:
         time.sleep(0.1)
-    assert job.state() in {"failed", "complete"}
+    assert job.state() in {"failed", "complete", "stopped"}
     assert (job.directory / "command.json").exists()
 
     quick = app.start_job("webui_selftest", {"--selftest-sleep": "0"})
