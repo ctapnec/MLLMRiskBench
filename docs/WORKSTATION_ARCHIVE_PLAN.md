@@ -31,8 +31,8 @@ human-review preparation is separate from generating demonstration outputs.
 
 ### Approved Flash example - 14 September
 
-The operator approved a small Gemini Flash demonstration using approximately
-20 matched text/image inputs, with a USD 1.00 Google spending cap. The latest
+The operator approved a small Gemini Flash demonstration, initially estimated
+at approximately 20 matched text/image inputs, with a USD 1.00 Google cap. The latest
 reported Google purse is USD 7.95. This example does not inherit the cancelled
 Pro supplement's allocation or inputs automatically. Keep it in a separately
 named demonstration campaign, outside the thesis study's statistical population.
@@ -47,9 +47,24 @@ Do not wait another day for quota to complete a demonstration.
 Apply local evaluation and output-specific Haiku assessment to new eligible
 answers. Count their actual saved text before judging. Haiku uses the separate
 Anthropic purse, not the Google dollar. Existing local verdicts may be reused
-only for the identical saved local answer and judging condition. The exact
-selection, forecast, achieved spending and tested UI steps remain to be added
-after the demonstration is prepared and executed.
+only for the identical saved local answer and judging condition.
+
+The production UI example uses Gemini 3.8 Flash, the retained Qwen3-VL XSTest
+and VLSBench inputs, selection seed 0, low thinking and a 4,096-token output
+allowance. Its cap was reduced to 12 requests to keep all three eligible
+transport retries within the dollar. Counted maximum exposure is USD 0.189337
+for first attempts and USD 0.757348 for all four attempts. Collection saved
+12 usable responses without transport retries: seven measured demonstration
+outputs (three text, four image) and five diagnostic outputs. Google reported
+token usage bounds their charge at USD 0.027046; this is not invoice-confirmed
+spending. The visible campaign is named **UI demonstration - Flash matched text
+and images**. Local judgments are saved for all 12 answers. Haiku assessed all
+seven measured answers for a recorded USD 0.007470: six valid verdicts and one
+invalid-format assessment. Seven existing local Haiku verdicts remain attached
+to their original answers, with no duplicate paid judging. Live desktop/mobile
+acceptance passed for results, charts, costs, exports and the seven-input
+comparison. The separate small local-run demonstration and the operator's own
+walkthrough remain outstanding; archive transfer has not started.
 
 ## Archive contents and acceptance
 

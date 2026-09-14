@@ -8,6 +8,10 @@ local judging, Haiku judging and result/cost inspection. This bounded acceptance
 used one diagnostic and one measured Terra input; it is not evidence that every
 model/framework combination has completed a new UI campaign.
 
+The production text/image example on 14 September also completed the full
+hosted flow. Its reproduction details are below. It is a demonstration, not
+an extension of the thesis study population.
+
 ## Inspect the retained studies
 
 1. Open **Campaigns -> Local campaign** or **API campaign**. These are separate
@@ -120,6 +124,55 @@ Costs retains both physical executions. Reopening or republishing one execution
 does not charge or count it twice, and a historical unknown charge stays unknown.
 Results and cost publication can be repaired from saved artifacts without
 repeating generation.
+
+### Worked text/image example on the rig
+
+Open **Campaigns -> UI demonstration - Flash matched text and images** to
+inspect the completed example. Use **Configure in Build** to inspect its saved
+choices. Do not press a collection or judging start button merely to view data.
+To make another demonstration, save a separately named campaign first.
+
+1. Choose **Local campaign** as the retained source. Under **Show saved runs**,
+   select the Qwen3-VL-8B-Instruct runs for `xstest_full` and
+   `vlsbench_release`. In this archive they are `run-a66a37fef7443227d3ff1ce0`
+   and `run-549b0f0db2a1cb24bcb80a85`, each containing 100 retained inputs.
+   Use **Prepare selected inputs**; this does not regenerate Qwen answers.
+2. Select `google:gemini-3.8-flash` with text and image support, low thinking,
+   a 4,096-token output allowance, selection seed 0 and a total request cap of
+   12. Use **Prepare forecast**, then **Prepare replay inputs**. The achieved
+   selection contains seven measured inputs and five separately labelled
+   diagnostic inputs, not twelve independent measured cases.
+3. In **Evaluation**, use **rules,guardrail**, no defense, and the installed
+   Llama-Guard-3-8B scoring model on `cuda:0`. Preserve its installed revision.
+   In **Execution**, set the call-start window to 3,600 seconds. Hosted answer
+   retries stay at zero; eligible HTTP errors allow three retries.
+4. Enable provider token counting and use **Prepare counted collection**.
+   Review the actual text/image count results before **Start prepared
+   collection**. This example's maximum was USD 0.189337 for first attempts,
+   or USD 0.757348 including all transport retries, within the USD 1 Google cap.
+   Counts and prices may differ for a later selection; these are not permanent
+   per-campaign prices.
+5. Follow the local and Haiku judging steps above. Here, all 12 saved answers
+   received local evaluation records. All-output coverage found seven measured
+   Flash answers and seven matching local answers. The seven local answers
+   already had Haiku verdicts in **Local campaign**; their lack of new funding
+   was not a missing judgment. Only the seven new Flash answers were charged.
+6. Inspect **Overview**, **Results**, **Judging** and **Costs**. The example
+   retained 12 usable responses without transport retries. Google token usage
+   gives USD 0.027046 of bounded charge exposure, while seven Haiku assessments
+   have USD 0.007470 of recorded cost. One Haiku output used an invalid verdict
+   format; it remains visible and is not silently converted into a safety label.
+7. In **Compare**, choose Flash on the left and **Local campaign / Qwen3-VL**
+   on the right. Choose each saved generation condition and the matching
+   Haiku judging condition, then filter to `replay` and one corpus/modality.
+   The image slice has four matched inputs, three with valid verdicts on both
+   sides. The text slice has three matched inputs, all jointly valid. Export
+   each slice using **Download this page's counts**. Different local generation
+   conditions are selected separately, not combined under a family label.
+
+The example exercised the live browser controls and actual export downloads.
+Its charts and costs are backed by the same saved responses as the comparison.
+No model weights or framework environments were installed for this acceptance.
 
 For partial historical runs and advanced imports, use the typed Tools commands
 in [RUN_AND_RETURN](../experiments/RUN_AND_RETURN.md). Preserve original failed
