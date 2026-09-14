@@ -52,6 +52,11 @@ CAMPAIGN_ENV="$HOME/.ura_campaign_env"
 [ -f "$CAMPAIGN_ENV" ] || { echo "campaign env missing: $CAMPAIGN_ENV (run distro/install.sh locators first)" >&2; exit 1; }
 
 cd "$REPO"
+# New console jobs retain a shared lease through their whole process tree.
+# Never change the checkout underneath them, and do not wait indefinitely.
+DEPLOY_LOCK_PATH="$(git rev-parse --git-common-dir)/ura-execution.lock"
+exec {DEPLOY_LOCK_FD}>"$DEPLOY_LOCK_PATH"
+flock -n -x "$DEPLOY_LOCK_FD" || { echo "Active jobs use this checkout; deployment postponed without stopping them." >&2; exit 1; }
 git fetch "$BUNDLE" main --quiet
 REF=$(git rev-parse FETCH_HEAD)
 test "$REF" = "$REF_EXPECTED" || { echo "bundle head $REF != expected $REF_EXPECTED" >&2; exit 1; }
@@ -68,7 +73,6 @@ git checkout --detach "$REF" --quiet
 # OLD code). Processes are matched on the anchored '-m experiments.<module>'
 # invocation only (pkill -f patterns are EREs: an unescaped '.' would also
 # match a path like experiments/rig_web_app/... open in an editor or tail).
-pkill -f -- '-m experiments\.run_matrix( |$)' 2>/dev/null || true
 pkill -f -- '-m experiments\.rig_web( |$)' 2>/dev/null || true
 sleep 1
 

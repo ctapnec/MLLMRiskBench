@@ -191,7 +191,9 @@ class Job:
     def state(self) -> str:
         if self.process is None:
             return self.restored_state or "unknown"
-        code = self.process.poll()
+        code = self.exit_code()
+        if getattr(self.process, "interrupted", False):
+            return "interrupted"
         if code is None:
             return "running"
         if self.ended_at is None:
@@ -201,7 +203,15 @@ class Job:
     def exit_code(self) -> int | None:
         if self.process is None:
             return self.restored_exit
-        return self.process.poll()
+        code = self.process.poll()
+        from .job_runtime import read_state
+        record = read_state(self.directory)
+        if record and record.get("supervisor", {}).get("pid") == getattr(self.process, "pid", None):
+            if record["state"] in {"complete", "failed"}:
+                return int(record["exit_code"])
+            if code is not None:
+                self.process.interrupted = True
+        return None if getattr(self.process, "interrupted", False) else code
 
     def runtime_seconds(self) -> float:
         end = self.ended_at if self.ended_at is not None else time.time()

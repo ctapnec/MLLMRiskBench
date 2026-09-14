@@ -1923,7 +1923,7 @@ def test_detached_redactor_keeps_logging_across_console_close_and_restart(
     restarted = new_app()
     try:
         restored = restarted.jobs[job.job_id]
-        assert restored.state() == "orphaned"
+        assert restored.state() == "running"
         log_path = restored.directory / "stdout.log"
         deadline = time.time() + 10
         while time.time() < deadline:

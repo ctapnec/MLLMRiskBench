@@ -244,7 +244,7 @@ class LifecycleMixin:
                     if row["exit_code"] is not None
                     else None
                 ),
-                run_recorded=True,
+                run_recorded=stored not in {"running", "orphaned"},
             ),
             stored,
         )
@@ -261,8 +261,47 @@ class LifecycleMixin:
                 continue
             job, stored = self._job_from_db_row(row)
             self.jobs[job_id] = job
+            self._restore_job_execution(job)
             if job.restored_state == "orphaned" and stored != "orphaned":
                 self.db.upsert_job(job)  # persist orphaned across restarts
+
+    def _restore_job_execution(self, job: Job) -> None:
+        """Recover process ownership or a command's durable terminal result."""
+        from .job_runtime import RecoveredProcess, read_state
+        record = read_state(job.directory)
+        if record and record.get("supervisor"):
+            job.process = RecoveredProcess(job.directory, record)
+            job.ended_at = record.get("ended_at")
+            return
+        # Older hosted collections predate the supervisor. Their final result
+        # is a CLI-owned terminal contract, not a guessed log sentinel.
+        if job.command != "hosted_campaign_execute" or job.restored_state not in {"orphaned", "unknown"}:
+            return
+        out = _argv_out_dir(job.argv)
+        if not out:
+            return
+        result_path = self.repo_root / out / "result.json"
+        try:
+            result = json.loads(result_path.read_text())
+            status = result.get("status")
+            if status not in {"responses_collected_awaiting_judging", "collection_needs_continuation"}:
+                return
+            rows = result.get("jobs")
+            if not isinstance(rows, list) or not rows:
+                return
+            complete = all(row.get("status") == "collected" for row in rows)
+            if complete != (status == "responses_collected_awaiting_judging"):
+                return
+            job.restored_state = "complete" if complete else "failed"
+            # This is the command's documented result-to-exit mapping.
+            job.restored_exit = 0 if complete else 1
+            job.ended_at = result_path.stat().st_mtime
+            if not complete:
+                tail = self._log_tail(job, "stderr").strip()
+                job.failure = tail[-500:] if tail else "Collection needs continuation; retained outputs are preserved."
+            self.db.upsert_job(job)
+        except (OSError, ValueError, TypeError, AttributeError):
+            return
 
     def _jobs_for_history_window(
         self,
@@ -319,6 +358,7 @@ class LifecycleMixin:
         if row is None:
             return None
         job = self._job_from_db_row(row)[0]
+        self._restore_job_execution(job)
         self.jobs[job_id] = job
         return job
 
@@ -433,12 +473,22 @@ class LifecycleMixin:
             # the run/usage transaction cannot disagree if the process exits
             # between polls.
             code = job.process.poll()
+            job.exit_code()  # Observes a missing supervisor completion record.
             if code is None:
                 if job.command == "model_acquire":
                     self._refresh_model_acquisition_activity(job)
                 self.db.upsert_job(job, state="running", exit_code=None)
                 continue
-            state = "complete" if code == 0 else "failed"
+            interrupted = bool(getattr(job.process, "interrupted", False))
+            state = "interrupted" if interrupted else "complete" if code == 0 else "failed"
+            if interrupted:
+                code = None
+                job.failure = "Execution process disappeared without a terminal record. Saved outputs are preserved; review before continuing."
+            from .job_runtime import read_state
+            execution = read_state(job.directory)
+            if execution and execution.get("ended_at"):
+                job.ended_at = execution["ended_at"]
+                code = execution["exit_code"]
             if job.ended_at is None:
                 job.ended_at = time.time()
             if job.run_recorded:
@@ -3558,7 +3608,14 @@ class LifecycleMixin:
                 popen_kwargs["start_new_session"] = True
             popen_kwargs["env"] = child_env
             log_writers: tuple[Any, Any] | None = None
+            lease = None
             try:
+                from .job_runtime import repository_lease, supervisor_argv
+                lease = repository_lease(self.repo_root)
+                if os.name == "posix":
+                    launch_argv = supervisor_argv(directory, launch_argv, lease.fileno() if lease else None)
+                    if lease:
+                        popen_kwargs["pass_fds"] = (lease.fileno(),)
                 if capture_logs:
                     log_writers = self._start_log_capture(
                         job_id,
@@ -3595,6 +3652,8 @@ class LifecycleMixin:
                     self._unlink_transient_local_config(path)
                 raise
             finally:
+                if lease is not None:
+                    lease.close()
                 # The child now owns duplicate write handles.  Closing the
                 # controller copies lets the detached redactors observe EOF
                 # when that child exits, even after this console has closed.

@@ -1734,7 +1734,7 @@ class PagesMixin:
 
     def _job_page(self, job: Job) -> bytes:
         state = job.state()
-        tone = {"running": "blue", "complete": "green", "failed": "red"}.get(state, "gray")
+        tone = {"running": "blue", "complete": "green", "failed": "red", "interrupted": "amber"}.get(state, "gray")
         state_tag = self._job_status_tag(state)
         stdout_tail = self._log_tail(job, "stdout") or "(empty)"
         stderr_tail = self._log_tail(job, "stderr") or "(empty)"
@@ -1766,6 +1766,10 @@ class PagesMixin:
             if state == "failed"
             else ""
         )
+        if state == "interrupted":
+            failure = ("<div class='notice amber'><strong>Execution interrupted.</strong><p>"
+                       + html.escape(job.failure or "No terminal process record is available. Saved outputs remain available; review them before continuing.")
+                       + "</p></div>")
         activity = (
             "<div class='notice blue'><strong>Model download in progress.</strong> "
             "This indicator comes from explicit job activity metadata and is "

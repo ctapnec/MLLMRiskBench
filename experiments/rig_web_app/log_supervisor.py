@@ -104,7 +104,9 @@ def capture_stream(
     written = 0
     truncated = False
     while True:
-        chunk = source.read(LOG_PIPE_READ_BYTES)
+        # Buffered read(n) may wait for 64 KiB or EOF, hiding a short live job's
+        # entire log. read1 returns the bytes currently supplied by the pipe.
+        chunk = getattr(source, "read1", source.read)(LOG_PIPE_READ_BYTES)
         if not chunk:
             break
         if isinstance(chunk, str):
@@ -119,6 +121,7 @@ def capture_stream(
             truncated=truncated,
             max_bytes=max_bytes,
         )
+        sink.flush()
     output, pending = redact_stream_prefix(pending, patterns, eof=True)
     if pending:  # pragma: no cover - EOF consumes the complete buffer
         output += pending

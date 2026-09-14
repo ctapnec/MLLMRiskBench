@@ -2715,10 +2715,11 @@ def test_distro_repin_script_is_fail_closed_and_sources_canonical_ura_env_last()
     assert 'test_local_model_readiness.py' not in parallel_gate
     assert 'distro/install.sh' not in parallel_gate
     # hygiene (anchored module invocations) precedes the clean-env gate
-    run_matrix_kill = text.index("pkill -f -- '-m experiments\\.run_matrix( |$)'")
+    assert "pkill -f -- '-m experiments\\.run_matrix( |$)'" not in text
+    assert text.index('flock -n -x "$DEPLOY_LOCK_FD"') < text.index('git checkout --detach')
     rig_web_kill = text.index("pkill -f -- '-m experiments\\.rig_web( |$)'")
     gate = text.index("-m pytest -q -p no:cacheprovider")
-    assert run_matrix_kill < gate and rig_web_kill < gate
+    assert rig_web_kill < gate
     assert "pkill -f 'experiments." not in text
     # the scrub unsets every URA_* name, digits included
     assert "grep -oE '^URA_[A-Za-z0-9_]+'" in text
