@@ -1,6 +1,13 @@
 # Third hosted campaign: provider-scaled expansion
 
-## Active continuation - 13 September 2026
+Current disposition, 14 September: collection and eligible output-specific
+local/Haiku judging are closed. The final Pro supplement was cancelled by the
+operator; its unissued inputs are not pending requests. Current counts,
+recovery links and publication evidence are recorded in
+[the final closeout](HOSTED_MATCHED_CLOSEOUT_PLAN.md). Preserve the observations
+and balances below; do not restart these historical controllers.
+
+## Historical continuation - 13 September 2026
 
 The updated Gemini Pro queue contains 230 additional matched inputs (189 text,
 41 image, 25 arms), plus twenty untouched inputs owned by the older collectors.

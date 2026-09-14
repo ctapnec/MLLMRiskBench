@@ -141,9 +141,10 @@ Reopen the same saved campaign in Build:
    Keep the other bounds and the one-answer-retry policy unchanged.
 4. Save, return through **Configure in Build**, and **Compose & review**.
    Follow step 3's preparation sequence for this new measured selection.
-   After preflight, return through the saved campaign's **Configure in Build**
-   and **Compose & review**, retaining its entered live-receipt paths. Confirm
-   the exact no-call projection before the real start.
+   After preflight, use **Review this exact lane in the builder**. The completed
+   measured-job shortcut also retains its receipt locations. Alternatively,
+   return through the saved campaign's **Configure in Build** and **Compose &
+   review**. Confirm the exact no-call projection before the real start.
 5. Wait for collection and local evaluation to finish. Inspect the campaign's
    **Results**, **Judging**, **Costs** and **Campaign jobs**. Probes remain
    diagnostic records; do not pool them with the measured cases.

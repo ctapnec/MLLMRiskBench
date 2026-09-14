@@ -23,8 +23,43 @@ and does not enlarge this study population.
 Approved by the operator on 13 September 2026, after the 11:12 UTC campaign
 snapshot. This is a bounded supplement to the existing API campaign, not a new
 independent sample or permission to repeat completed target calls. Statistical
-synthesis, complete UI-flow acceptance and academic thesis completion remain
-the main closeout tasks. Aggregate reporting continues every thirty minutes.
+synthesis, UI acceptance and academic editing were closeout tasks at approval;
+their current disposition is recorded below. Aggregate reporting continues
+every thirty minutes during active work.
+
+## Automated-work closeout review - 14 September
+
+The review reads retained evidence rather than repeating model calls, classifier
+fits, installations or complete regression suites. The rig evidence index is
+`engineering/campaign-closeout-evidence-20260914.json`. A passed software or
+publication check is not a human-validity result.
+
+| Requirement | Current disposition | Authoritative evidence |
+| --- | --- | --- |
+| Selected hosted collection and recoveries | Closed with explicit outcomes; no issued continuation remains | Current campaign index, collection cutoff, declared recovery links and operator cancellation |
+| Local recovery | All 2,636 assigned conditions attempted; 2,226 usable replacements and 410 residual misses | Retained recovery outputs and the Chapter V recovery analysis |
+| Output-specific judging | All saved hosted outcomes locally accounted for; all 9,346 eligible usable hosted answers Haiku-assessed; 4,454 matching local answers assessed | Judging reconciliation, current index and eligibility dispositions; 51 hosted invalid-only verdicts remain unscored |
+| Statistical synthesis | Published with fixed analysis populations and limits | Collection, paired, same-base, adaptive, source-classification, concordance and SVM evidence mapped to Chapter V |
+| Figures and costs | Published with reproducible figure/table exports and explicit accounting uncertainty | Figure reproduction guide, browser downloads and cost-publication comparisons; unknown amounts are not zero |
+| Local and hosted Build flows | Production examples passed, including output ownership, judgments, results, charts and exports | Small local and Flash guides and their production browser evidence |
+| Completed-job continuation | Receipt-bearing review now reopens the exact retained configuration | Production before/after review of the completed measured local job; no new job launched |
+| Human-review software | Wizard and qualified-rater workflow implemented and tested; production preparation controls accepted | Human-review tests and desktop/mobile acceptance, using isolated test ratings only |
+| Thesis and development records | Results, figures, limitations and SVM contributions incorporated; academic assembly and citation checks retained | Authoritative chapters, regenerated assembly, annotated references, runbook and reaudit ledger |
+| Actual independent human assessment | Not performed; Gate 8 remains open | Production has zero human studies and ratings; no supplied raters or institutional arrangements |
+
+The statistical reports do not infer a universal model ranking, human validity
+or successful execution of unavailable native frameworks. Diagnostic examples
+remain outside the thesis study populations. The separate local UI example has
+local decisions only; the completed Flash example proves the matched Haiku flow
+on its own source answers, not on those newly generated local answers.
+
+The operator's own reproduction of the two small examples and the subsequent
+workstation archive move remain the agreed next steps in
+[the migration plan](../docs/WORKSTATION_ARCHIVE_PLAN.md). They do not require
+restarting the completed study. Gate 8 additionally needs the actual study
+arrangements, independent qualified raters, adjudication and human-authored
+acceptance specified in the local campaign plan. Software tests cannot supply
+those decisions, and no completion of Gate 8 is claimed.
 
 ## Baseline and purpose
 

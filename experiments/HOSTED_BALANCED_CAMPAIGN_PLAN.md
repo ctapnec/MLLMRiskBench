@@ -1,5 +1,11 @@
 # Fourth hosted campaign: balanced matched coverage
 
+Current disposition, 14 September: the tails and saved-output judging described
+below have been reconciled. [The final closeout](HOSTED_MATCHED_CLOSEOUT_PLAN.md)
+supplies the current population and cancellation dispositions. Earlier counts
+and account observations remain historical; they do not authorize another
+continuation or duplicate judgment.
+
 Closeout, 13 September at 09:34 UTC: the whole measured API workspace has
 11,433 assignments on 2,888 distinct inputs. It retains 10,318 usable outputs,
 1,096 provider-policy outcomes, 16 missing responses and three assignments

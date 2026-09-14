@@ -1,5 +1,12 @@
 # Hosted subset and Haiku re-adjudication campaign plan
 
+Current disposition, 14 September: the selected hosted collection, its eligible
+output-specific judging and publication reconciliation are complete, subject
+to the explicitly retained misses, invalid judgments and cancelled Pro inputs.
+See [the final closeout](HOSTED_MATCHED_CLOSEOUT_PLAN.md) for current counts and
+the remaining human-assessment requirement. Dated continuation instructions
+below are history, not a queue to restart or a new spending authorization.
+
 The [third hosted expansion](HOSTED_EXPANSION_PLAN.md), requested on
 10 September 2026 and subsequently enlarged, separately targets 6,736
 additional evaluations with local and Haiku judging. Its remaining inputs use

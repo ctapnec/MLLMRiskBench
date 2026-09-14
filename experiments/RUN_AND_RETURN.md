@@ -7225,6 +7225,15 @@ paths automatically for both native judging and the later Haiku output view.
 Starting, stopping or resuming collection does not replace the selected inputs.
 Already attested programs still work without `--prepare-runtime`.
 
+Completed local jobs can reopen their receipt-bearing configuration from the
+job's **Review this exact lane** action. The console uses the small receipt
+snapshots retained with the matching preparation, including for standalone
+jobs; it does not rescan model weights. Historical source/project receipts remain
+visible after a console update. Reopening preserves what was run, not permission
+to use expired or old-revision evidence for a new run. Normal review, preflight
+and admission still apply. A saved campaign definition supplies a locator only
+when it identifies the same receipt.
+
 Console-form to runbook-section mapping (the console builds the identical
 argument vectors; nothing below is console-only):
 

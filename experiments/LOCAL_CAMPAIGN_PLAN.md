@@ -8,8 +8,9 @@ answers with output-specific Haiku assessments. Collection is not being rerun.
 The separate four-input local UI demonstration has passed collection, local
 evaluation and desktop/mobile result/export acceptance; its concrete procedure
 is in `docs/SMALL_LOCAL_CAMPAIGN.md`. It does not change the study populations.
-The remaining work is final publication review, the operator's own UI
-reproduction and actual independent human assessment. The deployed
+Publication reconciliation is recorded in the final hosted closeout's shared
+evidence checklist. The remaining work is the operator's own UI reproduction
+and actual independent human assessment; Gate 8 is not complete. The deployed
 human-review wizard can prepare saved campaign samples and issue qualified
 reviewer links, but no actual human ratings have been collected. Historical
 status entries below remain dated records, not instructions to restart them.
