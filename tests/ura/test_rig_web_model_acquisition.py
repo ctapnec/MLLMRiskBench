@@ -43,6 +43,26 @@ def test_build_modes_do_not_describe_local_inference_as_paid(tmp_path):
         app.close()
 
 
+def test_local_matrix_child_preserves_profile_registry_and_blas_bound(tmp_path, monkeypatch):
+    registry = tmp_path / "operator-local-model-profiles.json"
+    monkeypatch.setenv("URA_LOCAL_MODEL_PROFILE_REGISTRY", str(registry))
+    monkeypatch.setenv("OPENBLAS_NUM_THREADS", "2")
+    monkeypatch.setenv("HF_TOKEN", "not-for-this-child")
+    monkeypatch.setenv("OPENAI_API_KEY", "unselected-provider")
+    app = _app(tmp_path)
+    try:
+        child = app._run_matrix_child_environment(
+            {"--local": "vllm:Qwen/Qwen3-VL-8B-Instruct", "--corpora": "xstest_full"},
+            scrub_receipt_env=False,
+        )
+        assert child["URA_LOCAL_MODEL_PROFILE_REGISTRY"] == str(registry)
+        assert child["OPENBLAS_NUM_THREADS"] == "2"
+        assert "HF_TOKEN" not in child
+        assert "OPENAI_API_KEY" not in child
+    finally:
+        app.close()
+
+
 @pytest.mark.parametrize("full_sha", [False, True])
 def test_builder_full_model_sha_is_optional_and_composes_real_cli(tmp_path, full_sha):
     from experiments import model_acquire, run_matrix

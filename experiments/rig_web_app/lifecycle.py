@@ -1469,6 +1469,7 @@ class LifecycleMixin:
         "NVIDIA_DRIVER_CAPABILITIES",
         "NVIDIA_VISIBLE_DEVICES",
         "OMP_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
         "PATH",
         "PATHEXT",
         "PROGRAMDATA",
@@ -1504,6 +1505,9 @@ class LifecycleMixin:
     _MATRIX_OPTIONAL_ENV = frozenset({
         "URA_MEDIA_ROOTS",
         "URA_ENGINE_TIMEOUT_SECONDS",
+        # Build and its Runner child must resolve the same already-approved
+        # local profiles; omission falls back to an unrelated repository file.
+        "URA_LOCAL_MODEL_PROFILE_REGISTRY",
     })
     #: Non-secret receipt locators the CLI reads as argparse defaults
     #: (run_matrix/rig_check --project-revision / --source-conformance and their
