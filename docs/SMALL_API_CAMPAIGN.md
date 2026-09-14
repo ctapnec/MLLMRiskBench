@@ -298,6 +298,13 @@ planning failure is shown with its underlying Runner error on the job page.
 5. Inspect the campaign's **Judging** tab. A local evaluation record can be an
    abstention or inapplicable result; coverage alone is not a valid safety score.
 
+If step 6.4 failed before producing new assessments, keep the same saved judging
+preparation. After the software correction, repeat **Review local judging ->
+Start or resume local judging**. There is no device field to fill in for automatic
+placement. Original judgments are reused, the failed execution revision remains
+in its history, and Flash answers are not regenerated. Do not repeat collection
+or source preparation to recover this failure.
+
 ## 7. Apply Haiku to each new eligible answer
 
 1. Return to **Configure in Build -> General**. Under **Same-input output

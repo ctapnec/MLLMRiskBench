@@ -241,6 +241,45 @@ def test_unrecognized_original_cascade_setting_is_not_silently_ignored():
         subject.source_cascade(condition, object())
 
 
+@pytest.mark.parametrize('device', [None, 'cuda:0', 'cpu'])
+def test_saved_cascade_round_trips_automatic_and_explicit_placement(device):
+    guard = GuardrailJudge(revision='b'*40, device=device)
+    condition = _component_config(JudgeCascade([RuleJudge(),guard]))
+    assert ('device' in condition['stages'][1]) is (device is not None)
+    restored = subject.source_cascade(condition, object())
+    assert restored.stages[1].device == device
+    assert _component_config(restored) == condition
+    assert restored.stages[1]._model is None
+
+
+def test_pre_scoring_failure_can_resume_after_fix_without_repreparation(retained,tmp_path,monkeypatch):
+    monkeypatch.setattr(subject.sources,'load_program_job',lambda *a,**kw:
+        (retained.source,retained.reader(),retained.inputs,retained.responses))
+    monkeypatch.setattr(subject,'source_runtime',lambda *a,**kw:object())
+    def broken(*args):
+        raise KeyError('device')
+    monkeypatch.setattr(subject,'source_cascade',broken)
+    preparation=tmp_path/'prepared.json'
+    preparation.write_text(json.dumps(dict(status='prepared',units=[retained.source],failed=[])))
+    options=dict(preparation=preparation,preparation_sha256=hashlib.sha256(preparation.read_bytes()).hexdigest(),
+        out=tmp_path/'judging',revision='c'*40)
+    failed=subject.execute(**options)
+    assert failed['status']=='continuation_required' and failed['completed_judgments']==0
+    assert failed['errors'][0]['message']=="'device'"
+    original=(options['out']/'execution.json').read_bytes()
+    judges,calls=cascade()
+    monkeypatch.setattr(subject,'source_cascade',lambda *args:judges)
+    corrected={**options,'revision':'d'*40}
+    result=subject.execute(**corrected)
+    assert result['status']=='complete' and len(calls)==2
+    assert json.loads(next((options['out']/'execution-history').glob('*.json')).read_text())==json.loads(original)
+    assert (options['out']/'unit-0001/previous-error.json').is_file()
+    assert not (options['out']/'unit-0001/error.json').exists()
+    assert subject.execute(**corrected)['status']=='complete' and len(calls)==2
+    with pytest.raises(ValueError,match='scoring revision'):
+        subject.execute(**{**corrected,'revision':'e'*40})
+
+
 def test_ui_cli_and_environment_have_judging_role_without_provider_keys(tmp_path, monkeypatch):
     from experiments.rig_web_app.catalog import build_argv
     from experiments.rig_web_app.lifecycle import LifecycleMixin

@@ -87,7 +87,7 @@ def source_cascade(condition, runtime):
     rule = RuleJudge()
     rule.escalate_below = rule_config["escalate_below"]
     guard = GuardrailJudge(model=guard_config["model_id"], revision=guard_config["revision"],
-        device=guard_config["device"], max_new_tokens=guard_config["max_new_tokens"],
+        device=guard_config.get("device"), max_new_tokens=guard_config["max_new_tokens"],
         escalate_below=guard_config["escalate_below"], model_runtime=runtime)
     result = JudgeCascade([rule, guard])
     if _component_config(result) != condition:
@@ -211,6 +211,31 @@ def score_unit(source, reader, inputs, responses, *, out, revision, publication=
     return result
 
 
+def continue_execution_identity(out, selection):
+    """A pre-scoring failure can adopt a fix without relabelling old verdicts."""
+    identity = out/"execution.json"
+    previous = sources.read(identity)
+    if previous == selection:
+        return
+    if ({key:value for key,value in previous.items() if key != "scoring_revision"}
+            != {key:value for key,value in selection.items() if key != "scoring_revision"}):
+        raise ValueError("Resume must preserve its preparation and verification settings")
+    # Original source judgments are attributed to their generation revision.
+    # A new scoring checkout cannot silently claim judgments made by an older
+    # scorer. Here no new assessment was produced, so none needs migrating.
+    if (any(path.stat().st_size for path in out.glob("unit-*/judgments.checkpoint.jsonl"))
+            or any(out.glob("unit-*/evaluator-failures/*.json"))):
+        raise ValueError("Resume must preserve its scoring revision after producing assessments")
+    history = out/"execution-history"
+    history.mkdir(mode=0o700, exist_ok=True)
+    snapshot = history/(_sha256_json(previous)+".json")
+    if not snapshot.exists():
+        _write_new(snapshot, previous)
+    elif sources.read(snapshot) != previous:
+        raise ValueError("Previous scoring execution record changed")
+    _write_atomic(identity, selection)
+
+
 def execute(*, preparation, preparation_sha256, out, revision, workspace_id="", console_db=None,
             verify_model_sha256=False):
     if bool(workspace_id) != bool(console_db):
@@ -228,8 +253,7 @@ def execute(*, preparation, preparation_sha256, out, revision, workspace_id="", 
     with _exclusive_lock(out), ExitStack() as stack:
         identity = out/"execution.json"
         if identity.exists():
-            if sources.read(identity) != selection:
-                raise ValueError("Resume must preserve its preparation and scoring revision")
+            continue_execution_identity(out, selection)
         else:
             if any(path.name != "execution.lock" for path in out.iterdir()):
                 raise ValueError("New native judging needs an unused execution directory")
@@ -256,10 +280,14 @@ def execute(*, preparation, preparation_sha256, out, revision, workspace_id="", 
                 source = expected
                 completed.append(score_unit(source, reader, inputs, responses, out=unit, revision=revision,
                     publication=publication, verify_model_sha256=verify_model_sha256, cascade_cache=cascade_cache))
+                error_path = unit/"error.json"
+                if error_path.exists():
+                    error_path.replace(unit/"previous-error.json")
             except (OSError, ValueError, KeyError, TypeError, RuntimeError) as exc:
                 unit.mkdir(mode=0o700, exist_ok=True)
                 _write_atomic(unit/"error.json", dict(error_type=type(exc).__name__, message=str(exc)[:2000]))
-                errors.append(dict(job=expected["job"], unit=str(unit), error_type=type(exc).__name__))
+                errors.append(dict(job=expected["job"], unit=str(unit), error_type=type(exc).__name__,
+                    message=str(exc)[:2000]))
                 # Keep completed checkpoints. Do not repeat one infrastructure
                 # failure across every queued source/model load.
                 break

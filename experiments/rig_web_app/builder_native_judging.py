@@ -114,7 +114,8 @@ def native_judging_review(app, params):
         "The original source criteria and scoring cascade are preserved; later draft edits do not replace them. "
         "Existing judgments and saved checkpoints are restored before new scoring. This count is not a forecast "
         "of new classifier calls. No target is regenerated and no hosted provider is called.</p>"
-        "<p>Judging uses the recorded local devices. Avoid starting it on GPUs occupied by another local task. "
+        "<p>Judging preserves the saved placement policy, including automatic GPU placement. "
+        "Avoid starting it on GPUs occupied by another local task. "
         "Haiku assessment is a separate output-specific stage.</p>"
         +(f"<p class='notice amber'>{failed:,} assigned outputs are not prepared. Their source errors remain "
           "visible and this judging subset cannot complete the whole campaign.</p>" if failed else '')
