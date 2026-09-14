@@ -217,6 +217,23 @@ def test_finished_runs_discovered_without_cross_campaign_or_failed_run_sources(t
     finally:app.close()
 
 
+def test_preparation_uses_one_live_completion_snapshot_before_database_watcher(tmp_path,monkeypatch):
+    from types import SimpleNamespace
+    app=RigWebApp(results_root=tmp_path/'runs',state_dir=tmp_path/'state',repo_root=tmp_path,gpu_hardware={},system_hardware={})
+    try:
+        owner=app.db.create_workspace('Completed campaign','local');store=app._human_store()
+        path=store.root/'blank.csv';prepared(path)
+        key=store.save_preparation(owner,'completed-process',dict(name='Race regression',mode='common',prepared=str(path),metadata={}))
+        monkeypatch.setattr(app.db,'load_job',lambda key:dict(state='running',exit_code=None))
+        live=SimpleNamespace(process=object(),exit_code=lambda:0,state=lambda:'complete')
+        app.jobs['completed-process']=live
+        body=app.handle('GET','/human-evaluation/preparations/'+key)[2].decode()
+        assert 'Create study and assign reviewers' in body
+        assert 'did not finish successfully' not in body
+    finally:
+        app.jobs.pop('completed-process',None);app.close()
+
+
 @pytest.mark.parametrize('family', list(audit.SOURCE_TASK_VOCABULARY))
 def test_source_task_wizard_consumes_native_export(tmp_path, monkeypatch, family):
     """Exercise the real CSV producer, not a separately invented UI fixture."""

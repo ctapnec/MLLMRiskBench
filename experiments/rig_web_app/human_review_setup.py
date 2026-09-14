@@ -102,8 +102,15 @@ def setup_route(app, method, path, data, style):
     if path.startswith('/human-evaluation/preparations/'):
         key=path.rsplit('/',1)[-1];draft=store.preparation(key);job=app.db.load_job(draft['job'])
         if job is None:raise ValueError('The sample preparation job is unavailable')
-        live=app.jobs.get(draft['job']);state=live.state() if live else job['state']
-        ready=state=='complete' and job['exit_code']==0
+        live=app.jobs.get(draft['job'])
+        if live is not None and live.process is not None:
+            # Read one process result, not its new terminal state paired with
+            # an older SQLite exit code that the watcher has not saved yet.
+            exit_code=live.exit_code()
+            state='running' if exit_code is None else 'complete' if exit_code==0 else 'failed'
+        else:
+            state,exit_code=job['state'],job['exit_code']
+        ready=state=='complete' and exit_code==0
         if method=='POST':
             if not ready:raise ValueError('Finish sample preparation before creating the study')
             return 303,'/human-evaluation/'+store.create_prepared_study(key),b''
