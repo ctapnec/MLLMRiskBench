@@ -11,7 +11,7 @@ from pathlib import Path
 from experiments.retained_replay_sources import source_populations, source_media_index
 
 
-def prepare_media_index(results: Path, sample: Path, supplied: Path | None = None, *, manifest_paths=None) -> dict:
+def prepare_media_index(results: Path, sample: Path, supplied: Path | None = None, *, manifest_paths=None, bindings=None) -> dict:
     with sample.open(encoding='utf-8-sig', newline='') as stream:
         rows = list(csv.DictReader(stream))
     # Prepared two-rater forms repeat each output, not its media workload.
@@ -20,6 +20,7 @@ def prepare_media_index(results: Path, sample: Path, supplied: Path | None = Non
     original = json.loads(supplied.read_text(encoding='utf-8')) if supplied else {}
     if not isinstance(original, dict):
         raise ValueError('Retained media index must map content identities to local files')
+    original = {**(bindings or {}), **original}
     needed, by_run = {}, {}
     for row in rows:
         for ref in json.loads(row['media_references']):

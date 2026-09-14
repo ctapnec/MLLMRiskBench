@@ -60,6 +60,20 @@ def test_invalid_judge_not_imputed_safe_and_absent_verdict_does_not_drop_output(
     assert predictions=={'local-cascade-test':{}}
 
 
+def test_attacker_added_media_uses_retained_request_binding_without_store_scan(indexed,tmp_path,monkeypatch):
+    database,owner,root,_=indexed
+    inventory=read_campaign(database,owner,root);asset=tmp_path/'attacker-image.png';asset.write_bytes(b'retained asset')
+    digest='a'*64
+    for row in inventory['outputs']:
+        row['metadata']['effective_modality']='image'
+        row['metadata']['prepared_media_references']=json.dumps([dict(sha256=digest,locator='@content-sha256/'+digest,mime='image/png',modality='image')])
+        row['media_bindings']=[dict(sha256=digest,path=str(asset),mime='image/png')]
+    monkeypatch.setattr(Path,'rglob',lambda *args:pytest.fail('Indexed preparation scanned the results store'))
+    result=review.prepare(inventory,tmp_path/'images.csv',mode='common',clusters=0,results_root=root)
+    assert result['media']['resolved_references']==2
+    assert result['media']['outputs_with_unavailable_media']==0
+
+
 @pytest.mark.parametrize('family',list(audit.SOURCE_TASK_VOCABULARY))
 def test_source_task_keeps_native_parser_frame(indexed,tmp_path,family):
     database,owner,root,_=indexed

@@ -84,7 +84,9 @@ def prepare(inventory, output, *, mode, clusters, results_root, media_index=None
         manifest = path.with_name(stem+'.manifest.json')
         if manifest.is_file():
             manifest_paths.add(manifest)
-    media = prepare_media_index(results_root, output, media_index, manifest_paths=sorted(manifest_paths))
+    bound_media={binding['sha256']:binding['path'] for row in selected for binding in row.get('media_bindings',[])
+                 if binding.get('sha256') and binding.get('path')}
+    media = prepare_media_index(results_root, output, media_index, manifest_paths=sorted(manifest_paths),bindings=bound_media)
     report = {k:v for k,v in snapshot.items() if k not in {'outputs','prepared_sha256'}}
     report.update(selected_outputs=len(selected), selected_clusters=len({r['cluster_key'] for r in selected_rows}),
         independent_ratings_required=2*len(selected), media=media,
