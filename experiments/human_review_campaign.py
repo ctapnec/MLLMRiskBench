@@ -59,7 +59,13 @@ def prepare(inventory, output, *, mode, clusters, results_root, media_index=None
     producer = audit.prepare_sample if mode=='common' else audit.prepare_source_task_sample
     producer(results_root, output, max(1, clusters), artifact_view=view, minimum_coverage=clusters==0)
     with output.open(encoding='utf-8-sig', newline='') as stream:
-        selected_rows = list(csv.DictReader(stream))
+        reader=csv.DictReader(stream); fields=reader.fieldnames
+        selected_rows = list(reader)
+    # The native sampler emits one blank row per output. The actual analysis
+    # contract (and the UI store) uses an exact two-rater blank form.
+    with output.open('w', encoding='utf-8-sig', newline='') as stream:
+        writer=csv.DictWriter(stream,fieldnames=fields);writer.writeheader()
+        writer.writerows(row for row in selected_rows for _ in range(2))
     keys = {row['sample_key'] for row in selected_rows}
     selected = [row for row in outputs if row['sample_key'] in keys]
     snapshot = dict(campaign_id=inventory['campaign_id'], campaign_name=inventory['campaign_name'], mode=mode,
@@ -69,7 +75,7 @@ def prepare(inventory, output, *, mode, clusters, results_root, media_index=None
         unavailable_reasons=dict(Counter(r['reason'] for r in inventory['unavailable'])),
         excluded_rubrics=dict(excluded), requested_clusters=clusters,
         scope='Deterministic whole-cluster achieved sample; historical generation conditions are distinct; not population representative')
-    with gzip.open(output.with_suffix('.SNAPSHOT.json.gz'), 'xt', encoding='utf-8') as stream:
+    with gzip.open(output.with_suffix('.SNAPSHOT.json.gz'), 'xt', encoding='utf-8',compresslevel=1) as stream:
         json.dump(snapshot, stream, ensure_ascii=False, sort_keys=True)
     manifest_paths = set()
     for row in selected:

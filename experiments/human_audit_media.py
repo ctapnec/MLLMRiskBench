@@ -14,6 +14,9 @@ from experiments.retained_replay_sources import source_populations, source_media
 def prepare_media_index(results: Path, sample: Path, supplied: Path | None = None, *, manifest_paths=None) -> dict:
     with sample.open(encoding='utf-8-sig', newline='') as stream:
         rows = list(csv.DictReader(stream))
+    # Prepared two-rater forms repeat each output, not its media workload.
+    if rows and 'sample_key' in rows[0]:
+        rows = list({row['sample_key']:row for row in rows}.values())
     original = json.loads(supplied.read_text(encoding='utf-8')) if supplied else {}
     if not isinstance(original, dict):
         raise ValueError('Retained media index must map content identities to local files')

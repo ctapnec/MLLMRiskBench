@@ -30,7 +30,7 @@ def test_real_producer_index_to_two_rater_report(indexed,tmp_path):
             token=store.enroll(study,name,'rater',qualification())
             store.consent(token)
             for item in store.view(token)['queue']:
-                store.save(token,item['id'],revision=0,value=valid_rating(label='refusal',refusal_label='refusal'),submit=True)
+                store.save(token,item['id'],revision=0,value=dict(valid_rating(),label='refusal',refusal_label='refusal'),submit=True)
         labels=tmp_path/'labels.csv';labels.write_bytes(store.export(study))
         result=review.analyse(sample.with_suffix('.SNAPSHOT.json.gz'),sample,labels,tmp_path/'report.json',bootstrap_resamples=10)
         assert result['rated_outputs']==2 and result['independent_ratings']==4
@@ -73,7 +73,7 @@ def test_source_task_keeps_native_parser_frame(indexed,tmp_path,family):
     labels=tmp_path/'labels.csv'
     with labels.open('w',encoding='utf-8-sig',newline='') as stream:
         writer=csv.DictWriter(stream,fieldnames=fields);writer.writeheader()
-        for row in blanks:
+        for row in {r['sample_key']:r for r in blanks}.values():
             for rater in ('one','two'):
                 writer.writerow(dict(row,rater_id=rater,task_label=label,parse_status_label='clean_single_label',confidence='4'))
     report=review.analyse(sample.with_suffix('.SNAPSHOT.json.gz'),sample,labels,tmp_path/'report.json')
