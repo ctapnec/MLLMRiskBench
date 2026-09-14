@@ -1,6 +1,7 @@
 """Reusable collection and typed UI command, without target generation."""
 import hashlib
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -84,15 +85,16 @@ def test_ui_environment_uses_each_selected_program_not_all_provider_keys(tmp_pat
     def read(path, digest):
         documents.append((path, digest))
         return {"jobs": [{"argv": ["--api", path, "--out", "/tmp/unused"]}]}
-    fake = SimpleNamespace(commands=COMMANDS, _MATRIX_BASE_ENV={"BASE"},
+    fake = SimpleNamespace(repo_root=tmp_path,commands=COMMANDS, _MATRIX_BASE_ENV={"BASE"},
         _MATRIX_OPTIONAL_ENV={"OPTIONAL"}, _MATRIX_RECEIPT_ENV={"RECEIPT"},
         _strict_config_document=read,
         _selected_matrix_environment_names=lambda values: seen.append(values) or {values["--api"] + "_KEY"},
-        _selected_child_environment=lambda allowed: allowed)
+        _selected_child_environment=lambda allowed: dict.fromkeys(allowed,'test-value'))
     values = {"--program": "openai", "--program#1": "google",
         "--program-sha256": "a" * 64, "--program-sha256#1": "b" * 64}
     allowed = LifecycleMixin._generic_child_environment(fake, "hosted_campaign_execute", values)
-    assert allowed == {"BASE", "OPTIONAL", "RECEIPT", "openai_KEY", "google_KEY"}
+    assert set(allowed) == {"BASE", "OPTIONAL", "RECEIPT", "openai_KEY", "google_KEY","PYTHONPATH"}
+    assert allowed['PYTHONPATH'] == os.pathsep.join((str(tmp_path),str(tmp_path/'src')))
     assert documents == [("openai", "a" * 64), ("google", "b" * 64)]
     assert [item["--api"] for item in seen] == ["openai", "google"]
     del values["--program-sha256#1"]

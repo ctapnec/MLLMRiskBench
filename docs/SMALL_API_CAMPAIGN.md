@@ -226,6 +226,8 @@ counts or source selection halfway through preparation.
    scoring device to `cuda:0`. The installed revision on this rig is:
    `7327bd9f6efbbe6101dc6cc4736302b3cbb6e425`.
    Use the scoring guardrail fields, not the defense guardrail fields.
+   Type the model ID into the field: the example shown in an empty field is
+   a placeholder, not a saved selection. Both model and revision must be filled.
 3. Click **Execution**. Under **Call ceilings & deadline (budget guards)**, set
    **--deadline-seconds** to **3600**. This allows one hour in which to start
    calls; it is not an hour-long timeout for an individual answer.
@@ -242,6 +244,9 @@ counts or source selection halfway through preparation.
    option (the checkbox allowing network counting).
 2. Click **Prepare counted collection**. This constructs exact requests and
    counts their inputs; it does not generate answers. Wait for completion.
+   If scoring settings are missing, Build returns to **Evaluation** with the
+   missing fields marked. Correct them before preparing. The CLI preparer
+   likewise rejects an incomplete scoring revision before provider counting.
 3. Return to the saved Build draft. Click **Review prepared collection**.
 4. Check the destination name, Flash model, text/image selection and call count.
    Review the cost bound including transport retries, not just expected spend.
@@ -260,6 +265,14 @@ If execution was interrupted, reopen the same prepared collection and use its
 continuation action. Do not create another campaign to recover that job. If a
 preparation fails, open its job error first; an incomplete preparation is not
 authorization to bypass it or switch to the ordinary compose button.
+
+If an older collection failed during installed-runtime preparation because its
+scoring model/revision was absent, correct those fields and run **Prepare counted
+collection** again in the same campaign. Reuse the saved source, forecast and
+replay preparation; do not rebuild them. Review the new prepared collection
+before starting it. Changing draft fields alone does not amend an already saved
+program. Keep the original failed job as the record of that attempt. A runtime
+planning failure is shown with its underlying Runner error on the job page.
 
 ## 6. Apply the local judge to the saved answers
 

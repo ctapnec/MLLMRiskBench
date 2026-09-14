@@ -2,6 +2,7 @@
 from contextlib import nullcontext
 import copy
 import json
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -224,14 +225,16 @@ def test_console_command_is_no_call_preparation_and_checksums_default_off(tmp_pa
     assert observed[0]['verify_model_sha256'] is False
 
 
-def test_console_runtime_preparation_does_not_receive_provider_credentials():
+def test_console_runtime_preparation_does_not_receive_provider_credentials(tmp_path):
     from experiments.rig_web_app.catalog import COMMANDS
     from experiments.rig_web_app.lifecycle import LifecycleMixin
-    fake=SimpleNamespace(commands=COMMANDS,_MATRIX_BASE_ENV={'BASE'},_MATRIX_OPTIONAL_ENV={'OPTIONAL'},
+    fake=SimpleNamespace(repo_root=tmp_path,commands=COMMANDS,_MATRIX_BASE_ENV={'BASE'},_MATRIX_OPTIONAL_ENV={'OPTIONAL'},
         _MATRIX_RECEIPT_ENV={'URA_MODEL_STORE'},
         _strict_config_document=lambda *args:{'jobs':[{'argv':['--api','google:model','--corpora','arm']}]},
         _declared_matrix_environment=lambda values:{'CORPUS_ROOT'},
         _selected_matrix_environment_names=lambda values:pytest.fail('Provider credential selection reached'),
-        _selected_child_environment=lambda allowed:allowed)
-    assert LifecycleMixin._generic_child_environment(fake,'hosted_program_runtime',
-        {'--program':'program.json','--program-sha256':'a'*64}) == {'BASE','OPTIONAL','URA_MODEL_STORE','CORPUS_ROOT'}
+        _selected_child_environment=lambda allowed:dict.fromkeys(allowed,'test-value'))
+    child=LifecycleMixin._generic_child_environment(fake,'hosted_program_runtime',
+        {'--program':'program.json','--program-sha256':'a'*64})
+    assert set(child) == {'BASE','OPTIONAL','URA_MODEL_STORE','CORPUS_ROOT','PYTHONPATH'}
+    assert child['PYTHONPATH'] == os.pathsep.join((str(tmp_path),str(tmp_path/'src')))

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import copy
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -156,16 +157,18 @@ def test_preparation_typed_form_and_counting_environment_are_explicit(tmp_path):
     argv = build_argv("hosted_campaign_prepare", values)
     assert "--allow-network-counts" not in argv and "--verify-artifact-sha256" not in argv
     seen = []
-    fake = SimpleNamespace(_MATRIX_BASE_ENV={"PATH"},
+    fake = SimpleNamespace(repo_root=tmp_path,_MATRIX_BASE_ENV={"PATH"},
         _strict_config_document=lambda *a: dict(sources=dict(api_config=dict(path="api.json", sha256="b"*64)),
             routes=[dict(target="anthropic:judge"), dict(target="openai:target")]),
         _selected_matrix_environment_names=lambda selected: seen.append(selected) or {"SELECTED_PROVIDER_KEY"},
-        _selected_child_environment=lambda allowed: allowed)
-    assert LifecycleMixin._generic_child_environment(fake, "hosted_campaign_prepare", values) == {"PATH"}
+        _selected_child_environment=lambda allowed: dict.fromkeys(allowed,'test-value'))
+    child = LifecycleMixin._generic_child_environment(fake, "hosted_campaign_prepare", values)
+    assert set(child) == {"PATH","PYTHONPATH"}
+    assert child['PYTHONPATH'] == os.pathsep.join((str(tmp_path),str(tmp_path/'src')))
     assert not seen
     values["--allow-network-counts"] = "on"
     assert "--allow-network-counts" in build_argv("hosted_campaign_prepare", values)
-    assert LifecycleMixin._generic_child_environment(fake, "hosted_campaign_prepare", values) == {"PATH", "SELECTED_PROVIDER_KEY"}
+    assert set(LifecycleMixin._generic_child_environment(fake, "hosted_campaign_prepare", values)) == {"PATH", "SELECTED_PROVIDER_KEY","PYTHONPATH"}
     assert seen == [{"--api": "anthropic:judge,openai:target", "--api-config": "api.json", "--api-config-sha256": "b"*64}]
 
 
