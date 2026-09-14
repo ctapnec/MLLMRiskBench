@@ -152,6 +152,7 @@ def collect_campaign(*, programs: Sequence[tuple[Path, str]], budget_root: Path,
             else:
                 completed = _completed_continuation_jobs(resume_from, selection, admitted)
             selection['resume_from'] = str(resume_from)
+            selection['continuation_call_windows'] = str(out/'continuation-windows')
         out.mkdir(mode=0o700)
         owners.enter_context(_collection_lock(out))
         _write_new(out / 'selection.json', selection)
@@ -175,11 +176,12 @@ def collect_campaign(*, programs: Sequence[tuple[Path, str]], budget_root: Path,
                 completed = completed_runtime_jobs(
                     _completed_continuation_jobs(resume_from, selection, admitted), admitted)
             worker = run_runtime_admission
-        if execution_root != project_root:
-            for jobs in admitted:
-                for admission in jobs:
+        if resume_from is not None:
+            for p, jobs in enumerate(admitted):
+                for j, admission in enumerate(jobs):
                     admission.execution_checkout = str(execution_root)
                     admission.execution_commit = expected_commit
+                    admission.continuation_window_path = str(out/'continuation-windows'/f'program-{p:04d}-job-{j:04d}.json')
             worker = run_pinned_admission
         return _collect_admitted(admitted=admitted, prepared_programs=prepared_programs,
             budget_root=budget_root, project_root=project_root, out=out, workspace_id=workspace_id,

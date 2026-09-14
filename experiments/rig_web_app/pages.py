@@ -1730,6 +1730,7 @@ class PagesMixin:
             "<p>Keep the saved model programs, inputs, budget and campaign. Completed jobs are restored; "
             "partial jobs use their response checkpoints. After a console update, continuation automatically uses "
             "the original execution revision in a separate source-only checkout. Do not change the saved revision. "
+            "Continuation starts a fresh time window for remaining work without resetting consumed calls or spending. "
             "Spending stops and HTTP retry limits remain active.</p>"
             "<p><a class='button' href='" + html.escape(href, quote=True) + "'>Review continuation</a></p>"
             "<p class='note'>A fresh output directory is filled in for the continuation record. "

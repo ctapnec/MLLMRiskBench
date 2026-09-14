@@ -13,6 +13,59 @@ from contextlib import contextmanager
 
 
 @contextmanager
+def continuation_call_window(admission):
+    """An explicit successor starts a new window, never a new call allowance.
+
+    The original ledger/deadline remain intact. A separate successor record
+    identifies the effective window, created once when this queued job starts.
+    This budget specialization also supports original Runner revisions which
+    predate explicit continuation windows. Their normal reservation/cap logic
+    stays active; only the operator-renewed start deadline changes.
+    """
+    location = getattr(admission, 'continuation_window_path', None)
+    if location is None:
+        yield
+        return
+    from experiments import run_matrix
+    from ura.runner import BudgetExhausted
+    import math
+    import time
+
+    seconds = run_matrix.build_parser().parse_args(admission.job['argv']).deadline_seconds
+    path = Path(location)
+    path.parent.mkdir(mode=0o700, exist_ok=True)
+    binding = dict(policy='explicit_continuation_window', duration_seconds=seconds,
+        job=admission.job['name'], call_ids=sorted(row['call_id'] for row in admission.requests.values()))
+    started = time.time()
+    window = dict(binding, started_epoch=started, deadline_epoch=started+seconds if seconds else None)
+    try:
+        with path.open('x') as stream:
+            json.dump(window, stream)
+    except FileExistsError:
+        if path.is_symlink() or path.stat().st_size > 1024*1024:
+            raise ValueError('Continuation window must be one bounded regular record')
+        window = json.loads(path.read_text())
+    if (any(window.get(key) != value for key,value in binding.items())
+            or not isinstance(window.get('started_epoch'),(int,float))
+            or not math.isfinite(window['started_epoch'])
+            or window.get('deadline_epoch') != (window['started_epoch']+seconds if seconds else None)):
+        raise ValueError('Saved continuation window differs from this job')
+    original = run_matrix.GlobalCallBudget
+
+    class ContinuedBudget(original):
+        def _check_deadline(self):
+            if window['deadline_epoch'] is not None and time.time() >= window['deadline_epoch']:
+                raise BudgetExhausted('This continuation call-start window has expired')
+
+    run_matrix.GlobalCallBudget = ContinuedBudget
+    try:
+        print(f'Explicit continuation window: {seconds or "unlimited"} seconds; consumed call counts and spending are retained.', flush=True)
+        yield
+    finally:
+        run_matrix.GlobalCallBudget = original
+
+
+@contextmanager
 def saved_output_finalization(admission):
     """Finish retained output after a start window expires, with no new calls.
 
@@ -73,7 +126,7 @@ def main():
         from experiments.hosted_runtime_collection import run_runtime_admission as execute
     else:
         from experiments.hosted_dispatch import run_admission as execute
-    with saved_output_finalization(admission):
+    with continuation_call_window(admission), saved_output_finalization(admission):
         output = execute(admission, responses_only=responses_only)
     with os.fdopen(result_fd, 'w') as stream:
         json.dump(dict(status='complete', output=output), stream)

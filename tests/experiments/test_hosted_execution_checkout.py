@@ -186,3 +186,39 @@ def test_complete_saved_response_finalization_cannot_extend_paid_window(tmp_path
         assert not finalizing and run_matrix.GlobalCallBudget is GlobalCallBudget
         with pytest.raises(BudgetExhausted,match='deadline reached'):
             run_matrix.GlobalCallBudget(**options).raise_if_deadline_reached()
+
+
+def test_explicit_continuation_renews_time_but_not_consumed_call_caps(tmp_path, monkeypatch):
+    import time
+    from experiments import run_matrix
+    from experiments.hosted_pinned_worker import continuation_call_window
+    from ura.runner import BudgetExhausted, GlobalCallBudget
+    window = tmp_path/'successor/job-window.json'
+    admission = SimpleNamespace(continuation_window_path=str(window),
+        requests={'a':{'call_id':'same-funded-call'}},job={'name':'remaining',
+        'argv':['--out',str(tmp_path/'answers'),'--deadline-seconds','120']})
+    ledger = tmp_path/'original-budget.json'
+    options = dict(max_target_calls=3,max_judge_calls=3,max_http_attempts=3,
+        deadline_epoch=time.time()-1000,state_path=ledger,budget_id='original')
+    original = GlobalCallBudget(**options)
+    original.target_calls = original.http_attempts = 2
+    original._persist()
+    with continuation_call_window(admission):
+        continued = run_matrix.GlobalCallBudget(**options)
+        assert continued.target_calls == 2
+        continued.raise_if_deadline_reached()
+        continued.charge_target()
+        assert continued.target_calls == 3
+        with pytest.raises(BudgetExhausted,match='ceiling'):
+            continued.charge_target()
+        assert continued.deadline_epoch == original.deadline_epoch
+    saved = window.read_bytes()
+    metadata = json.loads(saved)
+    assert metadata['duration_seconds']==120 and metadata['deadline_epoch']>time.time()
+    assert json.loads(ledger.read_text())['target_calls']==3
+    with continuation_call_window(admission):
+        assert window.read_bytes()==saved
+        monkeypatch.setattr(time,'time',lambda:metadata['deadline_epoch']+1)
+        with pytest.raises(BudgetExhausted,match='continuation call-start window has expired'):
+            run_matrix.GlobalCallBudget(**options).raise_if_deadline_reached()
+    assert run_matrix.GlobalCallBudget is GlobalCallBudget

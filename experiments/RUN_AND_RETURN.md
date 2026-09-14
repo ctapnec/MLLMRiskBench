@@ -7258,6 +7258,19 @@ The worker is tied to its dispatch owner's lifetime on Linux to avoid leaving an
 orphan after Stop or controller termination. Build and the failed job's Review
 continuation action supply these saved settings without manual revision edits.
 
+Explicit collection continuation renews each job's call-start window, using its
+unchanged declared duration when that job starts. A create-once record in the
+successor's `continuation-windows` directory records the effective start and
+deadline. The original invocation deadline and cumulative call ledger are kept;
+the controller supplies the renewed deadline to the original Runner's budget
+lifecycle while retaining its normal reservation and call-cap checks. Resuming
+within the same successor does not renew the deadline again. This is an explicit
+operator continuation, not an automatic retry or a fresh monetary allowance.
+For a fully saved response set the controller prohibits all new target and
+model-judge reservations during finalization. Checkpoint and receipt validation
+still apply. This compatibility policy is part of the newer controller, not a
+claim that the historical Runner originally implemented renewed windows.
+
 Completed local jobs can reopen their receipt-bearing configuration from the
 job's **Review this exact lane** action. The console uses the small receipt
 snapshots retained with the matching preparation, including for standalone

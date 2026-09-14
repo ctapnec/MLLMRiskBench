@@ -135,7 +135,8 @@ def collection_review(app, params):
     if history is not None:
         body += "<p>Previous collection: <a href='/jobs/"+history['job_id']+"'>Open job and retained results</a></p>"
         body += ('<p>Continuation keeps the original execution revision, even after a console update. '
-            'Its saved responses, runtime bindings and spending records are reused; no model installation is repeated.</p>')
+            'Its saved responses, runtime bindings and spending records are reused; no model installation is repeated. '
+            'Each remaining job starts a fresh time window when it begins, without resetting consumed calls or spending.</p>')
     body += ("<details><summary>Exact command</summary><pre>"+html.escape(' '.join(build_argv('hosted_campaign_execute',values)))
         +"</pre></details><form class='action-row' method='post' action='/build/collect-prepared'>"
         "<input type='hidden' name='launch_ticket' value='"+html.escape(ticket,quote=True)+"'>"

@@ -235,7 +235,8 @@ def test_installed_runtime_collection_continuation_keeps_bindings_and_skips_save
     monkeypatch.setattr(runtime,'bind_installed_program',lambda **kw:bound.append(kw) or {'program':descriptor})
     dispatched = []
     def dispatch(jobs,**kw):
-        assert kw['_worker'] is runtime.run_runtime_admission
+        from experiments.hosted_execution_checkout import run_pinned_admission
+        assert kw['_worker'] is (run_pinned_admission if dispatched else runtime.run_runtime_admission)
         assert jobs[0][0].runtime_program == descriptor
         dispatched.append(kw['completed_jobs'])
         return [dict(program=0,job=0,name='saved',target=admission.program['target'],status='collected')]

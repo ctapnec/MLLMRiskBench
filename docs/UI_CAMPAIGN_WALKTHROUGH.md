@@ -90,6 +90,12 @@ filled in automatically. Keep the supplied programs, budget and revision.
 Alternatively, reopen the saved campaign in Build, select **Review prepared
 collection**, then **Continue saved collection**. Both routes reuse completed
 responses and spending records; do not repeat input or runtime preparation.
+An explicit continuation starts a fresh time window for each remaining job
+when that job begins. Time spent stopped or waiting in the queue does not use
+that new window. The original window remains in the history; consumed calls,
+saved responses and spending are not reset. Reopening a review alone does not
+renew a window. A fully saved response set can be finalized without new target
+or model-judge calls, even after its original call-start deadline.
 
 If the console was updated since collection began, the continuation automatically
 uses a separate checkout of the original execution revision. The live console
