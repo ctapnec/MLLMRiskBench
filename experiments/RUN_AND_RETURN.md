@@ -3536,6 +3536,14 @@ require repeating its survey. It also preserves an explicitly configured
 `OPENBLAS_NUM_THREADS` bound. A missing profile in a UI child must be investigated
 as a configuration handoff before downloading or assessing the model again.
 
+Reopening a retained job in Build restores its source and project receipt
+locators from the configured environment only when their recorded content
+identities still match. Composition validates the referenced files as usual.
+It must not interpret the display-only receipt identity as a filesystem path,
+or silently replace the old receipt after a source change or deployment.
+After a deployment, select the current project receipt explicitly and produce
+a new no-call projection before starting the updated lane.
+
 Build's model-acquisition workflow uses the existing `URA_MODEL_STORE` when
 configured. The selected resolved store is retained with the workflow and is
 not redirected by later environment changes. Older workflows retain their
