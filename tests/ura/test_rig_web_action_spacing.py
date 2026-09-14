@@ -7,7 +7,7 @@ import pytest
 from experiments.rig_web import Job
 from experiments.rig_web_app import (
     builder_collection, builder_haiku_judging, builder_inventory_execution,
-    builder_judging_inventory, builder_native_judging, builder_programs, ui,
+    builder_judging_inventory, builder_native_judging, builder_programs, builder_sources, ui,
 )
 from test_builder_collection import study  # noqa: F401
 from test_builder_native_judging import native, complete_preparation  # noqa: F401
@@ -140,6 +140,40 @@ def test_judging_action_groups_have_gaps_and_wrap(browser, width):
             else:
                 assert b['y']-a['y']-a['height'] >= 12
             assert first.get_attribute('form') == second.get_attribute('form') == 'builder'
+        assert not page.evaluate('document.documentElement.scrollWidth>innerWidth')
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize('width', [390, 1440])
+def test_source_preparation_action_has_spacing(browser, study, width):
+    app, params, _, _ = study
+    page = browser.new_page(viewport={'width': width, 'height': 1000})
+    try:
+        panel = builder_sources.source_panel(app, {'retained_source_campaign': params['campaign_id']})
+        render(page, ui._page('Sources', "<form id='builder'></form>"+panel))
+        button = page.get_by_role('button', name='Prepare selected inputs', exact=True)
+        assert_action_gap(page, button)
+        assert button.get_attribute('formaction') == '/build/prepare-inputs'
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize('width', [390, 1440])
+def test_config_editor_actions_wrap_without_overflow(browser, study, monkeypatch, width):
+    app, _, _, _ = study
+    monkeypatch.setattr(app, '_config_example_text', lambda key: '{}')
+    page = browser.new_page(viewport={'width': width, 'height': 1000})
+    try:
+        render(page, app._config_page('api-targets', ''))
+        row = page.locator('.editor-actions')
+        assert row.evaluate('row=>getComputedStyle(row).flexWrap') == 'wrap'
+        assert len(row.get_by_role('button').all()) == 3
+        bounds = row.bounding_box()
+        for button in row.get_by_role('button').all():
+            box = button.bounding_box()
+            assert box['x'] >= bounds['x']
+            assert box['x']+box['width'] <= bounds['x']+bounds['width']+1
         assert not page.evaluate('document.documentElement.scrollWidth>innerWidth')
     finally:
         page.close()

@@ -225,3 +225,16 @@ Final reporting accounts separately for unissued inputs, missing responses,
 truncation, invalid judgments and inapplicable scoring tasks. Human validity
 requires independent ratings; neither completed jobs nor automated agreement
 supplies them.
+
+## Shared control layout
+
+Standalone action rows have space above them and between buttons, and wrap on
+narrow screens. This includes Stop job, prepared collection and judging starts,
+and the saved-input preparation actions. Configuration editor actions also wrap.
+Optional checkbox rows align the checkbox with the first line of their label;
+the full label is clickable and long explanations wrap without overlapping.
+
+For UI maintenance, reuse the shared `action-row` or `review-actions` classes
+for these action groups and `checkrow` with a text `span` for standalone checkbox
+labels. Keep compact model selectors and table actions in their existing layouts.
+The spacing rules do not change defaults, submitted parameters or job actions.
