@@ -85,6 +85,10 @@ do not change an already prepared collection. If a preparation must be corrected
 before any provider attempt, retain the old jobs and prepare a new version from
 the same saved source, forecast and replay jobs. Do not edit retained programs.
 Collection and output-specific judging remain separate stages.
+For image inputs, launch the console with the same ordered `URA_MEDIA_ROOTS`
+configuration as the CLI. Build preserves it for both cached/offline request
+construction and network token counting. Enabling token counting forwards only
+the selected providers' credentials; it does not grant access to other files.
 The collection review includes the console's configured `URA_MODEL_STORE`
 location when installed-runtime preparation is needed. No installation is
 performed. A failed launch before collection initialization retries the same

@@ -81,6 +81,27 @@ def test_network_counting_is_an_explicit_separate_option(prepared):
     assert len(calls) == 1
 
 
+@pytest.mark.parametrize('network_counts', [False, True])
+def test_counted_preparation_preserves_image_roots_without_extra_keys(study, monkeypatch, tmp_path, network_counts):
+    app, _, _, _ = study
+    api = tmp_path/'counted-api.json'
+    api.write_text(json.dumps({'google:gemini-3.8-flash': {'modalities': ['text', 'image'], 'max_tokens': 4096}}))
+    request = tmp_path/'counted-request.json'
+    request.write_text(json.dumps({'sources': {'api_config': subject._descriptor(api)},
+                                  'routes': [{'target': 'google:gemini-3.8-flash'}]}))
+    values = {'--request': str(request), '--request-sha256': subject._descriptor(request)['sha256']}
+    if network_counts:
+        values['--allow-network-counts'] = 'on'
+    for name, value in [('URA_MEDIA_ROOTS', '/approved/images:/approved/derived-images'),
+                        ('GEMINI_API_KEY', 'test-only-google-key'),
+                        ('OPENAI_API_KEY', 'test-only-other-key'), ('HF_TOKEN', 'test-only-hub-token')]:
+        monkeypatch.setenv(name, value)
+    child = app._generic_child_environment('hosted_campaign_prepare', values)
+    assert child['URA_MEDIA_ROOTS'] == '/approved/images:/approved/derived-images'
+    assert ('GEMINI_API_KEY' in child) is network_counts
+    assert 'OPENAI_API_KEY' not in child and 'HF_TOKEN' not in child
+
+
 @pytest.mark.parametrize('deadline', ['', None, '0', '-1', '1.5', 'nan', 'inf', 'later'])
 def test_missing_or_invalid_deadline_is_reported_before_counting(prepared, deadline):
     app, params, calls, _, composed = prepared

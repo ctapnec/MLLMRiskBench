@@ -1743,6 +1743,10 @@ class LifecycleMixin:
                 if isinstance(name, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
                     allowed.add(name)
             allowed.add("URA_MEDIA_ROOTS")
+        # Offline request construction also needs the configured image roots.
+        # Counting permission controls provider keys, not local media access.
+        if command == "hosted_campaign_prepare":
+            allowed.add("URA_MEDIA_ROOTS")
         if command == "hosted_campaign_prepare" and values.get("--allow-network-counts") in {"on", "true", "1", "yes"}:
             request = self._strict_config_document(str(values.get("--request", "")),
                 str(values.get("--request-sha256", "")))
