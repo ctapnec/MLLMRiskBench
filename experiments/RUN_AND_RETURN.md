@@ -3544,6 +3544,15 @@ or silently replace the old receipt after a source change or deployment.
 After a deployment, select the current project receipt explicitly and produce
 a new no-call projection before starting the updated lane.
 
+For a local vLLM job with deferred judging, temporary UI configuration and
+prepared-attack inputs belong to the whole supervised job, not its first
+process. They remain available while the target process exits to release GPU
+memory and the fresh scoring process restores saved responses. Each process
+still validates the selected inputs. The supervisor removes its unchanged
+temporary files after the entire sequence ends. Ordinary single-process jobs
+retain their startup-consumption behavior. A scoring-handoff failure with a
+complete response checkpoint must resume those answers, not generate them again.
+
 Build's model-acquisition workflow uses the existing `URA_MODEL_STORE` when
 configured. The selected resolved store is retained with the workflow and is
 not redirected by later environment changes. Older workflows retain their
