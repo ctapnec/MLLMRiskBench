@@ -1,18 +1,26 @@
 # Your first small API campaign on the rig
 
 This is a click-by-click guide for the currently configured rig console at
-<http://localhost:8642/>. It creates a **new, separate Flash campaign** using
-questions and images already given to Qwen in the Local campaign. You do not
-need to download a model, install a framework, enter a filesystem path or run
-a terminal command. The saved local answers are not generated again.
+<http://localhost:8642/>. It creates a **new, separate Flash campaign** with
+either saved local inputs (section 2a) or a fresh selection of installed corpus
+arms and attack frameworks (section 2b). Neither route requires downloading a
+hosted model or reinstalling the rig's frameworks. The saved-input route needs
+no filesystem paths or terminal commands and does not regenerate local answers.
+The direct route uses the ordinary Runner controls, including output paths and
+transport evidence, as described in section 2b.
 
 The completed reference is **UI demonstration - Flash matched text and images**.
 You can inspect it without spending money. To execute your own example, follow
 the steps below with a new name; do not start the completed reference again.
 
-The important distinction: use **General -> Reuse local inputs for an API
-comparison**. Do **not** use **Compose & review** for this retained-input route.
-That button composes the ordinary pipeline, not the prepared matched collection.
+Choose one route after section 1:
+
+- **2a - Reuse local inputs:** use **General -> Reuse local inputs for an API
+  comparison**, then sections 3-8. Do **not** use **Compose & review** for this
+  route; it has its own **Review prepared collection** action.
+- **2b - Select arms and frameworks directly:** use **Pipeline**, then
+  **General -> Compose & review**. Follow section 2b's preparation and execution
+  instructions, not the retained-input preparation in sections 3-5.
 
 ## 1. Create the destination and select Flash
 
@@ -30,12 +38,13 @@ That button composes the ordinary pipeline, not the prepared matched collection.
    Saving does not leave you in Build automatically.
 
 Flash is already configured on this rig for text and images, low thinking and
-4,096 output tokens. The forecast in step 3 shows the actual output allowance.
+4,096 output tokens. For route 2a, the forecast in section 3 shows the actual
+output allowance; route 2b uses the configured API target directly.
 If it is different or Flash is absent, inspect **Config -> API targets** before
 proceeding; do not substitute a similarly named model. No API key needs to be
 copied into Build. The configured Google credential is already available.
 
-## 2. Select the existing local inputs
+## 2a. Select the existing local inputs
 
 1. Stay in **General**. Scroll below **Current pipeline** and the save/compose
    buttons to **Reuse local inputs for an API comparison**.
@@ -55,7 +64,140 @@ copied into Build. The configured Google credential is already available.
    then **General**. Do this after each preparation below. You are returning
    to the saved draft, not starting a new campaign.
 
-## 3. Choose the small workload and prepare its replay
+## 2b. Select arms, corpora and attack frameworks directly
+
+Use this alternative when you want Runner to read the installed datasets and
+apply selected attacks, without choosing any previous local run. No existing
+local generations are required. Keep the new destination from section 1, but
+leave **Reuse local inputs for an API comparison** unused. If you already
+prepared the 2a route, create a separate campaign for this example so its saved
+preparation controls cannot be confused with the direct job.
+
+### Choose the workload
+
+1. Open **Pipeline -> Mode** and select **Measured lane**. **Offline dry-run**
+   uses mock answers; it does not test Flash.
+2. Under **Modality scope**, enable **text** only for the first small run.
+   Under **Arms & corpora**, clear previous selections and select `xstest_full`.
+   To test images afterward, enable **image** and select `vlsbench_release`
+   in a separate job under the same campaign. Keep Flash as the only target.
+3. Under **Attack frameworks**, select **replay** for the initial example.
+   Here, replay sends the selected corpus's requests to Flash for new answers;
+   it does not reuse local answers or require a previously executed campaign.
+   A corpus arm and an attacker are separate choices: selecting a HarmBench
+   corpus does not automatically run the HarmBench attack-generation framework.
+4. To exercise another framework, select its enabled checkbox instead of, or
+   alongside, replay. Read its modality and preparation notes. Selecting two
+   attackers creates separate model/arm/attacker conditions, not a chain of
+   attacks. Adaptive frameworks can make several target and attacker-model
+   calls per input; do not assume the small replay bounds cover them.
+
+| Framework control | What must be configured before its run |
+| --- | --- |
+| Enabled direct/bridge framework | Its displayed runtime and model settings; reuse its installed isolated environment |
+| T3MP3ST | Its **Capture - Replay** panel and prepared planning bundle |
+| HarmBench attacker | Its preparation panel and generated capture configuration |
+| NanoGCG | Its precomputed suffix and source information; this UI route is suffix replay, not live optimization |
+| IDEATOR | Its verified seed-pair manifest and optional pair limit; this route replays prepared pairs, not live IDEATOR generation |
+| Disabled native-only or CLI-only entry | Read the displayed reason; checking a corpus with the same name does not enable that integration |
+
+For the first example, stay with `xstest_full` and `replay`. Broader selections
+use the same flow, but need their own compatible settings and cost assessment.
+
+5. Open **Execution -> Per-arm sample size**. Set **--limit** to **2**,
+   **--sampling-policy** to **Seeded pseudorandom cluster prefix (default)**,
+   **--sample-seed** to **0**, and generation **seeds** to **0**. The alternative
+   **Source-order cluster prefix** takes the first source clusters instead of
+   using pseudorandom ordering. The exact slider range appears after a matching
+   no-call preflight; enter the number directly until then.
+6. Set maximum queries and turns to **1** for this replay example. Set target
+   answer retries to **0**; retain **3** eligible HTTP/transport retries in the
+   configured API route. Keep Flash's configured **4,096-token** output allowance.
+   Uncheck **Exclude tool-conditioned inputs** and full model SHA verification.
+7. Enter provisional target/judge/HTTP call ceilings of **16 / 16 / 64**, and
+   **--deadline-seconds = 3600**. Leave the local process wall-time cap empty.
+   Use a new output directory, for example
+   `/mnt/stor/data/ura-work/runs/demonstrations/my-flash-direct/measured-text`.
+   These are planning bounds, not a USD allowance or permission to spend the
+   remaining Google purse. The exact preflight and monetary review below must
+   fit the intended small workload before any paid start.
+
+The limit is **per arm, in whole source clusters**, not a campaign-wide request
+cap. Sibling rows are retained, and models, attackers, seeds and framework
+variants can multiply generations. Zero means the full selected release, not
+zero work. This is different from section 3's total hosted request cap of 12.
+
+### Set judging and establish the route
+
+8. In **Evaluation**, select **rules** and **guardrail**, uncheck **llm**, keep
+   defense **none**, and use the installed Llama Guard model, revision and device
+   from section 4. Ordinary Runner evaluates through this selected cascade as
+   part of the job; it is not the retained collection's separate step-6 job.
+9. In **Admission**, keep the current project/source receipts supplied by the
+   console. Enter a new execution scope, such as `my-flash-direct`. Measured
+   execution also needs a current transport receipt for each selected target
+   and modality and a positive maximum age in hours, for example **24**.
+   Do not copy the Qwen demonstration's receipts: those establish a different
+   target, and a historical Flash receipt is usable only if its scope, route,
+   settings and age actually match this run.
+10. If there is no matching receipt, prepare a small **Attestation probe** first.
+    Keep one target, one corpus, `replay`, one seed, one query and one turn;
+    set limit **1**, clear live-attestation rows and maximum age, and use a
+    separate `probe-text` output directory. Follow the preparation/start
+    sequence below, then use **Campaign -> Run tools -> live_attestation**:
+    enter that probe directory, the same execution scope and a new output file
+    such as `attestation-text.json`. The job prints the receipt path and digest
+    for the measured Admission fields. A live probe spends Google credits;
+    deriving its receipt makes no additional target call. Repeat separately
+    for an image route when needed, then restore **Measured lane**, limit **2**,
+    the measured output directory and the receipt/maximum-age fields.
+
+### Prepare, review and start the direct job
+
+11. Click **General -> Save campaign**, then **Configure in Build -> General ->
+    Compose & review**. Check that the command names Flash, `xstest_full`,
+    `replay`, the selected sample policy/seeds and the correct mode.
+12. Run the displayed **Run no-call preflight (projection, no calls)** action.
+    With the local guardrail selected, the review instead starts with **Plan &
+    acquire models for no-call preflight**, followed by **Acquire sealed models**
+    and **Start no-call preflight**. These steps reuse the installed model store;
+    they are not instructions to reinstall runtimes or download another target.
+13. When the preflight passes, open **Review this exact lane in the builder**.
+    Read **Calculated call ceilings** and the exact projected row/target/judge/
+    HTTP counts. Confirm that they fit the selection and bounds. If not, revise
+    the workload and reproject it before starting. This projection counts calls,
+    not dollars: unlike 2a, it does not provide the matched collection's counted
+    monetary forecast. Assess the selected provider's input/output prices,
+    output allowance and possible transport attempts, including probes and any
+    hosted attacker/judge, against the intended spending cap. The 2a reference's
+    USD 0.757348 bound does **not** apply to this different selection.
+14. Use **Plan & acquire models for this job** and **Acquire sealed models** if
+    offered, then **Start reviewed measured job**. Without local acquisition,
+    the final button is **Start campaign run**. This starts real calls; in probe
+    mode the command must still show `--attestation-probe` despite the generic
+    button label. Follow **Jobs** or the campaign's **Activity** until completion.
+15. Inspect that campaign's **Results**, **Judging**, **Costs** and exports.
+    Later arms/frameworks can be separate jobs in this same campaign, with their
+    own output directories and reviewed settings. Do not relaunch a completed
+    job to inspect its answers.
+
+Sections 3-7 below describe the **2a retained-input route**, not additional
+buttons required after this direct run. For a direct run, selecting **llm** and
+the configured Haiku model in **Evaluation** is a different, paid judging
+cascade and requires its own review and applicable transport evidence. A cascade
+may decide a row before reaching Haiku; it does not establish independent local
+and Haiku verdicts on every output. The paired post-hoc controls in sections 6-7
+require their retained-source and prepared-collection prerequisites; they do
+not automatically appear for an ordinary Runner job.
+
+The result-inspection principles in section 8 still apply. A new direct sample
+is not automatically matched to the historical Local campaign. Equal seed and
+limit reproduce a selection only with the same arm, source release, conversion
+and sampling policy; attack settings must also match for comparable prompts.
+Check actual shared inputs and compatible conditions in **Compare** before
+claiming a paired result. Otherwise report this as a separate campaign.
+
+## 3. Choose the small workload and prepare its replay (route 2a)
 
 1. In General, find the newly available **Forecast matched hosted work** panel.
    It appears only after input preparation. If it is absent, verify the saved
@@ -172,7 +314,9 @@ authorization to bypass it or switch to the ordinary compose button.
    image pairs out of four matched images. Export each view with **Download
    this page's counts**.
 
-This exercise demonstrates the full UI flow. It stays separate from the thesis
-study populations and does not claim that every framework/model combination has
-been tested. Broader workflow and interpretation guidance is in
+The completed route-2a exercise demonstrates that retained-input UI flow.
+Section 2b describes the separate direct Runner controls; documenting them is
+not evidence that every framework/model combination has been executed. Keep
+new demonstrations separate from the thesis study populations. Broader
+workflow and interpretation guidance is in
 [UI_CAMPAIGN_WALKTHROUGH](UI_CAMPAIGN_WALKTHROUGH.md).
