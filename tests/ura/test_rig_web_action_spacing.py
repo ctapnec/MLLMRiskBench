@@ -359,3 +359,61 @@ def test_model_search_and_framework_action_spacing(browser, tmp_path, monkeypatc
     finally:
         page.close()
         app.close()
+
+
+@pytest.mark.parametrize('width', [390, 768, 1440])
+@pytest.mark.parametrize('kind', ['campaigns', 'workspace', 'exports', 'runtime', 'legacy-stats'])
+def test_action_links_are_spaced_as_actions(browser, study, width, kind):
+    from test_rig_web_workspace_results import assignment, response
+    app, params, calls, _ = study
+    owner = params['campaign_id']
+    if kind == 'campaigns':
+        body = app._workspaces_page()
+        selector = "a[href='/build?work_kind=campaign#build-general']"
+    elif kind == 'workspace':
+        body = app._workspace_page(owner, {})
+        selector = "a[href='/build?campaign_id="+owner+"']"
+    elif kind == 'exports':
+        app.db.publish_workspace_results(owner, assignments=[assignment()], responses=[response()], judgments=[])
+        body = ui._page('Results', app._workspace_results(owner, 'overview', {}))
+        selector = '#campaign-exports a'
+    elif kind == 'runtime':
+        body = ui._page('Runtimes', app._framework_runtime_panel())
+        selector = "a[href='/build#build-runtimes']"
+    else:
+        body = ui._page('Stats', "<div class='stats-campaign-actions'><a class='button' href='/stats'>Details</a><a class='button' href='/jobs'>Jobs</a></div><nav class='stats-pagination'><a href='/stats'>Previous</a><a href='/stats'>Next</a></nav>")
+        selector = '.stats-campaign-actions a'
+    page = browser.new_page(viewport={'width':width, 'height':1000})
+    try:
+        render(page, body)
+        row = page.locator(selector).first.locator('..')
+        assert row.evaluate('e=>getComputedStyle(e).display') == 'flex'
+        assert row.evaluate('e=>getComputedStyle(e).gap') == '12px'
+        boxes = [link.bounding_box() for link in row.locator(':scope>a').all()]
+        assert len(boxes)>=2
+        for a,b in zip(boxes, boxes[1:]):
+            assert (b['x']-a['x']-a['width'] if abs(a['y']-b['y'])<1 else b['y']-a['y']-a['height'])>=12
+        if kind=='legacy-stats':assert page.locator('.stats-pagination').evaluate('e=>getComputedStyle(e).gap')=='12px'
+        assert not page.evaluate('document.documentElement.scrollWidth>innerWidth')
+        assert not calls
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize('width', [390, 768, 1440])
+def test_notice_title_does_not_overlap_dismiss_button(browser, study, monkeypatch, width):
+    app, _, calls, _ = study
+    monkeypatch.setattr(app, '_load_warnings', lambda: [dict(level='warning',title='BIPIA qa blocked - NewsQA base data is license-gated (operator action needed)',detail='Synthetic layout notice.')])
+    page = browser.new_page(viewport={'width':width, 'height':1000})
+    try:
+        render(page, ui._page('Dashboard', app._warnings_html()))
+        notice = page.locator('.notice')
+        assert notice.evaluate('e=>parseFloat(getComputedStyle(e).paddingRight)')>=40
+        assert notice.evaluate("""e=>{
+          const b=e.querySelector('button').getBoundingClientRect(),r=document.createRange();
+          r.selectNodeContents(e.querySelector('strong'));
+          return [...r.getClientRects()].every(a=>a.right<=b.left||a.left>=b.right||a.bottom<=b.top||a.top>=b.bottom);
+        }""")
+        assert not calls
+    finally:
+        page.close()

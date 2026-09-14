@@ -286,7 +286,7 @@ class WorkspacePagesMixin:
             context.title(), "<h1>" + context.title() + "</h1>"
             + (self._work_view_tabs(context, "campaigns") if context in {"jobs", "stats"} else "")
             + "<p>Campaigns evaluate arms, corpora and frameworks across model sets. Define them in Build.</p>"
-            "<p><a class='button' href='/build?work_kind=campaign#build-general'>Build a campaign</a> "
+            "<p class='action-row'><a class='button' href='/build?work_kind=campaign#build-general'>Build a campaign</a> "
             "<a class='button ghost' href='/build?work_kind=run#build-general'>Build a single run</a></p>"
             + "<div class='campaign-grid'>" + cards + "</div>", active=context.title(),
         )
@@ -350,7 +350,7 @@ class WorkspacePagesMixin:
             content = self._workspace_result_filters(campaign_id, section, query) + content
         return _page(
             campaign["name"], "<h1>" + html.escape(campaign["name"]) + "</h1>"
-            "<p><a class='button' href='/build?campaign_id=" + campaign_id + "'>Configure in Build</a> "
+            "<p class='action-row'><a class='button' href='/build?campaign_id=" + campaign_id + "'>Configure in Build</a> "
             "<a class='button ghost' href='/jobs?campaign_id=" + campaign_id + "'>Campaign jobs</a> "
             "<a class='button ghost' href='/commands?campaign_id=" + campaign_id + "'>Run tools</a></p>"
             + navigation + "<section class='card'><h2>" + section.title() + "</h2>" + content + "</section>",
@@ -401,7 +401,7 @@ class WorkspacePagesMixin:
                 "Judging costs belong to the campaign whose output was judged. "
                 "Recorded costs are not account balances; uncertain exposure is not a money hold. "
                 "Local work has no API charge; electricity and hardware costs are not estimated.</p>"
-                + "<p id='campaign-exports'><a class='button ghost' data-campaign-export download='campaign-costs.csv' href='/campaigns/"+campaign_id+"/figures/costs.csv'>Download full campaign cost table</a></p><p id='campaign-export-status' role='status'></p>"+EXPORT_SCRIPT
+                + "<p class='action-row' id='campaign-exports'><a class='button ghost' data-campaign-export download='campaign-costs.csv' href='/campaigns/"+campaign_id+"/figures/costs.csv'>Download full campaign cost table</a></p><p id='campaign-export-status' role='status'></p>"+EXPORT_SCRIPT
                 + "<div class='campaign-costs'>" + table(("Provider / model", "Role", "HTTP attempts / local evaluations", "Recorded cost (USD)",
                          "Uncertain charge exposure (USD)", "Reported tokens: input / output / reasoning"),
                     [[html.escape(row["provider"] + " / " + row["model"]), html.escape(row["role"]),
@@ -422,7 +422,7 @@ class WorkspacePagesMixin:
                 return "<p class='notice amber'>Judgment label index unavailable.</p>"
             groups = judgment_groups(breakdown)
             selected = [row for group in groups[:12] for row in group]
-            exports = "<p id='campaign-exports'>" + " ".join(
+            exports = "<p class='action-row' id='campaign-exports'>" + " ".join(
                 "<a class='button ghost' data-campaign-export download='campaign-" + name + "' href='/campaigns/" + campaign_id
                 + "/figures/" + name + "?page=" + str(page) + scope_query + "'>" + label + "</a>"
                 for name, label in (("judgments.svg", "Export judgment figure"), ("judgments.csv", "Export judgment table"))
@@ -458,7 +458,7 @@ class WorkspacePagesMixin:
             if not rows:
                 return input_coverage + unknown
             chart = coverage_html(rows[:25])
-            exports = "<p id='campaign-exports'>" + " ".join(
+            exports = "<p class='action-row' id='campaign-exports'>" + " ".join(
                 "<a class='button ghost' data-campaign-export download='campaign-" + name + "' href='/campaigns/" + campaign_id
                 + "/figures/" + name + "?page=" + str(page) + scope_query + "'>" + label + "</a>"
                 for name, label in (("coverage.svg", "Export coverage figure"), ("quality.svg", "Export missing/truncation figure"),

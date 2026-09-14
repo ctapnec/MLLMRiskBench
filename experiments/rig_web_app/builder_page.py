@@ -388,7 +388,7 @@ class BuilderPageMixin:
             + html.escape(snapshot.campaign_status_tag)
             + "</span>"
             + campaign_link
-            + "</dd></div></dl><p><a class='button ghost' "
+            + "</dd></div></dl><p class='action-row'><a class='button ghost' "
             "href='/build#build-runtimes'>Refresh status</a> "
             "<a class='button ghost' href='/jobs'>Open Jobs</a></p></div>"
             "<div class='card scroll'><table><tr><th>Framework</th><th>Version</th>"

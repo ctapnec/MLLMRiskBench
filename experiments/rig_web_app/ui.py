@@ -269,6 +269,7 @@ form.inline { display:inline; margin:0; }
   background:transparent; color:var(--muted); border:0; font-size:1.15rem;
   line-height:1; padding:.1rem .35rem; cursor:pointer; border-radius:6px; }
 .notice-close:hover { background:var(--card); color:var(--ink); }
+.notice:has(.notice-close) { padding-right:2.5rem; }
 #jobfilter { width:100%; max-width:420px; padding:.45rem .7rem;
   border:1px solid var(--line); border-radius:9px; background:var(--card);
   color:var(--ink); font-size:.9rem; }
@@ -662,14 +663,14 @@ input.wide { width:100%; padding:.4rem .55rem; border:1px solid var(--line);
   minmax(0,1fr); gap:.3rem .65rem; margin:.75rem 0; font-size:.84rem; }
 .stats-campaign-meta dt { color:var(--muted); }
 .stats-campaign-meta dd { margin:0; min-width:0; overflow-wrap:anywhere; }
-.stats-campaign-actions { display:flex; flex-wrap:wrap; gap:.5rem; }
+.stats-campaign-actions { display:flex; flex-wrap:wrap; gap:.75rem; }
 a.button { display:inline-flex; align-items:center; justify-content:center;
   padding:.42rem .8rem; border-radius:8px; text-decoration:none;
   font-size:.86rem; font-weight:600; }
 a.button.ghost { color:var(--accent); border:1px solid var(--line);
   background:transparent; }
 .stats-pagination { display:flex; align-items:center; justify-content:center;
-  gap:.65rem; flex-wrap:wrap; margin:.7rem 0 1.2rem; }
+  gap:.75rem; flex-wrap:wrap; margin:.7rem 0 1.2rem; }
 .stats-modal { display:none; min-width:0; margin:1rem 0; }
 .stats-modal-shell { min-width:0; padding:.9rem; background:var(--card);
   border:1px solid var(--line); border-radius:12px; }
