@@ -85,11 +85,15 @@ class RecoveredProcess:
         self.identity = record["supervisor"]
         self.pid = int(self.identity["pid"])
         self.interrupted = False
+        self.terminal = record if record["state"] in {"complete", "failed"} else None
 
     def poll(self):
+        if self.terminal is not None:
+            return int(self.terminal["exit_code"])
         record = read_state(self.directory)
         if record and record.get("supervisor") == self.identity:
             if record["state"] in {"complete", "failed"}:
+                self.terminal = record
                 return int(record["exit_code"])
             if alive(self.identity) or alive(record.get("child")):
                 return None

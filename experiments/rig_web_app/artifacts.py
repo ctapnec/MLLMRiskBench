@@ -205,9 +205,10 @@ class Job:
             return self.restored_exit
         code = self.process.poll()
         from .job_runtime import read_state
-        record = read_state(self.directory)
+        record = getattr(self.process, "terminal", None) or read_state(self.directory)
         if record and record.get("supervisor", {}).get("pid") == getattr(self.process, "pid", None):
             if record["state"] in {"complete", "failed"}:
+                self.process.terminal = record
                 return int(record["exit_code"])
             if code is not None:
                 self.process.interrupted = True

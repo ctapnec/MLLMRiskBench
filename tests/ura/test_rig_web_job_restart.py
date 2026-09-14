@@ -61,6 +61,7 @@ def test_restart_keeps_running_then_records_actual_exit_and_logs(tmp_path, exit_
         assert second.db.load_job(job.job_id)['exit_code'] == exit_code
         until(lambda: 'Finished child' in (job.directory/'stdout.log').read_text())
     finally:
+        (second.repo_root/'release').touch()
         second.close(); job.process.wait(timeout=5)
 
 

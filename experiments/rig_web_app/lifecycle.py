@@ -492,6 +492,10 @@ class LifecycleMixin:
                     self._refresh_model_acquisition_activity(job)
                 self.db.upsert_job(job, state="running", exit_code=None)
                 continue
+            if job.run_recorded:
+                if job.command == "ollama_pull" and code == 0:
+                    automatic_ollama_readiness.append(job)
+                continue
             interrupted = bool(getattr(job.process, "interrupted", False))
             stopped = interrupted and (job.directory / "stop-request.json").exists()
             state = "stopped" if stopped else "interrupted" if interrupted else "complete" if code == 0 else "failed"
@@ -500,16 +504,12 @@ class LifecycleMixin:
                 job.failure = ("Execution stopped by operator request. No child exit code was retained; saved outputs are preserved."
                                if stopped else "Execution process disappeared without a terminal record. Saved outputs are preserved; review before continuing.")
             from .job_runtime import read_state
-            execution = read_state(job.directory)
+            execution = getattr(job.process, "terminal", None) or read_state(job.directory)
             if execution and execution.get("ended_at"):
                 job.ended_at = execution["ended_at"]
                 code = execution["exit_code"]
             if job.ended_at is None:
                 job.ended_at = time.time()
-            if job.run_recorded:
-                if job.command == "ollama_pull" and code == 0:
-                    automatic_ollama_readiness.append(job)
-                continue
             self._finish_log_capture(job.job_id)
             self._close_handles(job)
             self._unlink_transient_local_config(
