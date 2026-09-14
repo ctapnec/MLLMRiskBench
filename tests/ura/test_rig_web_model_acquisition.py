@@ -109,6 +109,8 @@ def test_reopened_measured_job_resolves_retained_live_receipt(tmp_path, origin):
     original = tmp_path / "operator-receipt.json"
     original.write_bytes(payload)
     params = {"att_path1": str(original), "att_sha1": digest,
+              "source_conformance": str(original), "source_conformance_sha": digest,
+              "project_revision": str(original), "project_revision_sha": digest,
               "_execution_config_bundle_sha256": "a" * 64}
     try:
         if origin.startswith("campaign"):
@@ -122,7 +124,10 @@ def test_reopened_measured_job_resolves_retained_live_receipt(tmp_path, origin):
             saved = root / "snapshot-live_attestation_01.bin"
             saved.write_bytes(payload)
             workflow = {"root": root, "execution_config_bundle_sha256": "a" * 64,
-                "snapshot_manifest": {"live_attestation_01": {"sha256": digest, "bytes": len(payload)}}}
+                "snapshot_manifest": {name: {"sha256": digest, "bytes": len(payload)}
+                    for name in ("live_attestation_01", "source_conformance", "project_revision")}}
+            for name in ("source_conformance", "project_revision"):
+                (root / f"snapshot-{name}.bin").write_bytes(payload)
             app._model_acquisition_workflows["job-retained-plan"] = workflow
             original.unlink()
             if origin.startswith("campaign"):
@@ -132,6 +137,10 @@ def test_reopened_measured_job_resolves_retained_live_receipt(tmp_path, origin):
         reopened = app._runtime_builder_params(durable)
         assert reopened["att_path1"] == str(saved)
         assert reopened["att_sha1"] == digest
+        # A later console revision must not make the historical source/project
+        # receipt locations disappear from the same saved execution review.
+        assert app._source_conformance_snapshot(reopened) == (payload,digest)
+        assert app._project_revision_snapshot(reopened) == (payload,digest)
         materialized = app._materialize_selected_live_attestations(reopened)
         assert materialized[0][0].read_bytes() == payload
         for path, _digest in materialized:

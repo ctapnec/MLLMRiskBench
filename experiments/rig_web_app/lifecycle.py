@@ -761,41 +761,49 @@ class LifecycleMixin:
                 # Reopen the same receipt, never substitute a changed one.
                 # Normal composition still validates its actual file content.
                 runtime[field] = configured_path
+        receipt_fields = {
+            "source_conformance": ("source_conformance_sha", "private-source-conformance"),
+            "project_revision": ("project_revision_sha", "private-project-revision"),
+            **{f"att_path{index}": (f"att_sha{index}", "private-live-attestation")
+               for index in range(1, self._MAX_ATT_ROWS + 1)},
+        }
         unresolved = {
-            index: str(runtime.get(f"att_sha{index}", "")).strip().lower()
-            for index in range(1, self._MAX_ATT_ROWS + 1)
-            if str(runtime.get(f"att_path{index}", "")).startswith(
-                "private-live-attestation@sha256:"
-            )
+            field: (label, str(runtime.get(digest_field, "")).strip().lower())
+            for field, (digest_field, label) in receipt_fields.items()
+            if str(runtime.get(field, "")).startswith(label + "@sha256:")
         }
         if unresolved:
             # Reuse the already retained small receipt files, not the consumed
             # one-shot copies. This also works for standalone acquired jobs.
-            candidates: dict[str, str] = {}
+            candidates: dict[tuple[str, str], str] = {}
             bundle = runtime.get("_execution_config_bundle_sha256", "")
             if re.fullmatch(r"[0-9a-f]{64}", bundle):
                 for workflow in self._model_acquisition_workflows.values():
                     if workflow.get("execution_config_bundle_sha256") != bundle:
                         continue
                     for name, entry in workflow.get("snapshot_manifest", {}).items():
+                        label = {"source_conformance": "private-source-conformance",
+                                 "project_revision": "private-project-revision"}.get(name)
                         if re.fullmatch(r"live_attestation_\d{2}", name):
-                            candidates.setdefault(entry["sha256"], str(
+                            label = "private-live-attestation"
+                        if label:
+                            candidates.setdefault((label, entry["sha256"]), str(
                                 Path(workflow["root"]) / f"snapshot-{name}.bin"
                             ))
             owner = runtime.get("campaign_id", "")
             if owner:
                 definition = self.db.workspace_definition(owner)
-                for index in range(1, self._MAX_ATT_ROWS + 1):
-                    path = definition.get(f"att_path{index}", "")
-                    digest = definition.get(f"att_sha{index}", "").strip().lower()
-                    if path and not path.startswith("private-live-attestation"):
-                        candidates.setdefault(digest, path)
-            for index, digest in unresolved.items():
+                for field, (digest_field, label) in receipt_fields.items():
+                    path = definition.get(field, "")
+                    digest = definition.get(digest_field, "").strip().lower()
+                    if path and not path.startswith(label):
+                        candidates.setdefault((label, digest), path)
+            for field, (label, digest) in unresolved.items():
                 if (re.fullmatch(r"[0-9a-f]{64}", digest)
-                        and runtime[f"att_path{index}"] == f"private-live-attestation@sha256:{digest}"
-                        and digest in candidates):
+                        and runtime[field] == f"{label}@sha256:{digest}"
+                        and (label, digest) in candidates):
                     # Composition still checks the bytes, route and revision.
-                    runtime[f"att_path{index}"] = candidates[digest]
+                    runtime[field] = candidates[(label, digest)]
         return runtime
 
     def _local_config_projection(
