@@ -228,6 +228,16 @@ supplies them.
 
 ## Shared control layout
 
+The header's **Theme** selector offers **Slate**, **Parchment**, **Midnight**,
+**Ash** and **Harbor**. The first four reuse the HotAAI UI palettes: Slate and
+Parchment are light; Midnight and Ash are dark. Harbor preserves this console's
+original palette and follows the operating system's light/dark preference.
+The choice applies immediately and is remembered in this browser across pages
+and reloads. It changes presentation only, without a backend request or a saved
+campaign setting. If browser storage is unavailable, it still works on the
+current page. Independent reviewers have the same selector without operator
+navigation or access to campaign controls.
+
 The scoring guardrail model has automatic revision and device configuration.
 No revision or device selector is shown in Build. Preparation reads the installed
 model's completion metadata and records its revision without downloads or weight

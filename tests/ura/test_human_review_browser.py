@@ -65,6 +65,9 @@ def test_finished_campaign_setup_and_independent_rating_wizard(tmp_path, monkeyp
                     context=browser.new_context(viewport=dict(width=390 if number else 1440,height=1000))
                     reviewer=context.new_page();reviewer.on('pageerror',lambda error:errors.append(str(error)))
                     reviewer.goto(base+'/review/'+token)
+                    reviewer.get_by_role('combobox',name='Colour theme').select_option('ash')
+                    assert reviewer.locator('html').get_attribute('data-theme')=='ash'
+                    assert reviewer.locator('nav').count()==0
                     if shots:reviewer.screenshot(path=str(Path(shots)/('consent-mobile.png' if number else 'consent-desktop.png')),full_page=True)
                     reviewer.locator('#review-intro input[type=checkbox]').check()
                     reviewer.get_by_role('button',name='Consent and begin').click()

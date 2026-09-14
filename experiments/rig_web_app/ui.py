@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import html
+import json
 from urllib.parse import quote
 
 from .catalog import _icon
 
 _STYLE = """
-:root { color-scheme: light dark;
+:root { color-scheme: light;
   --bg:#eef1f5; --card:#ffffff; --ink:#182430; --muted:#5b6b7c;
   --line:#d9e0e8; --accent:#0a5fb4; --accent-ink:#ffffff;
   --soft:#f4f7fa; --shadow:0 1px 2px rgba(16,24,32,.06),
@@ -16,15 +17,61 @@ _STYLE = """
   --m-text:#0a66c2; --m-text-bg:#e4eefb; --m-image:#1d7a43;
   --m-image-bg:#e1f2e8; --m-audio:#a86400; --m-audio-bg:#f7ecd9;
   --m-video:#7a3fb8; --m-video-bg:#f0e7fa;
+  --ok:#1d6b35; --ok-soft:#d9f4e1; --bad:#8c1d24; --bad-soft:#fde0e2;
+  --warn:#7a5200; --warn-soft:#ffe9c2;
+  --badge-green-bg:var(--ok); --badge-green-ink:var(--ok-soft);
+  --badge-red-bg:var(--bad); --badge-red-ink:var(--bad-soft);
+  --badge-amber-bg:var(--warn); --badge-amber-ink:var(--warn-soft);
+  --badge-blue-bg:#0b4c8c; --badge-blue-ink:#dcecfd;
   --chevron:url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%235b6b7c'%20stroke-width='2.2'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M6%209l6%206%206-6'/%3E%3C/svg%3E"); }
 @media (prefers-color-scheme: dark) {
-  :root { --bg:#10161d; --card:#19212b; --ink:#e7edf3; --muted:#92a3b4;
+  :root:not([data-theme]), :root[data-theme=harbor] { color-scheme:dark;
+    --bg:#10161d; --card:#19212b; --ink:#e7edf3; --muted:#92a3b4;
     --line:#28323e; --accent:#59a3ea; --accent-ink:#0d1621;
     --soft:#141b23; --shadow:0 1px 2px rgba(0,0,0,.35);
     --m-text:#79b7f7; --m-text-bg:#16304a; --m-image:#63cb90;
     --m-image-bg:#12301f; --m-audio:#f0b25e; --m-audio-bg:#3a2a10;
     --m-video:#c89df3; --m-video-bg:#2d1b41;
     --chevron:url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%2392a3b4'%20stroke-width='2.2'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M6%209l6%206%206-6'/%3E%3C/svg%3E"); } }
+/* HotAAI's four named palettes, mapped onto the console's existing tokens. */
+:root[data-theme=slate] {
+  --bg:#eef1f4; --card:#ffffff; --ink:#16191c; --muted:#57616b; --line:#d4dae0;
+  --accent:#0e7c96; --accent-ink:#ffffff; --soft:#dcf0f5;
+  --ok:#12683a; --ok-soft:#dff2e6; --bad:#a52016; --bad-soft:#fbe6e4;
+  --warn:#7d5300; --warn-soft:#faf0da;
+}
+:root[data-theme=parchment] {
+  --bg:#f2ede2; --card:#fbf8f1; --ink:#241f18; --muted:#6a5f4e; --line:#ddd4c2;
+  --accent:#14657d; --accent-ink:#ffffff; --soft:#e2eef2;
+  --ok:#4a6317; --ok-soft:#edf2df; --bad:#97331d; --bad-soft:#f7e6e0;
+  --warn:#8a5a12; --warn-soft:#f7eddb;
+}
+:root[data-theme=midnight] {
+  --bg:#0e1116; --card:#161b22; --ink:#e8ecf1; --muted:#96a3b1; --line:#262d36;
+  --accent:#35b3d0; --accent-ink:#06161c; --soft:#142530;
+  --ok:#58d089; --ok-soft:#10261a; --bad:#ff9a90; --bad-soft:#2c1512;
+  --warn:#e8bd62; --warn-soft:#2a2010;
+}
+:root[data-theme=ash] {
+  --bg:#1a1a1c; --card:#232326; --ink:#ececed; --muted:#9c9ca1; --line:#333338;
+  --accent:#7aa2c4; --accent-ink:#10161c; --soft:#1f2a34;
+  --ok:#7fcf95; --ok-soft:#16241a; --bad:#f0938c; --bad-soft:#2a1614;
+  --warn:#ddb96c; --warn-soft:#281f11;
+}
+:root[data-theme=slate], :root[data-theme=parchment], :root[data-theme=midnight], :root[data-theme=ash] {
+  --badge-green-bg:var(--ok-soft); --badge-green-ink:var(--ok);
+  --badge-red-bg:var(--bad-soft); --badge-red-ink:var(--bad);
+  --badge-amber-bg:var(--warn-soft); --badge-amber-ink:var(--warn);
+  --badge-blue-bg:var(--soft); --badge-blue-ink:var(--accent);
+  --shadow:0 1px 2px rgba(16,24,32,.05),0 3px 10px rgba(16,24,32,.04);
+}
+:root[data-theme=midnight], :root[data-theme=ash] {
+  color-scheme:dark;
+  --shadow:0 1px 2px rgba(0,0,0,.45),0 4px 14px rgba(0,0,0,.3);
+  --m-text:#79b7f7; --m-text-bg:#16304a; --m-image:#63cb90; --m-image-bg:#12301f;
+  --m-audio:#f0b25e; --m-audio-bg:#3a2a10; --m-video:#c89df3; --m-video-bg:#2d1b41;
+  --chevron:url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%2392a3b4'%20stroke-width='2.2'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M6%209l6%206%206-6'/%3E%3C/svg%3E");
+}
 * { box-sizing: border-box; }
 body { margin:0; font:15px/1.55 system-ui, "Segoe UI", sans-serif;
   background:var(--bg); color:var(--ink); }
@@ -40,6 +87,11 @@ nav a { display:flex; gap:.4rem; align-items:center; color:var(--muted);
   padding:.35rem .7rem; border-radius:8px; }
 nav a:hover { background:var(--soft); color:var(--ink); }
 nav a.active { background:var(--soft); color:var(--accent); }
+.theme-control { display:flex; align-items:center; gap:.5rem; margin-left:auto;
+  padding:.25rem 0; color:var(--muted); font-size:.82rem; font-weight:600; }
+.theme-control select { min-width:8rem; max-width:100%; font-size:.82rem; }
+.review-theme-bar { max-width:960px; margin:.75rem auto 0; padding:0 1.2rem;
+  display:flex; justify-content:flex-end; }
 h1 { font-size:1.3rem; margin:.4rem 0 1rem; display:flex; gap:.55rem;
   align-items:center; }
 h1 .ic { color:var(--accent); }
@@ -163,10 +215,10 @@ code { background:var(--soft); border-radius:5px; padding:.05rem .35rem;
 .badge { display:inline-flex; align-items:center; border-radius:999px;
   padding:.08rem .62rem; font-size:.74rem; font-weight:600;
   margin:0 .25rem .25rem 0; }
-.badge.amber { background:#7a5200; color:#ffe9c2; }
-.badge.blue { background:#0b4c8c; color:#dcecfd; }
-.badge.green { background:#1d6b35; color:#d9f4e1; }
-.badge.red { background:#8c1d24; color:#fde0e2; }
+.badge.amber { background:var(--badge-amber-bg); color:var(--badge-amber-ink); }
+.badge.blue { background:var(--badge-blue-bg); color:var(--badge-blue-ink); }
+.badge.green { background:var(--badge-green-bg); color:var(--badge-green-ink); }
+.badge.red { background:var(--badge-red-bg); color:var(--badge-red-ink); }
 .badge.gray { background:#4a5563; color:#e3e8ee; }
 .dot { display:inline-block; width:.55rem; height:.55rem;
   border-radius:50%; margin-right:.4rem; vertical-align:baseline; }
@@ -282,7 +334,7 @@ p.action-row { margin-bottom:1rem; }
 .job-date-filters input[type=datetime-local] { width:100%; min-height:2.35rem;
   padding:.42rem .65rem; border:1px solid var(--line); border-radius:8px;
   background:var(--bg); color:var(--ink); font:inherit; font-size:.86rem;
-  color-scheme:light dark; }
+  color-scheme:inherit; }
 .job-date-filters input[type=datetime-local]:hover { border-color:
   color-mix(in srgb, var(--accent) 55%, var(--line)); }
 .job-date-filters input[type=datetime-local]:focus { outline:2px solid
@@ -1305,6 +1357,30 @@ _FAVICON_SVG = (
 ).encode("utf-8")
 
 
+_THEMES = (('slate', 'Slate'), ('parchment', 'Parchment'), ('midnight', 'Midnight'),
+           ('ash', 'Ash'), ('harbor', 'Harbor'))
+_THEME_PICKER = (
+    "<label class='theme-control' for='theme-picker'>Theme "
+    "<select id='theme-picker' aria-label='Colour theme' "
+    "title='Harbor follows the system light/dark preference'>"
+    + ''.join("<option value='"+key+"'"+(' selected' if key=='harbor' else '')+'>'+label+'</option>'
+              for key,label in _THEMES) + '</select></label>'
+)
+_THEME_INIT = """<script>(function(){
+var allowed=THEME_IDS,value='harbor';
+try{var saved=localStorage.getItem('ura-theme');if(allowed.indexOf(saved)!==-1)value=saved;}catch(error){}
+document.documentElement.setAttribute('data-theme',value);
+})();</script>""".replace('THEME_IDS', json.dumps([key for key,_ in _THEMES]))
+_THEME_SCRIPT = """<script>(function(){
+var picker=document.getElementById('theme-picker');if(!picker)return;
+picker.value=document.documentElement.getAttribute('data-theme')||'harbor';
+picker.addEventListener('change',function(){
+document.documentElement.setAttribute('data-theme',picker.value);
+try{localStorage.setItem('ura-theme',picker.value);}catch(error){}
+});
+})();</script>"""
+
+
 def _page(title: str, body: str, active: str = "") -> bytes:
     links = "".join(
         f"<a href='{href}'"
@@ -1317,14 +1393,14 @@ def _page(title: str, body: str, active: str = "") -> bytes:
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
         f"<title>{html.escape(title)}</title>"
         "<link rel='icon' type='image/svg+xml' href='/static/favicon.svg'>"
-        "<link rel='stylesheet' href='/static/style.css'></head><body>" + _BUSY_OVERLAY +
+        + _THEME_INIT + "<link rel='stylesheet' href='/static/style.css'></head><body>" + _BUSY_OVERLAY +
         f"<nav><span class='brand'>{_icon('logo', size=21)}URA rig console"
-        f"</span>{links}</nav>"
+        f"</span>{links}" + _THEME_PICKER + "</nav>"
         f"<main>{body}"
         "<footer class='note'>The CLI and filesystem artifacts remain "
         "authoritative. This console never reinterprets experiment "
         "semantics; diagnostic evidence never authorizes a campaign."
-        "</footer></main>" + _PAGE_TABS_SCRIPT + "</body></html>"
+        "</footer></main>" + _PAGE_TABS_SCRIPT + _THEME_SCRIPT + "</body></html>"
     ).encode("utf-8")
 
 
