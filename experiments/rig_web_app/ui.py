@@ -220,13 +220,15 @@ button { display:inline-flex; gap:.4rem; align-items:center;
   background:var(--accent); border:0; color:var(--accent-ink);
   font-weight:600; border-radius:9px; padding:.48rem 1rem; cursor:pointer;
   font-size:.9rem; }
-button:hover { filter:brightness(1.08); }
+button:hover:not(:disabled) { filter:brightness(1.08); }
+button:disabled { opacity:.55; cursor:not-allowed; }
 button.danger { background:#a4262f; color:#fff; }
 button.small { padding:.28rem .6rem; font-size:.8rem; border-radius:7px; }
 form.inline { display:inline; margin:0; }
 .action-row, .review-actions { display:flex; flex-wrap:wrap; align-items:center;
   gap:.75rem; margin:1rem 0 0; }
 .action-row > form { margin:0; }
+p.action-row { margin-bottom:1rem; }
 .action-row > button, .review-actions > button { max-width:100%; }
 .checkrow { display:flex; align-items:flex-start; gap:.65rem;
   margin:.75rem 0; padding:.25rem 0; cursor:pointer; }

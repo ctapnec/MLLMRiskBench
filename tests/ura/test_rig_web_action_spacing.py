@@ -390,6 +390,7 @@ def test_action_links_are_spaced_as_actions(browser, study, width, kind):
         assert row.evaluate('e=>getComputedStyle(e).display') == 'flex'
         assert row.evaluate('e=>getComputedStyle(e).gap') == '12px'
         boxes = [link.bounding_box() for link in row.locator(':scope>a').all()]
+        if kind!='legacy-stats':assert row.evaluate('e=>getComputedStyle(e).marginBottom') == '16px'
         assert len(boxes)>=2
         for a,b in zip(boxes, boxes[1:]):
             assert (b['x']-a['x']-a['width'] if abs(a['y']-b['y'])<1 else b['y']-a['y']-a['height'])>=12
@@ -415,5 +416,20 @@ def test_notice_title_does_not_overlap_dismiss_button(browser, study, monkeypatc
           return [...r.getClientRects()].every(a=>a.right<=b.left||a.left>=b.right||a.bottom<=b.top||a.top>=b.bottom);
         }""")
         assert not calls
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize('scheme', ['light', 'dark'])
+def test_pending_action_is_visibly_disabled_without_changing_readiness(browser, scheme):
+    page = browser.new_page(color_scheme=scheme)
+    try:
+        render(page, ui._page('Preparation', "<form id='builder'></form>"+
+                             builder_programs.program_panel({'retained_sources_job':'saved-inputs'})))
+        button = page.get_by_role('button', name='Prepare counted collection', exact=True)
+        assert button.is_disabled()
+        assert button.evaluate('e=>getComputedStyle(e).cursor') == 'not-allowed'
+        assert float(button.evaluate('e=>getComputedStyle(e).opacity')) <= .6
+        assert button.get_attribute('formaction') == '/build/prepare-programs'
     finally:
         page.close()
