@@ -217,6 +217,35 @@ def test_setup_arrangement_choices_record_actual_status_and_reject_unknowns():
         arrangements(dict(data,compensation_type='invented'))
 
 
+def test_pending_determination_prepares_sample_without_inviting_reviewers(tmp_path,monkeypatch):
+    from types import SimpleNamespace
+    app=RigWebApp(results_root=tmp_path/'runs',state_dir=tmp_path/'state',repo_root=tmp_path,gpu_hardware={},system_hardware={})
+    try:
+        owner=app.db.create_workspace('Pending study arrangements','local');store=app._human_store()
+        root=tmp_path/'runs'/'source';root.mkdir()
+        source=store.register_source(campaign=owner,name='Saved source',results=root)
+        calls=[]
+        def launch(command,params,**kwargs):
+            calls.append(command);prepared(Path(params['--output']))
+            return SimpleNamespace(job_id='sample-only')
+        monkeypatch.setattr(app,'start_job',launch)
+        data=dict(campaign_id=owner,source='scope-'+source,name='Workload only',mode='common',clusters='1',
+            ethics_status='pending',ethics='',compensation_type='unpaid',compensation='Test terms',
+            stop_contact='Test operator',consent='Synthetic consent only',acknowledge='1')
+        code,location,_=app.handle('POST','/human-evaluation/prepare-study',data)
+        assert code==303 and calls==['human_audit']
+        monkeypatch.setattr(app.db,'load_job',lambda key:dict(state='complete',exit_code=0))
+        page=app.handle('GET',location)[2].decode()
+        assert '1 saved outputs, 2 required independent ratings' in page
+        assert 'Ethics determination is not decided yet' in page
+        assert 'Create study and assign reviewers' not in page
+        assert app.handle('POST',location,{})[0]==400
+        assert not store.studies(owner)
+        assert app.handle('POST','/human-evaluation/prepare-study',dict(data,ethics_status='invented'))[0]==400
+        assert calls==['human_audit']
+    finally:app.close()
+
+
 def test_finished_runs_discovered_without_cross_campaign_or_failed_run_sources(tmp_path):
     from experiments.rig_web_app.human_review_setup import sources
     app=RigWebApp(results_root=tmp_path/'runs',state_dir=tmp_path/'state',repo_root=tmp_path,gpu_hardware={},system_hardware={})
