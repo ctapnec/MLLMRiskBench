@@ -70,7 +70,10 @@ def test_finished_campaign_setup_and_independent_rating_wizard(tmp_path, monkeyp
                     assert reviewer.locator('html').get_attribute('data-theme')=='ash'
                     assert reviewer.locator('nav').count()==0
                     reviewer.evaluate("window.themeWaitEnd=window.uraBusy.begin('Synthetic wait')")
-                    assert reviewer.locator('.review-theme-bar').evaluate('e=>e.inert')
+                    assert reviewer.locator('.review-theme-bar').evaluate('e=>e.inert'), reviewer.evaluate("""() => ({
+                        busy: window.uraBusy.isBusy(), begin: String(window.uraBusy.begin),
+                        bars: Array.from(document.querySelectorAll('.review-theme-bar')).map(e=>({parent:e.parentElement.tagName,inert:e.inert}))
+                    })""")
                     reviewer.evaluate('window.themeWaitEnd()')
                     assert not reviewer.locator('.review-theme-bar').evaluate('e=>e.inert')
                     if shots:reviewer.screenshot(path=str(Path(shots)/('consent-mobile.png' if number else 'consent-desktop.png')),full_page=True)

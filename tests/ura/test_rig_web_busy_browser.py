@@ -49,7 +49,8 @@ def test_campaign_export_guards_download_and_releases_on_every_terminal(browser,
         assert state == {'visible': True, 'inert': True}
         assert len(requests) == 1
         if outcome == 'success':
-            requests[0].fulfill(status=200, content_type='text/csv', body='model,count\nA,1\n')
+            with page.expect_download():
+                requests[0].fulfill(status=200, content_type='text/csv', body='model,count\nA,1\n')
         elif outcome == 'http_error':
             requests[0].fulfill(status=500, body='Failed')
         elif outcome == 'network_error':
