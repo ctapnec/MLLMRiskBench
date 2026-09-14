@@ -305,7 +305,8 @@ def test_ui_transient_inputs_survive_target_to_judge_then_are_removed(tmp_path, 
 
     def consume():
         if kind == "local":
-            run_matrix._load_local_config(str(path), [spec], expected_sha256=digest)
+            run_matrix._load_local_config(str(path), [spec], expected_sha256=digest,
+                hardware={"available": False, "gpu_count": 0, "gpus": []})
         elif kind == "api":
             run_matrix._load_api_config(str(path), [], digest)
         else:
