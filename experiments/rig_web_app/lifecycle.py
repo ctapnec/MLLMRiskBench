@@ -2208,6 +2208,8 @@ class LifecycleMixin:
     def _new_model_acquisition_workflow_paths(
         self,
         workflow_id: str,
+        *,
+        restoring: bool = False,
     ) -> dict[str, Path]:
         root = self._prepare_private_acquisition_directory(
             (self.state_dir.resolve() / ".private-model-acquisition" / workflow_id),
@@ -2221,14 +2223,31 @@ class LifecycleMixin:
             root / "receipts",
             label="private model-acquisition receipt directory",
         )
-        # Web-owned workflow locations are derived solely from state_dir. A
-        # mutable process environment must not redirect an already reviewed
-        # workflow to another store after a console restart.
-        store = self.state_dir.resolve() / ".managed-model-store"
-        store = self._prepare_private_acquisition_directory(
-            store,
-            label="managed model store",
-        )
+        # Reuse the operator's installed store. Retain the resolved locator
+        # privately so a later environment change cannot redirect this job.
+        # Older workflows without a locator keep their original UI-only store.
+        locator = root / "model-store.json"
+        if locator.exists() or locator.is_symlink():
+            stored = strict_json_loads(self._bounded_private_bytes(
+                locator, max_bytes=16 * 1024, label="model store locator",
+            ).decode("utf-8"))
+            if not isinstance(stored, str):
+                raise ValueError("model store locator must contain a path")
+            store = Path(stored)
+            if not store.is_absolute() or not store.is_dir() or store.resolve(strict=True) != store:
+                raise ValueError("retained model store is unavailable or unresolved")
+        else:
+            configured = "" if restoring else os.environ.get("URA_MODEL_STORE", "").strip()
+            if configured:
+                store = Path(configured).expanduser().resolve(strict=True)
+                if not store.is_dir():
+                    raise ValueError("configured model store must be an existing directory")
+            else:
+                store = self._prepare_private_acquisition_directory(
+                    self.state_dir.resolve() / ".managed-model-store",
+                    label="managed model store",
+                )
+            self._write_private_workflow_file(locator, (json.dumps(str(store)) + "\n").encode("utf-8"))
         plan_output = self._prepare_private_acquisition_directory(
             self.results_root.resolve() / ".acquisition-planning" / workflow_id,
             label="acquisition planning output directory",
@@ -2585,7 +2604,7 @@ class LifecycleMixin:
                     )
                 ):
                     continue
-                paths = self._new_model_acquisition_workflow_paths(root.name)
+                paths = self._new_model_acquisition_workflow_paths(root.name, restoring=True)
                 workflow: dict[str, Any] = {
                     "acquisition_job_id": acquisition_job_id,
                     "consumed": bool(document["consumed"]),
@@ -3008,6 +3027,8 @@ class LifecycleMixin:
             job = self.start_job(
                 "model_acquire",
                 acquire_values,
+                builder_params=workflow["params"],
+                execution_snapshot=self._workflow_execution_snapshot(workflow),
                 reserved_job_id=job_id,
                 model_acquisition_activity_token=activity_token,
             )

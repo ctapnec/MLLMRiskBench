@@ -63,6 +63,30 @@ def test_local_matrix_child_preserves_profile_registry_and_blas_bound(tmp_path, 
         app.close()
 
 
+def test_ui_acquisition_reuses_configured_store_without_redirecting_old_work(tmp_path, monkeypatch):
+    installed = tmp_path / "installed-models"
+    installed.mkdir()
+    sentinel = installed / "existing-model.bin"
+    sentinel.write_bytes(b"existing model content")
+    monkeypatch.setenv("URA_MODEL_STORE", str(installed))
+    app = _app(tmp_path)
+    try:
+        first = app._new_model_acquisition_workflow_paths("a" * 32)
+        assert first["store"] == installed
+        replacement = tmp_path / "other-installed-models"
+        replacement.mkdir()
+        monkeypatch.setenv("URA_MODEL_STORE", str(replacement))
+        restored = app._new_model_acquisition_workflow_paths("a" * 32, restoring=True)
+        assert restored["store"] == installed
+        assert sentinel.read_bytes() == b"existing model content"
+        fresh = app._new_model_acquisition_workflow_paths("b" * 32)
+        assert fresh["store"] == replacement
+        legacy = app._new_model_acquisition_workflow_paths("c" * 32, restoring=True)
+        assert legacy["store"] == app.state_dir.resolve() / ".managed-model-store"
+    finally:
+        app.close()
+
+
 @pytest.mark.parametrize("full_sha", [False, True])
 def test_builder_full_model_sha_is_optional_and_composes_real_cli(tmp_path, full_sha):
     from experiments import model_acquire, run_matrix
@@ -560,6 +584,7 @@ def test_reviewed_plan_download_and_receipted_run_are_one_shot(
         "attackers": "replay",
         "judges": "rules",
         "out": "runs/measured",
+        "campaign_id": "a" * 32,
         "verify_model_sha256": "on" if full_sha else "",
     })
     params = app._bind_execution_config_bundle_identity(params)
@@ -634,6 +659,7 @@ def test_reviewed_plan_download_and_receipted_run_are_one_shot(
         assert acquire_values["--plan"] == str(plan_path)
         assert acquire_values["--activity-job-id"] == acquisition.job_id
         assert launches[0][2]["reserved_job_id"] == acquisition.job_id
+        assert launches[0][2]["builder_params"]["campaign_id"] == "a" * 32
         assert "--receipt" not in acquire_values
 
         measured = app._start_model_acquisition_run(acquisition.job_id)
@@ -656,6 +682,9 @@ def test_private_acquisition_workflow_recovers_activity_and_run_after_restart(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    installed = tmp_path / "installed-models"
+    installed.mkdir()
+    monkeypatch.setenv("URA_MODEL_STORE", str(installed))
     app = _app(tmp_path)
     workflow_id = "e" * 32
     paths = app._new_model_acquisition_workflow_paths(workflow_id)
@@ -729,12 +758,16 @@ def test_private_acquisition_workflow_recovers_activity_and_run_after_restart(
     reporter(True)
     app.close()
 
+    moved_environment = tmp_path / "later-model-store"
+    moved_environment.mkdir()
+    monkeypatch.setenv("URA_MODEL_STORE", str(moved_environment))
     restarted = _app(tmp_path)
     try:
         recovered = restarted.jobs[acquisition_job.job_id]
         assert recovered.state() == "orphaned"
         assert recovered.activity == "model_download"
         assert paths["activity_event"].exists()
+        assert restarted._model_acquisition_workflows[acquisition_job.job_id]["store"] == installed
         assert restarted._workflow_execution_snapshot(
             restarted._model_acquisition_workflows[acquisition_job.job_id]
         ) == snapshot
