@@ -1418,7 +1418,7 @@ if(lastFocus&&lastFocus.isConnected&&lastFocus.focus){lastFocus.focus();}lastFoc
 function begin(text){var token={};
 if(!busy()){
 lastFocus=document.activeElement;
-blocked=Array.prototype.map.call(document.querySelectorAll('body > nav,body > main'),
+blocked=Array.prototype.map.call(document.querySelectorAll('body > nav,body > main,body > .review-theme-bar'),
 function(node){var previous=Boolean(node.inert);node.inert=true;return {node:node,inert:previous};});
 overlay.classList.add('on');overlay.setAttribute('aria-hidden','false');
 document.documentElement.setAttribute('aria-busy','true');overlay.focus();}
