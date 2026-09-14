@@ -61,7 +61,7 @@ def test_deployed_checkout_resumes_with_original_source_and_paid_record(tmp_path
     before = checkpoint.read_bytes(), checkpoint.stat().st_mtime_ns
     admission = SimpleNamespace(execution_checkout=str(checkout),execution_commit=original,
         checkpoint=str(checkpoint),saved_response=saved,requests={'input':{'call_id':'already-paid'}},
-        job={'output':str(previous)})
+        job={'output':str(previous),'argv':['--out',str(previous)]})
     assert subject.run_pinned_admission(admission,responses_only=True) == str(previous)
     assert (checkpoint.read_bytes(),checkpoint.stat().st_mtime_ns) == before
     assert not (checkout/'.venv').exists()
@@ -120,7 +120,8 @@ def test_killed_dispatch_owner_does_not_leave_pinned_runner(tmp_path):
         '    time.sleep(30)\n'))
     checkout = subject.execution_checkout(repo, original, previous)
     marker = tmp_path/'child-pid'
-    admission = SimpleNamespace(execution_checkout=str(checkout),execution_commit=original,marker=str(marker))
+    admission = SimpleNamespace(execution_checkout=str(checkout),execution_commit=original,marker=str(marker),
+        job={'argv':['--out',str(previous)]})
     launcher = subprocess.Popen([sys.executable,'-c',
         'import sys,pickle; from experiments.hosted_execution_checkout import run_pinned_admission; '
         'run_pinned_admission(pickle.load(sys.stdin.buffer),responses_only=True)'],stdin=subprocess.PIPE)
@@ -150,3 +151,38 @@ def test_killed_dispatch_owner_does_not_leave_pinned_runner(tmp_path):
         launcher.wait(timeout=5)
         if child and active(child):
             os.kill(child, signal.SIGKILL)
+
+
+def test_complete_saved_response_finalization_cannot_extend_paid_window(tmp_path):
+    import time
+    from experiments import run_matrix
+    from experiments.hosted_pinned_worker import saved_output_finalization
+    from test_hosted_campaign_execute import _saved_admission
+    from ura.runner import BudgetExhausted, GlobalCallBudget
+    admission,calls = _saved_admission(tmp_path)
+    ledger = tmp_path/'expired-budget.json'
+    options = dict(max_target_calls=10,max_judge_calls=10,max_http_attempts=10,
+        deadline_epoch=time.time()-10,state_path=ledger,budget_id='same-budget')
+    budget = GlobalCallBudget(**options)
+    budget.target_calls = len(calls)
+    budget._persist()
+    before = ledger.read_bytes()
+    with saved_output_finalization(admission) as finalizing:
+        assert finalizing
+        restored = run_matrix.GlobalCallBudget(**options)
+        restored.raise_if_deadline_reached()
+        with pytest.raises(BudgetExhausted,match='finalization cannot start'):
+            restored.charge_target()
+        with pytest.raises(BudgetExhausted,match='finalization cannot start'):
+            restored.charge_judge(1)
+        # The actual call-start deadline itself is never cleared or extended.
+        with pytest.raises(BudgetExhausted,match='deadline reached'):
+            restored._check_deadline()
+        assert restored.snapshot() == budget.snapshot()
+    assert ledger.read_bytes()==before and run_matrix.GlobalCallBudget is GlobalCallBudget
+    path = tmp_path/'answers/saved.responses.checkpoint.jsonl'
+    path.write_text(path.read_text().splitlines()[0]+'\n')
+    with saved_output_finalization(admission) as finalizing:
+        assert not finalizing and run_matrix.GlobalCallBudget is GlobalCallBudget
+        with pytest.raises(BudgetExhausted,match='deadline reached'):
+            run_matrix.GlobalCallBudget(**options).raise_if_deadline_reached()
