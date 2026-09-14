@@ -135,6 +135,34 @@ def test_cost_role_model_names_are_escaped_and_unknown_index_is_explicit(app):
     assert '<img src=x' not in page and '&lt;img' in page
 
 
+def test_full_cost_export_includes_all_pages_and_preserves_unknowns(app,monkeypatch):
+    import csv
+    import io
+    campaign=owner(app)
+    items=[{**attempt(),'call_id':'call-'+str(i),'model':'model-'+str(i)} for i in range(30)]
+    items.append({**attempt(),'call_id':'uncertain','model':'=untrusted','state':'unknown',
+        'cost_microusd':None,'exposure_microusd':None,'input_tokens':None,'output_tokens':None})
+    app.db.publish_workspace_costs(campaign,items)
+    monkeypatch.setattr(Path,'open',lambda *a,**k:pytest.fail('Export must not scan artifacts'))
+    code,kind,payload=app.handle('GET','/campaigns/'+campaign+'/figures/costs.csv?page=99')
+    assert code==200 and kind.startswith('text/csv')
+    rows=list(csv.DictReader(io.StringIO(payload.decode())))
+    assert len(rows)==31 and len({r['model'] for r in rows})==31
+    uncertain=next(r for r in rows if r['model'].startswith("'="))
+    assert uncertain['cost_microusd']==uncertain['exposure_microusd']==uncertain['input_tokens']==''
+    assert uncertain['unknown_attempts']=='1' and uncertain['unknown_exposure_count']=='1'
+    assert sum(int(r['cost_microusd'] or 0) for r in rows)==30*12345
+    assert all(r['campaign_id']==campaign and 'historical' in r['scope'] for r in rows)
+    assert 'Download full campaign cost table' in app._workspace_results(campaign,'costs',{})
+
+
+def test_cost_export_unavailable_is_not_an_empty_success(app,monkeypatch):
+    campaign=owner(app)
+    assert app.handle('GET','/campaigns/'+campaign+'/figures/costs.csv')[0]==404
+    monkeypatch.setattr(app.db,'workspace_cost_totals',lambda *a,**k:None)
+    assert app.handle('GET','/campaigns/'+campaign+'/figures/costs.csv')[0]==503
+
+
 def test_retained_budget_translation_keeps_unknown_retry_usage_and_output_ownership(app):
     from experiments.rig_web_app.workspace_costs import budget_attempt_rows
     local, hosted = owner(app, 'local'), owner(app)

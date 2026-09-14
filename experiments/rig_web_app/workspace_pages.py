@@ -160,6 +160,12 @@ class WorkspacePagesMixin:
     def _workspace_export(self, campaign_id: str, name: str, query: dict[str, str]) -> tuple[int, str, bytes]:
         self.db.require_workspace(campaign_id)
         page = max(0, int(query.get("page", "0")))
+        if name == 'costs.csv':
+            from .workspace_costs import cost_totals_csv
+            rows=self.db.workspace_cost_totals(campaign_id,all_rows=True)
+            if rows is None:return 503,'text/plain; charset=utf-8',b'Campaign cost index unavailable'
+            if not rows:return 404,'text/plain; charset=utf-8',b'No indexed campaign costs'
+            return 200,'text/csv; charset=utf-8',cost_totals_csv(rows,campaign_id)
         if name == "comparison.csv":
             from .workspace_comparison import comparison_rows, comparison_groups, comparison_csv
             rows = comparison_rows(self.db, campaign_id, query, offset=page * 12)
@@ -395,6 +401,7 @@ class WorkspacePagesMixin:
                 "Judging costs belong to the campaign whose output was judged. "
                 "Recorded costs are not account balances; uncertain exposure is not a money hold. "
                 "Local work has no API charge; electricity and hardware costs are not estimated.</p>"
+                + "<p><a class='button ghost' data-campaign-export download='campaign-costs.csv' href='/campaigns/"+campaign_id+"/figures/costs.csv'>Download full campaign cost table</a></p>"+EXPORT_SCRIPT
                 + "<div class='campaign-costs'>" + table(("Provider / model", "Role", "HTTP attempts / local evaluations", "Recorded cost (USD)",
                          "Uncertain charge exposure (USD)", "Reported tokens: input / output / reasoning"),
                     [[html.escape(row["provider"] + " / " + row["model"]), html.escape(row["role"]),

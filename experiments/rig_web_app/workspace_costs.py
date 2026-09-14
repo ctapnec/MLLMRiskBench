@@ -4,7 +4,28 @@ from __future__ import annotations
 
 import sqlite3
 import time
+import csv
+import io
 from pathlib import Path
+
+
+def cost_totals_csv(rows: list[dict], campaign_id: str) -> bytes:
+    """Export the full displayed accounting vocabulary; blank means unknown."""
+    columns=('provider','model','role','attempts','http_attempts','local_evaluations',
+        'settled_attempts','unknown_attempts','unsettled_attempts','cost_microusd',
+        'exposure_microusd','unknown_exposure_count','input_tokens','input_unknown',
+        'output_tokens','output_unknown','reasoning_tokens','reasoning_unknown','updated_at')
+    stream=io.StringIO(newline='');writer=csv.writer(stream)
+    writer.writerow(('campaign_id','scope',*columns))
+    for row in rows:
+        values=[]
+        for name in columns:
+            value=row[name]
+            if isinstance(value,str) and value.startswith(('=','+','-','@','\t','\r')):
+                value="'"+value  # Literal identifiers, not spreadsheet formulas.
+            values.append(value)
+        writer.writerow((campaign_id,'all indexed evidence and historical executions',*values))
+    return stream.getvalue().encode('utf-8')
 
 
 def budget_attempt_rows(plan: dict, ledger: dict, *, bindings: dict[str, dict], source_ref: str) -> dict[str, list[dict]]:
@@ -184,7 +205,7 @@ class WorkspaceCostsMixin:
                 self._fail(exc)
                 raise ValueError("Campaign cost index could not be saved") from exc
 
-    def workspace_cost_totals(self, campaign_id: str, *, offset: int = 0) -> list[sqlite3.Row] | None:
+    def workspace_cost_totals(self, campaign_id: str, *, offset: int = 0, all_rows: bool = False) -> list[sqlite3.Row] | None:
         return self._query(
             "SELECT provider,model,role,COUNT(*) AS attempts,"
             "SUM(provider!='local') AS http_attempts,SUM(state='not_billed') AS local_evaluations,"
@@ -196,6 +217,7 @@ class WorkspaceCostsMixin:
             "SUM(output_tokens) AS output_tokens,SUM(output_tokens IS NULL) AS output_unknown,"
             "SUM(reasoning_tokens) AS reasoning_tokens,SUM(reasoning_tokens IS NULL) AS reasoning_unknown,"
             "MAX(updated_at) AS updated_at FROM campaign_cost_attempts "
-            "WHERE campaign_id=? GROUP BY provider,model,role ORDER BY provider,model,role LIMIT 26 OFFSET ?",
-            (campaign_id, max(0, offset)),
+            "WHERE campaign_id=? GROUP BY provider,model,role ORDER BY provider,model,role"
+            + ("" if all_rows else " LIMIT 26 OFFSET ?"),
+            (campaign_id,) if all_rows else (campaign_id, max(0, offset)),
         )
