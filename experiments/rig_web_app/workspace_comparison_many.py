@@ -172,7 +172,7 @@ def export_rows(data):
 
 
 def render(data, campaign, query):
-    from .workspace_comparison import CHOICES, FILTERS, render_groups
+    from .workspace_comparison import CHOICES, FILTERS, render_groups, _condition_tokens
     from .workspace_judging_charts import _judge_name
     escape = html.escape
     page, total = data['page'], data['total']
@@ -207,12 +207,11 @@ def render(data, campaign, query):
         content += ("<p id='campaign-exports'><a class='button ghost' data-campaign-export download='comparison.csv' href='"
             +escape(export,quote=True)+"'>Download this page's counts</a></p><p id='campaign-export-status' role='status'></p>")
     def label(unit):
-        low, high = unit['output_min'],unit['output_max']
-        allowance = 'unknown' if low is None else str(low)+((' to '+str(high)) if high!=low else '')
         known = unit['terminal'] or 0
         usable = unit['usable'] or 0
         return ("<span title='"+escape(unit['model'],quote=True)+"'>"+escape(model_label(unit['model']))+'</span>'
-            +f"; condition {unit['number']}; output allowance "+allowance
+            +f"; condition {unit['number']}; context "+_condition_tokens(unit,'context')
+            +'; output allowance '+_condition_tokens(unit,'output')
             +f"; usable responses {usable:,}/{known:,}; assigned {unit['assigned']:,}")
     for pair in data['pairs']:
         rows=pair['rows']

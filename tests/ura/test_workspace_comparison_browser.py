@@ -329,7 +329,8 @@ def test_condition_rules_work_for_single_and_all_models(browser,study,width,side
                     ready(page)
                 assert page.locator('[data-model-comparison]').count()>=1
                 if rule!='__best_response__':
-                    assert all('output allowance 8192' in d for d in page.locator('[data-model-comparison]').all_text_contents())
+                    assert all('output allowance 8,192' in d and 'context 32,768' in d
+                        for d in page.locator('[data-model-comparison]').all_text_contents())
                 assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
         page.locator('[name='+side+'_condition]').select_option('*')
         ready(page)

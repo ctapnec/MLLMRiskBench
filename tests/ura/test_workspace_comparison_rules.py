@@ -111,3 +111,14 @@ def test_no_rankable_conditions_are_explicit_and_do_not_remove_saved_data(study)
     assert 'no eligible generation conditions for this rule for api' in text
     assert '1 unranked conditions' in text
     assert len(many.units(app.db,right,'api','*'))==1
+
+
+def test_all_condition_cards_show_recorded_context_and_native_allowance(study):  # noqa: F811
+    app,left,right,query=study
+    put(app,left,'l','shared',context_tokens=32768,output_allowance=-1)
+    put(app,right,'r','shared',model='api',condition='rc',output_allowance=4096)
+    query=dict(query,left_condition='*')
+    data=many.page_data(app.db,left,query)
+    text=many.render(data,left,query)
+    assert 'context 32,768; output allowance native maximum' in text
+    assert 'context unknown; output allowance 4,096' in text
