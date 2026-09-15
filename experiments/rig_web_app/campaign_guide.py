@@ -11,6 +11,7 @@ STYLE = """
 .campaign-guide-option input { flex:none; margin-top:.25rem; }
 .campaign-guide-option small { display:block; color:var(--muted); margin-top:.3rem; }
 .campaign-guide-launch { margin:.65rem 0; }
+.campaign-guide [hidden] { display:none !important; }
 .campaign-guide-dialog { box-sizing:border-box; width:min(720px,calc(100vw - 2rem));
   max-height:calc(100dvh - 2rem); padding:0; overflow:auto; color:var(--ink);
   background:var(--card); border:1px solid var(--line); border-radius:14px; box-shadow:var(--shadow); }

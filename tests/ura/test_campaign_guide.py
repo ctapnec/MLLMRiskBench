@@ -137,6 +137,7 @@ def test_browser_checkbox_modal_keyboard_steps_links_and_single_run(browser, app
         page.goto('http://guide.test/build?work_kind=campaign')
         dialog = page.locator('.campaign-guide-dialog')
         assert not dialog.is_visible()
+        assert not page.locator('[data-guide-open]').is_visible()
         page.locator('[name=campaign_guide]').check()
         assert dialog.is_visible()
         page.locator('[data-guide-step="2"]').click()
