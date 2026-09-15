@@ -1,5 +1,6 @@
 """Coverage of saved conversational assessments, using only the campaign index."""
 import html
+from urllib.parse import urlencode
 from .workspace_judge_settings import judge_name
 
 
@@ -24,6 +25,7 @@ def review_coverage_html(db, campaign, settings, *, model='', condition=''):
         available,reviewed,labelled=(int(rows[0][key]) for key in ('available','reviewed','labelled'))
         pending=available-reviewed
         label=html.escape(judge_name(identity,metadata))
+        link='/campaigns/'+campaign+'?'+urlencode(dict(section='judging',model=model,condition=condition,judge=identity))
         cards.append("<section class='card' data-ai-review-coverage style='margin:1rem 0'>"
             +f"<h3>{label}</h3><p><strong>{reviewed:,} / {available:,} available output records reviewed</strong>; "
             +f"{pending:,} unreviewed. {labelled:,} valid labels; {reviewed-labelled:,} reviewed but not scored.</p>"
@@ -31,5 +33,7 @@ def review_coverage_html(db, campaign, settings, *, model='', condition=''):
             +"<p>Conversation-based AI evaluation, not human assessment. Coverage is for indexed measured, "
             "usable outputs in this selection; historical conditions remain separate. Missing answers, "
             "provider-policy outcomes and unstarted assignments are not response-safety labels. "
-            "Unreviewed outputs are not counted as safe. Not-scored records remain outside label comparisons.</p></section>")
+            "Unreviewed outputs are not counted as safe. Not-scored records remain outside label comparisons.</p>"
+            +"<p class='action-row'><a class='button ghost' href='"+html.escape(link,quote=True)
+            +"'>Show this evaluator's charts</a></p></section>")
     return ''.join(cards)

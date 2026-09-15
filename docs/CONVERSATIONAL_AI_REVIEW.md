@@ -113,7 +113,9 @@ media must match the reviewed presentation; publication never attaches a verdict
 by input identity alone or changes the original campaign response.
 
 Open the saved campaign's **Judging** tab to see the additional series and its
-reviewed/unreviewed coverage. Model and generation-condition filters also scope
+reviewed/unreviewed coverage. Click **Show this evaluator's charts** in its card
+to restrict the charts, paginated table and exports to this series; **Show all
+evaluators** restores the full view. Model and generation-condition filters also scope
 the coverage card. Its denominator is the current indexed measured, usable
 output records in that selection, not unique questions or a safety-success
 rate. Historic conditions remain distinct. Not-scored setup or unsupported

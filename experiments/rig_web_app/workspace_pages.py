@@ -28,6 +28,8 @@ class WorkspacePagesMixin:
         if not models:
             return ""
         action = "/campaigns/" + campaign_id
+        retained_judge = ("<input type='hidden' name='judge' value='"+html.escape(query['judge'],quote=True)+"'>"
+            if section=='judging' and query.get('judge') else '')
         options = "<option value=''>All models</option>" + "".join(
             "<option value='" + html.escape(row["model"], quote=True) + "'"
             + (" selected" if row["model"] == model else "") + ">" + html.escape(row["model"]) + "</option>"
@@ -38,6 +40,7 @@ class WorkspacePagesMixin:
         content = (
             "<div class='campaign-result-filters'><form method='get' action='" + action + "'>"
             "<input type='hidden' name='section' value='" + section + "'>"
+            + retained_judge +
             "<label class='campaign-field'>Model<select name='model'>" + options + "</select></label>"
             "<button type='submit'>Choose model</button></form>"
         )
@@ -65,6 +68,7 @@ class WorkspacePagesMixin:
                 options += "<option selected value='" + html.escape(condition, quote=True) + "'>Unknown execution condition</option>"
             content += (
                 "<form method='get' action='" + action + "'><input type='hidden' name='section' value='" + section + "'>"
+                + retained_judge +
                 "<input type='hidden' name='model' value='" + html.escape(model, quote=True) + "'>"
                 "<label class='campaign-field'>Execution condition<select name='condition'>" + options + "</select></label>"
                 "<button type='submit'>View condition</button></form>"
@@ -191,7 +195,8 @@ class WorkspacePagesMixin:
             return 200, "text/csv; charset=utf-8", comparison_csv(rows, campaign_id, query)
         model, condition = self._workspace_result_scope(query)
         if name in {"judgments.csv", "judgments.svg"}:
-            rows = self.db.workspace_judgment_breakdown(campaign_id, offset=page * 12, model=model, condition=condition)
+            rows = self.db.workspace_judgment_breakdown(campaign_id, offset=page * 12, model=model, condition=condition,
+                judge=query.get('judge',''))
             if rows is None:
                 return 503, "text/plain; charset=utf-8", b"Campaign judgment index unavailable"
             rows = [row for group in judgment_groups(rows)[:12] for row in group]
@@ -438,10 +443,18 @@ class WorkspacePagesMixin:
         if section == "judging":
             settings = indexed_settings(self.db,campaign_id)
             review_coverage = review_coverage_html(self.db,campaign_id,settings,model=model,condition=condition)
+            judge=query.get('judge','')
             rows = self.db.workspace_judging_totals(campaign_id, model=model, condition=condition)
+            if rows and judge:
+                rows=[row for row in rows if row['judge_id']==judge]
             if not rows:
                 return review_coverage + unknown
-            breakdown = self.db.workspace_judgment_breakdown(campaign_id, offset=page * 12, model=model, condition=condition)
+            if judge:
+                all_link='/campaigns/'+campaign_id+'?section=judging'+scope_query
+                review_coverage += '<p>Showing only '+html.escape(judge_name(judge,settings.get(judge)))+". <a href='"+all_link+"'>Show all evaluators</a>.</p>"
+                scope_query += '&amp;judge='+quote(judge,safe='')
+                base += '&amp;judge='+quote(judge,safe='')
+            breakdown = self.db.workspace_judgment_breakdown(campaign_id, offset=page * 12, model=model, condition=condition,judge=judge)
             if breakdown is None:
                 return "<p class='notice amber'>Judgment label index unavailable.</p>"
             groups = judgment_groups(breakdown)

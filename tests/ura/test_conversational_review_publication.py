@@ -127,3 +127,24 @@ def test_source_task_labels_are_not_replaced_with_common_safety(saved_review):
     assert artifact['presentation']['common_metrics_eligible'] is False
     status,mime,body=app.handle('GET','/campaigns/'+owner+'?section=judging')
     assert status==200 and 'not the answering model\'s safety' in body.decode()
+
+
+def test_review_link_filters_figures_tables_and_keeps_model_selection(saved_review):
+    import csv,io
+    app,owner,args=saved_review
+    publisher.publish(**args)
+    app.db.publish_workspace_results(owner,assignments=[],responses=[],judgments=[dict(response_id='run:0',
+        judge_id='another-evaluator',status='valid',label='violation',source_ref='other.json')])
+    rows=app.db.workspace_judgment_breakdown(owner,judge=args['judge_id'])
+    assert rows and {r['judge_id'] for r in rows}=={args['judge_id']}
+    query='?model=local&condition=condition&judge=conversation%3Aexample'
+    status,mime,body=app.handle('GET','/campaigns/'+owner+'?section=judging&'+query[1:])
+    page=body.decode()
+    assert status==200 and "Show this evaluator's charts" in page and 'Show all evaluators' in page
+    assert page.count("name='judge' value='conversation:example'")==2
+    assert 'another-evaluator' not in page
+    assert 'judge=conversation%3Aexample' in page
+    status,mime,body=app.handle('GET','/campaigns/'+owner+'/figures/judgments.csv'+query)
+    assert status==200
+    data=list(csv.DictReader(io.StringIO(body.decode('utf-8-sig'))))
+    assert data and {r['judge_id'] for r in data}=={args['judge_id']}
