@@ -191,6 +191,37 @@ def test_browser_checkbox_modal_keyboard_steps_links_and_single_run(browser, app
         page.close()
 
 
+@pytest.mark.parametrize('topic,link,path', [
+    ('9. Human review','Open human-evaluation wizard','/human-evaluation'),
+    ('10. SVM analysis','Open Retained response classifiers','/commands')])
+def test_guide_backend_links_close_dialog_and_use_shared_wait_guard(browser, app, topic, link, path):  # noqa: F811
+    from urllib.parse import urlsplit
+    saved = app._save_build_campaign(draft(campaign_guide='on'))
+    page, _, errors = _browser_page(browser, app, 390)
+    pending = []
+    try:
+        page.goto('http://guide.test/build?campaign_id='+saved['campaign_id'])
+        page.get_by_text('Browse all 11 topics', exact=True).click()
+        page.get_by_role('button', name=topic, exact=True).click()
+        page.route('http://guide.test'+path+'?*', lambda route: pending.append(route))
+        page.get_by_role('link', name=link, exact=True).click(no_wait_after=True)
+        page.wait_for_function('window.uraBusy.isBusy()')
+        assert not page.locator('.campaign-guide-dialog').is_visible()
+        assert page.locator('#busy-overlay').is_visible()
+        assert page.locator('main').evaluate('e=>e.inert')
+        assert len(pending)==1
+        request = urlsplit(pending[0].request.url)
+        code,mime,content = app.handle('GET',request.path+'?'+request.query)
+        assert code==200
+        pending[0].fulfill(status=code,content_type=mime,body=content)
+        page.wait_for_url('http://guide.test'+path+'?*')
+        page.wait_for_function('!window.uraBusy.isBusy()')
+        assert not page.locator('#busy-overlay').is_visible()
+        assert not errors and not app.db.load_jobs()
+    finally:
+        page.close()
+
+
 def test_browser_remembers_dismissal_per_campaign_and_reopens_on_demand(browser, app):  # noqa: F811
     saved = app._save_build_campaign(draft(campaign_guide='on'))
     path = '/campaigns/'+saved['campaign_id']+'?section=definition'
