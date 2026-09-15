@@ -235,7 +235,7 @@ def render_groups(rows):
             f"left only: {totals['left_only']:,}; right only: {totals['right_only']:,}; ambiguous shared inputs: {totals['ambiguous']:,}.</p>")
         paired = [row for row in group if row["match_status"] == "matched"]
         if not paired:
-            content += '<p>No shared inputs to pair in this source.</p></section>'
+            content += '<p>No unambiguous matched inputs to compare in this source.</p></section>'
             continue
         content += "<div class='scroll'><table><thead><tr><th>Left outcome</th><th>Right outcome</th><th>Left assessment</th><th>Right assessment</th><th>Inputs</th></tr></thead><tbody>"
         for row in paired:

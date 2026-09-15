@@ -92,6 +92,7 @@ def test_broad_filters_exports_and_ambiguous_inputs_match_the_display(study):  #
     code,_,body=app.handle('GET',f'/campaigns/{left}?'+urlencode(dict(query,section='compare')))
     assert code==200 and body.decode().count("value='*' selected>All models")==2
     assert 'Model / generation-condition pairs 1-2 of 2' in body.decode()
+    assert 'No unambiguous matched inputs' in body.decode() and '<tbody></tbody>' not in body.decode()
     code,_,body=app.handle('GET',f'/campaigns/{left}/figures/comparison.csv?'+urlencode(query))
     rows=list(csv.DictReader(io.StringIO(body.decode('utf-8-sig'))))
     assert code==200 and len(rows)==2 and all(r['compare_corpus']=='corpus' for r in rows)
