@@ -28,6 +28,14 @@ def test_saved_answers_reach_rating_form_save_and_resume(browser,personal,width)
         page.get_by_role('button',name='Prepare answers for review',exact=True).click()
         page.get_by_role('button',name='Open evaluation form',exact=True).click()
         page.get_by_role('heading',name='Personal evaluation',exact=True).wait_for()
+        assert page.title()=='Personal evaluation'
+        assert page.locator('body > nav').count()==1
+        assert page.locator('body > nav a.active').inner_text()=='Campaigns'
+        assert page.locator('body > nav #theme-picker').count()==1
+        page.evaluate("() => { window.endReviewWait=window.uraBusy.begin('Synthetic wait'); }")
+        assert page.locator('body > nav').evaluate('e=>e.inert')
+        page.evaluate('window.endReviewWait()')
+        assert not page.locator('body > nav').evaluate('e=>e.inert')
         assert 'A substantial example answer.' in page.locator('#review-body').inner_text()
         assert page.get_by_role('button',name='Consent and begin').count()==0
         assert page.get_by_role('button',name='Withdraw from further review').count()==0
@@ -51,5 +59,8 @@ def test_saved_answers_reach_rating_form_save_and_resume(browser,personal,width)
         page.get_by_role('link',name='Review progress and export',exact=True).click()
         assert '1 / 1 evaluations saved' in page.locator('main').inner_text()
         assert page.get_by_role('link',name='Download personal evaluations',exact=True).count()==1
+        page.locator('body > nav').get_by_role('link',name='Campaigns',exact=True).click()
+        page.wait_for_url('**/campaigns')
+        assert page.locator('body > nav a.active').inner_text()=='Campaigns'
         assert not errors
     finally:page.close()

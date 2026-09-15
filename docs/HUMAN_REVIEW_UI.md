@@ -12,7 +12,8 @@ database and existing campaign workers were preserved.
 The checked 167-output historical image sample now resolves all 167 references
 through the recorded source locations. The automatic media preparation and
 source-task format fixes have focused rig verification and are deployed.
-No actual human ratings have been collected.
+The operator has subsequently completed seven personal evaluations in the small
+Flash demonstration. These are separate from independent two-rater evidence.
 
 ## Purpose and scope
 
@@ -35,6 +36,9 @@ with step-by-step dimension choices, overall decision and confidence.
 **Save evaluation** records a personal evaluation; drafts, edits, deferral,
 resume and **Download personal evaluations** are supported. There are no
 study-arrangement or enrollment fields on this path.
+The personal evaluation board retains the console's main navigation, active
+Campaigns section and theme control. Only independent reviewer and adjudicator
+links use the restricted, model-label-blinded review layout.
 
 For an item with images, audio or video, view its required media in **Context**,
 then check **I viewed every required asset** on **Review** before final saving.

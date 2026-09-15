@@ -139,13 +139,15 @@ class HumanReviewPagesMixin:
             parts=path.removeprefix('/review/').split('/');token=parts[0];action='/'.join(parts[1:])
             try:
                 if method=='GET' and not action:
-                    store.view(token)
+                    reviewer=store.view(token)
                     if query.get('item'):
                         result=store.view(token,query['item'])
                     else:
-                        page=_page('Independent human evaluation',_REVIEW_STYLE+"<div class='review-stack'><section id='review-intro' class='review-card'></section><p id='review-status' class='review-status' role='status' aria-live='polite'></p><section id='review-body' class='review-card'></section></div>"+_REVIEW_SCRIPT)
-                        page=re.sub(rb'<nav>.*?</nav>',("<div class='review-theme-bar'>"+_THEME_PICKER+"</div>").encode(),page,count=1,flags=re.S)
-                        page=re.sub(rb"<footer class='note'>.*?</footer>",b'',page,count=1,flags=re.S)
+                        personal=reviewer['role']=='personal'
+                        page=_page('Personal evaluation' if personal else 'Independent human evaluation',_REVIEW_STYLE+"<div class='review-stack'><section id='review-intro' class='review-card'></section><p id='review-status' class='review-status' role='status' aria-live='polite'></p><section id='review-body' class='review-card'></section></div>"+_REVIEW_SCRIPT,active='Campaigns' if personal else '')
+                        if not personal:
+                            page=re.sub(rb'<nav>.*?</nav>',("<div class='review-theme-bar'>"+_THEME_PICKER+"</div>").encode(),page,count=1,flags=re.S)
+                            page=re.sub(rb"<footer class='note'>.*?</footer>",b'',page,count=1,flags=re.S)
                         return 200,'text/html; charset=utf-8',page
                 elif method=='GET' and action=='data': result=store.view(token)
                 elif method=='GET' and action=='media':
