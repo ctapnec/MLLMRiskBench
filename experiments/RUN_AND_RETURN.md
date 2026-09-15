@@ -7391,3 +7391,15 @@ argument vectors; nothing below is console-only):
 | `human_audit` (common and source-task frames) | 15, 15.1 |
 | `judge_sensitivity`, `kappa`, `transfer_matrix`, `paired_compare` | 16 |
 | `level1_evidence`, `suite_summary`, `level2_report`, `figures` | 8.1, 16 |
+
+### Indexed judging descriptions in Compare
+
+Local result publishers retain compact judging settings alongside the unchanged
+judging identity. Compare names rules-only and model-backed cascades separately,
+including the recorded approximate-metrics mode. Selecting a judge reveals its
+model, available output allowance and escalation settings. Exact model/scoring
+revisions remain in expandable details. Distinct conditions are never merged by
+label, and missing metadata is shown as not indexed rather than inferred.
+Historical descriptions can be indexed from their explicitly selected retained
+manifests or judging results without changing verdicts or making calls. Page
+refreshes read SQLite only; they do not scan or hash historical artifacts.

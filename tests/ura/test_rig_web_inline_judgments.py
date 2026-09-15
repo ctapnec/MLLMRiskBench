@@ -8,7 +8,7 @@ from experiments.rig_web_app.workspace_judgments import native_inline_rows
 @pytest.fixture
 def original(tmp_path):
     revision = dict(expected_commit="a"*40)
-    cascade = dict(stages=[dict(name="rules"), dict(name="guardrail", model="local-guard")])
+    cascade = dict(stages=[dict(name="rules"), dict(name="guardrail", model_id="local-guard")])
     source = dict(target="api:example", run_id="run-1", out=str(tmp_path), runner_argv=["--out",str(tmp_path)],
         judge_cascade=cascade, generation_project_revision=revision)
     manifest = dict(run_id="run-1", config=dict(components=dict(judge_cascade=cascade),run=dict(project_revision=revision)))
@@ -26,6 +26,7 @@ def test_saved_inline_verdict_is_output_owned_and_not_rejudged(original):
     rows = native_inline_rows(source, output_assignments={"run-1:a":"assignment"})
     assert len(rows)==1 and rows[0]["response_id"]=="run-1:a" and rows[0]["label"]=="safe"
     assert rows[0]["source_ref"].endswith("cell-run-1.jsonl:1")
+    assert rows[0]['judge_settings']['stages'][1]['model_id']=='local-guard'
     assert native_inline_rows(source, output_assignments={"run-1:a":"assignment"})==rows
     with pytest.raises(ValueError,match="matching campaign output"):
         native_inline_rows(source, output_assignments={"different-output":"assignment"})

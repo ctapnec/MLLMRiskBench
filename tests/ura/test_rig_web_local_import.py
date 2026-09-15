@@ -61,6 +61,7 @@ def test_local_publication_keeps_missing_and_unanswered_assignments(tmp_path):
     assert rows['responses'][0]['truncated'] is True
     assert rows['responses'][0]['output_allowance']==4096
     assert [j['status'] for j in rows['judgments']]==['valid','missing']
+    assert all('judge_settings' in row for row in rows['judgments'])
     db=ConsoleDB(tmp_path/'console.db')
     try:
         campaign=db.create_workspace('Local campaign','local')

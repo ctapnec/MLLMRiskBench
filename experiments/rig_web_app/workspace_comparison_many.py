@@ -132,9 +132,11 @@ def page_data(db, campaign, query, page=0):
     query = normalize(query)
     if type(page) is not int or page < 0 or not all(query.get(k) for k in CHOICES):
         raise ValueError('Select models, generation conditions and judging conditions on both sides')
-    scopes, absent, unranked = [], {}, {}
+    from .workspace_judge_settings import indexed_settings
+    scopes, absent, unranked, judge_settings = [], {}, {}, {}
     for side, owner in (('left',campaign),('right',query['right_campaign'])):
         db.require_workspace(owner)
+        judge_settings[side] = indexed_settings(db, owner).get(query[side+'_judge'])
         model, condition = query[side+'_model'], query[side+'_condition']
         scope = unit_scope(db,owner,model,condition,query=query)
         if scope is None:
@@ -162,7 +164,7 @@ def page_data(db, campaign, query, page=0):
         if rows is None:
             return None
         pairs.append(dict(left=left,right=right,query=selected,rows=rows))
-    return dict(pairs=pairs,total=total,absent=absent,unranked=unranked,page=page)
+    return dict(pairs=pairs,total=total,absent=absent,unranked=unranked,page=page,judge_settings=judge_settings)
 
 
 def export_rows(data):
@@ -222,8 +224,8 @@ def render(data, campaign, query):
             +escape(model_label(pair['right']['model']))+f" (condition {pair['right']['number']})"
             +f" - matched: {matched:,}; jointly valid judgments: {valid:,}</summary>"
             +'<p>Left: '+label(pair['left'])+'</p><p>Right: '+label(pair['right'])+'</p>'
-            +'<p>Judges: '+escape(_judge_name(query['left_judge']) if query['left_judge']!=UNJUDGED else 'Not indexed')
-            +' / '+escape(_judge_name(query['right_judge']) if query['right_judge']!=UNJUDGED else 'Not indexed')
+            +'<p>Judges: '+escape(_judge_name(query['left_judge'],data.get('judge_settings',{}).get('left')) if query['left_judge']!=UNJUDGED else 'Not indexed')
+            +' / '+escape(_judge_name(query['right_judge'],data.get('judge_settings',{}).get('right')) if query['right_judge']!=UNJUDGED else 'Not indexed')
             +'. Missing judgments remain Not indexed; another judge is not substituted.</p>')
         content += render_groups(rows) if rows else '<p>No measured inputs in these conditions under the selected filters.</p>'
         content += '</details>'

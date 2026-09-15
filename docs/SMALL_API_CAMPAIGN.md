@@ -449,6 +449,11 @@ remains available for retrying a failed refresh or submitting without JavaScript
    Similar token allowances do not mean identical retained execution settings.
 2. Wait after each selection. Its **Judging condition** choices load for the
    selected model and generation condition.
+   Local options distinguish **Rules only** from **Rules + Llama-Guard-3-8B**
+   and state whether approximate metrics were enabled. After selecting a judge,
+   read **Selected judging settings** below the selector. A rules-only condition
+   has no model-backed judge. Similar names do not make conditions equivalent;
+   unknown historical settings are explicitly marked as not indexed.
 3. Choose the corresponding **Haiku** judging condition on both sides, then
    wait for the comparison to appear. Do not substitute the local judge
    on one side when intending a Haiku-to-Haiku comparison.

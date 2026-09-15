@@ -39,6 +39,10 @@ an extension of the thesis study population.
    static comparison choose `replay`; keep adaptive frameworks separate. The
    filters remain in subsequent pages and CSV exports. An empty selection is
    shown as empty, not replaced with a different source.
+   Judging choices name the rules/model cascade and recorded approximate-metrics
+   mode. **Selected judging settings** shows the model and available settings;
+   rules-only judging is explicitly identified as having no model-backed judge.
+   Separate identities remain separate even when their readable names agree.
 5. **Costs** records physical attempts and charges. Unknown is not zero, and a
    provider purse update is not an invoice breakdown. **Activity** and
    **Campaign jobs** link to the original executions.

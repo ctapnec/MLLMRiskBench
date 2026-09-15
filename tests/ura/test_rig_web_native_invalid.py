@@ -24,6 +24,7 @@ def test_native_invalid_assessment_is_unscored_not_pending_or_a_target_failure()
     result=native_invalid_rows(unit,[("failure.json",failure)],responses={"a":response},output_assignments={"run:a":"assigned"})
     assert result["judgments"][0]["status"]=="invalid" and result["judgments"][0]["label"] is None
     assert result["judgments"][0]["response_id"]=="run:a"
+    assert result['judgments'][0]['judge_settings']['stages'][1]['model_id']=='local-guard'
     assert len(result["costs"])==1 and result["costs"][0]["state"]=="not_billed"
     assert result["costs"][0]["provider"]=="local" and result["costs"][0]["role"]=="judge"
 

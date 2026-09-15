@@ -8,6 +8,7 @@ from itertools import groupby
 from urllib.parse import urlencode
 
 from .workspace_judging_charts import _judge_name
+from .workspace_judge_settings import indexed_settings, settings_html
 from .workspace_charts import EXPORT_SCRIPT
 from . import workspace_comparison_many as many
 
@@ -213,7 +214,9 @@ def _comparison_body(db, campaign, query):
                 +('Usable-response rate uses saved terminal responses, not attack success or a safety verdict. This is a post-hoc selection; '
                   'inspect the displayed numerator, denominator and assigned count.' if condition=='__best_response__' else
                   'Only fully recorded, uniform finite settings can be ranked. Unknown, mixed or native-maximum settings are disclosed as unranked.')+'</p>')
-        judge_values = [(row['judge_id'],f'Condition {number}: '+_judge_name(row['judge_id'])) for number,row in enumerate(judges,1)]
+        settings = indexed_settings(db, owner) if judges else {}
+        judge_values = [(row['judge_id'],f'Condition {number}: '+_judge_name(row['judge_id'], settings.get(row['judge_id'])))
+            for number,row in enumerate(judges,1)]
         if many.broad(query) and model and condition and not judges:
             judge_values = [(many.UNJUDGED,'No indexed judgments - show coverage only')]
         if query.get(side + '_judge') not in {value for value, _label in judge_values}:
@@ -223,7 +226,11 @@ def _comparison_body(db, campaign, query):
             query[side + '_judge'] = ''
         form += _select(side + "_judge", "Judging condition", judge_values, query.get(side + "_judge", ""),
             empty_hint='Choose a generation condition first' if not condition else
-            'No indexed judgments for this model and generation condition') + "</fieldset>"
+            'No indexed judgments for this model and generation condition')
+        selected_judge = query.get(side + '_judge')
+        if selected_judge and selected_judge != many.UNJUDGED:
+            form += settings_html(selected_judge, settings.get(selected_judge), side=side)
+        form += "</fieldset>"
     form += "</div>"
     try:
         facets = facet_choices(db, campaign, query)

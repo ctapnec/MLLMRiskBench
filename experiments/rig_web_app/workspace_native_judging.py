@@ -8,6 +8,7 @@ import sqlite3
 import time
 
 from .storage import ConsoleDB
+from .workspace_judge_settings import local_settings
 
 
 class NativeJudgmentPublication:
@@ -21,7 +22,7 @@ class NativeJudgmentPublication:
         condition = dict(config=source["judge_cascade"], scoring_revision=revision)
         judge = "local-cascade-"+hashlib.sha256(json.dumps(condition, sort_keys=True).encode()).hexdigest()[:24]
         key = (response["run_id"]+":"+response["attempt_id"], judge)
-        self.pending[key] = (source, record, reference, invalid)
+        self.pending[key] = (source, record, reference, invalid, revision)
         if time.monotonic()-self.last_flush >= 5:
             self.flush()
 
@@ -31,7 +32,7 @@ class NativeJudgmentPublication:
         try:
             if self.db is None:
                 self.db = ConsoleDB(Path(self.database))
-            for (identity, judge), (source, record, reference, invalid) in list(self.pending.items()):
+            for (identity, judge), (source, record, reference, invalid, revision) in list(self.pending.items()):
                 response = record["response"]
                 owners = self.db._query("SELECT r.assignment_id,a.model FROM campaign_responses r "
                     "JOIN campaign_assignments a ON a.campaign_id=r.campaign_id AND a.assignment_id=r.assignment_id "
@@ -46,7 +47,8 @@ class NativeJudgmentPublication:
                 missing = value is not None and value.get("raw", {}).get("policy_evaluation_status") in {
                     "model_nonresponse", "target_input_incompatible"}
                 row = dict(response_id=identity, judge_id=judge, status="invalid" if invalid else
-                    "missing" if missing else "valid", label=None if invalid or missing else value["label"], source_ref=reference)
+                    "missing" if missing else "valid", label=None if invalid or missing else value["label"], source_ref=reference,
+                    judge_settings=local_settings(source=source, revision=revision))
                 self.db.publish_workspace_results(self.campaign_id, assignments=[], responses=[], judgments=[row])
                 if any(stage.get("raw", {}).get("guardrail_queried") is True for stage in record.get("trail", [])):
                     self.db.publish_workspace_costs(self.campaign_id, [dict(call_id="local-scoring:"+judge+":"+identity,

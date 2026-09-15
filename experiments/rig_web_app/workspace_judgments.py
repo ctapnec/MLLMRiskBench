@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from .workspace_costs import budget_attempt_rows
+from .workspace_judge_settings import local_settings
 
 
 def native_inline_rows(source: dict, *, output_assignments: dict[str, str]) -> list[dict]:
@@ -54,7 +55,10 @@ def native_inline_rows(source: dict, *, output_assignments: dict[str, str]) -> l
             raise ValueError("Original inline judgment has no matching campaign output")
         missing = (value.get("raw") or {}).get("policy_evaluation_status") in {"model_nonresponse", "target_input_incompatible"}
         rows.append(dict(response_id=identity, judge_id=judge, status="missing" if missing else "valid",
-            label=None if missing else value["label"], source_ref=reference))
+            label=None if missing else value["label"], source_ref=reference,
+            judge_settings=local_settings(source=dict(judge_cascade=source['judge_cascade'],
+                approximate_common_metrics=manifest['config']['run'].get('approximate_common_metrics')),
+                revision=condition['scoring_revision'])))
     return rows
 
 
@@ -82,7 +86,8 @@ def native_invalid_rows(unit: dict, artifacts: list[tuple[str, dict]], *,
                 or trail[-1].get("raw", {}).get("guardrail_queried") is not True
                 or any(stage.get("run_id") not in {None, unit["run_id"]} or stage["attempt_id"] != aid for stage in trail)):
             raise ValueError("Native failure is not an observed unparsed guard assessment")
-        rows.append(dict(response_id=identity, judge_id=judge, status="invalid", label=None, source_ref=reference))
+        rows.append(dict(response_id=identity, judge_id=judge, status="invalid", label=None, source_ref=reference,
+            judge_settings=local_settings(source=unit['source'], revision=unit['judging_revision'])))
         costs.append(dict(call_id="local-scoring:"+judge+":"+identity, attempt_number=1,
             assignment_id=output_assignments[identity], response_id=identity, provider="local",
             model=unit["source"]["judge_cascade"]["stages"][-1]["model_id"], role="judge",

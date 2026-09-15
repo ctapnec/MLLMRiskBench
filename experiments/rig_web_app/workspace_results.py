@@ -78,6 +78,10 @@ class WorkspaceResultsMixin:
             "reached INTEGER NOT NULL, updated_at REAL NOT NULL, PRIMARY KEY(campaign_id,run_id))"
         )
         self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS campaign_judge_settings (campaign_id TEXT NOT NULL, "
+            "judge_id TEXT NOT NULL, settings TEXT NOT NULL, PRIMARY KEY(campaign_id,judge_id))"
+        )
+        self._conn.execute(
             "CREATE TABLE IF NOT EXISTS campaign_recoveries (campaign_id TEXT NOT NULL, "
             "predecessor TEXT NOT NULL, successor TEXT NOT NULL, reason TEXT NOT NULL, evidence_ref TEXT NOT NULL, "
             "PRIMARY KEY(campaign_id,successor))"
@@ -178,6 +182,7 @@ class WorkspaceResultsMixin:
             return value
 
         prepared_assignments, prepared_responses, prepared_judgments = [], [], []
+        judge_settings = {}
         for row in assignments:
             if row.get("evidence_class") not in {"measured", "diagnostic", "preflight", "unknown"}:
                 raise ValueError("Assignment needs its explicit evidence class")
@@ -210,6 +215,14 @@ class WorkspaceResultsMixin:
             prepared_responses.append((campaign_id, text(row, "response_id"), text(row, "assignment_id"), text(row, "condition_id"),
                                        row["outcome"], row.get("truncated"), payload))
         for row in judgments:
+            if row.get('judge_settings') is not None:
+                settings = json.dumps(row['judge_settings'], sort_keys=True, allow_nan=False)
+                if not isinstance(row['judge_settings'], dict) or len(settings) > 16384:
+                    raise ValueError('Invalid judging settings metadata')
+                identity = text(row, 'judge_id')
+                if identity in judge_settings and judge_settings[identity] != settings:
+                    raise ValueError('Conflicting judging settings for one condition')
+                judge_settings[identity] = settings
             if row.get("status") not in {"valid", "invalid", "missing", "pending"}:
                 raise ValueError("Unknown judgment status")
             label = text(row, "label") if row.get("label") is not None else None
@@ -222,6 +235,13 @@ class WorkspaceResultsMixin:
                 raise ValueError("Campaign database is unavailable")
             try:
                 with self._conn:
+                    for identity, settings in judge_settings.items():
+                        old = self._conn.execute('SELECT settings FROM campaign_judge_settings '
+                            'WHERE campaign_id=? AND judge_id=?', (campaign_id, identity)).fetchone()
+                        if old and old['settings'] != settings:
+                            raise ValueError('Retained judging settings changed; use a distinct judge condition')
+                        self._conn.execute('INSERT OR IGNORE INTO campaign_judge_settings VALUES(?,?,?)',
+                            (campaign_id, identity, settings))
                     for row in prepared_assignments:
                         old = self._conn.execute(
                             "SELECT model,input_id,condition_id,modality,framework,corpus,evidence_class "

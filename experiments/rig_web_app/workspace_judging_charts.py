@@ -8,6 +8,7 @@ import json
 from itertools import groupby
 
 from .workspace_charts import CHART_STYLE, SERIES
+from .workspace_judge_settings import judge_name as _judge_name
 
 GROUP_FIELDS = ("model", "evidence_class", "condition_id", "modality", "framework", "corpus", "judge_id")
 
@@ -19,13 +20,6 @@ def judgment_groups(rows):
 def _label(row):
     return str(row["label"] if row["status"] == "valid" else {
         "missing": "Missing output", "invalid": "Invalid verdict"}.get(row["status"], row["status"]))
-
-
-def _judge_name(identity):
-    if identity.startswith("local-cascade-"):
-        return "Local judge"
-    name, _, suffix = identity.rpartition(":")
-    return name if len(suffix) == 24 and all(c in "0123456789abcdef" for c in suffix) else identity
 
 
 def _segments(group):

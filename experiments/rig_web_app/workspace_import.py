@@ -413,4 +413,8 @@ def local_run_rows(source: dict, selections: dict[str, dict]) -> dict:
         judgments.append(dict(response_id=run_id+":"+attempt_id, judge_id=actual_judge,
             status="missing" if missing else "valid", label=None if missing else row["label"],
             source_ref=reference))
+    from .workspace_judge_settings import local_settings
+    for row in judgments:
+        row['judge_settings'] = local_settings(run=run, revision=(
+            completion['judging_revision']['expected_commit'] if row['judge_id'] != judge_id else None))
     return dict(assignments=assignments, responses=outputs, judgments=judgments)
