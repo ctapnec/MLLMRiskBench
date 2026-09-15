@@ -153,9 +153,11 @@ prepared inputs and budget; an initialized collection resumes its saved state.
 ## Optional step-by-step campaign guidance
 
 In Build, check **Guide me through this campaign** beneath the campaign name.
-The modal opens immediately and offers route choices, input selection, settings,
-preparation, execution, judging and results guidance. Links open the relevant
-pages or builder tabs. Back, Next and the step buttons let you browse without
+The modal opens immediately and covers route choices, runtimes, input selection,
+settings, preparation, execution, judging, results, human review, SVM analysis
+and recovery. It also links costs and exports and explains special attacker
+preparation. Links open the relevant pages or builder tabs. Back, Next and
+**Browse all 11 topics** let you browse without
 altering the pipeline. Close or Escape returns to your work.
 
 Save the campaign to retain this preference. **Campaign guide** is available
@@ -169,6 +171,13 @@ and save to disable it. Single runs do not use campaign guidance.
 The guide performs no preparation, inference, judging, recovery or paid action.
 You still use the normal review and explicit start controls. Existing campaigns
 remain unguided unless you enable and save the option.
+
+Compare loads dependent model, generation and judging choices automatically.
+Each refresh and export uses the shared busy overlay and blocks duplicate
+interactions. Success, HTTP errors, network failures and timeouts release the
+overlay. Failed refreshes hide outdated comparison counts and exports and
+offer manual retry. Empty fields explain missing prerequisites or indexed
+records; they do not instruct you to regenerate answers.
 
 ## Judge the actual saved answers
 

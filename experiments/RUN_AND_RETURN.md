@@ -7142,6 +7142,20 @@ job or review page. Links navigate only; normal review/start controls still
 own all execution. Desktop/mobile browser checks cover keyboard closing,
 focus return, stage navigation, theme layout and read-only links.
 
+The guide covers all six Build sections and the optional human-review and
+response-SVM workflows, as well as costs, exports and recovery. Browse all
+topics is collapsible on narrow screens. Human review links to the actual
+wizard; SVM links to its existing Tools form, not a new training wizard.
+Neither topic starts work or implies that the required evidence exists.
+
+Compare refreshes dependent selectors with a read-only GET to the same page.
+Changing a campaign/model clears only its downstream selections. Empty lists
+explain prerequisites or missing indexed data. Refreshes and dynamically
+loaded exports use the shared busy guard; duplicate interactions are blocked
+and all success/error/timeout paths release it. Old results and exports are
+hidden while a changed selection is unresolved. No comparison query,
+input-matching rule, budget check or judgment semantics changed.
+
 ### Execute the all-output judging selection
 
 In Build, select the Haiku model in the judging controls, then choose

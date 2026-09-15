@@ -22,9 +22,9 @@ CHART_STYLE = """
 """
 
 EXPORT_SCRIPT = """<script>(()=>{
-const root=document.getElementById('campaign-exports');if(!root)return;
-root.addEventListener('click',async event=>{
-const link=event.target.closest('a[data-campaign-export]');if(!link)return;
+if(window.uraCampaignExportsBound)return;window.uraCampaignExportsBound=true;
+document.addEventListener('click',async event=>{
+const link=event.target.closest('a[data-campaign-export]');if(!link||!link.closest('#campaign-exports'))return;
 event.preventDefault();if(window.uraBusy.isBusy())return;
 const end=window.uraBusy.begin('Preparing campaign export...');
 const status=document.getElementById('campaign-export-status');

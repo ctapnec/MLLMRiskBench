@@ -91,11 +91,15 @@ def comparison_csv(rows, campaign, query):
     return stream.getvalue().encode("utf-8-sig")
 
 
-def _select(name, label, values, selected, *, optional=False):
-    options = "<option value=''>" + ("All" if optional else "Choose " + html.escape(label.lower())) + "</option>"
+def _select(name, label, values, selected, *, optional=False, empty_hint=''):
+    empty = not values and not optional
+    prompt = empty_hint if empty and empty_hint else 'All' if optional else 'Choose ' + label.lower()
+    options = "<option value=''>" + html.escape(prompt) + "</option>"
     options += "".join("<option value='" + html.escape(value, quote=True) + "'"
         + (" selected" if value == selected else "") + ">" + html.escape(text) + "</option>" for value, text in values)
-    return "<label class='campaign-field'>" + html.escape(label) + "<select name='" + name + "'>" + options + "</select></label>"
+    hint = "<small class='fieldhint' id='" + name + "-help'>" + html.escape(prompt) + '</small>' if empty else ''
+    return ("<label class='campaign-field'>" + html.escape(label) + "<select name='" + name + "'"
+        + (" disabled aria-describedby='" + name + "-help'" if empty else '') + '>' + options + '</select>' + hint + '</label>')
 
 
 def facet_choices(db, campaign, query):
@@ -117,13 +121,13 @@ def facet_choices(db, campaign, query):
     return values
 
 
-def comparison_page(db, campaign, query):
+def _comparison_body(db, campaign, query):
     base = "/campaigns/" + campaign
     campaigns = db.workspaces()
     if campaigns is None:
         return "<p class='notice red'>Campaign index unavailable.</p>"
     owners = {row["campaign_id"]: row["name"] for row in campaigns}
-    form = "<form method='get' action='" + base + "'><input type='hidden' name='section' value='compare'><div class='cols'>"
+    form = "<form data-comparison-form method='get' action='" + base + "'><input type='hidden' name='section' value='compare'><div class='cols'>"
     for side, owner in (("left", campaign), ("right", query.get("right_campaign", ""))):
         form += "<fieldset class='comparison-condition'><legend>" + side.title() + " condition</legend>"
         if side == "right":
@@ -136,14 +140,18 @@ def comparison_page(db, campaign, query):
         judges = judge_choices(db, owner, model, condition) if owner in owners and model and condition else []
         if models is None or conditions is None or judges is None:
             return "<p class='notice red'>Comparison selection index unavailable.</p>"
-        form += _select(side + "_model", "Model", [(row["model"], row["model"]) for row in models], model)
+        form += _select(side + "_model", "Model", [(row["model"], row["model"]) for row in models], model,
+            empty_hint='Choose a campaign first' if owner not in owners else 'No indexed model results in this campaign')
         form += _select(side + "_condition", "Generation condition", [
             (row["condition_id"], f"Condition {number}: {row['assigned']:,} assignments; output allowance "
                 + ("unknown" if row["output_min"] is None else str(row["output_min"])
                    + (" to " + str(row["output_max"]) if row["output_min"] != row["output_max"] else "")))
-            for number, row in enumerate(conditions, 1)], condition)
+            for number, row in enumerate(conditions, 1)], condition,
+            empty_hint='Choose a model first' if not model else 'No indexed generation conditions for this model')
         form += _select(side + "_judge", "Judging condition", [(row["judge_id"], f"Condition {number}: " + _judge_name(row["judge_id"]))
-            for number, row in enumerate(judges, 1)], query.get(side + "_judge", "")) + "</fieldset>"
+            for number, row in enumerate(judges, 1)], query.get(side + "_judge", ""),
+            empty_hint='Choose a generation condition first' if not condition else
+            'No indexed judgments for this model and generation condition') + "</fieldset>"
     form += "</div>"
     try:
         facets = facet_choices(db, campaign, query)
@@ -157,9 +165,12 @@ def comparison_page(db, campaign, query):
         # another source when the selected model or condition changes.
         values = facets[facet] | ({query[name]} if query.get(name) else set())
         form += _select(name, facet.title(), [(v, v) for v in sorted(values)], query.get(name, ""), optional=True)
-    form += ("</div><p>Choose campaigns and models, then update the choices to select generation and judging conditions. "
+    form += ("</div><p>Choose campaigns and models, then generation and judging conditions. "
+        "Dependent choices load automatically when you change a selection. Empty fields explain their prerequisite. "
         "Each side has one explicit condition; historical and corrected settings are not combined.</p>"
         "<p>Corpus, framework and modality filters apply to both sides and remain in exported counts.</p>"
+        "<p>Missing a judge? Inspect that campaign's Judging tab before rerunning anything. "
+        "Only indexed assessments for the selected generation condition are offered.</p>"
         "<button type='submit'>Update choices / compare</button></form>")
     explanation = ("<p>Read-only comparison of measured, indexed inputs. Matching uses the exact retained input identity "
         "and the same corpus, framework and modality. Multiple assignments for an input are ambiguous and excluded "
@@ -184,7 +195,7 @@ def comparison_page(db, campaign, query):
     export = base + "/figures/comparison.csv?" + urlencode({**saved, "page": page})
     content = ("<p id='campaign-exports'><a class='button ghost' data-campaign-export download='comparison.csv' href='"
         + html.escape(export, quote=True) + "'>Download this page's counts</a></p>"
-        "<p id='campaign-export-status' role='status'></p>" + EXPORT_SCRIPT)
+        "<p id='campaign-export-status' role='status'></p>")
     for group in groups[:12]:
         totals = {key: sum(row["count"] for row in group if row["match_status"] == key)
                   for key in ("matched", "left_only", "right_only", "ambiguous")}
@@ -207,4 +218,45 @@ def comparison_page(db, campaign, query):
         if number >= 0 and (label == "Previous" or len(groups) > 12):
             link = base + "?" + urlencode({"section": "compare", **saved, "page": number})
             content += "<a class='button ghost' href='" + html.escape(link, quote=True) + "'>" + label + "</a> "
-    return form + explanation + content
+    return form + explanation + "<div data-comparison-results>" + content + '</div>'
+
+
+def comparison_page(db, campaign, query):
+    return ("<div id='campaign-comparison'><p data-comparison-feedback role='status' aria-live='polite'></p>"
+        "<div data-comparison-body>" + _comparison_body(db, campaign, query)
+        + '</div></div>' + EXPORT_SCRIPT + COMPARISON_SCRIPT)
+
+
+COMPARISON_SCRIPT = """<script>(()=>{
+const root=document.getElementById('campaign-comparison');if(!root)return;
+const body=root.querySelector('[data-comparison-body]'),feedback=root.querySelector('[data-comparison-feedback]');
+const descendants={right_campaign:['right_model','right_condition','right_judge'],
+left_model:['left_condition','left_judge'],right_model:['right_condition','right_judge'],
+left_condition:['left_judge'],right_condition:['right_judge']};let loading=false;
+async function update(form,changed){if(loading)return;loading=true;
+for(const name of descendants[changed]||[]){const field=form.elements.namedItem(name);
+if(field){field.value='';field.disabled=true;}}
+const url=new URL(form.action,location.href);url.search=new URLSearchParams(new FormData(form)).toString();
+body.querySelectorAll('[data-comparison-results]').forEach(e=>e.hidden=true);
+feedback.textContent='Loading comparison choices...';feedback.className='note';
+const end=window.uraBusy.begin('Loading comparison choices...');
+const abort=new AbortController(),timer=setTimeout(()=>abort.abort(),30000);
+try{const response=await fetch(url,{signal:abort.signal});
+if(!response.ok)throw new Error('Comparison request failed (HTTP '+response.status+'). Use Update choices / compare to retry.');
+const doc=new DOMParser().parseFromString(await response.text(),'text/html');
+const replacement=doc.querySelector('[data-comparison-body]');
+if(!replacement||!replacement.querySelector('[data-comparison-form]')||replacement.querySelector('.notice.red'))
+throw new Error('Comparison choices are unavailable. Use Update choices / compare to retry.');
+body.replaceChildren(...replacement.childNodes);history.replaceState(null,'',url.pathname+url.search+location.hash);
+feedback.textContent='Choices updated. Select the next available field or inspect the comparison below.';
+}catch(error){feedback.className='notice amber';feedback.textContent=error.name==='AbortError'?
+'Comparison request timed out. Use Update choices / compare to retry.':
+error.message+' Check the connection and use Update choices / compare to retry.';
+}finally{clearTimeout(timer);loading=false;end();
+if(changed){const field=body.querySelector('[name="'+changed+'"]');if(field&&!field.disabled)field.focus({preventScroll:true});}}
+}
+root.addEventListener('change',event=>{const form=event.target.closest('[data-comparison-form]');
+if(form&&event.target.tagName==='SELECT')update(form,event.target.name);});
+root.addEventListener('submit',event=>{if(!event.target.matches('[data-comparison-form]'))return;
+event.preventDefault();update(event.target,'');});
+})();</script>"""

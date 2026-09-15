@@ -65,17 +65,17 @@ def test_help_does_not_change_cli_or_projection_and_never_applies_to_single_runs
 
 
 @pytest.mark.parametrize('state,role,expected', [
-    ('running', 'collection', 4), ('failed', 'judging', 4),
-    ('complete', 'collection', 5), ('complete', 'judging', 6),
-    ('complete', 'preparation', 3)])
+    ('running', 'collection', 'Run'), ('failed', 'judging', 'Recovery'),
+    ('complete', 'collection', 'Judge'), ('complete', 'judging', 'Results'),
+    ('complete', 'preparation', 'Prepare')])
 def test_suggestions_use_bounded_activity_not_preparation_field_presence(state, role, expected):
     row = dict(member_kind='job', member_id='job-one', state=state, role=role)
     reads = []
     db = SimpleNamespace(workspace_activity=lambda owner: reads.append(owner) or [row])
-    _, stage, notice, _ = campaign_guide._guidance(SimpleNamespace(db=db),
+    steps, stage, notice, _ = campaign_guide._guidance(SimpleNamespace(db=db),
         dict(campaign_id='a'*32, api='google:flash', retained_source_campaign='b'*32,
              retained_inventory_plan_job='saved-is-not-completed'))
-    assert stage == expected and reads == ['a'*32]
+    assert steps[stage][0] == expected and reads == ['a'*32]
     assert 'whole campaign is finished' in notice if state == 'complete' else state in notice
 
 
@@ -95,9 +95,9 @@ def test_matched_and_local_suggestions_are_distinct_and_links_do_not_execute(app
     assert 'paired comparison limit' in hosted and 'text proxy' in hosted
     links = Links()
     links.feed(local + hosted)
-    assert all(urlsplit(href).path in {'/build', '/config'} for href in links.hrefs)
+    assert all(urlsplit(href).path in {'/build', '/config', '/commands', '/jobs'} for href in links.hrefs)
     assert all(not urlsplit(href).fragment or urlsplit(href).fragment in {
-        'build-general', 'build-pipeline', 'build-evaluation', 'build-execution', 'build-admission'
+        'build-general', 'build-runtimes', 'build-pipeline', 'build-evaluation', 'build-execution', 'build-admission'
     } for href in links.hrefs)
 
 
@@ -106,10 +106,28 @@ def test_matched_and_local_suggestions_are_distinct_and_links_do_not_execute(app
 def test_completed_judging_preparation_is_not_a_completed_judgment(command):
     row = dict(member_kind='job', member_id='prepared', state='complete', role='judging', command=command)
     db = SimpleNamespace(workspace_activity=lambda owner: [row])
-    _, stage, _, _ = campaign_guide._guidance(SimpleNamespace(db=db),
+    steps, stage, _, _ = campaign_guide._guidance(SimpleNamespace(db=db),
         dict(campaign_id='a'*32, api='google:flash', retained_source_campaign='b'*32,
              retained_inventory_plan_job='prepared'))
-    assert stage == 5
+    assert steps[stage][0] == 'Judge'
+
+
+def test_guide_covers_all_build_sections_and_optional_campaign_analysis(app):
+    saved = app._save_build_campaign(draft(campaign_guide='on'))
+    content = campaign_guide.render(app, saved)
+    for panel in ('general', 'runtimes', 'pipeline', 'evaluation', 'admission', 'execution'):
+        assert '#build-' + panel in content
+    for topic in ('Runtimes', 'Human review', 'SVM analysis', 'Recovery'):
+        assert topic in content
+    owner = saved['campaign_id']
+    for href in ('/human-evaluation?campaign_id='+owner,
+        '/commands?cmd=response_svm&campaign_id='+owner,
+        '/commands?cmd=local_model_readiness&campaign_id='+owner):
+        import html
+        assert html.escape(href, quote=True) in content
+        assert app.handle('GET', href)[0] == 200
+    assert 'finished campaigns' in content and 'static text' in content
+    assert 'No target or judge call' in content and not app.db.load_jobs()
 
 
 def _browser_page(browser, app, width=1440):
@@ -140,7 +158,8 @@ def test_browser_checkbox_modal_keyboard_steps_links_and_single_run(browser, app
         assert not page.locator('[data-guide-open]').is_visible()
         page.locator('[name=campaign_guide]').check()
         assert dialog.is_visible()
-        page.locator('[data-guide-step="2"]').click()
+        page.get_by_text('Browse all 11 topics', exact=True).click()
+        page.get_by_role('button', name='4. Settings', exact=True).click()
         assert 'Choose evaluation' in page.locator('.campaign-guide-section:visible').inner_text()
         page.locator('[data-guide-next]').click()
         assert 'Prepare and review' in page.locator('.campaign-guide-section:visible').inner_text()
@@ -150,6 +169,7 @@ def test_browser_checkbox_modal_keyboard_steps_links_and_single_run(browser, app
         assert page.locator('[name=campaign_guide]').evaluate('e=>e===document.activeElement')
         page.locator('[data-guide-open]').click()
         assert dialog.is_visible()
+        page.locator('.campaign-guide-topics').evaluate('e=>e.open=false')
         for theme in ('harbor', 'slate', 'parchment', 'midnight', 'ash'):
             page.evaluate('(theme)=>document.documentElement.dataset.theme=theme', theme)
             assert dialog.evaluate('e=>e.scrollWidth<=e.clientWidth+1')

@@ -25,6 +25,8 @@ STYLE = """
 .campaign-guide-steps { display:flex; flex-wrap:wrap; gap:.4rem; margin:1rem 0; }
 .campaign-guide-steps button { padding:.45rem .65rem; }
 .campaign-guide-steps button[aria-current=step] { background:var(--accent); color:var(--accent-ink); }
+.campaign-guide-topics { margin:.8rem 0; }
+.campaign-guide-topics summary { cursor:pointer; padding:.45rem 0; font-weight:600; }
 .campaign-guide-section[hidden] { display:none; }
 .campaign-guide-section:focus { outline:none; }
 .campaign-guide-links { display:grid; gap:.6rem; margin:1rem 0; }
@@ -43,6 +45,7 @@ def _guidance(app, params):
     base = '/build?campaign_id=' + quote(owner, safe='') if owner else '/build?work_kind=campaign'
     campaign = '/campaigns/' + quote(owner, safe='') if owner else base
     link = lambda tab: base + '#build-' + tab
+    tool = lambda command: '/commands?cmd=' + command + ('&campaign_id=' + owner if owner else '')
     matched = bool(params.get('retained_source_campaign'))
     local = bool(params.get('local'))
     hosted = bool(params.get('api'))
@@ -54,10 +57,20 @@ def _guidance(app, params):
          'use Reuse local inputs for an API comparison in General. Sharing a seed alone does not prove matched inputs.',
          [('Choose models and a fresh workload', link('pipeline')),
           ('Reuse saved local inputs', link('general'))]),
+        ('Runtimes', 'Check model and framework readiness',
+         'For local work, inspect the available GPUs, local services and installed framework environments in '
+         'Runtimes. Reuse working installations and assessed model profiles. A newly downloaded or changed local '
+         'model needs its text/image responsiveness assessment before security testing; an existing valid profile '
+         'does not need repeated assessment. For hosted work, check the configured target and provider credentials '
+         'in Config. Opening these pages does not install models or call a provider.',
+         [('Inspect runtimes and hardware', link('runtimes')), ('Open local-model assessment', tool('local_model_readiness')),
+          ('Inspect hosted configuration', '/config')]),
         ('Inputs', 'Choose a small, interpretable input selection',
          'For fresh inputs, select your corpora and attacks in Pipeline, then set the per-arm limit, '
          'sampling policy and seeds in Execution. Keep text and image counts explicit. For reused inputs, '
-         'select the source campaign and saved runs, then Prepare selected inputs. That preparation makes no generation calls.',
+         'select the source campaign and saved runs, then Prepare selected inputs. That preparation makes no generation calls. '
+         'HarmBench, T3MP3ST, NanoGCG and IDEATOR have additional preparation controls when selected. '
+         'Follow the chosen attacker panel before measured execution; corpus selection alone does not prepare an attack.',
          [('Select corpora and frameworks', link('pipeline')),
           ('Set limits and sampling', link('execution')),
           ('Select saved source runs', link('general'))]),
@@ -100,39 +113,72 @@ def _guidance(app, params):
         ('Results', 'Inspect coverage before comparing rates',
          'Results shows answers, effective generation settings, usage and truncation. Judging shows '
          'answer-specific decisions and coverage. Costs reports recorded attempts and charges, not the balance '
-         'in your provider account. In Compare, the left campaign is fixed to the page you opened. Select '
-         'the right campaign and Update choices / compare to load its models. Select models and update '
-         'again for generation conditions, then select those and update again for judging conditions. Keep diagnostic '
-         'probes and historical replacements separate. Human evaluation is optional setup here, not a claim '
-         'that independent raters have already assessed the outputs.',
+         'in your provider account. In Compare, the left campaign is fixed to the page you opened. Choose '
+         'the right campaign, models, generation conditions and judging conditions; dependent choices load '
+         'automatically. Fields explain missing prerequisites or unavailable indexed records. Keep diagnostic '
+         'probes, missing responses and historical replacements explicit. Export figures and their counts '
+         'from Overview and Judging, and the exact paired counts from Compare. Definition is the editable '
+         'draft, not a replacement for each job\'s recorded execution settings.',
          [(label, campaign + '?section=' + section if owner else link('general'))
-          for label, section in [('Inspect results', 'results'), ('Compare matched inputs', 'compare'), ('Inspect costs', 'costs')]])
+          for label, section in [('Inspect results', 'results'), ('Compare matched inputs', 'compare'),
+              ('Inspect costs', 'costs'), ('Coverage figures and exports', 'overview'), ('Inspect the saved draft', 'definition')]]),
+        ('Human review', 'Optional: arrange independent human evaluation',
+         'Use saved campaign outputs, including finished campaigns. In Human evaluation, choose Saved results, '
+         'name the study, select the rubric and sample, record the actual participation and ethics arrangements, '
+         'then review and prepare the sample. Inspect prompts, images and workload before creating the study. '
+         'Assign qualified independent raters and an adjudicator, and share their individual review links. '
+         'After ratings and adjudication, export and analyze the completed sample. Setup does not create human '
+         'verdicts; automated judging and SVM predictions cannot replace actual raters.',
+         [('Open human-evaluation wizard', '/human-evaluation?campaign_id=' + owner if owner else link('general')),
+          ('Inspect campaign judging coverage', campaign + '?section=judging' if owner else link('evaluation'))]),
+        ('SVM analysis', 'Optional: analyze retained responses with SVMs',
+         'The Retained response classifiers tool supports harmful compliance, over-refusal and judge disagreement. '
+         'To fit a study, export a dataset from the saved campaign database and source candidates, choosing the '
+         'matched hosted-input population and one exact Haiku condition; then evaluate that dataset. Preserve '
+         'input-group splits and report class support and exclusions. To reuse completed work, package its fitted '
+         'models once or predict with an existing trusted package. These modes are separate choices, not four '
+         'mandatory reruns. A few demonstration answers are too small for meaningful training and held-out evaluation. '
+         'The current study supports static text, not arbitrary image or live-attack data. '
+         'Prediction scores are uncalibrated margins, not human verdicts or safety probabilities. No target or judge call is made.',
+         [('Open Retained response classifiers', tool('response_svm')),
+          ('Inspect existing analysis jobs', '/jobs?campaign_id=' + owner if owner else '/jobs')]),
+        ('Recovery', 'Recover the unfinished stage without duplicating work',
+         'Open the original job and read its error and saved outputs. Continue an interrupted prepared collection '
+         'from its offered continuation; do not create a second campaign. For saved-output judging, reuse the '
+         'same preparation and Start or resume action. A transport retry wait is not a model refusal. Keep '
+         'missing, truncated and invalid outcomes visible rather than silently relabelling them. After recovery, '
+         'check the replacement and its own judgments in Results. Refresh only transport evidence actually '
+         'affected by expiration or changed execution conditions, not every runtime or successful probe.',
+         [('Inspect campaign jobs', '/jobs?campaign_id=' + owner if owner else '/jobs'),
+          ('Inspect campaign activity', campaign + '?section=activity' if owner else link('general'))])
     ]
-    stage = 0 if not (local or hosted) else 1 if not (params.get('corpora') or matched) else 2
+    positions = {step[0]: index for index, step in enumerate(steps)}
+    stage = 'Choose a route' if not (local or hosted) else 'Inputs' if not (params.get('corpora') or matched) else 'Settings'
     notice = 'Suggested next step from your saved settings.'
     actions = []
     if owner:
         actions = app.db.workspace_activity(owner) or []
     latest = next((row for row in actions if row['member_kind'] == 'job'), None)
     if latest is not None and latest['state'] in {'queued', 'starting', 'running', 'retry_wait', 'retry_waiting', 'failed', 'aborted', 'interrupted'}:
-        stage = 4
         state = latest['state']
+        stage = 'Recovery' if state in {'failed', 'aborted', 'interrupted'} else 'Run'
         notice = 'The latest console job is recorded as ' + state + '. Open that job before starting or preparing another copy.'
-        steps[4][3].insert(0, ('Open the current job', '/jobs/' + quote(latest['member_id'], safe='')))
+        steps[positions[stage]][3].insert(0, ('Open the current job', '/jobs/' + quote(latest['member_id'], safe='')))
     elif latest is not None and latest['state'] == 'complete':
         command = dict(latest).get('command', '')
         judging_preparation = command in {'retained_native_judge_prepare', 'retained_response_judge_pair',
             'retained_judge_inventory', 'retained_inventory_judge_items'} or (
             latest['member_id'] == params.get('retained_inventory_plan_job'))
-        stage = 5 if judging_preparation else 6 if latest['role'] in {'judging', 'analysis'} else 5 if latest['role'] == 'collection' else 3
+        stage = ('Judge' if judging_preparation else 'SVM analysis' if command == 'response_svm' else
+                 'Results' if latest['role'] in {'judging', 'analysis'} else 'Judge' if latest['role'] == 'collection' else 'Prepare')
         notice = 'The latest console job completed. Check what that job covered; this does not mean the whole campaign is finished.'
     elif matched:
-        stage = 3
+        stage = 'Prepare'
     if latest is not None and latest['role'] == 'collection' and not matched and params.get('mode') == 'attestation_probe':
         notice += ' A diagnostic probe is not a measured result; finish its transport evidence before measured execution.'
         if latest['state'] == 'complete':
-            stage = 3
-    return steps, stage, notice, route
+            stage = 'Prepare'
+    return steps, positions[stage], notice, route
 
 
 def render(app, params, *, builder=False):
@@ -162,7 +208,8 @@ def render(app, params, *, builder=False):
         "<button type='button' class='ghost' data-guide-close aria-label='Close campaign guide'>Close</button></div>"
         "<div class='campaign-guide-content'><p class='note'>" + escape(notice) + '</p>'
         "<p>No calls are made by this guide. Links open controls; you decide what to run.</p>"
-        "<div class='campaign-guide-steps' role='group' aria-label='Guide steps'>" + navigation + '</div>'
+        "<details class='campaign-guide-topics'><summary>Browse all " + str(len(steps)) + " topics</summary>"
+        "<div class='campaign-guide-steps' role='group' aria-label='Guide steps'>" + navigation + '</div></details>'
         "<p class='note' data-guide-progress aria-live='polite'></p>" + sections
         + "<div class='campaign-guide-footer'><button type='button' class='ghost' data-guide-back>Back</button>"
         "<button type='button' data-guide-next>Next</button></div>"

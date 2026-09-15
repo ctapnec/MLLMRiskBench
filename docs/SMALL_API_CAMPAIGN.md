@@ -422,49 +422,51 @@ and charges.
 
 ### 8.2. Select the two models in Compare
 
-The selectors do **not** load dependent options immediately. Each **Update
-choices / compare** below reloads the page with the next set of choices.
+Dependent choices load automatically after each selection. Wait for the
+spinner to finish before making the next choice. **Update choices / compare**
+remains available for retrying a failed refresh or submitting without JavaScript.
 
 1. Open **Compare** inside **your Flash campaign**. Under **Left condition**,
    the campaign name is fixed to the page you opened. There is no left campaign
    selector. If it names the wrong campaign, open the correct campaign first.
-2. Under **Left condition -> Model**, select your saved Flash model. Under
+2. Under **Left condition -> Model**, select your saved Flash model and wait. Under
    **Right condition -> Campaign**, select **Local campaign**, or the local
    demonstration campaign you actually used as the source.
-3. Click **Update choices / compare** below the selectors. Wait for the page
-   to reload. This loads the right campaign's models; you could not select
-   Qwen from that campaign before this update.
+3. Wait for the right campaign's models to load. Its Model selector becomes
+   available without a separate submission.
 4. Under **Right condition -> Model**, select the saved `Qwen3-VL-8B-Instruct`
-   entry. Keep Flash selected on the left. Click **Update choices / compare**
-   again. Both **Generation condition** selectors can now offer their values.
+   entry and wait. Keep Flash selected on the left. Both **Generation
+   condition** selectors can now offer their values.
 
 ### 8.3. Select generation conditions, then Haiku conditions
 
 1. Choose **Generation condition** on each side. Use the saved Flash condition
    and the relevant local Qwen condition. The displayed condition numbers are
    local to each list; matching numbers do not establish matching settings.
-2. Click **Update choices / compare**. This loads each **Judging condition**
-   selector for its selected model and generation condition.
+2. Wait after each selection. Its **Judging condition** choices load for the
+   selected model and generation condition.
 3. Choose the corresponding **Haiku** judging condition on both sides, then
-   click **Update choices / compare** again. Do not substitute the local judge
+   wait for the comparison to appear. Do not substitute the local judge
    on one side when intending a Haiku-to-Haiku comparison.
 
 If a model, generation condition or Haiku condition is absent, first inspect
 that campaign's **Results** and **Judging**. Only indexed records are offered.
 An empty selector is not an instruction to regenerate answers or buy judgments
-again. Changing an upstream choice requires another update and may require
-reselecting the downstream conditions.
+again. Unavailable selectors explain what is missing. Changing a campaign or
+model clears only its downstream choices, which you must reselect. A failed
+refresh hides old comparison counts and exports; read the error and retry with
+**Update choices / compare**. The spinner releases on error or timeout.
 
 ### 8.4. Filter and export each comparison
 
 1. For the text comparison, select **Corpus** `xstest_full`, **Framework**
-   `replay` and **Modality** `text`, then click **Update choices / compare**.
+   `replay` and **Modality** `text`, waiting for each automatic refresh.
 2. Read **matched**, **left only**, **right only** and **ambiguous shared inputs**.
    In the outcome table, count jointly valid Haiku assessments separately from
    invalid or missing assessments. Export with **Download this page's counts**.
 3. For images, choose the local image **Generation condition** if it differs
-   from the text condition, update, and reselect its Haiku condition as in 8.3.
-   Change the filters to `vlsbench_release`, `replay`, `image`, then update and
+   from the text condition, wait, and reselect its Haiku condition as in 8.3.
+   Change the filters to `vlsbench_release`, `replay`, `image`, wait and
    export that view separately. Old filter values persist until you change them.
 
 The completed reference has three jointly valid text pairs and three valid
@@ -477,3 +479,22 @@ not evidence that every framework/model combination has been executed. Keep
 new demonstrations separate from the thesis study populations. Broader
 workflow and interpretation guidance is in
 [UI_CAMPAIGN_WALKTHROUGH](UI_CAMPAIGN_WALKTHROUGH.md).
+
+## 9. Optional: independent human evaluation
+
+Open **Human evaluation** for the saved campaign, including a finished one.
+Choose **Saved results** and follow the wizard to select a rubric and sample,
+record actual participation and ethics arrangements, inspect the preview and
+prepare the study. Qualified independent raters use their assigned review
+links; setup alone supplies no ratings. Follow [HUMAN_REVIEW_UI](HUMAN_REVIEW_UI.md)
+for assignment, adjudication and export. No new target generation is required.
+
+## 10. Optional: response-SVM analysis
+
+The campaign guide's **SVM analysis** topic opens **Tools -> Retained response
+classifiers**. Follow [RESPONSE_SVM](RESPONSE_SVM.md) for dataset export,
+grouped evaluation and optional model reuse. The three tasks are harmful
+compliance, over-refusal and judge disagreement. The current study uses static
+text with matched Haiku labels; it is not an image classifier or a substitute
+for human ratings. This small demonstration is too small for meaningful
+training and held-out evaluation. Use a sufficiently supported study population.

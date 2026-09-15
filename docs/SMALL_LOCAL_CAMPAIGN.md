@@ -269,6 +269,24 @@ another model's verdict cannot be copied onto it. Existing Haiku verdicts in
 the completed Flash reference belong to its original local counterparts, not
 to the four answers you just generated here.
 
+## 9. Optional: independent human evaluation
+
+Open **Human evaluation** for this saved campaign, including after completion.
+Choose **Saved results**, then use the wizard for the rubric, sample,
+participation arrangements and preview. Actual independent raters must supply
+the ratings. Follow [HUMAN_REVIEW_UI](HUMAN_REVIEW_UI.md) for assignment,
+adjudication and export; preparing a study is not completed human assessment.
+
+## 10. Optional: response-SVM analysis
+
+The campaign guide's **SVM analysis** topic opens **Tools -> Retained response
+classifiers**. [RESPONSE_SVM](RESPONSE_SVM.md) describes harmful-compliance,
+over-refusal and judge-disagreement models, using supported static-text data
+and matched Haiku labels. These four demonstration answers are insufficient
+for meaningful training and held-out evaluation. Use a larger supported study
+population or reuse an existing fitted package. This does not call a target
+or judge, classify arbitrary images, or replace independent human assessment.
+
 ## If a step fails or is interrupted
 
 ### A job is still active, or failed after saving an answer
