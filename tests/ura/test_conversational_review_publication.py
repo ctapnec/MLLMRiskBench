@@ -148,3 +148,40 @@ def test_review_link_filters_figures_tables_and_keeps_model_selection(saved_revi
     assert status==200
     data=list(csv.DictReader(io.StringIO(body.decode('utf-8-sig'))))
     assert data and {r['judge_id'] for r in data}=={args['judge_id']}
+
+
+def test_approved_sample_progress_is_not_the_whole_inventory(saved_review,monkeypatch):
+    app,owner,args=saved_review
+    publisher.publish(**args)
+    # A scope can be published after the verdicts without changing judging settings
+    # or rereading already-published response files.
+    with sqlite3.connect(args['review_database']) as db:
+        db.execute('CREATE TABLE review_scope(id TEXT PRIMARY KEY,value TEXT)')
+        db.execute('INSERT INTO review_scope VALUES(?,?)',('approved',json.dumps(
+            dict(planned_total=2,selected_review_ids=['R0','R1']))))
+    def no_reopen(refs,root):
+        assert refs==[]
+        return {}
+    monkeypatch.setattr(publisher,'_records',no_reopen)
+    assert publisher.publish(**args)['already_published']==2
+    monkeypatch.setattr(Path,'read_text',lambda *a,**k:pytest.fail('UI must use the index'))
+    settings=indexed_settings(app.db,owner)
+    page=review_coverage_html(app.db,owner,settings,model='local')
+    assert '2 / 2 selected output records reviewed' in page
+    assert 'Selected review complete' in page and '1 outside this review sample, not pending work' in page
+    assert "value='2' max='2'" in page
+    page=review_coverage_html(app.db,owner,settings,model='other')
+    assert '0 / 0 selected output records reviewed' in page
+    assert '1 outside this review sample' in page
+    assert not review_coverage_html(app.db,owner,{},model='local')
+
+
+def test_scope_cannot_omit_already_assessed_outputs(saved_review):
+    app,owner,args=saved_review
+    with sqlite3.connect(args['review_database']) as db:
+        db.execute('CREATE TABLE review_scope(id TEXT PRIMARY KEY,value TEXT)')
+        db.execute('INSERT INTO review_scope VALUES(?,?)',('approved',json.dumps(
+            dict(planned_total=1,selected_review_ids=['R0']))))
+    with pytest.raises(ValueError,match='approved review selection'):
+        publisher.publish(**args)
+    assert not app.db._query('SELECT * FROM campaign_review_selection',())

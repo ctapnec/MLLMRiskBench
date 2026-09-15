@@ -82,6 +82,11 @@ class WorkspaceResultsMixin:
             "judge_id TEXT NOT NULL, settings TEXT NOT NULL, PRIMARY KEY(campaign_id,judge_id))"
         )
         self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS campaign_review_selection (campaign_id TEXT NOT NULL, "
+            "judge_id TEXT NOT NULL, response_id TEXT NOT NULL, "
+            "PRIMARY KEY(campaign_id,judge_id,response_id))"
+        )
+        self._conn.execute(
             "CREATE TABLE IF NOT EXISTS campaign_recoveries (campaign_id TEXT NOT NULL, "
             "predecessor TEXT NOT NULL, successor TEXT NOT NULL, reason TEXT NOT NULL, evidence_ref TEXT NOT NULL, "
             "PRIMARY KEY(campaign_id,successor))"

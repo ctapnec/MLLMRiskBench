@@ -26,6 +26,16 @@ def publish(*, review_database, console_database, results_root, output_dir, judg
         saved=[dict(r) for r in review.execute(
             'SELECT q.id,q.record,p.value presentation,a.value assessment,a.reviewed_at '
             'FROM assessments a JOIN queue q ON q.id=a.id JOIN presentations p ON p.id=q.id ORDER BY q.id')]
+        selection=None
+        if review.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='review_scope'").fetchone():
+            scope=json.loads(review.execute("SELECT value FROM review_scope WHERE id='approved'").fetchone()[0])
+            ids=set(scope['selected_review_ids'])
+            if len(ids)!=scope['planned_total'] or not {r['id'] for r in saved}<=ids:
+                raise ValueError('Saved assessments do not match the approved review selection')
+            selection=[json.loads(r['record']) for r in review.execute(
+                'SELECT record FROM queue WHERE id IN ('+','.join('?' for _ in ids)+')',sorted(ids))]
+            if len(selection)!=len(ids):
+                raise ValueError('Approved review selection is incomplete')
     finally:
         review.close()
     settings=dict(display_name=display_name,assessment_method='conversation_based_ai_review',
@@ -110,6 +120,25 @@ def publish(*, review_database, console_database, results_root, output_dir, judg
             groups[campaign].append(indexed)
         for campaign,judgments in groups.items():
             db.publish_workspace_results(campaign,assignments=[],responses=[],judgments=judgments)
+        if selection is not None:
+            selected=defaultdict(set)
+            for row in selection:
+                selected[row['campaign_id']].add(row['response_id'])
+            with db._lock,db._conn:
+                for campaign,identities in selected.items():
+                    existing={r[0] for r in db._conn.execute('SELECT response_id FROM campaign_review_selection '
+                        'WHERE campaign_id=? AND judge_id=?',(campaign,judge_id))}
+                    if existing and existing!=identities:
+                        raise ValueError('Published review selection changed; use a separate review series')
+                    for response in identities:
+                        current=db._conn.execute('SELECT 1 FROM campaign_responses r JOIN campaign_assignments a '
+                            'ON a.campaign_id=r.campaign_id AND a.assignment_id=r.assignment_id '
+                            "WHERE r.campaign_id=? AND r.response_id=? AND r.outcome='usable' AND a.evidence_class='measured'",
+                            (campaign,response)).fetchone()
+                        if not current:
+                            raise ValueError('Selected review output is not an indexed measured usable response')
+                        db._conn.execute('INSERT OR IGNORE INTO campaign_review_selection VALUES(?,?,?)',
+                            (campaign,judge_id,response))
         return dict(published=len(prepared),already_published=unchanged,campaigns=len(groups),judge_api_calls=0)
     finally:
         db.close()

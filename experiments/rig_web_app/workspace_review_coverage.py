@@ -24,12 +24,27 @@ def review_coverage_html(db, campaign, settings, *, model='', condition=''):
             continue
         available,reviewed,labelled=(int(rows[0][key]) for key in ('available','reviewed','labelled'))
         pending=available-reviewed
+        scoped=db._query('SELECT 1 FROM campaign_review_selection WHERE campaign_id=? AND judge_id=? LIMIT 1',
+            (campaign,identity))
+        maximum=available
+        heading=f'{reviewed:,} / {available:,} available output records reviewed'
+        detail=f'{pending:,} unreviewed.'
+        if scoped:
+            sample=db._query('SELECT COUNT(*) planned FROM campaign_review_selection s JOIN campaign_responses r '
+                'ON r.campaign_id=s.campaign_id AND r.response_id=s.response_id JOIN campaign_assignments a '
+                'ON a.campaign_id=r.campaign_id AND a.assignment_id=r.assignment_id WHERE s.campaign_id=? '
+                "AND s.judge_id=? AND (?='' OR a.model=?) AND (?='' OR r.condition_id=?)",
+                (campaign,identity,model,model,condition,condition))
+            maximum=int(sample[0]['planned'])
+            heading=f'{reviewed:,} / {maximum:,} selected output records reviewed'
+            detail=(('Selected review complete. ' if reviewed==maximum else f'{maximum-reviewed:,} selected records pending. ')
+                +f'{available:,} available output records; {available-maximum:,} outside this review sample, not pending work.')
         label=html.escape(judge_name(identity,metadata))
         link='/campaigns/'+campaign+'?'+urlencode(dict(section='judging',model=model,condition=condition,judge=identity))
         cards.append("<section class='card' data-ai-review-coverage style='margin:1rem 0'>"
-            +f"<h3>{label}</h3><p><strong>{reviewed:,} / {available:,} available output records reviewed</strong>; "
-            +f"{pending:,} unreviewed. {labelled:,} valid labels; {reviewed-labelled:,} reviewed but not scored.</p>"
-            +f"<progress aria-label='Saved AI review coverage' value='{reviewed}' max='{max(1,available)}'></progress>"
+            +f"<h3>{label}</h3><p><strong>{heading}</strong>; "
+            +f"{detail} {labelled:,} valid labels; {reviewed-labelled:,} reviewed but not scored.</p>"
+            +f"<progress aria-label='Saved AI review coverage' value='{reviewed}' max='{max(1,maximum)}'></progress>"
             +"<p>Conversation-based AI evaluation, not human assessment. Coverage is for indexed measured, "
             "usable outputs in this selection; historical conditions remain separate. Missing answers, "
             "provider-policy outcomes and unstarted assignments are not response-safety labels. "

@@ -122,8 +122,25 @@ from a running shell or the number of queued rows.
 The operator's display name for this separate series is **Frontier LLM (Astra)**.
 Its provenance must state conversation-based AI review, not human evaluation or
 a paid API judging run. The name does not establish a verified runtime snapshot.
-Completed verdicts and coverage should be available in campaign analysis and
-charts, with pending and inapplicable outputs distinguished from valid labels.
+All 256 selected records have now been reviewed: 128 per campaign, comprising
+88 text and 40 image records each. The review produced 190 common safety labels,
+15 source-task assessments, 27 non-evaluable setup turns and 24 uncertain or
+uninterpretable responses. No additional target or paid judge calls were made.
+Four model identities were inadvertently exposed during media lookup before
+their assessments; their caveats record this masking exception. Existing judge
+labels were not inspected until all initial assessments were saved.
+
+The exact-response comparison retains 172 decided local-cascade pairs and 161
+Haiku pairs. Its principal comparison uses the same 150 outputs for both: exact
+four-category agreement with the conversation review is 121/150 for the local
+cascade and 80/150 for Haiku; violation-versus-other agreement is 137/150 and
+103/150 respectively. These are descriptive agreement figures, not accuracy
+against human ground truth. Local scoring conditions remain identifiable in
+the exported pairs. The seven personal human ratings are not pooled with them.
+The synthesis directory contains the assessment table, exact-response pairs,
+condition-specific summaries and a figure; the review database retains the
+complete rationales and media links. Review scope is complete, not 256 judgments
+extrapolated to the entire inventory.
 
 ### Publication and UI inspection
 
@@ -142,9 +159,14 @@ Open the saved campaign's **Judging** tab to see the additional series and its
 reviewed/unreviewed coverage. Click **Show this evaluator's charts** in its card
 to restrict the charts, paginated table and exports to this series; **Show all
 evaluators** restores the full view. Model and generation-condition filters also scope
-the coverage card. Its denominator is the current indexed measured, usable
-output records in that selection, not unique questions or a safety-success
-rate. Historic conditions remain distinct. Not-scored setup or unsupported
+the coverage card. When an approved review scope is supplied, its primary
+denominator is the selected output records in that campaign/model/condition.
+The full indexed usable-output count is secondary; records outside the selected
+sample are not pending work. Without a declared sample the card reports full
+inventory coverage. Neither denominator is a safety-success rate. Publication
+indexes the selection separately from immutable judging settings and can add
+this coverage metadata without reopening previously published response files.
+Historic conditions remain distinct. Not-scored setup or unsupported
 records are retained but excluded from valid-label comparisons. The existing
 judgment figure/table exports and Compare judge selectors use the new series;
 the existing local and Haiku records remain intact. The exact artifact retains
