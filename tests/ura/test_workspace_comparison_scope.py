@@ -16,8 +16,9 @@ class Selects(HTMLParser):
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
         if tag == 'select':
-            self.name = attrs['name']
-            self.values[self.name] = []
+            self.name = attrs.get('name')
+            if self.name:
+                self.values[self.name] = []
         elif tag == 'option' and self.name:
             value = attrs.get('value', '')
             if value:
