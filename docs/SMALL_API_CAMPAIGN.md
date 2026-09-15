@@ -307,24 +307,106 @@ or source preparation to recover this failure.
 
 ## 7. Apply Haiku to each new eligible answer
 
-1. Return to **Configure in Build -> General**. Under **Same-input output
-   coverage**, leave **input limit 0** and **seed 0**. Here, zero means all inputs
-   in this small hosted selection, not the entire historical local campaign.
-2. Click **Prepare all-output coverage**. Wait for completion, then return.
-   The reference found seven measured Flash answers and seven matching saved
-   Qwen answers. The diagnostic answers are outside this common judging subset.
-3. Click **Prepare all-output judging funding**, wait, then **Review all-output
-   judging funding**. Existing judgments on identical saved local answers do
-   not need new funding or execution. New Flash answers need their own verdicts.
-4. Select **Haiku** `anthropic:claude-haiku-4-5-20251001` in this judging panel.
-   Click **Prepare all-output Haiku judging** and wait for completion.
-5. Click **Review all-output Haiku judging**. Check which outputs are new,
-   already judged or unfunded and the Anthropic cost limit. Then click **Start
-   or resume all-output Haiku judging**. **This spends Anthropic credits.**
-6. The completed reference executed seven new Flash assessments for **$0.007470**
-   recorded cost. Six were valid and one had an invalid verdict format. All
-   seven matching Qwen answers already had Haiku verdicts. A new run may differ;
-   invalid results remain visible and are not silently changed into labels.
+Use this section after sections 5-6 of **route 2a**. You need the saved Flash
+collection and its completed **Saved judging preparation**. Each new answer
+needs its own verdict; a Qwen verdict cannot be copied onto a Flash answer.
+
+The sequence is **check coverage -> check funding -> prepare Haiku -> start
+judging -> inspect verdicts**. Only the explicit start in section 7.4 buys
+judgments. Preparation may contact the provider's token-count endpoint, but
+does not generate answers or verdicts.
+
+After each preparation job completes, return through **Campaigns -> your
+campaign -> Configure in Build -> General**. After a review, use **Return to
+Build**. Always reopen the same saved campaign.
+
+### 7.1. Check which saved answers will be included
+
+1. In **Judge retained outputs locally**, keep the completed **Saved judging
+   preparation** from section 6 selected.
+2. Find **Same-input output coverage**. Set **Input limit (0 = all hosted
+   inputs)** to **0** and **Input selection seed** to **0**. Zero includes all
+   inputs in this small hosted selection, not the entire Local campaign.
+3. Click **Prepare all-output coverage**. Wait for completion and return to Build.
+4. Click **Review all-output coverage**. Check the counts for each local and
+   hosted model, missing response text and inputs without a local record.
+   Coverage is not proof that an answer has already been judged.
+5. Click **Return to Build**.
+
+### 7.2. Check which answers have judging funds
+
+1. In **Same-input output coverage**, click **Prepare all-output judging funding**.
+   Wait for completion and return to Build.
+2. Click **Review all-output judging funding**. Read the four categories:
+
+   | Category | What it means for this step |
+   | --- | --- |
+   | Funded and not yet started | These answers can proceed to Haiku preparation. |
+   | Owned by existing judging executions | Check the original execution. Ownership alone does not mean a valid verdict exists. |
+   | No matching funding in this selection | This preparation will not buy verdicts for these answers. Check any existing judgments separately. |
+   | Missing response text | These outputs remain in coverage but cannot receive a text-based verdict. |
+
+3. Click **Return to Build**. This review checks the collection's existing
+   judging allocation; it does not allocate more money or start calls.
+
+### 7.3. Select Haiku and prepare its requests
+
+1. Scroll to **Haiku comparison of saved outputs**, below **Same-input output
+   coverage**. In **Haiku judge**, select `anthropic:claude-haiku-4-5-20251001`.
+2. Return to **Same-input output coverage** and click **Prepare all-output
+   Haiku judging**. Wait for completion and return to Build.
+3. Click **Review all-output Haiku judging**. Check the pending answer count,
+   first-attempt cost estimate and any requests needing a funding review.
+   The settings are **512 output tokens per assessment**, **0 answer retries**
+   and **up to 3 HTTP-error retries**.
+
+Use only the **Haiku judge** selector from the comparison panel for this flow.
+Its **Maximum matched comparisons**, **Selection seed**, **Judging ceiling
+(USD)** and **Prepare matched Haiku selection** belong to a separate paired
+selection. They do not change this all-output selection or its existing funding.
+
+Haiku judges the saved prompt text and each answer. For images, this flow uses
+the retained text proxy, not the image pixels; keep that limitation in the
+comparison's interpretation.
+
+### 7.4. Start the paid judging
+
+1. On the review page, click **Start or resume all-output Haiku judging**.
+   **This spends Anthropic credits.** It does not regenerate Flash or Qwen answers.
+2. Follow the opened job until it finishes. Do not start another copy while it
+   is queued, running or waiting to retry a transport error.
+
+If there is **no start button**, read the review's explanation. Either requests
+need a funding review or no unstarted funded answers remain. Neither condition
+proves that every saved answer already has a valid verdict.
+
+### 7.5. Inspect the verdicts and costs
+
+1. Open your campaign's **Judging** tab. Check valid, invalid and missing
+   assessments separately. Inspect **Costs** for the recorded Anthropic usage.
+2. For matching local answers, inspect the source **Local campaign** as well.
+   Reuse a verdict only for the identical saved answer and judging condition.
+3. Continue to [section 8](#8-examine-and-compare-your-results) for the paired
+   comparison and exports.
+
+### If preparation or judging was interrupted
+
+- If a preparation is still active, open its existing job and wait. If it failed,
+  read that job's error before retrying the affected preparation.
+- If judging stopped after starting, reopen **Review all-output Haiku judging**
+  for the same preparation and use **Start or resume all-output Haiku judging**.
+  Completed judgments are retained without another paid call.
+- If funding review assigns an answer to an earlier judging execution, inspect
+  or resume that original execution. Do not create another selection to charge
+  for it again. Invalid verdicts remain recorded; they are not automatically retried.
+
+### Reference result, not a required count
+
+The completed demonstration included seven measured Flash answers and seven
+matching saved Qwen answers. Its diagnostic answers were outside this common
+judging subset. Haiku assessed the seven new Flash answers for **$0.007470**:
+six verdicts were valid and one had an invalid format. The seven Qwen answers
+already had Haiku verdicts. Your counts and costs depend on your own selection.
 
 ## 8. Examine and compare your results
 
