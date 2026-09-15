@@ -34,6 +34,9 @@ def indexed_settings(db, campaign):
 
 
 def judge_name(identity, settings=None):
+    display = (settings or {}).get('display_name')
+    if isinstance(display, str) and display.strip():
+        return display
     if not identity.startswith('local-cascade-'):
         name, _, suffix = identity.rpartition(':')
         return name if len(suffix) == 24 and all(c in '0123456789abcdef' for c in suffix) else identity
@@ -54,6 +57,10 @@ def settings_html(identity, settings, *, side):
     """Always-visible description after selection; technical provenance stays folded."""
     label = judge_name(identity, settings)
     text = '<p>' + html.escape(label) + '.</p>'
+    if (settings or {}).get('assessment_method') == 'conversation_based_ai_review':
+        text += ('<p>Conversation-based AI assessment, not human evaluation or a fixed API judge. '
+                 'The display name does not establish a verified runtime snapshot. '
+                 'Coverage may be incomplete; only saved assessments are indexed.</p>')
     if identity.startswith('local-cascade-'):
         stages = (settings or {}).get('stages', [])
         if stages and all(stage.get('name') == 'rules' for stage in stages):

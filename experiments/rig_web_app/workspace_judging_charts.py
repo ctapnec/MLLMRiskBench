@@ -17,12 +17,14 @@ def judgment_groups(rows):
     return [list(values) for _key, values in groupby(rows, key=lambda row: tuple(row[key] for key in GROUP_FIELDS))]
 
 
-def _label(row):
+def _label(row, settings=None):
+    if row['status'] == 'invalid' and (settings or {}).get('assessment_method') == 'conversation_based_ai_review':
+        return 'Not scored'
     return str(row["label"] if row["status"] == "valid" else {
         "missing": "Missing output", "invalid": "Invalid verdict"}.get(row["status"], row["status"]))
 
 
-def _segments(group):
+def _segments(group, settings=None):
     if any(type(row["count"]) is not int or row["count"] <= 0 for row in group):
         raise ValueError("Judgment counts must be positive integers")
     total = sum(row["count"] for row in group)
@@ -32,16 +34,17 @@ def _segments(group):
     for row in group:
         width = 100 * row["count"] / total
         color = colors.get(str(row["label"]), SERIES[3]) if row["status"] == "valid" else SERIES[4]
-        result.append((row, _label(row), start, width, color))
+        result.append((row, _label(row, settings), start, width, color))
         start += width
     return total, result
 
 
-def judgment_breakdown_html(rows):
+def judgment_breakdown_html(rows, *, settings=None):
     blocks = []
     for group in judgment_groups(rows):
         first = group[0]
-        total, segments = _segments(group)
+        judge_settings = (settings or {}).get(first['judge_id'])
+        total, segments = _segments(group, judge_settings)
         description = " / ".join(str(first[key]) for key in ("model", "corpus", "framework", "modality", "evidence_class"))
         marks = "".join(
             f"<rect x='{start:.5f}' width='{width:.5f}' height='8' style='fill:{color}' "
@@ -49,7 +52,7 @@ def judgment_breakdown_html(rows):
             f"<title>{html.escape(label)}: {row['count']}/{total}</title></rect>"
             for row, label, start, width, color in segments)
         counts = "; ".join(f"{label}: {row['count']:,}/{total:,}" for row, label, *_rest in segments)
-        judge = _judge_name(first["judge_id"])
+        judge = _judge_name(first["judge_id"], judge_settings)
         blocks.append(
             "<figure class='card' style='margin:1rem 0;overflow-wrap:anywhere'>"
             f"<figcaption>{html.escape(description)}</figcaption><p>{html.escape(judge)}; {total:,} retained assessments</p>"
@@ -73,18 +76,19 @@ def judgment_counts_csv(rows):
     return stream.getvalue().encode("utf-8-sig")
 
 
-def judgment_breakdown_svg(rows, *, scope):
+def judgment_breakdown_svg(rows, *, scope, settings=None):
     groups = judgment_groups(rows)
     height = 80 + 120 * len(groups)
     marks = []
     for index, group in enumerate(groups):
         first = group[0]
-        total, segments = _segments(group)
+        judge_settings = (settings or {}).get(first['judge_id'])
+        total, segments = _segments(group, judge_settings)
         y = 36 + index * 120
         title = " / ".join(str(first[key]) for key in ("model", "corpus", "modality"))
         display = title if len(title) <= 95 else title[:92] + "..."
         marks.append(f"<text x='24' y='{y}'>{html.escape(display)}</text>")
-        detail = f"Condition {index + 1}; {_judge_name(first['judge_id'])}; {first['framework']}; {first['evidence_class']}; n={total:,}"
+        detail = f"Condition {index + 1}; {_judge_name(first['judge_id'], judge_settings)}; {first['framework']}; {first['evidence_class']}; n={total:,}"
         marks.append(f"<text x='24' y='{y + 21}'>{html.escape(detail)}</text>")
         for row, label, start, width, color in segments:
             marks.append(f"<rect x='{24 + 8.5 * start:.5f}' y='{y + 31}' width='{8.5 * width:.5f}' height='18' "

@@ -10,6 +10,8 @@ from urllib.parse import quote
 from .ui import _page
 from .workspace_charts import coverage_html, coverage_svg, quality_svg, model_counts_csv, EXPORT_SCRIPT
 from .workspace_judging_charts import judgment_groups, judgment_breakdown_html, judgment_counts_csv, judgment_breakdown_svg
+from .workspace_judge_settings import indexed_settings, judge_name
+from .workspace_review_coverage import review_coverage_html
 
 
 class WorkspacePagesMixin:
@@ -197,7 +199,8 @@ class WorkspacePagesMixin:
                 return 404, "text/plain; charset=utf-8", b"No indexed judgments for this page"
             if name == "judgments.csv":
                 return 200, "text/csv; charset=utf-8", judgment_counts_csv(rows)
-            figure = judgment_breakdown_svg(rows, scope=f"Page {page + 1}. Retained assessment counts, not pooled security rates.")
+            figure = judgment_breakdown_svg(rows, scope=f"Page {page + 1}. Retained assessment counts, not pooled security rates.",
+                settings=indexed_settings(self.db,campaign_id))
             from .ui import _STYLE  # noqa: PLC0415
             figure = figure.replace("<style>", "<style>" + _STYLE.split("* { box-sizing:", 1)[0], 1)
             return 200, "image/svg+xml; charset=utf-8", figure.encode("utf-8")
@@ -433,9 +436,11 @@ class WorkspacePagesMixin:
                 + pagination(len(rows) > 25)
             )
         if section == "judging":
+            settings = indexed_settings(self.db,campaign_id)
+            review_coverage = review_coverage_html(self.db,campaign_id,settings,model=model,condition=condition)
             rows = self.db.workspace_judging_totals(campaign_id, model=model, condition=condition)
             if not rows:
-                return unknown
+                return review_coverage + unknown
             breakdown = self.db.workspace_judgment_breakdown(campaign_id, offset=page * 12, model=model, condition=condition)
             if breakdown is None:
                 return "<p class='notice amber'>Judgment label index unavailable.</p>"
@@ -450,10 +455,10 @@ class WorkspacePagesMixin:
                 "Each bar counts retained assessments, including invalid verdicts and missing-output assessments. "
                 "Pending judgments are not part of these bars. These are label distributions, not pooled security rates.</p>"
                 "<p class='note'>Measured conditions are listed first. Diagnostics remain separate and accessible on later pages.</p>"
-                + exports + judgment_breakdown_html(selected) + pagination(len(groups) > 12)
+                + review_coverage + exports + judgment_breakdown_html(selected,settings=settings) + pagination(len(groups) > 12)
                 + "<details><summary>All indexed judging totals for this selection</summary>" + table(
                 ("Judge condition", "Status", "Verdicts"),
-                [[html.escape(row["judge_id"]), html.escape(row["status"]), str(row["count"])] for row in rows],
+                [[html.escape(judge_name(row['judge_id'],settings.get(row['judge_id']))), html.escape(row["status"]), str(row["count"])] for row in rows],
             ) + "</details>")
         if section == "overview":
             inputs = self.db.workspace_input_totals(campaign_id, offset=page * 25, model=model, condition=condition)

@@ -87,6 +87,35 @@ a paid API judging run. The name does not establish a verified runtime snapshot.
 Completed verdicts and coverage should be available in campaign analysis and
 charts, with pending and inapplicable outputs distinguished from valid labels.
 
+### Publication and UI inspection
+
+`python -m experiments.conversational_review_publish` publishes assessments
+already saved in the review database. It does not generate verdicts or call a
+model. Supply `--review-database`, `--console-database`, `--results-root`,
+`--output-dir`, a separate `--judge-id conversation:<series>` and
+`--display-name "Frontier LLM (Astra)"`. The review database retains the queue,
+presentations and completed assessments described above. Each published artifact
+preserves the original answer, reviewed context, decision and explanation.
+Unchanged published outputs are skipped on continuation. Source text, input and
+media must match the reviewed presentation; publication never attaches a verdict
+by input identity alone or changes the original campaign response.
+
+Open the saved campaign's **Judging** tab to see the additional series and its
+reviewed/unreviewed coverage. Model and generation-condition filters also scope
+the coverage card. Its denominator is the current indexed measured, usable
+output records in that selection, not unique questions or a safety-success
+rate. Historic conditions remain distinct. Not-scored setup or unsupported
+records are retained but excluded from valid-label comparisons. The existing
+judgment figure/table exports and Compare judge selectors use the new series;
+the existing local and Haiku records remain intact. The exact artifact retains
+the explanation and the reason a reviewed record could not be scored.
+
+The series name is a display label, not proof of a fixed model version. Selected
+judging settings identify conversation-based assessment explicitly. Publication
+records no paid judging calls and does not invent a cost for assistant-session
+usage. Scientific conclusions require completed review and the stated coverage;
+the presence of an initial series in the UI does not imply completion.
+
 After this review is complete, the operator will test a small local campaign
 through the web UI. Only after that acceptance should substantial campaign data,
 review records, media, source references, console state and analysis artifacts
