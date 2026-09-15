@@ -104,7 +104,7 @@ def _guidance(app, params):
          'probes and historical replacements separate. Human evaluation is optional setup here, not a claim '
          'that independent raters have already assessed the outputs.',
          [(label, campaign + '?section=' + section if owner else link('general'))
-          for label, section in [('Inspect results', 'results'), ('Compare matched inputs', 'compare'), ('Inspect costs', 'costs')]]
+          for label, section in [('Inspect results', 'results'), ('Compare matched inputs', 'compare'), ('Inspect costs', 'costs')]])
     ]
     stage = 0 if not (local or hosted) else 1 if not (params.get('corpora') or matched) else 2
     notice = 'Suggested next step from the saved draft. It is guidance, not a validation or completion certificate.'
