@@ -1431,6 +1431,10 @@ def test_run_page_required_markers_match_argparse_required_flags(tmp_path: Path)
             for option in action.option_strings
             if option.startswith("--") and action.required
         }
+        # This store_true flag is mandatory in main's post-parse check, not
+        # argparse's action.required. The UI correctly marks it required.
+        if name == "retained_response_judge_pair":
+            real_required.add("--ack-hosted-judge-data-transfer")
         ui_required = {param.flag for param in entry.params if param.required}
         if name in console_required_extra:
             assert real_required <= ui_required, name
