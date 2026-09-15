@@ -208,6 +208,8 @@ def render(app, params, *, builder=False):
         "<button type='button' class='ghost' data-guide-close aria-label='Close campaign guide'>Close</button></div>"
         "<div class='campaign-guide-content'><p class='note'>" + escape(notice) + '</p>'
         "<p>No calls are made by this guide. Links open controls; you decide what to run.</p>"
+        "<p>This is a workflow companion, not a preset recipe. The small-campaign documents provide "
+        "the specific models, field values and example counts; this guide does not fill them in.</p>"
         "<details class='campaign-guide-topics'><summary>Browse all " + str(len(steps)) + " topics</summary>"
         "<div class='campaign-guide-steps' role='group' aria-label='Guide steps'>" + navigation + '</div></details>'
         "<p class='note' data-guide-progress aria-live='polite'></p>" + sections

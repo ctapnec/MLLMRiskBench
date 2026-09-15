@@ -128,6 +128,7 @@ def test_guide_covers_all_build_sections_and_optional_campaign_analysis(app):
         assert app.handle('GET', href)[0] == 200
     assert 'finished campaigns' in content and 'static text' in content
     assert 'No target or judge call' in content and not app.db.load_jobs()
+    assert 'workflow companion, not a preset recipe' in content
 
 
 def _browser_page(browser, app, width=1440):

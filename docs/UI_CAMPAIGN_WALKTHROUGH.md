@@ -160,6 +160,12 @@ preparation. Links open the relevant pages or builder tabs. Back, Next and
 **Browse all 11 topics** let you browse without
 altering the pipeline. Close or Escape returns to your work.
 
+The guide and the SMALL_API_CAMPAIGN / SMALL_LOCAL_CAMPAIGN documents follow
+the same workflow at different levels of detail. The guide explains stages
+and links to controls; the documents supply concrete model selections, field
+values, bounds and reference counts. The guide does not prefill that recipe
+or guarantee its reproduction without those choices.
+
 Save the campaign to retain this preference. **Campaign guide** is available
 again in Build, campaign pages and campaign-owned job/review pages. Automatic
 help appears once per suggested stage in the current browser tab; reopening
