@@ -77,7 +77,8 @@ _STYLE = """
 body { margin:0; font:15px/1.55 system-ui, "Segoe UI", sans-serif;
   background:var(--bg); color:var(--ink); }
 main { max-width:1160px; margin:0 auto; padding:1.4rem 1.2rem 2rem; }
-nav { position:sticky; top:0; z-index:5; background:var(--card);
+body > nav { position:sticky; top:0; z-index:5; }
+nav { background:var(--card);
   border-bottom:1px solid var(--line); padding:.6rem 1.2rem;
   display:flex; gap:.4rem; align-items:center; flex-wrap:wrap; }
 nav .brand { display:flex; gap:.55rem; align-items:center; font-weight:700;
