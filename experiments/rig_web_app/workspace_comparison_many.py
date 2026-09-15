@@ -2,12 +2,19 @@
 from __future__ import annotations
 
 import html
+import re
 from itertools import groupby, islice, product
 from urllib.parse import urlencode
 
 ALL = '*'
 UNJUDGED = '__not_indexed__'
 PAGE_SIZE = 12
+
+
+def model_label(identity):
+    """Readable labels only; stored identities and exported fields stay exact."""
+    match = re.fullmatch(r'(.+)@(?:sha256:)?([0-9a-f]{40}|[0-9a-f]{64})',identity)
+    return match[1]+' (revision '+match[2][:8]+')' if match else identity
 
 
 def normalize(query):
@@ -95,6 +102,7 @@ def export_rows(data):
 
 def render(data, campaign, query):
     from .workspace_comparison import CHOICES, FILTERS, render_groups
+    from .workspace_judging_charts import _judge_name
     escape = html.escape
     page, total = data['page'], data['total']
     start = min(page*PAGE_SIZE+1,total)
@@ -113,17 +121,18 @@ def render(data, campaign, query):
     def label(unit):
         low, high = unit['output_min'],unit['output_max']
         allowance = 'unknown' if low is None else str(low)+((' to '+str(high)) if high!=low else '')
-        return escape(unit['model'])+f"; condition {unit['number']}; output allowance "+allowance
+        return "<span title='"+escape(unit['model'],quote=True)+"'>"+escape(model_label(unit['model']))+'</span>'+f"; condition {unit['number']}; output allowance "+allowance
     for pair in data['pairs']:
         rows=pair['rows']
         matched=sum(r['count'] for r in rows if r['match_status']=='matched')
         valid=sum(r['count'] for r in rows if r['match_status']=='matched' and r['left_status']=='valid' and r['right_status']=='valid')
         content += ("<details class='comparison-pair' data-model-comparison><summary>"
-            +escape(pair['left']['model'])+f" (condition {pair['left']['number']}) versus "
-            +escape(pair['right']['model'])+f" (condition {pair['right']['number']})"
+            +escape(model_label(pair['left']['model']))+f" (condition {pair['left']['number']}) versus "
+            +escape(model_label(pair['right']['model']))+f" (condition {pair['right']['number']})"
             +f" - matched: {matched:,}; jointly valid judgments: {valid:,}</summary>"
             +'<p>Left: '+label(pair['left'])+'</p><p>Right: '+label(pair['right'])+'</p>'
-            +'<p>Judges: '+escape(query['left_judge'])+' / '+escape(query['right_judge'])
+            +'<p>Judges: '+escape(_judge_name(query['left_judge']) if query['left_judge']!=UNJUDGED else 'Not indexed')
+            +' / '+escape(_judge_name(query['right_judge']) if query['right_judge']!=UNJUDGED else 'Not indexed')
             +'. Missing judgments remain Not indexed; another judge is not substituted.</p>')
         content += render_groups(rows) if rows else '<p>No measured inputs in these conditions under the selected filters.</p>'
         content += '</details>'

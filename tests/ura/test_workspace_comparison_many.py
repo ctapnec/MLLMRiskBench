@@ -108,3 +108,16 @@ def test_no_measured_units_remain_explicit(study):  # noqa: F811
     content=many.render(data,left,query)
     assert 'no indexed measured generation conditions for local' in content
     assert 'no indexed measured generation conditions for api' in content
+
+
+def test_readable_labels_preserve_exact_identity_in_data_and_exports(study):  # noqa: F811
+    app,left,right,query=study
+    pair(study,'shared')
+    identity='ollama:example:q4@sha256:'+'a'*64
+    put(app,right,'pinned','shared',model=identity,condition='pin')
+    query=many.normalize(dict(query,right_model='*'))
+    data=many.page_data(app.db,left,query)
+    assert many.model_label(identity)=='ollama:example:q4 (revision aaaaaaaa)'
+    assert many.model_label('model@not-a-revision')=='model@not-a-revision'
+    assert identity in {row['right_model'] for row in many.export_rows(data)}
+    assert "title='"+identity+"'" in many.render(data,left,query)

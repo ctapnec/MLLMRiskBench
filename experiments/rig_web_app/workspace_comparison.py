@@ -145,7 +145,7 @@ def _comparison_body(db, campaign, query):
         judges = many.scope_judges(db, owner, model, condition) if owner in owners and model and condition else []
         if models is None or conditions is None or judges is None:
             return "<p class='notice red'>Comparison selection index unavailable.</p>"
-        model_values = ([(many.ALL,'All models')] if models else []) + [(row['model'],row['model']) for row in models]
+        model_values = ([(many.ALL,'All models')] if models else []) + [(row['model'],many.model_label(row['model'])) for row in models]
         form += _select(side + "_model", "Model", model_values, model,
             empty_hint='Choose a campaign first' if owner not in owners else 'No indexed model results in this campaign')
         if model==many.ALL:
@@ -234,6 +234,9 @@ def render_groups(rows):
         content += (f"<p>Input union: {sum(totals.values()):,}; matched: {totals['matched']:,}; "
             f"left only: {totals['left_only']:,}; right only: {totals['right_only']:,}; ambiguous shared inputs: {totals['ambiguous']:,}.</p>")
         paired = [row for row in group if row["match_status"] == "matched"]
+        if not paired:
+            content += '<p>No shared inputs to pair in this source.</p></section>'
+            continue
         content += "<div class='scroll'><table><thead><tr><th>Left outcome</th><th>Right outcome</th><th>Left assessment</th><th>Right assessment</th><th>Inputs</th></tr></thead><tbody>"
         for row in paired:
             cells = []
