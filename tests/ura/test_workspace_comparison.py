@@ -25,12 +25,13 @@ def study(tmp_path):
 
 def put(app, owner, aid, input_id, *, model='local', condition='lc', corpus='corpus', evidence='measured',
         outcome='usable', label='safe', status='valid', judge='judge', pending=False, truncated=False,
-        modality='text', framework='replay'):
+        modality='text', framework='replay', context_tokens=None, output_allowance=None):
     assignment = dict(assignment_id=aid, model=model, input_id=input_id, condition_id=condition,
         modality=modality, framework=framework, corpus=corpus, response_id=None if pending else 'r'+aid,
         evidence_class=evidence)
     response = dict(response_id='r'+aid, assignment_id=aid, condition_id=condition, outcome=outcome,
-        truncated=truncated, source_ref='responses.jsonl:'+aid)
+        truncated=truncated, source_ref='responses.jsonl:'+aid,
+        context_tokens=context_tokens, output_allowance=output_allowance)
     judgment = dict(response_id='r'+aid, judge_id=judge, status=status, label=label, source_ref='judgments.jsonl:'+aid)
     app.db.publish_workspace_results(owner, assignments=[assignment], responses=[] if pending else [response],
         judgments=[] if pending or status is None else [judgment])

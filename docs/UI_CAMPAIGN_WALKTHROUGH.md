@@ -191,9 +191,18 @@ overlay. Failed refreshes hide outdated comparison counts and exports and
 offer manual retry. Empty fields explain missing prerequisites or indexed
 records; they do not instruct you to regenerate answers.
 
+Generation-condition lists contain only measured assignments for that exact
+campaign and model. Their scope line names both; options show modality, context,
+output allowance and assignment counts. Expand the selected condition for its
+frameworks and corpora. Identical token allowances do not establish identical
+runtime settings. Selecting the same condition again performs no request.
+Changing conditions preserves the selected judge only when that exact judge
+is indexed for the new condition; otherwise an explanation accompanies its reset.
+
 Both Compare Model selectors offer **All models**, supporting one-to-many,
 many-to-one and many-to-many inspection. Every model/generation-setting pair
-remains separate. The page loads at most twelve pairs, with complete source
+remains separate within the selected campaigns. All does not select a newest
+or best answer, pool scores, or start any jobs. The page loads at most twelve pairs, with complete source
 facets inside each expandable result. CSV exports preserve those exact pairs,
 filters and model identities. Missing judgments and models without indexed
 measured conditions remain explicit. Counts across pairs are not independent

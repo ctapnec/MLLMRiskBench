@@ -7172,6 +7172,16 @@ handling; its source facets are complete. HTML and CSV pagination select the
 same pairs, and exported rows identify actual models/settings, not All markers.
 No model files or historical output artifacts are scanned.
 
+Generation-condition selectors use the same measured-evidence scope as Compare
+outcomes, with exact campaign/model ownership and the assignment-selected response.
+Other Results views can still include diagnostic/history conditions. Compare
+names its scope and shows modality/context/output metadata plus expandable
+framework/corpus details. Repeated same-value selection is a client-side no-op.
+On a condition change, the old judge is offered back for server-side validation:
+preserve its exact identity if still available, otherwise clear it with a message.
+Failed refreshes leave dependent choices unavailable and hide stale outcomes;
+the shared busy guard releases and the explicit retry action remains available.
+
 ### Execute the all-output judging selection
 
 In Build, select the Haiku model in the judging controls, then choose

@@ -300,7 +300,8 @@ class WorkspaceResultsMixin:
             (campaign_id, campaign_id),
         )
 
-    def workspace_result_conditions(self, campaign_id: str, *, model: str) -> list[sqlite3.Row] | None:
+    def workspace_result_conditions(self, campaign_id: str, *, model: str,
+                                    measured_only: bool = False) -> list[sqlite3.Row] | None:
         """Settings for one selected model, read only from compact indexed metadata."""
         return self._query(
             "SELECT COALESCE(r.condition_id,a.condition_id) AS condition_id,COUNT(*) AS assigned, "
@@ -309,10 +310,15 @@ class WorkspaceResultsMixin:
             "MIN(json_extract(r.details,'$.output_allowance')) AS output_min, "
             "MAX(json_extract(r.details,'$.output_allowance')) AS output_max, "
             "COUNT(json_extract(r.details,'$.context_tokens')) AS context_known, "
-            "COUNT(json_extract(r.details,'$.output_allowance')) AS output_known "
+            "COUNT(json_extract(r.details,'$.output_allowance')) AS output_known, "
+            "GROUP_CONCAT(DISTINCT a.modality) AS modalities, "
+            "GROUP_CONCAT(DISTINCT a.framework) AS frameworks, "
+            "GROUP_CONCAT(DISTINCT a.corpus) AS corpora "
             "FROM campaign_assignments a LEFT JOIN campaign_responses r "
-            "ON r.campaign_id=a.campaign_id AND r.response_id=a.response_id "
-            "WHERE a.campaign_id=? AND a.model=? GROUP BY COALESCE(r.condition_id,a.condition_id) "
+            "ON r.campaign_id=a.campaign_id AND r.response_id=a.response_id AND r.assignment_id=a.assignment_id "
+            "WHERE a.campaign_id=? AND a.model=? "
+            + ("AND a.evidence_class='measured' " if measured_only else "")
+            + "GROUP BY COALESCE(r.condition_id,a.condition_id) "
             "ORDER BY condition_id", (campaign_id, model),
         )
 

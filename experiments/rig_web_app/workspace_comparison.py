@@ -125,6 +125,26 @@ def facet_choices(db, campaign, query):
     return values
 
 
+def _condition_tokens(row, prefix):
+    low, high = row[prefix + '_min'], row[prefix + '_max']
+    def tokens(value):
+        return 'native maximum' if value == -1 else f'{value:,}'
+    value = 'unknown' if low is None else tokens(low) + ((' to ' + tokens(high)) if high != low else '')
+    if 0 < row[prefix + '_known'] < row['assigned']:
+        value += ' (partly unknown)'
+    return value
+
+
+def _condition_sources(row, key):
+    return ', '.join(sorted((row[key] or '').split(','))) or 'unknown'
+
+
+def _condition_label(row, number):
+    return (f"Condition {number}: {_condition_sources(row, 'modalities')}; "
+        f"context {_condition_tokens(row, 'context')}; output allowance {_condition_tokens(row, 'output')}; "
+        f"{row['assigned']:,} assignments")
+
+
 def _comparison_body(db, campaign, query):
     query = many.normalize(query)
     base = "/campaigns/" + campaign
@@ -141,7 +161,12 @@ def _comparison_body(db, campaign, query):
             form += "<p>" + html.escape(owners[campaign]) + "</p>"
         model, condition = query.get(side + "_model", ""), query.get(side + "_condition", "")
         models = db.workspace_result_models(owner) if owner in owners else []
-        conditions = db.workspace_result_conditions(owner, model=model) if owner in owners and model and model!=many.ALL else []
+        if models is not None and ((model == many.ALL and not models)
+                or (model != many.ALL and model not in {row['model'] for row in models})):
+            model = query[side + '_model'] = ''
+        conditions = db.workspace_result_conditions(owner, model=model, measured_only=True) if owner in owners and model and model!=many.ALL else []
+        if conditions is not None and model != many.ALL and condition not in {row['condition_id'] for row in conditions}:
+            condition = query[side + '_condition'] = ''
         judges = many.scope_judges(db, owner, model, condition) if owner in owners and model and condition else []
         if models is None or conditions is None or judges is None:
             return "<p class='notice red'>Comparison selection index unavailable.</p>"
@@ -149,18 +174,35 @@ def _comparison_body(db, campaign, query):
         form += _select(side + "_model", "Model", model_values, model,
             empty_hint='Choose a campaign first' if owner not in owners else 'No indexed model results in this campaign')
         if model==many.ALL:
-            form += ("<p class='fieldhint'>Generation conditions: all, compared separately.</p>"
+            form += ("<p class='fieldhint' data-comparison-scope='" + side + "'>Only " + html.escape(owners[owner])
+                + ": all indexed models. Generation conditions: all measured conditions, compared separately. "
+                "No latest/best response is chosen and scores are not pooled. Models without measured conditions are identified below.</p>"
                 "<input type='hidden' name='"+side+"_condition' value='*'>")
         else:
             form += _select(side + "_condition", "Generation condition", [
-            (row["condition_id"], f"Condition {number}: {row['assigned']:,} assignments; output allowance "
-                + ("unknown" if row["output_min"] is None else str(row["output_min"])
-                   + (" to " + str(row["output_max"]) if row["output_min"] != row["output_max"] else "")))
+            (row["condition_id"], _condition_label(row, number))
             for number, row in enumerate(conditions, 1)], condition,
             empty_hint='Choose a model first' if not model else 'No indexed generation conditions for this model')
+            if model:
+                form += ("<p class='fieldhint' data-comparison-scope='" + side + "' style='overflow-wrap:anywhere'>Only "
+                    + html.escape(owners[owner]) + ' / ' + html.escape(many.model_label(model))
+                    + f": {len(conditions)} measured generation conditions. Condition numbers are local to this model in this campaign.</p>")
+            selected = next((row for row in conditions if row['condition_id'] == condition), None)
+            if selected is not None:
+                form += ("<details data-condition-details='" + side + "' style='overflow-wrap:anywhere'><summary>Selected condition: settings and inputs</summary><p>"
+                    + html.escape(_condition_label(selected, next(i for i, row in enumerate(conditions, 1) if row['condition_id'] == condition)))
+                    + '</p><p>Frameworks: ' + html.escape(_condition_sources(selected, 'frameworks'))
+                    + '</p><p>Corpora: ' + html.escape(_condition_sources(selected, 'corpora'))
+                    + '</p><p>Similar token allowances do not make conditions identical. Retained runtime and execution settings can differ; '
+                    'these conditions are not merged.</p></details>')
         judge_values = [(row['judge_id'],f'Condition {number}: '+_judge_name(row['judge_id'])) for number,row in enumerate(judges,1)]
         if many.broad(query) and model and condition and not judges:
             judge_values = [(many.UNJUDGED,'No indexed judgments - show coverage only')]
+        if query.get(side + '_judge') not in {value for value, _label in judge_values}:
+            if query.get(side + '_judge') and condition:
+                form += ("<p class='notice amber' data-judge-reset='" + side + "'>The previously selected judge is not indexed "
+                    "for this generation condition. Choose an available judging condition; no other judge was substituted.</p>")
+            query[side + '_judge'] = ''
         form += _select(side + "_judge", "Judging condition", judge_values, query.get(side + "_judge", ""),
             empty_hint='Choose a generation condition first' if not condition else
             'No indexed judgments for this model and generation condition') + "</fieldset>"
@@ -180,10 +222,12 @@ def _comparison_body(db, campaign, query):
     form += ("</div><p>Choose campaigns and models, then generation and judging conditions. "
         "Dependent choices load automatically when you change a selection. Empty fields explain their prerequisite. "
         "All models is available on either side. Their generation conditions are compared separately; "
-        "historical and corrected settings are not combined.</p>"
+        "historical and corrected settings are not combined. One All selection gives one-to-many comparisons; "
+        "All on both sides gives model/condition pairs, twelve per page. Changing these controls starts no jobs.</p>"
         "<p>Corpus, framework and modality filters apply to both sides and remain in exported counts.</p>"
         "<p>Missing a judge? Inspect that campaign's Judging tab before rerunning anything. "
-        "Only indexed assessments for the selected generation condition are offered.</p>"
+        "Judges are offered within the selected campaign/model/condition scope. With All, the selected judge may not "
+        "cover every pair; those assessments stay Not indexed.</p>"
         "<button type='submit'>Update choices / compare</button></form>")
     explanation = ("<p>Read-only comparison of measured, indexed inputs. Matching uses the exact retained input identity "
         "and the same corpus, framework and modality. Multiple assignments for an input are ambiguous and excluded "
@@ -262,10 +306,16 @@ const body=root.querySelector('[data-comparison-body]'),feedback=root.querySelec
 const descendants={right_campaign:['right_model','right_condition','right_judge'],
 left_model:['left_condition','left_judge'],right_model:['right_condition','right_judge'],
 left_condition:['left_judge'],right_condition:['right_judge']};let loading=false;
-async function update(form,changed){if(loading)return;loading=true;
+async function update(form,changed){if(loading)return;
+if(changed&&form.elements.namedItem(changed)?.selectedOptions?.[0]?.defaultSelected)return;
+loading=true;
+const judgeName=changed.endsWith('_condition')?changed.replace('_condition','_judge'):'';
+const retainedJudge=judgeName?form.elements.namedItem(judgeName)?.value:'';
 for(const name of descendants[changed]||[]){const field=form.elements.namedItem(name);
 if(field){field.value='';field.disabled=true;}}
-const url=new URL(form.action,location.href);url.search=new URLSearchParams(new FormData(form)).toString();
+const url=new URL(form.action,location.href),values=new FormData(form);
+if(retainedJudge)values.set(judgeName,retainedJudge);
+url.search=new URLSearchParams(values).toString();
 body.querySelectorAll('[data-comparison-results]').forEach(e=>e.hidden=true);
 feedback.textContent='Loading comparison choices...';feedback.className='note';
 const end=window.uraBusy.begin('Loading comparison choices...');

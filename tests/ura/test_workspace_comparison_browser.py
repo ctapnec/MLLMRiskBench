@@ -9,6 +9,7 @@ expect = pytest.importorskip('playwright.sync_api').expect
 from experiments.rig_web_app import ui
 from test_workspace_comparison import study, pair, put  # noqa: F401
 from test_rig_web_busy_browser import browser  # noqa: F401
+from test_workspace_comparison_scope import scoped_study, expected_conditions  # noqa: F401
 
 
 def open_page(browser, study, width=1440, query=None):
@@ -35,6 +36,78 @@ def ready(page):
     expect(page.locator('[data-comparison-feedback]')).to_have_text(
         'Choices updated. Select the next available field or inspect the comparison below.')
     page.wait_for_function('!window.uraBusy.isBusy()')
+
+
+@pytest.mark.parametrize('width',[1440,390])
+def test_condition_options_follow_model_and_campaign_switches_exactly(browser,study,scoped_study,width):  # noqa: F811
+    app,left,right,other=scoped_study
+    page,_,errors=open_page(browser,study,width,dict(right_campaign=right))
+    def choose(name,value):
+        page.locator('[name='+name+']').select_option(value)
+        ready(page)
+    def conditions(side,owner,model):
+        values=page.locator('select[name='+side+'_condition] option').evaluate_all('(items)=>items.map(e=>e.value).filter(Boolean)')
+        assert set(values)==expected_conditions(owner,model,right)
+        assert model in page.locator('[data-comparison-scope='+side+']').inner_text()
+    try:
+        for side,owner in [('left',left),('right',right)]:
+            for model in ('qwen','gemma','qwen'):
+                choose(side+'_model',model)
+                conditions(side,owner,model)
+                expect(page.locator('[name='+side+'_judge]')).to_be_disabled()
+                choose(side+'_condition',owner+'-'+model+'-image')
+                offered=page.locator('[name='+side+'_judge] option').evaluate_all('(items)=>items.map(e=>e.value).filter(Boolean)')
+                assert offered==[owner+'-'+model+'-image-judge']
+                page.locator('[data-condition-details='+side+'] summary').click()
+                assert 'Corpora: '+owner+'-source' in page.locator('[data-condition-details='+side+']').inner_text()
+                assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+            choose(side+'_model','*')
+            assert 'all measured conditions, compared separately' in page.locator('[data-comparison-scope='+side+']').inner_text()
+            choose(side+'_model','qwen')
+            conditions(side,owner,'qwen')
+        choose('left_condition',left+'-qwen-text')
+        for owner in (other,right):
+            choose('right_campaign',owner)
+            expect(page.locator('[name=right_condition]')).to_be_disabled()
+            expect(page.locator('[name=left_condition]')).to_have_value(left+'-qwen-text')
+            choose('right_model','qwen')
+            conditions('right',owner,'qwen')
+        assert not errors and not app.db.load_jobs()
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize('side',['left','right'])
+def test_condition_changes_preserve_only_the_exact_available_judge(browser,study,side):  # noqa: F811
+    app,left,right,query=study
+    pair(study,'shared')
+    owner,model=(left,'local') if side=='left' else (right,'api')
+    put(app,owner,'next','shared',model=model,condition='next',judge='judge')
+    put(app,owner,'different','shared',model=model,condition='different',judge='different-judge')
+    page,requests,errors=open_page(browser,study,query=query)
+    try:
+        for condition in ('next',query[side+'_condition']):
+            page.locator('[name='+side+'_condition]').select_option(condition)
+            ready(page)
+            expect(page.locator('[name='+side+'_judge]')).to_have_value('judge')
+            assert 'matched: 1' in page.locator('[data-comparison-results]').inner_text()
+            before=len(requests)
+            # Repeated same-value selection must not reload or discard a judge.
+            page.locator('[name='+side+'_condition]').select_option(condition)
+            page.wait_for_timeout(50)
+            assert len(requests)==before
+            expect(page.locator('[name='+side+'_judge]')).to_have_value('judge')
+        page.locator('[name='+side+'_condition]').select_option('different')
+        ready(page)
+        expect(page.locator('[name='+side+'_judge]')).to_have_value('')
+        assert page.locator('[data-judge-reset='+side+']').is_visible()
+        assert not page.locator('[data-comparison-results]').count()
+        page.locator('[name='+side+'_judge]').select_option('different-judge')
+        ready(page)
+        assert 'matched: 1' in page.locator('[data-comparison-results]').inner_text()
+        assert not errors and not app.db.load_jobs()
+    finally:
+        page.close()
 
 
 @pytest.mark.parametrize('width', [1440,390])

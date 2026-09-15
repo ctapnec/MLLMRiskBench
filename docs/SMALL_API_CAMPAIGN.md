@@ -443,6 +443,10 @@ remains available for retrying a failed refresh or submitting without JavaScript
 1. Choose **Generation condition** on each side. Use the saved Flash condition
    and the relevant local Qwen condition. The displayed condition numbers are
    local to each list; matching numbers do not establish matching settings.
+   The scope line names the campaign and model. Each option shows its measured
+   modality, context window, output allowance and assignment count. Open
+   **Selected condition: settings and inputs** to see its frameworks and corpora.
+   Similar token allowances do not mean identical retained execution settings.
 2. Wait after each selection. Its **Judging condition** choices load for the
    selected model and generation condition.
 3. Choose the corresponding **Haiku** judging condition on both sides, then
@@ -453,7 +457,11 @@ If a model, generation condition or Haiku condition is absent, first inspect
 that campaign's **Results** and **Judging**. Only indexed records are offered.
 An empty selector is not an instruction to regenerate answers or buy judgments
 again. Unavailable selectors explain what is missing. Changing a campaign or
-model clears only its downstream choices, which you must reselect. A failed
+model clears only its downstream choices, which you must reselect. Changing a
+generation condition preserves the exact selected judge if it is indexed for
+the new condition. Otherwise it clears that judge with an explanation; it
+never selects a different judge for you. Re-selecting the same condition does
+not reload or reset the judge. A failed
 refresh hides old comparison counts and exports; read the error and retry with
 **Update choices / compare**. The spinner releases on error or timeout.
 
@@ -485,7 +493,10 @@ workflow and interpretation guidance is in
 Either **Model** selector offers **All models**. Use it on the right for your
 Flash model against all local models, on the left for all models in your
 opened campaign against one selected model, or on both sides. Choose a judging
-condition for each side. All generation conditions are kept separate; an
+condition for each side. All is scoped to each side's selected campaign, not
+the entire installation. All measured generation conditions are kept separate;
+no latest/best output is selected and no scores are pooled. Choosing All starts
+no jobs. An
 available judge is never substituted for a missing selected judge.
 
 The view contains up to twelve model/generation-setting pairs per page. Expand
