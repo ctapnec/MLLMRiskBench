@@ -9,9 +9,10 @@ or a rerun of the existing local/Haiku judges. The seven personal evaluations
 reported by the operator remain separate. No human qualification, consent or
 adjudication record is created for the assistant.
 
-The intended scope is the complete measured assignment index of the thesis
-Local campaign and API campaign at the review cutoff. UI demonstrations and
-diagnostic calls are outside this scientific population. Historical generation
+The operator subsequently capped the review at 256 output records, including
+work already saved. The frozen measured assignment index remains the sampling
+frame, not a requirement to review all 57,144 available outputs. UI demonstrations
+and diagnostic calls are outside this population. Historical generation
 conditions and recovery outcomes remain distinguishable. Missing responses,
 provider-policy outcomes and unstarted assignments remain in the inventory;
 an absent answer cannot receive a response-safety judgment.
@@ -69,10 +70,35 @@ keyword rules or copy another judge's verdict as an assistant assessment.
 The thesis may report achieved coverage, disagreements and concrete qualitative
 examples. It must not call this a human audit, independent ground truth or a
 validated replacement for raters. Any interim analysis is explicitly incomplete;
-the full requested review is complete only when every inventory item has either
+the capped review is complete only when every selected item has either
 a content-based assessment or a documented reason it could not be assessed.
+Unselected inventory records remain outside scope, not unfinished promised work.
 No new target generations or paid automated-judge requests are authorized by
 this procedure.
+
+### Approved 256-record scope
+
+The saved scope contains 128 Local and 128 API records: 176 text and 80 image
+outputs from 20 models, 28 corpora and 11 attack/framework routes. The initial
+93 reviewed records are retained as a convenience prefix, including unscored
+setup turns and uncertain outputs. The remaining 163 were selected without
+reading existing judge verdicts: 34 text and 40 image source-input pairs across
+the two campaigns, plus 15 additional API answers for those selected text inputs.
+Selection spreads coverage across corpora, frameworks, models and generation
+conditions, with seeded tie-breaking. Retired RWKV models are not added.
+
+This is a descriptive, coverage-oriented sample, not a probability-proportional
+sample or a basis for unweighted population safety estimates. A shared source
+input does not guarantee identical rendered conversations across attack routes
+or conditions. Exact-response judge comparisons remain the primary comparison.
+The retained file `review-scope-256.json` gives the selection and seed; the review
+database stores the same scope and enforces the cap when assessments are saved.
+
+Complete the selected review, exact-response comparisons, UI publication and
+academic discussion, then close this assessment work. Preserve the seven
+personal evaluations separately and report their limited status. The independent
+two-rater study remains unperformed and a limitation/future study, not something
+the assistant may fabricate or a reason to expand this approved review.
 
 ## Current retained work and later workstation migration
 
