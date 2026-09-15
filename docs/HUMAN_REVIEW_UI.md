@@ -36,6 +36,13 @@ with step-by-step dimension choices, overall decision and confidence.
 resume and **Download personal evaluations** are supported. There are no
 study-arrangement or enrollment fields on this path.
 
+For an item with images, audio or video, view its required media in **Context**,
+then check **I viewed every required asset** on **Review** before final saving.
+If unchecked, the form focuses that box and explains the requirement beside it,
+without submitting an invalid rating or clearing your choices. **Save draft**
+remains available without this confirmation. This applies to personal and
+independent ratings; unavailable media must be deferred rather than guessed.
+
 Personal reviews are explicitly separate from independent study evidence.
 Their one-reviewer progress and CSV retain unfinished items; they cannot enter
 the independent audit export or overwrite automated campaign judgments.

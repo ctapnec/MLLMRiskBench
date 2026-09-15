@@ -588,6 +588,9 @@ credits. Personal evaluations are saved, but are not independent research rating
 6. In **Review**, select **Overall decision** and **Confidence**. Add optional
    notes and, for images, confirm **I viewed every required asset**. Click
    **Save evaluation**. **Save draft** alone does not finish the item.
+   If the asset confirmation is unchecked, the form highlights it and keeps
+   your ratings. View the required media in **Context**, check the box, then
+   click **Save evaluation** again; do not restart the preparation or campaign.
 7. Continue with the next item. **Assigned item** lets you reopen an earlier
    evaluation and edit it. For missing media or an unreadable answer, open
    **Cannot assess this item / category opt-out**, choose the reason, and click
