@@ -338,3 +338,23 @@ def test_condition_rules_work_for_single_and_all_models(browser,study,width,side
         assert not errors and not app.db.load_jobs()
     finally:
         page.close()
+
+
+@pytest.mark.parametrize('identity',[
+    'ollama:organization/model-name:q4@sha256:'+'a'*64,
+    'vllm:organization/'+'long_unbroken_name_'*15])
+def test_unrankable_condition_notice_wraps_realistic_model_identities(browser,study,identity):  # noqa: F811
+    from experiments.rig_web_app.workspace_comparison_many import UNJUDGED, model_label
+    app,left,right,query=study
+    pair(study,'shared')
+    put(app,right,'unknown-context','shared',model=identity,condition='unknown')
+    query=dict(query,right_model='*',right_condition='__max_context__',right_judge=UNJUDGED)
+    page,_,errors=open_page(browser,study,390,query)
+    try:
+        notice=page.locator('[data-comparison-results] .notice.amber')
+        assert model_label(identity) in notice.inner_text()
+        assert identity in notice.get_attribute('title')
+        assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+        assert not errors and not app.db.load_jobs()
+    finally:
+        page.close()

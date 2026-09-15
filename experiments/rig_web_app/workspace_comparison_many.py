@@ -200,7 +200,7 @@ def render(data, campaign, query):
     for side, models in data['absent'].items():
         if models:
             reason = 'no eligible generation conditions for this rule' if ranked(query[side+'_condition']) else 'no indexed measured generation conditions'
-            content += '<p class="notice amber">'+side.title()+': '+reason+' for '+escape(', '.join(models))+'.</p>'
+            content += '<p class="notice amber" title="'+escape(', '.join(models),quote=True)+'">'+side.title()+': '+reason+' for '+escape(', '.join(model_label(model) for model in models))+'.</p>'
     saved = {key:query[key] for key in (*CHOICES,*FILTERS) if query.get(key)}
     if any(pair['rows'] for pair in data['pairs']):
         export='/campaigns/'+campaign+'/figures/comparison.csv?'+urlencode(dict(saved,page=page))
@@ -231,4 +231,4 @@ def render(data, campaign, query):
         if number>=0 and (label=='Previous' or (page+1)*PAGE_SIZE<total):
             url='/campaigns/'+campaign+'?'+urlencode(dict(saved,section='compare',page=number))
             content += "<a class='button ghost' href='"+escape(url,quote=True)+"'>"+label+'</a> '
-    return "<div data-comparison-results>"+content+'</div>'
+    return "<div data-comparison-results style='overflow-wrap:anywhere'>"+content+'</div>'
