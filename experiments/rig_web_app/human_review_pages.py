@@ -1,16 +1,15 @@
-"""Operator study management and a separate blinded reviewer surface."""
+"""Study management and review forms within the shared console layout."""
 from __future__ import annotations
 
 import html
 import json
 import os
 from pathlib import Path
-import re
 import secrets
 from urllib.parse import quote
 
 from .human_review_store import HumanReviewStore, COMMON
-from .ui import _page, _THEME_PICKER
+from .ui import _page
 
 
 def _field(name, label, value="", kind="text", required=True):
@@ -144,10 +143,7 @@ class HumanReviewPagesMixin:
                         result=store.view(token,query['item'])
                     else:
                         personal=reviewer['role']=='personal'
-                        page=_page('Personal evaluation' if personal else 'Independent human evaluation',_REVIEW_STYLE+"<div class='review-stack'><section id='review-intro' class='review-card'></section><p id='review-status' class='review-status' role='status' aria-live='polite'></p><section id='review-body' class='review-card'></section></div>"+_REVIEW_SCRIPT,active='Campaigns' if personal else '')
-                        if not personal:
-                            page=re.sub(rb'<nav>.*?</nav>',("<div class='review-theme-bar'>"+_THEME_PICKER+"</div>").encode(),page,count=1,flags=re.S)
-                            page=re.sub(rb"<footer class='note'>.*?</footer>",b'',page,count=1,flags=re.S)
+                        page=_page('Personal evaluation' if personal else 'Independent human evaluation',_REVIEW_STYLE+"<div class='review-stack'><section id='review-intro' class='review-card'></section><p id='review-status' class='review-status' role='status' aria-live='polite'></p><section id='review-body' class='review-card'></section></div>"+_REVIEW_SCRIPT,active='Campaigns')
                         return 200,'text/html; charset=utf-8',page
                 elif method=='GET' and action=='data': result=store.view(token)
                 elif method=='GET' and action=='media':

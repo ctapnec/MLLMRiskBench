@@ -36,9 +36,11 @@ with step-by-step dimension choices, overall decision and confidence.
 **Save evaluation** records a personal evaluation; drafts, edits, deferral,
 resume and **Download personal evaluations** are supported. There are no
 study-arrangement or enrollment fields on this path.
-The personal evaluation board retains the console's main navigation, active
-Campaigns section and theme control. Only independent reviewer and adjudicator
-links use the restricted, model-label-blinded review layout.
+Every review screen retains the console's main navigation, active Campaigns
+section and theme control, including personal, rater and adjudicator views.
+The item view does not reveal model identities or automated verdicts, but the
+shared console menu is not an access-control or experimental-blinding boundary.
+Independent work is a study procedure, not enforced by removing navigation.
 
 For an item with images, audio or video, view its required media in **Context**,
 then check **I viewed every required asset** on **Review** before final saving.

@@ -69,12 +69,13 @@ def test_finished_campaign_setup_and_independent_rating_wizard(tmp_path, monkeyp
                     assert reviewer.locator('#theme-picker').count()==1
                     reviewer.get_by_role('combobox',name='Colour theme').select_option('ash')
                     assert reviewer.locator('html').get_attribute('data-theme')=='ash'
-                    assert reviewer.locator('nav').count()==0
+                    assert reviewer.locator('body > nav').count()==1
+                    assert reviewer.locator('body > nav a.active').inner_text()=='Campaigns'
                     # Do not return the release function: Playwright invokes function-valued expressions.
                     reviewer.evaluate("() => { window.themeWaitEnd=window.uraBusy.begin('Synthetic wait'); }")
-                    assert reviewer.locator('.review-theme-bar').evaluate('e=>e.inert')
+                    assert reviewer.locator('body > nav').evaluate('e=>e.inert')
                     reviewer.evaluate('window.themeWaitEnd()')
-                    assert not reviewer.locator('.review-theme-bar').evaluate('e=>e.inert')
+                    assert not reviewer.locator('body > nav').evaluate('e=>e.inert')
                     if shots:reviewer.screenshot(path=str(Path(shots)/('consent-mobile.png' if number else 'consent-desktop.png')),full_page=True)
                     reviewer.locator('#review-intro input[type=checkbox]').check()
                     reviewer.get_by_role('button',name='Consent and begin').click()
@@ -108,6 +109,16 @@ def test_finished_campaign_setup_and_independent_rating_wizard(tmp_path, monkeyp
                     assert not reviewer.evaluate('window.uraBusy.isBusy()')
                     context.close()
                 assert store.summary(study)['ready_for_analysis']
+                token=store.enroll(study,'synthetic-adjudicator','adjudicator',qualification())
+                page.goto(base+'/review/'+token)
+                assert page.locator('body > nav a').count()==8
+                assert page.locator('body > nav a.active').inner_text()=='Campaigns'
+                page.locator('#review-intro input[type=checkbox]').check()
+                page.get_by_role('button',name='Consent and begin').click()
+                page.get_by_text('No eligible items currently await your review.',exact=True).wait_for()
+                assert page.locator('body > nav #theme-picker').count()==1
+                page.locator('body > nav').get_by_role('link',name='Campaigns',exact=True).click()
+                page.wait_for_url('**/campaigns')
                 assert len(calls)==1 and not errors
                 assert store.export(study)
             finally:browser.close()
