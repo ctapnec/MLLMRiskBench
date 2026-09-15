@@ -269,23 +269,141 @@ another model's verdict cannot be copied onto it. Existing Haiku verdicts in
 the completed Flash reference belong to its original local counterparts, not
 to the four answers you just generated here.
 
-## 9. Optional: independent human evaluation
+## 9. Human evaluation of your saved local answers
 
-Open **Human evaluation** for this saved campaign, including after completion.
-Choose **Saved results**, then use the wizard for the rubric, sample,
-participation arrangements and preview. Actual independent raters must supply
-the ratings. Follow [HUMAN_REVIEW_UI](HUMAN_REVIEW_UI.md) for assignment,
-adjudication and export; preparing a study is not completed human assessment.
+### 9.1. Review the answers yourself
+
+1. Click **Campaigns -> your local demonstration campaign -> Human evaluation**.
+   Leave **Review saved answers** selected. This path has no ethics, working-time,
+   qualification or reviewer-enrollment fields.
+2. Select **Saved results -> All indexed measured campaign outputs**. Enter a
+   **Review name**, keep **Rubric -> Common safety dimensions**, and set
+   **Source clusters -> 0** for the small indexed example. Zero requests the
+   minimum-coverage sample, not zero answers. Whole clusters stay together.
+3. Check **I am ready to view potentially harmful saved content**, then click
+   **Prepare answers for review** once. The preparation connects existing
+   prompts, images and responses without generating or judging anything.
+4. Follow **Open preparation job** if needed. When it completes, return to
+   **Human evaluation -> Prepared personal reviews -> your review name**.
+   Inspect the output count, then click **Open evaluation form**.
+5. In **Personal evaluation**, choose an **Assigned item**, read the policy,
+   prompt, required assets and saved answer in **Context**, then click **Next**.
+6. Select a rating in **Refusal**, **Harmfulness**, **Convincingness** and
+   **Specificity**, clicking **Next** after each. In **Review**, select
+   **Overall decision** and **Confidence**, add optional notes and confirm
+   **I viewed every required asset** when shown. Click **Save evaluation**.
+7. Continue through the remaining items. To postpone an unreadable or
+   inaccessible item, open **Cannot assess this item / category opt-out**,
+   select its reason and click **Defer / opt out of this item**. Do not guess
+   a judgment for an image you cannot see.
+8. Click **Review progress and export -> Download personal evaluations**.
+   Pending and deferred items remain in that export. Reopen the review under
+   **Human evaluation -> Existing studies**, then **Open evaluation form** to
+   resume or edit your saved personal ratings.
+
+Personal evaluations are labelled as such. They do not overwrite the local or
+Haiku verdicts and do not complete the independent two-rater assessment.
+
+### 9.2. Organize a separate independent study when you have actual raters
+
+1. On the same Human evaluation page, click **Independent two-rater study**.
+2. In **Saved results**, select the indexed outputs and click **Next**. In
+   **Sample**, fill **Study name**, select **Common safety dimensions**, set
+   **Source clusters** and click **Next**.
+3. In **Arrangements**, record the actual ethics determination, participation
+   arrangement, time/withdrawal terms, contact person and reviewer information.
+   **Not decided yet - prepare a sample only** allows inspection, not enrollment.
+4. Click **Next**, check the acknowledgement in **Review**, then **Prepare
+   review sample**. Follow its job, return through **Sample preparations**,
+   inspect the workload and click **Create study and assign reviewers** when
+   the arrangements permit it.
+5. Under **Assign reviewers and issue their links**, enter each person's
+   **Pseudonymous reviewer ID**, **Role**, actual **Independent 20-item
+   qualification evidence reference** and per-dimension scores. Confirm
+   suitability and click **Issue individual review link**. Use **Return to
+   study** and repeat for two distinct independent raters and one adjudicator.
+   The qualification exercise is separate; at least 16/20 per dimension is
+   required. Never invent scores or enter ratings for other people.
+6. Each rater opens their own link, clicks **Consent and begin**, evaluates
+   items through the dimension wizard, and clicks **Submit independent rating**.
+   The adjudicator uses their link for disagreements and clicks **Submit
+   adjudication** after entering final decisions and a rationale.
+7. Reopen the study as operator. Once **Review progress** is complete, click
+   **Export and run human audit analysis** under **Analysis and exports**.
+   Follow its Jobs page; **Download completed ratings** supplies the labels.
+
+[SMALL_API_CAMPAIGN sections 9.2-9.5](SMALL_API_CAMPAIGN.md#92-optional-prepare-an-independent-study-in-the-four-step-wizard)
+spell out every enrollment/rating field; the controls are identical for local
+campaigns. [HUMAN_REVIEW_UI](HUMAN_REVIEW_UI.md) explains the study protocol.
 
 ## 10. Optional: response-SVM analysis
 
-The campaign guide's **SVM analysis** topic opens **Tools -> Retained response
-classifiers**. [RESPONSE_SVM](RESPONSE_SVM.md) describes harmful-compliance,
-over-refusal and judge-disagreement models, using supported static-text data
-and matched Haiku labels. These four demonstration answers are insufficient
-for meaningful training and held-out evaluation. Use a larger supported study
-population or reuse an existing fitted package. This does not call a target
-or judge, classify arbitrary images, or replace independent human assessment.
+These four demonstration answers are insufficient for meaningful SVM training
+and held-out evaluation. SVM work is separate from campaign generation and has
+no dedicated campaign tab. Use the **response_svm** form in Tools. It makes no
+target or judge calls and does not classify images or replace human assessment.
+
+### 10.1. Inspect the completed SVM work without running it again
+
+1. Click **Artifacts** in the top navigation. Browse the results root's
+   `engineering/response-svm-20260913-r-checkpoints/analysis` directory.
+2. Open `result.json` for the completed grouped study and `predictions.json`
+   for its held-out predictions. The three tasks are harmful compliance,
+   over-refusal and judge disagreement. They predict recorded teacher labels,
+   not independently established human truth.
+3. The existing fitted package is at
+   `/mnt/stor/data/ura-work/runs/engineering/response-svm-persistence-20260913/fitted/models.joblib`.
+   Do not rerun training or packaging just to inspect these artifacts.
+
+### 10.2. Apply that package through the UI
+
+1. Click **Tools -> Analysis and native imports -> response_svm**. Its
+   description starts **Retained response classifiers**. Direct link:
+   <http://localhost:8642/commands?cmd=response_svm>.
+2. In this form's **Save under campaign**, select your local campaign. This
+   groups the analysis job; it does not select its input dataset for you.
+3. Check **--predict** only. Uncheck **--export**, **--evaluate** and **--package**.
+4. Supply **--dataset**, a prepared static-text `dataset.jsonl`, and set
+   **--models** to the trusted package path in 10.1. Do not load an arbitrary
+   downloaded joblib file. Choose **--features -> response**.
+5. Set **--out** to a new directory, for example
+   `/mnt/stor/data/ura-work/runs/ui-demos/my-local-svm-predict-01`. Leave the
+   export/training fields blank. Click **Start job** inside this form.
+6. Follow the job until complete, then open `result.json` for counts and
+   `predictions.json` for decisions, uncalibrated scores and non-applicable
+   cases. Scores are not safety probabilities. These derived outputs do not
+   replace campaign judging records.
+
+For a workflow-only demonstration, the already exported study dataset is
+`/mnt/stor/data/ura-work/runs/engineering/response-svm-20260913-r-checkpoints/dataset/dataset.jsonl`.
+Using it demonstrates reuse, not evaluation of the four new local answers and
+not independent held-out accuracy. Name the job accordingly.
+
+### 10.3. Use your new local outputs or fit a new study
+
+The current **--export** mode needs a matching source-candidate file and valid
+Haiku judgments on the selected outputs. Completing the local guide alone
+does not supply those Haiku labels. If you completed the matched hosted
+continuation in section 8, use **Tools -> response_svm -> --export**, set
+**--campaign** to your local demonstration ID, and **--matched-campaign** to
+its hosted counterpart's ID. Copy IDs from their `/campaigns/ID` addresses.
+Use **Add another value** beside **--campaign** if including both populations.
+Do not use the old thesis Local campaign ID as a substitute for your new one.
+
+[SMALL_API_CAMPAIGN 10.2](SMALL_API_CAMPAIGN.md#102-export-the-small-campaigns-eligible-text-answers)
+lists the database, candidates, judge-condition and output fields, including
+the limits of the historical candidates file. A newly selected corpus may need
+its own candidates; there is no automatic arbitrary-corpus exporter in this
+form. Inspect the export's `dispositions` before predicting or fitting.
+
+For a sufficiently supported new study, check only **--evaluate**, supply
+**--dataset**, a fresh **--out**, **--seed -> 0**, **--max-feature-characters ->
+20000** and **--bootstrap -> 1000**, then click **Start job**. Read its support,
+group-split, baseline and held-out metrics in `result.json`. Optional
+**--package** takes that same dataset plus **--study-result** and
+**--study-predictions**, producing a new reusable `models.joblib`; it is not
+required for an ordinary evaluation. See [RESPONSE_SVM](RESPONSE_SVM.md) for
+the scientific protocol, not additional mandatory campaign stages.
 
 ## If a step fails or is interrupted
 

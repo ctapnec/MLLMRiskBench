@@ -179,7 +179,7 @@ def setup_route(app, method, path, data, style):
         if ready:
             with Path(draft['value']['prepared']).open(encoding='utf-8-sig',newline='') as f:rows=list(csv.DictReader(f))
             count=len({r['sample_key'] for r in rows});clusters=len({r.get('cluster_key',r['sample_key']) for r in rows})
-            body+=f"<h2>Check the review workload</h2><p>{clusters:,} source clusters, {count:,} saved outputs. "
+            body+=f"<h2>Check the review workload</h2><p>{clusters:,} source clusters, {count:,} saved outputs, "
             body+=(f"{count:,} personal evaluations. These are not independent two-rater assessments.</p>" if personal else
                 f"{2*count:,} required independent ratings, plus any adjudication.</p>")
             body+="<p>No human ratings have been created by preparation.</p>"

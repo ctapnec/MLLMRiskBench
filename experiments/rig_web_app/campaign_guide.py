@@ -147,7 +147,7 @@ def _guidance(app, params):
           for label, section in [('Inspect results', 'results'), ('Compare matched inputs', 'compare'),
               ('Inspect costs', 'costs'), ('Coverage figures and exports', 'overview'), ('Inspect the saved draft', 'definition')]]),
         ('Human review', 'Evaluate saved answers or arrange independent review',
-         'Open Human evaluation and use Review saved answers for your own evaluation: choose Saved results, '
+         'For active or finished campaigns, open Human evaluation and use Review saved answers for your own evaluation: choose Saved results, '
          'name the review, choose its rubric and source-cluster count, acknowledge sensitive content and click '
          'Prepare answers for review. When preparation finishes, click Open evaluation form. Read the prompt, '
          'images and answer, use Next through the rating dimensions, then Save evaluation. Review progress and '

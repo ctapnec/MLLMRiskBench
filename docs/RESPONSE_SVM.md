@@ -57,19 +57,26 @@ score this baseline but do not determine its predictions or ranking.
 
 ## CLI and UI flow
 
-In **Tools -> Analysis and native imports -> Retained response classifiers**,
-choose **export** first. Supply the campaign SQLite path, retained source
+In **Tools -> Analysis and native imports -> response_svm**, described as
+**Retained response classifiers**, check **--export** first. The four modes
+are separate checkboxes; check exactly one per job. **Save under campaign**
+groups the job but does not fill the input selection fields. Supply the campaign SQLite path, retained source
 candidate JSON/JSON.GZ, one or more campaign IDs, the hosted campaign defining
 the matched input population, and one exact Haiku condition. The fresh output
 directory receives `dataset.jsonl` and an extraction report. Original responses
 are read once per selected file; the command makes no recursive model-store
 scan and never reads provider credentials.
 
-Then choose **evaluate**, select that dataset and a different fresh output
+Then check only **--evaluate**, select that dataset and a different fresh output
 directory. Seed, feature-character allowance, bootstrap draws, held-out model
 prefixes and held-out corpus IDs are configurable. Jobs retains the log and
 analysis artifacts. Export and evaluation are separate reproducible operations,
 not generation jobs. The same CLI is:
+
+For exact clicks, field values and a small export/predict demonstration, see
+[SMALL_API_CAMPAIGN section 10](SMALL_API_CAMPAIGN.md#10-optional-response-svm-analysis).
+Small demonstration datasets are not sufficient for a new grouped training/test
+study. Use **--predict** with a trusted existing package when demonstrating reuse.
 
 ```bash
 python -m experiments.response_svm --export --database /path/console.db \
