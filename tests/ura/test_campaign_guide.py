@@ -1,6 +1,8 @@
 """Guidance is persisted UI help, never a change to experiment semantics."""
 from types import SimpleNamespace
 from urllib.parse import urlsplit
+from pathlib import Path
+import os
 
 import pytest
 
@@ -52,6 +54,9 @@ def test_help_does_not_change_cli_or_projection_and_never_applies_to_single_runs
     assert app._projection_params(params) == app._projection_params(guided)
     command, values, _ = app._compose_from_builder(params)
     other_command, other_values, _ = app._compose_from_builder(guided)
+    # Composition intentionally creates uniquely named configuration snapshots.
+    # Compare their actual payloads, then all the remaining CLI fields exactly.
+    assert Path(values.pop('--source-config')).read_bytes() == Path(other_values.pop('--source-config')).read_bytes()
     assert (command, values) == (other_command, other_values)
     single = app._builder_params(dict(guided, work_kind='run'))
     assert 'campaign_guide' not in single and 'campaign_name' not in single
@@ -137,8 +142,11 @@ def test_browser_checkbox_modal_keyboard_steps_links_and_single_run(browser, app
             page.evaluate('(theme)=>document.documentElement.dataset.theme=theme', theme)
             assert dialog.evaluate('e=>e.scrollWidth<=e.clientWidth+1')
             assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+        if os.environ.get('URA_GUIDE_SCREENSHOTS'):
+            page.screenshot(path=str(Path(os.environ['URA_GUIDE_SCREENSHOTS'])/f'guide-{width}.png'))
         page.get_by_role('link', name='Choose judges', exact=True).click()
         assert not dialog.is_visible()
+        page.locator('#build-evaluation').wait_for(state='visible')
         assert page.locator('#build-evaluation').is_visible()
         page.locator('[data-guide-open]').click()
         page.locator('[data-guide-close]').click()
