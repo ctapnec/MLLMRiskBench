@@ -38,6 +38,7 @@ def test_finished_campaign_setup_and_independent_rating_wizard(tmp_path, monkeyp
                 page.on('pageerror',lambda error:errors.append(str(error)))
                 page.goto(base+'/campaigns/'+campaign)
                 page.get_by_role('link',name='Human evaluation',exact=True).click()
+                page.get_by_role('link',name='Independent two-rater study',exact=True).click()
                 form=page.locator('[data-study-wizard]')
                 form.locator('[name=source]').select_option(label='Finished response set')
                 form.get_by_role('button',name='Next',exact=True).click()

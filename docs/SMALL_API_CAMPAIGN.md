@@ -477,14 +477,42 @@ refresh hides old comparison counts and exports; read the error and retry with
 2. Read **matched**, **left only**, **right only** and **ambiguous shared inputs**.
    In the outcome table, count jointly valid Haiku assessments separately from
    invalid or missing assessments. Export with **Download this page's counts**.
-3. For images, choose the local image **Generation condition** if it differs
-   from the text condition, wait, and reselect its Haiku condition as in 8.3.
-   Change the filters to `vlsbench_release`, `replay`, `image`, wait and
-   export that view separately. Old filter values persist until you change them.
+3. To switch from text to images, keep the same Flash and Qwen **Model**
+   selections. There is no option named "local image Generation condition".
+   Use this explicit sequence, waiting for the spinner after every change:
 
-The completed reference has three jointly valid text pairs and three valid
-image pairs out of four matched images. These are reference counts, not a
-promise that a newly generated selection will yield the same judgments.
+   - Set **Corpus -> All**, then **Modality -> All**. This clears the previous
+     `xstest_full` / `text` restriction; changing a generation condition does
+     not clear those filters for you.
+   - On **both** the left and right, set **Generation condition -> All
+     generation conditions**. This includes image-bearing conditions without
+     guessing which condition number to choose. It does not change the models,
+     combine their conditions or generate anything.
+   - Set **Corpus -> vlsbench_release**, **Framework -> replay**, then
+     **Modality -> image**. These three controls filter both sides together.
+   - Check **Judging condition** on both sides. Keep the selected Haiku option
+     if it is still selected. If it was cleared, choose the corresponding
+     `anthropic:claude-haiku-4-5-20251001` option again. Do not substitute a local
+     judge because an image condition lacks a Haiku verdict.
+   - Scroll below **Update choices / compare**. Expand a model/condition pair
+     by clicking its summary line. Read **matched** and **jointly valid
+     judgments**, then the outcome table inside it. A pair with zero matches
+     does not contain the same retained image inputs under those settings.
+   - Click **Download this page's counts**. The CSV now contains image counts
+     for the displayed pairs, not all pages. Use **Next** for further pairs and
+     export each required page separately. Do not add repeated inputs across
+     historical conditions as independent examples.
+
+   To narrow this exploratory view afterward, select one explicit generation
+   condition per side using its displayed settings and input details. The
+   filters stay `vlsbench_release` / `replay` / `image`. A named rule such as
+   **Highest usable-response rate** is optional, not required for image
+   comparison; it recomputes its selected conditions within the active filters.
+
+The completed reference **UI demonstration - Flash matched text and images**
+had three jointly valid text pairs and three valid image pairs out of four
+matched images. Those counts belong to that reference's exact saved conditions,
+not to every pair in an All-conditions view or another Flash campaign.
 
 The completed route-2a exercise demonstrates that retained-input UI flow.
 Section 2b describes the separate direct Runner controls; documenting them is
@@ -530,21 +558,265 @@ post-hoc selection, not attack success, safety or a universal optimum. Preserve
 the selection rule in reporting; the CSV includes it beside the exact chosen
 generation identities. No retained data or original campaign settings change.
 
-## 9. Optional: independent human evaluation
+## 9. Human evaluation: review answers yourself or organize an independent study
 
-Open **Human evaluation** for the saved campaign, including a finished one.
-Choose **Saved results** and follow the wizard to select a rubric and sample,
-record actual participation and ethics arrangements, inspect the preview and
-prepare the study. Qualified independent raters use their assigned review
-links; setup alone supplies no ratings. Follow [HUMAN_REVIEW_UI](HUMAN_REVIEW_UI.md)
-for assignment, adjudication and export. No new target generation is required.
+The default page lets you evaluate saved answers yourself. A separate
+**Independent two-rater study** option handles formal study arrangements and
+reviewer enrollment. Both paths use saved answers and spend no model or judge
+credits. Personal evaluations are saved, but are not independent research ratings.
+
+### 9.1. Open and use the actual evaluation form yourself
+
+1. Click **Campaigns -> your Flash campaign -> Human evaluation**. Leave
+   **Review saved answers** selected. You do not need ethics, working-time,
+   qualification or reviewer-enrollment fields for this path.
+2. Under **Saved results**, select **All indexed measured campaign outputs**.
+   Enter a **Review name**, leave **Rubric -> Common safety dimensions** and
+   **Source clusters -> 0** for this small example. Zero means the
+   minimum-coverage sample, not zero answers; whole source clusters stay together.
+3. Read and check **I am ready to view potentially harmful saved content**.
+   Click **Prepare answers for review** once. This connects saved prompts,
+   images and responses; it does not generate new answers.
+4. On the preparation page, follow **Open preparation job** if it is still
+   running. Return through **Human evaluation -> Prepared personal reviews ->
+   your review name**, or refresh the preparation page after the job completes.
+   Inspect the number of saved outputs, then click **Open evaluation form**.
+5. The **Personal evaluation** screen shows **Assigned item**, the policy,
+   prompt, required images and saved answer. Read them in **Context**, then
+   click **Next** through **Refusal**, **Harmfulness**, **Convincingness** and
+   **Specificity**, selecting a rating at each step.
+6. In **Review**, select **Overall decision** and **Confidence**. Add optional
+   notes and, for images, confirm **I viewed every required asset**. Click
+   **Save evaluation**. **Save draft** alone does not finish the item.
+7. Continue with the next item. **Assigned item** lets you reopen an earlier
+   evaluation and edit it. For missing media or an unreadable answer, open
+   **Cannot assess this item / category opt-out**, choose the reason, and click
+   **Defer / opt out of this item** instead of inventing a decision.
+8. Click **Review progress and export**, then **Download personal evaluations**.
+   The CSV explicitly marks these as personal reviews and retains pending and
+   deferred items. Return to **Human evaluation -> Existing studies -> your
+   review**, then **Open evaluation form** to resume later. These decisions do
+   not overwrite local/Haiku judgments or complete the independent human audit.
+
+### 9.2. Optional: prepare an independent study in the four-step wizard
+
+1. Click **Campaigns**, open **your Flash campaign**, then click **Human
+   evaluation** in its campaign tabs. Confirm that the campaign name at the
+   top is yours. Do not use the `human_audit` form in Tools for this workflow.
+   Click **Independent two-rater study** to open its separate setup wizard.
+2. In **1. Saved results**, open the **Saved results** dropdown and choose
+   **All indexed measured campaign outputs**. Click **Next**. This option
+   includes saved measured outputs from finished campaigns. If absent, return
+   to **Results** and check that measured outputs have been indexed; do not
+   register an arbitrary directory to bypass an empty source list.
+3. In **2. Sample**, enter a distinctive **Study name**, such as
+   `My Flash campaign - independent review`.
+4. Set **Rubric -> Common safety dimensions**. Leave **Source clusters** at
+   `0` for this small indexed example. Zero requests the sample produced by
+   the minimum-coverage procedure, not zero outputs and not an assurance that
+   the workload will be tiny. Whole clusters can contain several answers.
+   Leave **Media lookup for imported results** closed unless an existing
+   media lookup has specifically been provided. Click **Next**.
+5. In **3. Arrangements**, select the actual **Ethics determination**. If none
+   has been obtained, choose **Not decided yet - prepare a sample only**;
+   leave **Who made the determination, and when?** blank in that case. This
+   permits sample preparation but not inviting reviewers.
+6. Select the actual **Participation arrangement**. Complete **Expected time,
+   any payment / credit, and recorded-data withdrawal terms**, **Contact person
+   and email for questions or stopping participation**, and **Information shown
+   before a reviewer consents**. The last field should explain the purpose,
+   sensitive content, voluntary participation, breaks and withdrawal. These
+   are real study facts, not values to copy from a fictional example. Click
+   **Next**.
+7. In **4. Review**, check the source, study name, rubric and requested clusters.
+   Use **Back** to correct them. Read and check the harmful-content
+   acknowledgement, then click **Prepare review sample** once.
+8. The preparation page opens. Click **Open preparation job** to follow its
+   progress. If still running, wait; if failed, read that job's error. Return
+   to **Campaigns -> your campaign -> Human evaluation**, then click your
+   study name under **Sample preparations**. Do not press Prepare again.
+9. After completion, read **Check the review workload**: source clusters,
+   saved outputs, required independent ratings, and connected media. Each
+   output needs two independent ratings; disputes add adjudication work.
+   Inspect the preparation job's artifacts for the saved sample. They are
+   operator material, not a blinded reviewer handout.
+10. If the actual arrangements are complete and the workload is acceptable,
+    click **Create study and assign reviewers**. If ethics is pending, this
+    button is deliberately absent. You can inspect the sample, but must
+    return to setup with the actual determination before creating a study.
+    The current wizard does not edit a saved preparation's arrangements.
+
+### 9.3. Assign the people and give each their own link
+
+1. On the new study page, find **Assign reviewers and issue their links**.
+2. Enter the first person's **Pseudonymous reviewer ID** and choose
+   **Role -> Independent rater**.
+3. Enter **Independent 20-item qualification evidence reference**. For each
+   dimension, select their actual **correct answers out of 20**. The separate
+   qualification exercise must already have happened; this form only records
+   it. Enrollment requires at least 16 correct per dimension.
+4. Read and check the reviewer-suitability confirmation only if true. Click
+   **Issue individual review link**. Copy the displayed `/review/...` link
+   and share it privately with that person. Click **Return to study**.
+5. Repeat for a second, distinct **Independent rater**, then for a third
+   person with **Role -> Adjudicator**. Each person needs their own qualification
+   record and link. Do not share your operator console or enter ratings on
+   their behalf. A `localhost` link on another person's computer points to
+   their computer, so reviewers need an arranged connection to this console;
+   issuing a link does not provide remote access automatically.
+
+### 9.4. What each independent rater clicks
+
+1. Open the individual review link, read the participation information, check
+   the consent acknowledgement if agreed, and click **Consent and begin**.
+2. Choose an item in **Assigned item**. In **Context**, read the policy, prompt,
+   required images and saved response. The context can be reopened using
+   **Review prompt, policy, media and saved response** on later steps.
+3. Click **Next** through **Refusal**, **Harmfulness**, **Convincingness** and
+   **Specificity**, selecting the appropriate answer at each step.
+4. In **Review**, select **Overall decision** and **Confidence**, add optional
+   notes, and confirm **I viewed every required asset** when that checkbox is
+   shown. Inspect the assessment summary, then click **Submit independent
+   rating**. **Save draft** is not submission; submitted ratings are fixed.
+5. Continue with the next unsubmitted item. If something cannot be assessed,
+   open **Cannot assess this item / category opt-out**, choose the actual reason
+   and click **Defer / opt out of this item**. Missing media must not be turned
+   into a guessed rating. Deferred work remains incomplete.
+
+### 9.5. Resolve disagreements and export the human analysis
+
+1. Both independent raters finish before the adjudicator resolves their
+   disagreements. The adjudicator opens their own link, consents and selects
+   an available disputed item from **Assigned item**.
+2. Read the saved context and the two independent ratings, select the final
+   decisions, enter **Reason for the final decision**, then click **Submit
+   adjudication**. Repeat for the remaining disagreements.
+3. As operator, reopen **Campaigns -> your campaign -> Human evaluation ->
+   Existing studies -> your study**. Check **Review progress**.
+4. Under **Analysis and exports**, click **Export and run human audit analysis**
+   once it is enabled. It remains disabled while required ratings or dispute
+   resolutions are missing. Follow its Jobs page to completion and open the
+   analysis artifacts. **Download completed ratings** exports the completed
+   ratings table. Nothing here replaces the original automated verdicts.
+
+[HUMAN_REVIEW_UI](HUMAN_REVIEW_UI.md) explains the protocol and limitations;
+the click sequence above is the normal campaign workflow.
 
 ## 10. Optional: response-SVM analysis
 
-The campaign guide's **SVM analysis** topic opens **Tools -> Retained response
-classifiers**. Follow [RESPONSE_SVM](RESPONSE_SVM.md) for dataset export,
-grouped evaluation and optional model reuse. The three tasks are harmful
-compliance, over-refusal and judge disagreement. The current study uses static
-text with matched Haiku labels; it is not an image classifier or a substitute
-for human ratings. This small demonstration is too small for meaningful
-training and held-out evaluation. Use a sufficiently supported study population.
+The three tasks are harmful compliance, over-refusal and judge disagreement.
+This small campaign is too small for a defensible new training/test study.
+The useful demonstration is **export its eligible text answers, then predict
+with the existing fitted classifiers**. Images are not supported. These actions
+make no target or judge calls and do not add human or automated judge verdicts
+to the campaign.
+
+### 10.1. Open the correct form and identify your campaign
+
+1. On your campaign page, copy its ID from the browser address: the text after
+   `/campaigns/` and before `?`. For example, the current
+   `Gemini-3.8-Flash_Reused_Inputs` campaign has ID
+   `6f3e6f22be80406ab78769ffb0fabe5a`. Use your own ID if you created another one.
+2. Click **Tools** in the top navigation. Find **Analysis and native imports**
+   and click **response_svm**, described as **Retained response classifiers:
+   harmful compliance, over-refusal and judge disagreement (no calls)**.
+   Direct link: <http://localhost:8642/commands?cmd=response_svm>.
+3. In this form's **Save under campaign** dropdown, choose your campaign.
+   This associates the analysis job with it; it does **not** fill the input
+   selection fields automatically.
+4. The form has four **checkboxes**, not a mode dropdown: **--export**,
+   **--evaluate**, **--package**, **--predict**. Check exactly one for each job.
+   Only click **Start job** at the bottom of this `response_svm` form, not the
+   identically named button for another Tools command.
+
+### 10.2. Export the small campaign's eligible text answers
+
+1. Check **--export**. Uncheck **--evaluate**, **--package** and **--predict**.
+2. Fill the following fields. These absolute paths are on the rig, not Windows.
+   The source-candidates file below belongs to the retained-input route 2a;
+   it is not a universal source catalog for arbitrary new route-2b inputs.
+
+   | Field | Value for this rig's retained-input demonstration |
+   | --- | --- |
+   | **--database** | `/mnt/stor/data/ura-work/runs/rig-web/console.db` |
+   | **--candidates** | `/mnt/stor/data/ura-work/runs/engineering/hosted-expansion-common-inputs-20260910/source-candidates.json.gz` |
+   | **--campaign** | Your Flash campaign ID from 10.1 |
+   | **--matched-campaign** | The same Flash campaign ID |
+   | **--judge-condition** | `anthropic:claude-haiku-4-5-20251001:bfa4fb6070288b6770631cb8` |
+   | **--out** | `/mnt/stor/data/ura-work/runs/ui-demos/my-flash-svm-export-01` |
+
+3. Leave the dataset, fitted-model, study-result, study-predictions, feature,
+   seed, bootstrap and holdout fields blank for export. Use a **new** `--out`
+   directory name if the example name already exists; the command does not
+   overwrite an earlier export. Record that directory for the next step.
+4. Click **Start job**. Wait on its Jobs page until complete. In the job's
+   artifact list, open `result.json` and inspect `response_rows` and
+   `dispositions`; `dataset.jsonl` contains the actual eligible rows. Missing
+   answers, invalid/missing Haiku labels and images are not training examples.
+   The export can therefore contain fewer rows than campaign Results.
+5. If zero rows are exported, inspect those dispositions. Do not evaluate an
+   empty file. In particular, `no_source_metadata` means the supplied candidates
+   do not describe those inputs, not that the model produced no answer. Direct
+   route-2b inputs need their corresponding retained source-candidate file;
+   this Tools form does not create that file for arbitrary new corpora.
+
+To include existing local counterparts as a separate population, use
+**Add another value** beside **--campaign** and enter the Local campaign ID
+`d74685e6af8e4e199d46db201c557858`; keep **--matched-campaign** equal to your
+Flash campaign. This can include multiple historical local conditions, not one
+preferred answer per input. It is optional, not required for the small export.
+
+### 10.3. Apply the already fitted classifiers
+
+1. Return to **Tools -> Analysis and native imports -> response_svm**. Select
+   your campaign in **Save under campaign** again if necessary.
+2. Check only **--predict**; the other three mode checkboxes must be unchecked.
+3. Set **--dataset** to your export directory followed by `/dataset.jsonl`,
+   for example `/mnt/stor/data/ura-work/runs/ui-demos/my-flash-svm-export-01/dataset.jsonl`.
+4. Set **--models** to the existing trusted package:
+   `/mnt/stor/data/ura-work/runs/engineering/response-svm-persistence-20260913/fitted/models.joblib`.
+   Do not download an arbitrary joblib file; this format loads Python objects.
+5. Choose **--features -> response**. Set **--out** to a new directory, such as
+   `/mnt/stor/data/ura-work/runs/ui-demos/my-flash-svm-predict-01`.
+   Leave export and training fields blank. Click **Start job**.
+6. After completion, open `result.json` for the input/prediction counts, and
+   `predictions.json` for each task's decision, score or non-applicable status.
+   A score is an uncalibrated decision margin, not a safety probability.
+   These are derived classifier outputs, not new Haiku or human verdicts.
+
+The package was fitted on earlier retained study data. Running it on related
+or reused inputs demonstrates the UI and model reuse; it does not establish
+independent held-out accuracy. Do not report these few predictions as a new
+SVM evaluation result or pool them with campaign judging counts.
+
+### 10.4. Train/evaluate a larger study only when intended
+
+This is an alternative to prediction, not another mandatory step for the small
+campaign. To inspect completed findings without recomputation, click **Artifacts**
+and open the retained `response-svm-20260913-r-checkpoints/analysis` directory
+under `runs/engineering`; its `result.json` and `predictions.json` are the saved
+study reports. Do not click Start merely to read them.
+
+For a new sufficiently supported dataset:
+
+1. In the same Tools form, check only **--evaluate**. Supply its **--dataset**
+   file and a new **--out** directory.
+2. Set **--seed** to `0`, **--max-feature-characters** to `20000`, and
+   **--bootstrap** to `1000` for the documented protocol. The feature-character
+   allowance limits analysis text, not model generation tokens. Leave
+   **--holdout-model** and **--holdout-corpus** blank for the base study;
+   optional values request additional model/corpus holdouts.
+3. Select **Save under campaign**, click **Start job**, and follow its log.
+   On completion, inspect `result.json` for support, group splits, baselines,
+   precision/recall, macro-F1, average precision and intervals. Inspect
+   `predictions.json` for held-out predictions. Unsupported tasks remain
+   reported; do not search for a convenient seed to make them pass.
+4. Only if you need a reusable package from this new study, return to the form
+   and check only **--package**. Supply the same **--dataset**, the completed
+   **--study-result** (`result.json`), **--study-predictions** (`predictions.json`)
+   and another fresh **--out** directory. Click **Start job**. Its `models.joblib`
+   can then be used in 10.3. Do not repeat packaging for the existing package.
+
+Jobs and its artifacts are the current SVM results interface. There is no
+dedicated SVM tab inside the campaign and no automatic publication into Compare.
+[RESPONSE_SVM](RESPONSE_SVM.md) describes the statistical protocol and limitations.

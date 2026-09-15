@@ -178,7 +178,7 @@ def test_finished_campaign_study_setup_uses_saved_results_and_reports_workload(t
         result_root=tmp_path/'runs'/'completed-results';result_root.mkdir()
         store=app._human_store()
         source=store.register_source(campaign=campaign,name='Completed local analysis',results=result_root)
-        page=app.handle('GET','/human-evaluation?campaign_id='+campaign)[2].decode()
+        page=app.handle('GET','/human-evaluation?campaign_id='+campaign+'&kind=independent')[2].decode()
         assert 'Completed local analysis' in page and 'data-study-wizard' in page
         assert 'No model is rerun' in page and "data-study-step='Arrangements'" in page
         assert "select name='ethics_status'" in page and "select name='compensation_type'" in page

@@ -104,7 +104,7 @@ def test_indexed_campaign_setup_uses_readonly_snapshot_job(indexed,tmp_path,monk
         starts.append((command,params,kwargs));return SimpleNamespace(job_id='prepared-job')
     monkeypatch.setattr(app,'start_job',start)
     try:
-        body=app.handle('GET','/human-evaluation?campaign_id='+owner)[2].decode()
+        body=app.handle('GET','/human-evaluation?campaign_id='+owner+'&kind=independent')[2].decode()
         assert 'All indexed measured campaign outputs' in body and 'smallest sample' in body
         data=dict(campaign_id=owner,source='campaign-index',name='Synthetic setup',mode='common',clusters='0',
             acknowledge='1',ethics='fixture',compensation='fixture',stop_contact='fixture',consent='fixture')

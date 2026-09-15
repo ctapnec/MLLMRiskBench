@@ -7403,3 +7403,17 @@ label, and missing metadata is shown as not indexed rather than inferred.
 Historical descriptions can be indexed from their explicitly selected retained
 manifests or judging results without changing verdicts or making calls. Page
 refreshes read SQLite only; they do not scan or hash historical artifacts.
+
+### Personal review and independent study entry points
+
+Campaign Human evaluation opens Review saved answers by default. Preparing
+the saved sample and clicking Open evaluation form reaches prompt/media/answer
+review with persistent personal ratings, drafts, edits, deferral and a separate
+CSV export. Personal progress requires one evaluation per output and never
+qualifies as independent two-rater evidence or modifies automated judgments.
+Independent two-rater study remains a separate explicit option with its own
+arrangements, qualification, consent, immutable submissions and adjudication.
+Both reuse the existing saved-sample preparation and SQLite review store.
+No target or judge calls are made. SMALL_API_CAMPAIGN section 9 supplies the
+click-by-click instructions; section 10 distinguishes SVM export, prediction,
+new grouped evaluation and packaging instead of treating them as one operation.

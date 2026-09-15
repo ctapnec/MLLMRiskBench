@@ -24,7 +24,26 @@ Source-task classification needs its separate existing rubric and analysis.
 
 ## Operator workflow
 
-1. Open **Campaigns -> the campaign -> Human evaluation**. In the setup wizard,
+### Direct personal evaluation
+
+Open **Campaigns -> the campaign -> Human evaluation**. The default **Review
+saved answers** path asks for a saved result set, review name, rubric and
+source-cluster count, plus acknowledgement of sensitive content. Click
+**Prepare answers for review**, follow the preparation job, then **Open
+evaluation form**. The form shows the actual saved prompt, assets and response,
+with step-by-step dimension choices, overall decision and confidence.
+**Save evaluation** records a personal evaluation; drafts, edits, deferral,
+resume and **Download personal evaluations** are supported. There are no
+study-arrangement or enrollment fields on this path.
+
+Personal reviews are explicitly separate from independent study evidence.
+Their one-reviewer progress and CSV retain unfinished items; they cannot enter
+the independent audit export or overwrite automated campaign judgments.
+
+### Independent two-rater study
+
+1. Open **Campaigns -> the campaign -> Human evaluation**, then click
+   **Independent two-rater study**. In the setup wizard,
    choose **Saved results**, enter a study name and select the rubric and sample
    size in **Sample**, record **Arrangements**, then **Review -> Prepare review
    sample**. No CLI command is required. This preserves complete selected source clusters and

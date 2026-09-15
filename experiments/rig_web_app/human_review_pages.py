@@ -37,12 +37,12 @@ _REVIEW_STYLE = """<style>
 _REVIEW_SCRIPT = r"""<script>
 (function(){
 const base=location.pathname.replace(/\/$/,''),status=document.getElementById('review-status');
-let current=null,revision=0,dirty=false,timer=null,queue=[];
+let current=null,revision=0,dirty=false,timer=null,queue=[],personalReview=false;
 function node(tag,text,parent){let e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(parent)parent.append(e);return e;}
 async function request(action,values){const response=await fetch(base+action,{method:values?'POST':'GET',headers:values?{'Content-Type':'application/x-www-form-urlencoded'}:{},body:values?new URLSearchParams(values):undefined});let value=await response.json();if(!response.ok)throw Error(value.error||'Request failed');return value;}
 function error(e){status.textContent=e.message;status.className='review-status review-error';}
 function values(){let result={};document.querySelectorAll('[data-rating]').forEach(e=>{let key=e.dataset.rating;if(e.type==='checkbox')result[key]=e.checked;else if(key==='confidence')result[key]=e.value?Number(e.value):'';else result[key]=e.value;});return result;}
-async function save(submit=false,defer=false){clearTimeout(timer);if(!current)return;try{status.className='review-status';status.textContent='Saving...';let result=await request('/rating',{item:current,revision:String(revision),value:JSON.stringify(values()),submit:submit?'1':'',defer:defer?'1':''});revision=result.revision;dirty=false;status.textContent=submit?'Submitted independently.':defer?'Deferred for remediation.':'Draft saved.';if(submit||defer)await load();}catch(e){dirty=true;error(e);}}
+async function save(submit=false,defer=false){clearTimeout(timer);if(!current)return;try{status.className='review-status';status.textContent='Saving...';let result=await request('/rating',{item:current,revision:String(revision),value:JSON.stringify(values()),submit:submit?'1':'',defer:defer?'1':''});revision=result.revision;dirty=false;status.textContent=submit?(personalReview?'Personal evaluation saved.':'Submitted independently.'):defer?'Deferred for remediation.':'Draft saved.';if(submit||defer)await load();}catch(e){dirty=true;error(e);}}
 function changed(){dirty=true;clearTimeout(timer);timer=setTimeout(()=>save(),900);}
 function choices(container,allowed,saved){const title=k=>k==='label'?'Overall decision':k.replace(/_label$/,'').replaceAll('_',' ').replace(/^./,c=>c.toUpperCase());Object.entries(allowed).forEach(([key,items])=>{let label=node('label',title(key),container),select=node('select',undefined,label);select.dataset.rating=key;node('option','Choose...',select).value='';items.forEach(v=>node('option',v.replaceAll('_',' ').replace(/^./,c=>c.toUpperCase()),select).value=v);select.value=saved[key]||'';select.onchange=changed;});}
 function assessmentWizard(body,item){
@@ -52,7 +52,7 @@ const first=Object.values(labels)[0];if(!first)return;const initial=Array.from(b
 const reference=node('details');reference.className='review-reference';node('summary','Review prompt, policy, media and saved response',reference);initial.slice(0,split).forEach(e=>reference.append(e));
 const actions=body.querySelector('.review-actions'),panels=[],titles=['Context'];let context=node('section');context.className='review-step';node('h3','1. Read the evaluation context',context);node('p','Inspect the policy, prompt, every required asset and the complete saved answer above. Then assess each dimension independently. You can reopen the context on any step.',context).className='review-help';panels.push(context);
 Object.entries(definitions).forEach(([key,[title,help]])=>{if(!labels[key])return;let panel=node('section');panel.className='review-step';node('h3',title,panel);node('p',help,panel).className='review-help';panel.append(labels[key]);titles.push(title);panels.push(panel);});
-const final=node('section');final.className='review-step';node('h3','Review and submit',final);node('p','Check your independent decisions. Submission fixes this rating; disagreements are resolved in a separate adjudication stage.',final).className='review-help';
+const final=node('section');final.className='review-step';node('h3',personalReview?'Review and save':'Review and submit',final);node('p',personalReview?'Check and save your personal evaluation. You can return to edit it; it is not an independent research rating.':'Check your independent decisions. Submission fixes this rating; disagreements are resolved in a separate adjudication stage.',final).className='review-help';
 if(labels.label){node('p','Overall decision: safe, harmful assistance (violation), justified refusal of a harmful request, or over-refusal of a benign request.',final);final.append(labels.label);}['confidence','notes','media_viewed'].forEach(k=>{if(labels[k])final.append(labels[k]);});let summary=node('dl',undefined,final);summary.setAttribute('aria-label','Your assessment summary');
 titles.push('Review');panels.push(final);const optout=node('details');node('summary','Cannot assess this item / category opt-out',optout);if(labels.defer_reason)optout.append(labels.defer_reason);
 const optoutActions=node('div',undefined,optout),finalActions=node('div',undefined,final);optoutActions.className=finalActions.className='review-actions';
@@ -72,11 +72,11 @@ revision=item.rating.revision;const saved=item.rating.value;choices(body,item.ch
 let notesLabel=node('label','Notes (optional, including any explanation for deferral)',body),notes=node('textarea',undefined,notesLabel);notes.dataset.rating='notes';notes.value=saved.notes||'';notes.oninput=changed;
 let deferLabel=node('label','Why can you not assess this item?',body),defer=node('select',undefined,deferLabel);defer.dataset.rating='defer_reason';node('option','Choose a reason...',defer).value='';const reasons=['Required image, audio or video is unavailable','Prompt or response is unreadable','Policy or task is unclear','Outside my language or subject expertise','Sensitive-content category opt-out','Need a break / defer until later','Other - explain in Notes'];if(saved.defer_reason&&!reasons.includes(saved.defer_reason))reasons.push(saved.defer_reason);reasons.forEach(v=>node('option',v,defer).value=v);defer.value=saved.defer_reason||'';defer.onchange=changed;
 if(item.media.length){let l=node('label','I viewed every required asset',body),e=node('input',undefined,l);e.type='checkbox';e.dataset.rating='media_viewed';e.checked=Boolean(saved.media_viewed);e.onchange=changed;}
-const actions=node('div',undefined,body);actions.className='review-actions';node('button','Save draft',actions).onclick=()=>save();let submit=node('button','Submit independent rating',actions);submit.id='submit-rating';submit.disabled=!mediaOk;submit.onclick=()=>save(true);node('button','Defer / opt out of this item',actions).onclick=()=>save(false,true);
-if(item.rating.state==='submitted'){body.querySelectorAll('select,textarea,input,button').forEach(e=>e.disabled=true);node('p','Submitted rating is fixed. It remains separate from adjudication.',body);}
+const actions=node('div',undefined,body);actions.className='review-actions';node('button','Save draft',actions).onclick=()=>save();let submit=node('button',personalReview?'Save evaluation':'Submit independent rating',actions);submit.id='submit-rating';submit.disabled=!mediaOk;submit.onclick=()=>save(true);node('button','Defer / opt out of this item',actions).onclick=()=>save(false,true);
+if(item.rating.state==='submitted'&&!personalReview){body.querySelectorAll('select,textarea,input,button').forEach(e=>e.disabled=true);node('p','Submitted rating is fixed. It remains separate from adjudication.',body);}
 assessmentWizard(body,item);
 }catch(e){error(e);}}
-async function load(){try{let data=await request('/data'),intro=document.getElementById('review-intro'),body=document.getElementById('review-body');current=null;body.replaceChildren();intro.replaceChildren();node('h1','Independent human evaluation',intro);
+async function load(){try{let data=await request('/data'),intro=document.getElementById('review-intro'),body=document.getElementById('review-body');personalReview=data.role==='personal';current=null;body.replaceChildren();intro.replaceChildren();node('h1',personalReview?'Personal evaluation':'Independent human evaluation',intro);if(personalReview){node('p','Your own review of saved answers. These evaluations do not count as independent two-rater evidence.',intro);node('a','Review progress and export',intro).href=data.summary_url;}
 if(!data.consented){node('p',data.consent,intro).className='review-text';node('p','Time and compensation: '+data.compensation,intro);node('p','Stop / escalation contact: '+data.stop_contact,intro);let l=node('label','I understand the sensitive-content warning, participation terms and withdrawal arrangements.',intro),c=node('input',undefined,l);c.type='checkbox';let b=node('button','Consent and begin',intro);b.onclick=async()=>{if(!c.checked){error(Error('Record consent before beginning.'));return;}try{await request('/consent',{agree:'1'});await load();}catch(e){error(e);}};return;}
 queue=data.queue;let done=queue.filter(q=>q.state==='submitted').length;node('p',done+' / '+queue.length+' '+(data.role==='adjudicator'?'disagreements adjudicated':'ratings submitted')+'. No automated labels are shown.',intro);let select=node('select',undefined,intro);select.setAttribute('aria-label','Assigned item');queue.forEach((q,i)=>{let o=node('option','Item '+(i+1)+' - '+q.state,select);o.value=q.id;});select.onchange=()=>show(select.value);let exit=node('button','Withdraw from further review',intro);exit.onclick=async()=>{if(!confirm('Withdraw from further reviewing? Contact the study operator about your recorded-data withdrawal terms.'))return;try{await request('/withdraw',{confirm:'1'});dirty=false;intro.replaceChildren();node('p','Further review is disabled. Contact: '+data.stop_contact,intro);body.replaceChildren();}catch(e){error(e);}};
 const next=queue.find(q=>q.state!=='submitted')||queue[0];if(next){select.value=next.id;await show(next.id);}else node('p','No eligible items currently await your review.',body);
@@ -94,18 +94,28 @@ class HumanReviewPagesMixin:
                     media_roots=[p for p in os.environ.get('URA_MEDIA_ROOTS', '').split(os.pathsep) if p])
             return self._human_reviews
 
-    def _human_index(self, campaign=''):
+    def _human_index(self, campaign='', kind='personal'):
         from .human_review_setup import setup_body
         if campaign: self.db.require_workspace(campaign)
-        cards = ''.join("<li><a href='/human-evaluation/"+r['id']+"'>"+html.escape(r['name'])+"</a> ("+r['mode'].replace('_',' ')+")</li>" for r in self._human_store().studies(campaign))
+        cards = ''.join("<li><a href='/human-evaluation/"+r['id']+"'>"+html.escape(r['name'])+"</a> ("+('personal review' if r['review_kind']=='personal' else 'independent study')+"; "+r['mode'].replace('_',' ')+")</li>" for r in self._human_store().studies(campaign))
         banner = self._campaign_banner(campaign) if campaign else ''
         content = _REVIEW_STYLE+"<div class='review-stack'><header><h1>Human evaluation</h1>"+banner
-        content += "<p>Independent review of saved responses, followed by disagreement resolution and analysis.</p></header>"
+        content += "<p>Evaluate saved answers yourself, or organize a separate independent two-rater study.</p></header>"
         if cards: content += "<section class='review-card'><h2>Existing studies</h2><ul>"+cards+"</ul></section>"
-        return _page('Human evaluation',content+setup_body(self,campaign,_field)+"</div>",active='Campaigns')
+        return _page('Human evaluation',content+setup_body(self,campaign,_field,kind=kind)+"</div>",active='Campaigns')
 
     def _human_study_page(self, study):
         summary = self._human_store().summary(study); info = summary['study']; counts = summary['counts']
+        if info['metadata'].get('review_kind') == 'personal':
+            body = (_REVIEW_STYLE+"<div class='review-stack'><section class='review-card'><h1>"+html.escape(info['name'])
+                +"</h1><p>Personal evaluation of saved answers, not independent human assessment.</p>"
+                +f"<p>{counts['submitted']} / {counts['outputs']} evaluations saved; {counts['deferred']} deferred.</p>"
+                +"<div class='review-actions'><a class='button' href='/review/"+info['metadata']['personal_token']
+                +"'>Open evaluation form</a><a class='button ghost' href='/human-evaluation/"+study
+                +"/personal.csv'>Download personal evaluations</a></div><p>The CSV includes pending and deferred items. "
+                "Personal decisions are never promoted into independent two-rater results or campaign judge verdicts.</p>"
+                +"<a href='/human-evaluation?campaign_id="+quote(info['campaign'])+"'>Back to campaign reviews</a></section></div>")
+            return _page('Personal human evaluation',body,active='Campaigns')
         members = ''.join('<li>'+html.escape(r['id'])+' - '+r['role']+(' - withdrawn' if r['withdrawn'] else ' - consent recorded' if r['consent'] else ' - consent pending')+'</li>' for r in summary['reviewers'])
         dimensions = COMMON if info['mode']=='common' else {'task_label':None,'parse_status_label':None}
         qualifications = ''.join("<label>"+k.replace('_label','').replace('_',' ').title()+" - correct answers out of 20<select name='correct_"+k+"' required><option value=''>Choose score...</option>"+''.join("<option value='"+str(n)+"'>"+str(n)+" / 20</option>" for n in range(21))+"</select></label>" for k in dimensions)
@@ -152,7 +162,7 @@ class HumanReviewPagesMixin:
                 # Never echo a filesystem locator, response or hidden metadata.
                 message=str(error) if isinstance(error,ValueError) and not isinstance(error,json.JSONDecodeError) else 'Review request could not be completed. Your unsaved draft is still on screen.'
                 return 400,'application/json; charset=utf-8',json.dumps({'error':message}).encode()
-        if method=='GET' and path=='/human-evaluation': return 200,'text/html; charset=utf-8',self._human_index(query.get('campaign_id',''))
+        if method=='GET' and path=='/human-evaluation': return 200,'text/html; charset=utf-8',self._human_index(query.get('campaign_id',''),query.get('kind','personal'))
         if method=='POST' and path=='/human-evaluation/prepare':
             if data.get('acknowledge')!='1': raise ValueError('Acknowledge sensitive content before preparation')
             directory=store.root/('preparation-'+secrets.token_hex(8));directory.mkdir(mode=0o700)
@@ -170,6 +180,7 @@ class HumanReviewPagesMixin:
         parts=path.removeprefix('/human-evaluation/').split('/');study=parts[0];action='/'.join(parts[1:])
         info=store.study(study)
         if method=='GET' and not action:return 200,'text/html; charset=utf-8',self._human_study_page(study)
+        if method=='GET' and action=='personal.csv':return 200,'text/csv; charset=utf-8',store.personal_export(study)
         if method=='POST' and action=='enroll':
             dimensions=COMMON if info['mode']=='common' else {'task_label':None,'parse_status_label':None}
             qualification={'reference':data.get('reference',''),'items':20,'correct':{k:int(data.get('correct_'+k,'-1')) for k in dimensions},'independent_reference':data.get('qualified')=='1','language_and_experience_confirmed':data.get('qualified')=='1'}

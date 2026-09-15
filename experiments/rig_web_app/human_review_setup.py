@@ -73,7 +73,7 @@ document.querySelectorAll('[data-study-wizard]').forEach(form=>{
 });</script>"""
 
 
-def setup_body(app, campaign, field):
+def setup_body(app, campaign, field, *, kind='personal'):
     escape = lambda value: html.escape(str(value), quote=True)
     if not campaign:
         return "<section class='review-card'><h2>Choose a campaign</h2><p>Open an existing local or API campaign, including a finished campaign, to review its saved outputs.</p><div class='review-actions'>" + ''.join(
@@ -81,6 +81,32 @@ def setup_body(app, campaign, field):
     choices = sources(app,campaign)
     options = "<option value=''>Choose saved results</option>"+''.join("<option value='"+escape(r['id'])+"'>"+escape(r['name'])+"</option>" for r in choices)
     hidden = "<input type='hidden' name='campaign_id' value='"+escape(campaign)+"'>"
+    navigation = ("<div class='review-actions'><a class='button"+('' if kind=='personal' else ' ghost')
+        +"' href='/human-evaluation?campaign_id="+escape(campaign)+"'>Review saved answers</a>"
+        "<a class='button"+('' if kind=='independent' else ' ghost')+"' href='/human-evaluation?campaign_id="
+        +escape(campaign)+"&amp;kind=independent'>Independent two-rater study</a></div>")
+    if kind != 'independent':
+        options = options.replace("value='campaign-index'", "value='campaign-index' selected")
+        body = navigation + ("<section class='review-card'><h2>Review saved answers</h2>"
+            "<p>Read the actual prompt, images and saved answer, then record your own evaluation in the guided form. "
+            "Personal review needs no reviewer enrollment, qualification scores or study-arrangement fields. "
+            "Its decisions remain labelled personal, not independent research ratings.</p>"
+            "<form method='post' action='/human-evaluation/prepare-personal'>"+hidden
+            +"<label>Saved results<select name='source' required>"+options+"</select></label>"
+            +field('name','Review name','My review of saved answers')
+            +"<div class='review-grid'><label>Rubric<select name='mode'><option value='common'>Common safety dimensions</option>"
+            "<option value='source_task'>Source-task classification</option></select></label>"
+            +field('clusters','Source clusters',0 if any(r.get('source_kind')=='campaign_index' for r in choices) else 20,'number')
+            +"</div><p>For indexed campaign outputs, 0 selects the minimum-coverage sample. It does not mean zero answers. "
+            "Whole clusters stay together; inspect the actual number of answers before opening the form.</p>"
+            "<label class='review-check'><input type='checkbox' name='acknowledge' value='1' required>"
+            "<span>I am ready to view potentially harmful saved content.</span></label>"
+            "<button>Prepare answers for review</button></form><p>This prepares saved content only. No model or judge is called.</p></section>")
+        drafts = [r for r in app._human_store().preparations(campaign) if r['value']['metadata'].get('review_kind')=='personal']
+        if drafts:
+            body += "<section class='review-card'><h2>Prepared personal reviews</h2><ul>"+''.join(
+                "<li><a href='/human-evaluation/preparations/"+r['id']+"'>"+escape(r['value']['name'])+"</a></li>" for r in drafts)+"</ul></section>"
+        return body
     body = "<section class='review-card'><h2>New human evaluation</h2><p>Use saved results from this campaign. Collection can already be finished. No model is rerun and no API credit is spent.</p><ol><li><strong>You, the study operator:</strong> choose saved answers, inspect the sample size and record participation arrangements.</li><li><strong>You:</strong> assign two independent raters and a separate adjudicator, then share each person's private review link.</li><li><strong>Each reviewer:</strong> read the prompt and answer, choose ratings in the guided review, then submit.</li></ol><p>This page sets up the study; it is not the rating form.</p><form method='post' action='/human-evaluation/prepare-study' data-study-wizard novalidate>"+hidden
     body += "<div class='review-steps' role='navigation' aria-label='Study setup steps'></div><section class='review-step' data-study-step='Saved results'><h2 tabindex='-1'>Choose the saved result set</h2><label>Saved results<select name='source' required>"+options+"</select></label><p class='review-help'>A result set may cover one run or a registered combined analysis. Its label describes the scope; choosing it does not imply every campaign output is eligible. Missing outputs remain in campaign statistics.</p></section>"
     body += "<section class='review-step' data-study-step='Sample'><h2 tabindex='-1'>Define the assessment sample</h2>"+field('name','Study name')+"<div class='review-grid'><label>Rubric<select name='mode'><option value='common'>Common safety dimensions</option><option value='source_task'>Source-task classification</option></select></label>"+field('clusters','Source clusters',0 if any(r.get('source_kind')=='campaign_index' for r in choices) else 20,'number')+"</div><p>For indexed campaign outputs, zero selects the smallest sample produced by the deterministic coverage procedure. For a registered result set, enter a positive count. Whole selected clusters stay together across models and conditions. The prepared sample shows the actual output count and two-rater workload before a study is created; a broad campaign can require substantial review.</p><details><summary>Media lookup for imported results</summary>"+field('media_index','Existing retained media index (optional)',required=False)+"<p>Leave blank to use the selected result set's registered index. This connects saved image identities to their existing local files; it does not download media.</p></details></section>"
@@ -90,7 +116,7 @@ def setup_body(app, campaign, field):
     if drafts:
         body += "<section class='review-card'><h2>Sample preparations</h2><ul>"+''.join("<li><a href='/human-evaluation/preparations/"+r['id']+"'>"+escape(r['value']['name'])+"</a></li>" for r in drafts)+"</ul></section>"
     body += "<details class='review-card'><summary>Register an existing analysis result set</summary><p>For imported historical campaigns, associate their existing combined analysis once. This neither copies nor regenerates responses. Normal completed runs are listed automatically.</p><form method='post' action='/human-evaluation/register-source'>"+hidden+field('name','Result-set name')+field('results','Existing analysis results directory')+field('historical_code_repository','Historical code repository (if needed)',required=False)+field('judge_configuration_sha256','Historical judge configuration reference (if needed)',required=False)+"<button>Register saved results</button></form></details>"
-    return body+SETUP_SCRIPT
+    return navigation+body+SETUP_SCRIPT
 
 
 def setup_route(app, method, path, data, style):
@@ -99,7 +125,8 @@ def setup_route(app, method, path, data, style):
         owner=data.get('campaign_id','');app.db.require_workspace(owner)
         store.register_source(campaign=owner, **{k:data.get(k,'') for k in ('name','results','historical_code_repository','judge_configuration_sha256','media_index')})
         return 303,'/human-evaluation?campaign_id='+owner,b''
-    if method=='POST' and path=='/human-evaluation/prepare-study':
+    if method=='POST' and path in {'/human-evaluation/prepare-study','/human-evaluation/prepare-personal'}:
+        personal = path.endswith('/prepare-personal')
         owner=data.get('campaign_id',''); choices=sources(app,owner)
         source=next((r for r in choices if r['id']==data.get('source')),None)
         if source is None: raise ValueError('Choose saved results from this campaign')
@@ -107,10 +134,10 @@ def setup_route(app, method, path, data, style):
         indexed = source.get('source_kind')=='campaign_index'
         if data.get('mode') not in {'common','source_task'} or int(data.get('clusters','0')) < (0 if indexed else 1):
             raise ValueError('Choose a rubric and cluster count; zero selects minimum coverage for indexed campaigns')
-        metadata=arrangements(data)
-        if not data.get('name','').strip() or any(not metadata[k] for k in ('ethics','compensation','stop_contact','consent')):
+        metadata = dict(review_kind='personal') if personal else arrangements(data)
+        if not data.get('name','').strip() or (not personal and any(not metadata[k] for k in ('ethics','compensation','stop_contact','consent'))):
             raise ValueError('Complete the study name and actual review arrangements')
-        if not data.get('compensation','').strip(): raise ValueError('Record participation time and withdrawal terms')
+        if not personal and not data.get('compensation','').strip(): raise ValueError('Record participation time and withdrawal terms')
         directory=store.root/('preparation-'+secrets.token_hex(8));directory.mkdir(mode=0o700)
         params={'--results':source['results'],'--output':str(directory/'sample.csv'),'--acknowledge-sensitive-content':'1',
                 '--prepare-source-task' if data['mode']=='source_task' else '--prepare':data['clusters']}
@@ -141,17 +168,24 @@ def setup_route(app, method, path, data, style):
         else:
             state,exit_code=job['state'],job['exit_code']
         ready=state=='complete' and exit_code==0
+        personal=draft['value']['metadata'].get('review_kind')=='personal'
         pending_ethics=draft['value']['metadata'].get('ethics_status')=='pending'
         if method=='POST':
             if not ready:raise ValueError('Finish sample preparation before creating the study')
             if pending_ethics:raise ValueError('Record the actual ethics determination before creating a study for reviewers')
-            return 303,'/human-evaluation/'+store.create_prepared_study(key),b''
+            study=store.create_prepared_study(key)
+            return 303,('/review/'+store.study(study)['metadata']['personal_token'] if personal else '/human-evaluation/'+study),b''
         body=style+"<div class='review-stack'><section class='review-card'><h1>"+html.escape(draft['value']['name'])+"</h1><p>Sample preparation: "+html.escape(state)+"</p><p><a href='/jobs/"+draft['job']+"'>Open preparation job</a> | <a href='/human-evaluation?campaign_id="+draft['campaign']+"'>Human evaluation</a></p>"
         if ready:
             with Path(draft['value']['prepared']).open(encoding='utf-8-sig',newline='') as f:rows=list(csv.DictReader(f))
             count=len({r['sample_key'] for r in rows});clusters=len({r.get('cluster_key',r['sample_key']) for r in rows})
-            body+=f"<h2>Check the review workload</h2><p>{clusters:,} source clusters, {count:,} saved outputs, {2*count:,} required independent ratings, plus any adjudication.</p><p>No human ratings have been created by preparation.</p>"
-            if pending_ethics:
+            body+=f"<h2>Check the review workload</h2><p>{clusters:,} source clusters, {count:,} saved outputs. "
+            body+=(f"{count:,} personal evaluations. These are not independent two-rater assessments.</p>" if personal else
+                f"{2*count:,} required independent ratings, plus any adjudication.</p>")
+            body+="<p>No human ratings have been created by preparation.</p>"
+            if personal:
+                body+="<form method='post'><button>Open evaluation form</button></form>"
+            elif pending_ethics:
                 body+="<p>Ethics determination is not decided yet. You can inspect this sample, but cannot invite reviewers. Return to study setup when the actual determination is available.</p>"
             else:body+="<form method='post'><button>Create study and assign reviewers</button></form>"
             frame_path=Path(draft['value']['prepared']).with_suffix('.FRAME.json')

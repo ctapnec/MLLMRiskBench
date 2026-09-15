@@ -146,8 +146,14 @@ def _guidance(app, params):
          [(label, campaign + '?section=' + section if owner else link('general'))
           for label, section in [('Inspect results', 'results'), ('Compare matched inputs', 'compare'),
               ('Inspect costs', 'costs'), ('Coverage figures and exports', 'overview'), ('Inspect the saved draft', 'definition')]]),
-        ('Human review', 'Optional: arrange independent human evaluation',
-         'Use saved campaign outputs, including finished campaigns. In Human evaluation, choose Saved results, '
+        ('Human review', 'Evaluate saved answers or arrange independent review',
+         'Open Human evaluation and use Review saved answers for your own evaluation: choose Saved results, '
+         'name the review, choose its rubric and source-cluster count, acknowledge sensitive content and click '
+         'Prepare answers for review. When preparation finishes, click Open evaluation form. Read the prompt, '
+         'images and answer, use Next through the rating dimensions, then Save evaluation. Review progress and '
+         'export reopens your saved work and downloads personal evaluations, including unfinished items. '
+         'This path has no study-arrangement or enrollment fields; personal ratings are not independent evidence. '
+         'For the separate Independent two-rater study option, choose Saved results, '
          'name the study, select the rubric and sample, record the actual participation and ethics arrangements, '
          'then review and prepare the sample. Inspect prompts, images and workload before creating the study. '
          'Assign qualified independent raters and an adjudicator, and share their individual review links. '
@@ -159,6 +165,11 @@ def _guidance(app, params):
          'The Retained response classifiers tool supports harmful compliance, over-refusal and judge disagreement. '
          'To fit a study, export a dataset from the saved campaign database and source candidates, choosing the '
          'matched hosted-input population and one exact Haiku condition; then evaluate that dataset. Preserve '
+         'the distinction between the form controls: Tools -> Analysis and native imports -> response_svm '
+         'has four mode checkboxes, not a dropdown. Check exactly one of --export, --evaluate, --package or --predict. '
+         'Save under campaign groups the job but does not fill the input campaign fields. Enter a fresh --out '
+         'directory, then use Start job within that form. Jobs links to result.json and the produced dataset, '
+         'predictions or fitted models. Preserve '
          'input-group splits and report class support and exclusions. To reuse completed work, package its fitted '
          'models once or predict with an existing trusted package. These modes are separate choices, not four '
          'mandatory reruns. A few demonstration answers are too small for meaningful training and held-out evaluation. '

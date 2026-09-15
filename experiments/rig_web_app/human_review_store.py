@@ -130,16 +130,21 @@ class HumanReviewStore:
             unique[key] = row; counts[key] += 1
         if not unique or len(unique) > 10000 or set(counts.values()) not in ({1}, {2}):
             raise ValueError("Sample must contain one or two identical blank rows per item")
-        for key in ("ethics", "consent", "compensation", "stop_contact", "results"):
+        personal = metadata.get('review_kind') == 'personal'
+        for key in (('results',) if personal else ("ethics", "consent", "compensation", "stop_contact", "results")):
             if not str(metadata.get(key, "")).strip(): raise ValueError("Record study arrangements: " + key)
         study = secrets.token_hex(12); directory = self.root/study; directory.mkdir(mode=0o700)
-        blank = [row for row in unique.values() for _ in range(2)]
+        blank = [row for row in unique.values() for _ in range(1 if personal else 2)]
         payload = _csv_bytes(fields, blank)
         (directory/"prepared.csv").write_bytes(payload)
         metadata = dict(metadata, source=str(path), rows=len(unique),
                         clusters=len({r.get("cluster_key", r["sample_key"]) for r in unique.values()}),
                         prepared_sha256=hashlib.sha256(payload).hexdigest(), model_identity_hidden=True,
-                        qualification_policy="independent_20_items_at_least_16_correct_per_dimension")
+                        qualification_policy='not_applied_to_personal_review' if personal else
+                        "independent_20_items_at_least_16_correct_per_dimension")
+        if personal:
+            # Operator-only resume link. The blinded reviewer payload never includes metadata.
+            metadata['personal_token'] = secrets.token_urlsafe(32)
         with self.transaction():
             self.conn.execute("INSERT INTO human_studies VALUES(?,?,?,?,?,?,?)",
                               (study, campaign, name.strip(), mode, _json(fields), _json(metadata), time.time()))
@@ -149,11 +154,15 @@ class HumanReviewStore:
                 self.conn.execute("INSERT INTO human_items VALUES(?,?,?,?,?)",
                                   (study, secrets.token_hex(12), ordinal, _json(row), _json(references)))
             self._event(study, None, None, "study_created", {"rows": len(unique)})
+            if personal:
+                self.conn.execute('INSERT INTO human_reviewers VALUES(?,?,?,?,?,?,NULL)',
+                    (study, 'personal', 'personal', hashlib.sha256(metadata['personal_token'].encode()).hexdigest(),
+                     _json({'independent': False}), time.time()))
         return study
 
     def studies(self, campaign=""):
         with self.lock:
-            return [dict(r) for r in self.conn.execute("SELECT id,campaign,name,mode,created FROM human_studies WHERE (?='' OR campaign=?) ORDER BY created DESC", (campaign, campaign))]
+            return [dict(r) for r in self.conn.execute("SELECT id,campaign,name,mode,created,COALESCE(json_extract(metadata,'$.review_kind'),'independent') AS review_kind FROM human_studies WHERE (?='' OR campaign=?) ORDER BY created DESC", (campaign, campaign))]
 
     def register_source(self, *, campaign, name, results, historical_code_repository='', judge_configuration_sha256='', media_index=''):
         """Associate an existing analysis scope without changing its results."""
@@ -213,6 +222,8 @@ class HumanReviewStore:
             raise ValueError("Use a pseudonymous reviewer ID and role")
         with self.transaction():
             info = self.study(study)
+            if info['metadata'].get('review_kind') == 'personal':
+                raise ValueError('Personal review is separate from independent reviewer enrollment')
             dimensions = list(COMMON) if info["mode"] == "common" else ["task_label", "parse_status_label"]
             scores = qualification.get("correct", {})
             if (not qualification.get("reference") or qualification.get("items") != 20
@@ -292,13 +303,15 @@ class HumanReviewStore:
         with self.lock:
             r = self._reviewer(token); study = self.study(r["study"])
             result = {"role": r["role"], "consented": r["consent"] is not None,
-                      "consent": study["metadata"]["consent"], "compensation": study["metadata"]["compensation"],
-                      "stop_contact": study["metadata"]["stop_contact"]}
+                      "consent": study["metadata"].get("consent", ''), "compensation": study["metadata"].get("compensation", ''),
+                      "stop_contact": study["metadata"].get("stop_contact", '')}
+            if r['role'] == 'personal':
+                result['summary_url'] = '/human-evaluation/'+r['study']
             if r["consent"] is None: return result
             items = self.conn.execute("SELECT id FROM human_items WHERE study=? ORDER BY ordinal", (r["study"],)).fetchall()
             queue = []
             for entry in items:
-                if r["role"] == "rater":
+                if r["role"] in {"rater", "personal"}:
                     rating = self.conn.execute("SELECT state FROM human_ratings WHERE study=? AND item=? AND reviewer=?", (r["study"], entry["id"], r["id"])).fetchone()
                     state = rating["state"] if rating else "unstarted"
                 else:
@@ -318,7 +331,7 @@ class HumanReviewStore:
                 try: self._media_path(reference, study['metadata'].get('media_index', '')); available = True
                 except (OSError, ValueError): available = False
                 shown["media"].append({"index": index, "modality": reference.get("modality"), "available": available})
-            if r["role"] == "rater":
+            if r["role"] in {"rater", "personal"}:
                 rating = self.conn.execute("SELECT revision,state,value FROM human_ratings WHERE study=? AND item=? AND reviewer=?", (r["study"], item, r["id"])).fetchone()
                 shown["rating"] = dict(rating, value=json.loads(rating["value"])) if rating else {"revision": 0, "state": "unstarted", "value": {}}
             else:
@@ -338,7 +351,7 @@ class HumanReviewStore:
     def save(self, token, item, *, revision, value, submit=False, defer=False):
         with self.transaction():
             r = self._reviewer(token)
-            if r["role"] != "rater" or r["consent"] is None: raise ValueError("Independent rater consent is required")
+            if r["role"] not in {"rater", "personal"} or r["consent"] is None: raise ValueError("Independent rater consent is required")
             study = self.study(r["study"]); selected = self._item(r["study"], item)
             choices = _allowed(selected["content"], study["mode"])
             allowed = set(choices) | {"confidence", "notes", "media_viewed", "defer_reason"}
@@ -347,7 +360,7 @@ class HumanReviewStore:
             if any(v not in choices[k] for k, v in value.items() if k in choices and v): raise ValueError("Invalid rubric choice")
             previous = self.conn.execute("SELECT * FROM human_ratings WHERE study=? AND item=? AND reviewer=?", (r["study"], item, r["id"])).fetchone()
             if type(revision) is not int or revision != (previous["revision"] if previous else 0): raise ValueError("Draft changed in another tab; reload before saving")
-            if previous and previous["state"] == "submitted": raise ValueError("Submitted independent ratings are fixed")
+            if previous and previous["state"] == "submitted" and r['role'] != 'personal': raise ValueError("Submitted independent ratings are fixed")
             if submit:
                 if defer or any(value.get(k) not in v for k, v in choices.items()) or type(value.get("confidence")) is not int or value["confidence"] not in {1, 2, 3, 4, 5}:
                     raise ValueError("Complete every rubric dimension and confidence before submission")
@@ -376,9 +389,10 @@ class HumanReviewStore:
     def summary(self, study):
         with self.lock:
             info = self.study(study)
+            personal = info['metadata'].get('review_kind') == 'personal'
             counts = Counter({"outputs": 0, "required_ratings": 0, "submitted": 0, "deferred": 0, "paired": 0, "disagreements": 0, "adjudicated": 0})
             for item in self.conn.execute("SELECT id,content FROM human_items WHERE study=?", (study,)):
-                counts["outputs"] += 1; counts["required_ratings"] += 2
+                counts["outputs"] += 1; counts["required_ratings"] += 1 if personal else 2
                 rows = self._ratings(study, item["id"]); counts["submitted"] += len(rows)
                 if len(rows) == 2:
                     counts["paired"] += 1
@@ -388,7 +402,26 @@ class HumanReviewStore:
             counts["deferred"] = self.conn.execute("SELECT COUNT(*) FROM human_ratings WHERE study=? AND state='deferred'", (study,)).fetchone()[0]
             reviewers = [dict(r) for r in self.conn.execute("SELECT id,role,consent,withdrawn FROM human_reviewers WHERE study=? ORDER BY role,id", (study,))]
             return {"study": info, "counts": dict(counts), "reviewers": reviewers,
-                    "ready_for_analysis": counts["submitted"] == counts["required_ratings"] and counts["disagreements"] == counts["adjudicated"] and not any(r["withdrawn"] for r in reviewers)}
+                    "ready_for_analysis": not personal and counts["submitted"] == counts["required_ratings"] and counts["disagreements"] == counts["adjudicated"] and not any(r["withdrawn"] for r in reviewers)}
+
+    def personal_export(self, study):
+        """Partial personal evaluations are never the independent two-rater CSV."""
+        with self.lock:
+            info = self.study(study)
+            if info['metadata'].get('review_kind') != 'personal':
+                raise ValueError('Choose a personal review')
+            rows = []
+            fields = ['review_kind', 'item', 'sample_key', 'state', *list(COMMON if info['mode']=='common'
+                else {'task_label':None,'parse_status_label':None}), 'confidence', 'notes']
+            for item in self.conn.execute('SELECT id,content FROM human_items WHERE study=? ORDER BY ordinal', (study,)):
+                rating = self.conn.execute('SELECT state,value FROM human_ratings WHERE study=? AND item=? AND reviewer=?',
+                    (study,item['id'],'personal')).fetchone()
+                values = json.loads(rating['value']) if rating else {}
+                row = {key: values.get(key,'') for key in fields}
+                row.update(review_kind='personal_not_independent',item=item['id'],
+                    sample_key=json.loads(item['content'])['sample_key'], state=rating['state'] if rating else 'unstarted')
+                rows.append({key:audit._csv_safe(value) if isinstance(value,str) else value for key,value in row.items()})
+            return _csv_bytes(fields,rows)
 
     def export(self, study):
         with self.transaction():
