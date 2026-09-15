@@ -1,0 +1,168 @@
+"""Guidance is persisted UI help, never a change to experiment semantics."""
+from types import SimpleNamespace
+from urllib.parse import urlsplit
+
+import pytest
+
+from experiments.rig_web import RigWebApp
+from experiments.rig_web_app import campaign_guide, ui
+from test_rig_web_busy_browser import browser  # noqa: F401
+
+
+@pytest.fixture
+def app(tmp_path, monkeypatch):
+    result = RigWebApp(results_root=tmp_path/'runs', state_dir=tmp_path/'state',
+        repo_root=tmp_path, gpu_hardware={}, system_hardware={})
+    def forbidden(*args, **kwargs):
+        raise AssertionError('Campaign guidance must never launch work')
+    monkeypatch.setattr(result, 'start_job', forbidden)
+    yield result
+    result.close()
+
+
+def draft(**changes):
+    return dict(work_kind='campaign', campaign_name='My guided campaign', mode='dry_run',
+        corpora='synth', attackers='replay', judges='rules,llm', limit='1', **changes)
+
+
+def test_opt_in_survives_save_reopen_and_can_be_disabled(app):
+    plain = app.handle('GET', '/build?work_kind=campaign')[2].decode()
+    assert "name='campaign_guide'><span>" in plain
+    assert "data-guide-enabled='false'" in plain
+    status, location, _ = app.handle('POST', '/build/save', draft(campaign_guide='on'))
+    assert status == 303
+    owner = location.split('/campaigns/')[1].split('?')[0]
+    assert app.db.workspace_definition(owner)['campaign_guide'] == 'on'
+    for path in (location, '/build?campaign_id='+owner):
+        page = app.handle('GET', path)[2].decode()
+        assert "data-guide-enabled='true'" in page
+        assert page.count("<dialog class='campaign-guide-dialog'") == 1
+    assert "data-guide-enabled='true'" in app._campaign_banner(owner)
+    plain = app.db.workspace_definition(owner)
+    plain.pop('campaign_guide')
+    app._save_build_campaign(plain)
+    assert 'campaign_guide' not in app.db.workspace_definition(owner)
+    assert 'campaign-guide-dialog' not in app.handle('GET', location)[2].decode()
+    assert not app.db.load_jobs()
+
+
+def test_help_does_not_change_cli_or_projection_and_never_applies_to_single_runs(app, tmp_path):
+    params = draft(out=str(tmp_path/'runs'/'demo'))
+    guided = dict(params, campaign_guide='on')
+    assert app._projection_params(params) == app._projection_params(guided)
+    command, values, _ = app._compose_from_builder(params)
+    other_command, other_values, _ = app._compose_from_builder(guided)
+    assert (command, values) == (other_command, other_values)
+    single = app._builder_params(dict(guided, work_kind='run'))
+    assert 'campaign_guide' not in single and 'campaign_name' not in single
+    with pytest.raises(ValueError, match='guidance choice'):
+        app._builder_params(dict(guided, campaign_guide='yes'))
+
+
+@pytest.mark.parametrize('state,role,expected', [
+    ('running', 'collection', 4), ('failed', 'judging', 4),
+    ('complete', 'collection', 5), ('complete', 'judging', 6),
+    ('complete', 'preparation', 3)])
+def test_suggestions_use_bounded_activity_not_preparation_field_presence(state, role, expected):
+    row = dict(member_kind='job', member_id='job-one', state=state, role=role)
+    reads = []
+    db = SimpleNamespace(workspace_activity=lambda owner: reads.append(owner) or [row])
+    _, stage, notice, _ = campaign_guide._guidance(SimpleNamespace(db=db),
+        dict(campaign_id='a'*32, api='google:flash', retained_source_campaign='b'*32,
+             retained_inventory_plan_job='saved-is-not-completed'))
+    assert stage == expected and reads == ['a'*32]
+    assert 'whole campaign is finished' in notice if state == 'complete' else state in notice
+
+
+def test_matched_and_local_suggestions_are_distinct_and_links_do_not_execute(app):
+    from html.parser import HTMLParser
+    class Links(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.hrefs = []
+        def handle_starttag(self, tag, attrs):
+            if tag == 'a':
+                self.hrefs.append(dict(attrs)['href'])
+    local = campaign_guide.render(app, dict(local='vllm:qwen', campaign_guide='on'), builder=True)
+    hosted = campaign_guide.render(app, dict(api='google:flash', retained_source_campaign='b'*32,
+        campaign_guide='on'), builder=True)
+    assert 'Compose &amp; review' in local and 'Prepare counted collection' in hosted
+    assert 'paired comparison limit' in hosted and 'text proxy' in hosted
+    links = Links()
+    links.feed(local + hosted)
+    assert all(urlsplit(href).path in {'/build', '/config'} for href in links.hrefs)
+    assert all(not urlsplit(href).fragment or urlsplit(href).fragment in {
+        'build-general', 'build-pipeline', 'build-evaluation', 'build-execution', 'build-admission'
+    } for href in links.hrefs)
+
+
+def _browser_page(browser, app, width=1440):
+    page = browser.new_page(viewport={'width': width, 'height': 900})
+    requests, errors = [], []
+    page.on('pageerror', lambda error: errors.append(str(error)))
+    def route(request):
+        parsed = urlsplit(request.request.url)
+        requests.append((request.request.method, parsed.path))
+        if parsed.path == '/static/style.css':
+            request.fulfill(status=200, content_type='text/css', body=ui._STYLE)
+        elif request.request.method == 'GET':
+            status, mime, body = app.handle('GET', parsed.path + ('?'+parsed.query if parsed.query else ''))
+            request.fulfill(status=status, content_type=mime, body=body)
+        else:
+            raise AssertionError('Guide browser navigation may not submit jobs')
+    page.route('http://guide.test/**', route)
+    return page, requests, errors
+
+
+@pytest.mark.parametrize('width', [1440, 390])
+def test_browser_checkbox_modal_keyboard_steps_links_and_single_run(browser, app, width):  # noqa: F811
+    page, requests, errors = _browser_page(browser, app, width)
+    try:
+        page.goto('http://guide.test/build?work_kind=campaign')
+        dialog = page.locator('.campaign-guide-dialog')
+        assert not dialog.is_visible()
+        page.locator('[name=campaign_guide]').check()
+        assert dialog.is_visible()
+        page.locator('[data-guide-step="2"]').click()
+        assert 'Choose evaluation' in page.locator('.campaign-guide-section:visible').inner_text()
+        page.locator('[data-guide-next]').click()
+        assert 'Prepare and review' in page.locator('.campaign-guide-section:visible').inner_text()
+        page.locator('[data-guide-back]').click()
+        page.keyboard.press('Escape')
+        assert not dialog.is_visible()
+        assert page.locator('[name=campaign_guide]').evaluate('e=>e===document.activeElement')
+        page.locator('[data-guide-open]').click()
+        assert dialog.is_visible()
+        for theme in ('harbor', 'slate', 'parchment', 'midnight', 'ash'):
+            page.evaluate('(theme)=>document.documentElement.dataset.theme=theme', theme)
+            assert dialog.evaluate('e=>e.scrollWidth<=e.clientWidth+1')
+            assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+        page.get_by_role('link', name='Choose judges', exact=True).click()
+        assert not dialog.is_visible()
+        assert page.locator('#build-evaluation').is_visible()
+        page.locator('[data-guide-open]').click()
+        page.locator('[data-guide-close]').click()
+        page.locator('[name=work_kind][value=run]').check()
+        assert page.locator('[name=campaign_guide]').is_disabled()
+        assert not page.locator('[data-guide-open]').is_visible()
+        assert not errors and not [row for row in requests if row[0] != 'GET']
+        assert not app.db.load_jobs()
+    finally:
+        page.close()
+
+
+def test_browser_remembers_dismissal_per_campaign_and_reopens_on_demand(browser, app):  # noqa: F811
+    saved = app._save_build_campaign(draft(campaign_guide='on'))
+    path = '/campaigns/'+saved['campaign_id']+'?section=definition'
+    page, requests, errors = _browser_page(browser, app)
+    try:
+        page.goto('http://guide.test'+path)
+        assert page.locator('.campaign-guide-dialog').is_visible()
+        page.locator('[data-guide-close]').click()
+        page.reload()
+        assert not page.locator('.campaign-guide-dialog').is_visible()
+        page.locator('[data-guide-open]').click()
+        assert page.locator('.campaign-guide-dialog').is_visible()
+        assert not errors and not app.db.load_jobs()
+    finally:
+        page.close()

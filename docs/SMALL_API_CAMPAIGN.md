@@ -410,22 +410,63 @@ already had Haiku verdicts. Your counts and costs depend on your own selection.
 
 ## 8. Examine and compare your results
 
-1. Open the destination campaign. **Overview** shows coverage; **Results** shows
-   outputs, generation settings, token usage and truncation; **Judging** shows
-   answer-specific decisions; **Costs** shows physical attempts and charges.
-2. Open **Compare**. Choose your Flash campaign/model on the left and **Local
-   campaign / Qwen3-VL-8B-Instruct** on the right. Click **Update choices /
-   compare** to load the dependent choices.
-3. Select the relevant generation condition on each side and the same Haiku
-   judging condition. Click **Update choices / compare** again if the condition
-   or corpus choices have just changed.
-4. For text, choose `xstest_full`, framework `replay`, modality `text`. For images,
-   use a separate view with `vlsbench_release`, `replay`, `image` and the local
-   image generation condition. Apply the choices.
-5. Read the shared-input and jointly valid-verdict counts before comparing
-   labels. The reference has three jointly valid text pairs and three valid
-   image pairs out of four matched images. Export each view with **Download
-   this page's counts**.
+### 8.1. Inspect the destination campaign
+
+Open **Campaigns -> your Flash campaign**. **Overview** shows coverage;
+**Results** shows outputs, generation settings, token usage and truncation;
+**Judging** shows answer-specific decisions; **Costs** shows physical attempts
+and charges.
+
+### 8.2. Select the two models in Compare
+
+The selectors do **not** load dependent options immediately. Each **Update
+choices / compare** below reloads the page with the next set of choices.
+
+1. Open **Compare** inside **your Flash campaign**. Under **Left condition**,
+   the campaign name is fixed to the page you opened. There is no left campaign
+   selector. If it names the wrong campaign, open the correct campaign first.
+2. Under **Left condition -> Model**, select your saved Flash model. Under
+   **Right condition -> Campaign**, select **Local campaign**, or the local
+   demonstration campaign you actually used as the source.
+3. Click **Update choices / compare** below the selectors. Wait for the page
+   to reload. This loads the right campaign's models; you could not select
+   Qwen from that campaign before this update.
+4. Under **Right condition -> Model**, select the saved `Qwen3-VL-8B-Instruct`
+   entry. Keep Flash selected on the left. Click **Update choices / compare**
+   again. Both **Generation condition** selectors can now offer their values.
+
+### 8.3. Select generation conditions, then Haiku conditions
+
+1. Choose **Generation condition** on each side. Use the saved Flash condition
+   and the relevant local Qwen condition. The displayed condition numbers are
+   local to each list; matching numbers do not establish matching settings.
+2. Click **Update choices / compare**. This loads each **Judging condition**
+   selector for its selected model and generation condition.
+3. Choose the corresponding **Haiku** judging condition on both sides, then
+   click **Update choices / compare** again. Do not substitute the local judge
+   on one side when intending a Haiku-to-Haiku comparison.
+
+If a model, generation condition or Haiku condition is absent, first inspect
+that campaign's **Results** and **Judging**. Only indexed records are offered.
+An empty selector is not an instruction to regenerate answers or buy judgments
+again. Changing an upstream choice requires another update and may require
+reselecting the downstream conditions.
+
+### 8.4. Filter and export each comparison
+
+1. For the text comparison, select **Corpus** `xstest_full`, **Framework**
+   `replay` and **Modality** `text`, then click **Update choices / compare**.
+2. Read **matched**, **left only**, **right only** and **ambiguous shared inputs**.
+   In the outcome table, count jointly valid Haiku assessments separately from
+   invalid or missing assessments. Export with **Download this page's counts**.
+3. For images, choose the local image **Generation condition** if it differs
+   from the text condition, update, and reselect its Haiku condition as in 8.3.
+   Change the filters to `vlsbench_release`, `replay`, `image`, then update and
+   export that view separately. Old filter values persist until you change them.
+
+The completed reference has three jointly valid text pairs and three valid
+image pairs out of four matched images. These are reference counts, not a
+promise that a newly generated selection will yield the same judgments.
 
 The completed route-2a exercise demonstrates that retained-input UI flow.
 Section 2b describes the separate direct Runner controls; documenting them is

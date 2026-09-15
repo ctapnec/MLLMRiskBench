@@ -21,6 +21,7 @@ class BuilderCaptureMixin:
         "campaign_id",
         "work_kind",
         "campaign_name",
+        "campaign_guide",
         "retained_source_campaign",
         "retained_source_runs",
         "retained_sources_job",
@@ -572,10 +573,13 @@ class BuilderCaptureMixin:
         if work_kind == "run":
             params.pop("campaign_id", None)
             params.pop("campaign_name", None)
+            params.pop("campaign_guide", None)
         elif not params.get("campaign_id"):
             name = params.get("campaign_name", "")
             if not name or len(name) > 120 or any(ord(c) < 32 for c in name):
                 raise ValueError("Enter a campaign name or select an existing campaign")
+        if params.get("campaign_guide") not in {None, "on"}:
+            raise ValueError("Invalid campaign guidance choice")
         attackers = set(self._split_list(params.get("attackers", "")))
         if "t3mp3st" not in attackers:
             params.pop("t3_artifact", None)

@@ -1417,6 +1417,7 @@ class BuilderModelsMixin:
         "campaign_id",
         "work_kind",
         "campaign_name",
+        "campaign_guide",
         "verify_model_sha256",
         "reset_open_circuits",
         "lock_stale_seconds",

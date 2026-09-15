@@ -130,8 +130,13 @@ class WorkspacePagesMixin:
             "<input name='campaign_name' form='builder' maxlength='120' value='"
             + html.escape(params.get("campaign_name", ""), quote=True) + "'></label>"
             + ("<a class='button ghost' href='/campaigns/" + selected + "'>Open campaign</a>" if selected else "")
+            + "<label class='campaign-guide-option'><input type='checkbox' form='builder' name='campaign_guide'"
+            + (" checked" if params.get('campaign_guide') == 'on' else '')
+            + "><span><strong>Guide me through this campaign</strong>"
+            "<small>Optional step-by-step help with choices, explanations and links. No jobs start automatically.</small></span></label>"
             + "</div><p class='note'>Choose models once below. Local, API or mixed follows from your model selection. "
             "Campaign drafts do not change jobs that are already running.</p></section>"
+            + self._campaign_guide(selected, params=params, builder=True)
         )
 
     def _standalone_results_page(self, query: dict[str, str]) -> bytes:
@@ -268,7 +273,13 @@ class WorkspacePagesMixin:
         return (
             "<p>Campaign: <a href='/campaigns/" + campaign_id + "'>"
             + html.escape(campaign["name"]) + "</a></p>"
+            + self._campaign_guide(campaign_id)
         )
+
+    def _campaign_guide(self, campaign_id: str, *, params=None, builder=False) -> str:
+        from .campaign_guide import render
+        definition = params if params is not None else self.db.workspace_definition(campaign_id)
+        return render(self, dict(definition, campaign_id=campaign_id), builder=builder)
 
     def _workspaces_page(self, *, context: str = "campaigns") -> bytes:
         rows = self.db.workspaces()
@@ -353,6 +364,7 @@ class WorkspacePagesMixin:
             "<p class='action-row'><a class='button' href='/build?campaign_id=" + campaign_id + "'>Configure in Build</a> "
             "<a class='button ghost' href='/jobs?campaign_id=" + campaign_id + "'>Campaign jobs</a> "
             "<a class='button ghost' href='/commands?campaign_id=" + campaign_id + "'>Run tools</a></p>"
+            + self._campaign_guide(campaign_id)
             + navigation + "<section class='card'><h2>" + section.title() + "</h2>" + content + "</section>",
             active="Campaigns" if section in {"definition", "activity"} else "Stats",
         )

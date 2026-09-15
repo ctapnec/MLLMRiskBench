@@ -7,6 +7,7 @@ import json
 from urllib.parse import quote
 
 from .catalog import _icon
+from .campaign_guide import STYLE as _CAMPAIGN_GUIDE_STYLE
 
 _STYLE = """
 :root { color-scheme: light;
@@ -1379,6 +1380,9 @@ document.documentElement.setAttribute('data-theme',picker.value);
 try{localStorage.setItem('ura-theme',picker.value);}catch(error){}
 });
 })();</script>"""
+
+
+_STYLE += _CAMPAIGN_GUIDE_STYLE
 
 
 def _page(title: str, body: str, active: str = "") -> bytes:

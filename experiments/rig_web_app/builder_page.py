@@ -2220,7 +2220,7 @@ class BuilderPageMixin:
         build_default = "build-general"
         error_fields = set(errors)
         error_panel_fields = (
-            ("build-general", {"work_kind", "campaign_name", "campaign_id"}),
+            ("build-general", {"work_kind", "campaign_name", "campaign_id", "campaign_guide"}),
             (
                 "build-pipeline",
                 {
@@ -2660,6 +2660,7 @@ class BuilderPageMixin:
             "const name=document.querySelector('[name=campaign_name]');const fields=document.getElementById('build-campaign-fields');"
             "function update(){const campaign=document.querySelector('[name=work_kind]:checked').value==='campaign';"
             "fields.hidden=!campaign;c.disabled=!campaign;name.disabled=!campaign||!!c.value;name.required=campaign&&!c.value;"
+            "document.querySelector('[name=campaign_guide]').disabled=!campaign;"
             "document.getElementById('build-campaign-name').hidden=!!c.value;"
             "document.querySelectorAll('[data-save-campaign]').forEach(e=>{e.hidden=!campaign;});"
             "document.querySelectorAll('[data-builder-campaign]').forEach(e=>{e.value=campaign?c.value:'';});}"
