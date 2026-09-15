@@ -41,6 +41,10 @@ section and theme control, including personal, rater and adjudicator views.
 The item view does not reveal model identities or automated verdicts, but the
 shared console menu is not an access-control or experimental-blinding boundary.
 Independent work is a study procedure, not enforced by removing navigation.
+Only the main console menu is sticky. Campaign and section tabs scroll with
+their content so they cannot cover that menu on narrow screens. Browser
+acceptance must check that the main links remain unobstructed after scrolling,
+not merely that their elements are present in the page.
 
 For an item with images, audio or video, view its required media in **Context**,
 then check **I viewed every required asset** on **Review** before final saving.
