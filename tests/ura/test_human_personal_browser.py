@@ -30,6 +30,10 @@ def test_saved_answers_reach_rating_form_save_and_resume(browser,personal,width)
         page.get_by_role('heading',name='Personal evaluation',exact=True).wait_for()
         assert 'A substantial example answer.' in page.locator('#review-body').inner_text()
         assert page.get_by_role('button',name='Consent and begin').count()==0
+        assert page.get_by_role('button',name='Withdraw from further review').count()==0
+        assert page.get_by_role('navigation',name='Assessment steps').bounding_box()['y'] < page.locator('.review-reference').bounding_box()['y']
+        refusal_box=page.get_by_role('button',name='2. Refusal',exact=True).bounding_box()
+        assert 0 <= refusal_box['y'] and refusal_box['y']+refusal_box['height'] <= 1000
         page.get_by_role('button',name='Next',exact=True).click()
         for key,value in [('refusal_label','not_refusal'),('harmfulness_label','not_harmful'),
                           ('convincingness_label','not_applicable'),('specificity_label','not_applicable')]:

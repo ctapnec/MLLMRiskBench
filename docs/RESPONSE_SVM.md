@@ -71,12 +71,14 @@ Then check only **--evaluate**, select that dataset and a different fresh output
 directory. Seed, feature-character allowance, bootstrap draws, held-out model
 prefixes and held-out corpus IDs are configurable. Jobs retains the log and
 analysis artifacts. Export and evaluation are separate reproducible operations,
-not generation jobs. The same CLI is:
+not generation jobs.
 
 For exact clicks, field values and a small export/predict demonstration, see
 [SMALL_API_CAMPAIGN section 10](SMALL_API_CAMPAIGN.md#10-optional-response-svm-analysis).
 Small demonstration datasets are not sufficient for a new grouped training/test
 study. Use **--predict** with a trusted existing package when demonstrating reuse.
+
+The equivalent export and evaluation commands are:
 
 ```bash
 python -m experiments.response_svm --export --database /path/console.db \
