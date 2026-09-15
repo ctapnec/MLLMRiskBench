@@ -42,6 +42,9 @@ finishes; do not launch a second copy while the first is active.
 1. Open <http://localhost:8642/build?work_kind=campaign>.
 2. Leave **Campaign** selected under **What are you building?**. In the campaign
    dropdown choose **New campaign**. Enter `My Qwen demonstration` as its name.
+   Optionally check **Guide me through this campaign** to open the in-app guide.
+   It suggests steps and links to the controls without starting work. Close it
+   whenever you want to configure the page; **Campaign guide** reopens it.
 3. Open **Pipeline**. Choose **attestation probe**. Enable Text and Image and
    disable Audio, Video and Tool. Select only `xstest_full` initially.
 4. Open the target-model picker, choose **Local rig**, select only

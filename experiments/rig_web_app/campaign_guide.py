@@ -16,7 +16,8 @@ STYLE = """
   background:var(--card); border:1px solid var(--line); border-radius:14px; box-shadow:var(--shadow); }
 .campaign-guide-dialog::backdrop { background:rgba(0,0,0,.55); }
 .campaign-guide-header { display:flex; align-items:flex-start; justify-content:space-between;
-  gap:1rem; padding:1.25rem 1.25rem .5rem; }
+  gap:1rem; padding:1.25rem 1.25rem .5rem; position:sticky; top:0;
+  background:var(--card); z-index:1; }
 .campaign-guide-header h2 { margin:0; }
 .campaign-guide-header button { flex:none; }
 .campaign-guide-content { padding:0 1.25rem 1.25rem; }
@@ -107,7 +108,7 @@ def _guidance(app, params):
           for label, section in [('Inspect results', 'results'), ('Compare matched inputs', 'compare'), ('Inspect costs', 'costs')]])
     ]
     stage = 0 if not (local or hosted) else 1 if not (params.get('corpora') or matched) else 2
-    notice = 'Suggested next step from the saved draft. It is guidance, not a validation or completion certificate.'
+    notice = 'Suggested next step from your saved settings.'
     actions = []
     if owner:
         actions = app.db.workspace_activity(owner) or []
@@ -118,12 +119,18 @@ def _guidance(app, params):
         notice = 'The latest console job is recorded as ' + state + '. Open that job before starting or preparing another copy.'
         steps[4][3].insert(0, ('Open the current job', '/jobs/' + quote(latest['member_id'], safe='')))
     elif latest is not None and latest['state'] == 'complete':
-        stage = 6 if latest['role'] == 'judging' else 5 if latest['role'] == 'collection' else 3
+        command = dict(latest).get('command', '')
+        judging_preparation = command in {'retained_native_judge_prepare', 'retained_response_judge_pair',
+            'retained_judge_inventory', 'retained_inventory_judge_items'} or (
+            latest['member_id'] == params.get('retained_inventory_plan_job'))
+        stage = 5 if judging_preparation else 6 if latest['role'] in {'judging', 'analysis'} else 5 if latest['role'] == 'collection' else 3
         notice = 'The latest console job completed. Check what that job covered; this does not mean the whole campaign is finished.'
     elif matched:
         stage = 3
     if latest is not None and latest['role'] == 'collection' and not matched and params.get('mode') == 'attestation_probe':
         notice += ' A diagnostic probe is not a measured result; finish its transport evidence before measured execution.'
+        if latest['state'] == 'complete':
+            stage = 3
     return steps, stage, notice, route
 
 
@@ -187,10 +194,11 @@ dialog.querySelectorAll('a').forEach(a=>a.addEventListener('click',close));
 steps.forEach((b,i)=>b.addEventListener('click',()=>show(i,true)));
 back.addEventListener('click',()=>show(current-1,true));
 next.addEventListener('click',()=>current===panels.length-1?close():show(current+1,true));
-function enabled(){return choice?choice.checked&&!choice.disabled:root.dataset.guideEnabled==='true';}
+function enabled(){const kind=document.querySelector('[name=work_kind]:checked');
+return choice?choice.checked&&(!kind||kind.value==='campaign'):root.dataset.guideEnabled==='true';}
 function sync(){open.hidden=!enabled();if(!enabled()&&dialog.open)close();}
 if(choice)choice.addEventListener('change',()=>{sync();if(enabled())launch();});
-document.querySelectorAll('[name=work_kind]').forEach(e=>e.addEventListener('change',()=>setTimeout(sync,0)));
+document.querySelectorAll('[name=work_kind]').forEach(e=>e.addEventListener('change',sync));
 show(current);sync();
 document.addEventListener('DOMContentLoaded',()=>{sync();let seen=false;
 try{seen=sessionStorage.getItem(key)==='shown';}catch(e){}

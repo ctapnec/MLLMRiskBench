@@ -7122,6 +7122,26 @@ the other three categories have separate output-level files. The all-output
 execution flow below uses that handoff. The separately reviewed bounded paired
 executor remains unchanged; cross-preparation verdict reuse is not inferred.
 
+### Optional guidance for campaign operators
+
+Build offers **Guide me through this campaign** when creating or editing a
+campaign. The preference is stored with the existing SQLite campaign draft;
+it needs no schema migration and defaults off for historical campaigns. The
+modal offers navigational choices, contextual explanations and a suggested
+stage from the saved draft and at most one bounded recent-activity query.
+It does not scan artifacts, verify model checksums, poll providers or make
+generation calls. Preparation completion is not judging completion.
+
+The preference is UI metadata: it has no Runner CLI flag and does not alter
+request selection, budgets, scoring or projection identity. Single-run
+normalization removes it. Closing the dialog preserves the preference;
+unchecking it and saving the draft disables it. Session-local dismissal keeps
+the same suggested stage from reopening on every page navigation. The guide
+can always be reopened explicitly on an enabled campaign's Build, campaign,
+job or review page. Links navigate only; normal review/start controls still
+own all execution. Desktop/mobile browser checks cover keyboard closing,
+focus return, stage navigation, theme layout and read-only links.
+
 ### Execute the all-output judging selection
 
 In Build, select the Haiku model in the judging controls, then choose

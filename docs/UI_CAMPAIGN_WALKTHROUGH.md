@@ -150,6 +150,26 @@ location when installed-runtime preparation is needed. No installation is
 performed. A failed launch before collection initialization retries the same
 prepared inputs and budget; an initialized collection resumes its saved state.
 
+## Optional step-by-step campaign guidance
+
+In Build, check **Guide me through this campaign** beneath the campaign name.
+The modal opens immediately and offers route choices, input selection, settings,
+preparation, execution, judging and results guidance. Links open the relevant
+pages or builder tabs. Back, Next and the step buttons let you browse without
+altering the pipeline. Close or Escape returns to your work.
+
+Save the campaign to retain this preference. **Campaign guide** is available
+again in Build, campaign pages and campaign-owned job/review pages. Automatic
+help appears once per suggested stage in the current browser tab; reopening
+the same page does not repeatedly interrupt you. Guidance follows the saved
+draft and recent indexed console activity, not live model probing. It does
+not certify completion or reinterpret failed jobs. Uncheck the option in Build
+and save to disable it. Single runs do not use campaign guidance.
+
+The guide performs no preparation, inference, judging, recovery or paid action.
+You still use the normal review and explicit start controls. Existing campaigns
+remain unguided unless you enable and save the option.
+
 ## Judge the actual saved answers
 
 1. Under **Judge retained outputs locally**, use **Prepare remaining source

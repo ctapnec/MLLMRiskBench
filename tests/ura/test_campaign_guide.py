@@ -101,6 +101,17 @@ def test_matched_and_local_suggestions_are_distinct_and_links_do_not_execute(app
     } for href in links.hrefs)
 
 
+@pytest.mark.parametrize('command', ['retained_native_judge_prepare', 'retained_response_judge_pair',
+    'retained_judge_inventory', 'retained_inventory_judge_items', 'retained_inventory_judging'])
+def test_completed_judging_preparation_is_not_a_completed_judgment(command):
+    row = dict(member_kind='job', member_id='prepared', state='complete', role='judging', command=command)
+    db = SimpleNamespace(workspace_activity=lambda owner: [row])
+    _, stage, _, _ = campaign_guide._guidance(SimpleNamespace(db=db),
+        dict(campaign_id='a'*32, api='google:flash', retained_source_campaign='b'*32,
+             retained_inventory_plan_job='prepared'))
+    assert stage == 5
+
+
 def _browser_page(browser, app, width=1440):
     page = browser.new_page(viewport={'width': width, 'height': 900})
     requests, errors = [], []

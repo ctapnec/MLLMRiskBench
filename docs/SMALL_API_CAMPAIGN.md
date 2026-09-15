@@ -29,6 +29,9 @@ Choose one route after section 1:
 3. In the **Campaign** dropdown select **New campaign**, not Local campaign or
    API campaign. Those names identify existing workspaces.
 4. In **New campaign name**, enter `My first Flash campaign` (or a unique name).
+   Optionally check **Guide me through this campaign** for explanations and
+   links in a modal. Closing it does not disable the option; **Campaign guide**
+   reopens it. Your choice is saved with the campaign and never starts calls.
 5. Click the **Pipeline** tab. Open the target-model picker, choose **Hosted
    API**, and select only `google:gemini-3.8-flash`. Click **Done**. Do not select
    Haiku as a target unless you deliberately want Haiku to answer the questions.
