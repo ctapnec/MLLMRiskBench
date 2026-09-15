@@ -506,6 +506,25 @@ row identifies the actual models and generation settings. Do not add counts
 across pairs as independent inputs or treat condition numbers as equivalent
 settings. Select individual models again for the focused comparison in 8.2-8.4.
 
+For a single model, **Generation condition -> All generation conditions**
+includes every measured condition of that model, separately. Both sides support
+this option. The same selector remains available under **All models**.
+
+Optional named rules are **Highest output allowance**, **Lowest output
+allowance**, **Largest recorded context**, **Smallest recorded context** and
+**Highest usable-response rate**. Each rule applies separately per model within
+the active corpus/framework/modality filters. Ties remain separate. Token rules
+rank only fully recorded, uniform finite settings; unknown, mixed or
+native-maximum settings are listed as unranked, not guessed.
+
+Usable-response rate is usable outputs divided by saved terminal responses
+(usable, provider-policy or missing). Pending responses do not enter that
+denominator. Inspect the usable/terminal counts and total assigned count:
+small or incomplete conditions can rank highest. This is an exploratory,
+post-hoc selection, not attack success, safety or a universal optimum. Preserve
+the selection rule in reporting; the CSV includes it beside the exact chosen
+generation identities. No retained data or original campaign settings change.
+
 ## 9. Optional: independent human evaluation
 
 Open **Human evaluation** for the saved campaign, including a finished one.

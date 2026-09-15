@@ -5,6 +5,7 @@ from urllib.parse import urlencode
 import pytest
 
 from test_workspace_comparison import study, put  # noqa: F401
+from experiments.rig_web_app.workspace_comparison_many import CONDITION_MODES
 
 
 class Selects(HTMLParser):
@@ -70,7 +71,7 @@ def test_condition_choices_are_measured_scoped_and_identifiable(scoped_study, si
     text = body.decode()
     assert status == 200
     fields = Selects(text)
-    assert set(fields.values[side+'_condition']) == expected_conditions(owner, 'qwen', right)
+    assert set(fields.values[side+'_condition']) == set(CONDITION_MODES) | expected_conditions(owner, 'qwen', right)
     assert 'context 32,768; output allowance 4,096' in text
     assert 'context 16,384; output allowance 4,096' in text
     assert 'Condition 1: image;' in text
@@ -85,10 +86,10 @@ def test_condition_choices_are_measured_scoped_and_identifiable(scoped_study, si
 
 
 @pytest.mark.parametrize('side', ['left','right'])
-def test_stale_condition_or_all_marker_is_not_a_selected_condition(scoped_study, side):
+def test_stale_condition_is_not_a_selected_condition(scoped_study, side):
     app, left, right, other = scoped_study
     owner = left if side=='left' else right
-    for stale in ('*', other+'-qwen-text', owner+'-gemma-text', owner+'-qwen-probe', 'old'):
+    for stale in (other+'-qwen-text', owner+'-gemma-text', owner+'-qwen-probe', 'old'):
         query = dict(right_campaign=right, left_model='qwen', right_model='qwen', section='compare')
         query.update({side+'_condition':stale, side+'_judge':'judge'})
         status, _, body = app.handle('GET','/campaigns/'+left+'?'+urlencode(query))

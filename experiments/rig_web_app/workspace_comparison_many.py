@@ -3,12 +3,25 @@ from __future__ import annotations
 
 import html
 import re
+from fractions import Fraction
 from itertools import groupby, islice, product
 from urllib.parse import urlencode
 
 ALL = '*'
 UNJUDGED = '__not_indexed__'
 PAGE_SIZE = 12
+CONDITION_MODES = {
+    ALL: 'All generation conditions',
+    '__max_output__': 'Highest output allowance',
+    '__min_output__': 'Lowest output allowance',
+    '__max_context__': 'Largest recorded context',
+    '__min_context__': 'Smallest recorded context',
+    '__best_response__': 'Highest usable-response rate',
+}
+
+
+def ranked(condition):
+    return condition in CONDITION_MODES and condition != ALL
 
 
 def model_label(identity):
@@ -20,44 +33,98 @@ def model_label(identity):
 def normalize(query):
     query = dict(query)
     for side in ('left', 'right'):
-        if query.get(side+'_model') == ALL:
+        if query.get(side+'_model') == ALL and query.get(side+'_condition') not in CONDITION_MODES:
             query[side+'_condition'] = ALL
     return query
 
 
 def broad(query):
-    return any(query.get(side+'_model') == ALL for side in ('left','right'))
+    return any(query.get(side+'_model') == ALL or query.get(side+'_condition') in CONDITION_MODES
+               for side in ('left','right'))
 
 
-def scope_judges(db, owner, model, condition):
+def scope_judges(db, owner, model, condition, *, selected_units=None, query=None):
     """Offer the union, retaining models without this judge in the comparison."""
+    filters, params = "AND (?='*' OR COALESCE(r.condition_id,a.condition_id)=?) ", [owner,model,model,condition,condition]
+    if ranked(condition):
+        selected_units = units(db,owner,model,condition,query=query) if selected_units is None else selected_units
+        if selected_units is None:
+            return None
+        if not selected_units:
+            return []
+        filters = 'AND ('+' OR '.join('(a.model=? AND COALESCE(r.condition_id,a.condition_id)=?)' for _ in selected_units)+') '
+        params = [owner,model,model]+[v for row in selected_units for v in (row['model'],row['condition_id'])]
     return db._query(
         "SELECT DISTINCT j.judge_id FROM campaign_assignments a "
         "JOIN campaign_responses r ON r.campaign_id=a.campaign_id AND r.response_id=a.response_id "
         "AND r.assignment_id=a.assignment_id JOIN campaign_judgments j "
         "ON j.campaign_id=r.campaign_id AND j.response_id=r.response_id "
         "WHERE a.campaign_id=? AND a.evidence_class='measured' "
-        "AND (?='*' OR a.model=?) AND (?='*' OR COALESCE(r.condition_id,a.condition_id)=?) "
-        "ORDER BY j.judge_id", (owner, model, model, condition, condition))
+        "AND (?='*' OR a.model=?) " + filters + "ORDER BY j.judge_id", params)
 
 
-def units(db, owner, model, condition):
-    rows = db._query(
+def unit_scope(db, owner, model, condition, *, query=None):
+    sql = (
         "SELECT a.model,COALESCE(r.condition_id,a.condition_id) AS condition_id,"
         "MIN(json_extract(r.details,'$.output_allowance')) AS output_min,"
-        "MAX(json_extract(r.details,'$.output_allowance')) AS output_max "
+        "MAX(json_extract(r.details,'$.output_allowance')) AS output_max,"
+        "COUNT(json_extract(r.details,'$.output_allowance')) AS output_known,"
+        "MIN(json_extract(r.details,'$.context_tokens')) AS context_min,"
+        "MAX(json_extract(r.details,'$.context_tokens')) AS context_max,"
+        "COUNT(json_extract(r.details,'$.context_tokens')) AS context_known,"
+        "COUNT(*) AS assigned,SUM(r.outcome='usable') AS usable,"
+        "SUM(r.outcome IN ('usable','policy','missing')) AS terminal "
         "FROM campaign_assignments a LEFT JOIN campaign_responses r "
         "ON r.campaign_id=a.campaign_id AND r.response_id=a.response_id AND r.assignment_id=a.assignment_id "
         "WHERE a.campaign_id=? AND a.evidence_class='measured' "
-        "AND (?='*' OR a.model=?) AND (?='*' OR COALESCE(r.condition_id,a.condition_id)=?) "
-        "GROUP BY a.model,COALESCE(r.condition_id,a.condition_id) ORDER BY a.model,condition_id",
-        (owner,model,model,condition,condition))
+        "AND (?='*' OR a.model=?) "
+        "GROUP BY a.model,COALESCE(r.condition_id,a.condition_id) ORDER BY a.model,condition_id")
+    params = (owner,model,model)
+    rows = db._query(sql,params)
     if rows is None:
         return None
     # Interleave models so the first page is not consumed by one model's history.
     result = [dict(row, number=index) for _, group in groupby(rows, key=lambda r:r['model'])
               for index, row in enumerate(group,1)]
-    return sorted(result, key=lambda row:(row['number'],row['model']))
+    filters = [(facet,(query or {}).get('compare_'+facet)) for facet in ('corpus','framework','modality')
+               if (query or {}).get('compare_'+facet)]
+    if ranked(condition) and filters:
+        numbers = {(row['model'],row['condition_id']):row['number'] for row in result}
+        filtered_sql = sql.replace('GROUP BY a.model', ''.join('AND a.'+facet+'=? ' for facet,_ in filters)+'GROUP BY a.model')
+        filtered = db._query(filtered_sql,(*params,*(value for _,value in filters)))
+        if filtered is None:
+            return None
+        result = [dict(row,number=numbers[(row['model'],row['condition_id'])]) for row in filtered]
+    # Number within the model's complete measured list before selecting a
+    # condition, so a fixed condition keeps the same label beside an All scope.
+    unranked = []
+    if ranked(condition):
+        selected = []
+        for _model, group in groupby(result,key=lambda row:row['model']):
+            scored = []
+            for row in group:
+                if condition == '__best_response__':
+                    score = Fraction(row['usable'] or 0,row['terminal']) if row['terminal'] else None
+                else:
+                    field = 'output' if condition.endswith('output__') else 'context'
+                    value = row[field+'_min']
+                    score = value if row[field+'_known']==row['assigned'] and value is not None and value>0 and value==row[field+'_max'] else None
+                if score is None:
+                    unranked.append(row)
+                else:
+                    scored.append((score,row))
+            if scored:
+                best = (min if condition.startswith('__min_') else max)(score for score,_row in scored)
+                selected.extend(row for score,row in scored if score==best)
+        result = selected
+    else:
+        result = [row for row in result if condition == ALL or row['condition_id'] == condition]
+    return dict(units=sorted(result, key=lambda row:(row['number'],row['model'])),unranked=unranked)
+
+
+def units(db, owner, model, condition, *, query=None):
+    scope = unit_scope(db,owner,model,condition,query=query)
+    return None if scope is None else scope['units']
 
 
 def page_data(db, campaign, query, page=0):
@@ -65,12 +132,16 @@ def page_data(db, campaign, query, page=0):
     query = normalize(query)
     if type(page) is not int or page < 0 or not all(query.get(k) for k in CHOICES):
         raise ValueError('Select models, generation conditions and judging conditions on both sides')
-    scopes, absent = [], {}
+    scopes, absent, unranked = [], {}, {}
     for side, owner in (('left',campaign),('right',query['right_campaign'])):
         db.require_workspace(owner)
         model, condition = query[side+'_model'], query[side+'_condition']
-        choices = scope_judges(db,owner,model,condition)
-        rows = units(db,owner,model,condition)
+        scope = unit_scope(db,owner,model,condition,query=query)
+        if scope is None:
+            return None
+        rows = scope['units']
+        unranked[side] = scope['unranked']
+        choices = scope_judges(db,owner,model,condition,selected_units=rows)
         roster = db.workspace_result_models(owner)
         if choices is None or rows is None or roster is None:
             return None
@@ -91,7 +162,7 @@ def page_data(db, campaign, query, page=0):
         if rows is None:
             return None
         pairs.append(dict(left=left,right=right,query=selected,rows=rows))
-    return dict(pairs=pairs,total=total,absent=absent,page=page)
+    return dict(pairs=pairs,total=total,absent=absent,unranked=unranked,page=page)
 
 
 def export_rows(data):
@@ -110,9 +181,26 @@ def render(data, campaign, query):
     content = (f"<p>Model / generation-condition pairs {start:,}-{end:,} of {total:,}. "
         "Each comparison is separate. Condition numbers belong to each model, not equivalent settings. "
         "Counts across these comparisons must not be added as independent inputs.</p>")
+    for side in ('left','right'):
+        condition = query[side+'_condition']
+        if ranked(condition):
+            content += '<p>'+side.title()+' condition rule: '+escape(CONDITION_MODES[condition])+'. Applied independently per model within the selected source filters; all ties are retained.</p>'
+            if condition == '__best_response__':
+                content += ("<p class='notice amber'>Post-hoc selection by observed usable-response rate: usable outputs divided by saved "
+                    "terminal responses (usable, provider-policy or missing). Pending responses are excluded from that denominator. "
+                    "This is not attack success or a safety score; small or incomplete conditions can rank highest. "
+                    "It is not an unbiased comparison of preselected conditions.</p>")
+            else:
+                content += '<p>Only fully recorded, uniform finite settings are ranked. Unknown, mixed and native-maximum values remain unranked.</p>'
+            skipped = data.get('unranked',{}).get(side,[])
+            if skipped:
+                content += '<details><summary>'+side.title()+f': {len(skipped)} unranked conditions</summary><ul>'
+                content += ''.join('<li>'+escape(model_label(row['model']))+f"; condition {row['number']}</li>" for row in skipped)
+                content += '</ul></details>'
     for side, models in data['absent'].items():
         if models:
-            content += '<p class="notice amber">'+side.title()+': no indexed measured generation conditions for '+escape(', '.join(models))+'.</p>'
+            reason = 'no eligible generation conditions for this rule' if ranked(query[side+'_condition']) else 'no indexed measured generation conditions'
+            content += '<p class="notice amber">'+side.title()+': '+reason+' for '+escape(', '.join(models))+'.</p>'
     saved = {key:query[key] for key in (*CHOICES,*FILTERS) if query.get(key)}
     if any(pair['rows'] for pair in data['pairs']):
         export='/campaigns/'+campaign+'/figures/comparison.csv?'+urlencode(dict(saved,page=page))
@@ -121,7 +209,11 @@ def render(data, campaign, query):
     def label(unit):
         low, high = unit['output_min'],unit['output_max']
         allowance = 'unknown' if low is None else str(low)+((' to '+str(high)) if high!=low else '')
-        return "<span title='"+escape(unit['model'],quote=True)+"'>"+escape(model_label(unit['model']))+'</span>'+f"; condition {unit['number']}; output allowance "+allowance
+        known = unit['terminal'] or 0
+        usable = unit['usable'] or 0
+        return ("<span title='"+escape(unit['model'],quote=True)+"'>"+escape(model_label(unit['model']))+'</span>'
+            +f"; condition {unit['number']}; output allowance "+allowance
+            +f"; usable responses {usable:,}/{known:,}; assigned {unit['assigned']:,}")
     for pair in data['pairs']:
         rows=pair['rows']
         matched=sum(r['count'] for r in rows if r['match_status']=='matched')

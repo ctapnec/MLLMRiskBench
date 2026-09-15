@@ -7172,6 +7172,23 @@ handling; its source facets are complete. HTML and CSV pagination select the
 same pairs, and exported rows identify actual models/settings, not All markers.
 No model files or historical output artifacts are scanned.
 
+Compare's generation selector supports All generation conditions independently
+of All models. Both sides can also select per-model max/min output allowance,
+max/min recorded context or highest usable-response rate. Named modes route
+through the existing paginated pair query and export; they are not new runs.
+Exact generation identifiers remain in each CSV row alongside the selection
+rule. Numbering stays local to the model's full measured condition list.
+
+Rules operate within the active source filters, independently per model, and
+retain ties. Token/context ranking requires fully known, uniform positive
+finite values. Unknown/mixed/native-maximum metadata is unranked and disclosed.
+Usable-response ranking compares exact fractions, with usable outputs over
+saved terminal outcomes (usable, policy, missing); pending/retry-pending rows
+are not terminal. The UI shows numerator, denominator and assigned count and
+warns that this post-hoc, possibly incomplete selection is not attack success,
+safety or an unbiased preselected comparison. Judges are drawn only from the
+selected conditions; unavailable assessments are never substituted.
+
 Generation-condition selectors use the same measured-evidence scope as Compare
 outcomes, with exact campaign/model ownership and the assignment-selected response.
 Other Results views can still include diagnostic/history conditions. Compare

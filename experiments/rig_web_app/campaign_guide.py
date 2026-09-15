@@ -132,7 +132,11 @@ def _guidance(app, params):
          'preserves the exact selected judge only when it is still available. Fields explain missing prerequisites or unavailable indexed records. Keep diagnostic '
          'probes separate. All models on either side compares model and generation-setting pairs separately, '
          'within each selected campaign, twelve pairs per page; expand a pair to inspect outcomes. All does not '
-         'pool scores, choose the latest/best response or start jobs. Missing judgments are not substituted. Keep '
+         'pool scores, choose the latest/best response or start jobs. For one model, All generation conditions '
+         'includes its settings separately. Both single-model and All-model scopes offer highest/lowest output '
+         'allowance, largest/smallest context and highest usable-response rate, applied per model within source '
+         'filters. Ties remain separate. Rate-based selection is post-hoc, not attack success or a safety score; '
+         'inspect its denominator and coverage. Missing judgments are not substituted. Keep '
          'missing responses and historical replacements explicit. Export figures and their counts '
          'from Overview and Judging, and the exact paired counts from Compare. Definition is the editable '
          'draft, not a replacement for each job\'s recorded execution settings.',

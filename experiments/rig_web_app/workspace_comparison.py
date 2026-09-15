@@ -85,11 +85,12 @@ def comparison_groups(rows):
 def comparison_csv(rows, campaign, query):
     stream = io.StringIO(newline="")
     writer = csv.writer(stream)
-    fields = ("left_campaign", *CHOICES, *FILTERS, *FACETS, *FIELDS, "count")
+    fields = ("left_campaign", *CHOICES, "left_condition_selection", "right_condition_selection", *FILTERS, *FACETS, *FIELDS, "count")
     writer.writerow(fields)
     for row in rows:
         value = {"left_campaign": campaign, **{key: query[key] for key in CHOICES},
-                 **{key: query.get(key, "") for key in FILTERS}, **dict(row)}
+                 **{side+'_condition_selection':many.CONDITION_MODES.get(query[side+'_condition'],'Explicit condition')
+                    for side in ('left','right')}, **{key: query.get(key, "") for key in FILTERS}, **dict(row)}
         writer.writerow(["'" + value[key] if isinstance(value[key], str) and value[key].startswith(("=", "+", "-", "@"))
                          else value[key] for key in fields])
     return stream.getvalue().encode("utf-8-sig")
@@ -112,11 +113,14 @@ def facet_choices(db, campaign, query):
         if not owner or not query.get(side + "_model") or not query.get(side + "_condition"):
             continue
         db.require_workspace(owner)
+        condition = query[side + '_condition']
+        if condition in many.CONDITION_MODES:
+            condition = many.ALL
         rows = db._query("SELECT DISTINCT a.corpus,a.framework,a.modality FROM campaign_assignments a "
             "LEFT JOIN campaign_responses r ON r.campaign_id=a.campaign_id AND r.response_id=a.response_id "
             "AND r.assignment_id=a.assignment_id WHERE a.campaign_id=? AND (?='*' OR a.model=?) "
             "AND (?='*' OR COALESCE(r.condition_id,a.condition_id)=?) AND a.evidence_class='measured'",
-            (owner, query[side + "_model"], query[side + "_model"], query[side + "_condition"], query[side + "_condition"]))
+            (owner, query[side + "_model"], query[side + "_model"], condition, condition))
         if rows is None:
             return None
         for row in rows:
@@ -165,21 +169,25 @@ def _comparison_body(db, campaign, query):
                 or (model != many.ALL and model not in {row['model'] for row in models})):
             model = query[side + '_model'] = ''
         conditions = db.workspace_result_conditions(owner, model=model, measured_only=True) if owner in owners and model and model!=many.ALL else []
-        if conditions is not None and model != many.ALL and condition not in {row['condition_id'] for row in conditions}:
+        if conditions is not None and model != many.ALL and condition not in (
+                {row['condition_id'] for row in conditions} | (set(many.CONDITION_MODES) if conditions else set())):
             condition = query[side + '_condition'] = ''
-        judges = many.scope_judges(db, owner, model, condition) if owner in owners and model and condition else []
+        judges = many.scope_judges(db, owner, model, condition, query=query) if owner in owners and model and condition else []
         if models is None or conditions is None or judges is None:
             return "<p class='notice red'>Comparison selection index unavailable.</p>"
         model_values = ([(many.ALL,'All models')] if models else []) + [(row['model'],many.model_label(row['model'])) for row in models]
         form += _select(side + "_model", "Model", model_values, model,
             empty_hint='Choose a campaign first' if owner not in owners else 'No indexed model results in this campaign')
         if model==many.ALL:
+            form += _select(side+'_condition','Generation condition',list(many.CONDITION_MODES.items()),condition)
             form += ("<p class='fieldhint' data-comparison-scope='" + side + "'>Only " + html.escape(owners[owner])
-                + ": all indexed models. Generation conditions: all measured conditions, compared separately. "
-                "No latest/best response is chosen and scores are not pooled. Models without measured conditions are identified below.</p>"
-                "<input type='hidden' name='"+side+"_condition' value='*'>")
+                + ": all indexed models. " + ('Generation conditions: all measured conditions, compared separately. '
+                'No latest/best response is chosen and scores are not pooled. ' if condition==many.ALL else
+                'The selected condition rule is applied independently per model; tied conditions remain separate and scores are not pooled. ')
+                + "Models without eligible measured conditions are identified below.</p>")
         else:
-            form += _select(side + "_condition", "Generation condition", [
+            form += _select(side + "_condition", "Generation condition",
+            (list(many.CONDITION_MODES.items()) if conditions else []) + [
             (row["condition_id"], _condition_label(row, number))
             for number, row in enumerate(conditions, 1)], condition,
             empty_hint='Choose a model first' if not model else 'No indexed generation conditions for this model')
@@ -187,6 +195,10 @@ def _comparison_body(db, campaign, query):
                 form += ("<p class='fieldhint' data-comparison-scope='" + side + "' style='overflow-wrap:anywhere'>Only "
                     + html.escape(owners[owner]) + ' / ' + html.escape(many.model_label(model))
                     + f": {len(conditions)} measured generation conditions. Condition numbers are local to this model in this campaign.</p>")
+                if condition == many.ALL:
+                    form += ("<p class='fieldhint' data-all-conditions='" + side + "'>All generation conditions for this model "
+                        "are compared separately. No other model is included on this side; scores are not pooled "
+                        "and no latest/best response is chosen.</p>")
             selected = next((row for row in conditions if row['condition_id'] == condition), None)
             if selected is not None:
                 form += ("<details data-condition-details='" + side + "' style='overflow-wrap:anywhere'><summary>Selected condition: settings and inputs</summary><p>"
@@ -195,6 +207,12 @@ def _comparison_body(db, campaign, query):
                     + '</p><p>Corpora: ' + html.escape(_condition_sources(selected, 'corpora'))
                     + '</p><p>Similar token allowances do not make conditions identical. Retained runtime and execution settings can differ; '
                     'these conditions are not merged.</p></details>')
+        if many.ranked(condition):
+            form += ("<p class='fieldhint' data-condition-rule='"+side+"'>"+html.escape(many.CONDITION_MODES[condition])
+                +': applied within each selected model and the active source filters. All ties remain separate. '
+                +('Usable-response rate uses saved terminal responses, not attack success or a safety verdict. This is a post-hoc selection; '
+                  'inspect the displayed numerator, denominator and assigned count.' if condition=='__best_response__' else
+                  'Only fully recorded, uniform finite settings can be ranked. Unknown, mixed or native-maximum settings are disclosed as unranked.')+'</p>')
         judge_values = [(row['judge_id'],f'Condition {number}: '+_judge_name(row['judge_id'])) for number,row in enumerate(judges,1)]
         if many.broad(query) and model and condition and not judges:
             judge_values = [(many.UNJUDGED,'No indexed judgments - show coverage only')]
@@ -221,7 +239,9 @@ def _comparison_body(db, campaign, query):
         form += _select(name, facet.title(), [(v, v) for v in sorted(values)], query.get(name, ""), optional=True)
     form += ("</div><p>Choose campaigns and models, then generation and judging conditions. "
         "Dependent choices load automatically when you change a selection. Empty fields explain their prerequisite. "
-        "All models is available on either side. Their generation conditions are compared separately; "
+        "All models is available on either side. For one model, choose All generation conditions to include "
+        "all of its measured settings. Highest/lowest output allowance, largest/smallest context and highest usable-response rate "
+        "are optional rules on either side, including All models. There is no universal optimal condition. Their generation conditions are compared separately; "
         "historical and corrected settings are not combined. One All selection gives one-to-many comparisons; "
         "All on both sides gives model/condition pairs, twelve per page. Changing these controls starts no jobs.</p>"
         "<p>Corpus, framework and modality filters apply to both sides and remain in exported counts.</p>"

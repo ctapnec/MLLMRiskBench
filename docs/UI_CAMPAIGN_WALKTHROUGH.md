@@ -185,6 +185,14 @@ You still use the normal review and explicit start controls. Existing campaigns
 remain unguided unless you enable and save the option.
 
 Compare loads dependent model, generation and judging choices automatically.
+Generation choices include All generation conditions for one model, as well as
+per-model highest/lowest output allowance, largest/smallest recorded context
+and highest usable-response rate. The same rules are available with All models.
+Rules use the active source filters, preserve every tie and leave unsupported
+token metadata explicitly unranked. A usable-response-rate selection is post-hoc,
+not an attack-success or safety ranking. The UI displays its saved-terminal
+denominator and assigned count; the CSV preserves the selected rule and exact
+generation identities. Full campaign data remains unchanged.
 Each refresh and export uses the shared busy overlay and blocks duplicate
 interactions. Success, HTTP errors, network failures and timeouts release the
 overlay. Failed refreshes hide outdated comparison counts and exports and

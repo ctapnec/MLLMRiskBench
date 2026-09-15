@@ -122,3 +122,67 @@ def test_readable_labels_preserve_exact_identity_in_data_and_exports(study):  # 
     assert many.model_label('model@not-a-revision')=='model@not-a-revision'
     assert identity in {row['right_model'] for row in many.export_rows(data)}
     assert "title='"+identity+"'" in many.render(data,left,query)
+
+
+@pytest.mark.parametrize('side',['left','right','both'])
+def test_all_conditions_keeps_selected_models_and_each_condition_separate(study,side):  # noqa: F811
+    app,left,right,query=study
+    pair(study,'shared')
+    put(app,left,'local-second','shared',condition='second',label='violation')
+    put(app,right,'api-second','shared',model='api',condition='second',status=None)
+    put(app,left,'local-other','shared',model='other',condition='second')
+    put(app,right,'api-other','shared',model='other',condition='second')
+    elsewhere=app.db.create_workspace('Elsewhere','mixed')
+    put(app,elsewhere,'elsewhere','shared',model='api',condition='elsewhere')
+    put(app,right,'probe','shared',model='api',condition='probe',evidence='diagnostic')
+    for part in (('left','right') if side=='both' else (side,)):
+        query[part+'_condition']='*'
+    assert many.broad(query)
+    data=many.page_data(app.db,left,query)
+    assert data['total']==(4 if side=='both' else 2)
+    for item in data['pairs']:
+        assert item['left']['model']=='local' and item['right']['model']=='api'
+        assert totals(item['rows'])==dict(matched=1,left_only=0,right_only=0,ambiguous=0)
+        if item['left']['condition_id']=='second':assert item['rows'][0]['left_label']=='violation'
+        if item['right']['condition_id']=='second':assert item['rows'][0]['right_status'] is None
+    code,_,body=app.handle('GET',f'/campaigns/{left}?'+urlencode(dict(query,section='compare')))
+    assert code==200 and 'All generation conditions</option>' in body.decode()
+    assert 'No other model is included on this side' in body.decode()
+    assert body.decode().count('data-model-comparison')==data['total']
+    code,_,body=app.handle('GET',f'/campaigns/{left}/figures/comparison.csv?'+urlencode(query))
+    rows=list(csv.DictReader(io.StringIO(body.decode('utf-8-sig'))))
+    assert code==200 and sum(int(r['count']) for r in rows)==data['total']
+    assert {r['left_model'] for r in rows}=={'local'} and {r['right_model'] for r in rows}=={'api'}
+    assert all(r['left_condition']!='*' and r['right_condition']!='*' for r in rows)
+
+
+def test_all_conditions_pagination_filters_exports_and_stable_condition_numbers(study):  # noqa: F811
+    app,left,right,query=study
+    put(app,left,'z','shared',condition='z')
+    put(app,left,'a','shared',condition='a')
+    for index in range(15):
+        put(app,right,str(index),'shared',model='api',condition=f'c{index:02}')
+        put(app,right,'excluded'+str(index),'excluded',model='api',condition=f'c{index:02}',corpus='excluded')
+    query=dict(query,left_condition='z',right_condition='*',compare_corpus='corpus')
+    first=many.page_data(app.db,left,query)
+    second=many.page_data(app.db,left,query,1)
+    assert first['total']==15 and len(first['pairs'])==12 and len(second['pairs'])==3
+    assert all(p['left']['number']==2 for p in first['pairs']+second['pairs'])
+    assert [p['right']['number'] for p in second['pairs']]==[13,14,15]
+    assert all(totals(p['rows'])['matched']==1 for p in first['pairs']+second['pairs'])
+    code,_,body=app.handle('GET',f'/campaigns/{left}/figures/comparison.csv?'+urlencode(dict(query,page=1)))
+    rows=list(csv.DictReader(io.StringIO(body.decode('utf-8-sig'))))
+    assert code==200 and len(rows)==3 and {r['right_condition'] for r in rows}=={'c12','c13','c14'}
+    assert all(r['compare_corpus']==r['corpus']=='corpus' for r in rows)
+
+
+def test_all_conditions_with_no_judgments_retains_pending_and_missing_coverage(study):  # noqa: F811
+    app,left,right,query=study
+    put(app,left,'l','shared',status=None)
+    put(app,right,'missing','shared',model='api',condition='missing',outcome='missing',status=None)
+    put(app,right,'pending','shared',model='api',condition='pending',pending=True)
+    query=dict(query,right_condition='*',left_judge=many.UNJUDGED,right_judge=many.UNJUDGED)
+    data=many.page_data(app.db,left,query)
+    assert data['total']==2
+    assert {p['rows'][0]['right_outcome'] for p in data['pairs']}=={'missing',None}
+    assert all(p['rows'][0]['right_status'] is None for p in data['pairs'])

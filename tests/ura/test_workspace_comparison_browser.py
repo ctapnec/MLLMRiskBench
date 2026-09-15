@@ -10,6 +10,7 @@ from experiments.rig_web_app import ui
 from test_workspace_comparison import study, pair, put  # noqa: F401
 from test_rig_web_busy_browser import browser  # noqa: F401
 from test_workspace_comparison_scope import scoped_study, expected_conditions  # noqa: F401
+from experiments.rig_web_app.workspace_comparison_many import CONDITION_MODES
 
 
 def open_page(browser, study, width=1440, query=None):
@@ -47,7 +48,7 @@ def test_condition_options_follow_model_and_campaign_switches_exactly(browser,st
         ready(page)
     def conditions(side,owner,model):
         values=page.locator('select[name='+side+'_condition] option').evaluate_all('(items)=>items.map(e=>e.value).filter(Boolean)')
-        assert set(values)==expected_conditions(owner,model,right)
+        assert set(values)==set(CONDITION_MODES) | expected_conditions(owner,model,right)
         assert model in page.locator('[data-comparison-scope='+side+']').inner_text()
     try:
         for side,owner in [('left',left),('right',right)]:
@@ -179,12 +180,14 @@ def test_changing_campaign_clears_only_its_dependents_and_explains_empty_judges(
 
 
 @pytest.mark.parametrize('outcome', ['success','http_error','network_error','timeout'])
-@pytest.mark.parametrize('all_models',[False,True])
-def test_compare_wait_blocks_duplicate_interactions_and_releases_for_retry(browser,study,outcome,all_models):  # noqa: F811
+@pytest.mark.parametrize('scope',['single','models','conditions'])
+def test_compare_wait_blocks_duplicate_interactions_and_releases_for_retry(browser,study,outcome,scope):  # noqa: F811
     app,left,right,query=study
     pair(study,'shared')
-    if all_models:
+    if scope=='models':
         query=dict(query,left_model='*',right_model='*')
+    elif scope=='conditions':
+        query=dict(query,left_condition='*',right_condition='*')
     page,_,errors=open_page(browser,study,query=query)
     pending=[]
     pattern='http://compare.test/campaigns/'+left+'?*'
@@ -238,7 +241,7 @@ def test_all_models_on_either_side_keep_choices_results_and_downloads_usable(bro
         for side in (('left','right') if scope=='both' else (scope,)):
             page.locator('[name='+side+'_model]').select_option('*')
             ready(page)
-            assert page.locator('[name='+side+'_condition]').get_attribute('type')=='hidden'
+            expect(page.locator('select[name='+side+'_condition]')).to_have_value('*')
             page.locator('[name='+side+'_judge]').select_option('judge')
             ready(page)
         assert page.locator('[data-model-comparison]').count()==(4 if scope=='both' else 2)
@@ -253,6 +256,84 @@ def test_all_models_on_either_side_keep_choices_results_and_downloads_usable(bro
             page.locator('[name='+side+'_model]').select_option('local' if side=='left' else 'api')
             ready(page)
             assert page.locator('select[name='+side+'_condition]').count()==1
+        assert not errors and not app.db.load_jobs()
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize('width',[1440,390])
+@pytest.mark.parametrize('scope',['left','right','both'])
+def test_all_conditions_on_either_side_roundtrip_and_preserve_judges(browser,study,width,scope):  # noqa: F811
+    import csv
+    app,left,right,query=study
+    pair(study,'shared')
+    put(app,left,'local-second','shared',condition='second')
+    put(app,right,'api-second','shared',model='api',condition='second')
+    put(app,right,'other-model','shared',model='other',condition='unrelated')
+    page,requests,errors=open_page(browser,study,width,query)
+    sides=('left','right') if scope=='both' else (scope,)
+    try:
+        for side in sides:
+            page.locator('[name='+side+'_condition]').select_option('*')
+            ready(page)
+            expect(page.locator('[name='+side+'_judge]')).to_have_value('judge')
+            expect(page.locator('[name='+side+'_model]')).to_have_value(query[side+'_model'])
+            assert page.locator('[data-all-conditions='+side+']').is_visible()
+            before=len(requests)
+            page.locator('[name='+side+'_condition]').select_option('*')
+            page.wait_for_timeout(50)
+            assert len(requests)==before
+        assert page.locator('[data-model-comparison]').count()==(4 if scope=='both' else 2)
+        assert 'other (condition' not in page.locator('[data-comparison-results]').inner_text()
+        page.locator('[data-model-comparison] summary').first.click()
+        assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+        with page.expect_download() as event:
+            page.get_by_role('link',name="Download this page's counts",exact=True).click()
+        with open(event.value.path(),encoding='utf-8-sig',newline='') as stream:
+            rows=list(csv.DictReader(stream))
+        assert {r['left_model'] for r in rows}=={'local'} and {r['right_model'] for r in rows}=={'api'}
+        assert all(r['left_condition']!='*' and r['right_condition']!='*' for r in rows)
+        page.wait_for_function('!window.uraBusy.isBusy()')
+        for side in sides:
+            page.locator('[name='+side+'_condition]').select_option(query[side+'_condition'])
+            ready(page)
+            expect(page.locator('[name='+side+'_judge]')).to_have_value('judge')
+        assert 'matched: 1' in page.locator('[data-comparison-results]').inner_text()
+        assert not page.locator('[data-model-comparison]').count()
+        assert not errors and not app.db.load_jobs()
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize('width',[1440,390])
+@pytest.mark.parametrize('side',['left','right'])
+def test_condition_rules_work_for_single_and_all_models(browser,study,width,side):  # noqa: F811
+    app,left,right,query=study
+    pair(study,'shared',output_allowance=1024,context_tokens=4096)
+    owner=left if side=='left' else right
+    for model in (query[side+'_model'],'other'):
+        put(app,owner,model+'-large','shared',model=model,condition='large',output_allowance=8192,context_tokens=32768)
+    page,_,errors=open_page(browser,study,width,query)
+    try:
+        for model in (query[side+'_model'],'*'):
+            if model=='*':
+                page.locator('[name='+side+'_model]').select_option('*')
+                ready(page)
+            for rule in ('__max_output__','__max_context__','__best_response__'):
+                page.locator('[name='+side+'_condition]').select_option(rule)
+                ready(page)
+                expect(page.locator('[name='+side+'_condition]')).to_have_value(rule)
+                assert page.locator('[data-condition-rule='+side+']').is_visible()
+                if not page.locator('[name='+side+'_judge]').input_value():
+                    page.locator('[name='+side+'_judge]').select_option('judge')
+                    ready(page)
+                assert page.locator('[data-model-comparison]').count()>=1
+                if rule!='__best_response__':
+                    assert all('output allowance 8192' in d for d in page.locator('[data-model-comparison]').all_text_contents())
+                assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+        page.locator('[name='+side+'_condition]').select_option('*')
+        ready(page)
+        expect(page.locator('[name='+side+'_judge]')).to_have_value('judge')
         assert not errors and not app.db.load_jobs()
     finally:
         page.close()
