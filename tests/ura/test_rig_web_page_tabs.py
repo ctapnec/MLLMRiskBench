@@ -106,7 +106,7 @@ def test_dashboard_and_build_sections_have_sensible_boundaries(tmp_path: Path) -
     assert "Campaign sampling policy" not in governance and "Boundaries" in governance
 
     general_at = builder.index("data-page-panel='build-general'")
-    builder_form_at = builder.index("<form method='post' action='/build' id='builder'>")
+    builder_form_at = builder.index("<form method='post' action='/build/review' id='builder'>")
     pipeline_at = builder.index("data-page-panel='build-pipeline'")
     evaluation_at = builder.index("data-page-panel='build-evaluation'")
     admission_at = builder.index("data-page-panel='build-admission'")

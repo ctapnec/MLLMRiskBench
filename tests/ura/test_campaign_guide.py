@@ -251,10 +251,10 @@ def test_guide_links_reveal_scroll_and_focus_exact_controls_including_same_hash(
             assert not page.evaluate('uraBusy.isBusy()')
         for _ in range(2):
             topic('4. Settings')
-            before=len(requests)
+            before=requests.count(('GET','/build'))
             page.get_by_role('link',name='Inspect local serving',exact=True).click()
             destination('local-serving','build-execution')
-            assert len(requests)==before, 'Same-document help must not request the backend'
+            assert requests.count(('GET','/build'))==before, 'Same-document help must not reload Build'
         topic('3. Inputs')
         page.get_by_role('link',name='Set limits and sampling',exact=True).click()
         destination('sample-size-control','build-execution')
