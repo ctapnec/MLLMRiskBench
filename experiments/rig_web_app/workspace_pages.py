@@ -173,10 +173,17 @@ class WorkspacePagesMixin:
             return 200,'text/csv; charset=utf-8',cost_totals_csv(rows,campaign_id)
         if name == "comparison.csv":
             from .workspace_comparison import comparison_rows, comparison_groups, comparison_csv
-            rows = comparison_rows(self.db, campaign_id, query, offset=page * 12)
+            from . import workspace_comparison_many as many
+            query = many.normalize(query)
+            if many.broad(query):
+                data = many.page_data(self.db,campaign_id,query,page=page)
+                rows = None if data is None else many.export_rows(data)
+            else:
+                rows = comparison_rows(self.db, campaign_id, query, offset=page * 12)
+                if rows is not None:
+                    rows = [row for group in comparison_groups(rows)[:12] for row in group]
             if rows is None:
                 return 503, "text/plain; charset=utf-8", b"Campaign comparison index unavailable"
-            rows = [row for group in comparison_groups(rows)[:12] for row in group]
             if not rows:
                 return 404, "text/plain; charset=utf-8", b"No measured comparison inputs on this page"
             return 200, "text/csv; charset=utf-8", comparison_csv(rows, campaign_id, query)

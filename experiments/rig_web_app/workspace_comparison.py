@@ -9,6 +9,7 @@ from urllib.parse import urlencode
 
 from .workspace_judging_charts import _judge_name
 from .workspace_charts import EXPORT_SCRIPT
+from . import workspace_comparison_many as many
 
 FACETS = ("corpus", "framework", "modality")
 FIELDS = ("match_status", "left_outcome", "right_outcome", "left_truncated", "right_truncated",
@@ -28,7 +29,7 @@ def judge_choices(db, campaign, model, condition):
         "ORDER BY j.judge_id", (campaign, model, condition))
 
 
-def comparison_rows(db, campaign, query, *, offset=0):
+def comparison_rows(db, campaign, query, *, offset=0, permit_missing_judges=False, all_facets=False):
     """Return thirteen whole source facets, the last for pagination lookahead.
 
     Multiple assignments for one input are ambiguous, never a Cartesian pair
@@ -41,11 +42,12 @@ def comparison_rows(db, campaign, query, *, offset=0):
     sides, params = [], []
     for side, owner in (("left", campaign), ("right", query["right_campaign"])):
         db.require_workspace(owner)
-        judges = judge_choices(db, owner, query[side + "_model"], query[side + "_condition"])
-        if judges is None:
-            return None
-        if query[side + "_judge"] not in {row["judge_id"] for row in judges}:
-            raise ValueError("Select an indexed judging condition for each model and generation condition")
+        if not permit_missing_judges:
+            judges = judge_choices(db, owner, query[side + "_model"], query[side + "_condition"])
+            if judges is None:
+                return None
+            if query[side + "_judge"] not in {row["judge_id"] for row in judges}:
+                raise ValueError("Select an indexed judging condition for each model and generation condition")
         filters = "".join(" AND a." + facet + "=?" for facet, name in zip(FACETS, FILTERS) if query.get(name))
         sides.append(side + "_inputs AS (SELECT a.input_id,a.corpus,a.framework,a.modality,COUNT(*) AS n,"
             "CASE WHEN COUNT(*)=1 THEN MAX(r.outcome) END AS outcome,"
@@ -69,6 +71,8 @@ def comparison_rows(db, campaign, query, *, offset=0):
                     for field in ("outcome", "truncated", "status", "label"))
     sql += " FROM input_keys k LEFT JOIN left_inputs l USING(" + keys + ") LEFT JOIN right_inputs r USING(" + keys + "))"
     sql += ", counts AS (SELECT " + fields + ",COUNT(*) AS count FROM paired GROUP BY " + fields + ")"
+    if all_facets:
+        return db._query(sql + ' SELECT * FROM counts ORDER BY ' + fields, params)
     sql += ", ranked AS (SELECT *,DENSE_RANK() OVER(ORDER BY corpus,framework,modality) AS facet FROM counts)"
     sql += " SELECT * FROM ranked WHERE facet>? AND facet<=? ORDER BY " + fields
     return db._query(sql, (*params, offset, offset + 13))
@@ -110,9 +114,9 @@ def facet_choices(db, campaign, query):
         db.require_workspace(owner)
         rows = db._query("SELECT DISTINCT a.corpus,a.framework,a.modality FROM campaign_assignments a "
             "LEFT JOIN campaign_responses r ON r.campaign_id=a.campaign_id AND r.response_id=a.response_id "
-            "AND r.assignment_id=a.assignment_id WHERE a.campaign_id=? AND a.model=? "
-            "AND COALESCE(r.condition_id,a.condition_id)=? AND a.evidence_class='measured'",
-            (owner, query[side + "_model"], query[side + "_condition"]))
+            "AND r.assignment_id=a.assignment_id WHERE a.campaign_id=? AND (?='*' OR a.model=?) "
+            "AND (?='*' OR COALESCE(r.condition_id,a.condition_id)=?) AND a.evidence_class='measured'",
+            (owner, query[side + "_model"], query[side + "_model"], query[side + "_condition"], query[side + "_condition"]))
         if rows is None:
             return None
         for row in rows:
@@ -122,6 +126,7 @@ def facet_choices(db, campaign, query):
 
 
 def _comparison_body(db, campaign, query):
+    query = many.normalize(query)
     base = "/campaigns/" + campaign
     campaigns = db.workspaces()
     if campaigns is None:
@@ -136,20 +141,27 @@ def _comparison_body(db, campaign, query):
             form += "<p>" + html.escape(owners[campaign]) + "</p>"
         model, condition = query.get(side + "_model", ""), query.get(side + "_condition", "")
         models = db.workspace_result_models(owner) if owner in owners else []
-        conditions = db.workspace_result_conditions(owner, model=model) if owner in owners and model else []
-        judges = judge_choices(db, owner, model, condition) if owner in owners and model and condition else []
+        conditions = db.workspace_result_conditions(owner, model=model) if owner in owners and model and model!=many.ALL else []
+        judges = many.scope_judges(db, owner, model, condition) if owner in owners and model and condition else []
         if models is None or conditions is None or judges is None:
             return "<p class='notice red'>Comparison selection index unavailable.</p>"
-        form += _select(side + "_model", "Model", [(row["model"], row["model"]) for row in models], model,
+        model_values = ([(many.ALL,'All models')] if models else []) + [(row['model'],row['model']) for row in models]
+        form += _select(side + "_model", "Model", model_values, model,
             empty_hint='Choose a campaign first' if owner not in owners else 'No indexed model results in this campaign')
-        form += _select(side + "_condition", "Generation condition", [
+        if model==many.ALL:
+            form += ("<p class='fieldhint'>Generation conditions: all, compared separately.</p>"
+                "<input type='hidden' name='"+side+"_condition' value='*'>")
+        else:
+            form += _select(side + "_condition", "Generation condition", [
             (row["condition_id"], f"Condition {number}: {row['assigned']:,} assignments; output allowance "
                 + ("unknown" if row["output_min"] is None else str(row["output_min"])
                    + (" to " + str(row["output_max"]) if row["output_min"] != row["output_max"] else "")))
             for number, row in enumerate(conditions, 1)], condition,
             empty_hint='Choose a model first' if not model else 'No indexed generation conditions for this model')
-        form += _select(side + "_judge", "Judging condition", [(row["judge_id"], f"Condition {number}: " + _judge_name(row["judge_id"]))
-            for number, row in enumerate(judges, 1)], query.get(side + "_judge", ""),
+        judge_values = [(row['judge_id'],f'Condition {number}: '+_judge_name(row['judge_id'])) for number,row in enumerate(judges,1)]
+        if many.broad(query) and model and condition and not judges:
+            judge_values = [(many.UNJUDGED,'No indexed judgments - show coverage only')]
+        form += _select(side + "_judge", "Judging condition", judge_values, query.get(side + "_judge", ""),
             empty_hint='Choose a generation condition first' if not condition else
             'No indexed judgments for this model and generation condition') + "</fieldset>"
     form += "</div>"
@@ -167,7 +179,8 @@ def _comparison_body(db, campaign, query):
         form += _select(name, facet.title(), [(v, v) for v in sorted(values)], query.get(name, ""), optional=True)
     form += ("</div><p>Choose campaigns and models, then generation and judging conditions. "
         "Dependent choices load automatically when you change a selection. Empty fields explain their prerequisite. "
-        "Each side has one explicit condition; historical and corrected settings are not combined.</p>"
+        "All models is available on either side. Their generation conditions are compared separately; "
+        "historical and corrected settings are not combined.</p>"
         "<p>Corpus, framework and modality filters apply to both sides and remain in exported counts.</p>"
         "<p>Missing a judge? Inspect that campaign's Judging tab before rerunning anything. "
         "Only indexed assessments for the selected generation condition are offered.</p>"
@@ -179,6 +192,13 @@ def _comparison_body(db, campaign, query):
         "Not indexed does not establish that a request or judgment was never attempted.</p>")
     if not all(query.get(key) for key in CHOICES):
         return form + explanation
+    if many.broad(query):
+        try:
+            data = many.page_data(db,campaign,query,page=max(0,int(query.get('page','0'))))
+        except ValueError as exc:
+            return form+explanation+"<p class='notice amber'>"+html.escape(str(exc))+'</p>'
+        return form+explanation+(many.render(data,campaign,query) if data is not None else
+            "<p class='notice red'>Comparison index unavailable.</p>")
     # Intermediate form updates can leave a previous model's condition selected.
     # Require an explicit valid choice instead of silently substituting another.
     try:
@@ -196,7 +216,17 @@ def _comparison_body(db, campaign, query):
     content = ("<p id='campaign-exports'><a class='button ghost' data-campaign-export download='comparison.csv' href='"
         + html.escape(export, quote=True) + "'>Download this page's counts</a></p>"
         "<p id='campaign-export-status' role='status'></p>")
-    for group in groups[:12]:
+    content += render_groups([row for group in groups[:12] for row in group])
+    for label, number in (("Previous", page - 1), ("Next", page + 1)):
+        if number >= 0 and (label == "Previous" or len(groups) > 12):
+            link = base + "?" + urlencode({"section": "compare", **saved, "page": number})
+            content += "<a class='button ghost' href='" + html.escape(link, quote=True) + "'>" + label + "</a> "
+    return form + explanation + "<div data-comparison-results>" + content + '</div>'
+
+
+def render_groups(rows):
+    content = ''
+    for group in comparison_groups(rows):
         totals = {key: sum(row["count"] for row in group if row["match_status"] == key)
                   for key in ("matched", "left_only", "right_only", "ambiguous")}
         title = " / ".join(group[0][key] for key in FACETS)
@@ -214,11 +244,7 @@ def _comparison_body(db, campaign, query):
                 cells.append((row[side + "_status"] or "Not indexed") + (": " + row[side + "_label"] if row[side + "_label"] is not None else ""))
             content += "<tr>" + "".join("<td>" + html.escape(value) + "</td>" for value in cells) + f"<td>{row['count']:,}</td></tr>"
         content += "</tbody></table></div></section>"
-    for label, number in (("Previous", page - 1), ("Next", page + 1)):
-        if number >= 0 and (label == "Previous" or len(groups) > 12):
-            link = base + "?" + urlencode({"section": "compare", **saved, "page": number})
-            content += "<a class='button ghost' href='" + html.escape(link, quote=True) + "'>" + label + "</a> "
-    return form + explanation + "<div data-comparison-results>" + content + '</div>'
+    return content
 
 
 def comparison_page(db, campaign, query):

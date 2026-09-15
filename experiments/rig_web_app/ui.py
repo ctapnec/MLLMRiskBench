@@ -142,6 +142,8 @@ h2 .ic { color:var(--muted); }
 .comparison-condition { min-width:0; overflow-wrap:anywhere; margin:0; padding:1rem;
   border:1px solid var(--line); border-radius:10px; }
 .comparison-condition legend { padding:0 .4rem; font-weight:600; }
+.comparison-pair { margin:1rem 0; padding:1rem; border:1px solid var(--line); border-radius:10px; overflow-wrap:anywhere; }
+.comparison-pair > summary { cursor:pointer; padding:.35rem 0; font-weight:600; }
 .comparison-condition .campaign-field + .campaign-field { margin-top:1rem; }
 .campaign-ownership > .note { margin:0; line-height:1.55; }
 .campaign-create-card { max-width:44rem; padding:1.5rem; margin:1.5rem 0; }

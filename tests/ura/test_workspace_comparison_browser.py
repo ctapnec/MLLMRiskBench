@@ -50,11 +50,11 @@ def test_compare_populates_all_dependencies_and_keeps_exports_working(browser, s
         ready(page)
         expect(page.locator('[name=right_model]')).to_be_enabled()
         assert page.locator('[name=right_model]').evaluate('e=>getComputedStyle(e).backgroundImage')!='none'
-        assert page.locator('[name=right_model] option').count() == 2
+        assert page.locator('[name=right_model] option').count() == 3
         # Use the actual control with keyboard input, not only DOM selection.
         field = page.locator('[name=left_model]')
         field.focus()
-        field.press('ArrowDown')
+        field.press('End')
         ready(page)
         expect(page.locator('[name=left_model]')).to_have_value('local')
         expect(page.locator('[name=left_condition]')).to_be_enabled()
@@ -106,9 +106,12 @@ def test_changing_campaign_clears_only_its_dependents_and_explains_empty_judges(
 
 
 @pytest.mark.parametrize('outcome', ['success','http_error','network_error','timeout'])
-def test_compare_wait_blocks_duplicate_interactions_and_releases_for_retry(browser,study,outcome):  # noqa: F811
+@pytest.mark.parametrize('all_models',[False,True])
+def test_compare_wait_blocks_duplicate_interactions_and_releases_for_retry(browser,study,outcome,all_models):  # noqa: F811
     app,left,right,query=study
     pair(study,'shared')
+    if all_models:
+        query=dict(query,left_model='*',right_model='*')
     page,_,errors=open_page(browser,study,query=query)
     pending=[]
     pattern='http://compare.test/campaigns/'+left+'?*'
@@ -145,6 +148,38 @@ def test_compare_wait_blocks_duplicate_interactions_and_releases_for_retry(brows
             page.get_by_role('button',name='Update choices / compare',exact=True).click()
             ready(page)
         assert page.locator('[data-comparison-results]').is_visible()
+        assert not errors and not app.db.load_jobs()
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize('width',[1440,390])
+@pytest.mark.parametrize('scope',['left','right','both'])
+def test_all_models_on_either_side_keep_choices_results_and_downloads_usable(browser,study,width,scope):  # noqa: F811
+    app,left,right,query=study
+    pair(study,'shared')
+    put(app,left,'local-other','shared',model='local-other',condition='new')
+    put(app,right,'api-other','shared',model='api-other',condition='new',status=None)
+    page,_,errors=open_page(browser,study,width,query)
+    try:
+        for side in (('left','right') if scope=='both' else (scope,)):
+            page.locator('[name='+side+'_model]').select_option('*')
+            ready(page)
+            assert page.locator('[name='+side+'_condition]').get_attribute('type')=='hidden'
+            page.locator('[name='+side+'_judge]').select_option('judge')
+            ready(page)
+        assert page.locator('[data-model-comparison]').count()==(4 if scope=='both' else 2)
+        page.locator('[data-model-comparison] summary').first.click()
+        assert page.locator('[data-model-comparison]').first.evaluate('e=>e.open')
+        assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+        with page.expect_download():
+            page.get_by_role('link',name="Download this page's counts",exact=True).click()
+        page.wait_for_function('!window.uraBusy.isBusy()')
+        expect(page.locator('#campaign-export-status')).to_have_text('Export prepared.')
+        for side in (('left','right') if scope=='both' else (scope,)):
+            page.locator('[name='+side+'_model]').select_option('local' if side=='left' else 'api')
+            ready(page)
+            assert page.locator('select[name='+side+'_condition]').count()==1
         assert not errors and not app.db.load_jobs()
     finally:
         page.close()

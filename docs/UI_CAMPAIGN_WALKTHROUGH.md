@@ -191,6 +191,14 @@ overlay. Failed refreshes hide outdated comparison counts and exports and
 offer manual retry. Empty fields explain missing prerequisites or indexed
 records; they do not instruct you to regenerate answers.
 
+Both Compare Model selectors offer **All models**, supporting one-to-many,
+many-to-one and many-to-many inspection. Every model/generation-setting pair
+remains separate. The page loads at most twelve pairs, with complete source
+facets inside each expandable result. CSV exports preserve those exact pairs,
+filters and model identities. Missing judgments and models without indexed
+measured conditions remain explicit. Counts across pairs are not independent
+inputs and must not be pooled into a single safety rate.
+
 ## Judge the actual saved answers
 
 1. Under **Judge retained outputs locally**, use **Prepare remaining source

@@ -128,7 +128,9 @@ def _guidance(app, params):
          'in your provider account. In Compare, the left campaign is fixed to the page you opened. Choose '
          'the right campaign, models, generation conditions and judging conditions; dependent choices load '
          'automatically. Fields explain missing prerequisites or unavailable indexed records. Keep diagnostic '
-         'probes, missing responses and historical replacements explicit. Export figures and their counts '
+         'probes separate. All models on either side compares model and generation-setting pairs separately, '
+         'twelve pairs per page; expand a pair to inspect outcomes. Missing judgments are not substituted. Keep '
+         'missing responses and historical replacements explicit. Export figures and their counts '
          'from Overview and Judging, and the exact paired counts from Compare. Definition is the editable '
          'draft, not a replacement for each job\'s recorded execution settings.',
          [(label, campaign + '?section=' + section if owner else link('general'))

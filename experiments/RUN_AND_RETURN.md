@@ -7162,6 +7162,16 @@ and all success/error/timeout paths release it. Old results and exports are
 hidden while a changed selection is unresolved. No comparison query,
 input-matching rule, budget check or judgment semantics changed.
 
+Compare also supports All models independently on either side. This is a
+read-only multi-pair view, not another experimental execution. It enumerates
+measured model/generation settings from SQLite, validates the requested judge
+against each selected scope, and loads at most twelve exact setting pairs per
+page. A missing selected judge in one pair stays unindexed rather than being
+replaced by another judge. Every pair reuses exact-input matching and ambiguity
+handling; its source facets are complete. HTML and CSV pagination select the
+same pairs, and exported rows identify actual models/settings, not All markers.
+No model files or historical output artifacts are scanned.
+
 ### Execute the all-output judging selection
 
 In Build, select the Haiku model in the judging controls, then choose

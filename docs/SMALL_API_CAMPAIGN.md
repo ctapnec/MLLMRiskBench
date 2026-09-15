@@ -480,6 +480,21 @@ new demonstrations separate from the thesis study populations. Broader
 workflow and interpretation guidance is in
 [UI_CAMPAIGN_WALKTHROUGH](UI_CAMPAIGN_WALKTHROUGH.md).
 
+### 8.5. Optional: compare multiple models
+
+Either **Model** selector offers **All models**. Use it on the right for your
+Flash model against all local models, on the left for all models in your
+opened campaign against one selected model, or on both sides. Choose a judging
+condition for each side. All generation conditions are kept separate; an
+available judge is never substituted for a missing selected judge.
+
+The view contains up to twelve model/generation-setting pairs per page. Expand
+a pair to inspect source-specific outcomes, missing responses and judgments.
+Next/Previous and the CSV download refer to these same pairs. Each exported
+row identifies the actual models and generation settings. Do not add counts
+across pairs as independent inputs or treat condition numbers as equivalent
+settings. Select individual models again for the focused comparison in 8.2-8.4.
+
 ## 9. Optional: independent human evaluation
 
 Open **Human evaluation** for the saved campaign, including a finished one.
