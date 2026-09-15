@@ -1461,7 +1461,7 @@ class BuilderPageMixin:
             + "</p>"
         )
         hardware_card = (
-            "<div class='card'><h2>Local hardware</h2>"
+            "<div class='card' id='local-hardware'><h2>Local hardware</h2>"
             + system_summary
             + (
                 "<p><strong>"
@@ -2277,7 +2277,7 @@ class BuilderPageMixin:
         elif framework_runtime_state or framework_runtime_error:
             build_default = "build-runtimes"
         general_panel = (
-            "<div class='card'><h2>"
+            "<div class='card' id='pipeline-review'><h2>"
             + _icon("flask")
             + "Current pipeline</h2>"
             "<p class='note'>A live summary of the controls across every builder "
@@ -2324,7 +2324,8 @@ class BuilderPageMixin:
             + f"data-default-tab='{build_default}'{force_default}>"
             + _page_tablist("Builder sections", build_tabs, default=build_default)
             + _page_tabpanel("build-general", general_panel)
-            + _page_tabpanel("build-runtimes", hardware_card + ollama_card + framework_runtime_panel)
+            + _page_tabpanel("build-runtimes", hardware_card + ollama_card
+                + "<div id='framework-runtimes'>" + framework_runtime_panel + '</div>')
             + "<form method='post' action='/build/review' id='builder'>"
             # hidden composed fields
             "<input type='hidden' name='corpora'><input type='hidden' name='api'>"
@@ -2347,13 +2348,13 @@ class BuilderPageMixin:
                 for m in _MODALITIES
             )
             + "</div></div>"
-            "<div class='card'><h2>" + _icon("box") + "Arms &amp; corpora</h2>"
+            "<div class='card' id='input-corpora'><h2>" + _icon("box") + "Arms &amp; corpora</h2>"
             "<p class='note'>Arms in the current modality scope. Each shows its "
             "modality tags; use All / None per group for bulk selection.</p>"
             + err("corpora")
             + "".join(arm_groups)
             + "</div>"
-            "<div class='card'><h2>"
+            "<div class='card' id='target-models'><h2>"
             + _icon("coins")
             + "Target models</h2>"
             + err("models")
@@ -2363,7 +2364,7 @@ class BuilderPageMixin:
             "under the same reviewed rig plan.</p>"
             + target_selector
             + "</div>"
-            "<div class='card'><h2>"
+            "<div class='card' id='attack-frameworks'><h2>"
             + _icon("pulse")
             + "Attack frameworks</h2>"
             + err("attackers")
@@ -2376,7 +2377,7 @@ class BuilderPageMixin:
             "</section><section class='page-tabpanel' id='build-evaluation' "
             "role='tabpanel' aria-labelledby='build-evaluation-tab' tabindex='0' "
             "data-page-panel='build-evaluation'>"
-            "<div class='card'><h2>" + _icon("receipt") + "Judges &amp; defense"
+            "<div class='card' id='evaluation-judges'><h2>" + _icon("receipt") + "Judges &amp; defense"
             "</h2>"
             + err("judges")
             + "<div class='checkgrid'>"
@@ -2475,7 +2476,7 @@ class BuilderPageMixin:
                 default=env_source_sha,
             )
             + "</div></div>"
-            "<div class='card'><h2>" + _icon("logo") + "Execution scope &amp; live attestation</h2>"
+            "<div class='card' id='transport-evidence'><h2>" + _icon("logo") + "Execution scope &amp; live attestation</h2>"
             "<p class='note'>Probes create attestations; live canaries and "
             "measured lanes consume them (repeatable receipt/digest rows, "
             "paired in order).</p><div class='cols'>"
@@ -2582,7 +2583,7 @@ class BuilderPageMixin:
             "open circuit was corrected before rerunning the identical lane "
             "(runbook section 17); never a default</span></span></label>"
             "</div>"
-            "<div class='card'><h2>"
+            "<div class='card' id='execution-budgets'><h2>"
             + _icon("coins")
             + "Call ceilings &amp; deadline (budget guards)</h2>"
             "<p class='note'>Required finite positive ceilings on every "
@@ -2617,7 +2618,7 @@ class BuilderPageMixin:
                 kind="number",
             )
             + "</div></div>"
-            "<div class='card'><h2>" + _icon("disk") + "Local model serving</h2>"
+            "<div class='card' id='local-serving'><h2>" + _icon("disk") + "Local model serving</h2>"
             + err("verify_model_sha256")
             + "<label class='checkrow'><input type='checkbox' name='verify_model_sha256'"
             + (" checked" if prefill.get("verify_model_sha256") == "on" else "")

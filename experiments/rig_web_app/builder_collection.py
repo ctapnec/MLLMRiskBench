@@ -172,7 +172,7 @@ def collection_panel(params):
     if not params.get('retained_programs_job'):
         return ''
     value = html.escape(params.get('retained_collection_workers','2'),quote=True)
-    return ("<section class='card'><h2>Collect prepared inputs</h2>"
+    return ("<section class='card' id='prepared-collection'><h2>Collect prepared inputs</h2>"
         "<p>Review the saved model assignments and costs, then start or continue the existing provider-parallel collection. "
         "Missing runtime bindings and funded transport checks are handled in the same launch, without downloads. "
         "Later draft edits do not change a prepared collection. Measured-output judging follows separately.</p>"

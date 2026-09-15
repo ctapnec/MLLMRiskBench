@@ -151,7 +151,7 @@ def native_judging_panel(app, params):
     if not params.get('retained_programs_job'):
         return ''
     job = params.get('retained_native_judging_job','')
-    body = ("<section class='card'><h2>Judge retained outputs locally</h2>"
+    body = ("<section class='card' id='retained-local-judging'><h2>Judge retained outputs locally</h2>"
         "<p>Prepare the saved collection outputs for their original source-specific or rules/guardrail scoring. "
         "Preparation makes no target or judge calls. Incomplete source runs remain listed as unprepared.</p>"
         "<p>Preparation reuses active or already prepared work. After more source runs finish, it adds only "

@@ -7148,6 +7148,12 @@ topics is collapsible on narrow screens. Human review links to the actual
 wizard; SVM links to its existing Tools form, not a new training wizard.
 Neither topic starts work or implies that the required evidence exists.
 
+Guide links use stable section anchors. Shared fragment navigation activates
+the containing tab before scrolling and focusing the intended control or
+heading, including on initial load and repeated same-fragment clicks. Closing
+the guide through a link does not restore focus to its old opener and undo
+that navigation. Matched preparation/judging links follow saved prerequisites.
+
 Compare refreshes dependent selectors with a read-only GET to the same page.
 Changing a campaign/model clears only its downstream selections. Empty lists
 explain prerequisites or missing indexed data. Refreshes and dynamically

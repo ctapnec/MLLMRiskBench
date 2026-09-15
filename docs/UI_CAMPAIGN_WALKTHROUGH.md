@@ -166,6 +166,12 @@ and links to controls; the documents supply concrete model selections, field
 values, bounds and reference counts. The guide does not prefill that recipe
 or guarantee its reproduction without those choices.
 
+Guide links target the relevant controls within a tab, not just the tab itself.
+They reveal the containing section, scroll below the navigation bar and focus
+the destination heading or control. Clicking the same link again returns to
+that destination. Matched preparation links follow the saved prerequisites;
+controls not yet available are not offered as ready-to-use destinations.
+
 Save the campaign to retain this preference. **Campaign guide** is available
 again in Build, campaign pages and campaign-owned job/review pages. Automatic
 help appears once per suggested stage in the current browser tab; reopening

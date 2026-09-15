@@ -95,9 +95,11 @@ def test_matched_and_local_suggestions_are_distinct_and_links_do_not_execute(app
     assert 'paired comparison limit' in hosted and 'text proxy' in hosted
     links = Links()
     links.feed(local + hosted)
-    assert all(urlsplit(href).path in {'/build', '/config', '/commands', '/jobs'} for href in links.hrefs)
+    assert all(urlsplit(href).path in {'/build', '/config', '/config/secrets', '/commands', '/jobs'} for href in links.hrefs)
     assert all(not urlsplit(href).fragment or urlsplit(href).fragment in {
-        'build-general', 'build-runtimes', 'build-pipeline', 'build-evaluation', 'build-execution', 'build-admission'
+        'build-general','build-evaluation','target-models','input-corpora','retained-inputs',
+        'local-hardware','framework-runtimes','attack-frameworks','sample-size-control',
+        'evaluation-judges','execution-budgets','local-serving','cfg-editor','pipeline-review','transport-evidence'
     } for href in links.hrefs)
 
 
@@ -115,8 +117,8 @@ def test_completed_judging_preparation_is_not_a_completed_judgment(command):
 def test_guide_covers_all_build_sections_and_optional_campaign_analysis(app):
     saved = app._save_build_campaign(draft(campaign_guide='on'))
     content = campaign_guide.render(app, saved)
-    for panel in ('general', 'runtimes', 'pipeline', 'evaluation', 'admission', 'execution'):
-        assert '#build-' + panel in content
+    for target in ('retained-inputs','local-hardware','target-models','evaluation-judges','transport-evidence','local-serving'):
+        assert '#' + target in content
     for topic in ('Runtimes', 'Human review', 'SVM analysis', 'Recovery'):
         assert topic in content
     owner = saved['campaign_id']
@@ -224,6 +226,59 @@ def test_guide_backend_links_close_dialog_and_use_shared_wait_guard(browser, app
         assert not errors and not app.db.load_jobs()
     finally:
         page.close()
+
+
+@pytest.mark.parametrize('width', [1440,390])
+def test_guide_links_reveal_scroll_and_focus_exact_controls_including_same_hash(browser, app, width):  # noqa: F811
+    saved=app._save_build_campaign(draft(campaign_guide='on'))
+    page,requests,errors=_browser_page(browser,app,width)
+    base='http://guide.test/build?campaign_id='+saved['campaign_id']
+    try:
+        page.goto(base)
+        original=page.locator('[name=cap_target]').input_value()
+        def topic(label):
+            if not page.locator('.campaign-guide-dialog').is_visible():
+                page.locator('[data-guide-open]').click()
+            if not page.locator('.campaign-guide-topics').evaluate('e=>e.open'):
+                page.get_by_text('Browse all 11 topics',exact=True).click()
+            page.get_by_role('button',name=label,exact=True).click()
+        def destination(anchor,panel):
+            page.wait_for_function("""([id,panel])=>{const node=document.getElementById(id),r=node.getBoundingClientRect();
+                return !document.getElementById(panel).hidden&&r.top>=document.querySelector('body>nav').getBoundingClientRect().bottom-2
+                &&r.top<innerHeight-70&&node.contains(document.activeElement);}""",arg=[anchor,panel])
+            assert page.url.endswith('#'+anchor)
+            assert not page.locator('.campaign-guide-dialog').is_visible()
+            assert not page.evaluate('uraBusy.isBusy()')
+        for _ in range(2):
+            topic('4. Settings')
+            before=len(requests)
+            page.get_by_role('link',name='Inspect local serving',exact=True).click()
+            destination('local-serving','build-execution')
+            assert len(requests)==before, 'Same-document help must not request the backend'
+        topic('3. Inputs')
+        page.get_by_role('link',name='Set limits and sampling',exact=True).click()
+        destination('sample-size-control','build-execution')
+        topic('3. Inputs')
+        page.get_by_role('link',name='Select saved source runs',exact=True).click()
+        destination('retained-inputs','build-general')
+        # A new page with an inner fragment overrides the remembered General tab.
+        page.goto(base+'#target-models')
+        destination('target-models','build-pipeline')
+        assert page.locator('[name=cap_target]').input_value()==original
+        assert not errors and not app.db.load_jobs()
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize('field,target', [
+    ('retained_sources_job','matched-forecast'),('retained_budget_job','matched-replay-inputs'),
+    ('retained_replays_job','counted-collection')])
+def test_matched_guide_preparation_links_follow_available_prerequisites(app,field,target):
+    steps,_,_,_=campaign_guide._guidance(app,draft(api='google:flash',retained_source_campaign='source',**{field:'prepared'}))
+    prepare=next(step for step in steps if step[0]=='Prepare')
+    assert prepare[3][0][1].endswith('#'+target)
+    judge=next(step for step in steps if step[0]=='Judge')
+    assert judge[3][0][1].endswith('#'+target)
 
 
 def test_browser_remembers_dismissal_per_campaign_and_reopens_on_demand(browser, app):  # noqa: F811

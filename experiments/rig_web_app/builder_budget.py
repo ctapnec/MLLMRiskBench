@@ -58,7 +58,7 @@ def budget_panel(app, params):
         if not isinstance(caps, dict):
             caps = {}
     except ValueError as exc:
-        return "<section class='card'><h2>Matched-work budget</h2><p>" + escape(exc) + "</p>" \
+        return "<section class='card' id='matched-forecast'><h2>Matched-work budget</h2><p>" + escape(exc) + "</p>" \
             "<button form='builder' formaction='/build/source-runs'>Refresh selected models</button></section>"
     fields = "".join(
         "<tr><td>" + escape(route["spec"]) + "</td><td>" + escape(route["max_output_tokens"]) + "</td>"
@@ -69,7 +69,7 @@ def budget_panel(app, params):
     as_of = params.get("retained_pricing_date") or datetime.now(timezone.utc).date().isoformat()
     job = params.get("retained_budget_job", "")
     return (
-        "<section class='card'><h2>Forecast matched hosted work</h2>"
+        "<section class='card' id='matched-forecast'><h2>Forecast matched hosted work</h2>"
         "<p>Uses the selected hosted models and configured output allowances. Request caps include diagnostic "
         "calls; whole source clusters may leave unused capacity. The forecast includes Haiku assessment of "
         "hosted and matched local outputs. It does not generate, judge, count via an API, or reserve funds.</p>"

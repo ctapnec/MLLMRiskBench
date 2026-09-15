@@ -83,7 +83,7 @@ def source_panel(app, params: dict[str, str]) -> str:
         + ">" + escape(row["name"]) + "</option>" for row in campaigns
     )
     content = (
-        "<section class='card source-preparation'><h2>Reuse local inputs for an API comparison</h2>"
+        "<section class='card source-preparation' id='retained-inputs'><h2>Reuse local inputs for an API comparison</h2>"
         "<p>Use the same questions, images and attack prompts from saved local runs to compare API models. "
         "This prepares an input selection only: it does not change the current pipeline's corpus or launch any model.</p>"
         "<div class='source-steps' aria-label='Input reuse workflow'><span>1. Choose a campaign</span>"

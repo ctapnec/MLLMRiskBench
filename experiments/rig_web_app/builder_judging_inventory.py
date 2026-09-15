@@ -152,7 +152,7 @@ def inventory_judging_review(app, params):
 
 
 def judging_inventory_panel(params):
-    body = ("<section class='card'><h2>Same-input output coverage</h2>"
+    body = ("<section class='card' id='retained-judging-coverage'><h2>Same-input output coverage</h2>"
         '<p>Include all local models and every saved output on the hosted input entries. '
         'Uses all completed source preparations for this collection, including earlier increments. '
         'Missing answers stay visible. This preparation makes no provider calls.</p>'

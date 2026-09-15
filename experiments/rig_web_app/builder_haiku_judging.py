@@ -180,7 +180,7 @@ def haiku_judging_panel(app,params):
     from .builder_judging_inventory import judging_inventory_panel
     choices=_choices(app)
     chosen=params.get('retained_haiku_model') or next(iter(choices),'')
-    body=("<section class='card'><h2>Haiku comparison of saved outputs</h2>"
+    body=("<section class='card' id='retained-haiku-judging'><h2>Haiku comparison of saved outputs</h2>"
         '<p>Select input-matched local and hosted answers from the saved preparation above. Preparation '
         'makes no provider calls and uses the existing judging allocation. It does not regenerate targets.</p>'
         "<div class='haiku-judging-controls'>"

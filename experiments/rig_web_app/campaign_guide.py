@@ -44,43 +44,55 @@ def _guidance(app, params):
     owner = params.get('campaign_id', '')
     base = '/build?campaign_id=' + quote(owner, safe='') if owner else '/build?work_kind=campaign'
     campaign = '/campaigns/' + quote(owner, safe='') if owner else base
-    link = lambda tab: base + '#build-' + tab
+    link = lambda tab, target='': base + '#' + (target or 'build-' + tab)
     tool = lambda command: '/commands?cmd=' + command + ('&campaign_id=' + owner if owner else '')
     matched = bool(params.get('retained_source_campaign'))
     local = bool(params.get('local'))
     hosted = bool(params.get('api'))
     route = 'matched' if matched else 'mixed' if local and hosted else 'local' if local else 'hosted' if hosted else 'choose'
+    prepare_target = ('counted-collection' if params.get('retained_replays_job') else
+        'matched-replay-inputs' if params.get('retained_budget_job') else
+        'matched-forecast' if params.get('retained_sources_job') else 'retained-inputs') if matched else 'pipeline-review'
+    judging_links = ([('Open local saved-output judging', link('general', 'retained-local-judging'))]
+        if params.get('retained_programs_job') else [('Complete collection preparation', link('general', prepare_target))]) if matched else [
+            ('Choose judges', link('evaluation', 'evaluation-judges'))]
+    if matched and params.get('retained_native_judging_job'):
+        judging_links += [('Open Haiku saved-output judging', link('general', 'retained-haiku-judging')),
+            ('Inspect same-input output coverage', link('general', 'retained-judging-coverage'))]
     steps = [
         ('Choose a route', 'Choose what you want to compare',
          'Use local models, hosted APIs, or both in one campaign. For a fresh workload, choose arms, '
          'corpora and frameworks in Pipeline. To compare hosted answers against saved local answers, '
          'use Reuse local inputs for an API comparison in General. Sharing a seed alone does not prove matched inputs.',
-         [('Choose models and a fresh workload', link('pipeline')),
-          ('Reuse saved local inputs', link('general'))]),
+         [('Choose target models', link('pipeline', 'target-models')),
+          ('Choose a fresh workload', link('pipeline', 'input-corpora')),
+          ('Reuse saved local inputs', link('general', 'retained-inputs'))]),
         ('Runtimes', 'Check model and framework readiness',
          'For local work, inspect the available GPUs, local services and installed framework environments in '
          'Runtimes. Reuse working installations and assessed model profiles. A newly downloaded or changed local '
          'model needs its text/image responsiveness assessment before security testing; an existing valid profile '
          'does not need repeated assessment. For hosted work, check the configured target and provider credentials '
          'in Config. Opening these pages does not install models or call a provider.',
-         [('Inspect runtimes and hardware', link('runtimes')), ('Open local-model assessment', tool('local_model_readiness')),
-          ('Inspect hosted configuration', '/config')]),
+         [('Inspect local hardware', link('runtimes', 'local-hardware')),
+          ('Inspect framework runtimes', link('runtimes', 'framework-runtimes')),
+          ('Open local-model assessment', tool('local_model_readiness')), ('Inspect provider credentials', '/config/secrets')]),
         ('Inputs', 'Choose a small, interpretable input selection',
          'For fresh inputs, select your corpora and attacks in Pipeline, then set the per-arm limit, '
          'sampling policy and seeds in Execution. Keep text and image counts explicit. For reused inputs, '
          'select the source campaign and saved runs, then Prepare selected inputs. That preparation makes no generation calls. '
          'HarmBench, T3MP3ST, NanoGCG and IDEATOR have additional preparation controls when selected. '
          'Follow the chosen attacker panel before measured execution; corpus selection alone does not prepare an attack.',
-         [('Select corpora and frameworks', link('pipeline')),
-          ('Set limits and sampling', link('execution')),
-          ('Select saved source runs', link('general'))]),
+         [('Select arms and corpora', link('pipeline', 'input-corpora')),
+          ('Select attack frameworks and preparation', link('pipeline', 'attack-frameworks')),
+          ('Set limits and sampling', link('execution', 'sample-size-control')),
+          ('Select saved source runs', link('general', 'retained-inputs'))]),
         ('Settings', 'Choose evaluation and realistic bounds',
          'Select your judges in Evaluation. Local models use their assessed serving profiles; scoring revision '
          'and placement are automatic. Hosted output allowances come from API target configuration and, for '
          'matched work, the model forecast. Review target, judge and HTTP ceilings in Execution. '
          'The call-start window is not an individual response timeout. Full model checksum scans are optional.',
-         [('Choose judges', link('evaluation')), ('Set execution bounds', link('execution')),
-          ('Inspect local serving', link('execution')), ('Configure hosted targets', '/config')]),
+         [('Choose judges', link('evaluation', 'evaluation-judges')), ('Set execution bounds', link('execution', 'execution-budgets')),
+          ('Inspect local serving', link('execution', 'local-serving')), ('Configure hosted targets', '/config?file=api-targets#cfg-editor')]),
         ('Prepare', 'Prepare and review before making target calls',
          ('For this matched selection: Prepare selected inputs, Prepare forecast, Prepare replay inputs, '
           'then Prepare counted collection. After each job completes, return to this saved campaign in Build. '
@@ -90,13 +102,14 @@ def _guidance(app, params):
           'Local acquisition controls reuse installed models, not a new runtime installation. Measured work '
           'needs valid transport evidence for each selected route/modality. Use a diagnostic probe when that '
           'evidence is missing, then return to the measured selection. The probe makes real calls; the projection does not.'),
-         [('Open preparation controls', link('general')), ('Check transport evidence', link('admission'))]),
+         [('Open the next preparation controls', link('general', prepare_target)),
+          ('Check transport evidence', link('admission', 'transport-evidence'))]),
         ('Run', 'Start once and follow the existing job',
          'Use the explicit start on the reviewed job or prepared collection. Hosted generation spends credits. '
          'Watch Campaign jobs or Activity; an active or retry-waiting job is not a reason to start a duplicate. '
          'If interrupted, inspect the original error and its offered continuation. Keep saved answers and '
          'recover only the unfinished stage. This guide never starts or resumes jobs for you.',
-         [('Open review controls', link('general')),
+         [('Open review controls', link('general', 'prepared-collection' if params.get('retained_programs_job') else 'pipeline-review')),
           ('Open campaign jobs', '/jobs?campaign_id=' + owner if owner else link('general'))]),
         ('Judge', 'Judge each saved answer, not just its input',
          ('Use Judge retained outputs locally: prepare remaining source runs, select the saved preparation, '
@@ -108,8 +121,7 @@ def _guidance(app, params):
           'decide before reaching its model-backed judge; it is not two independent verdicts. Missing text, '
           'abstentions and invalid assessments must remain visible. Post-hoc Haiku comparison needs a prepared '
           'saved-output selection and its own budget. A verdict for one model cannot be copied to another answer.'),
-         [('Open judging controls', link('general') if matched else link('evaluation')),
-          ('Inspect saved verdicts', campaign + '?section=judging' if owner else link('evaluation'))]),
+         judging_links + [('Inspect saved verdicts', campaign + '?section=judging' if owner else link('evaluation', 'evaluation-judges'))]),
         ('Results', 'Inspect coverage before comparing rates',
          'Results shows answers, effective generation settings, usage and truncation. Judging shows '
          'answer-specific decisions and coverage. Costs reports recorded attempts and charges, not the balance '
@@ -227,7 +239,7 @@ const dialog=root.querySelector('dialog'),open=root.querySelector('[data-guide-o
 const choice=document.querySelector('[name=campaign_guide]');
 const steps=[...root.querySelectorAll('[data-guide-step]')],panels=[...root.querySelectorAll('[data-guide-section]')];
 const back=root.querySelector('[data-guide-back]'),next=root.querySelector('[data-guide-next]');
-let current=Number(root.dataset.guideInitial),focusBefore;
+let current=Number(root.dataset.guideInitial),focusBefore,restoreFocus=true;
 function show(index,focus=false){current=Math.max(0,Math.min(index,panels.length-1));
 panels.forEach((p,i)=>p.hidden=i!==current);steps.forEach((b,i)=>{if(i===current)b.setAttribute('aria-current','step');else b.removeAttribute('aria-current');});
 back.disabled=current===0;next.textContent=current===panels.length-1?'Done':'Next';
@@ -235,12 +247,12 @@ root.querySelector('[data-guide-progress]').textContent='Step '+(current+1)+' of
 if(focus)panels[current].focus();}
 const key='ura-campaign-guide:'+root.dataset.guideKey;
 function launch(){if(dialog.open||!dialog.showModal||window.uraBusy?.isBusy())return;
-focusBefore=document.activeElement;show(current);dialog.showModal();
+restoreFocus=true;focusBefore=document.activeElement;show(current);dialog.showModal();
 try{sessionStorage.setItem(key,'shown');}catch(e){}}
 function close(){dialog.close();}
 open.addEventListener('click',launch);root.querySelector('[data-guide-close]').addEventListener('click',close);
-dialog.addEventListener('close',()=>{if(focusBefore?.isConnected)focusBefore.focus();});
-dialog.querySelectorAll('a').forEach(a=>a.addEventListener('click',close));
+dialog.addEventListener('close',()=>{if(restoreFocus&&focusBefore?.isConnected)focusBefore.focus();});
+dialog.querySelectorAll('a').forEach(a=>a.addEventListener('click',()=>{restoreFocus=false;close();}));
 steps.forEach((b,i)=>b.addEventListener('click',()=>show(i,true)));
 back.addEventListener('click',()=>show(current-1,true));
 next.addEventListener('click',()=>current===panels.length-1?close():show(current+1,true));
