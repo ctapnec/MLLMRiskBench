@@ -74,3 +74,24 @@ def test_native_metadata_keeps_models_allowance_and_metrics():
     assert value['stages']==source['judge_cascade']['stages']
     assert value['approximate_common_metrics'] is False
     assert value['scoring_revision']=='b'*40
+
+
+def test_native_posthoc_publisher_indexes_settings_without_new_calls(study,tmp_path):
+    from experiments.rig_web_app.workspace_native_judging import NativeJudgmentPublication
+    app,left,_,_=study
+    put(app,left,'un:a','input',status=None)
+    source=dict(target='local',run_id='run',approximate_common_metrics=False,
+        judge_cascade=dict(stages=[dict(name='rules'),dict(name='guardrail',model_id='local-guard',max_new_tokens=20)]))
+    record=dict(response=dict(run_id='run',attempt_id='a',target='local'),
+        judgment=dict(run_id='run',attempt_id='a',label='compliant'))
+    database=app.db._query('PRAGMA database_list',())[0]['file']
+    publisher=NativeJudgmentPublication(database=database,campaign_id=left,root=tmp_path)
+    try:
+        publisher.accept(source,record,'judgments.jsonl:1','b'*40)
+        values=list(indexed_settings(app.db,left).values())
+        assert len(values)==1
+        assert values[0]['stages'][1]['max_new_tokens']==20
+        assert values[0]['approximate_common_metrics'] is False
+        assert not publisher.pending
+    finally:
+        publisher.close()
