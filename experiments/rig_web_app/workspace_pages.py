@@ -454,6 +454,8 @@ class WorkspacePagesMixin:
             return ("<p>Labels for the selected outputs, separated by model, source, framework, modality and generation/judging condition. "
                 "Each bar counts retained assessments, including invalid verdicts and missing-output assessments. "
                 "Pending judgments are not part of these bars. These are label distributions, not pooled security rates.</p>"
+                "<p>For source-classification corpora, task labels describe the classified material, not the answering model's safety. "
+                "Task correctness and answer-format validity are separate from common refusal and harmful-compliance measures.</p>"
                 "<p class='note'>Measured conditions are listed first. Diagnostics remain separate and accessible on later pages.</p>"
                 + review_coverage + exports + judgment_breakdown_html(selected,settings=settings) + pagination(len(groups) > 12)
                 + "<details><summary>All indexed judging totals for this selection</summary>" + table(

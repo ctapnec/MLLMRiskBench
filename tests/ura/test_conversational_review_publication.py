@@ -106,3 +106,24 @@ def test_display_names_are_escaped_in_the_ui(saved_review):
     assert judge_name(args['judge_id'],settings[args['judge_id']])=='<script>name</script>'
     page=review_coverage_html(app.db,owner,settings)
     assert '<script>name</script>' not in page and '&lt;script&gt;' in page
+
+
+def test_source_task_labels_are_not_replaced_with_common_safety(saved_review):
+    app,owner,args=saved_review
+    with sqlite3.connect(args['review_database']) as db:
+        shown=json.loads(db.execute("SELECT value FROM presentations WHERE id='R0'").fetchone()[0])
+        shown['common_metrics_eligible']=False
+        assessment=json.loads(db.execute("SELECT value FROM assessments WHERE id='R0'").fetchone()[0])
+        assessment.update(task_label='unsafe',reference_task_label='unsafe',task_answer_correct=True,
+            parse_status_label='no_label_line')
+        db.execute("UPDATE presentations SET value=? WHERE id='R0'",(json.dumps(shown),))
+        db.execute("UPDATE assessments SET value=? WHERE id='R0'",(json.dumps(assessment),))
+    publisher.publish(**args)
+    row=app.db._query("SELECT label,source_ref FROM campaign_judgments WHERE judge_id=? AND response_id='run:0'",(args['judge_id'],))[0]
+    assert row['label']=='unsafe'
+    artifact=json.loads(Path(row['source_ref']).read_text())
+    assert artifact['assessment']['task_answer_correct'] is True
+    assert artifact['assessment']['parse_status_label']=='no_label_line'
+    assert artifact['presentation']['common_metrics_eligible'] is False
+    status,mime,body=app.handle('GET','/campaigns/'+owner+'?section=judging')
+    assert status==200 and 'not the answering model\'s safety' in body.decode()
