@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Mapping
 from urllib.parse import urlparse
 
-from .catalog import _ARM_CATALOG, _BUILD_MODES, build_argv, _icon
+from .catalog import _ARM_CATALOG, _BUILD_MODES, _MODALITIES, build_argv, _icon
 
 from .ui import _page
 
@@ -22,6 +22,7 @@ class BuilderCaptureMixin:
         "work_kind",
         "campaign_name",
         "campaign_guide",
+        "modality_scope",
         "retained_source_campaign",
         "retained_source_runs",
         "retained_sources_job",
@@ -567,6 +568,13 @@ class BuilderCaptureMixin:
                 and str(value).strip()
             )
         }
+        # UI filter state is saved independently of the selected corpus/model
+        # identities. An explicit empty scope must not become the legacy All.
+        if "modality_scope" in form:
+            modalities = set(self._split_list(str(form["modality_scope"])))
+            if modalities - set(_MODALITIES):
+                raise ValueError("Unknown modality scope")
+            params["modality_scope"] = ",".join(m for m in _MODALITIES if m in modalities)
         work_kind = params.get("work_kind", "campaign" if params.get("campaign_id") else "run")
         if work_kind not in {"run", "campaign"}:
             raise ValueError("Choose Campaign or Single run")

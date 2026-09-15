@@ -47,6 +47,9 @@ finishes; do not launch a second copy while the first is active.
    whenever you want to configure the page; **Campaign guide** reopens it.
 3. Open **Pipeline**. Choose **attestation probe**. Enable Text and Image and
    disable Audio, Video and Tool. Select only `xstest_full` initially.
+   **Save campaign** retains these modality choices. Older drafts that never
+   saved a scope start with all modalities enabled; set Text and Image once
+   and save. Switching Build tabs does not require another save.
 4. Open the target-model picker, choose **Local rig**, select only
    `vllm:Qwen/Qwen3-VL-8B-Instruct`, then click **Done**.
 
@@ -72,24 +75,61 @@ loads. Saved verdicts retain its actual placement.
 
 ### 2.2. Set Execution
 
-In **Execution**, set:
+These are controls in **Build**, not the campaign's Definition page, a job's
+execution details or a Tools form. Keep your current draft open. If you already
+saved it and left Build, use **Campaigns -> your demonstration campaign ->
+Configure in Build**. Do not open a fresh Build link and lose unsaved selections.
 
-| Field | Value |
-| --- | --- |
-| Per-arm limit | `1` |
-| Sampling policy | `seeded_pseudorandom_whole_cluster_prefix_v1` |
-| Sample seed / generation seeds | `0` / `0` |
-| Maximum queries / turns | `1` / `1` |
-| Target answer retries | `1` |
-| Target / judge / HTTP ceilings | `16` / `16` / `1` |
-| --deadline-seconds | `3600` |
-| Local process wall-time cap | Leave empty during probes |
-| Output directory | `/mnt/stor/data/ura-work/runs/demonstrations/my-qwen-demonstration/probe-text` |
+1. At the top of Build, click **Execution**, in the same tab row as **General**,
+   **Runtimes**, **Pipeline**, **Evaluation** and **Admission**. Close the campaign
+   guide modal first if it covers the page. You should see **Sampling & turns**.
+2. In its **Per-arm sample size** box, check that the badge says **1 arm selected**.
+   If it says **0 arms selected**, use **Pipeline - Arms & corpora**, select
+   `xstest_full`, and return to **Execution**. The sampling fields are disabled
+   until a corpus is selected.
+3. Set the following fields by their **literal on-screen labels**:
 
-Uncheck **Exclude tool-conditioned inputs** and leave full model SHA
-verification unchecked. The exclusion applies to the standalone synthetic dry
-run, not this real probe. HTTP's positive ceiling does not initiate network
-calls; the actual local projection should report zero HTTP attempts.
+   | Location in Sampling & turns | On-screen label | Value |
+   | --- | --- | --- |
+   | Per-arm sample size | `--limit` | `1` |
+   | Per-arm sample size | `--sample-seed` | `0` |
+   | Per-arm sample size | `--sampling-policy` | **Seeded pseudorandom cluster prefix (default)** |
+   | Below Per-arm sample size | `--seeds` | `0` |
+   | Below Per-arm sample size | `--max-queries` | `1` |
+   | Below Per-arm sample size | `--max-turns` | `1` |
+   | Below Per-arm sample size | `--target-answer-retries` | `1` |
+
+   Enter `--limit` directly in its number box. The **Sample-size range** slider
+   is unavailable until a matching no-call preflight supplies the corpus size;
+   no preflight is needed to enter the number now. The policy's CLI value is
+   `seeded_pseudorandom_whole_cluster_prefix_v1`, but that is not its menu label.
+4. Scroll down, still inside **Execution**, to **Aggregation, row admission &
+   resume**. Keep `--group` unchanged and `--lock-stale-seconds` empty. Leave
+   **Reset open circuits (--reset-open-circuits)** unchecked. In **attestation
+   probe** mode, **Exclude tool-conditioned rows (--exclude-tool-conditioned)**
+   is automatically unchecked and disabled; do not try to enable it.
+5. Continue down to **Call ceilings & deadline (budget guards)**. Set each
+   individual field; there is no combined "Target / judge / HTTP ceilings" control.
+
+   | On-screen label | Value |
+   | --- | --- |
+   | `--max-total-target-calls` | `16` |
+   | `--max-total-judge-calls` | `16` |
+   | `--max-total-http-attempts` | `1` |
+   | **Local process wall-time cap (hours)** | Leave empty for the probe |
+   | `--deadline-seconds` | `3600` |
+
+6. Continue to **Local model serving**. Leave **Full model SHA verification
+   (slow, optional)** unchecked. Do not change `--dtype` or `--quantization`;
+   keep the installed model profile.
+7. Continue to the last card, **Output**. In its `--out` field enter:
+   `/mnt/stor/data/ura-work/runs/demonstrations/my-qwen-demonstration/probe-text`.
+   The card is called Output; the editable field is labelled `--out`, not
+   "Output directory".
+8. Continue with section **2.3** to save and review. Do not start a job yet.
+
+The positive HTTP ceiling is required by the common bounds form; it does not
+initiate network calls. This all-local projection should report zero HTTP attempts.
 
 ### 2.3. Save and review the draft
 
@@ -155,7 +195,7 @@ follow the transport-recovery instructions at the end of this guide.
 2. Keep **attestation probe**, Qwen, Text and Image, the scope, seed, bounds and
    evaluation settings unchanged. Keep the live-attestation and maximum-age
    fields empty, as for the text probe.
-3. In **Execution**, change Output to
+3. In **Execution -> Output**, change **--out** to
    `/mnt/stor/data/ura-work/runs/demonstrations/my-qwen-demonstration/probe-image`.
 4. Click **General -> Save campaign**, then return to Build and click
    **General -> Compose & review**.
@@ -189,8 +229,9 @@ for the measured run, not measured results themselves.
    **Add receipt row** for the image receipt and digest. Keep the same scope and
    set maximum age to `24` hours. Refresh only receipts that have actually
    expired or changed.
-3. In **Execution**, change the per-arm limit to `2`, set the local process
-   wall-time cap to `1` hour and change Output to
+3. In **Execution -> Sampling & turns -> Per-arm sample size**, change **--limit**
+   to `2`. In **Call ceilings & deadline (budget guards)** set **Local process
+   wall-time cap (hours)** to `1`. In **Output**, change **--out** to
    `/mnt/stor/data/ura-work/runs/demonstrations/my-qwen-demonstration/measured`.
    Keep the other bounds and the one-answer-retry policy unchanged.
 4. Click **General -> Save campaign**, then return to Build and click

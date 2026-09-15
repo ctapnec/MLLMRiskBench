@@ -2015,11 +2015,6 @@ class BuilderPageMixin:
             else 1
         )
         range_render_value = min(range_value, range_max)
-        sampling_hidden = (
-            " aria-hidden='false'"
-            if effective_arm_count
-            else " hidden aria-hidden='true'"
-        )
         sampling_disabled = "" if effective_arm_count else " disabled"
         range_field_hidden = "" if exact_arm_cardinality else " hidden"
         range_disabled = "" if exact_arm_cardinality else " disabled"
@@ -2114,8 +2109,7 @@ class BuilderPageMixin:
                 + sampling_policy_options
             )
         sampling_fields = (
-            "<section class='sample-size-control' id='sample-size-control'"
-            + sampling_hidden
+            "<section class='sample-size-control' id='sample-size-control' aria-hidden='false'"
             + " data-arm-cardinalities='"
             + arm_cardinality_json
             + "'"
@@ -2130,6 +2124,11 @@ class BuilderPageMixin:
             "<span class='badge blue' id='sample-arm-count'>"
             + html.escape(sampling_arm_label)
             + "</span></div>"
+            "<p id='sample-arm-prerequisite' class='note'"
+            + (" hidden" if effective_arm_count else "")
+            + ">Select a corpus in <a href='#input-corpora'>Pipeline - Arms &amp; corpora</a> "
+            "to enable the limit, sample seed and sampling policy below. "
+            "These controls stay visible so you can find them before selecting inputs.</p>"
             "<div class='sample-size-grid'><div class='fieldcell sample-range-field'"
             + range_field_hidden
             + ">"
@@ -2332,6 +2331,7 @@ class BuilderPageMixin:
             "<input type='hidden' name='local'>"
             "<input type='hidden' name='attackers'>"
             "<input type='hidden' name='judges'>"
+            "<input type='hidden' name='modality_scope'>"
             "<section class='page-tabpanel' id='build-pipeline' role='tabpanel' "
             "aria-labelledby='build-pipeline-tab' tabindex='0' "
             "data-page-panel='build-pipeline'>"
@@ -2340,11 +2340,14 @@ class BuilderPageMixin:
             "<div class='card'><h2>" + _icon("grid") + "Modality scope</h2>"
             "<p class='note'>Input modalities - all enabled for a "
             "fresh build. Turn one off to hide the arms, target models, and "
-            "frameworks that need it.</p>"
+            "frameworks that need it. Save campaign retains this scope when "
+            "you reopen it; review and editing retain it too.</p>"
             "<div class='modscope'>"
             + "".join(
                 "<label class='modtoggle'><input type='checkbox' class='modbox' "
-                f"data-mod='{m}' checked><span>{html.escape(m)}</span></label>"
+                f"data-mod='{m}'"
+                + (" checked" if m in self._split_list(prefill.get("modality_scope", ",".join(_MODALITIES))) else "")
+                + f"><span>{html.escape(m)}</span></label>"
                 for m in _MODALITIES
             )
             + "</div></div>"

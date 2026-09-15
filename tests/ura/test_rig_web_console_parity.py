@@ -430,7 +430,9 @@ def test_builder_sampling_control_and_local_wall_time_keep_cli_semantics(
         ).decode("utf-8")
         fresh_panel = _opening_tag(fresh, "id='sample-size-control'")
         selected_panel = _opening_tag(selected, "id='sample-size-control'")
-        assert " hidden" in fresh_panel and "aria-hidden='true'" in fresh_panel
+        assert " hidden" not in fresh_panel and "aria-hidden='false'" in fresh_panel
+        assert " disabled" in _opening_tag(fresh, "id='sample-limit-number'")
+        assert "href='#input-corpora'" in fresh
         assert " hidden" not in selected_panel and "aria-hidden='false'" in selected_panel
         assert "name='limit' value='0'" in selected
         assert "name='sample_seed' value='17'" in selected

@@ -65,6 +65,14 @@ a pooled safety ranking. Inspection and exports make no model calls.
 2. Set sources and attacks in **Pipeline**, judges/defenses in **Evaluation**,
    source/model requirements in **Admission**, and sampling/resource limits in
    **Execution**. Reuse installed runtimes and assessed local-model settings.
+   **Pipeline -> Modality scope** is retained by **Save campaign**, subsequent
+   reopening, and the review/edit flow, including an explicitly empty scope.
+   Fresh drafts and older drafts without saved scope start with all modalities
+   enabled. Scope filters available selections; it is not an additional Runner
+   modality flag and does not change a preflight identity by itself.
+   In **Execution -> Sampling & turns -> Per-arm sample size**, the number and
+   policy fields stay visible but disabled until an arm is selected. The exact
+   range slider appears only after a matching no-call preflight supplies sizes.
 3. Inspect **Current pipeline**, then **Save campaign** if applicable. Saving
    makes no calls. **Compose & review** shows the actual command and settings;
    execution requires the separate start action on the review page.
