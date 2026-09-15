@@ -204,11 +204,14 @@ def test_guide_backend_links_close_dialog_and_use_shared_wait_guard(browser, app
         page.get_by_text('Browse all 11 topics', exact=True).click()
         page.get_by_role('button', name=topic, exact=True).click()
         page.route('http://guide.test'+path+'?*', lambda route: pending.append(route))
-        page.get_by_role('link', name=link, exact=True).click(no_wait_after=True)
-        page.wait_for_function('window.uraBusy.isBusy()')
-        assert not page.locator('.campaign-guide-dialog').is_visible()
-        assert page.locator('#busy-overlay').is_visible()
-        assert page.locator('main').evaluate('e=>e.inert')
+        # Read the departing document in the click itself: once navigation is
+        # pending, browser queries may wait for the next document to commit.
+        state = page.get_by_role('link', name=link, exact=True).evaluate("""e=>{
+            e.click();return {busy:uraBusy.isBusy(),dialog:document.querySelector('.campaign-guide-dialog').open,
+            visible:getComputedStyle(document.getElementById('busy-overlay')).display==='flex',
+            inert:document.querySelector('main').inert};}""")
+        assert state==dict(busy=True,dialog=False,visible=True,inert=True)
+        page.wait_for_timeout(80)
         assert len(pending)==1
         request = urlsplit(pending[0].request.url)
         code,mime,content = app.handle('GET',request.path+'?'+request.query)

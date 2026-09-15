@@ -49,6 +49,7 @@ def test_compare_populates_all_dependencies_and_keeps_exports_working(browser, s
         page.locator('[name=right_campaign]').select_option(right)
         ready(page)
         expect(page.locator('[name=right_model]')).to_be_enabled()
+        assert page.locator('[name=right_model]').evaluate('e=>getComputedStyle(e).backgroundImage')!='none'
         assert page.locator('[name=right_model] option').count() == 2
         # Use the actual control with keyboard input, not only DOM selection.
         field = page.locator('[name=left_model]')
