@@ -274,25 +274,96 @@ for the measured run, not measured results themselves.
 The text/image probes and their checks are already finished. Do not repeat
 them or open an old probe's review, which restores that probe's settings.
 
-1. On **Review execution**, check **Mode: measured**, both selected corpora,
-   Qwen and limit `2`. The software records, scope, output directory and saved
-   transport checks have been supplied automatically.
-2. Click **Plan & acquire models for no-call preflight**. On its passed job,
-   click **Acquire sealed models**. On the resulting passed acquisition job,
-   click **Start no-call preflight**. Wait for the projection to pass. This
-   reuses the installed store and makes no target or judge calls.
-3. On that **new measured preflight job**, scroll to **Builder parameters** and
-   click **Review this exact lane in the builder**. On **Review execution**,
-   check **Calculated call ceilings** against the projection for both corpora.
-4. Below that card, click **Plan & acquire models for this job**, not the
-   similarly named preflight button higher on the page. On its passed planning
-   job, click **Acquire sealed models** and wait for that job to pass.
-5. On the latest acquisition job, under **Verified model acquisition receipt**,
-   click **Start reviewed measured job** once. Follow the new `run_matrix` job
-   until **passed**, including local evaluation, then continue to section 7.
+There are **two different preparation chains**. Both contain a `model_acquire`
+job and both show a card titled **Verified model acquisition receipt**. The
+button inside that card identifies the next stage:
+
+| Button on the completed acquisition job | Where you are | Next section |
+| --- | --- | --- |
+| **Start no-call preflight** | Models are ready for the projected workload check; measured execution is not ready yet | 6.2.2 |
+| **Start reviewed measured job** | Models are ready for the actual measured run | 6.2.5 |
+
+The saved **Mode: measured** setting alone does not distinguish these jobs:
+the first chain checks that measured configuration without generating answers.
+
+#### 6.2.1. Review the measured configuration
+
+You should be on **Review execution**, reached through **Campaigns -> your
+campaign name -> Configure in Build -> General -> Compose & review**.
+
+Check **Mode: measured**, `xstest_full` and `vlsbench_release`, Qwen and limit
+`2`. Software records, scope, output directory and saved transport checks have
+been supplied automatically. Do not enter receipt rows.
+
+#### 6.2.2. Complete the no-call preflight
+
+1. On **Review execution**, click **Plan & acquire models for no-call
+   preflight**. This opens a **Job** page for a planning job. Wait for **passed**.
+2. On that page, find **Reviewed sealed acquisition plan**, then click
+   **Acquire sealed models**. A **different Job page** opens for `model_acquire`.
+   Wait for **passed**. This reuses the installed model store.
+3. Stay on that acquisition job. Below the state/runtime/started/exit-code
+   cards, find **Verified model acquisition receipt**, above **Durable command
+   identity**. Click **Start no-call preflight**. Browser Find (`Ctrl+F`) can
+   locate that exact button text if the page is long.
+4. A **third Job page** opens for the no-call `run_matrix` check. Wait for
+   **passed**. This check makes no target or judge calls. Its completion, not
+   merely completion of `model_acquire`, finishes this subsection.
+
+If your current acquisition page offers **Start no-call preflight**, continue
+from step 3 above. **Start reviewed measured job** is not available on that
+page; do not repeat preparation looking for it.
+
+#### 6.2.3. Return from the passed preflight to execution review
+
+1. On the **passed preflight job from 6.2.2 step 4**, find **Builder parameters**.
+   You can use `Ctrl+F` for **Review this exact lane in the builder**.
+2. Click **Review this exact lane in the builder**. This opens **Review
+   execution**, not the ordinary editable Build tabs.
+3. Check **Calculated call ceilings** for the two-corpus selection. Keep the
+   measured settings. Do not open an older text/image probe's review instead.
+
+#### 6.2.4. Prepare the measured execution
+
+1. On **Review execution**, below **Calculated call ceilings**, click **Plan &
+   acquire models for this job**. It is a different button from **Plan & acquire
+   models for no-call preflight** higher on the page. Use `Ctrl+F` for the exact
+   **Plan & acquire models for this job** text if needed.
+2. The new **Job** page is another planning job. Wait for **passed**, then find
+   **Reviewed sealed acquisition plan** and click **Acquire sealed models**.
+3. A **new `model_acquire` Job page** opens. Wait for **passed** and stay on
+   that page. This is the acquisition job required by 6.2.5, not the one from
+   6.2.2. No second model download is required for already installed files.
+
+#### 6.2.5. Start the measured run
+
+**Where:** the `model_acquire` Job page opened by **6.2.4 step 2**. The heading
+starts with **Job**, followed by its job ID. This action is **not** in Build,
+the campaign's Definition tab, the planning job or the earlier preflight
+acquisition job.
+
+1. If you left that page, click **Campaigns -> your campaign name -> Campaign
+   jobs**. **Campaign jobs** is a button immediately below the campaign heading,
+   not a tab. Open the `model_acquire` job created in 6.2.4. For the current
+   walkthrough the campaign is **Qwen demonstration**.
+2. On its Job page, look directly below the four **state**, **runtime**,
+   **started** and **exit code** cards. Find **Verified model acquisition
+   receipt**, above **Durable command identity**. You can use `Ctrl+F` for
+   **Start reviewed measured job**.
+3. Click **Start reviewed measured job** once. A new `run_matrix` Job page
+   opens. **This click starts real Qwen generation and the selected local
+   evaluation.** It is not another no-call check.
+4. Follow that new job until **passed**, then inspect the results in section 7.
+
+If the card instead offers **Start no-call preflight**, you opened the first
+acquisition chain: continue at 6.2.2 step 3. If it says the acquisition was
+**consumed by its reviewed run**, its next job was already started: open that
+existing job from **Campaign jobs**, rather than preparing a duplicate. If it
+says the receipt is missing or invalid, inspect that error; the start button
+is deliberately unavailable in that case.
 
 The present controller still separates preflight preparation and execution
-preparation. There is no second download or receipt-copying step. If a matching
+preparation. There is no receipt-copying step. If a matching
 measured preflight or planning stage has already completed, continue from it
 instead of launching another copy. If the start button says **Start blocked**,
 read the projection explanation; do not restart probes to clear it. The
