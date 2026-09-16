@@ -153,6 +153,15 @@ class WorkspaceStoreMixin:
             "AND j.state='complete' AND j.exit_code=0" + where +
             " ORDER BY j.started_at DESC,j.job_id DESC LIMIT 100", (campaign_id,) if campaign_id else ())
 
+    def automatic_output_attempts(self, base: str):
+        """Exact generated-directory family, excluding no-call preparation."""
+        prefix = base + '-attempt-'
+        return self._query(
+            "SELECT DISTINCT out_dir,state FROM jobs WHERE command='run_matrix' "
+            "AND run_kind NOT IN ('acquisition_plan','preflight') "
+            "AND (out_dir=? OR substr(out_dir,1,?)=?)",
+            (base, len(prefix), prefix))
+
     def attach_workspace_member(
         self, campaign_id: str, member_kind: str, member_id: str, role: str
     ) -> None:

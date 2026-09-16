@@ -7417,3 +7417,37 @@ Both reuse the existing saved-sample preparation and SQLite review store.
 No target or judge calls are made. SMALL_API_CAMPAIGN section 9 supplies the
 click-by-click instructions; section 10 distinguishes SVM export, prediction,
 new grouped evaluation and packaging instead of treating them as one operation.
+
+### Automatic technical setup in Build and transport Tools
+
+Newly rendered Build forms default to **Admission -> Automatic** for campaigns
+and standalone runs. Save/review resolves the configured project/source records,
+preserves the campaign scope (or assigns one), chooses the output directory and
+selects current saved transport checks belonging to that workspace. Selection
+uses the indexed completed jobs, model, scope, software revision and observation
+age; Runner still validates exact route and input coverage before generation.
+Probe mode omits prior transport evidence automatically. **Advanced overrides**
+retains explicit fields for exceptional workflows and does not change the CLI.
+
+Resolved settings are frozen in execution reviews and subsequent preparation;
+they are not silently replaced after confirmation. A fresh editable review can
+refresh them. Output naming includes the generation, judging and resource
+settings. A fresh review after terminal execution chooses the next output
+attempt; preflight preparation does not consume an attempt. Recovery and exact
+job-review links preserve the original output rather than rerunning it elsewhere.
+
+**Tools -> live_attestation -> Completed probe** derives scope, output filename
+and ownership from the selected completed probe. **Prepare transport check**
+opens an already completed check when present, otherwise starts only receipt
+preparation. It does not regenerate a target answer. The advanced raw command
+form remains available. Preparation and measured execution are still separate
+reviewed stages; automatic setup is not an unattended campaign-start action.
+
+For UI-only releases, `python -m experiments.rig_web --runner-root /absolute/runner-checkout`
+serves the UI from its current clean checkout while jobs/configuration use the
+specified existing Runner checkout. Supply absolute `--results-root` and
+`--state-dir` paths, keep its configured project receipt unchanged, and record
+both revisions during deployment. Do not advance the Runner merely to ship a
+layout or form correction. A genuine Runner change still requires its ordinary
+revision/admission update. This option neither bypasses checks nor rewrites old
+job snapshots. Do not replace UI code while that same checkout runs experiments.

@@ -6,8 +6,9 @@ either saved local inputs (section 2a) or a fresh selection of installed corpus
 arms and attack frameworks (section 2b). Neither route requires downloading a
 hosted model or reinstalling the rig's frameworks. The saved-input route needs
 no filesystem paths or terminal commands and does not regenerate local answers.
-The direct route uses the ordinary Runner controls, including output paths and
-transport evidence, as described in section 2b.
+The direct route uses the ordinary Runner controls. **Admission -> Automatic**
+supplies output paths, execution scope and matching saved transport checks;
+section 2b explains the choices you still need to make.
 
 The completed reference is **UI demonstration - Flash matched text and images**.
 You can inspect it without spending money. To execute your own example, follow
@@ -119,8 +120,8 @@ use the same flow, but need their own compatible settings and cost assessment.
    Uncheck **Exclude tool-conditioned inputs** and full model SHA verification.
 7. Enter provisional target/judge/HTTP call ceilings of **16 / 16 / 64**, and
    **--deadline-seconds = 3600**. Leave the local process wall-time cap empty.
-   Use a new output directory, for example
-   `/mnt/stor/data/ura-work/runs/demonstrations/my-flash-direct/measured-text`.
+   Leave **Admission -> Setup -> Automatic (recommended)** selected. A separate
+   output directory is supplied automatically for the selected run settings.
    These are planning bounds, not a USD allowance or permission to spend the
    remaining Google purse. The exact preflight and monetary review below must
    fit the intended small workload before any paid start.
@@ -137,24 +138,23 @@ zero work. This is different from section 3's total hosted request cap of 12.
    Its installed revision and placement are automatic.
    Ordinary Runner evaluates through this selected cascade as
    part of the job; it is not the retained collection's separate step-6 job.
-9. In **Admission**, keep the current project/source receipts supplied by the
-   console. Enter a new execution scope, such as `my-flash-direct`. Measured
-   execution also needs a current transport receipt for each selected target
-   and modality and a positive maximum age in hours, for example **24**.
-   Do not copy the Qwen demonstration's receipts: those establish a different
-   target, and a historical Flash receipt is usable only if its scope, route,
-   settings and age actually match this run.
+9. In **Admission**, keep **Automatic (recommended)**. The console supplies the
+   Runner's project/source records, the campaign scope and matching saved
+   transport checks, with a 24-hour maximum age. No paths, hashes or receipt
+   rows to copy. Qwen checks are not used as evidence for Flash; the selected
+   target, scope, revision, age and exact route must match.
 10. If there is no matching receipt, prepare a small **Attestation probe** first.
     Keep one target, one corpus, `replay`, one seed, one query and one turn;
-    set limit **1**, clear live-attestation rows and maximum age, and use a
-    separate `probe-text` output directory. Follow the preparation/start
-    sequence below, then use **Campaign -> Run tools -> live_attestation**:
-    enter that probe directory, the same execution scope and a new output file
-    such as `attestation-text.json`. The job prints the receipt path and digest
-    for the measured Admission fields. A live probe spends Google credits;
-    deriving its receipt makes no additional target call. Repeat separately
-    for an image route when needed, then restore **Measured lane**, limit **2**,
-    the measured output directory and the receipt/maximum-age fields.
+    set limit **1** and keep **Automatic**. The probe's directory and scope are
+    supplied for you; prior transport evidence is omitted in probe mode.
+    Follow the preparation/start sequence below. Once it passes, click
+    **Campaigns -> your campaign name -> Run tools**, filter for
+    `live_attestation`, and expand **Use a completed probe**. Select this probe
+    from **Completed probe**, then click **Prepare transport check**. An
+    existing completed check is reused. A live probe spends Google credits;
+    preparing the check makes no additional target call. Repeat separately
+    for an image route only when needed, then restore **Measured lane** and
+    limit **2**. Automatic setup finds the saved checks on review.
 
 ### Prepare, review and start the direct job
 
@@ -241,8 +241,8 @@ counts or source selection halfway through preparation.
 4. Hosted **answer retries** must be **0**. Eligible HTTP/transport errors have
    **3 retries**. A usable truncated answer or a documented policy refusal is
    not an empty-answer retry. Leave full model SHA verification unchecked.
-5. Return to **General**. Leave the Admission paths already supplied by the
-   console unchanged. The generic Current pipeline may still say `dry_run`;
+5. Return to **General**. Leave **Admission -> Setup -> Automatic** selected;
+   do not enter technical receipt fields. The generic Current pipeline may still say `dry_run`;
    the matched collection uses its own explicitly prepared and reviewed inputs.
 
 ## 5. Count, review and start the paid collection

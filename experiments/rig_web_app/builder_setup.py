@@ -143,14 +143,22 @@ class BuilderSetupMixin:
                 params[field] = os.environ[variable]
         # Stable per configuration, so save/review/preflight use the same output.
         # Existing manually named probe directories and historical jobs are untouched.
-        output_keys = ('mode','local','api','corpora','attackers','judges','judge_model',
-                       'limit','seeds','sample_seed','sampling_policy','max_queries','max_turns',
-                       'target_answer_retries','dtype','quantization','defense')
-        identity = {key:params.get(key,'') for key in output_keys}
+        presentation = {'out','campaign_id','campaign_name','campaign_guide','work_kind','modality_scope','setup_mode','max_age'}
+        identity = {key:value for key,value in params.items()
+                    if key not in presentation and not key.startswith(('_','att_path','att_sha'))}
         suffix = hashlib.sha256(json.dumps(identity,sort_keys=True).encode()).hexdigest()[:12]
         mode = params.get('mode','measured')
         base = self.results_root.resolve() / 'campaigns' / owner if owner else self.results_root.resolve() / 'standalone'
-        params['out'] = str(base / (mode+'-'+suffix))
+        directory = str(base / (mode+'-'+suffix))
+        attempts = self.db.automatic_output_attempts(directory) or []
+        terminal = {row['out_dir'] for row in attempts
+                    if row['state'] in {'complete', 'failed', 'stopped', 'interrupted'}}
+        candidate = directory
+        number = 1
+        while candidate in terminal:
+            number += 1
+            candidate = directory + '-attempt-' + str(number)
+        params['out'] = candidate
         for i in range(1, self._MAX_ATT_ROWS + 1):
             params.pop(f'att_path{i}', None)
             params.pop(f'att_sha{i}', None)

@@ -99,7 +99,11 @@ def _guidance(app, params):
           'Review prepared collection shows the exact workload and cost bound. Token counting can contact '
           'the provider but does not generate answers.') if matched else
          ('Save the campaign, then Compose & review. Run the no-call preflight and inspect its counts. '
-          'Local acquisition controls reuse installed models, not a new runtime installation. Measured work '
+          'Keep Admission on Automatic: output locations, execution scope, software/source records and saved '
+          'transport checks are supplied for campaigns and single runs. Technical text fields are optional '
+          'Advanced overrides. In Tools, live_attestation selects a completed probe by name; it fills the '
+          'scope and output automatically and reuses an existing completed check. No receipt rows or hashes '
+          'need copying. Local acquisition controls reuse installed models, not a new runtime installation. Measured work '
           'needs valid transport evidence for each selected route/modality. Use a diagnostic probe when that '
           'evidence is missing, then return to the measured selection. The probe makes real calls; the projection does not.'),
          [('Open the next preparation controls', link('general', prepare_target)),

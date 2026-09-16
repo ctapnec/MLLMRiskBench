@@ -55,6 +55,7 @@ def test_automatic_setup_selects_only_current_owned_checks_and_freezes_review(ca
     add('other',owner_override=other,age=0.1)
     add('expired',age=25);add('failed',status='failed');add('wrong-scope',scope='other')
     add('old-software',project_sha='b'*64);add('future',age=-1)
+    add('other-model',spec='openai:unselected')
     result=app._builder_params(dict(params,setup_mode='automatic',_refresh_setup='yes'))
     assert {result['att_path1'],result['att_path2']}=={str(text),str(image)}
     assert result['max_age']=='24' and result['scope']==_SCOPE
@@ -73,6 +74,26 @@ def test_manual_override_and_probe_mode(campaign):
     probe=app._builder_params(dict(manual,setup_mode='automatic',mode='attestation_probe',_refresh_setup='yes'))
     assert not any(k.startswith('att_path') or k=='max_age' for k in probe)
     assert probe['scope']==_SCOPE
+
+
+def test_automatic_output_covers_settings_and_preserves_review_or_preparation(campaign):
+    app,params,_=campaign
+    params=dict(params,setup_mode='automatic',mode='attestation_probe',_refresh_setup='yes')
+    first=app._builder_params(params)
+    for change in ({'cap_target':'23'}, {'judge_model':'openai:other'},
+                   {'limit':'3'}, {'max_queries':'4'}):
+        assert app._builder_params(dict(params,**change))['out']!=first['out']
+    with app.db._conn:
+        app.db._conn.execute('INSERT INTO jobs(job_id,command,argv,state,exit_code,run_kind,out_dir) VALUES(?,?,?,?,?,?,?)',
+            ('preflight','run_matrix','[]','complete',0,'preflight',first['out']))
+    assert app._builder_params(params)['out']==first['out']
+    with app.db._conn:
+        app.db._conn.execute('INSERT INTO jobs(job_id,command,argv,state,exit_code,run_kind,out_dir) VALUES(?,?,?,?,?,?,?)',
+            ('done','run_matrix','[]','complete',0,'attestation_probe',first['out']))
+    assert app._builder_params(first)==first, 'Review/recovery stays on the exact original output'
+    second=app._builder_params(params)
+    assert second['out']==first['out']+'-attempt-2'
+    assert app._builder_params(dict(second,_refresh_setup='yes'))['out']==second['out']
 
 
 def test_standalone_does_not_borrow_campaign_checks(campaign):
@@ -127,7 +148,8 @@ def test_console_can_keep_runner_checkout_pinned(tmp_path,monkeypatch):
     assert seen['repo_root']==tmp_path.resolve()
 
 
-def test_saved_probe_action_derives_fields_and_reuses_existing_job(campaign):
+@pytest.mark.parametrize('width',[1440,390])
+def test_saved_probe_action_derives_fields_and_reuses_existing_job(campaign,browser,width):  # noqa: F811
     app,params,add=campaign
     root=app.results_root/'completed-probe';root.mkdir(parents=True,exist_ok=True)
     probe=dict(params,mode='attestation_probe',out=str(root))
@@ -148,3 +170,27 @@ def test_saved_probe_action_derives_fields_and_reuses_existing_job(campaign):
     other=app.db.create_workspace('Not this campaign','mixed')
     with pytest.raises(ValueError,match='completed probe'):
         app._transport_check_from_job('probe',other)
+    page=browser.new_page(viewport=dict(width=width,height=900))
+    submissions=[]
+    def route(route):
+        req=route.request;url=urlsplit(req.url)
+        if url.path=='/jobs/ready':
+            route.fulfill(status=200,content_type='text/html',body='<h1>Existing transport check</h1>')
+            return
+        fields=dict(parse_qsl(req.post_data or '',keep_blank_values=True))
+        if req.method=='POST':submissions.append(fields)
+        status,mime,body=app.handle(req.method,url.path+('?'+url.query if url.query else ''),fields)
+        if status==303:route.fulfill(status=status,headers={'Location':mime},body=body)
+        else:route.fulfill(status=status,content_type=mime,body=body)
+    page.route('http://setup.test/**',route)
+    try:
+        page.goto('http://setup.test/commands?cmd=live_attestation&campaign_id='+owner)
+        select=page.locator('[name=probe_job]')
+        assert select.is_visible()
+        select.select_option('probe')
+        assert not page.locator('input[name="--probe-root"]').is_visible()
+        page.get_by_role('button',name='Prepare transport check',exact=True).click()
+        page.wait_for_url('**/jobs/ready')
+        assert len(submissions)==1 and submissions[0]['probe_job']=='probe'
+        assert '--probe-root' not in submissions[0] and not app.jobs
+    finally:page.close()

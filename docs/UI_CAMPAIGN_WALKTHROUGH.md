@@ -73,14 +73,18 @@ a pooled safety ranking. Inspection and exports make no model calls.
    In **Execution -> Sampling & turns -> Per-arm sample size**, the number and
    policy fields stay visible but disabled until an arm is selected. The exact
    range slider appears only after a matching no-call preflight supplies sizes.
-   A draft saved before a software deployment may retain the old project
-   receipt. **Admission -> Use current project receipt** explicitly replaces
-   its path and digest; save and review again before starting fresh preparation.
-   Review compares the receipt's commit to Git HEAD without hashing model files.
-   Runner retains its complete admission validation. Old jobs, captured plans,
-   responses, source receipts and transport attestations are never rewritten by
-   this action. New software conditions require new preparation and, for measured
-   work, compatible transport evidence.
+   Leave **Admission -> Setup -> Automatic (recommended)** selected. The console
+   supplies software/source records, an output directory and execution scope.
+   Completed transport checks are selected from this campaign's saved jobs (or
+   unattached jobs for a single run). No paths, hashes or receipt rows need entry.
+   Under **Tools -> live_attestation**, select a **Completed probe** by name and
+   click **Prepare transport check**. Its technical fields and campaign are
+   derived automatically; an existing check opens without another job.
+   **Advanced overrides** keeps explicit fields available for exceptional work.
+   A fresh review uses the configured Runner records. Previously reviewed jobs,
+   plans and recovery links keep their original settings. A UI-only deployment
+   can preserve the Runner revision and already completed probes. Changing the
+   Runner itself still requires compatible preparation and transport evidence.
 3. Inspect **Current pipeline**, then **Save campaign** if applicable. Saving
    makes no calls. **Compose & review** shows the actual command and settings;
    execution requires the separate start action on the review page.

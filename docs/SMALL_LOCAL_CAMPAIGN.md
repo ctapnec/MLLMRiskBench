@@ -8,12 +8,9 @@ followed by local evaluation. Diagnostic probes are kept separate.
 
 ### Before you begin
 
-- For a new campaign, choose an unused name and output directory. If you already
-  created one, continue with it; do not create another at each section. The
-  example uses `My Qwen demonstration` as its display name and
-  `my-qwen-demonstration` as its execution scope and output-directory component.
-  These are separate values; a different display name does not rename either
-  the scope or the directory.
+- For a new campaign, choose an unused name. If you already created one,
+  continue with it. Output directories and the execution scope are automatic;
+  you do not need to invent, create or copy filesystem paths.
 - Do not start this work alongside another GPU job. The installed Qwen profile
   uses both GPUs. Static collection releases the target before local scoring.
 - Keep the assessed model settings. Do not repeat the responsiveness survey,
@@ -95,16 +92,12 @@ loads. Saved verdicts retain its actual placement.
 
 ### 2.1. Set Admission
 
-1. Open **Admission**. Click **Use current project receipt** to select the
-   software version currently deployed on the rig. Leave the source receipt
-   unchanged. This matters when reopening a draft saved before a software update;
-   the button updates only the two project-receipt fields and makes no calls.
-2. Set **--execution-scope-id** to `my-qwen-demonstration`. This is a stable
-   execution label, not the campaign's display name or its database ID. Keep
-   exactly the same value for the text probe, image probe, both transport
-   receipts and the measured run. If you choose a different scope here, use
-   that exact value wherever the later sections show `my-qwen-demonstration`.
-3. Leave the live-attestation rows and maximum-age field empty for this probe.
+Open **Admission** and leave **Setup -> Automatic (recommended)** selected.
+No receipt rows, hashes, revision, execution-scope or output-path entry is
+required. Build supplies the Runner's configured software/source records and
+keeps an existing campaign scope, or assigns one for a new campaign. Probes
+automatically omit prior transport checks. **Advanced overrides** is optional,
+not a required step in this walkthrough.
 
 ### 2.2. Set Execution
 
@@ -155,10 +148,9 @@ Configure in Build**. Do not open a fresh Build link and lose unsaved selections
 6. Continue to **Local model serving**. Leave **Full model SHA verification
    (slow, optional)** unchecked. Do not change `--dtype` or `--quantization`;
    keep the installed model profile.
-7. Continue to the last card, **Output**. In its `--out` field enter:
-   `/mnt/stor/data/ura-work/runs/demonstrations/my-qwen-demonstration/probe-text`.
-   The card is called Output; the editable field is labelled `--out`, not
-   "Output directory".
+7. The last card, **Output**, explains that the directory is assigned
+   automatically. Leave it that way. Review execution and the resulting job
+   show its actual location; no folder needs to be created by hand.
 8. Continue with section **2.3** to save and review. Do not start a job yet.
 
 The positive HTTP ceiling is required by the common bounds form; it does not
@@ -168,18 +160,16 @@ initiate network calls. This all-local projection should report zero HTTP attemp
 
 1. Return to **General** and click **Save campaign**. This opens **Definition**.
 2. Click **Configure in Build -> General -> Compose & review**.
-3. Check Qwen, `xstest_full`, probe mode, the bounds and the `probe-text`
-   output directory. Saving and reviewing make no model calls.
+3. Check Qwen, `xstest_full`, probe mode and the bounds. The output directory is
+   supplied automatically. Saving and reviewing make no model calls.
 
 ## 3. Complete preparation, then run the text probe
 
 If an earlier planning job failed with **project checkout revision mismatch**,
-keep that failed job as history. Open your campaign's **Configure in Build ->
-Admission -> Use current project receipt**, then **General -> Save campaign**.
-Reopen **Configure in Build -> General -> Compose & review** and start a new
-planning job using section 3.1. Do not continue the old plan: its saved receipt
-belongs to the earlier software version. No target generation occurred in that
-failed planning job, and no output folder needs to be created by hand.
+keep it as history. Reopen the campaign in Build, keep **Admission -> Automatic**,
+save and review again. Fresh review selects the configured Runner revision;
+an already reviewed or launched job keeps its original settings. A console-only
+update can retain the Runner checkout, so it need not invalidate existing probes.
 
 ### 3.1. Run the no-call preflight
 
@@ -218,31 +208,17 @@ no-call preflight is not a substitute for this probe.
    This is not a button on the probe job page or a Build tab. The navigation
    and direct links are also given above in **Find your campaign, Build and
    Run tools**.
-2. The next page is headed **Run a command**, with **Tools** active in the main
-   menu. In **Type to filter commands...**, enter `live_attestation`. Click the
-   remaining **live_attestation** heading to expand its form; its description
-   is **Derive a typed transport receipt from a completed probe**. In the
-   expanded form's **Save under campaign** dropdown, keep your actual campaign
-   name selected: **Qwen demonstration** here, not **No campaign - standalone
-   job** and not the historical **Local campaign**.
-3. Set **--probe-root** to the text probe output directory from section 2.2:
-   `/mnt/stor/data/ura-work/runs/demonstrations/my-qwen-demonstration/probe-text`.
-   If you used another output directory, copy its actual **--out** value from
-   the completed probe job instead. Do not infer a directory from the campaign
-   name.
-4. Set **--execution-scope-id** to the **exact scope used by that probe**. On
-   its job page, find **--execution-scope-id** in the command, or **scope** in
-   **Builder parameters**. For the current Qwen demonstration this value is
-   `my-qwen-demonstration`, although the campaign's display name is
-   `Qwen demonstration`. These are intentionally different identifiers. Do not
-   enter the display name or the long ID from the campaign URL in this field.
-5. Set **--out** to
-   `/mnt/stor/data/ura-work/runs/demonstrations/my-qwen-demonstration/attestation-text.json`.
-   This is a new file name, not a directory. Leave **--validate** and **--sha256**
-   empty when deriving it.
-6. Click **Start job** inside this expanded **live_attestation** form. When it
-   passes, keep the output path and the `sha256`
-   value printed in its result for the measured lane's Admission tab.
+2. On **Run a command**, type `live_attestation` in **Type to filter commands...**
+   and expand **live_attestation - Use a completed probe**.
+3. In **Completed probe**, choose the entry naming your campaign, Qwen and
+   `xstest_full`. Its job ID distinguishes repeated probes. Choose the passed
+   text probe from section 3, not an image probe.
+4. Click **Prepare transport check**. The console supplies the probe directory,
+   scope, output filename and campaign association. If this probe already has
+   a completed check, its existing job opens instead of running it again.
+5. Wait for **passed**, then return to your campaign. There is nothing to copy
+   into Build. Automatic setup finds this saved check when measured work is
+   reviewed. Leave **Advanced transport-check overrides** closed.
 
 Deriving this receipt makes no additional target or judge call. It establishes
 the observed transport path, not benchmark performance or human validity.
@@ -251,15 +227,14 @@ follow the transport-recovery instructions at the end of this guide.
 
 ## 5. Repeat for one image input
 
-### 5.1. Change only the corpus and output directory
+### 5.1. Change only the corpus
 
 1. Return to Build and open **Pipeline**. Uncheck `xstest_full` and select only
    `vlsbench_release`.
-2. Keep **attestation probe**, Qwen, Text and Image, the scope, seed, bounds and
-   evaluation settings unchanged. Keep the live-attestation and maximum-age
-   fields empty, as for the text probe.
-3. In **Execution -> Output**, change **--out** to
-   `/mnt/stor/data/ura-work/runs/demonstrations/my-qwen-demonstration/probe-image`.
+2. Keep **attestation probe**, Qwen, Text and Image, seed, bounds and evaluation
+   settings unchanged. Automatic setup handles the probe's technical settings.
+3. Leave **Admission -> Automatic** selected. The changed corpus receives its
+   own output directory automatically; leave **Output** unchanged.
 4. Click **General -> Save campaign**, then return to Build and click
    **General -> Compose & review**.
 
@@ -268,21 +243,10 @@ follow the transport-recovery instructions at the end of this guide.
 1. Follow sections **3.1-3.2** for this image selection. Wait for the real probe
    and its local evaluation to pass before proceeding.
 2. Click **Campaigns -> your campaign name -> Run tools**, filter for
-   `live_attestation`, and expand its form as in **4.1-4.2**. Keep your actual
-   campaign selected in **Save under campaign**. Use:
-
-   | Field | Value |
-   | --- | --- |
-   | --probe-root | `/mnt/stor/data/ura-work/runs/demonstrations/my-qwen-demonstration/probe-image` |
-   | --execution-scope-id | `my-qwen-demonstration` |
-   | --out | `/mnt/stor/data/ura-work/runs/demonstrations/my-qwen-demonstration/attestation-image.json` |
-   | --validate / --sha256 | Leave empty when deriving the receipt |
-
-3. Click **Start job** and wait for it to pass. Keep the new image receipt's
-   path and printed digest alongside the text receipt's details.
-
-The table uses the example scope and directories. If your probe uses different
-values, copy its actual scope and output path as explained in **4.3-4.4**.
+   `live_attestation`, and expand its saved-probe form as in **4.1-4.2**.
+3. In **Completed probe**, choose your passed Qwen `vlsbench_release` probe.
+   Click **Prepare transport check** and wait for it to pass, or inspect the
+   existing completed job if the console reuses it. No paths or hashes to copy.
 
 You now have separate text and image transport receipts. These are preparations
 for the measured run, not measured results themselves.
@@ -293,31 +257,47 @@ for the measured run, not measured results themselves.
 
 1. Return to Build. In **Pipeline**, choose **measured** and select
    `xstest_full` and `vlsbench_release`. Keep only Qwen selected as a target.
-2. In **Admission**, enter the text receipt path and its printed digest. Click
-   **Add receipt row** for the image receipt and digest. Keep the same scope and
-   set maximum age to `24` hours. Refresh only receipts that have actually
-   expired or changed.
+2. In **Admission**, leave **Automatic (recommended)** selected. Build finds
+   this campaign's saved text and image checks, keeps its scope and applies a
+   24-hour maximum age. Do not enter receipt rows or digests. If no matching
+   check is found, use **Select a completed probe**; do not rerun a successful
+   probe merely to create its missing check.
 3. In **Execution -> Sampling & turns -> Per-arm sample size**, change **--limit**
    to `2`. In **Call ceilings & deadline (budget guards)** set **Local process
-   wall-time cap (hours)** to `1`. In **Output**, change **--out** to
-   `/mnt/stor/data/ura-work/runs/demonstrations/my-qwen-demonstration/measured`.
+   wall-time cap (hours)** to `1`. The measured output directory is automatic.
    Keep the other bounds and the one-answer-retry policy unchanged.
 4. Click **General -> Save campaign**, then return to Build and click
    **General -> Compose & review**.
 
 ### 6.2. Prepare, review and start the measured run
 
-1. Follow **section 3.1** for this new measured selection. Confirm that the
-   no-call projection contains the intended text and image inputs and fits
-   the caps. Use **Review this exact lane in the builder** after preflight.
-2. Click **Plan & acquire models for this job**, wait for the plan, then
-   **Acquire sealed models** and wait for completion.
-3. Review the command again. It must now use **measured** mode, not
-   **--attestation-probe**, and retain both transport receipts.
-4. Click **Start reviewed measured job**. This starts real collection on the
-   measured selection, followed by local evaluation.
-5. Wait for both stages and the final result to finish. A target answer saved
-   while local evaluation is still running is not a finished job.
+The text/image probes and their checks are already finished. Do not repeat
+them or open an old probe's review, which restores that probe's settings.
+
+1. On **Review execution**, check **Mode: measured**, both selected corpora,
+   Qwen and limit `2`. The software records, scope, output directory and saved
+   transport checks have been supplied automatically.
+2. Click **Plan & acquire models for no-call preflight**. On its passed job,
+   click **Acquire sealed models**. On the resulting passed acquisition job,
+   click **Start no-call preflight**. Wait for the projection to pass. This
+   reuses the installed store and makes no target or judge calls.
+3. On that **new measured preflight job**, scroll to **Builder parameters** and
+   click **Review this exact lane in the builder**. On **Review execution**,
+   check **Calculated call ceilings** against the projection for both corpora.
+4. Below that card, click **Plan & acquire models for this job**, not the
+   similarly named preflight button higher on the page. On its passed planning
+   job, click **Acquire sealed models** and wait for that job to pass.
+5. On the latest acquisition job, under **Verified model acquisition receipt**,
+   click **Start reviewed measured job** once. Follow the new `run_matrix` job
+   until **passed**, including local evaluation, then continue to section 7.
+
+The present controller still separates preflight preparation and execution
+preparation. There is no second download or receipt-copying step. If a matching
+measured preflight or planning stage has already completed, continue from it
+instead of launching another copy. If the start button says **Start blocked**,
+read the projection explanation; do not restart probes to clear it. The
+acquisition job's command is `model_acquire`; the full Runner settings are on
+**Review execution**, not that acquisition command.
 
 ## 7. Inspect results, judging and exports
 
@@ -330,7 +310,7 @@ for the measured run, not measured results themselves.
    | Results | Each saved answer; its generation settings, usage and separate Truncated column |
    | Judging | Local decisions, abstentions or inapplicable results; the judging figure and exported counts |
    | Costs | Available usage and cost accounting; an unknown local cost is not zero-cost computing |
-   | Campaign jobs | Preparation, collection and evaluation job states and durations |
+   | Activity | Preparation, collection and evaluation activity; use the **Campaign jobs** button above the tabs for detailed job states and durations |
 
 3. In **Results**, open a row's **Generation settings and usage** to inspect
    context, output allowance, actual token usage and finish reason. On a narrow
@@ -526,14 +506,18 @@ is not a recovery procedure for every possible failure.
 
 ### Transport evidence expired, or the software changed
 
-1. Refresh only the affected text or image diagnostic probe, not both by default.
-   Keep the same campaign and use a **new probe output directory**.
-2. When switching back to **attestation probe**, clear both live-attestation
-   path/digest rows and the maximum-age field in **Admission**.
-3. Complete that probe and derive a receipt with a **new file name**, following
-   section 4 or 5. Keep the original probe and receipt.
-4. Return to the measured configuration in section 6. Restore the scope,
-   maximum age and both receipt rows, replacing only the affected receipt.
+1. Return to the same campaign in Build. In **Pipeline**, choose **attestation
+   probe** and only the affected text or image corpus. Keep **Admission ->
+   Automatic**. Do not repeat the unaffected modality's probe.
+2. Save and compose a fresh review. After an earlier execution has ended,
+   automatic setup assigns the next output location without overwriting it.
+   Review or recovery links on an old job intentionally keep its old location.
+3. Complete the probe through section 3, then choose that new completed probe
+   under **Run tools -> live_attestation -> Completed probe** and click
+   **Prepare transport check**. The filename is automatic too.
+4. Return to the measured configuration in section 6. Automatic setup selects
+   the newer check and retains any other still-valid modality check. Nothing
+   needs to be copied or cleared.
 
 An earlier probe does not establish transport under changed software. If the
 revision changes for both modalities, refresh both. Do not overwrite receipt
