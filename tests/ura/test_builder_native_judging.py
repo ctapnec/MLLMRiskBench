@@ -149,7 +149,7 @@ def test_panel_retains_preparation_history_and_normal_build_controls(native):
     body=subject.native_judging_panel(app,params)
     assert params['retained_native_judging_job'] in body and second.job_id in body
     assert "select form='builder' name='retained_native_judging_job'" in body
-    assert "formaction='/build/prepare-native-judging'" in body
+    assert "formaction='/build/prepare-operation/local-judging'" in body
     assert "formaction='/build/review-native-judging'" in body
     assert ' checked' not in body
 

@@ -138,7 +138,9 @@ def test_rater_http_shell_and_metadata_are_separate_from_operator(tmp_path):
         study=store.create(campaign='',name='Model identity must stay private',prepared=sample,mode='common',metadata=dict(ethics='test',consent='test',compensation='test',stop_contact='test',results=str(tmp_path/'runs')))
         token=store.enroll(study,'a','rater',qualification())
         code,_,body=app.handle('GET','/review/'+token)
-        assert code==200 and b'/settings' not in body and b'/campaigns' not in body and b'<nav>' not in body
+        # This is a single-operator console. The user's shared-navigation
+        # requirement applies to evaluation pages too, not just operator forms.
+        assert code==200 and b'/campaigns' in body and b'<nav>' in body
         assert b'window.addEventListener' in body and b'Draft saved.' in body and b'uraBusy' in body
         app.handle('POST','/review/'+token+'/consent',{'agree':'1'})
         item=store.view(token)['queue'][0]['id']

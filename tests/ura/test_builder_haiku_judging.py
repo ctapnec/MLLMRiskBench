@@ -155,7 +155,8 @@ def test_haiku_panel_and_review_are_usable_at_mobile_width(browser,haiku):  # no
     app,_,_,_=haiku
     params=completed(haiku)
     panel=subject.haiku_judging_panel(app,params)
-    assert "formaction='/build/prepare-haiku-judging'" in panel
+    assert "formaction='/build/prepare-operation/paired-haiku'" in panel
+    assert "formaction='/build/prepare-operation/haiku-judging'" in panel
     assert "formaction='/build/review-haiku-judging'" in panel
     body,_=review(app,params)
     page=browser.new_page(viewport={'width':390,'height':844})
@@ -176,15 +177,15 @@ def test_haiku_controls_have_separate_rows_and_responsive_spacing(browser,haiku)
     page=browser.new_page(viewport={'width':1440,'height':900})
     try:
         page.set_content(content)
-        fields=page.locator('section').filter(has=page.get_by_role('heading',name='Haiku comparison of saved outputs')).locator('.campaign-field')
+        fields=page.locator('#retained-judging-coverage .campaign-field')
         a,b=fields.nth(0).bounding_box(),fields.nth(1).bounding_box()
         assert abs(a['y']-b['y'])<1 and b['x']>=a['x']+a['width']+15
         page.set_viewport_size({'width':390,'height':844})
-        for index in range(1,4):
+        for index in range(1,3):
             previous,current=fields.nth(index-1).bounding_box(),fields.nth(index).bounding_box()
             assert current['y']>=previous['y']+previous['height']+15
-        last=fields.nth(3).bounding_box()
-        button=page.get_by_role('button',name='Prepare matched Haiku selection').bounding_box()
+        last=fields.nth(2).bounding_box()
+        button=page.get_by_role('button',name='Review all-output Haiku judging').bounding_box()
         assert button['y']>=last['y']+last['height']+15
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
     finally:

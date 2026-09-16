@@ -164,6 +164,29 @@ def test_corrupt_operation_metadata_cannot_crash_startup(app):
     assert not app._operations
 
 
+def test_completed_probe_saves_connection_check_without_an_operator_handoff(app, monkeypatch):
+    probe = child(app, 'probe', command='run_matrix', state='running', code=None)
+    probe.argv = ['python','-m','experiments.run_matrix','--attestation-probe']
+    probe.builder_params = {}
+    key = app._finish_probe_automatically(probe)
+    assert app._finish_probe_automatically(probe) == key
+    operation = app._operations[key]
+    calls = []
+    monkeypatch.setattr(app, '_transport_check_from_job', lambda job, owner:('', {'--probe-root':'saved'}, ''))
+    def launch(command, values, **kwargs):
+        assert command == 'live_attestation'
+        calls.append(values)
+        return child(app, kwargs['reserved_job_id'], command=command)
+    monkeypatch.setattr(app, 'start_job', launch)
+    app._advance_operation(operation)
+    assert not calls
+    child(app, 'probe', command='run_matrix')
+    app._advance_operation(operation)
+    app._advance_operation(operation)
+    assert operation['status'] == 'ready' and calls == [{'--probe-root':'saved'}]
+    assert b'No receipt needs copying' in app._operation_page(key)
+
+
 def test_exact_projection_and_unconsumed_preparation_are_reused(app, monkeypatch):
     monkeypatch.setattr(app, '_builder_model_acquisition_required', lambda p:True)
     monkeypatch.setattr(app, '_read_lane_projection', lambda p:({'existing':True}, ''))
@@ -201,7 +224,7 @@ def test_progress_stop_busy_guard_and_final_review_in_browser(app, monkeypatch, 
     try:
         page.goto('http://operations.test/operations/'+key)
         assert page.get_by_role('button',name='Stop preparation',exact=True).is_visible()
-        assert page.locator('header').is_visible()
+        assert page.locator('body > nav').is_visible()
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
         page.evaluate("() => {for(let i=0;i<1000;i++) document.querySelector('form button').click();}")
         page.wait_for_function('window.uraBusy.isBusy()')

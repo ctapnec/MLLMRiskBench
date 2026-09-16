@@ -91,15 +91,15 @@ def test_matched_and_local_suggestions_are_distinct_and_links_do_not_execute(app
     local = campaign_guide.render(app, dict(local='vllm:qwen', campaign_guide='on'), builder=True)
     hosted = campaign_guide.render(app, dict(api='google:flash', retained_source_campaign='b'*32,
         campaign_guide='on'), builder=True)
-    assert 'Compose &amp; review' in local and 'Prepare counted collection' in hosted
-    assert 'paired comparison limit' in hosted and 'text proxy' in hosted
+    assert 'Compose &amp; review' in local and 'Prepare comparison and review' in hosted
+    assert 'sampled paired comparison' in hosted and 'text proxy' in hosted
     links = Links()
     links.feed(local + hosted)
     assert all(urlsplit(href).path in {'/build', '/config', '/config/secrets', '/commands', '/jobs'} for href in links.hrefs)
     assert all(not urlsplit(href).fragment or urlsplit(href).fragment in {
         'build-general','build-evaluation','target-models','input-corpora','retained-inputs',
         'local-hardware','framework-runtimes','attack-frameworks','sample-size-control',
-        'evaluation-judges','execution-budgets','local-serving','cfg-editor','pipeline-review','transport-evidence'
+        'evaluation-judges','execution-budgets','local-serving','cfg-editor','pipeline-review','transport-evidence','automatic-comparison'
     } for href in links.hrefs)
 
 
@@ -276,8 +276,8 @@ def test_guide_links_reveal_scroll_and_focus_exact_controls_including_same_hash(
 
 
 @pytest.mark.parametrize('field,target', [
-    ('retained_sources_job','matched-forecast'),('retained_budget_job','matched-replay-inputs'),
-    ('retained_replays_job','counted-collection')])
+        ('retained_sources_job','automatic-comparison'),('retained_budget_job','automatic-comparison'),
+        ('retained_replays_job','automatic-comparison')])
 def test_matched_guide_preparation_links_follow_available_prerequisites(app,field,target):
     steps,_,_,_=campaign_guide._guidance(app,draft(api='google:flash',retained_source_campaign='source',**{field:'prepared'}))
     prepare=next(step for step in steps if step[0]=='Prepare')

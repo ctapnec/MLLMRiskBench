@@ -4513,7 +4513,8 @@ class LifecycleMixin:
                             )
                         }),
                     )
-                return 303, f"/jobs/{job.job_id}", b""
+                operation_id = self._finish_probe_automatically(job)
+                return 303, ('/operations/'+operation_id if operation_id else f"/jobs/{job.job_id}"), b""
             if method == "POST" and path in {"/build", "/build/review"}:
                 data = dict(form or {})
                 confirm_value = data.pop("confirm", "")
@@ -4700,7 +4701,8 @@ class LifecycleMixin:
                     scrub_receipt_env=("--dry-run" in values),
                     execution_snapshot=execution_snapshot,
                 )
-                return 303, f"/jobs/{job.job_id}", b""
+                operation_id = self._finish_probe_automatically(job)
+                return 303, ('/operations/'+operation_id if operation_id else f"/jobs/{job.job_id}"), b""
             if method == "POST" and path == "/db/reindex":
                 summary = self.reindex_all(verify_sha=(form or {}).get("verify_artifact_sha256") == "on")
                 return 303, f"/?reindexed={quote(json.dumps(summary, sort_keys=True))}", b""

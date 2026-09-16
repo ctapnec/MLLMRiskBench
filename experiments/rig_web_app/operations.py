@@ -16,6 +16,10 @@ from .ui import _page
 
 # These functions already own command construction and artifact semantics.
 _STEPS = {
+    'transport-check': (
+        ('Waiting for your diagnostic probe', 'operations', 'prepare_transport_check'),
+        ('Saving the connection check', 'operations', 'prepare_transport_check'),
+    ),
     'matched': (
         ('Selecting saved inputs', 'builder_sources', 'prepare_selected_inputs'),
         ('Calculating workload and costs', 'builder_budget', 'prepare_budget'),
@@ -38,7 +42,14 @@ _DIRECT = ('Planning installed models', 'Preparing installed models', 'Checking 
            'Preparing execution', 'Finishing model preparation')
 _TITLES = {'direct': 'Prepare run', 'matched': 'Prepare hosted comparison',
            'local-judging': 'Prepare local judging', 'haiku-judging': 'Prepare Haiku judging',
-           'paired-haiku': 'Prepare sampled Haiku comparison'}
+           'paired-haiku': 'Prepare sampled Haiku comparison', 'transport-check':'Finish diagnostic probe'}
+
+
+def prepare_transport_check(app, params):
+    owner, values, previous = app._transport_check_from_job(params['probe_job'], params.get('campaign_id', ''))
+    if previous:
+        return app.jobs[previous]
+    return app.start_job('live_attestation', values, campaign_id=owner)
 
 
 class _Context:
@@ -109,18 +120,24 @@ class OperationsMixin:
         if kind not in _TITLES:
             raise ValueError('Choose a supported operation')
         params = dict(params)
-        if kind != 'direct' and not params.get('campaign_id'):
+        if kind not in {'direct', 'transport-check'} and not params.get('campaign_id'):
             raise ValueError('Save the campaign before preparing this operation')
         # Exact frozen selection: a second click/review reopens existing work.
-        signature = hashlib.sha256(json.dumps({'kind':kind, 'params':params}, sort_keys=True).encode()).hexdigest()
+        identity = {key:value for key,value in params.items()
+            if not (kind == 'matched' and key.startswith('retained_') and key.endswith('_job'))}
+        signature = hashlib.sha256(json.dumps({'kind':kind, 'params':identity}, sort_keys=True).encode()).hexdigest()
         with self._app_lock:
             for operation in self._operations.values():
-                if operation['signature'] == signature and operation['status'] in {'preparing', 'ready'}:
+                reusable = operation['status'] == 'preparing' or (
+                    operation['status'] == 'ready' and kind in {'direct', 'matched', 'transport-check'})
+                if operation['signature'] == signature and reusable:
                     return operation['id']
             operation = dict(id=uuid4().hex, kind=kind, params=params, signature=signature,
                 status='preparing', step=0, current_job='', jobs=[], launch_pending=False, error='',
                 created_at=time.time(), failed_jobs=[], snapshot_manifest={})
             operation['original_params'] = dict(params)
+            if kind == 'transport-check':
+                operation['current_job'] = params['probe_job']
             if kind == 'direct':
                 operation['acquisition'] = self._builder_model_acquisition_required(params)
                 self._reuse_direct_preparation(operation)
@@ -303,6 +320,8 @@ class OperationsMixin:
             if job is not None and job.state() in {'running', 'queued', 'starting'}:
                 raise ValueError('The previous preparation is still stopping. Wait for it to finish.')
             if job is not None and job.state() != 'complete':
+                if operation['kind'] == 'transport-check' and operation['step'] == 0:
+                    raise ValueError('The diagnostic probe did not complete. Open its saved job and recover the probe first; connection checking will not regenerate it.')
                 # This can only re-enable a failed no-call preflight, never a
                 # consumed target-generation workflow.
                 if operation['kind'] == 'direct' and operation.get('acquisition') and operation['step'] == 2:
@@ -321,6 +340,11 @@ class OperationsMixin:
 
     def _operation_review(self, operation):
         params = dict(operation['params'])
+        if operation['kind'] == 'transport-check':
+            return _page('Probe finished', '<h1>Probe and connection check complete</h1>'
+                +self._campaign_banner(params.get('campaign_id', ''))
+                +'<p>The saved connection check will be selected automatically for matching measured work. '
+                'No receipt needs copying.</p><p><a href="/jobs/'+operation['jobs'][0]+'">View the probe result</a></p>', active='Build')
         if operation['kind'] == 'direct':
             if not operation['acquisition']:
                 command, values, params = self._compose_from_builder(params, execution_snapshot=self._operation_snapshot(operation))
@@ -368,8 +392,11 @@ class OperationsMixin:
         labels = self._operation_labels(operation)
         label = labels[min(operation['step'], len(labels)-1)]
         body = '<h1>'+escape(_TITLES[operation['kind']])+'</h1>'+self._campaign_banner(operation['params'].get('campaign_id', ''))
-        body += '<section class="card"><h2>'+escape(label)+'</h2><p>Preparation runs automatically. '
-        body += 'No target answers or judge decisions are generated. You can leave this page and return.</p>'
+        body += '<section class="card"><h2>'+escape(label)+'</h2><p>'
+        body += ('Your explicitly started probe may make real calls. Its connection record is saved automatically afterwards.'
+            if operation['kind'] == 'transport-check' else
+            'Preparation runs automatically. No target answers or judge decisions are generated.')
+        body += ' You can leave this page and return.</p>'
         if operation['status'] == 'preparing':
             body += '<p role="status">Preparing your selected work...</p><form class="action-row" method="post" action="/operations/'+operation_id+'/stop"><button class="danger">Stop preparation</button></form>'
             body += '<script>setTimeout(()=>window.uraBusy.reload(),3000);</script>'
@@ -392,3 +419,10 @@ class OperationsMixin:
             action = 'Review and start' if row['status'] == 'ready' else 'View progress' if row['status'] == 'preparing' else 'Inspect problem'
             body += '<li>'+html.escape(_TITLES[row['kind']])+' - '+html.escape(row['status'])+' - <a href="/operations/'+row['id']+'">'+action+'</a></li>'
         return body+'</ul></section>'
+
+    def _finish_probe_automatically(self, job):
+        if getattr(job, 'command', '') == 'run_matrix' and '--attestation-probe' in job.argv and '--preflight-only' not in job.argv:
+            params = job.builder_params or {}
+            return self._start_operation('transport-check', dict(probe_job=job.job_id,
+                campaign_id=params.get('campaign_id', '')))
+        return None

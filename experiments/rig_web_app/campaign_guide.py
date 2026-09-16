@@ -102,8 +102,8 @@ def _guidance(app, params):
           'When ready, review the workload and click Start run (or Start probe for a diagnostic). '
           'Keep Admission on Automatic: output locations, execution scope, software/source records and saved '
           'transport checks are supplied for campaigns and single runs. Technical text fields are optional '
-          'Advanced overrides. In Tools, live_attestation selects a completed probe by name; it fills the '
-          'scope and output automatically and reuses an existing completed check. No receipt rows or hashes '
+          'Advanced overrides. Diagnostic probes started here save their connection checks automatically; '
+          'the same progress page follows both. For older probes, Tools can select the completed probe by name. No receipt rows or hashes '
           'need copying. No separate plan/acquire/preflight buttons are required. Measured work '
           'needs valid transport evidence for each selected route/modality. Use a diagnostic probe when that '
           'evidence is missing, then return to the measured selection. The probe makes real calls; the projection does not.'),
@@ -217,7 +217,9 @@ def _guidance(app, params):
     operations = sorted((row for row in getattr(app, '_operations', {}).values()
         if row['params'].get('campaign_id') == owner and row['status'] in {'preparing', 'ready', 'failed', 'stopped'}),
         key=lambda row:row.get('created_at', 0))
-    if operations:
+    if operations and (operations[-1]['status'] == 'preparing' or latest is None
+            or operations[-1].get('created_at', 0) >= (dict(latest).get('started_at') or 0)
+            or latest['member_id'] in operations[-1]['jobs']):
         current = operations[-1]
         stage = 'Recovery' if current['status'] in {'failed', 'stopped'} else 'Prepare'
         notice = ('Preparation is '+current['status']+'. Open the operation, not its internal child jobs. '

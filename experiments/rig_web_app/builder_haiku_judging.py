@@ -183,11 +183,10 @@ def haiku_judging_panel(app,params):
         '<p>Judge saved hosted answers and all matching local answers. The console prepares the selection, '
         'checks existing verdicts and calculates costs automatically. Token counting may contact the selected '
         'provider, but no judgments are bought until you review and start. Targets are not regenerated.</p>'
-        "<div class='haiku-judging-controls'>"
+        "<div class='haiku-judging-controls' id='retained-judging-coverage'>"
         "<label class='campaign-field'>Haiku judge<select form='builder' name='retained_haiku_model'>"
         +''.join("<option value='"+html.escape(model,quote=True)+"'"+(' selected' if model==chosen else '')+'>'
             +html.escape(model)+'</option>' for model in choices)+'</select></label>')
-    body += '</div><div class="haiku-judging-controls" id="retained-judging-coverage">'
     for field, label, default in (('limit', 'Input limit (0 = all selected hosted inputs)', '0'),
                                   ('seed', 'Input selection seed', '0')):
         body += "<label class='campaign-field'>"+label+"<input form='builder' type='number' step='1' name='retained_inventory_"+field

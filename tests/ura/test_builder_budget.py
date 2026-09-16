@@ -92,7 +92,7 @@ def test_duplicate_json_caps_rejected(study):
 def test_forecast_table_has_form_ownership_and_retains_links(study):
     app,params,_,_ = study
     page = subject.budget_panel(app,dict(params,retained_budget_job='budget-job'))
-    assert 'Forecast matched hosted work' in page and '16384' in page
+    assert 'Matched comparison limits' in page and '16384' in page
     assert "form='builder' name='retained_budget_caps'" in page
     assert "form='builder' name='retained_pricing_date'" in page
     assert "type='number' form='builder'" in page
