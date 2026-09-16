@@ -64,8 +64,10 @@ def test_save_reopen_and_validation_keep_scope_and_execution_controls(browser, a
         assert page.locator('#sample-arm-prerequisite').is_visible() == (not scope)
         assert not page.locator('.sample-range-field').is_visible(), 'No unvalidated slider maximum'
         for name in ('seeds','max_queries','max_turns','target_answer_retries',
-                     'cap_target','cap_judge','cap_http','deadline','local_budget_hours','out'):
+                     'cap_target','cap_judge','cap_http','deadline','local_budget_hours'):
             assert page.locator('[name='+name+']').is_visible(), name
+        assert page.locator('#automatic-output-note').is_visible()
+        assert not page.locator('[name=out]').is_visible()
 
     try:
         page.goto('http://build.test/build?work_kind=campaign')

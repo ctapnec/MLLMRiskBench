@@ -26,7 +26,7 @@ def campaign(state):  # noqa: F811
     raw=open(latest['project_revision'],'rb').read()
     project=json.loads(raw)
     binding=project_revision_binding(project,dict(file=__import__('pathlib').Path(latest['project_revision']).name,
-        sha256=hashlib.sha256(raw).hexdigest(),bytes=len(raw)))
+        sha256=hashlib.sha256(raw).hexdigest(),bytes=len(raw),revision_id=project['revision_id']))
     def add(name,mods=('text',),*,owner_override=None,age=1,scope=_SCOPE,spec=_SPEC,status='complete',project_sha=None):
         record=_record(modalities=list(mods),observed_at=(datetime.now(timezone.utc)-timedelta(hours=age)).isoformat())
         record.update(execution_scope_id=scope,requested_target_spec=spec)
