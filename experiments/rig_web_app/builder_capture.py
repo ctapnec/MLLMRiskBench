@@ -802,6 +802,16 @@ class BuilderCaptureMixin:
                     values[flag] = os.environ[env_name]
         # Bind the operator-local registries so a lane resolves its roster,
         # local target config, and source receipt as the runbook expects.
+        # Reject a stale software receipt before creating other private configs.
+        project_receipt, project_receipt_sha256 = (
+            self._materialize_selected_project_revision(
+                params,
+                snapshot_payload=snapshot.get("project_revision"),
+            )
+        )
+        if project_receipt is not None and project_receipt_sha256 is not None:
+            values["--project-revision"] = str(project_receipt)
+            values["--project-revision-sha256"] = project_receipt_sha256
         api_config, api_config_sha256 = self._materialize_selected_api_config(
             params,
             snapshot_payload=snapshot.get("api_config"),
@@ -827,15 +837,6 @@ class BuilderCaptureMixin:
         if source_receipt is not None and source_receipt_sha256 is not None:
             values["--source-conformance"] = str(source_receipt)
             values["--source-conformance-sha256"] = source_receipt_sha256
-        project_receipt, project_receipt_sha256 = (
-            self._materialize_selected_project_revision(
-                params,
-                snapshot_payload=snapshot.get("project_revision"),
-            )
-        )
-        if project_receipt is not None and project_receipt_sha256 is not None:
-            values["--project-revision"] = str(project_receipt)
-            values["--project-revision-sha256"] = project_receipt_sha256
         live_attestations = self._materialize_selected_live_attestations(
             params,
             execution_snapshot=snapshot,

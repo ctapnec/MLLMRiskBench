@@ -73,6 +73,14 @@ a pooled safety ranking. Inspection and exports make no model calls.
    In **Execution -> Sampling & turns -> Per-arm sample size**, the number and
    policy fields stay visible but disabled until an arm is selected. The exact
    range slider appears only after a matching no-call preflight supplies sizes.
+   A draft saved before a software deployment may retain the old project
+   receipt. **Admission -> Use current project receipt** explicitly replaces
+   its path and digest; save and review again before starting fresh preparation.
+   Review compares the receipt's commit to Git HEAD without hashing model files.
+   Runner retains its complete admission validation. Old jobs, captured plans,
+   responses, source receipts and transport attestations are never rewritten by
+   this action. New software conditions require new preparation and, for measured
+   work, compatible transport evidence.
 3. Inspect **Current pipeline**, then **Save campaign** if applicable. Saving
    makes no calls. **Compose & review** shows the actual command and settings;
    execution requires the separate start action on the review page.

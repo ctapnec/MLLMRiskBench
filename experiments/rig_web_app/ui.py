@@ -1190,6 +1190,14 @@ var prev=document.getElementById('buildpreview');
 if(prev){prev.textContent=parts.join(' ');}}
 form.addEventListener('change',refresh);
 form.addEventListener('input',refresh);
+var projectRefresh=document.getElementById('use-current-project-receipt');
+if(projectRefresh){projectRefresh.addEventListener('click',function(){
+form.querySelector('[name=project_revision]').value=this.getAttribute('data-path');
+form.querySelector('[name=project_revision_sha]').value=this.getAttribute('data-sha');
+document.getElementById('project-receipt-refresh-status').textContent=
+'Current project receipt selected. Save campaign, then Compose & review. '+
+'Repeat preparation for the new software revision; old jobs and results remain unchanged.';
+refresh();});}
 // The tool-conditioned exclusion is an offline-smoke-only diagnostic.  It is
 // enabled and defaults ON only for a standalone dry run; evidence-bearing
 // preflight, probe, canary, and measured routes must retain whole clusters.

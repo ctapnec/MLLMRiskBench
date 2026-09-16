@@ -9,6 +9,7 @@ import os
 import re
 import secrets
 import stat
+import subprocess
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -1226,6 +1227,29 @@ class BuilderValidationMixin:
             raw = bytes(snapshot_payload)
         if hashlib.sha256(raw).hexdigest() != expected:
             raise ValueError("reviewed project revision snapshot no longer matches")
+        # Catch the common saved-draft-after-deployment error before creating a
+        # plan job. This reads only the small receipt and Git HEAD. Runner still
+        # performs the complete receipt/source validation; no model is hashed.
+        try:
+            receipt = strict_json_loads(raw.decode("utf-8"))
+        except (UnicodeError, ValueError):
+            receipt = None
+        repository = receipt.get("repository") if isinstance(receipt, dict) else None
+        required_commit = repository.get("expected_commit") if isinstance(repository, dict) else None
+        dry = params.get("mode") == "dry_run" or (
+            params.get("mode") == "diagnostic_canary" and params.get("canary_dry") == "on")
+        if not dry and isinstance(required_commit, str) and re.fullmatch(r"[0-9a-f]{40,64}", required_commit):
+            try:
+                head = subprocess.run(["git", "-C", str(self.repo_root), "rev-parse", "HEAD"],
+                    check=True, capture_output=True, text=True, timeout=5).stdout.strip()
+            except (OSError, subprocess.SubprocessError) as exc:
+                raise ValueError("Cannot read the deployed project revision; no job was started") from exc
+            if head != required_commit:
+                raise ValueError(
+                    "The saved project receipt belongs to an older or different software revision. "
+                    "Open Admission, click Use current project receipt, then Save campaign and "
+                    "Compose & review again. Existing jobs and results are unchanged."
+                )
         path, actual = self._materialize_private_config(
             payload=raw,
             directory_name=".private-project-revision",

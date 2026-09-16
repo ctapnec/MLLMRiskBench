@@ -68,8 +68,10 @@ loads. Saved verdicts retain its actual placement.
 
 ### 2.1. Set Admission
 
-1. Open **Admission**. Leave the current project and source receipts supplied
-   by the console unchanged.
+1. Open **Admission**. Click **Use current project receipt** to select the
+   software version currently deployed on the rig. Leave the source receipt
+   unchanged. This matters when reopening a draft saved before a software update;
+   the button updates only the two project-receipt fields and makes no calls.
 2. Set **--execution-scope-id** to `my-qwen-demonstration`.
 3. Leave the live-attestation rows and maximum-age field empty for this probe.
 
@@ -139,6 +141,14 @@ initiate network calls. This all-local projection should report zero HTTP attemp
    output directory. Saving and reviewing make no model calls.
 
 ## 3. Complete preparation, then run the text probe
+
+If an earlier planning job failed with **project checkout revision mismatch**,
+keep that failed job as history. Open your campaign's **Configure in Build ->
+Admission -> Use current project receipt**, then **General -> Save campaign**.
+Reopen **Configure in Build -> General -> Compose & review** and start a new
+planning job using section 3.1. Do not continue the old plan: its saved receipt
+belongs to the earlier software version. No target generation occurred in that
+failed planning job, and no output folder needs to be created by hand.
 
 ### 3.1. Run the no-call preflight
 

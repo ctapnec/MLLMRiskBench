@@ -2196,6 +2196,22 @@ class BuilderPageMixin:
         env_project_sha = os.environ.get("URA_PROJECT_REVISION_SHA256", "")
         env_source = os.environ.get("URA_SOURCE_CONFORMANCE_MANIFEST", "")
         env_source_sha = os.environ.get("URA_SOURCE_CONFORMANCE_SHA256", "")
+        project_refresh = ""
+        if env_project and env_project_sha:
+            different_project = bool(prefill.get("project_revision_sha")) and (
+                prefill.get("project_revision_sha") != env_project_sha)
+            project_refresh = (
+                "<div class='workflow-actions'><button type='button' class='ghost' "
+                "id='use-current-project-receipt' data-path='" + html.escape(env_project, quote=True)
+                + "' data-sha='" + html.escape(env_project_sha, quote=True)
+                + "'>Use current project receipt</button></div>"
+                "<p id='project-receipt-refresh-status' class='note' role='status'>"
+                + ("This saved receipt differs from the console's current project receipt. "
+                   if different_project else "")
+                + "After a software update, use the current receipt and review preparation again. "
+                "This changes only this draft's two project-receipt fields; it does not modify "
+                "existing jobs, results, source receipts or transport receipts.</p>"
+            )
         error_summary = ""
         if errors:
             items = "".join(
@@ -2478,7 +2494,7 @@ class BuilderPageMixin:
                 "exact byte digest",
                 default=env_source_sha,
             )
-            + "</div></div>"
+            + "</div>" + project_refresh + "</div>"
             "<div class='card' id='transport-evidence'><h2>" + _icon("logo") + "Execution scope &amp; live attestation</h2>"
             "<p class='note'>Probes create attestations; live canaries and "
             "measured lanes consume them (repeatable receipt/digest rows, "
