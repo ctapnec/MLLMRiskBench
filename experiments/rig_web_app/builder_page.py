@@ -454,8 +454,11 @@ class BuilderPageMixin:
         if setup_mode == 'automatic':
             setup_preview = self._automatic_campaign_setup(setup_preview, refresh=True)
         _, transport_status = self._campaign_transport_receipts(setup_preview)
+        if setup_preview.get('mode', 'dry_run') in {'dry_run', 'attestation_probe'}:
+            transport_status = ('This mode does not require an existing transport check. '
+                                'Saved checks are selected automatically when you review measured work.')
         setup_controls = (
-            "<div class='card'><h2>Automatic setup</h2>"
+            "<div class='card' id='transport-evidence'><h2>Automatic setup</h2>"
             "<p>Choose the experiment, not filenames. The console supplies output paths, scope, "
             "software/source records and matching saved transport checks. No job starts here.</p>"
             "<label>Setup <select name='setup_mode' form='builder' id='setup-mode'>"
@@ -2518,7 +2521,7 @@ class BuilderPageMixin:
                 default=env_source_sha,
             )
             + "</div>" + project_refresh + "</div>"
-            "<div class='card' id='transport-evidence'><h2>" + _icon("logo") + "Execution scope &amp; live attestation</h2>"
+            "<div class='card' id='advanced-transport-evidence'><h2>" + _icon("logo") + "Execution scope &amp; live attestation</h2>"
             "<p class='note'>Probes create attestations; live canaries and "
             "measured lanes consume them (repeatable receipt/digest rows, "
             "paired in order).</p><div class='cols'>"

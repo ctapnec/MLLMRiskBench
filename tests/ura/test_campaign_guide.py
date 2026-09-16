@@ -261,6 +261,11 @@ def test_guide_links_reveal_scroll_and_focus_exact_controls_including_same_hash(
         topic('3. Inputs')
         page.get_by_role('link',name='Select saved source runs',exact=True).click()
         destination('retained-inputs','build-general')
+        topic('5. Prepare')
+        page.get_by_role('link',name='Check transport evidence',exact=True).click()
+        destination('transport-evidence','build-admission')
+        assert page.locator('#setup-mode').is_visible()
+        assert not page.locator('#advanced-setup-fields').is_visible()
         # A new page with an inner fragment overrides the remembered General tab.
         page.goto(base+'#target-models')
         destination('target-models','build-pipeline')
