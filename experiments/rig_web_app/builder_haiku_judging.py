@@ -175,27 +175,38 @@ def judge_retained_haiku(app,form):
 
 
 def haiku_judging_panel(app,params):
-    if not params.get('retained_native_judging_job'):
+    if not params.get('retained_programs_job'):
         return ''
-    from .builder_judging_inventory import judging_inventory_panel
     choices=_choices(app)
     chosen=params.get('retained_haiku_model') or next(iter(choices),'')
     body=("<section class='card' id='retained-haiku-judging'><h2>Haiku comparison of saved outputs</h2>"
-        '<p>Select input-matched local and hosted answers from the saved preparation above. Preparation '
-        'makes no provider calls and uses the existing judging allocation. It does not regenerate targets.</p>'
+        '<p>Judge saved hosted answers and all matching local answers. The console prepares the selection, '
+        'checks existing verdicts and calculates costs automatically. Token counting may contact the selected '
+        'provider, but no judgments are bought until you review and start. Targets are not regenerated.</p>'
         "<div class='haiku-judging-controls'>"
         "<label class='campaign-field'>Haiku judge<select form='builder' name='retained_haiku_model'>"
         +''.join("<option value='"+html.escape(model,quote=True)+"'"+(' selected' if model==chosen else '')+'>'
             +html.escape(model)+'</option>' for model in choices)+'</select></label>')
+    body += '</div><div class="haiku-judging-controls" id="retained-judging-coverage">'
+    for field, label, default in (('limit', 'Input limit (0 = all selected hosted inputs)', '0'),
+                                  ('seed', 'Input selection seed', '0')):
+        body += "<label class='campaign-field'>"+label+"<input form='builder' type='number' step='1' name='retained_inventory_"+field
+        body += "' value='"+html.escape(params.get('retained_inventory_'+field, default),quote=True)+"'></label>"
+    body += ("</div><p>Uses this campaign's existing judging allocation. The review shows funded answers, "
+        "missing responses, already-owned judgments and any funding shortfall separately.</p>"
+        "<div class='campaign-actions'><button form='builder' formaction='/build/prepare-operation/haiku-judging'>Review all-output Haiku judging</button></div>"
+        "<details class='card'><summary>Optional sampled paired comparison</summary><p>This alternative selects "
+        "pairs of local and hosted answers. Its limit and spending ceiling apply only to this sampled option.</p>"
+        "<div class='haiku-judging-controls'>")
     for name,label,default,maximum,step in (
         ('limit','Maximum matched comparisons','100',MAX_PAIR_LIMIT,'1'),
         ('seed','Selection seed','0',None,'1'),('cost','Judging ceiling (USD)','7',MAX_COST_MICROUSD/1e6,'0.000001')):
         body+="<label class='campaign-field'>"+label+"<input type='number' form='builder' name='retained_haiku_"+name+"' step='"+step+"'"+(
             " max='"+str(maximum)+"'" if maximum is not None else '')+" value='"+html.escape(params.get('retained_haiku_'+name,default),quote=True)+"'></label>"
-    body+="</div><div class='campaign-actions'><button form='builder' formaction='/build/prepare-haiku-judging'>Prepare matched Haiku selection</button></div>"
+    body+="</div><div class='campaign-actions'><button form='builder' formaction='/build/prepare-operation/paired-haiku'>Review sampled Haiku comparison</button></div>"
     job=params.get('retained_haiku_job','')
     if job:
         body+="<input type='hidden' form='builder' name='retained_haiku_job' value='"+html.escape(job,quote=True)+"'>"
         body+="<p><a href='/jobs/"+html.escape(job,quote=True)+"'>Open selection and exclusions</a></p>"
         body+="<button form='builder' formaction='/build/review-haiku-judging'>Review Haiku judging</button>"
-    return judging_inventory_panel(params)+body+'</section>'
+    return body+'</details></section>'

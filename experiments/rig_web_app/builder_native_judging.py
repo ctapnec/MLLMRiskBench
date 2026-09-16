@@ -156,7 +156,7 @@ def native_judging_panel(app, params):
         "Preparation makes no target or judge calls. Incomplete source runs remain listed as unprepared.</p>"
         "<p>Preparation reuses active or already prepared work. After more source runs finish, it adds only "
         "runs not previously prepared. Resume earlier judging from the selection below or from Jobs.</p>"
-        "<button form='builder' formaction='/build/prepare-native-judging'>Prepare remaining source runs</button>")
+        "<button form='builder' formaction='/build/prepare-operation/local-judging'>Review local judging</button>")
     if job:
         escaped = html.escape(job,quote=True)
         try:
@@ -164,7 +164,7 @@ def native_judging_panel(app, params):
         except (ValueError,OSError,KeyError):
             return body+"<p>Finish the selected collection preparation to review its judging. Previous jobs remain in Jobs.</p></section>"
         history = preparation_history(app,params['campaign_id'],receipt['programs'])
-        body += "<label class='campaign-field separated-field'>Saved judging preparation<select form='builder' name='retained_native_judging_job'>"
+        body += "<details class='card'><summary>Earlier judging selections and technical options</summary><label class='campaign-field separated-field'>Saved judging preparation<select form='builder' name='retained_native_judging_job'>"
         body += ''.join("<option value='"+html.escape(row['job_id'],quote=True)+"'"+(
             ' selected' if row['job_id']==job else '')+'>'+html.escape(row['job_id']+' - '+_state(app,row))+'</option>'
             for row in history)
@@ -174,5 +174,5 @@ def native_judging_panel(app, params):
             ('retained_native_verify_artifacts','Full result-file checksum revalidation')]:
             body += "<label class='checkrow'><input type='checkbox' form='builder' name='"+field+"'"+(
                 ' checked' if params.get(field)=='on' else '')+'><span>'+label+' (optional)</span></label>'
-        body += "<button form='builder' formaction='/build/review-native-judging'>Review local judging</button>"
+        body += "<button form='builder' formaction='/build/review-native-judging'>Review earlier selection</button></details>"
     return body+'</section>'

@@ -2345,6 +2345,7 @@ class BuilderPageMixin:
             "</div>"
         )
         from .builder_sources import source_panel
+        general_panel += self._operation_links(prefill.get('campaign_id', ''))
         general_panel += source_panel(self, dict(prefill))
         force_default = (
             " data-force-default='true'"

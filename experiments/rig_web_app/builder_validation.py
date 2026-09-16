@@ -2617,6 +2617,8 @@ class BuilderValidationMixin:
         command: str,
         values: Mapping[str, str],
         params: Mapping[str, str],
+        *,
+        prepared: bool = False,
     ) -> bytes:
         """Durable argv identity + ceilings confirmation before a paid start."""
 
@@ -2761,4 +2763,25 @@ class BuilderValidationMixin:
             + self._new_launch_ticket(params, purpose="build-edit")
             + "'><button class='ghost'>Edit configuration</button></form>"
         )
+        if not offline and not prepared:
+            # The technical stages remain inspectable, not operator tasks.
+            # Keep the existing endpoints for older reviewed jobs and advanced use.
+            title_end = body.index('</h1>') + len('</h1>')
+            preparation_ticket = ticket_input(self._new_launch_ticket(params,
+                purpose='automatic-preparation', execution_snapshot=execution_snapshot))
+            summary_start = body.index("<section class='card'><h2>Experiment</h2>")
+            summary_end = body.index('</section>', summary_start)+len('</section>')
+            automatic = (
+                self._campaign_banner(params.get('campaign_id', ''))
+                + body[summary_start:summary_end]
+                + '<section class="card"><h2>Prepare this run automatically</h2>'
+                '<p>The console reuses installed models, checks the workload and prepares execution. '
+                'No receipt copying, separate acquisition steps or target/judge calls are needed. '
+                'You will review the calculated workload before starting.</p>'
+                '<form class="action-row" method="post" action="/build/prepare-automatic">'
+                + preparation_ticket
+                + '<button data-busy="Starting automatic preparation...">Prepare and review</button></form></section>'
+                + self._operation_links(params.get('campaign_id', ''))
+            )
+            body = body[:title_end] + automatic + '<details class="card"><summary>Technical preparation details</summary>' + body[title_end:] + '</details>'
         return _page("Confirm execution", body, active="Build")

@@ -1,0 +1,161 @@
+"""Automatic preparation must not turn into automatic model execution."""
+import importlib
+import json
+from types import SimpleNamespace
+
+import pytest
+
+from experiments.rig_web_app.operations import _STEPS
+from test_rig_web_model_acquisition import _app
+
+
+@pytest.fixture
+def app(tmp_path, monkeypatch):
+    value = _app(tmp_path)
+    monkeypatch.setattr(value, '_ensure_operation_worker', lambda key: None)
+    monkeypatch.setattr(value, '_reconcile_locked', lambda: None)
+    yield value
+    value.jobs.clear()
+    value.close()
+
+
+def child(app, name, command='preparation', state='complete', code=0):
+    row = SimpleNamespace(job_id=name, command=command, failure='', state=lambda:state, exit_code=lambda:code)
+    app.jobs[name] = row
+    return row
+
+
+def setup_stages(app, monkeypatch, kind):
+    launched = []
+    for index, (_, module, function) in enumerate(_STEPS[kind]):
+        def prepare(context, params, index=index):
+            # The preceding private handoff is available without editing the draft.
+            assert all(params.get('retained_test_'+str(i)) == str(i) for i in range(index))
+            context._save_build_campaign(dict(params, **{'retained_test_'+str(index):str(index)}))
+            launched.append(index)
+            return child(app, 'stage-'+str(index))
+        monkeypatch.setattr(importlib.import_module('experiments.rig_web_app.'+module), function, prepare)
+    return launched
+
+
+@pytest.mark.parametrize('kind', ['matched', 'local-judging', 'haiku-judging', 'paired-haiku'])
+def test_preparation_advances_every_stage_without_starting_targets_or_judges(app, monkeypatch, kind):
+    owner = app.db.create_workspace('Automatic', 'mixed')
+    params = dict(campaign_id=owner, api='openai:test')
+    app.db.save_workspace_definition(owner, params)
+    launched = setup_stages(app, monkeypatch, kind)
+    def forbidden(*args, **kwargs):
+        raise AssertionError('No generation or judging may start here')
+    monkeypatch.setattr(app, 'start_job', forbidden)
+    key = app._start_operation(kind, params)
+    assert app._start_operation(kind, params) == key
+    operation = app._operations[key]
+    for _ in range(len(_STEPS[kind])+1):
+        app._advance_operation(operation)
+    assert operation['status'] == 'ready' and launched == list(range(len(_STEPS[kind])))
+    assert app.db.workspace_definition(owner) == operation['params']
+    app._advance_operation(operation)
+    assert len(launched) == len(_STEPS[kind])
+
+
+def test_preparation_never_overwrites_a_concurrently_edited_campaign(app, monkeypatch):
+    owner = app.db.create_workspace('Concurrent edit', 'mixed')
+    params = dict(campaign_id=owner, api='original')
+    app.db.save_workspace_definition(owner, params)
+    setup_stages(app, monkeypatch, 'local-judging')
+    operation = app._operations[app._start_operation('local-judging', params)]
+    app._advance_operation(operation)
+    changed = dict(params, api='new choice')
+    app.db.save_workspace_definition(owner, changed)
+    app._advance_operation(operation)
+    assert operation['status'] == 'ready'
+    assert app.db.workspace_definition(owner) == changed
+    assert operation['params']['api'] == 'original'
+
+
+def test_stop_and_failed_child_prevent_next_stage_and_retry_keeps_completed_stages(app, monkeypatch):
+    owner = app.db.create_workspace('Failure', 'mixed')
+    launched = setup_stages(app, monkeypatch, 'matched')
+    operation = app._operations[app._start_operation('matched', dict(campaign_id=owner))]
+    app._advance_operation(operation)
+    app._advance_operation(operation)
+    child(app, 'stage-1', state='failed', code=2)
+    app._advance_operation(operation)
+    assert operation['status'] == 'failed' and launched == [0,1]
+    assert operation['jobs'] == ['stage-0']
+    app._retry_operation(operation['id'])
+    for _ in range(4):
+        app._advance_operation(operation)
+    assert operation['status'] == 'ready' and launched == [0,1,1,2,3]
+    assert operation['failed_jobs'] == ['stage-1']
+    other = app._operations[app._start_operation('matched', dict(campaign_id=owner, api='changed'))]
+    app._advance_operation(other)
+    app._stop_operation(other['id'])
+    app._advance_operation(other)
+    assert other['status'] == 'stopped' and len(launched) == 6
+
+
+def test_restored_operation_observes_current_job_without_relaunch(app, monkeypatch):
+    owner = app.db.create_workspace('Restart', 'mixed')
+    launched = setup_stages(app, monkeypatch, 'matched')
+    key = app._start_operation('matched', dict(campaign_id=owner))
+    app._advance_operation(app._operations[key])
+    child(app, 'stage-0', state='running', code=None)
+    app._restore_operations()
+    app._advance_operation(app._operations[key])
+    assert launched == [0]
+    child(app, 'stage-0')
+    app._advance_operation(app._operations[key])
+    assert launched == [0,1]
+
+
+@pytest.mark.parametrize('acquisition', [False, True])
+def test_direct_preparation_only_launches_no_call_work(app, monkeypatch, acquisition):
+    monkeypatch.setattr(app, '_builder_model_acquisition_required', lambda p:acquisition)
+    monkeypatch.setattr(app, '_operation_snapshot', lambda op:{})
+    monkeypatch.setattr(app, '_compose_from_builder', lambda p, **kw:('run_matrix', {'--out':'original'}, p))
+    monkeypatch.setattr(app, '_materialize_prepared_attacker_config', lambda *a, **kw:None)
+    monkeypatch.setattr(app, '_preflight_output_dir', lambda p:'projection')
+    monkeypatch.setattr(app, '_builder_preflight_values', lambda values, **kw:dict(values, **{'--preflight-only':'on'}))
+    launches = []
+    def launch(command, values, **kwargs):
+        assert '--preflight-only' in values
+        launches.append(command)
+        return child(app, kwargs['reserved_job_id'], command=command)
+    monkeypatch.setattr(app, 'start_job', launch)
+    def plan(params, **kwargs):
+        key = kwargs['reserved_job_id']
+        app._model_acquisition_workflows[key] = dict(next_stage=params['_model_acquisition_next'])
+        launches.append('plan-'+params['_model_acquisition_next'])
+        return child(app, key)
+    def acquire(key, **kwargs):
+        app._model_acquisition_workflows[kwargs['reserved_job_id']] = app._model_acquisition_workflows[key]
+        launches.append('reuse-installed')
+        return child(app, kwargs['reserved_job_id'])
+    def preflight(key, **kwargs):
+        assert app._model_acquisition_workflows[key]['next_stage'] == 'preflight'
+        launches.append('preflight')
+        return child(app, kwargs['reserved_job_id'])
+    monkeypatch.setattr(app, '_start_model_acquisition_plan', plan)
+    monkeypatch.setattr(app, '_start_model_acquisition_download', acquire)
+    monkeypatch.setattr(app, '_start_model_acquisition_run', preflight)
+    operation = app._operations[app._start_operation('direct', {'local':'vllm:test'})]
+    for _ in range(6):
+        app._advance_operation(operation)
+    assert operation['status'] == 'ready'
+    assert launches == (['plan-preflight','reuse-installed','preflight','plan-run','reuse-installed']
+        if acquisition else ['run_matrix'])
+
+
+def test_unknown_operation_kind_does_not_save_a_draft(app, monkeypatch):
+    monkeypatch.setattr(app, '_save_build_campaign', lambda p:pytest.fail('Unknown action must not save'))
+    status, _, _ = app.handle('POST', '/build/prepare-operation/not-real', {})
+    assert status == 400
+
+
+def test_corrupt_operation_metadata_cannot_crash_startup(app):
+    root = app.state_dir/'.private-operations'/('a'*32)
+    root.mkdir(parents=True)
+    (root/'operation.json').write_text(json.dumps(dict(id='a'*32,kind='direct',status='preparing',params=[],jobs=[],current_job='',step=-1)))
+    app._restore_operations()
+    assert not app._operations

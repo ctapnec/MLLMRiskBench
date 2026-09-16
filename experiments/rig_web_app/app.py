@@ -13,9 +13,11 @@ from .pages import PagesMixin
 from .settings import SettingsMixin
 from .workspace_pages import WorkspacePagesMixin
 from .human_review_pages import HumanReviewPagesMixin
+from .operations import OperationsMixin
 
 
 class RigWebApp(
+    OperationsMixin,
     BuilderSetupMixin,
     HumanReviewPagesMixin,
     WorkspacePagesMixin,

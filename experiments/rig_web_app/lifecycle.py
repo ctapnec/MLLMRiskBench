@@ -181,9 +181,12 @@ class LifecycleMixin:
         self._restore_jobs()
         self._restore_model_acquisition_workflows()
         self._recover_unrecorded_runs()
+        self._restore_operations()
 
     def close(self) -> None:
         """Release the database cleanly; running jobs stay detached."""
+
+        self._operation_shutdown.set()
 
         # Unlike experiment jobs, a daemon started by this console is an
         # owned service and must not be orphaned on a clean console shutdown.
@@ -3024,6 +3027,7 @@ class LifecycleMixin:
         ticket_params: Mapping[str, str],
         *,
         execution_snapshot: Mapping[str, bytes] | None = None,
+        reserved_job_id: str | None = None,
     ) -> Job:
         params = {str(key): str(value) for key, value in ticket_params.items()}
         next_stage = params.pop("_model_acquisition_next", "")
@@ -3076,7 +3080,7 @@ class LifecycleMixin:
             plan_values["--model-acquisition-plan-only"] = "on"
             plan_values["--model-acquisition-plan-dir"] = str(paths["plan_dir"])
             plan_values["--out"] = str(paths["plan_output"])
-            plan_job_id = self._job_id_factory()
+            plan_job_id = reserved_job_id or self._job_id_factory()
             workflow: dict[str, Any] = {
                 "acquisition_job_id": "",
                 "consumed": False,
@@ -3110,7 +3114,7 @@ class LifecycleMixin:
         self._model_acquisition_workflows[job.job_id] = workflow
         return job
 
-    def _start_model_acquisition_download(self, plan_job_id: str) -> Job:
+    def _start_model_acquisition_download(self, plan_job_id: str, *, reserved_job_id: str | None = None) -> Job:
         workflow = self._model_acquisition_workflows.get(plan_job_id)
         plan_job = self.jobs.get(plan_job_id)
         if (
@@ -3131,7 +3135,7 @@ class LifecycleMixin:
         plan_path, plan_sha256, _plan = self._workflow_plan(workflow)
         activity_event = Path(workflow["activity_event"])
         self._unlink_private_activity_event(activity_event)
-        job_id = self._job_id_factory()
+        job_id = reserved_job_id or self._job_id_factory()
         activity_token = secrets.token_hex(32)
         acquire_values = {
             "--plan": str(plan_path),
@@ -3167,7 +3171,7 @@ class LifecycleMixin:
         self._model_acquisition_workflows[job.job_id] = workflow
         return job
 
-    def _start_model_acquisition_run(self, acquisition_job_id: str) -> Job:
+    def _start_model_acquisition_run(self, acquisition_job_id: str, *, reserved_job_id: str | None = None) -> Job:
         workflow = self._model_acquisition_workflows.get(acquisition_job_id)
         acquisition_job = self.jobs.get(acquisition_job_id)
         if (
@@ -3214,6 +3218,7 @@ class LifecycleMixin:
                 values,
                 builder_params=rebound,
                 execution_snapshot=self._workflow_execution_snapshot(workflow),
+                **({'reserved_job_id': reserved_job_id} if reserved_job_id else {}),
             )
         except BaseException:
             workflow["consumed"] = False
@@ -4077,6 +4082,33 @@ class LifecycleMixin:
         path = parsed.path
         query = {key: values[0] for key, values in parse_qs(parsed.query).items() if values}
         try:
+            if method == 'GET' and path.startswith('/operations/'):
+                return 200, 'text/html; charset=utf-8', self._operation_page(path.removeprefix('/operations/'))
+            if method == 'POST' and path.startswith('/operations/') and path.endswith('/stop'):
+                operation_id = path.split('/')[2]
+                self._stop_operation(operation_id)
+                return 303, '/operations/'+operation_id, b''
+            if method == 'POST' and path.startswith('/operations/') and path.endswith('/retry'):
+                operation_id = path.split('/')[2]
+                self._retry_operation(operation_id)
+                return 303, '/operations/'+operation_id, b''
+            if method == 'POST' and path == '/build/prepare-automatic':
+                data = dict(form or {})
+                ticket = data.pop('launch_ticket', '')
+                payload = self._consume_launch_ticket(ticket, purpose='automatic-preparation')
+                if data or payload is None:
+                    raise ValueError('This preparation review expired. Reopen your saved configuration.')
+                params, snapshot = payload
+                params.pop('_model_acquisition_next', None)
+                operation_id = self._start_operation('direct', params, snapshot=snapshot)
+                return 303, '/operations/'+operation_id, b''
+            if method == 'POST' and path.startswith('/build/prepare-operation/'):
+                kind = path.removeprefix('/build/prepare-operation/')
+                if kind not in {'matched', 'local-judging', 'haiku-judging', 'paired-haiku'}:
+                    raise ValueError('Choose a supported preparation')
+                params = self._save_build_campaign(self._builder_params(form or {}))
+                operation_id = self._start_operation(kind, params)
+                return 303, '/operations/'+operation_id, b''
             if path == '/human-evaluation' or path.startswith(('/human-evaluation/', '/review/')):
                 return self._human_route(method, path, query, dict(form or {}))
             if method == "GET" and path == "/campaigns":

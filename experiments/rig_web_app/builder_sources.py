@@ -87,7 +87,7 @@ def source_panel(app, params: dict[str, str]) -> str:
         "<p>Use the same questions, images and attack prompts from saved local runs to compare API models. "
         "This prepares an input selection only: it does not change the current pipeline's corpus or launch any model.</p>"
         "<div class='source-steps' aria-label='Input reuse workflow'><span>1. Choose a campaign</span>"
-        "<span>2. Select saved runs</span><span>3. Prepare inputs</span></div>"
+        "<span>2. Select saved runs and limits</span><span>3. Review and start</span></div>"
         "<div class='source-campaign-row'><label class='campaign-field'>Source campaign "
         "<select name='retained_source_campaign' form='builder'>" + options + "</select></label>"
         "<button type='submit' form='builder' formaction='/build/source-runs' class='ghost'>Show saved runs</button></div>"
@@ -117,7 +117,6 @@ def source_panel(app, params: dict[str, str]) -> str:
             "<p class='note' id='retained-source-help'>Missing and truncated responses are included. Only measured local records are listed; "
             "the preparation job checks that the selected original grids are complete and usable as input sources. "
             "This list is not a model-quality filter.</p>"
-            "<div class='review-actions'><button type='submit' form='builder' formaction='/build/prepare-inputs'>Prepare selected inputs</button></div>"
             "<script>document.addEventListener('DOMContentLoaded',()=>{const boxes=Array.from(document.querySelectorAll('[data-source-run]'));"
             "const hidden=document.getElementById('retained-source-runs');"
             "const sync=()=>{const chosen=boxes.filter(o=>o.checked);hidden.value=JSON.stringify(chosen.map(o=>o.value));"
@@ -137,8 +136,21 @@ def source_panel(app, params: dict[str, str]) -> str:
     from .builder_collection import collection_panel
     from .builder_native_judging import native_judging_panel
     from .builder_haiku_judging import haiku_judging_panel
-    return (content + "</section>" + budget_panel(app, params) + replay_panel(params)
-            + program_panel(params) + collection_panel(params) + native_judging_panel(app,params)
+    automatic = ''
+    if selected:
+        automatic = budget_panel(app, params, automatic=True)
+        automatic += ("<section class='card' id='automatic-comparison'><h2>Prepare and review the comparison</h2>"
+            "<p>Input extraction, forecasting, replay preparation and execution setup run automatically on one progress page. "
+            "You will review the workload and costs before any generation starts.</p>"
+            "<label class='checkrow'><input type='checkbox' form='builder' name='retained_network_counts'"+
+            (' checked' if params.get('retained_network_counts') == 'on' else '')+
+            "><span>Allow provider token counting for the selected prompts and images (no generation)</span></label>"
+            "<button form='builder' formaction='/build/prepare-operation/matched'>Prepare comparison and review</button></section>")
+    # Retain old prepared collections without making their internal stages a
+    # required part of a new operator workflow.
+    hidden = ''.join("<input type='hidden' form='builder' name='"+field+"' value='"+escape(params[field])+"'>"
+        for field in ('retained_replays_job', 'retained_programs_job') if params.get(field))
+    return (content + "</section>" + automatic + hidden + collection_panel(params) + native_judging_panel(app,params)
             + haiku_judging_panel(app,params))
 
 

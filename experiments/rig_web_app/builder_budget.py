@@ -47,8 +47,8 @@ def selected_routes(app, params):
     return routes, api
 
 
-def budget_panel(app, params):
-    if not params.get("retained_sources_job"):
+def budget_panel(app, params, *, automatic=False):
+    if not automatic and not params.get("retained_sources_job"):
         return ""
     def escape(value):
         return html.escape(str(value), quote=True)
@@ -69,7 +69,7 @@ def budget_panel(app, params):
     as_of = params.get("retained_pricing_date") or datetime.now(timezone.utc).date().isoformat()
     job = params.get("retained_budget_job", "")
     return (
-        "<section class='card' id='matched-forecast'><h2>Forecast matched hosted work</h2>"
+        "<section class='card' id='matched-forecast'><h2>Matched comparison limits</h2>"
         "<p>Uses the selected hosted models and configured output allowances. Request caps include diagnostic "
         "calls; whole source clusters may leave unused capacity. The forecast includes Haiku assessment of "
         "hosted and matched local outputs. It does not generate, judge, count via an API, or reserve funds.</p>"
@@ -83,7 +83,7 @@ def budget_panel(app, params):
         "Token assumptions are estimates until exact input preparation. Changing target selection requires "
         "refreshing this table; a stale model list cannot launch the forecast.</p>"
         "<div class='campaign-actions'><button form='builder' formaction='/build/source-runs' class='ghost'>"
-        "Refresh selected models</button><button form='builder' formaction='/build/forecast-matched'>Prepare forecast</button></div>"
+        "Refresh selected models</button>" + ("" if automatic else "<button form='builder' formaction='/build/forecast-matched'>Prepare forecast</button>") + "</div>"
         + ("<p><a href='/jobs/" + escape(job) + "'>Open the budget forecast and artifacts</a></p>"
            "<input type='hidden' form='builder' name='retained_budget_job' value='" + escape(job) + "'>" if job else "")
         + "<script>document.addEventListener('DOMContentLoaded',()=>{document.getElementById('builder')"

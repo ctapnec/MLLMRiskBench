@@ -1,0 +1,370 @@
+"""One operator action over existing preparation jobs, never automatic generation."""
+from __future__ import annotations
+
+import hashlib
+import html
+import importlib
+import json
+import re
+import threading
+import time
+from pathlib import Path
+from uuid import uuid4
+
+from .ui import _page
+
+
+# These functions already own command construction and artifact semantics.
+_STEPS = {
+    'matched': (
+        ('Selecting saved inputs', 'builder_sources', 'prepare_selected_inputs'),
+        ('Calculating workload and costs', 'builder_budget', 'prepare_budget'),
+        ('Preparing selected inputs', 'builder_replays', 'prepare_replays'),
+        ('Counting and preparing execution', 'builder_programs', 'prepare_programs'),
+    ),
+    'local-judging': (('Preparing saved answers', 'builder_native_judging', 'prepare_native_judging'),),
+    'haiku-judging': (
+        ('Preparing saved answers', 'builder_native_judging', 'prepare_native_judging'),
+        ('Matching selected outputs', 'builder_judging_inventory', 'prepare_judging_inventory'),
+        ('Calculating judging costs', 'builder_judging_inventory', 'prepare_inventory_judging'),
+        ('Preparing judging execution', 'builder_inventory_execution', 'prepare'),
+    ),
+    'paired-haiku': (
+        ('Preparing saved answers', 'builder_native_judging', 'prepare_native_judging'),
+        ('Matching answers and calculating judging costs', 'builder_haiku_judging', 'prepare_haiku_judging'),
+    ),
+}
+_DIRECT = ('Planning installed models', 'Preparing installed models', 'Checking the workload',
+           'Preparing execution', 'Finishing model preparation')
+_TITLES = {'direct': 'Prepare run', 'matched': 'Prepare hosted comparison',
+           'local-judging': 'Prepare local judging', 'haiku-judging': 'Prepare Haiku judging',
+           'paired-haiku': 'Prepare sampled Haiku comparison'}
+
+
+class _Context:
+    """Existing preparers update this operation, not a concurrently edited draft."""
+    def __init__(self, app, operation):
+        self.app, self.operation = app, operation
+
+    def __getattr__(self, key):
+        return getattr(self.app, key)
+
+    def _save_build_campaign(self, params):
+        self.operation['params'] = dict(params)
+        self.app._save_operation(self.operation)
+        return dict(params)
+
+    def start_job(self, command, values, **kwargs):
+        job_id = kwargs.get('reserved_job_id') or self.app._job_id_factory()
+        kwargs['reserved_job_id'] = job_id
+        self.operation['current_job'] = job_id
+        self.operation['launch_pending'] = True
+        self.app._save_operation(self.operation)
+        return self.app.start_job(command, values, **kwargs)
+
+
+class OperationsMixin:
+    def _restore_operations(self):
+        self._operations = {}
+        self._operation_workers = {}
+        self._operation_shutdown = threading.Event()
+        base = self.state_dir.resolve() / '.private-operations'
+        if base.is_dir():
+            for path in base.glob('*/operation.json'):
+                try:
+                    raw = self._bounded_private_bytes(path, max_bytes=512 * 1024, label='operation')
+                    value = json.loads(raw)
+                    if (value['kind'] not in _TITLES or value['id'] != path.parent.name
+                            or not re.fullmatch('[a-f0-9]{32}', value['id'])
+                            or value['status'] not in {'preparing', 'ready', 'failed', 'stopped'}
+                            or not isinstance(value['params'], dict)
+                            or not isinstance(value['jobs'], list)
+                            or not isinstance(value['current_job'], str)
+                            or not isinstance(value['signature'], str)
+                            or type(value['step']) is not int
+                            or not 0 <= value['step'] <= len(self._operation_labels(value))):
+                        continue
+                    self._operations[value['id']] = value
+                except (OSError, ValueError, KeyError, TypeError):
+                    continue
+        for value in self._operations.values():
+            if value['status'] == 'preparing':
+                self._ensure_operation_worker(value['id'])
+
+    def _operation_root(self, operation):
+        return self.state_dir.resolve() / '.private-operations' / operation['id']
+
+    def _save_operation(self, operation):
+        root = self._operation_root(operation)
+        root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self._write_private_workflow_file(root / 'operation.json',
+            (json.dumps(operation, sort_keys=True, ensure_ascii=False) + '\n').encode())
+
+    def _operation_snapshot(self, operation):
+        if not operation.get('snapshot_manifest'):
+            return {}
+        return self._workflow_execution_snapshot(dict(operation, root=self._operation_root(operation)))
+
+    def _start_operation(self, kind, params, *, snapshot=None):
+        if kind not in _TITLES:
+            raise ValueError('Choose a supported operation')
+        params = dict(params)
+        if kind != 'direct' and not params.get('campaign_id'):
+            raise ValueError('Save the campaign before preparing this operation')
+        # Exact frozen selection: a second click/review reopens existing work.
+        signature = hashlib.sha256(json.dumps({'kind':kind, 'params':params}, sort_keys=True).encode()).hexdigest()
+        with self._app_lock:
+            for operation in self._operations.values():
+                if operation['signature'] == signature and operation['status'] in {'preparing', 'ready'}:
+                    return operation['id']
+            operation = dict(id=uuid4().hex, kind=kind, params=params, signature=signature,
+                status='preparing', step=0, current_job='', jobs=[], launch_pending=False, error='',
+                created_at=time.time(), failed_jobs=[], snapshot_manifest={})
+            operation['original_params'] = dict(params)
+            if kind == 'direct':
+                operation['acquisition'] = self._builder_model_acquisition_required(params)
+            root = self._operation_root(operation)
+            root.mkdir(parents=True, mode=0o700)
+            for name, payload in (snapshot or {}).items():
+                name = self._workflow_component_name(name)
+                self._write_private_workflow_file(root / ('snapshot-'+name+'.bin'), payload)
+                operation['snapshot_manifest'][name] = dict(bytes=len(payload), sha256=hashlib.sha256(payload).hexdigest())
+            self._operations[operation['id']] = operation
+            self._save_operation(operation)
+            self._ensure_operation_worker(operation['id'])
+            return operation['id']
+
+    def _ensure_operation_worker(self, operation_id):
+        existing = self._operation_workers.get(operation_id)
+        if existing is not None and existing.is_alive():
+            return
+        def work():
+            while not self._operation_shutdown.is_set():
+                with self._app_lock:
+                    if self._operation_shutdown.is_set():
+                        return
+                    operation = self._operations[operation_id]
+                    if operation['status'] != 'preparing':
+                        return
+                    try:
+                        self._reconcile_locked()
+                        self._advance_operation(operation)
+                    except Exception as exc:
+                        operation.update(status='failed', error='Preparation could not continue: '+str(exc)[:1200])
+                        self._save_operation(operation)
+                if self._operation_shutdown.wait(3):
+                    return
+        worker = threading.Thread(target=work, name='prepare-'+operation_id[:8], daemon=True)
+        self._operation_workers[operation_id] = worker
+        worker.start()
+
+    @staticmethod
+    def _operation_labels(operation):
+        if operation['kind'] == 'direct':
+            return _DIRECT if operation.get('acquisition') else ('Checking the workload',)
+        return tuple(item[0] for item in _STEPS[operation['kind']])
+
+    def _advance_operation(self, operation):
+        if operation['status'] != 'preparing':
+            return
+        try:
+            if operation['current_job']:
+                job = self.jobs.get(operation['current_job'])
+                if job is None:
+                    raise ValueError('Preparation was interrupted before its job was registered. No next job was started.')
+                state = job.state()
+                if state in {'running', 'queued', 'starting', 'retry_wait', 'retry_waiting'}:
+                    return
+                partial_native = (job.command == 'retained_native_judge_prepare'
+                    and state == 'failed' and job.exit_code() == 1)
+                if not partial_native and (state != 'complete' or job.exit_code() != 0):
+                    raise ValueError(job.failure or 'The preparation job '+job.job_id+' ended as '+state+'.')
+                operation['jobs'].append(job.job_id)
+                operation['current_job'] = ''
+                operation['launch_pending'] = False
+                operation['step'] += 1
+                self._save_operation(operation)
+            length = len(self._operation_labels(operation))
+            if operation['step'] == length:
+                operation['status'] = 'ready'
+                self._publish_operation_selection(operation)
+                self._save_operation(operation)
+                return
+            if operation['kind'] == 'direct':
+                job = self._launch_direct_preparation_step(operation)
+            else:
+                _, module, function = _STEPS[operation['kind']][operation['step']]
+                preparer = getattr(importlib.import_module('.'+module, __package__), function)
+                job = preparer(_Context(self, operation), dict(operation['params']))
+            operation['current_job'] = job.job_id
+            operation['launch_pending'] = False
+            self._save_operation(operation)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            operation['status'] = 'failed'
+            operation['error'] = str(exc)[:1500]
+            self._save_operation(operation)
+
+    def _publish_operation_selection(self, operation):
+        """Update preparation pointers only if the operator has not edited the draft."""
+        owner = operation['params'].get('campaign_id')
+        if owner and operation['kind'] != 'direct':
+            saved = self.db.workspace_definition(owner)
+            if saved == operation['original_params']:
+                self.db.save_workspace_definition(owner, operation['params'])
+
+    def _launch_direct_preparation_step(self, operation):
+        step = operation['step']
+        if not operation['acquisition']:
+            snapshot = self._operation_snapshot(operation)
+            command, values, params = self._compose_from_builder(operation['params'], execution_snapshot=snapshot)
+            try:
+                attacker = self._materialize_prepared_attacker_config(params,
+                    snapshot_payload=snapshot.get('attacker_config'), artifact_snapshots=snapshot)
+                if attacker is not None:
+                    values.update({'--attacker-config':str(attacker),
+                        '--attacker-config-sha256':hashlib.sha256(attacker.read_bytes()).hexdigest()})
+                preflight = self._builder_preflight_values(values, output=self._preflight_output_dir(params))
+                return _Context(self, operation).start_job(command, preflight,
+                    builder_params=params, execution_snapshot=snapshot)
+            except BaseException:
+                self._discard_unlaunched_local_config(values)
+                raise
+        if step in {0, 3}:
+            next_stage = 'preflight' if step == 0 else 'run'
+            params = dict(operation['params'], _model_acquisition_next=next_stage)
+            reserved = self._job_id_factory()
+            operation['current_job'] = reserved
+            operation['launch_pending'] = True
+            self._save_operation(operation)
+            job = self._start_model_acquisition_plan(params,
+                execution_snapshot=self._operation_snapshot(operation), reserved_job_id=reserved)
+            return job
+        if step in {1, 4}:
+            plan_id = operation['jobs'][0 if step == 1 else 3]
+            workflow = self._model_acquisition_workflows[plan_id]
+            existing = workflow.get('acquisition_job_id')
+            if existing and self.jobs[existing].state() != 'failed':
+                return self.jobs[existing]
+            reserved = self._job_id_factory()
+            operation.update(current_job=reserved, launch_pending=True)
+            self._save_operation(operation)
+            return self._start_model_acquisition_download(plan_id, reserved_job_id=reserved)
+        # The only automatic run is the no-call preflight. Generation is never
+        # a background transition, including probe/canary execution.
+        acquisition = operation['jobs'][1]
+        if self._model_acquisition_workflows[acquisition]['next_stage'] != 'preflight':
+            raise ValueError('Automatic preparation may only execute a no-call preflight')
+        reserved = self._job_id_factory()
+        operation['current_job'] = reserved
+        operation['launch_pending'] = True
+        self._save_operation(operation)
+        return self._start_model_acquisition_run(acquisition, reserved_job_id=reserved)
+
+    def _stop_operation(self, operation_id):
+        with self._app_lock:
+            operation = self._operations.get(operation_id)
+            if operation is None or operation['status'] != 'preparing':
+                raise ValueError('Only an active preparation can be stopped')
+            operation['status'] = 'stopped'
+            self._save_operation(operation)  # Prevent the next handoff first.
+            job = self.jobs.get(operation['current_job'])
+            if job is not None and job.state() == 'running':
+                self.stop_job(job.job_id)
+
+    def _retry_operation(self, operation_id):
+        with self._app_lock:
+            operation = self._operations.get(operation_id)
+            if operation is None or operation['status'] not in {'failed', 'stopped'}:
+                raise ValueError('Only interrupted preparation can be continued')
+            job = self.jobs.get(operation['current_job'])
+            if job is not None and job.state() in {'running', 'queued', 'starting'}:
+                raise ValueError('The previous preparation is still stopping. Wait for it to finish.')
+            if job is not None and job.state() != 'complete':
+                # This can only re-enable a failed no-call preflight, never a
+                # consumed target-generation workflow.
+                if operation['kind'] == 'direct' and operation.get('acquisition') and operation['step'] == 2:
+                    workflow = self._model_acquisition_workflows[operation['jobs'][1]]
+                    if workflow['next_stage'] != 'preflight':
+                        raise ValueError('Only a no-call preflight can be resumed automatically')
+                    workflow['consumed'] = False
+                    self._persist_model_acquisition_workflow(workflow)
+                operation['failed_jobs'].append(job.job_id)
+                operation['current_job'] = ''
+            operation.update(status='preparing', error='')
+            self._save_operation(operation)
+            # A failed worker may still be returning from its last cycle.
+            # It exits only on the status check above; if live, it will resume.
+            self._ensure_operation_worker(operation_id)
+
+    def _operation_review(self, operation):
+        params = dict(operation['params'])
+        if operation['kind'] == 'direct':
+            if not operation['acquisition']:
+                command, values, params = self._compose_from_builder(params, execution_snapshot=self._operation_snapshot(operation))
+                try:
+                    return self._preview_page(command, values, params, prepared=True)
+                finally:
+                    self._discard_unlaunched_local_config(values)
+            acquisition = operation['jobs'][-1]
+            workflow = self._model_acquisition_workflows[acquisition]
+            ceilings, eligible = self._ceilings_card(workflow['params'])
+            mode = params.get('mode', 'measured')
+            label = {'attestation_probe':'Start probe', 'diagnostic_canary':'Start canary'}.get(mode, 'Start run')
+            if workflow.get('consumed'):
+                action = '<p>This prepared run has already been started. Its results remain in this campaign.</p>'
+            elif eligible:
+                ticket = self._new_launch_ticket({'acquisition_job_id':acquisition}, purpose='acquisition_run')
+                action = ('<form class="action-row" method="post" action="/build/model-acquisition/run">'
+                    '<input type="hidden" name="launch_ticket" value="'+html.escape(ticket)+'">'
+                    '<button>'+label+'</button></form>')
+            else:
+                action = '<p class="notice amber">The workload exceeds the configured limits. Adjust the limits or selection in Build.</p>'
+            experiment = '<section class="card"><h2>Your prepared run</h2><dl>'
+            for name, key in [('Models','local'),('Hosted models','api'),('Inputs','corpora'),('Per-arm sample','limit'),('Evaluation','judges')]:
+                if params.get(key):
+                    experiment += '<dt>'+name+'</dt><dd>'+html.escape(params[key])+'</dd>'
+            experiment += '</dl><p>Preparation is complete. Starting makes real model calls; hosted calls may incur charges.</p></section>'
+            return _page('Review prepared run', '<h1>Review prepared run</h1>'
+                +self._campaign_banner(params.get('campaign_id', ''))+experiment+ceilings+action, active='Build')
+        module, function = {
+            'matched': ('builder_collection', 'collection_review'),
+            'local-judging': ('builder_native_judging', 'native_judging_review'),
+            'haiku-judging': ('builder_inventory_execution', 'review'),
+            'paired-haiku': ('builder_haiku_judging', 'haiku_judging_review'),
+        }[operation['kind']]
+        return getattr(importlib.import_module('.'+module, __package__), function)(self, params)
+
+    def _operation_page(self, operation_id):
+        operation = self._operations.get(operation_id)
+        if operation is None:
+            raise ValueError('This operation is unavailable')
+        if operation['status'] == 'ready':
+            return self._operation_review(operation)
+        escape = html.escape
+        labels = self._operation_labels(operation)
+        label = labels[min(operation['step'], len(labels)-1)]
+        body = '<h1>'+escape(_TITLES[operation['kind']])+'</h1>'+self._campaign_banner(operation['params'].get('campaign_id', ''))
+        body += '<section class="card"><h2>'+escape(label)+'</h2><p>Preparation runs automatically. '
+        body += 'No target answers or judge decisions are generated. You can leave this page and return.</p>'
+        if operation['status'] == 'preparing':
+            body += '<p role="status">Preparing your selected work...</p><form class="action-row" method="post" action="/operations/'+operation_id+'/stop"><button class="danger">Stop preparation</button></form>'
+            body += '<script>setTimeout(()=>window.uraBusy.reload(),3000);</script>'
+        else:
+            body += '<p class="notice amber">'+escape(operation['error'] or 'Preparation stopped.')+'</p>'
+            body += '<form class="action-row" method="post" action="/operations/'+operation_id+'/retry"><button>Continue preparation</button></form>'
+            body += '<p>Completed stages and existing installed models are retained. If settings need changing, return to Build.</p>'
+        body += '</section><details class="card"><summary>Technical job details</summary><ul>'
+        for job_id in operation.get('failed_jobs', [])+operation['jobs']+([operation['current_job']] if operation['current_job'] else []):
+            body += '<li><a href="/jobs/'+escape(job_id)+'">'+escape(job_id)+'</a></li>'
+        return _page('Preparing work', body+'</ul></details>', active='Build')
+
+    def _operation_links(self, owner):
+        selected = sorted((row for row in self._operations.values() if row['params'].get('campaign_id', '') == owner),
+            key=lambda row:row.get('created_at', 0))
+        if not selected:
+            return ''
+        body = '<section class="card"><h2>Prepared and active work</h2><ul>'
+        for row in selected[-8:][::-1]:
+            action = 'Review and start' if row['status'] == 'ready' else 'View progress' if row['status'] == 'preparing' else 'Inspect problem'
+            body += '<li>'+html.escape(_TITLES[row['kind']])+' - '+html.escape(row['status'])+' - <a href="/operations/'+row['id']+'">'+action+'</a></li>'
+        return body+'</ul></section>'
