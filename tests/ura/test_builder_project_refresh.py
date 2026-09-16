@@ -85,6 +85,8 @@ def test_refresh_button_keeps_other_choices_and_is_explicitly_saved(browser,stat
         page.get_by_role('tab',name='Admission',exact=True).click()
         assert 'differs' in page.locator('#project-receipt-refresh-status').inner_text()
         assert page.locator('[name=project_revision]').input_value()==previous['project_revision']
+        assert page.locator('#use-current-project-receipt').evaluate(
+            'e=>e.getBoundingClientRect().top-e.parentElement.previousElementSibling.getBoundingClientRect().bottom') >= 12
         before=page.locator('form#builder').evaluate('f=>Object.fromEntries(new FormData(f))')
         n=len(requests)
         page.get_by_role('button',name='Use current project receipt',exact=True).click()

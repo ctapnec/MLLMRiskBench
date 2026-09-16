@@ -2201,7 +2201,7 @@ class BuilderPageMixin:
             different_project = bool(prefill.get("project_revision_sha")) and (
                 prefill.get("project_revision_sha") != env_project_sha)
             project_refresh = (
-                "<div class='workflow-actions'><button type='button' class='ghost' "
+                "<div class='action-row'><button type='button' class='ghost' "
                 "id='use-current-project-receipt' data-path='" + html.escape(env_project, quote=True)
                 + "' data-sha='" + html.escape(env_project_sha, quote=True)
                 + "'>Use current project receipt</button></div>"
