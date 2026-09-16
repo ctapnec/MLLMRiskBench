@@ -1419,6 +1419,8 @@ class BuilderModelsMixin:
         "campaign_name",
         "campaign_guide",
         "modality_scope",
+        "setup_mode",
+        "_setup_resolved",
         "verify_model_sha256",
         "reset_open_circuits",
         "lock_stale_seconds",

@@ -23,6 +23,8 @@ class BuilderCaptureMixin:
         "campaign_name",
         "campaign_guide",
         "modality_scope",
+        "setup_mode",
+        "_setup_resolved",
         "retained_source_campaign",
         "retained_source_runs",
         "retained_sources_job",
@@ -135,7 +137,7 @@ class BuilderCaptureMixin:
         "hcap_credentials",
         "hcap_timeout",
     })
-    _BUILDER_UI_ONLY_FIELDS = frozenset({"_judge_model_ui", "local_choice"})
+    _BUILDER_UI_ONLY_FIELDS = frozenset({"_judge_model_ui", "local_choice", "_refresh_setup"})
 
     def _validate_builder_form_keys(self, form: Mapping[str, str]) -> None:
         """Reject unknown or malformed builder keys before any composition."""
@@ -606,7 +608,9 @@ class BuilderCaptureMixin:
                 "nanogcg_suffix_source",
             ):
                 params.pop(field, None)
-        return params
+        if params.get('setup_mode') not in {None, 'automatic', 'manual'}:
+            raise ValueError('Unknown campaign setup mode')
+        return self._automatic_campaign_setup(params, refresh=form.get('_refresh_setup') == 'yes')
 
     def _compose_from_builder(
         self,

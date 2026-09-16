@@ -191,6 +191,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--state-dir", type=Path, default=Path("runs") / "rig-web")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8642)
+    parser.add_argument('--runner-root', type=Path,
+                        help='Use this existing Runner checkout for jobs while the console is updated independently')
     parser.add_argument("--check-database", action="store_true",
                         help="headless: explicitly scan the existing SQLite database and exit (default: off)")
     parser.add_argument("--verify-artifact-sha256", action="store_true",
@@ -215,6 +217,7 @@ def main(argv: list[str] | None = None) -> int:
         help="UI diagnostic only: sleep this many seconds and exit",
     )
     args = parser.parse_args(argv)
+    runner_options = {'repo_root': args.runner_root.resolve(strict=True)} if args.runner_root else {}
     if args.verify_artifact_sha256 and not args.reindex:
         parser.error("--verify-artifact-sha256 requires --reindex")
     if args.check_database:
@@ -241,6 +244,7 @@ def main(argv: list[str] | None = None) -> int:
         app = RigWebApp(
             results_root=args.results_root.resolve(),
             state_dir=args.state_dir.resolve(),
+            **runner_options,
         )
         app.state_dir.mkdir(parents=True, exist_ok=True)
         try:
@@ -265,6 +269,7 @@ def main(argv: list[str] | None = None) -> int:
     app = RigWebApp(
         results_root=args.results_root.resolve(),
         state_dir=args.state_dir.resolve(),
+        **runner_options,
     )
     app.state_dir.mkdir(parents=True, exist_ok=True)
     _serve(app, args.host, args.port)

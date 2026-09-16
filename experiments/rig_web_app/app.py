@@ -6,6 +6,7 @@ from .builder_capture import BuilderCaptureMixin
 from .builder_models import BuilderModelsMixin
 from .builder_page import BuilderPageMixin
 from .builder_validation import BuilderValidationMixin
+from .builder_setup import BuilderSetupMixin
 from .dashboard import DashboardMixin
 from .lifecycle import LifecycleMixin
 from .pages import PagesMixin
@@ -15,6 +16,7 @@ from .human_review_pages import HumanReviewPagesMixin
 
 
 class RigWebApp(
+    BuilderSetupMixin,
     HumanReviewPagesMixin,
     WorkspacePagesMixin,
     LifecycleMixin,

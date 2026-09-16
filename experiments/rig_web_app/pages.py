@@ -681,7 +681,11 @@ class PagesMixin:
         listattr = f" list='dl-{html.escape(param.suggest)}'" if param.suggest else ""
         return f"<input type='text' name='{flag}'{listattr}>"
 
-    def _command_card(self, name: str, campaign_id: str = "") -> str:
+    def _command_card(self, name: str, campaign_id: str = "", *, manual: bool = False) -> str:
+        if name == 'live_attestation' and not manual:
+            return (self._transport_check_form(campaign_id)
+                    + "<details><summary>Advanced transport-check overrides</summary>"
+                    + self._command_card(name, campaign_id, manual=True) + "</details>")
         entry = self.commands[name]
         fields = []
         for param in entry.params:

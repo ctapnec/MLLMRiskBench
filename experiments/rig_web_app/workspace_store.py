@@ -126,6 +126,33 @@ class WorkspaceStoreMixin:
         )
         return str(rows[0]["campaign_id"]) if rows else ""
 
+    def completed_workspace_transport_jobs(self, campaign_id: str):
+        """Bounded campaign-local lookup, not a scan of historical artifacts."""
+        if campaign_id:
+            self.require_workspace(campaign_id)
+        else:
+            return self._query(
+                "SELECT j.job_id,j.argv FROM jobs j WHERE j.command='live_attestation' "
+                "AND j.state='complete' AND j.exit_code=0 AND NOT EXISTS "
+                "(SELECT 1 FROM campaign_members m WHERE m.member_kind='job' AND m.member_id=j.job_id) "
+                "ORDER BY j.started_at DESC,j.job_id DESC LIMIT 100", ())
+        return self._query(
+            "SELECT j.job_id,j.argv FROM jobs j JOIN campaign_members m "
+            "ON m.member_kind='job' AND m.member_id=j.job_id "
+            "WHERE m.campaign_id=? AND j.command='live_attestation' "
+            "AND j.state='complete' AND j.exit_code=0 "
+            "ORDER BY j.started_at DESC,j.job_id DESC LIMIT 100", (campaign_id,))
+
+    def completed_probe_jobs(self, campaign_id: str = ''):
+        where = " AND m.campaign_id=?" if campaign_id else ""
+        return self._query(
+            "SELECT j.job_id,j.builder_params,j.out_dir,m.campaign_id,c.name AS campaign_name "
+            "FROM jobs j LEFT JOIN campaign_members m ON m.member_kind='job' AND m.member_id=j.job_id "
+            "LEFT JOIN campaigns c ON c.campaign_id=m.campaign_id "
+            "WHERE j.command='run_matrix' AND j.run_kind='attestation_probe' "
+            "AND j.state='complete' AND j.exit_code=0" + where +
+            " ORDER BY j.started_at DESC,j.job_id DESC LIMIT 100", (campaign_id,) if campaign_id else ())
+
     def attach_workspace_member(
         self, campaign_id: str, member_kind: str, member_id: str, role: str
     ) -> None:

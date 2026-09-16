@@ -1185,7 +1185,8 @@ setBuildSummary('build-summary-local','dtype: '+namedValue('dtype','auto')+
 '; model file checks: '+(checkedName('verify_model_sha256')?'full SHA (slow)':'metadata (no weight hashing)')+
 '; default quantization: '+namedValue('quantization','auto')+
 (localPrecisions.length?'; selected model: '+localPrecisions.join(', '):''));
-setBuildSummary('build-summary-output',namedValue('out','not set'));
+setBuildSummary('build-summary-output',namedValue('setup_mode','')==='automatic'?
+'Assigned automatically on review':namedValue('out','not set'));
 var prev=document.getElementById('buildpreview');
 if(prev){prev.textContent=parts.join(' ');}}
 form.addEventListener('change',refresh);

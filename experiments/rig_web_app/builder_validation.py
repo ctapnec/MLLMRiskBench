@@ -2049,7 +2049,10 @@ class BuilderValidationMixin:
             if not 0 < age_value <= 8760:
                 errors["max_age"] = "required: maximum attestation age in hours, in (0, 8760]"
             if not att_rows:
-                errors["att"] = "at least one live-attestation receipt/digest pair is required"
+                errors["att"] = ("No matching completed transport checks are available for this selection. "
+                                 "Use Tools - live_attestation to select a completed probe; no receipt copying is needed."
+                                 if params.get('setup_mode') == 'automatic' else
+                                 "at least one live-attestation receipt/digest pair is required")
             if not has_project:
                 errors["project_revision"] = (
                     "required: validated project-revision receipt and digest "

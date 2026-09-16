@@ -449,6 +449,26 @@ class BuilderPageMixin:
             else:
                 safe_prefill[safe_key] = safe_value
         prefill = safe_prefill
+        setup_mode = prefill.get('setup_mode', 'automatic')
+        setup_preview = dict(prefill, setup_mode=setup_mode)
+        if setup_mode == 'automatic':
+            setup_preview = self._automatic_campaign_setup(setup_preview, refresh=True)
+        _, transport_status = self._campaign_transport_receipts(setup_preview)
+        setup_controls = (
+            "<div class='card'><h2>Automatic setup</h2>"
+            "<p>Choose the experiment, not filenames. The console supplies output paths, scope, "
+            "software/source records and matching saved transport checks. No job starts here.</p>"
+            "<label>Setup <select name='setup_mode' form='builder' id='setup-mode'>"
+            "<option value='automatic'" + (" selected" if setup_mode == 'automatic' else "")
+            + ">Automatic (recommended)</option><option value='manual'"
+            + (" selected" if setup_mode == 'manual' else "") + ">Advanced overrides</option></select></label>"
+            "<p id='automatic-transport-status' class='note' role='status'>"
+            + html.escape(transport_status) + "</p><p class='note'>Existing completed checks are reused; "
+            "the maximum age defaults to 24 hours. Review shows the exact resolved settings.</p>"
+            + "<p><a href='/commands?cmd=live_attestation&amp;campaign_id="
+            + html.escape(prefill.get('campaign_id','')) + "'>Select a completed probe</a></p>"
+            + "<p class='fielderr'>" + html.escape((errors or {}).get('att','')) + "</p></div>"
+        )
         errors = {
             durable_ui_text(key): durable_ui_text(value)
             for key, value in dict(errors or {}).items()
@@ -2342,6 +2362,7 @@ class BuilderPageMixin:
             + _page_tabpanel("build-runtimes", hardware_card + ollama_card
                 + "<div id='framework-runtimes'>" + framework_runtime_panel + '</div>')
             + "<form method='post' action='/build/review' id='builder'>"
+            "<input type='hidden' name='_refresh_setup' value='yes'>"
             # hidden composed fields
             "<input type='hidden' name='corpora'><input type='hidden' name='api'>"
             "<input type='hidden' name='local'>"
@@ -2465,6 +2486,8 @@ class BuilderPageMixin:
             "</section><section class='page-tabpanel' id='build-admission' "
             "role='tabpanel' aria-labelledby='build-admission-tab' tabindex='0' "
             "data-page-panel='build-admission'>"
+            + setup_controls
+            + "<fieldset id='advanced-setup-fields'><legend>Advanced overrides</legend>"
             "<div class='card'><h2>" + _icon("receipt") + "Receipts (fail-closed admission)</h2>"
             "<p class='note'>Every non-dry run requires the validated "
             "project-revision receipt; every real source arm requires the "
@@ -2513,7 +2536,7 @@ class BuilderPageMixin:
             + "".join(att_rows_html)
             + "</div>"
             "<button type='button' class='ghost' id='addatt'>"
-            "Add receipt row</button></div>"
+            "Add receipt row</button></div></fieldset>"
             "</section><section class='page-tabpanel' id='build-execution' "
             "role='tabpanel' aria-labelledby='build-execution-tab' tabindex='0' "
             "data-page-panel='build-execution'>"
@@ -2661,6 +2684,10 @@ class BuilderPageMixin:
             )
             + "</div></div>"
             "<div class='card'><h2>" + _icon("folder") + "Output</h2>"
+            "<p id='automatic-output-note' class='note'>The output directory is assigned automatically "
+            "from this run's settings. Review execution shows its exact location. "
+            "Use Admission - Advanced overrides only to supply a custom path.</p>"
+            "<fieldset id='advanced-output-fields'>"
             "<div class='cols'>"
             + text_field(
                 "out",
@@ -2668,7 +2695,7 @@ class BuilderPageMixin:
                 "output directory under the rig results root",
                 default="runs/thesis/lane",
             )
-            + "</div></div>"
+            + "</div></fieldset></div>"
             + "<div class='buildbar'><button type='submit' class='ghost' data-save-campaign formaction='/build/save'>Save campaign</button>"
             "<button type='submit'>"
             + _icon("play", size=15)
@@ -2698,5 +2725,12 @@ class BuilderPageMixin:
             ).replace("</", "<\\/")
             + "</script>"
             + _BUILDER_SCRIPT
+            + "<script>(()=>{const choice=document.getElementById('setup-mode');"
+            "function sync(){const automatic=choice.value==='automatic';"
+            "['advanced-setup-fields','advanced-output-fields'].forEach(id=>{const field=document.getElementById(id);"
+            "field.hidden=automatic;field.disabled=automatic;});"
+            "document.getElementById('automatic-output-note').hidden=!automatic;"
+            "document.getElementById('automatic-transport-status').hidden=!automatic;}"
+            "choice.addEventListener('change',sync);sync();})();</script>"
         )
         return _page("Campaign builder", body, active="Build")

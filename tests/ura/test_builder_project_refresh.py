@@ -62,7 +62,7 @@ def test_stale_receipt_does_not_block_offline_work(state):
 @pytest.mark.parametrize('width',[1440,390])
 def test_refresh_button_keeps_other_choices_and_is_explicitly_saved(browser,state,width):  # noqa: F811
     app,previous,latest,old=state
-    params=dict(previous,work_kind='campaign',campaign_name='Existing Qwen draft',mode='attestation_probe',
+    params=dict(previous,work_kind='campaign',campaign_name='Existing Qwen draft',mode='attestation_probe',setup_mode='manual',
         corpora='xstest_full',modality_scope='text,image',attackers='replay',judges='rules,llm',limit='1',
         sample_seed='0',scope='demo',cap_target='16',cap_judge='16',cap_http='1',deadline='3600',
         out=str(app.results_root/'probe-text'))

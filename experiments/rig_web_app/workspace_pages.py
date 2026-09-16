@@ -89,6 +89,7 @@ class WorkspacePagesMixin:
         if not campaign_id:
             campaign_id = self.db.create_workspace(result["campaign_name"], "mixed")
         result.update(campaign_id=campaign_id, work_kind="campaign")
+        result = self._automatic_campaign_setup(result)
         result.pop("campaign_name", None)
         # An editable draft must retain its configured locators. Report-only
         # identities cannot be reopened as files. The builder allowlist excludes

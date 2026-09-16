@@ -4176,6 +4176,13 @@ class LifecycleMixin:
                 data = dict(form or {})
                 command = data.pop("command", "")
                 campaign_id = data.pop("campaign_id", "")
+                if command == 'live_attestation' and 'probe_job' in data:
+                    probe_job = data.pop('probe_job')
+                    if data:
+                        raise ValueError('Do not mix a saved probe selection with manual receipt fields')
+                    campaign_id, data, existing_job = self._transport_check_from_job(probe_job, campaign_id)
+                    if existing_job:
+                        return 303, '/jobs/' + existing_job, b''
                 if command in {
                     "run_matrix",
                     "model_acquire",
