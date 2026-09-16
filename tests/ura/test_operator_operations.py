@@ -2,11 +2,13 @@
 import importlib
 import json
 from types import SimpleNamespace
+from urllib.parse import urlsplit, parse_qsl
 
 import pytest
 
 from experiments.rig_web_app.operations import _STEPS
 from test_rig_web_model_acquisition import _app
+from test_rig_web_busy_browser import browser  # noqa: F401
 
 
 @pytest.fixture
@@ -14,6 +16,7 @@ def app(tmp_path, monkeypatch):
     value = _app(tmp_path)
     monkeypatch.setattr(value, '_ensure_operation_worker', lambda key: None)
     monkeypatch.setattr(value, '_reconcile_locked', lambda: None)
+    monkeypatch.setattr(value, '_read_lane_projection', lambda p:(None, 'not prepared'))
     yield value
     value.jobs.clear()
     value.close()
@@ -159,3 +162,63 @@ def test_corrupt_operation_metadata_cannot_crash_startup(app):
     (root/'operation.json').write_text(json.dumps(dict(id='a'*32,kind='direct',status='preparing',params=[],jobs=[],current_job='',step=-1)))
     app._restore_operations()
     assert not app._operations
+
+
+def test_exact_projection_and_unconsumed_preparation_are_reused(app, monkeypatch):
+    monkeypatch.setattr(app, '_builder_model_acquisition_required', lambda p:True)
+    monkeypatch.setattr(app, '_read_lane_projection', lambda p:({'existing':True}, ''))
+    monkeypatch.setattr(app, '_durable_builder_params', lambda p:p)
+    params = dict(local='same-model', max_target='4')
+    app._model_acquisition_workflows['ready'] = dict(params=params, next_stage='run', consumed=False,
+        plan_job_id='plan', acquisition_job_id='ready')
+    child(app, 'ready')
+    key = app._start_operation('direct', params)
+    operation = app._operations[key]
+    assert operation['step'] == 5 and operation['jobs'][-1] == 'ready'
+    app._advance_operation(operation)
+    assert operation['status'] == 'ready'
+    changed = app._operations[app._start_operation('direct', dict(params, max_target='5'))]
+    assert changed['step'] == 3, 'A receipt for different caps must not be adopted'
+
+
+@pytest.mark.parametrize('width', [1440, 390])
+def test_progress_stop_busy_guard_and_final_review_in_browser(app, monkeypatch, browser, width):
+    monkeypatch.setattr(app, '_builder_model_acquisition_required', lambda p:True)
+    monkeypatch.setattr(app, '_ceilings_card', lambda p:('<p>Four target calls, no hosted charges.</p>',True))
+    key = app._start_operation('direct', dict(local='vllm:Qwen/Qwen3-VL-8B-Instruct',corpora='xstest_full,vlsbench_release'))
+    operation = app._operations[key]
+    page = browser.new_page(viewport=dict(width=width,height=1000))
+    held, errors = [], []
+    page.on('pageerror', lambda error:errors.append(str(error)))
+    def route(request):
+        path = urlsplit(request.request.url).path
+        if request.request.method == 'POST':
+            held.append(request)
+        else:
+            status,mime,body = app.handle('GET', path)
+            request.fulfill(status=status,content_type=mime,body=body)
+    page.route('http://operations.test/**', route)
+    try:
+        page.goto('http://operations.test/operations/'+key)
+        assert page.get_by_role('button',name='Stop preparation',exact=True).is_visible()
+        assert page.locator('header').is_visible()
+        assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+        page.evaluate("() => {for(let i=0;i<1000;i++) document.querySelector('form button').click();}")
+        page.wait_for_function('window.uraBusy.isBusy()')
+        assert len(held) == 1
+        request = held.pop()
+        status,location,body = app.handle('POST',urlsplit(request.request.url).path,dict(parse_qsl(request.request.post_data or '')))
+        request.fulfill(status=status,headers={'Location':location},body=body)
+        page.get_by_role('button',name='Continue preparation',exact=True).wait_for()
+        assert not page.locator('#busy-overlay').is_visible()
+        assert operation['status'] == 'stopped'
+        app._model_acquisition_workflows['ready'] = dict(params=operation['params'],consumed=False)
+        operation.update(status='ready',step=5,jobs=['','','','plan','ready'])
+        page.reload()
+        assert page.get_by_role('button',name='Start run',exact=True).is_visible()
+        assert not page.get_by_role('button',name='Start run',exact=True).is_disabled()
+        assert not page.get_by_role('button',name='Download / acquire models',exact=True).count()
+        assert not app.jobs
+        assert not errors
+    finally:
+        page.close()

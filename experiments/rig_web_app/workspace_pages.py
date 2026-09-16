@@ -381,7 +381,8 @@ class WorkspacePagesMixin:
             "<a class='button ghost' href='/jobs?campaign_id=" + campaign_id + "'>Campaign jobs</a> "
             "<a class='button ghost' href='/commands?campaign_id=" + campaign_id + "'>Run tools</a></p>"
             + self._campaign_guide(campaign_id)
-            + navigation + "<section class='card'><h2>" + section.title() + "</h2>" + content + "</section>",
+            + navigation + (self._operation_links(campaign_id) if section in {'overview', 'activity'} else '')
+            + "<section class='card'><h2>" + section.title() + "</h2>" + content + "</section>",
             active="Campaigns" if section in {"definition", "activity"} else "Stats",
         )
 

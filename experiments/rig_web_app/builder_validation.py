@@ -2619,12 +2619,17 @@ class BuilderValidationMixin:
         params: Mapping[str, str],
         *,
         prepared: bool = False,
+        held_snapshot: Mapping[str, bytes] | None = None,
     ) -> bytes:
         """Durable argv identity + ceilings confirmation before a paid start."""
 
-        reviewed_params, execution_snapshot, _snapshot_sha256 = (
-            self._capture_execution_config_snapshot(params)
-        )
+        if held_snapshot is not None:
+            reviewed_params = dict(params)
+            execution_snapshot = self._validate_execution_snapshot(params, held_snapshot)
+        else:
+            reviewed_params, execution_snapshot, _snapshot_sha256 = (
+                self._capture_execution_config_snapshot(params)
+            )
         (
             argv,
             _retained_params,

@@ -104,7 +104,8 @@ def test_build_renders_indexed_selection_and_distinct_prepare_action(study, monk
     status, _, body = app.handle('POST', '/build/source-runs', params)
     page = body.decode()
     assert status == 200
-    assert "formaction='/build/prepare-inputs'" in page
+    assert "formaction='/build/prepare-operation/matched'" in page
+    assert "formaction='/build/prepare-inputs'" not in page
     assert "data-source-run value='saved' checked" in page
     assert 'Missing and truncated responses are included' in page
     assert 'does not change the current pipeline' in page

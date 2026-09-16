@@ -123,6 +123,7 @@ class OperationsMixin:
             operation['original_params'] = dict(params)
             if kind == 'direct':
                 operation['acquisition'] = self._builder_model_acquisition_required(params)
+                self._reuse_direct_preparation(operation)
             root = self._operation_root(operation)
             root.mkdir(parents=True, mode=0o700)
             for name, payload in (snapshot or {}).items():
@@ -133,6 +134,28 @@ class OperationsMixin:
             self._save_operation(operation)
             self._ensure_operation_worker(operation['id'])
             return operation['id']
+
+    def _reuse_direct_preparation(self, operation):
+        params = operation['params']
+        projection, _ = self._read_lane_projection(params)
+        if projection is None:
+            return
+        # A valid exact projection need not be recomputed. Empty positions
+        # represent skipped technical stages, not invented jobs.
+        operation.update(step=3 if operation['acquisition'] else 1,
+            jobs=['', '', ''] if operation['acquisition'] else [])
+        if not operation['acquisition']:
+            return
+        wanted = {k:v for k,v in self._durable_builder_params(params).items() if v}
+        for workflow in self._model_acquisition_workflows.values():
+            retained = {k:v for k,v in self._durable_builder_params(workflow['params']).items() if v}
+            if (workflow['next_stage'] != 'run' or workflow.get('consumed')
+                    or retained != wanted):
+                continue
+            job = self.jobs.get(workflow.get('acquisition_job_id'))
+            if job is not None and job.state() == 'complete' and job.exit_code() == 0:
+                operation.update(step=5, jobs=['','','',workflow['plan_job_id'],job.job_id])
+                return
 
     def _ensure_operation_worker(self, operation_id):
         existing = self._operation_workers.get(operation_id)
@@ -302,7 +325,8 @@ class OperationsMixin:
             if not operation['acquisition']:
                 command, values, params = self._compose_from_builder(params, execution_snapshot=self._operation_snapshot(operation))
                 try:
-                    return self._preview_page(command, values, params, prepared=True)
+                    return self._preview_page(command, values, params, prepared=True,
+                        held_snapshot=self._operation_snapshot(operation))
                 finally:
                     self._discard_unlaunched_local_config(values)
             acquisition = operation['jobs'][-1]
@@ -354,7 +378,7 @@ class OperationsMixin:
             body += '<form class="action-row" method="post" action="/operations/'+operation_id+'/retry"><button>Continue preparation</button></form>'
             body += '<p>Completed stages and existing installed models are retained. If settings need changing, return to Build.</p>'
         body += '</section><details class="card"><summary>Technical job details</summary><ul>'
-        for job_id in operation.get('failed_jobs', [])+operation['jobs']+([operation['current_job']] if operation['current_job'] else []):
+        for job_id in filter(None, operation.get('failed_jobs', [])+operation['jobs']+([operation['current_job']] if operation['current_job'] else [])):
             body += '<li><a href="/jobs/'+escape(job_id)+'">'+escape(job_id)+'</a></li>'
         return _page('Preparing work', body+'</ul></details>', active='Build')
 

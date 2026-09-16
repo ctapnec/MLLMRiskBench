@@ -50,13 +50,11 @@ def _guidance(app, params):
     local = bool(params.get('local'))
     hosted = bool(params.get('api'))
     route = 'matched' if matched else 'mixed' if local and hosted else 'local' if local else 'hosted' if hosted else 'choose'
-    prepare_target = ('counted-collection' if params.get('retained_replays_job') else
-        'matched-replay-inputs' if params.get('retained_budget_job') else
-        'matched-forecast' if params.get('retained_sources_job') else 'retained-inputs') if matched else 'pipeline-review'
+    prepare_target = 'automatic-comparison' if matched else 'pipeline-review'
     judging_links = ([('Open local saved-output judging', link('general', 'retained-local-judging'))]
         if params.get('retained_programs_job') else [('Complete collection preparation', link('general', prepare_target))]) if matched else [
             ('Choose judges', link('evaluation', 'evaluation-judges'))]
-    if matched and params.get('retained_native_judging_job'):
+    if matched and params.get('retained_programs_job'):
         judging_links += [('Open Haiku saved-output judging', link('general', 'retained-haiku-judging')),
             ('Inspect same-input output coverage', link('general', 'retained-judging-coverage'))]
     steps = [
@@ -79,7 +77,8 @@ def _guidance(app, params):
         ('Inputs', 'Choose a small, interpretable input selection',
          'For fresh inputs, select your corpora and attacks in Pipeline, then set the per-arm limit, '
          'sampling policy and seeds in Execution. Keep text and image counts explicit. For reused inputs, '
-         'select the source campaign and saved runs, then Prepare selected inputs. That preparation makes no generation calls. '
+         'select the source campaign and saved runs, then set request caps in General. Prepare comparison and review '
+         'handles input extraction and the following preparation stages automatically. It makes no generation calls. '
          'HarmBench, T3MP3ST, NanoGCG and IDEATOR have additional preparation controls when selected. '
          'Follow the chosen attacker panel before measured execution; corpus selection alone does not prepare an attack.',
          [('Select arms and corpora', link('pipeline', 'input-corpora')),
@@ -94,16 +93,18 @@ def _guidance(app, params):
          [('Choose judges', link('evaluation', 'evaluation-judges')), ('Set execution bounds', link('execution', 'execution-budgets')),
           ('Inspect local serving', link('execution', 'local-serving')), ('Configure hosted targets', '/config?file=api-targets#cfg-editor')]),
         ('Prepare', 'Prepare and review before making target calls',
-         ('For this matched selection: Prepare selected inputs, Prepare forecast, Prepare replay inputs, '
-          'then Prepare counted collection. After each job completes, return to this saved campaign in Build. '
-          'Review prepared collection shows the exact workload and cost bound. Token counting can contact '
-          'the provider but does not generate answers.') if matched else
-         ('Save the campaign, then Compose & review. Run the no-call preflight and inspect its counts. '
+         ('Click Prepare comparison and review in General. One progress page follows input extraction, forecasting, '
+          'replay and execution preparation. Do not open or start the child jobs. The completed page shows the '
+          'workload and cost bound, then offers the explicit collection start. Token counting can contact '
+          'the provider but does not generate answers. Prepared and active work reopens this progress or review.') if matched else
+         ('Use Compose & review, then Prepare and review. The console handles model planning, installed-model reuse, '
+          'the no-call preflight and final execution preparation on one page. Existing exact preparation is reused. '
+          'When ready, review the workload and click Start run (or Start probe for a diagnostic). '
           'Keep Admission on Automatic: output locations, execution scope, software/source records and saved '
           'transport checks are supplied for campaigns and single runs. Technical text fields are optional '
           'Advanced overrides. In Tools, live_attestation selects a completed probe by name; it fills the '
           'scope and output automatically and reuses an existing completed check. No receipt rows or hashes '
-          'need copying. Local acquisition controls reuse installed models, not a new runtime installation. Measured work '
+          'need copying. No separate plan/acquire/preflight buttons are required. Measured work '
           'needs valid transport evidence for each selected route/modality. Use a diagnostic probe when that '
           'evidence is missing, then return to the measured selection. The probe makes real calls; the projection does not.'),
          [('Open the next preparation controls', link('general', prepare_target)),
@@ -116,11 +117,11 @@ def _guidance(app, params):
          [('Open review controls', link('general', 'prepared-collection' if params.get('retained_programs_job') else 'pipeline-review')),
           ('Open campaign jobs', '/jobs?campaign_id=' + owner if owner else link('general'))]),
         ('Judge', 'Judge each saved answer, not just its input',
-         ('Use Judge retained outputs locally: prepare remaining source runs, select the saved preparation, '
-          'then Review local judging. For Haiku, review Same-input output coverage and all-output judging '
-          'funding. Select Haiku in Haiku comparison of saved outputs, then prepare and review all-output '
-          'Haiku judging. Only its explicit start buys verdicts. The paired comparison limit and USD fields '
-          'do not change all-output judging. Image assessments use the retained text proxy.') if matched else
+         ('In General, click Review local judging. Preparation is automatic; the completed page offers Start or resume '
+          'local judging. For Haiku choose the judge and input limit, then Review all-output Haiku judging. Its '
+          'inventory, matching, counting and cost calculation run automatically before the final paid start. '
+          'Missing answers and funding shortfalls remain explicit. Optional sampled paired comparison has its own '
+          'limit and USD fields; these do not change all-output judging. Image assessments use the retained text proxy.') if matched else
          ('For direct Runner work, the selected judging cascade evaluates collected answers. A cascade may '
           'decide before reaching its model-backed judge; it is not two independent verdicts. Missing text, '
           'abstentions and invalid assessments must remain visible. Post-hoc Haiku comparison needs a prepared '
@@ -153,7 +154,7 @@ def _guidance(app, params):
         ('Human review', 'Evaluate saved answers or arrange independent review',
          'For active or finished campaigns, open Human evaluation and use Review saved answers for your own evaluation: choose Saved results, '
          'name the review, choose its rubric and source-cluster count, acknowledge sensitive content and click '
-         'Prepare answers for review. When preparation finishes, click Open evaluation form. Read the prompt, '
+         'Prepare answers for review. The evaluation form opens automatically after preparation. Read the prompt, '
          'images and answer, use Next through the rating dimensions, then Save evaluation. Review progress and '
          'export reopens your saved work and downloads personal evaluations, including unfinished items. '
          'This path has no study-arrangement or enrollment fields; personal ratings are not independent evidence. '
@@ -213,6 +214,15 @@ def _guidance(app, params):
         notice = 'The latest console job completed. Check what that job covered; this does not mean the whole campaign is finished.'
     elif matched:
         stage = 'Prepare'
+    operations = sorted((row for row in getattr(app, '_operations', {}).values()
+        if row['params'].get('campaign_id') == owner and row['status'] in {'preparing', 'ready', 'failed', 'stopped'}),
+        key=lambda row:row.get('created_at', 0))
+    if operations:
+        current = operations[-1]
+        stage = 'Recovery' if current['status'] in {'failed', 'stopped'} else 'Prepare'
+        notice = ('Preparation is '+current['status']+'. Open the operation, not its internal child jobs. '
+            'Completed preparation still requires an explicit execution start.')
+        steps[positions[stage]][3].insert(0, ('Open prepared or active work', '/operations/'+current['id']))
     if latest is not None and latest['role'] == 'collection' and not matched and params.get('mode') == 'attestation_probe':
         notice += ' A diagnostic probe is not a measured result; finish its transport evidence before measured execution.'
         if latest['state'] == 'complete':

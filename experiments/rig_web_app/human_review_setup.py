@@ -184,7 +184,8 @@ def setup_route(app, method, path, data, style):
                 f"{2*count:,} required independent ratings, plus any adjudication.</p>")
             body+="<p>No human ratings have been created by preparation.</p>"
             if personal:
-                body+="<form method='post'><button>Open evaluation form</button></form>"
+                body+="<form method='post' id='open-personal-review'><button>Open evaluation form</button></form>"
+                body+="<script>document.addEventListener('DOMContentLoaded',()=>document.getElementById('open-personal-review').requestSubmit());</script>"
             elif pending_ethics:
                 body+="<p>Ethics determination is not decided yet. You can inspect this sample, but cannot invite reviewers. Return to study setup when the actual determination is available.</p>"
             else:body+="<form method='post'><button>Create study and assign reviewers</button></form>"
@@ -200,7 +201,8 @@ def setup_route(app, method, path, data, style):
                 if report.get('outputs_with_unavailable_media'):
                     body+=f"<p class='review-error'>{report['outputs_with_unavailable_media']:,} outputs have unavailable media. Restore these assets before rating affected items; those rows have not been removed.</p>"
         elif state in {'running','starting','queued'}:
-            body+="<p>The sample is preparing in the background. Refresh this page when the job finishes.</p><a class='button ghost' href=''>Refresh preparation</a>"
+            body+="<p role='status'>Preparing the selected answers automatically. You can leave and return to this page.</p><a class='button ghost' href=''>Refresh preparation</a>"
+            body+="<script>setTimeout(()=>window.uraBusy.reload(),3000);</script>"
         else:body+="<p class='review-error'>Preparation did not finish successfully. Inspect the job before continuing; no study has been created.</p>"
         return 200,'text/html; charset=utf-8',_page('Human evaluation preparation',body+'</section></div>',active='Campaigns')
     return None
