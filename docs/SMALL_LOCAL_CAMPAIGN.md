@@ -8,9 +8,12 @@ followed by local evaluation. Diagnostic probes are kept separate.
 
 ### Before you begin
 
-- Use a new campaign name and output directory. The example below uses
-  `My Qwen demonstration` and `my-qwen-demonstration`; replace them consistently
-  if you have already used them.
+- For a new campaign, choose an unused name and output directory. If you already
+  created one, continue with it; do not create another at each section. The
+  example uses `My Qwen demonstration` as its display name and
+  `my-qwen-demonstration` as its execution scope and output-directory component.
+  These are separate values; a different display name does not rename either
+  the scope or the directory.
 - Do not start this work alongside another GPU job. The installed Qwen profile
   uses both GPUs. Static collection releases the target before local scoring.
 - Keep the assessed model settings. Do not repeat the responsiveness survey,
@@ -30,10 +33,34 @@ followed by local evaluation. Diagnostic probes are kept separate.
 | Inspect | 7 | Results, coverage, charts and exports |
 | Optional hosted comparison | 8 | A separate Flash campaign using saved local inputs |
 
-Whenever a step says **return to Build**, open **Campaigns -> your demonstration
-campaign -> Configure in Build**. Continue in that same saved campaign. After
-clicking a preparation or execution button, follow the opened job until it
-finishes; do not launch a second copy while the first is active.
+### Find your campaign, Build and Run tools
+
+"Your demonstration campaign" means the campaign **you named in section 1**.
+It is not a menu item named "Demonstration campaign", and it is not the historical
+**Local campaign**. For the operator's current walkthrough its name is
+**Qwen demonstration**.
+
+1. Click **Campaigns** in the main navigation at the top of any page.
+2. On the campaign list, click your campaign's **name**, not **Edit in Build**.
+   For the current walkthrough, click **Qwen demonstration**. This opens a page
+   with that name as its heading.
+3. Immediately below the heading are three buttons: **Configure in Build**,
+   **Campaign jobs**, and **Run tools**. They are above the campaign's Overview,
+   Definition, Results and other tabs. On narrow screens the buttons may wrap
+   onto separate lines. Close the campaign guide modal if it covers them.
+4. **Configure in Build** reopens your saved settings. **Campaign jobs** lists
+   this campaign's jobs. **Run tools** opens the command forms with this campaign
+   already selected. It does not start a job.
+
+For the current walkthrough only:
+
+- [Open Qwen demonstration](http://localhost:8642/campaigns/02aa50eae1bc43f4be35dfc14d673f6d).
+- [Open its Run tools page](http://localhost:8642/commands?campaign_id=02aa50eae1bc43f4be35dfc14d673f6d).
+
+For a different campaign, use its name from the campaign list instead of these
+example links. Whenever a step says **return to Build**, follow steps 1-3 and
+click **Configure in Build**. After starting a job, follow its opened job page
+until it finishes; do not launch a second copy while the first is active.
 
 ## 1. Create the draft and select the installed models
 
@@ -72,7 +99,11 @@ loads. Saved verdicts retain its actual placement.
    software version currently deployed on the rig. Leave the source receipt
    unchanged. This matters when reopening a draft saved before a software update;
    the button updates only the two project-receipt fields and makes no calls.
-2. Set **--execution-scope-id** to `my-qwen-demonstration`.
+2. Set **--execution-scope-id** to `my-qwen-demonstration`. This is a stable
+   execution label, not the campaign's display name or its database ID. Keep
+   exactly the same value for the text probe, image probe, both transport
+   receipts and the measured run. If you choose a different scope here, use
+   that exact value wherever the later sections show `my-qwen-demonstration`.
 3. Leave the live-attestation rows and maximum-age field empty for this probe.
 
 ### 2.2. Set Execution
@@ -178,17 +209,39 @@ failed planning job, and no output folder needs to be created by hand.
 
 ## 4. Derive the text transport receipt
 
-1. From the demonstration campaign, click **Run tools**.
-2. Filter for `live_attestation` and open its form. Keep the demonstration
-   campaign selected so this preparation job remains grouped with it.
+Start only after the real text probe from **3.2.4** has passed. A completed
+no-call preflight is not a substitute for this probe.
+
+1. In the main menu, click **Campaigns**, then click your campaign's **name**:
+   **Qwen demonstration** in the current walkthrough. On the opened campaign
+   page, click **Run tools**, the third button immediately below its heading.
+   This is not a button on the probe job page or a Build tab. The navigation
+   and direct links are also given above in **Find your campaign, Build and
+   Run tools**.
+2. The next page is headed **Run a command**, with **Tools** active in the main
+   menu. In **Type to filter commands...**, enter `live_attestation`. Click the
+   remaining **live_attestation** heading to expand its form; its description
+   is **Derive a typed transport receipt from a completed probe**. In the
+   expanded form's **Save under campaign** dropdown, keep your actual campaign
+   name selected: **Qwen demonstration** here, not **No campaign - standalone
+   job** and not the historical **Local campaign**.
 3. Set **--probe-root** to the text probe output directory from section 2.2:
    `/mnt/stor/data/ura-work/runs/demonstrations/my-qwen-demonstration/probe-text`.
-4. Set **--execution-scope-id** to `my-qwen-demonstration`.
+   If you used another output directory, copy its actual **--out** value from
+   the completed probe job instead. Do not infer a directory from the campaign
+   name.
+4. Set **--execution-scope-id** to the **exact scope used by that probe**. On
+   its job page, find **--execution-scope-id** in the command, or **scope** in
+   **Builder parameters**. For the current Qwen demonstration this value is
+   `my-qwen-demonstration`, although the campaign's display name is
+   `Qwen demonstration`. These are intentionally different identifiers. Do not
+   enter the display name or the long ID from the campaign URL in this field.
 5. Set **--out** to
    `/mnt/stor/data/ura-work/runs/demonstrations/my-qwen-demonstration/attestation-text.json`.
    This is a new file name, not a directory. Leave **--validate** and **--sha256**
    empty when deriving it.
-6. Click **Start job**. When it passes, keep the output path and the `sha256`
+6. Click **Start job** inside this expanded **live_attestation** form. When it
+   passes, keep the output path and the `sha256`
    value printed in its result for the measured lane's Admission tab.
 
 Deriving this receipt makes no additional target or judge call. It establishes
@@ -214,7 +267,9 @@ follow the transport-recovery instructions at the end of this guide.
 
 1. Follow sections **3.1-3.2** for this image selection. Wait for the real probe
    and its local evaluation to pass before proceeding.
-2. Open **Run tools -> live_attestation** as in section 4. Use:
+2. Click **Campaigns -> your campaign name -> Run tools**, filter for
+   `live_attestation`, and expand its form as in **4.1-4.2**. Keep your actual
+   campaign selected in **Save under campaign**. Use:
 
    | Field | Value |
    | --- | --- |
@@ -225,6 +280,9 @@ follow the transport-recovery instructions at the end of this guide.
 
 3. Click **Start job** and wait for it to pass. Keep the new image receipt's
    path and printed digest alongside the text receipt's details.
+
+The table uses the example scope and directories. If your probe uses different
+values, copy its actual scope and output path as explained in **4.3-4.4**.
 
 You now have separate text and image transport receipts. These are preparations
 for the measured run, not measured results themselves.
