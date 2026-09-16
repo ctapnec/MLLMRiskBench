@@ -33,7 +33,7 @@ def campaign(state,monkeypatch):  # noqa: F811
     binding=project_revision_binding(project,dict(file=canonical.name,
         sha256=hashlib.sha256(raw).hexdigest(),bytes=len(raw),revision_id=project['revision_id']))
     def add(name,mods=('text',),*,owner_override=None,age=1,scope=_SCOPE,spec=_SPEC,status='complete',project_sha=None):
-        record=_record(modalities=list(mods),observed_at=(datetime.now(timezone.utc)-timedelta(hours=age)).isoformat())
+        record=_record(modalities=list(mods),observed_at=(datetime.now(timezone.utc)-timedelta(hours=age)).isoformat().replace('+00:00','Z'))
         record.update(execution_scope_id=scope,requested_target_spec=spec)
         record['probe'].update(project_revision=copy.deepcopy(binding),
             harness_source_sha256=binding['harness_source_sha256'],driver_source_sha256=binding['driver_source_sha256'])
@@ -125,3 +125,26 @@ def test_console_can_keep_runner_checkout_pinned(tmp_path,monkeypatch):
     monkeypatch.setattr(server,'_serve',lambda *args:None)
     assert server.main(['--runner-root',str(tmp_path),'--state-dir',str(tmp_path/'state')])==0
     assert seen['repo_root']==tmp_path.resolve()
+
+
+def test_saved_probe_action_derives_fields_and_reuses_existing_job(campaign):
+    app,params,add=campaign
+    root=app.results_root/'completed-probe';root.mkdir(parents=True,exist_ok=True)
+    probe=dict(params,mode='attestation_probe',out=str(root))
+    with app.db._conn:
+        app.db._conn.execute('INSERT INTO jobs(job_id,command,argv,builder_params,state,exit_code,run_kind,out_dir,started_at) VALUES(?,?,?,?,?,?,?,?,?)',
+            ('probe','run_matrix','[]',json.dumps(probe),'complete',0,'attestation_probe',str(root),1))
+    app.db.attach_workspace_member(params['campaign_id'],'job','probe','preparation')
+    owner,values,existing=app._transport_check_from_job('probe',params['campaign_id'])
+    assert owner==params['campaign_id'] and not existing
+    assert values['--probe-root']==str(root) and values['--execution-scope-id']==_SCOPE
+    path=add('ready')
+    with app.db._conn:
+        app.db._conn.execute('UPDATE jobs SET argv=? WHERE job_id=?',(json.dumps(['python','--probe-root',str(root),
+            '--execution-scope-id',_SCOPE,'--out',str(path)]),'ready'))
+    status,location,_=app.handle('POST','/jobs',{'command':'live_attestation','campaign_id':owner,'probe_job':'probe'})
+    assert status==303 and location=='/jobs/ready'
+    assert not app.jobs
+    other=app.db.create_workspace('Not this campaign','mixed')
+    with pytest.raises(ValueError,match='completed probe'):
+        app._transport_check_from_job('probe',other)
