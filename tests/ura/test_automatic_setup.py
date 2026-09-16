@@ -16,7 +16,7 @@ from ura.project_revision import project_revision_binding
 
 
 @pytest.fixture
-def campaign(state):  # noqa: F811
+def campaign(state,monkeypatch):  # noqa: F811
     app, _, latest, _ = state
     (app.repo_root/'experiments/api-targets.json').write_text(json.dumps({_SPEC:{'modalities':['text','image']}}))
     owner=app.db.create_workspace('Automatic test','mixed')
@@ -25,7 +25,12 @@ def campaign(state):  # noqa: F811
     app.db.save_workspace_definition(owner,params)
     raw=open(latest['project_revision'],'rb').read()
     project=json.loads(raw)
-    binding=project_revision_binding(project,dict(file=__import__('pathlib').Path(latest['project_revision']).name,
+    canonical=app.results_root/(project['revision_id']+'.project-revision.json')
+    canonical.parent.mkdir(exist_ok=True);canonical.write_bytes(raw)
+    params['project_revision']=str(canonical)
+    app.db.save_workspace_definition(owner,params)
+    monkeypatch.setenv('URA_PROJECT_REVISION_MANIFEST',str(canonical))
+    binding=project_revision_binding(project,dict(file=canonical.name,
         sha256=hashlib.sha256(raw).hexdigest(),bytes=len(raw),revision_id=project['revision_id']))
     def add(name,mods=('text',),*,owner_override=None,age=1,scope=_SCOPE,spec=_SPEC,status='complete',project_sha=None):
         record=_record(modalities=list(mods),observed_at=(datetime.now(timezone.utc)-timedelta(hours=age)).isoformat())
