@@ -88,7 +88,8 @@ def test_assessment_browser_hides_irrelevant_fields_and_blocks_duplicate_request
     finally:view.close()
 
 
-def test_haiku_preparation_and_resume_use_existing_executor_without_target_calls(indexed,tmp_path,monkeypatch):
+@pytest.mark.parametrize('ui_owned_config', [False, True])
+def test_haiku_preparation_and_resume_use_existing_executor_without_target_calls(indexed,tmp_path,monkeypatch,ui_owned_config):
     from ura.data_models import Response,DialogTurn
     database,owner,root,_=indexed;manifests(root)
     judge='anthropic:claude-haiku-4-5-20251001'
@@ -110,8 +111,18 @@ def test_haiku_preparation_and_resume_use_existing_executor_without_target_calls
     monkeypatch.setattr(subject.executor,'execute',lambda **kw:execute(**kw,judge_factory=lambda *args:fake))
     args=SimpleNamespace(database=database,campaign=owner,results_root=root,kind='haiku',judge_model=judge,limit=2,
         model_store='',max_cost_microusd=1_000_000,api_config=api,pricing_config=pricing,out=root/'assessment')
+    if ui_owned_config:
+        args.out.mkdir()
+        for name in ('api','pricing'):
+            source=getattr(args,name+'_config')
+            destination=args.out/(name+'.json')
+            destination.write_bytes(source.read_bytes())
+            setattr(args,name+'_config',destination)
+    originals={name:getattr(args,name+'_config').read_bytes() for name in ('api','pricing')}
     result=subject.prepare(args)
     assert result['selected_outputs']==2 and result['status']=='prepared' and fake.calls==0
+    assert subject.prepare(args)==result
+    assert all(getattr(args,name+'_config').read_bytes()==raw for name,raw in originals.items())
     subject.execute(args)
     assert fake.calls==2 and (args.out/'completion.json').is_file()
     subject.execute(args)

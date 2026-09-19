@@ -1,4 +1,7 @@
 import time
+import html
+import re
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
@@ -43,5 +46,8 @@ def test_work_view_retains_failures_and_links_to_hidden_technical_jobs(app):
 def test_job_count_navigation_preserves_selected_campaign_and_dates(app):
     owner=app.db.create_workspace('Selected campaign','local')
     page=app._jobs_page(dict(campaign_id=owner,view='work',from_ms='1',to_ms=str(int(time.time()*1000)))).decode()
-    assert 'view=work&amp;campaign_id='+owner+'&amp;from_ms=1' in page
-    assert 'Open technical jobs' in page and 'view=all&amp;campaign_id='+owner in page
+    links=[parse_qs(urlsplit(html.unescape(link)).query) for link in re.findall("href='([^']+)'",page)]
+    cards=[q for q in links if q.get('state')==['passed']]
+    assert cards and cards[0]['campaign_id']==[owner] and cards[0]['from_ms']==['1'] and cards[0]['view']==['work']
+    assert 'Open technical jobs' in page
+    assert any(q.get('view')==['all'] and q.get('campaign_id')==[owner] for q in links)

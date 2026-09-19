@@ -91,8 +91,13 @@ def prepare(args):
         if normalized['max_tokens']!=512:
             raise ValueError('Saved-output Haiku assessment requires its separate 512-token judge configuration')
         # Freeze non-secret endpoint settings and prices with this assessment.
-        executor._write_atomic(root/'api.json',read(args.api_config))
-        executor._write_atomic(root/'pricing.json',read(args.pricing_config))
+        # UI inputs already live at these destinations. Do not rewrite their
+        # serialization after binding it in request.json: an unchanged resume
+        # must retain the exact originally selected settings.
+        if args.api_config.resolve() != root/'api.json':
+            executor._write_atomic(root/'api.json',read(args.api_config))
+        if args.pricing_config.resolve() != root/'pricing.json':
+            executor._write_atomic(root/'pricing.json',read(args.pricing_config))
         condition=retained.load_pricing_condition(root/'pricing.json',expected_sha256=hashlib.sha256((root/'pricing.json').read_bytes()).hexdigest(),
             judge_model=args.judge_model,as_of=date.today().isoformat())
         target=executor._build_haiku_judge(args.judge_model,normalized)
