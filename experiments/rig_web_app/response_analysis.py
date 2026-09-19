@@ -24,7 +24,7 @@ def teachers(app, owner):
 
 def select(name,label,options,selected=''):
     escape=lambda v:html.escape(str(v),quote=True)
-    return '<label>'+escape(label)+'<select name="'+name+'" required>'+''.join(
+    return '<label>'+escape(label)+'<select aria-label="'+escape(label)+'" name="'+name+'" required>'+''.join(
         '<option value="'+escape(key)+'"'+(' selected' if key==selected else '')+'>'+escape(value)+'</option>'
         for key,value in options)+'</select></label>'
 

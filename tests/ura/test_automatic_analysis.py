@@ -12,7 +12,7 @@ from test_operator_operations import app, child  # noqa: F401
 from test_rig_web_busy_browser import browser, _burst  # noqa: F401
 
 
-def test_study_runs_real_export_evaluation_package_and_reuses_completed_work(tmp_path, monkeypatch):
+def test_study_retains_real_small_cohort_limitations_and_reuses_completed_work(tmp_path, monkeypatch):
     pytest.importorskip('sklearn')
     args=dataset_fixture(tmp_path)
     out=tmp_path/'study'
@@ -23,15 +23,15 @@ def test_study_runs_real_export_evaluation_package_and_reuses_completed_work(tmp
     assert response_svm.main(argv)==0
     result=json.loads((out/'result.json').read_text())
     assert result['status']=='study_complete'
-    assert Path(result['models']).is_file()
+    assert result['models'] is None and result['packaging_status']=='not_applicable'
     assert result['target_calls']==result['judge_calls']==0
     assert not result['human_validated'] and not result['campaign_judgments_modified']
     # Simulate interruption between a successful stage and controller publication.
-    (out/'result.json').unlink();(out/'classifiers-complete.json').unlink()
-    from ura import response_svm_models
-    monkeypatch.setattr(response_svm_models,'package_study',lambda *a,**kw:pytest.fail('Completed fitting was repeated'))
+    (out/'result.json').unlink();(out/'evaluation-complete.json').unlink()
+    from ura import response_svm as engine
+    monkeypatch.setattr(engine,'evaluate_study',lambda *a,**kw:pytest.fail('Completed evaluation was repeated'))
     assert response_svm.main(argv)==0
-    assert not (out/'classifiers-2').exists()
+    assert not (out/'evaluation-2').exists()
     assert args['database'].read_bytes()==before
     with pytest.raises(ValueError,match='original scientific selection'):
         response_svm.main([*argv,'--seed','3'])
@@ -87,8 +87,15 @@ def test_analysis_browser_has_choices_not_preparation_paths(app,monkeypatch,brow
     page=browser.new_page(viewport=dict(width=width,height=1000))
     held=[];errors=[]
     page.on('pageerror',lambda error:errors.append(str(error)))
-    page.route('http://analysis.test/**',lambda request: held.append(request) if request.request.method=='POST'
-        else request.fulfill(content_type='text/html',body=response_analysis.page(app,owner)))
+    def route(request):
+        from urllib.parse import urlsplit
+        if request.request.method=='POST':held.append(request)
+        elif urlsplit(request.request.url).path=='/analysis':
+            request.fulfill(content_type='text/html',body=response_analysis.page(app,owner))
+        else:
+            status,mime,body=app.handle('GET',urlsplit(request.request.url).path)
+            request.fulfill(status=status,content_type=mime,body=body)
+    page.route('http://analysis.test/**',route)
     try:
         page.goto('http://analysis.test/analysis')
         assert page.locator('body > nav').is_visible()

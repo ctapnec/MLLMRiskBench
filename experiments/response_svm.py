@@ -81,18 +81,29 @@ def study(args):
     for owner in args.campaign:export+=['--campaign',owner]
     for model in args.exclude_model:export+=['--exclude-model',model]
     dataset=stage('dataset',export)/'dataset.jsonl'
+    def finish(*, models=None, reason=None):
+        result=dict(status='study_complete',stages=stages,dataset=str(dataset),models=models,
+            packaging_status='saved' if models else 'not_applicable',packaging_reason=reason,
+            target_calls=0,judge_calls=0,human_validated=False,campaign_judgments_modified=False)
+        checkpoint(root/'result.json',result)
+        print(json.dumps(result),flush=True)
+        return 0
+    if not dataset.stat().st_size:
+        return finish(reason='No eligible labeled static-text responses; inspect dataset dispositions')
     evaluate=['--evaluate','--dataset',str(dataset),'--seed',str(args.seed),
         '--bootstrap',str(args.bootstrap),'--max-feature-characters',str(args.max_feature_characters)]
     for model in args.holdout_model:evaluate+=['--holdout-model',model]
     for corpus in args.holdout_corpus:evaluate+=['--holdout-corpus',corpus]
     analysis=stage('evaluation',evaluate)
+    from ura.response_svm import TASKS, FEATURES
+    report=json.loads((analysis/'result.json').read_text())
+    supported={(r['task'],r['features']) for r in report['experiments']
+               if r.get('status')=='evaluated' and r['protocol']=='group_holdout' and r['estimator']=='linear_svm'}
+    if supported!={(task,features) for task in TASKS for features in FEATURES}:
+        return finish(reason='Insufficient class-group support for all three classifier tasks; evaluation results retained')
     fitted=stage('classifiers',['--package','--dataset',str(dataset),
         '--study-result',str(analysis/'result.json'),'--study-predictions',str(analysis/'predictions.json')])
-    checkpoint(root/'result.json',dict(status='study_complete',stages=stages,dataset=str(dataset),
-        models=str(fitted/'models.joblib'),target_calls=0,judge_calls=0,human_validated=False,
-        campaign_judgments_modified=False))
-    print(json.dumps(dict(status='study_complete',stages=stages)),flush=True)
-    return 0
+    return finish(models=str(fitted/'models.joblib'))
 
 
 def main(argv=None):
