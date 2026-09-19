@@ -109,6 +109,11 @@ def test_finished_campaign_setup_and_independent_rating_wizard(tmp_path, monkeyp
                     assert not reviewer.evaluate('window.uraBusy.isBusy()')
                     context.close()
                 assert store.summary(study)['ready_for_analysis']
+                page.goto(base+'/human-evaluation/'+study)
+                with page.expect_download() as download:
+                    page.get_by_role('link',name='Download completed ratings',exact=True).click()
+                assert download.value.suggested_filename=='completed-ratings.csv'
+                page.wait_for_function("!window.uraBusy.isBusy() && document.querySelector('#campaign-export-status').textContent==='Export prepared.'")
                 token=store.enroll(study,'synthetic-adjudicator','adjudicator',qualification())
                 page.goto(base+'/review/'+token)
                 assert page.locator('body > nav a').count()==8

@@ -10,6 +10,7 @@ from urllib.parse import quote
 
 from .human_review_store import HumanReviewStore, COMMON
 from .ui import _page
+from .workspace_charts import EXPORT_SCRIPT
 
 
 def _field(name, label, value="", kind="text", required=True):
@@ -109,12 +110,12 @@ class HumanReviewPagesMixin:
             body = (_REVIEW_STYLE+"<div class='review-stack'><section class='review-card'><h1>"+html.escape(info['name'])
                 +"</h1><p>Personal evaluation of saved answers, not independent human assessment.</p>"
                 +f"<p>{counts['submitted']} / {counts['outputs']} evaluations saved; {counts['deferred']} deferred.</p>"
-                +"<div class='review-actions'><a class='button' href='/review/"+info['metadata']['personal_token']
-                +"'>Open evaluation form</a><a class='button ghost' href='/human-evaluation/"+study
+                +"<div class='review-actions' id='campaign-exports'><a class='button' href='/review/"+info['metadata']['personal_token']
+                +"'>Open evaluation form</a><a class='button ghost' data-campaign-export download='personal-evaluations.csv' href='/human-evaluation/"+study
                 +"/personal.csv'>Download personal evaluations</a></div><p>The CSV includes pending and deferred items. "
                 "Personal decisions are never promoted into independent two-rater results or campaign judge verdicts.</p>"
                 +"<a href='/human-evaluation?campaign_id="+quote(info['campaign'])+"'>Back to campaign reviews</a></section></div>")
-            return _page('Personal human evaluation',body,active='Campaigns')
+            return _page('Personal human evaluation',body+"<p id='campaign-export-status' role='status'></p>"+EXPORT_SCRIPT,active='Campaigns')
         members = ''.join('<li>'+html.escape(r['id'])+' - '+r['role']+(' - withdrawn' if r['withdrawn'] else ' - consent recorded' if r['consent'] else ' - consent pending')+'</li>' for r in summary['reviewers'])
         dimensions = COMMON if info['mode']=='common' else {'task_label':None,'parse_status_label':None}
         qualifications = ''.join("<label>"+k.replace('_label','').replace('_',' ').title()+" - correct answers out of 20<select name='correct_"+k+"' required><option value=''>Choose score...</option>"+''.join("<option value='"+str(n)+"'>"+str(n)+" / 20</option>" for n in range(21))+"</select></label>" for k in dimensions)
@@ -125,7 +126,7 @@ class HumanReviewPagesMixin:
         body += "<form method='post' action='/human-evaluation/"+study+"/enroll'>"+_field('reviewer','Pseudonymous reviewer ID')+"<label>Role<select name='role'><option value='rater'>Independent rater</option><option value='adjudicator'>Adjudicator</option></select></label>"
         body += _field('reference','Independent 20-item qualification evidence reference')+"<div class='review-grid'>"+qualifications+"</div><label><input type='checkbox' name='qualified' value='1' required>Language, relevant experience and conflicts have been reviewed; the qualification reference was independently adjudicated.</label><button>Issue individual review link</button></form></section>"
         body += "<section class='review-card'><h2>Analysis and exports</h2><p>Independent ratings remain distinct from adjudication. The analysis reports agreement, support, coverage and evaluator comparisons in its appropriate frame.</p><form method='post' action='/human-evaluation/"+study+"/analyse'><button"+('' if summary['ready_for_analysis'] else ' disabled')+">Export and run human audit analysis</button></form>"
-        if summary['ready_for_analysis']: body += "<p><a href='/human-evaluation/"+study+"/labels.csv'>Download completed ratings</a></p>"
+        if summary['ready_for_analysis']: body += "<div id='campaign-exports' class='review-actions'><a data-campaign-export download='completed-ratings.csv' href='/human-evaluation/"+study+"/labels.csv'>Download completed ratings</a></div><p id='campaign-export-status' role='status'></p>"+EXPORT_SCRIPT
         body += "</section></div>"
         return _page('Human evaluation study',body,active='Campaigns')
 
