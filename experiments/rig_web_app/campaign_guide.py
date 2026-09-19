@@ -180,12 +180,14 @@ def _guidance(app, params):
          'then click Start classifier study. Input extraction, dataset export, grouped evaluation and reusable '
          'classifier packaging happen automatically as one job. No database, output directory or intermediate '
          'file needs entering. Saved analyses shows answer/group counts, task status, held-out macro-F1 and named '
-         'links to complete reports. Resume unfinished analysis reuses completed '
+         'links to complete reports. Stats -> SVM results shows saved-study scores, baselines, class/group support, '
+         'recorded confidence intervals and filtered CSV/SVG exports without retraining. Resume unfinished analysis reuses completed '
          'stages. The three tasks are harmful compliance, over-refusal and local/Haiku disagreement. '
          'A few demonstration answers are too small for meaningful training and held-out evaluation. '
          'The current study supports static text, not arbitrary image or live-attack data. '
          'Prediction scores are uncalibrated margins, not human verdicts or safety probabilities. No target or judge call is made.',
          [('Open SVM analysis', '/analysis?campaign_id='+owner if owner else '/campaigns'),
+          ('Inspect SVM results', '/stats?view=svm&campaign_id='+owner if owner else '/stats?view=svm'),
           ('Inspect existing analysis jobs', '/jobs?campaign_id=' + owner if owner else '/jobs')]),
         ('Recovery', 'Recover the unfinished stage without duplicating work',
          'Open the original job and read its error and saved outputs. Continue an interrupted prepared collection '

@@ -281,9 +281,16 @@ calls, and does not replace human assessment.
 2. Under **Saved analyses**, read the study summary: selected answers,
    independent input groups, task status and held-out macro-F1. Named links
    open the complete metrics, predictions, baselines and fitted classifiers.
-3. Historical thesis analysis remains available under **Artifacts ->
-   engineering/response-svm-20260913-r-checkpoints/analysis**. Open
-   `result.json` and `predictions.json`; do not start training just to read them.
+3. Click **Stats -> SVM results** to inspect historical and UI-created studies.
+   Choose **Campaign**, **Saved study**, **Evaluation split** and **Task**, then
+   click **Show SVM results**. The historical study is named **Matched local and
+   hosted response classifiers**. It contains both populations, not a separate
+   fit for each campaign.
+4. Read the held-out score chart and its group-bootstrap intervals alongside
+   the baseline table, class counts and independent input groups. **Not
+   estimated** means insufficient/unrecorded evidence, not zero performance.
+5. Use **Download CSV**, **Download SVG** or **Full study report**. No training,
+   target generation or judging is started by inspecting or exporting results.
 
 ### 10.2. Start a new study when scientifically appropriate
 

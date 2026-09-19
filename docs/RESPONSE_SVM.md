@@ -136,3 +136,19 @@ serialization and must not load untrusted files. Reuse the recorded scikit-learn
 version. These exploratory classifications remain separate from campaign
 judgments and are never installed as automatic safety gates or replacements
 for local, hosted or independent human evaluation.
+
+## Results in the console
+
+**Stats -> SVM results** displays retained studies, including registered CLI
+studies and new UI analysis jobs. Select the study, task and evaluation split.
+The chart displays held-out SVM macro-F1 and recorded input-group bootstrap
+intervals. The accompanying table includes baselines, average precision,
+test-class counts and test-group support. Different studies and splits are not
+pooled. Missing estimates remain explicit. CSV and SVG exports preserve the
+selection; CSV also records teacher, split seed and population counts.
+
+Opening Stats reads the selected result report only. It does not read training
+datasets, load fitted pickle files, recalculate hashes or fit classifiers.
+Study registration stores a relative artifact reference and associated
+campaigns; it does not fabricate an old console job. UI studies are discovered
+from their recorded execution arguments and appear without an import step.

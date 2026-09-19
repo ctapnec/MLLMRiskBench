@@ -659,7 +659,25 @@ A small demonstration may have insufficient class support. That is a reported
 limitation, not a reason to search seeds or generate extra answers silently.
 Inspect existing study results without clicking Start to avoid recomputation.
 
-### 10.3. Advanced reuse
+### 10.3. Read SVM results in Stats
+
+1. Click **Stats -> SVM results**. Alternatively, click **View SVM results in
+   Stats** on the campaign's **SVM analysis** page.
+2. Choose **Campaign** and **Saved study**. Choose **Evaluation split** and
+   **Task**, then click **Show SVM results**. Changing the campaign or study
+   clears an incompatible downstream selection.
+3. Read the answer and independent-input-group counts. The chart shows held-out
+   SVM macro-F1 with recorded 95% group-bootstrap intervals. The table includes
+   majority/logistic baselines, class support and average precision. Unsupported
+   tasks say **Not estimated**, not zero.
+4. Click **Download CSV** or **Download SVG** for the displayed selection. The
+   CSV identifies the study, recorded teacher and split. **Full study report**
+   opens the retained analysis. These actions do not retrain or make API calls.
+
+Compare scores within the same study, task and split. These are predictions of
+recorded judge labels, not new human judgments or direct model safety scores.
+
+### 10.4. Advanced reuse
 
 The optional **Tools -> Advanced CLI tools and troubleshooting -> Analysis
 and native imports -> response_svm** form remains available for importing a

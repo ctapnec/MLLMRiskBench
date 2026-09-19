@@ -65,6 +65,24 @@ retained Haiku executor. Source-specific metrics are not replaced with common
 safety labels. Image assessment remains a text proxy. SVM studies display a
 summary and named reports under Saved analyses.
 
+The main **Jobs** menu opens **Substantive work**, showing collection, actual
+assessment and analysis. **Technical - all jobs** retains preparation,
+diagnostics and maintenance, including failed or active internal stages.
+Work classification uses command mode, so a no-call run is not mislabeled as
+collection and an assessment preparation is not mislabeled as judging. The
+work view links to hidden technical stages; failures are not deleted.
+
+**Stats -> Compare campaigns** opens the exact-input comparison flow from two
+selected campaigns. Input-union composition charts distinguish matched,
+left-only, right-only and ambiguous inputs. They are coverage diagrams, not
+pooled success rates. Arbitrary cross-job matching remains unavailable without
+indexed input ownership; standalone job reports remain separately accessible.
+
+**Stats -> SVM results** presents retained classifier studies, including the
+historical shared local/hosted study. Held-out metrics, baselines, class/group
+counts and uncertainty remain separate by study, task and split. Reading or
+exporting these results never starts training or provider calls.
+
 Direct hosted review displays priced cost scenarios, not an exact monetary
 ceiling: inputs assume 4,096 tokens, and quarter/full output allowances are
 shown before HTTP retries. Missing prices are explicit. The matched-input
