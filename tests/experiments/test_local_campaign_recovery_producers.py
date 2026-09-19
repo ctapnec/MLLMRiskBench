@@ -913,7 +913,9 @@ def _assert_phase7_seven_gate5_layers(source: str) -> None:
         source.index("expected_historical_profile = {"):
         source.index("expected_all_pass_profile = {")
     ]
-    assert '"target_runtime_terminal": 7' in historical
+    # The retained amendment declares three; canonical Gate 5 has seven and
+    # is validated independently. Do not rewrite the historical declaration.
+    assert '"target_runtime_terminal": 3' in historical
 
 
 def _assert_phase7_seven_policy_launch_chain(source: str) -> None:
@@ -954,7 +956,7 @@ def _assert_phase7_seven_policy_launch_chain(source: str) -> None:
         'completion.get("launch") != descriptor(launch_path)',
         'set(states) != set(SEVEN_AMENDMENT_LANES)',
         'control.name\n        != f"seven-output-policy-amendment-{short_commit}-{policy_tag}"',
-        'runnote_path.name\n        != f"RUNNOTE.runner-2.24-seven-output-policy-amendment-{policy_tag}.md"',
+        'runnote_path.name != _seven_policy_runnote_name(',
     ):
         assert condition in validator
     assert 'completion.get("amendment") != descriptor(policy_file)' not in validator
@@ -1525,8 +1527,8 @@ def test_phase7_separates_policy_and_completed_gate5_amendment_digests() -> None
     profile_mutant = (
         source[:historical_start]
         + source[historical_start:historical_end].replace(
-            '"target_runtime_terminal": 7',
             '"target_runtime_terminal": 3',
+            '"target_runtime_terminal": 7',
             1,
         )
         + source[historical_end:]

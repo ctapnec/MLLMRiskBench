@@ -1021,6 +1021,9 @@ def test_console_covers_runbook_clis_except_private_typed_controllers() -> None:
         # rendering. Generated controllers run on the rig, but this source
         # packaging operation must not be exposed as a Rig Web command.
         "local_campaign",
+        # Invoked by the campaign controllers or Stats, not raw operator jobs.
+        "hosted_attempt_budget", "hosted_retained_execute", "operational_costs",
+        "retained_response_judge_report", "retained_response_view",
     }
     assert not (private_typed_controllers & allowlisted)
     missing = sorted(used - allowlisted - private_typed_controllers)
@@ -1146,9 +1149,9 @@ def test_builder_page_renders_full_surface(tmp_path: Path) -> None:
         "name='dtype'",
         "name='quantization'", "name='judge_model'", "name='defense_guard'",
         "name='canary_dry'", "name='approximate_common_metrics'",
-        # Scoring and defense guardrail inputs (model/revision/device each).
-        "name='guardrail_model'", "name='guardrail_revision'",
-        "name='guardrail_device'", "name='defense_guardrail_model'",
+        # Scoring revision/device are resolved from installed metadata. The
+        # separately selected defense retains explicit execution controls.
+        "name='guardrail_model'", "name='defense_guardrail_model'",
         "name='defense_guardrail_revision'", "name='defense_guardrail_device'",
     ):
         assert field in text, field
@@ -1436,7 +1439,7 @@ def test_prepared_workflows_live_under_attack_frameworks_without_nested_forms(
     app = _app(tmp_path)
     try:
         page = app.handle("GET", "/build")[2].decode("utf-8")
-        builder_at = page.index("<form method='post' action='/build' id='builder'>")
+        builder_at = page.index("<form method='post' action='/build/review' id='builder'>")
         frameworks_at = page.index("Attack frameworks")
         workflows_at = page.index("id='prepared-workflows'")
         assert builder_at < frameworks_at < workflows_at
@@ -1665,13 +1668,16 @@ def test_prepared_attack_configs_are_verified_and_materialized_for_runtime(
         common["source_conformance_sha"] = hashlib.sha256(
             source_receipt.read_bytes()
         ).hexdigest()
-        status, _, body = app.handle("POST", "/build", {
+        replay_form = {
             **common, "corpora": "strongreject_official",
             "attackers": "t3mp3st", "sample_seed": "0",
             "max_queries": "1", "max_turns": "1", "out": "runs/t3-measured",
             "t3_artifact": str(t3_bundle), "t3_artifact_sha": t3_sha,
-        })
-        assert status == 200
+        }
+        # Exercise the prepared review; initial Build submission now starts
+        # its no-call preparation operation, covered by flow tests.
+        command, values, params = app._compose_from_builder(replay_form)
+        body = app._preview_page(command, values, params, prepared=True)
         ticket = re.search(
             rb"name='launch_ticket' value='([^']+)'",
             body,
@@ -1693,12 +1699,13 @@ def test_prepared_attack_configs_are_verified_and_materialized_for_runtime(
         assert generated_doc["t3mp3st"]["response_artifact_sha256"] == t3_sha
         run_matrix.build_parser().parse_args(build_argv(command, values)[3:])
 
-        status, _, body = app.handle("POST", "/build", {
+        replay_form = {
             **common, "corpora": "harmbench_text", "attackers": "harmbench",
             "sample_seed": "7", "max_queries": "4", "max_turns": "4",
             "out": "runs/harm-measured", "harm_config": str(harm_config),
-        })
-        assert status == 200
+        }
+        command, values, params = app._compose_from_builder(replay_form)
+        body = app._preview_page(command, values, params, prepared=True)
         ticket = re.search(
             rb"name='launch_ticket' value='([^']+)'",
             body,
@@ -2111,7 +2118,9 @@ def test_modality_shown_as_icons_not_word_tags(tmp_path: Path) -> None:
         _s2, _c2, css_body = app.handle("GET", "/static/style.css")
         css = css_body.decode("utf-8")
         # The per-modality chip colors are themed (light + dark definitions).
-        assert css.count("--m-text:") == 2 and ".modicon.m-video" in css
+        assert "--m-text:" in css and ".modicon.m-video" in css
+        for theme in ("slate", "parchment", "midnight", "ash"):
+            assert f"data-theme={theme}]" in css
         # Field cells bottom-align their inputs across a row (labels grow).
         assert ".fieldcell .fieldlabel { flex:1 0 auto; }" in css
         # Selects are custom-styled everywhere (no generic browser chrome):
@@ -2431,6 +2440,7 @@ def test_guardrail_separation_and_wiring(tmp_path: Path) -> None:
             "api": "anthropic:claude-opus-5", "attackers": "replay",
             "judges": "rules,guardrail", "defense": "output",
             "defense_guard": "guardrail", "guardrail_model": "vllm:guard",
+            "guardrail_revision": "d" * 40,
             "defense_guardrail_model": "vllm:guard", "out": "runs/g", "seeds": "0",
         })
         assert "defense_guardrail_model" in errors
@@ -2442,7 +2452,7 @@ def test_guardrail_separation_and_wiring(tmp_path: Path) -> None:
             "judges": "guardrail", "out": "runs/g", "seeds": "0",
         })
         assert "guardrail_model" in errors
-        assert "guardrail_revision" in errors
+        assert "not installed" in errors["guardrail_model"]
         defense_missing = app._validate_builder({
             "mode": "dry_run", "corpora": "strongreject_official",
             "api": "anthropic:claude-opus-5", "attackers": "replay",
@@ -2610,6 +2620,18 @@ def test_builder_preflight_consumes_private_project_receipt_and_makes_no_calls(
     app = _operator_registry_app(tmp_path)
     receipt_path = Path(project_revision_args.values[1])
     receipt_sha256 = project_revision_args.values[3]
+    # This fixture isolates receipt consumption using a synthetic revision.
+    # Match only Build's preliminary HEAD lookup to that declared fixture.
+    import subprocess
+    from experiments.rig_web_app import builder_validation
+    original_run = subprocess.run
+
+    def fixture_head(argv, *args, **kwargs):
+        if argv == ["git", "-C", str(app.repo_root), "rev-parse", "HEAD"]:
+            return subprocess.CompletedProcess(argv, 0, "e" * 40 + "\n", "")
+        return original_run(argv, *args, **kwargs)
+
+    monkeypatch.setattr(builder_validation.subprocess, "run", fixture_head)
     form = {
         "mode": "attestation_probe",
         "corpora": "synth",
@@ -2815,9 +2837,10 @@ def test_builder_paid_modes_preview_exact_argv_then_confirm(
         "deadline": "600", "out": "runs/probe",
     }
     started = len(app.jobs)
-    status, _, body = app.handle("POST", "/build", form)
+    command, values, params = app._compose_from_builder(form)
+    body = app._preview_page(command, values, params, prepared=True)
     text = body.decode("utf-8")
-    assert status == 200 and len(app.jobs) == started  # preview, no job
+    assert len(app.jobs) == started  # prepared review, no paid job
     assert "Review execution" in text
     assert "--attestation-probe" in text
     assert "--max-total-target-calls" in text and ">4<" in text
@@ -3671,7 +3694,7 @@ def test_command_groups_partition_the_allowlist_exactly() -> None:
 
     # These controller commands are reachable only through validated Build
     # actions, never a generic raw-argv form.
-    internal = {"model_acquire", "ollama_pull", "run_matrix"}
+    internal = {"model_acquire", "ollama_pull", "run_matrix", "campaign_assess"}
     named = [name for _, _, _, names in COMMAND_GROUPS for name in names]
     assert len(named) == len(set(named)), "command grouped twice"
     assert set(named) == set(COMMANDS) - internal, (
@@ -3721,10 +3744,15 @@ def test_dashboard_shows_presence_only_pipeline(tmp_path: Path) -> None:
             # their pre-subprocess checks.
             assert run_text.count(f"data-name='{name}'") == 1
             assert "/build#prepared-workflows" in run_text
-        elif name in {"model_acquire", "ollama_pull", "run_matrix"}:
+        elif name in {"model_acquire", "ollama_pull", "run_matrix", "campaign_assess"}:
             # Pull and measured matrix execution require their validated
             # Build controller, not a raw generic argv form.
             assert f"name='command' value='{name}'" not in run_text
+        elif name == "live_attestation":
+            # A guided selector and an advanced form share the typed command.
+            assert run_text.count(
+                f"<input type='hidden' name='command' value='{name}'>"
+            ) == 2
         else:
             assert run_text.count(
                 f"<input type='hidden' name='command' value='{name}'>"
@@ -3819,7 +3847,7 @@ def test_jobs_page_has_filter_chips_and_row_stop(tmp_path: Path) -> None:
         assert "url.searchParams.delete('to')" in text
         assert "url.searchParams.set('from_ms',String(fromMs))" in text
         assert "url.searchParams.set('to_ms',String(toMs))" in text
-        assert "syncFilters();location.reload()" in text
+        assert "syncFilters();uraBusy.reload()" in text
         assert "fromBox.addEventListener('change',function(){explicitFrom=true" in text
         assert "toBox.addEventListener('change',function(){explicitTo=true" in text
         # The default seven-day window remains implicit. Initial sync and the
@@ -5185,7 +5213,7 @@ def test_jobs_and_runs_persist_across_console_restart(tmp_path: Path) -> None:
     )
     assert job.job_id in restarted.jobs
     restored = restarted.jobs[job.job_id]
-    assert restored.process is None
+    assert restored.process is not None and restored.process.poll() == 0
     assert restored.state() == "complete"  # last-known state, no live handle
     status, _, body = restarted.handle("GET", "/jobs")
     assert status == 200 and job.job_id.encode() in body
@@ -5337,7 +5365,11 @@ def test_matrix_params_match_real_run_matrix_parser_exactly() -> None:
     # exclusion that can never be valid there.
     from experiments.rig_web import COMMANDS
 
-    real = _parser_options(run_matrix.build_parser()) - {"--help"}
+    # Workspace/database locators are supplied by the owning console, never
+    # operator-editable Runner controls.
+    real = _parser_options(run_matrix.build_parser()) - {
+        "--help", "--console-db", "--workspace-id",
+    }
     ui = {param.flag for param in _MATRIX_PARAMS}
     assert ui - real == set(), f"UI flags absent from run_matrix: {ui - real}"
     assert real - ui == set(), f"run_matrix flags absent from the UI: {real - ui}"
@@ -5633,7 +5665,7 @@ def test_every_ui_command_parses_with_its_real_module_parser() -> None:
         "webui_selftest": [{"--selftest-sleep": "0"}],
     }
     # Typed controller commands with dedicated workflows; never generic forms.
-    internal = {"model_acquire", "ollama_pull"}
+    internal = {"model_acquire", "ollama_pull", "campaign_assess", "human_review_campaign"}
     assert set(forms) == set(COMMANDS) - internal, (
         sorted(set(forms) ^ (set(COMMANDS) - internal))
     )
@@ -6768,7 +6800,7 @@ def test_v1_database_migrates_preserving_history(tmp_path: Path) -> None:
     conn.close()
     db = ConsoleDB(state / "console.db")
     health = db.health()
-    assert health["healthy"] and health["schema_version"] == 4
+    assert health["healthy"] and health["schema_version"] == ConsoleDB.SCHEMA_VERSION
     runs = db.list_runs()
     assert runs is not None and runs[0]["job_id"] == "job-v1"
     db.close()
@@ -6804,10 +6836,12 @@ def test_corrupt_database_is_visible_never_silent_empty(tmp_path: Path) -> None:
         assert status == 200, path
         assert "Console database" in text or "Unavailable" in text or \
             "unavailable" in text, path
-    # Jobs still start and stop with a broken database.
-    job = app.start_job("webui_selftest", {"--selftest-sleep": "30"})
-    assert job.state() == "running"
-    app.stop_job(job.job_id)
+    # A launch without durable identity would orphan its process. Preserve the
+    # corrupt file for recovery and refuse before starting a child.
+    with pytest.raises(OSError, match="retain job identity before process launch"):
+        app.start_job("webui_selftest", {"--selftest-sleep": "30"})
+    assert not app.jobs
+    assert (state / "console.db").read_bytes() == b"not a sqlite file at all"
     app.close()
 
 

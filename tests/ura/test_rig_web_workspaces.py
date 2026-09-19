@@ -100,8 +100,9 @@ def test_create_redirects_into_build_without_a_second_creation_wizard(tmp_path):
         assert "formaction='/build/save'" in page
         code, location, _ = app.handle("POST", "/build/save", {
             "campaign_name": "Fresh comparison", "work_kind": "campaign"})
-        assert code == 303 and location.endswith("?section=definition")
-        new = location.split("/campaigns/", 1)[1].split("?", 1)[0]
+        assert code == 303 and location.startswith("/build?campaign_id=")
+        assert location.endswith("&saved=1#build-general")
+        new = location.split("campaign_id=", 1)[1].split("&", 1)[0]
         assert new != existing
         assert app.db.workspace(new)["name"] == "Fresh comparison"
         assert app.db.workspace(new)["kind"] == "mixed"

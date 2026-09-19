@@ -70,6 +70,36 @@ def _fake_project_revision_receipt() -> dict[str, Any]:
 
 
 @pytest.fixture
+def approved_local_profile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Install explicit assessed metadata for tests of later local-run gates."""
+    registry = tmp_path / "profiles.json"
+    evidence = tmp_path / "profile-readiness.json"
+    evidence.write_text("{}\n", encoding="utf-8")
+    monkeypatch.setenv("URA_LOCAL_MODEL_PROFILE_REGISTRY", str(registry))
+
+    def install(spec: str, config: dict[str, Any]) -> None:
+        identity = "revision" if "revision" in config else "digest"
+        registry.write_text(json.dumps({
+            "schema": "ura-local-model-execution-profiles/3",
+            "models": {spec: {
+                "identity": {identity: config[identity]},
+                "modalities": config["modalities"],
+                "generation_tokens": config.get("max_tokens", 4096),
+                "request_timeout_seconds": 120.0,
+                "local_execution": {
+                    "max_model_len": -1,
+                    "tensor_parallel_size": config.get("tensor_parallel_size", 1),
+                    "gpu_memory_utilization": config.get("gpu_memory_utilization", 0.9),
+                },
+                "readiness": {"path": str(evidence), "sha256": "a" * 64,
+                              "readiness_id": "b" * 64},
+            }},
+        }), encoding="utf-8")
+
+    return install
+
+
+@pytest.fixture
 def project_revision_args(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> ProjectRevisionTestArgs:

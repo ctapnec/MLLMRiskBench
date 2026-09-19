@@ -854,6 +854,7 @@ def test_rig_check_runs_preflights_and_projects_calls_without_generation(
         "--dry-run", "--attackers", "replay,crescendo", "--judges", "rules",
         "--corpora", "synth", "--limit", "2", "--seeds", "0,1",
         "--max-queries", "4", "--max-turns", "4",
+        "--target-answer-retries", "0",
         "--out", str(tmp_path),
     ]) == 0
     output = capsys.readouterr().out
@@ -1511,6 +1512,7 @@ def test_provider_backed_request_requires_caps_for_full_projected_work(
     result = run_matrix.main([
         *purpose_args,
         "--api", target_spec,
+        "--target-answer-retries", "0",
         *_api_config_args(tmp_path, target_spec, judge_spec),
         *_live_attestation_args(
             tmp_path,
@@ -1630,6 +1632,7 @@ def test_local_probe_receipt_admits_measured_run_and_level1(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     project_revision_args,
+    approved_local_profile,
 ) -> None:
     """Local grid configs are keyed by resolved base identity, not request spec."""
 
@@ -1644,6 +1647,7 @@ def test_local_probe_receipt_admits_measured_run_and_level1(
         "max_tokens": 64,
     }
     local_config_path = tmp_path / "local-targets.json"
+    approved_local_profile(requested_spec, local_config)
     local_config_path.write_text(
         json.dumps({requested_spec: local_config}), encoding="utf-8"
     )
@@ -1764,6 +1768,7 @@ def test_defended_local_preflight_binds_base_model_not_guard_wrapper(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     project_revision_args,
+    approved_local_profile,
 ) -> None:
     """The defense wrapper is a run condition, not a Hub revision suffix."""
 
@@ -1779,6 +1784,8 @@ def test_defended_local_preflight_binds_base_model_not_guard_wrapper(
         "max_tokens": 64,
     }}), encoding="utf-8")
 
+    approved_local_profile(requested_spec, json.loads(
+        local_config_path.read_text(encoding="utf-8"))[requested_spec])
     # The real local engine is unnecessary for a no-call preflight, but its
     # resolved immutable name must still flow through the full matrix builder.
     base_target = MockTarget(resolved_target)
@@ -2315,11 +2322,11 @@ def test_precall_identity_prioritizes_immutable_local_digest_over_ollama_tag() -
     digest = "a" * 64
     first = run_matrix.build_target(
         "ollama:alias-a",
-        local_identity={"digest": digest, "modalities": ["text"]},
+        local_identity={"digest": digest, "modalities": ["text"], "num_ctx": "fit"},
     )
     second = run_matrix.build_target(
         "ollama:alias-b",
-        local_identity={"digest": digest, "modalities": ["text"]},
+        local_identity={"digest": digest, "modalities": ["text"], "num_ctx": "fit"},
     )
 
     assert run_matrix._precall_model_identity(first) == frozenset({
@@ -3540,7 +3547,8 @@ def test_systemic_target_failure_opens_circuit_before_next_cell(
     circuit = json.loads(next(tmp_path.glob("*.circuits.json")).read_text(
         encoding="utf-8"
     ))
-    assert "target:failing-provider" in circuit["circuits"]
+    assert "paid_provider" in circuit["circuits"]
+    assert "systemic provider outage" in circuit["circuits"]["paid_provider"]["message"]
     grid = json.loads(next(tmp_path.glob("*.grid.json")).read_text(
         encoding="utf-8"
     ))
@@ -5102,7 +5110,8 @@ def test_first_response_attestation_drift_opens_circuit_before_second_cell(
     circuit = json.loads(next((tmp_path / "drift").glob("*.circuits.json")).read_text(
         encoding="utf-8"
     ))
-    assert f"target:{target.name}" in circuit["circuits"]
+    assert "paid_provider" in circuit["circuits"]
+    assert "target_identity_attestation" in circuit["circuits"]["paid_provider"]["message"]
     grid = json.loads(next((tmp_path / "drift").glob("*.grid.json")).read_text(
         encoding="utf-8"
     ))
@@ -7451,6 +7460,7 @@ def test_group_values_with_separators_round_trip_through_aggregation_and_consume
         ]
         assert [row.attempt_id for row in level2_rows] == [
             judgment.attempt_id for judgment in expected_support
+            if judgment.raw.get("approximate_security_decision") is not None
         ]
     # Plain group values keep the historical label and identities unchanged.
     plain_keys = ["source", "effective_modality", "expected_behavior"]

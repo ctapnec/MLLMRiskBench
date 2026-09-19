@@ -18468,17 +18468,17 @@ def contract_self_test() -> int:
                 )
             relocated_config_path = temp / "relocated-local-llava-rr.json"
             relocated_config_path.write_bytes(config_payload)
-            must_fail(
-                "rr-local-config-path",
-                lambda: validate_rr_runtime_project_continuity(
-                    continuity_artifact(
-                        "relocated-config",
-                        local_config=descriptor(relocated_config_path),
-                    ),
-                    project_root=deployed,
-                    covered_commit=historical_covered_commit,
-                    label="RR continuity self-test",
+            # Analysis may use a copied workspace. Relocation is valid when
+            # retained and checkout config bytes match. Changed bytes below
+            # must still fail.
+            validate_rr_runtime_project_continuity(
+                continuity_artifact(
+                    "relocated-config",
+                    local_config=descriptor(relocated_config_path),
                 ),
+                project_root=deployed,
+                covered_commit=historical_covered_commit,
+                label="RR relocated continuity self-test",
             )
             wrong_config_path = temp / "wrong-project" / "experiments" / (
                 "local-llava-rr.json"

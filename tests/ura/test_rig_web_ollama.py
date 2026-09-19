@@ -1009,6 +1009,7 @@ def test_routes_dispatch_without_action_token_and_pull_sets_explicit_activity(
                 "--timeout-seconds": "120",
             },
             "kwargs": {
+                "campaign_id": "",
                 "activity": "model_download",
                 "builder_params": {"ollama_model": "fixture:latest"},
             },
@@ -1152,7 +1153,7 @@ def test_job_activity_schema_migrates_persists_and_restores(tmp_path: Path) -> N
             str(row[1])
             for row in db._conn.execute("PRAGMA table_info(jobs)")  # type: ignore[union-attr]
         }
-        assert "activity" in columns and db.SCHEMA_VERSION == 4
+        assert "activity" in columns and db.health()["schema_version"] == db.SCHEMA_VERSION
         job = Job(
             "download-job",
             "ollama_pull",
@@ -1336,8 +1337,7 @@ def test_builder_uses_only_exact_live_rows_and_ignores_catalog_only_overlap(
     assert catalog["ollama:granite:latest"] == {
         "digest": "B" * 64,
         "modalities": ["text", "image"],
-        "num_ctx": 32768,
-        "num_predict": 4096,
+        "num_ctx": "fit",
         "think": False,
     }
     generated = builder._materialize_selected_local_config(
@@ -1347,8 +1347,7 @@ def test_builder_uses_only_exact_live_rows_and_ignores_catalog_only_overlap(
         "ollama:granite:latest": {
             "digest": "b" * 64,
             "modalities": ["text", "image"],
-            "num_ctx": 32768,
-            "num_predict": 4096,
+            "num_ctx": "fit",
             "think": False,
         }
     }
@@ -1582,7 +1581,7 @@ def test_crafted_measured_post_rejects_unavailable_absent_or_stale_live_model(
         system_hardware={"available": False},
         ollama_service=LiveControl(),
     )
-    monkeypatch.setattr(app, "_validate_builder", lambda _params: {})
+    monkeypatch.setattr(app, "_validate_builder", lambda _params, **_kwargs: {})
     before = set(app.jobs)
     try:
         status, _content_type, body = app.handle(

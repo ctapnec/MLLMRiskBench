@@ -1422,7 +1422,8 @@ def test_phase7_splits_lifecycle_from_success_only_metric_views() -> None:
     suite = source[source.index("    def run_suite_summary("):source.index("    def run_level2(")]
     level2 = source[source.index("    def run_level2("):source.index("    def run_judge_sensitivity(")]
     assert "self.lifecycle_runner_view()" in level1
-    assert "self.lifecycle_eligibility_args_for_roots(roots)" in level1
+    assert "view_roots = {stratum_id: str(view)}" in level1
+    assert "self.lifecycle_eligibility_args_for_roots(view_roots)" in level1
     assert "self.analysis_runner_view()" in suite
     assert "self.eligibility_args(lifecycle=False)" in suite
     assert "self.analysis_runner_view()" in level2

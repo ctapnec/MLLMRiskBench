@@ -219,7 +219,7 @@ def test_run_matrix_rejects_multiple_local_models_per_process(tmp_path):
 
 
 def test_local_target_setup_error_does_not_persist_checkpoint_path(
-    tmp_path, project_revision_args,
+    tmp_path, project_revision_args, approved_local_profile,
 ):
     missing = (tmp_path / "private-workstation" / "missing-ckpt").resolve()
     spec = f"vllm:{missing}"
@@ -228,6 +228,7 @@ def test_local_target_setup_error_does_not_persist_checkpoint_path(
     config.write_text(json.dumps({spec: {
         "digest": digest, "modalities": ["text"], "tensor_parallel_size": 1,
     }}), encoding="utf-8")
+    approved_local_profile(spec, json.loads(config.read_text(encoding="utf-8"))[spec])
     out = tmp_path / "artifacts"
 
     result = run_matrix.main([

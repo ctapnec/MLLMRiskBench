@@ -17,6 +17,14 @@ to exhaust it. Verification artifacts stay outside version control.
 
 ## Acceptance matrix
 
+This matrix began before the unified campaign flow. The subsequent real local,
+fresh hosted and matched hosted acceptance is recorded in RA-756 and RA-757
+of the development ledger. The broader 19 September re-audit remains open:
+its first complete rig suite produced 5,251 passes, 136 failures and 10 skips.
+Do not treat earlier focused acceptance as a clean result for that suite.
+Failures and corrected reruns are retained separately; production campaigns
+are not rerun to repair test fixtures.
+
 | Workflow | Required checks | Current audit state |
 | --- | --- | --- |
 | Direct local campaign and single run | Automatic preparation, one start, stop/restart, retained scope | Re-audit pending |
@@ -32,6 +40,21 @@ to exhaust it. Verification artifacts stay outside version control.
 
 Track findings and evidence in the thesis project's development ledger. Thesis
 chapters describe methods and findings academically, not audit chronology.
+
+## Documentation preservation
+
+The maintained [small-campaign guide](SMALL_CAMPAIGNS.md) contains both input
+routes and the full optional analysis steps. The
+[preservation map](DOCUMENTATION_MAINTENANCE.md) records where the earlier
+sections moved. Historical workspace and walkthrough records are retained in
+full, not silently replaced by shorter current instructions.
+
+The rig document checks cover links, section anchors, numbering, redirects,
+retained actions, reference results and qualifications. Deliberate removal of
+seven required passages and one section link is detected. The final first
+affected pass included 11 document checks within 93 passing tests. This is
+supplemented by semantic comparison and browser regression; it does not close
+the outstanding broad-suite findings.
 
 The Jobs/Stats pass ran 122 focused regressions and eight detecting reversals.
 Real-data Chromium acceptance inspected 7,541 retained answers in 397 SVM input

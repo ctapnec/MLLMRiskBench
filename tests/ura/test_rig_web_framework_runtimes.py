@@ -141,7 +141,7 @@ def test_runtime_tab_is_outside_builder_and_has_one_action_per_row(tmp_path: Pat
     page = body.decode("utf-8")
     general = page.index("data-page-panel='build-general'")
     runtimes = page.index("data-page-panel='build-runtimes'")
-    builder = page.index("<form method='post' action='/build' id='builder'>")
+    builder = page.index("<form method='post' action='/build/review' id='builder'>")
     pipeline = page.index("data-page-panel='build-pipeline'")
     assert general < runtimes < builder < pipeline
     runtime_html = page[runtimes:builder]

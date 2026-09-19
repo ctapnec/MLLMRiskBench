@@ -1018,6 +1018,14 @@ def test_phase7_sampling_sources_exclude_failed_followon_sibling(tmp_path: Path)
         def _seven_metric_lanes() -> list[str]:
             return []
 
+        _current_ollama_metric_lanes = staticmethod(lambda: [])
+        _current_ollama_stability_metric_lanes = staticmethod(lambda: [])
+        _current_ollama_alignment_metric_lanes = staticmethod(lambda: [])
+        _failed_output_recovery_metric_lanes = staticmethod(lambda: [])
+        _vllm_stability_metric_lanes = staticmethod(lambda: [])
+        _vllm_context_recovery_metric_lanes = staticmethod(lambda: [])
+        _local_hardware_fit_metric_lanes = staticmethod(lambda: [])
+
     sources = method(Fixture())
     assert set(sources) == {
         "core-view/core-lane/core.complete.json",
@@ -1070,6 +1078,9 @@ def test_phase7_revision_strata_retain_mixed_current_revisions(tmp_path: Path) -
                 }
             },
             "seven_output_policy_amendment": {"revision_strata": {}},
+            **{name: {"revision_strata": {}} for name in (
+                "current_ollama", "current_ollama_stability", "current_ollama_population_alignment",
+                "failed_output_recovery", "vllm_stability", "vllm_context_recovery", "local_hardware_fit_recovery")},
         }
 
         @staticmethod
@@ -1098,6 +1109,8 @@ def test_phase8_sampling_keeps_four_current_revision_strata() -> None:
     }
     followon_revision = "7" * 64
     revision_by_lane[followon] = followon_revision
+    context_lane = "context-recovery"
+    revision_by_lane[context_lane] = followon_revision
     source_sha = "e" * 64
     namespace: dict[str, Any] = {
         "Path": Path,
@@ -1110,13 +1123,18 @@ def test_phase8_sampling_keeps_four_current_revision_strata() -> None:
         "SEVEN_TERMINAL_STATES": {"measured_complete", "gate5_failed", "measured_failed"},
         "FOLLOWON_LANES": (followon,),
         "FOLLOWON_STATES": {"measured_complete", "partial", "failed"},
+        "CURRENT_OLLAMA_RUNNABLE_LANES": (), "CURRENT_OLLAMA_TYPED_TERMINAL_LANES": (),
+        "CURRENT_OLLAMA_STABILITY_LAYOUT": (), "CURRENT_OLLAMA_ALIGNMENT_LANES": (),
+        "CURRENT_OLLAMA_ALIGNMENT_SPLIT_LANE": "unused",
+        "FAILED_OUTPUT_RECOVERY_UNIT_ORDER": (), "VLLM_STABILITY_UNIT_LAYOUT": (),
+        "VLLM_CONTEXT_RECOVERY_UNIT": context_lane,
         "checked_dir": lambda path, **_: Path(path),
         "_sampling_lane_binding": lambda *, lane, **_: (
             revision_by_lane[lane], source_sha
         ),
     }
     helper = _phase8_function("phase7_sampling_lane_contract", namespace)
-    lane_order = [*core, followon]
+    lane_order = [*core, followon, context_lane]
     runner_root = Path("/runner")
     runner = {
         "lifecycle_lane_order": core,
@@ -1139,12 +1157,21 @@ def test_phase8_sampling_keeps_four_current_revision_strata() -> None:
         "project_revision_receipt_sha256": followon_revision,
         "source_conformance_sha256": source_sha,
     }
+    extensions = {name: {**seven, "unit_order": []} for name in (
+        "current_ollama", "current_ollama_stability", "current_ollama_population_alignment",
+        "failed_output_recovery", "vllm_stability", "local_hardware_fit_recovery")}
+    extensions["vllm_context_recovery"] = {
+        **followon_value, "terminal_states": {context_lane: "measured_complete"},
+        "metric_lane_order": [context_lane], "metric_roots": {context_lane: str(runner_root/context_lane)},
+        "metric_evidence": {context_lane: {}},
+    }
     contract = helper(
         runner_root=runner_root,
         runner=runner,
         recoveries={"latest": {}},
         seven=seven,
         followon=followon_value,
+        **extensions,
     )
     strata = contract["revision_strata"]
     assert len(strata) == 4
@@ -1164,6 +1191,7 @@ def test_phase8_sampling_keeps_four_current_revision_strata() -> None:
                 "metric_roots": {core[0]: str(runner_root / core[0])},
                 "metric_evidence": {core[0]: {}},
             },
+            **extensions,
         )
 
 
