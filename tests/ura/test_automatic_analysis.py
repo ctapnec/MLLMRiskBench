@@ -97,7 +97,7 @@ def test_analysis_process_uses_console_tool_and_bounded_threads(app,monkeypatch)
     from experiments.rig_web_app.lifecycle import LifecycleMixin
     # The command remains typed; execution source is recorded separately from Runner.
     source=inspect.getsource(LifecycleMixin.start_job)
-    assert 'analysis_code_repository' in source and '_REPO_ROOT / "experiments" / "response_svm.py"' in source
+    assert 'analysis_code_repository' in source and 'command+".py"' in source
     monkeypatch.setenv('OPENBLAS_NUM_THREADS','24')
     env=app._generic_child_environment('response_svm',{})
     assert env['OPENBLAS_NUM_THREADS']==env['OMP_NUM_THREADS']==env['MKL_NUM_THREADS']=='2'
@@ -211,7 +211,7 @@ def test_compose_starts_automatic_preparation_without_second_prepare_form(app,mo
     params=dict(mode='attestation_probe',local='vllm:test',corpora='xstest_full')
     monkeypatch.setattr(app,'_builder_params',lambda data:params)
     monkeypatch.setattr(app,'_runtime_builder_params',lambda data:data)
-    monkeypatch.setattr(app,'_validate_builder',lambda data:{})
+    monkeypatch.setattr(app,'_validate_builder',lambda data,**kw:{})
     monkeypatch.setattr(app,'_save_build_campaign',lambda data:data)
     monkeypatch.setattr(app,'_compose_from_builder',lambda data,**kw:('run_matrix',{},data))
     monkeypatch.setattr(app,'_materialize_prepared_attacker_config',lambda *a,**kw:None)

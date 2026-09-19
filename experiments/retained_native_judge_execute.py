@@ -64,7 +64,8 @@ def original_judgments(source, reader, inputs, responses):
 def source_runtime(source, *, verify_model_sha256=False):
     """Reuse the admitted judge bytes; full model hashing is explicitly opt-in."""
     directory = Path(source["out"])
-    grid = sources.read(next(directory.glob("*.grid.json")))
+    grid = (sources.generation_artifacts(directory, source['run_id'])[1]
+            if source.get('run_id') else sources.read(next(directory.glob("*.grid.json"))))
     acquisition = grid["request"]["model_acquisition"]
     selected = validate_public_selection_descriptor(acquisition["selection"])
     selection = build_runtime_selection(ModelRequirementSet(tuple(

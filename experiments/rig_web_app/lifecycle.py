@@ -1926,6 +1926,17 @@ class LifecycleMixin:
                 allowed.update(self._declared_matrix_environment(selected))
             allowed.update(self._MATRIX_OPTIONAL_ENV)
             allowed.update(self._MATRIX_RECEIPT_ENV)
+        if command == 'campaign_assess':
+            allowed.update(self._MATRIX_OPTIONAL_ENV)
+            allowed.add('URA_MODEL_STORE')
+            if values.get('--execute'):
+                root = Path(str(values['--out']))
+                preparation = self._strict_config_document(str(root/'result.json'))
+                if preparation['kind'] == 'haiku':
+                    api_path = root/'api.json'
+                    allowed.update(self._selected_matrix_environment_names({
+                        '--judges':'llm','--judge-model':preparation['judge_model'],
+                        '--api-config':str(api_path),'--api-config-sha256':hashlib.sha256(api_path.read_bytes()).hexdigest()}))
         if command == "retained_inventory_judging":
             from experiments.hosted_retained_inputs import _descriptor
             if values.get('--execute'):
@@ -1994,7 +2005,7 @@ class LifecycleMixin:
         # installation of its Python interpreter. Honor the selected project.
         child["PYTHONPATH"] = os.pathsep.join((str(self.repo_root.resolve()),
                                               str(self.repo_root.resolve() / "src")))
-        if command == "response_svm":
+        if command in {"response_svm", "campaign_assess"}:
             child.update(OPENBLAS_NUM_THREADS="2", OMP_NUM_THREADS="2", MKL_NUM_THREADS="2")
         if command == "export_aggregators":
             # The aggregator export is the second acquisition child: the gated
@@ -3462,10 +3473,10 @@ class LifecycleMixin:
         # allowlist and differ only in content-identity projection.
         try:
             launch_argv = build_argv(command, values, commands=self.commands)
-            if command == "response_svm":
+            if command in {"response_svm", "campaign_assess"}:
                 # Console-owned analysis does not advance the measured Runner.
                 # Use this release's tool, including its automatic study mode.
-                launch_argv = [launch_argv[0], str(_REPO_ROOT / "experiments" / "response_svm.py"), *launch_argv[3:]]
+                launch_argv = [launch_argv[0], str(_REPO_ROOT / "experiments" / (command+".py")), *launch_argv[3:]]
             (
                 argv,
                 retained_params,
@@ -3595,7 +3606,7 @@ class LifecycleMixin:
                 "argv": argv,
                 "supervised": os.name == "posix",
             }
-            if command == "response_svm":
+            if command in {"response_svm", "campaign_assess"}:
                 command_document['analysis_code_repository'] = str(_REPO_ROOT)
             if campaign_id:
                 from .workspace_store import activity_role  # noqa: PLC0415
@@ -4084,6 +4095,18 @@ class LifecycleMixin:
         path = parsed.path
         query = {key: values[0] for key, values in parse_qs(parsed.query).items() if values}
         try:
+            if path == '/assessment' and method == 'GET':
+                from .campaign_assessment import page
+                return 200, 'text/html; charset=utf-8', page(self,query.get('campaign_id',''))
+            if path == '/assessment/review' and method == 'GET':
+                from .campaign_assessment import review
+                return 200, 'text/html; charset=utf-8', review(self,query.get('campaign_id',''),query.get('job',''))
+            if path in {'/assessment/prepare','/assessment/start'} and method == 'POST':
+                from .campaign_assessment import prepare, launch
+                with self._app_lock:
+                    job=(prepare if path.endswith('/prepare') else launch)(self,dict(form or {}))
+                owner=self.db.workspace_for_job(job.job_id)
+                return 303, ('/assessment/review?campaign_id='+owner+'&job='+job.job_id if path.endswith('/prepare') else '/jobs/'+job.job_id), b''
             if path == '/analysis' and method == 'GET':
                 from .response_analysis import page
                 return 200, 'text/html; charset=utf-8', page(self, query.get('campaign_id',''))

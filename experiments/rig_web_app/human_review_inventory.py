@@ -57,7 +57,7 @@ def _records(references, root):
     return result
 
 
-def read_campaign(database: Path, campaign: str, results_root: Path) -> dict:
+def read_campaign(database: Path, campaign: str, results_root: Path, *, include_records=False) -> dict:
     root = results_root.resolve(strict=True)
     connection = sqlite3.connect(database.resolve().as_uri()+'?mode=ro', uri=True)
     connection.row_factory = sqlite3.Row
@@ -192,6 +192,8 @@ def read_campaign(database: Path, campaign: str, results_root: Path) -> dict:
         outputs.append(dict(response_id=identity,input_id=assignment['input_id'],sample_key=audit._record_key(response),
             metadata=meta,judgments=attached,supplementary_contexts=supplementary_contexts,source_ref=reference,truncated=assignment['truncated'],
             media_bindings=origin.get('media_bindings',[]),generation_metadata=details))
+        if include_records:
+            outputs[-1].update(attempt=attempt,response=response,manifest=manifests[manifest_path],out=str(path.parent))
     return dict(campaign_id=campaign,campaign_name=owner['name'],measured_assignments=len(assignments),
         assignment_outcomes=dict(dispositions),outputs=outputs,unavailable=unavailable,
         retained_files_read=len({path for path,_ in records})+len(attempts_by_file)+sum(bool(m) for m in manifests.values()),

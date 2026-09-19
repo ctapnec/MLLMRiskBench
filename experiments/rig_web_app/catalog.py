@@ -1078,6 +1078,17 @@ def _commands() -> dict[str, Command]:
             ),
         ),
         Command(
+            "campaign_assess", "experiments.campaign_assess",
+            "Prepare or resume missing local/Haiku verdicts on indexed campaign answers",
+            (CommandParam("--execute", "flag"), CommandParam("--database", "path", required=True),
+             CommandParam("--campaign", "str"), CommandParam("--results-root", "path"),
+             CommandParam("--kind", "str", choices=("local", "haiku")),
+             CommandParam("--judge-model", "str"), CommandParam("--api-config", "path"),
+             CommandParam("--pricing-config", "path"), CommandParam("--max-cost-microusd", "int"),
+             CommandParam("--model-store", "path"), CommandParam("--limit", "int"),
+             CommandParam("--out", "path", required=True)),
+        ),
+        Command(
             "local_model_readiness",
             "experiments.local_model_readiness",
             "Profile one vLLM or Ollama target with the seeded 10-text/5-image gate",

@@ -335,6 +335,7 @@ class WorkspacePagesMixin:
             + (" aria-current='page'" if tab == section else "") + ">"
             + tab.title() + "</a>" for tab in sections
         ) + "<a class='page-tab' href='/human-evaluation?campaign_id=" + campaign_id + "'>Human evaluation</a>" \
+            + "<a class='page-tab' href='/assessment?campaign_id=" + campaign_id + "'>Evaluate saved answers</a>"
             + "<a class='page-tab' href='/analysis?campaign_id=" + campaign_id + "'>SVM analysis</a></nav>"
         if section == "definition":
             definition = self.db.workspace_definition(campaign_id)
