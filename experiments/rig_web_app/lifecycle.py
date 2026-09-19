@@ -4381,6 +4381,7 @@ class LifecycleMixin:
                     "text/html; charset=utf-8",
                     self._build_page(
                         prefill=prefill,
+                        saved=query.get('saved') == '1',
                         ollama_state=query.get("ollama_state", ""),
                         ollama_error=query.get("ollama_error", ""),
                         framework_runtime_state=query.get(

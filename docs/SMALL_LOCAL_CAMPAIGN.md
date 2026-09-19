@@ -1,280 +1,135 @@
 # A small local campaign through Build
 
-This guide uses the installed Qwen3-VL model and Llama Guard on the rig. It does
-not require a framework installation, a model download or a hosted API call.
-The destination is a **new demonstration campaign**, not the thesis Local
-campaign. The measured example requests **two text and two image inputs**,
-followed by local evaluation. Diagnostic probes are kept separate.
+This walkthrough creates a new campaign with the installed Qwen3-VL model,
+two text and two image inputs, and local evaluation. It needs no hosted calls,
+framework reinstall or model download. The ordinary flow is **configure ->
+save -> compose -> review -> start**. Required connection checks are automatic
+parts of the reviewed execution, not separate setup tasks.
 
-### Before you begin
-
-- For a new campaign, choose an unused name. If you already created one,
-  continue with it. Output directories and the execution scope are automatic;
-  you do not need to invent, create or copy filesystem paths.
-- Do not start this work alongside another GPU job. The installed Qwen profile
-  uses both GPUs. Static collection releases the target before local scoring.
-- Keep the assessed model settings. Do not repeat the responsiveness survey,
-  reinstall the runtimes, download the models or enable full model SHA verification.
-- You can inspect the
-  [completed reference campaign](http://localhost:8642/campaigns/f082ba4833644521b51eade324ccf94d)
-  without restarting it. Its results are described in section 7, not targets
-  your new run must reproduce exactly.
-
-### Workflow
-
-| Stage | Sections | Result |
-| --- | --- | --- |
-| Configure | 1-2 | One saved campaign draft with small, explicit bounds |
-| Establish text and image transport | 3-5 | Completed probes and two transport receipts |
-| Collect and evaluate | 6 | Four requested measured inputs with local evaluation |
-| Inspect | 7 | Results, coverage, charts and exports |
-| Optional hosted comparison | 8 | A separate Flash campaign using saved local inputs |
-
-### Find your campaign, Build and Run tools
-
-"Your demonstration campaign" means the campaign **you named in section 1**.
-It is not a menu item named "Demonstration campaign", and it is not the historical
-**Local campaign**. For the operator's current walkthrough its name is
-**Qwen demonstration**.
-
-1. Click **Campaigns** in the main navigation at the top of any page.
-2. On the campaign list, click your campaign's **name**, not **Edit in Build**.
-   For the current walkthrough, click **Qwen demonstration**. This opens a page
-   with that name as its heading.
-3. Immediately below the heading are three buttons: **Configure in Build**,
-   **Campaign jobs**, and **Run tools**. They are above the campaign's Overview,
-   Definition, Results and other tabs. On narrow screens the buttons may wrap
-   onto separate lines. Close the campaign guide modal if it covers them.
-4. **Configure in Build** reopens your saved settings. **Campaign jobs** lists
-   this campaign's jobs. **Run tools** opens the command forms with this campaign
-   already selected. It does not start a job.
-
-For the current walkthrough only:
-
-- [Open Qwen demonstration](http://localhost:8642/campaigns/02aa50eae1bc43f4be35dfc14d673f6d).
-- [Open its Run tools page](http://localhost:8642/commands?campaign_id=02aa50eae1bc43f4be35dfc14d673f6d).
-
-For a different campaign, use its name from the campaign list instead of these
-example links. Whenever a step says **return to Build**, follow steps 1-3 and
-click **Configure in Build**. After starting a job, follow its opened job page
-until it finishes; do not launch a second copy while the first is active.
-
-## 1. Create the draft and select the installed models
-
-### 1.1. Create the campaign and select Qwen
+## 1. Create the campaign and choose its experiment
 
 1. Open <http://localhost:8642/build?work_kind=campaign>.
-2. Leave **Campaign** selected under **What are you building?**. In the campaign
-   dropdown choose **New campaign**. Enter `My Qwen demonstration` as its name.
-   Optionally check **Guide me through this campaign** to open the in-app guide.
-   It suggests steps and links to the controls without starting work. Close it
-   whenever you want to configure the page; **Campaign guide** reopens it.
-3. Open **Pipeline**. Choose **attestation probe**. Enable Text and Image and
-   disable Audio, Video and Tool. Select only `xstest_full` initially.
-   **Save campaign** retains these modality choices. Older drafts that never
-   saved a scope start with all modalities enabled; set Text and Image once
-   and save. Switching Build tabs does not require another save.
-4. Open the target-model picker, choose **Local rig**, select only
-   `vllm:Qwen/Qwen3-VL-8B-Instruct`, then click **Done**.
+2. Leave **Campaign** selected under **What are you building?**. Choose
+   **New campaign**, then enter a unique name such as `My Qwen demonstration`.
+   If you already created **Qwen demonstration**, select it instead.
+3. Optionally enable **Guide me through this campaign**. Close the guide when
+   it covers controls; **Campaign guide** reopens it.
+4. Open **Pipeline** and select **Measured lane**. Enable **Text** and **Image**;
+   disable Audio, Video and Tool. Select only `xstest_full` and
+   `vlsbench_release` under **Arms & corpora**, and **replay** under attacks.
+5. In the target-model picker, choose **Local rig**, select only
+   `vllm:Qwen/Qwen3-VL-8B-Instruct`, and click **Done**.
+6. In **Evaluation**, select **rules** and **guardrail**, uncheck **llm**, and
+   leave defense **none**. Select `meta-llama/Llama-Guard-3-8B` as the
+   **scoring** guardrail. Its installed revision and device are automatic.
 
-### 1.2. Configure local evaluation
+Do not start alongside another GPU job. The installed Qwen profile uses both
+GPUs; static collection releases the target before local scoring. Reuse the
+assessed serving profile. No new responsiveness survey is needed for an
+unchanged, already-assessed model.
 
-1. Open **Evaluation**. Keep **rules**, uncheck **llm**, and select **guardrail**.
-2. Leave the defense **none**.
-3. Set the **scoring** guardrail model to `meta-llama/Llama-Guard-3-8B`, not
-   the similarly named defense guardrail model.
+## 2. Set the small workload
 
-Revision and device are automatic, without selection fields. Preparation records
-the installed revision; the judge is placed using available GPU memory when it
-loads. Saved verdicts retain its actual placement.
+### 2.1. Admission
 
-## 2. Set the text probe's bounds
+Keep **Admission -> Setup -> Automatic (recommended)**. Do not enter receipt
+rows, hashes, execution scopes or paths. Build finds matching connection checks.
+When checks are missing or expired, it derives the necessary diagnostics from
+your measured selection and includes them in the final reviewed start.
+Your measured settings remain unchanged.
 
-### 2.1. Set Admission
+### 2.2. Execution
 
-Open **Admission** and leave **Setup -> Automatic (recommended)** selected.
-No receipt rows, hashes, revision, execution-scope or output-path entry is
-required. Build supplies the Runner's configured software/source records and
-keeps an existing campaign scope, or assigns one for a new campaign. Probes
-automatically omit prior transport checks. **Advanced overrides** is optional,
-not a required step in this walkthrough.
+1. Click **Execution** in Build's top tab row. Under **Sampling & turns ->
+   Per-arm sample size**, confirm **2 arms selected**.
+2. Set these on-screen fields:
 
-### 2.2. Set Execution
-
-These are controls in **Build**, not the campaign's Definition page, a job's
-execution details or a Tools form. Keep your current draft open. If you already
-saved it and left Build, use **Campaigns -> your demonstration campaign ->
-Configure in Build**. Do not open a fresh Build link and lose unsaved selections.
-
-1. At the top of Build, click **Execution**, in the same tab row as **General**,
-   **Runtimes**, **Pipeline**, **Evaluation** and **Admission**. Close the campaign
-   guide modal first if it covers the page. You should see **Sampling & turns**.
-2. In its **Per-arm sample size** box, check that the badge says **1 arm selected**.
-   If it says **0 arms selected**, use **Pipeline - Arms & corpora**, select
-   `xstest_full`, and return to **Execution**. The sampling fields are disabled
-   until a corpus is selected.
-3. Set the following fields by their **literal on-screen labels**:
-
-   | Location in Sampling & turns | On-screen label | Value |
-   | --- | --- | --- |
-   | Per-arm sample size | `--limit` | `1` |
-   | Per-arm sample size | `--sample-seed` | `0` |
-   | Per-arm sample size | `--sampling-policy` | **Seeded pseudorandom cluster prefix (default)** |
-   | Below Per-arm sample size | `--seeds` | `0` |
-   | Below Per-arm sample size | `--max-queries` | `1` |
-   | Below Per-arm sample size | `--max-turns` | `1` |
-   | Below Per-arm sample size | `--target-answer-retries` | `1` |
-
-   Enter `--limit` directly in its number box. The **Sample-size range** slider
-   is unavailable until a matching no-call preflight supplies the corpus size;
-   no preflight is needed to enter the number now. The policy's CLI value is
-   `seeded_pseudorandom_whole_cluster_prefix_v1`, but that is not its menu label.
-4. Scroll down, still inside **Execution**, to **Aggregation, row admission &
-   resume**. Keep `--group` unchanged and `--lock-stale-seconds` empty. Leave
-   **Reset open circuits (--reset-open-circuits)** unchecked. In **attestation
-   probe** mode, **Exclude tool-conditioned rows (--exclude-tool-conditioned)**
-   is automatically unchecked and disabled; do not try to enable it.
-5. Continue down to **Call ceilings & deadline (budget guards)**. Set each
-   individual field; there is no combined "Target / judge / HTTP ceilings" control.
-
-   | On-screen label | Value |
+   | Field | Value |
    | --- | --- |
-   | `--max-total-target-calls` | `16` |
-   | `--max-total-judge-calls` | `16` |
-   | `--max-total-http-attempts` | `1` |
-   | **Local process wall-time cap (hours)** | Leave empty for the probe |
-   | `--deadline-seconds` | `3600` |
+   | `--limit` | `2` |
+   | `--sample-seed` | `0` |
+   | `--sampling-policy` | Seeded pseudorandom cluster prefix (default) |
+   | `--seeds` | `0` |
+   | `--max-queries` | `1` |
+   | `--max-turns` | `1` |
+   | `--target-answer-retries` | `1` |
 
-6. Continue to **Local model serving**. Leave **Full model SHA verification
-   (slow, optional)** unchecked. Do not change `--dtype` or `--quantization`;
-   keep the installed model profile.
-7. The last card, **Output**, explains that the directory is assigned
-   automatically. Leave it that way. Review execution and the resulting job
-   show its actual location; no folder needs to be created by hand.
-8. Continue with section **2.3** to save and review. Do not start a job yet.
+   Enter the sample count directly; the slider acquires its corpus range after
+   preparation. The limit is per arm and preserves whole source clusters.
+3. Leave **Advanced execution and recovery options** collapsed.
+4. Under **Call ceilings & deadline (budget guards)**, enable **Calculate call
+   limits automatically**. Do not fill **Manual call-limit overrides**.
+   Set **Local process wall-time cap (hours)** to `1`; leave
+   `--deadline-seconds` at `3600`. These are resource bounds, not a required
+   duration or individual-response timeout.
+5. Under **Local model serving**, keep the assessed defaults. Leave **Full model
+   SHA verification (slow, optional)** unchecked.
+6. Leave **Output** automatic. No folder needs to be created, and the campaign
+   name does not need translating into a filesystem path.
 
-The positive HTTP ceiling is required by the common bounds form; it does not
-initiate network calls. This all-local projection should report zero HTTP attempts.
+### 2.3. Save
 
-### 2.3. Save and review the draft
+Click **General -> Save campaign**. Build stays open with the saved draft.
+Saving does not start preparation or model calls. Continue with section 3.
 
-1. Return to **General** and click **Save campaign**. This opens **Definition**.
-2. Click **Configure in Build -> General -> Compose & review**.
-3. Check Qwen, `xstest_full`, probe mode and the bounds. The output directory is
-   supplied automatically. Saving and reviewing make no model calls.
+## 3. Prepare automatically
 
-## 3. Complete preparation, then run the text probe
+1. In **Build -> General**, click **Compose & review** once.
+2. Stay on the progress page. The system plans the workload, reuses installed
+   models, checks the selection without generation and prepares any required
+   connection checks. Do not open or launch its internal jobs.
+3. Wait until the page presents the execution review. No target or judge call
+   has been made by this preparation.
 
-If an earlier planning job failed with **project checkout revision mismatch**,
-keep it as history. Reopen the campaign in Build, keep **Admission -> Automatic**,
-save and review again. Fresh review selects the configured Runner revision;
-an already reviewed or launched job keeps its original settings. A console-only
-update can retain the Runner checkout, so it need not invalidate existing probes.
+To return later, open **Campaigns -> your campaign name -> Configure in Build ->
+General -> Prepared and active work**. Select **View progress** or **Review and
+start**. Refreshing this page does not launch a duplicate.
 
-### 3.1. Prepare automatically
+## 4. Review the complete workload
 
-1. **Compose & review** opens automatic preparation directly.
-2. Stay on the progress page. Planning, reuse of installed models, the no-call
-   workload check and final preparation happen automatically. Do not open or
-   launch the internal child jobs.
-3. When preparation finishes, the same page shows **Review prepared run**.
-   Check the projected workload. Preparation has made no target or judge calls.
+If all necessary checks already exist, the page is **Review prepared run**.
+Otherwise it is **Review experiment and required checks**.
 
-You can leave this page. Return through **Campaigns -> your campaign name ->
-Configure in Build -> General -> Prepared and active work** and click **Review
-and start** or **View progress**. The campaign's Overview also contains these
-links. Refreshing does not start another preparation.
+Check Qwen, both selected arms, per-arm limit 2 and the measured workload.
+Call ceilings are calculated from the actual projection. A positive technical
+HTTP limit does not create network calls; this local workload projects none.
 
-### 3.2. Start the real text probe
+Missing text/image checks appear under **Additional connection checks**, each
+with its own small diagnostic workload. They make real model calls only after
+the start below and remain separate from measured results. You do not change
+the campaign into probe mode, copy receipts or restore settings afterward.
 
-1. On **Review prepared run**, click **Start probe** once. This makes real Qwen
-   calls and performs the selected evaluation.
-2. The progress page follows the probe and saves its connection check
-   automatically when it succeeds. There is no separate receipt-creation task.
-3. Wait for **Probe and connection check complete**. Use **View the probe result**
-   to inspect the answer and job. A saved answer alone is not completion.
+## 5. Start once
 
-## 4. Check readiness without copying technical fields
+1. Click **Start run**, or **Start experiment including connection checks**
+   when that is the button shown.
+2. Follow the single progress page. Required checks run first, their records
+   are saved automatically, and then the original measured experiment starts.
+3. Open the measured job from the provided link and follow it to completion.
+   Do not start another copy while it is active.
+4. Continue to section 7 to inspect saved answers and verdicts.
 
-After the completed probe, return to the saved campaign in Build. Its connection
-check is retained automatically and will be selected for compatible measured
-work. Leave **Admission -> Automatic** selected. Do not copy paths, digests or
-receipt rows, and do not repeat a successful probe.
+A failed connection check stops progression before the measured run; its
+diagnostic output and error remain available. That failure is not silently
+converted into benchmark evidence.
 
-A connection check establishes the observed transport, not benchmark performance.
-An expired or incompatible probe may need renewal, but an unrelated console-only
-update does not require rerunning it. Historical probes created before automatic
-completion can still be selected through **Tools -> Advanced CLI tools and troubleshooting -> live_attestation -> Use a
-completed probe**; that is a compatibility path, not part of a new campaign.
+## 6. Return, stop or continue
 
-## 5. Repeat for one image input
+Open **Campaigns** in the main header, then your campaign's **name**. This is
+your named demonstration, not the historical **Local campaign**.
+**Configure in Build** reopens its draft; **Campaign jobs** opens its jobs.
+Ordinary execution does not require **Run tools**.
 
-### 5.1. Change only the corpus
+**Prepared and active work** in Build General or campaign Overview reopens the
+current operation. **Stop preparation** prevents later internal stages; an
+active execution has **Stop job** on its job page. If preparation fails, inspect
+the reported cause and use **Continue preparation**. Completed stages are
+reused. A failed real diagnostic has its own retained job and recovery action;
+do not repeatedly start it as if it were a no-call preparation.
 
-1. Return to Build and open **Pipeline**. Uncheck `xstest_full` and select only
-   `vlsbench_release`.
-2. Keep **attestation probe**, Qwen, Text and Image, seed, bounds and evaluation
-   settings unchanged. Automatic setup handles the probe's technical settings.
-3. Leave **Admission -> Automatic** selected. The changed corpus receives its
-   own output directory automatically; leave **Output** unchanged.
-4. Click **General -> Save campaign**, then return to Build and click
-   **General -> Compose & review**.
-
-### 5.2. Run the image probe
-
-1. Follow **3.1-3.2** with the image selection: **Compose & review**, then
-   **Start probe** after checking the workload.
-2. Wait for **Probe and connection check complete**. Connection bookkeeping
-   happens automatically. No tool form, filename or receipt row is required.
-
-The text and image checks support measured execution; neither probe is itself
-a measured benchmark result.
-
-## 6. Configure the small measured run
-
-### 6.1. Change from diagnostic to measured work
-
-1. Return to Build. In **Pipeline**, choose **measured** and select
-   `xstest_full` and `vlsbench_release`. Keep only Qwen selected as a target.
-2. In **Admission**, leave **Automatic (recommended)** selected. Build finds
-   this campaign's saved text and image checks, keeps its scope and applies a
-   24-hour maximum age. Do not enter receipt rows or digests. If no matching
-   check is found, use **Select a completed probe**; do not rerun a successful
-   probe merely to create its missing check.
-3. In **Execution -> Sampling & turns -> Per-arm sample size**, change **--limit**
-   to `2`. In **Call ceilings & deadline (budget guards)** set **Local process
-   wall-time cap (hours)** to `1`. The measured output directory is automatic.
-   Keep the other bounds and the one-answer-retry policy unchanged.
-4. Click **General -> Save campaign**. Build stays open with the saved draft.
-   Continue below; do not start preparation twice.
-
-### 6.2. Prepare, review and start the measured run
-
-1. Stay in **Build -> General**. If you left, return through **Campaigns ->
-   your campaign name -> Configure in Build**.
-2. Check **measured**, Qwen, `xstest_full,vlsbench_release` and per-arm limit
-   `2`. Click **Compose & review** once.
-3. Wait on the single progress page. The console reuses matching completed
-   preparation and installed models. Any needed planning, no-call preflight and
-   execution preparation happen automatically.
-4. On **Review prepared run**, check the calculated call ceilings and selected
-   experiment, then click **Start run**. This starts real generation and local
-   evaluation. Follow the opened job until it finishes.
-
-There is no requirement to choose between acquisition jobs or coordinate
-preparation stages. Internal job details are available for diagnosis
-but are not operator steps. Do not repeat the completed text/image probes.
-
-If you leave preparation, reopen it from **Prepared and active work** in Build
-General or campaign Overview. **Stop preparation** prevents later stages.
-After a failure, inspect the reported cause and use **Continue preparation** to
-retry the unfinished stage with the same settings. If the scientific settings
-must change, edit them in Build and prepare the changed selection. Completed
-work and earlier errors remain in history.
-
-Older job pages and their reviewed start buttons still work. If you already
-have a fully prepared measured job from the previous interface, continue that
-job instead of creating a second measured execution.
+Changing scientific choices requires a new review. A finished measured run is
+not restarted merely to inspect results. Older manually prepared jobs remain
+in history and can still use their own continuation controls.
 
 ## 7. Inspect results, judging and exports
 
@@ -295,6 +150,17 @@ job instead of creating a second measured execution.
 4. Export the coverage figure and counts from **Overview**, and the judging
    figure and counts from **Judging**. Read the coverage and valid-assessment
    counts before interpreting a safety rate.
+
+### Fill missing saved-output judgments
+
+Open **Campaigns -> your campaign -> Evaluate saved answers**. Choose
+**Original local rules and guardrail** or **Haiku**, and a maximum pending-answer
+count (0 means all). Haiku also requires a configured judge and USD ceiling.
+Click **Prepare assessment and review**, inspect its selected/skipped counts
+and costs, then **Start or resume assessment**. No target generation is repeated.
+Existing valid verdicts are skipped. Source-specific tasks, missing context and
+missing answers remain explicit; image judgments use saved text proxies.
+Return through the same page's **Prepared assessments and progress** to resume.
 
 ### Reference result, not a required outcome
 
@@ -321,7 +187,7 @@ you finished this guide.
 1. Open [the small Flash guide](SMALL_API_CAMPAIGN.md) and create a **new hosted
    campaign**. Choose **route 2a - Reuse local inputs**.
 2. Select **your demonstration campaign** as its source. Choose the measured
-   Qwen text and image runs created in section 6, not the probes or the
+   Qwen text and image runs created in section 5, not the probes or the
    historical run IDs printed in the Flash guide's example.
 3. Follow the Flash guide's workload forecast, preparation and reviewed paid
    start. Use the counts for your four-input selection, not its historical
@@ -412,8 +278,9 @@ calls, and does not replace human assessment.
 ### 10.1. Inspect existing results
 
 1. Click **Campaigns -> your campaign -> SVM analysis**.
-2. Under **Saved analyses**, open an existing study if present. Its Jobs page
-   links the dataset, evaluation and fitted classifiers.
+2. Under **Saved analyses**, read the study summary: selected answers,
+   independent input groups, task status and held-out macro-F1. Named links
+   open the complete metrics, predictions, baselines and fitted classifiers.
 3. Historical thesis analysis remains available under **Artifacts ->
    engineering/response-svm-20260913-r-checkpoints/analysis**. Open
    `result.json` and `predictions.json`; do not start training just to read them.
@@ -431,8 +298,9 @@ calls, and does not replace human assessment.
 5. Click **Start classifier study**. Source metadata extraction, dataset export,
    grouped evaluation and model packaging run together. No campaign IDs,
    database paths or intermediate output paths need entering.
-6. Inspect extraction dispositions, class support and held-out metrics on the
-   resulting Jobs page. Missing labels and unsupported modalities are not
+6. Return to **SVM analysis -> Saved analyses** for its summary and named
+   reports. Inspect extraction dispositions, class support and held-out metrics.
+   Missing labels and unsupported modalities are not
    invented. For interruption, reopen **Saved analyses** and click **Resume
    unfinished analysis**; completed stages are reused.
 
@@ -454,17 +322,10 @@ is not a recovery procedure for every possible failure.
 
 ### Transport evidence expired, or the software changed
 
-1. Return to the same campaign in Build. In **Pipeline**, choose **attestation
-   probe** and only the affected text or image corpus. Keep **Admission ->
-   Automatic**. Do not repeat the unaffected modality's probe.
-2. Save and compose a fresh review. After an earlier execution has ended,
-   automatic setup assigns the next output location without overwriting it.
-   Review or recovery links on an old job intentionally keep its old location.
-3. Complete the probe through section 3. Its connection check is saved
-   automatically; do not run a separate transport-check job.
-4. Return to the measured configuration in section 6. Automatic setup selects
-   the newer check and retains any other still-valid modality check. Nothing
-   needs to be copied or cleared.
+Keep the intended measured selection and **Admission -> Automatic**. Compose
+a fresh review; only missing or incompatible checks are included in its start.
+No mode switch, receipt copying or separate transport-check job is required.
+Old job recovery links intentionally keep their original settings and outputs.
 
 An earlier probe does not establish transport under changed software. If the
 revision changes for both modalities, refresh both. Do not overwrite receipt

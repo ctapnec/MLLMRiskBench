@@ -406,6 +406,7 @@ class BuilderPageMixin:
         ollama_error: str = "",
         framework_runtime_state: str = "",
         framework_runtime_error: str = "",
+        saved: bool = False,
     ) -> bytes:
         # The private local registry may use an operator workstation path as
         # vLLM's runtime locator.  Builder HTML is retained in browser history
@@ -2334,7 +2335,8 @@ class BuilderPageMixin:
         )
         body = (
             "<h1>" + _icon("flask", size=22) + "Build</h1>"
-            "<p>Define a campaign or an independent run. Select your models, "
+            + ('<p class="notice green" role="status">Campaign saved. Continue editing or compose your experiment below.</p>' if saved else '')
+            + "<p>Define a campaign or an independent run. Select your models, "
             "inputs and frameworks, then review the workload and execution settings.</p>"
             + error_summary
             + self._build_work_choice(dict(prefill))

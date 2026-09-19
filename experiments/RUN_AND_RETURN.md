@@ -7424,7 +7424,12 @@ with automatic input extraction, export, evaluation and classifier packaging.
 
 Build campaigns and single runs use **Compose & review**.
 One durable progress page advances through model planning, reuse/acquisition,
-no-call preflight and final preparation. Its final **Start run**, **Start probe**
+no-call preflight and final preparation. Save keeps Build open. Call limits
+are calculated from the projection by default; manual overrides are advanced.
+Missing measured-route connection checks are derived without editing the draft.
+**Start experiment including connection checks** runs those reviewed diagnostics,
+saves their records and proceeds to measured execution. Existing valid checks
+are reused. Its final **Start run**, **Start probe**
 or **Start canary** is an explicit execution action. A probe's connection record
 is saved automatically after the explicitly started probe finishes. Operators
 do not copy receipts or choose between internal acquisition jobs.
@@ -7439,6 +7444,16 @@ prepare their saved-output selection automatically and open the corresponding
 execution review. Haiku preparation does not buy verdicts. The earlier CLI
 recipes in this runbook remain available as technical reference; their separate
 preparation commands are not ordinary UI operator tasks.
+
+All campaigns, including direct and historical CLI collections, also expose
+**Evaluate saved answers**. Choose the original local cascade or Haiku, a
+pending-answer limit and Haiku's USD ceiling. Preparation resolves indexed
+saved outputs and exclusions; the reviewed start uses the existing executors.
+Valid verdicts are skipped, missing responses remain in coverage, and original
+answers are never regenerated. Media assessment is explicitly a text proxy.
+Direct hosted execution reviews display cost scenarios using configured prices,
+4,096 assumed input tokens and quarter/full output allowances, before HTTP
+retries. They are estimates, not the retained-input route's counted budget bound.
 
 **Prepared and active work** in Build General and campaign Overview/Activity
 reopens progress or the final review. **Stop preparation** prevents subsequent
@@ -7456,7 +7471,8 @@ package handoff. Select named campaigns and the recorded Haiku condition, then
 **Start classifier study**. Source metadata, database/output paths and intermediate
 files are derived by the application. Small populations and insufficient class
 support remain reported limitations; unsupported classifier packages are not
-invented. **Saved analyses -> Resume unfinished analysis** retains successful
+invented. Saved analyses shows answer/group counts, task status, held-out
+macro-F1 and named full-report links. **Saved analyses -> Resume unfinished analysis** retains successful
 stages. The scientific protocol is unchanged and no model calls are made.
 
 Prepared attack capture resolves the installed runtime's revision, source tree,

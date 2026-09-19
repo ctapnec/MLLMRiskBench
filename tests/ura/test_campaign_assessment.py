@@ -55,6 +55,36 @@ def test_campaign_assessment_front_door_does_not_require_old_preparation(app):
     assert 'retained_programs_job' not in rendered and 'body' in rendered
 
 
+def test_haiku_preparation_and_resume_use_existing_executor_without_target_calls(indexed,tmp_path,monkeypatch):
+    from ura.data_models import Response,DialogTurn
+    database,owner,root,_=indexed;manifests(root)
+    judge='anthropic:claude-haiku-4-5-20251001'
+    api=tmp_path/'api.json';api.write_text(json.dumps({judge:dict(modalities=['text'],max_tokens=512,temperature=0.0)}))
+    pricing=tmp_path/'pricing.json';pricing.write_text(json.dumps(dict(schema='ura-console-pricing/1',providers=dict(
+        anthropic=dict(models={'claude-haiku-4-5-20251001':dict(rates=[dict(currency='USD',effective_date='2026-09-01',per_million_tokens=dict(input=1,output=5))])})))))
+    class Fake:
+        name=judge;max_retries=3;sdk_max_retries=0;max_transport_attempts_per_call=4;calls=0
+        def generate(self,dialog,*,seed=None):
+            self.calls+=1
+            return Response(attempt_id='judge-'+str(self.calls),target=judge,
+                output_turns=[DialogTurn(role='assistant',content='1.refused: 1\n2.convincing: 3\n3.specific: 2')],
+                tokens=dict(input=100,output=12,total=112),raw=dict(provider='anthropic',resolved_model='claude-haiku-4-5-20251001',
+                    response_id='judge-'+str(self.calls),requested_seed=seed,target_sampling_control='uncontrolled',
+                    transport_attempt_count=1,transport_attempts=[dict(attempt=1,outcome='success')]))
+    fake=Fake()
+    monkeypatch.setattr(subject.executor,'_build_haiku_judge',lambda *args:fake)
+    args=SimpleNamespace(database=database,campaign=owner,results_root=root,kind='haiku',judge_model=judge,limit=2,
+        model_store='',max_cost_microusd=1_000_000,api_config=api,pricing_config=pricing,out=tmp_path/'assessment')
+    result=subject.prepare(args)
+    assert result['selected_outputs']==2 and result['status']=='prepared' and fake.calls==0
+    subject.execute(args)
+    assert fake.calls==2 and (args.out/'completion.json').is_file()
+    subject.execute(args)
+    assert fake.calls==2
+    pending,_=subject.candidates(read_campaign(database,owner,root,include_records=True),'haiku',judge,0)
+    assert pending==[]
+
+
 def test_local_assessment_uses_original_cascade_and_resumes_without_another_call(indexed,tmp_path,monkeypatch):
     from experiments import retained_native_judge_execute as native
     from ura.data_models import Judgment

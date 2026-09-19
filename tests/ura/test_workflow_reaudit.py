@@ -52,6 +52,42 @@ def test_double_start_reopens_same_execution(app):
     assert connection.launch(app,dict(execution_job='saved-run')) is job
 
 
+def test_authorized_checks_run_sequentially_then_bind_evidence_without_changing_experiment(app,monkeypatch):
+    launched=[]
+    for name in ('text','image'):
+        app._operations[name]=dict(id=name,status='ready',params={})
+        app._operations['check-'+name]=dict(status='preparing')
+    operation=dict(id='c'*32,params=dict(mode='measured',limit='2'),execution_authorized=True,
+        connection_operations=[dict(preparation='text'),dict(preparation='image')])
+    def launch(context,child):
+        launched.append(child['id'])
+        return SimpleNamespace(job_id=child['id'])
+    monkeypatch.setattr(connection,'launch',launch)
+    monkeypatch.setattr(app,'_finish_probe_automatically',lambda job:'check-'+job.job_id)
+    monkeypatch.setattr(app,'_campaign_transport_receipts',lambda p:([dict(path='/saved/check',sha256='a'*64)],''))
+    monkeypatch.setattr(app,'_operation_snapshot',lambda op:dict(api_targets=b'original'))
+    monkeypatch.setattr(app,'_capture_execution_config_snapshot',lambda p:(p,dict(api_targets=b'original',live_attestation_1=b'new'),None))
+    monkeypatch.setattr(app,'_bind_execution_config_bundle_identity',lambda p:p)
+    assert connection.advance(app,operation) and launched==['text']
+    assert connection.advance(app,operation) and launched==['text']
+    app._operations['check-text']['status']='ready'
+    assert connection.advance(app,operation) and launched==['text','image']
+    app._operations['check-image']['status']='ready'
+    assert not connection.advance(app,operation)
+    assert operation['connections_complete'] and operation['refresh_after_connections']
+    assert operation['params']['mode']=='measured' and operation['params']['limit']=='2'
+    assert operation['params']['att_path1']=='/saved/check'
+
+
+def test_stopped_internal_preparation_resumes_with_parent(app,monkeypatch):
+    parent=app._operations[app._start_operation('direct',dict(mode='dry_run'))]
+    nested=app._operations[app._start_operation('direct',dict(mode='dry_run',limit='1'))]
+    parent['connection_operations']=[dict(preparation=nested['id'])]
+    parent['status']=nested['status']='stopped'
+    app._retry_operation(parent['id'])
+    assert parent['status']==nested['status']=='preparing'
+
+
 def test_analysis_summary_readable_and_reports_insufficient_support(app):
     root=app.results_root/'summary';root.mkdir(parents=True)
     evaluation=root/'evaluation';evaluation.mkdir()

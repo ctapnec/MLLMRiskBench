@@ -26,10 +26,10 @@ def page(app, owner):
     body='<h1>Evaluate saved answers</h1>'+app._campaign_banner(owner)
     body+='<section class="card"><h2>Fill missing judgments</h2><p>Select the evaluator and workload. Saved prompts and each model\'s own answer are selected automatically; generation is never repeated. Existing valid verdicts for the selected evaluator are skipped.</p>'
     body+='<form method="post" action="/assessment/prepare"><input type="hidden" name="launch_ticket" value="'+ticket+'"><div class="campaign-grid">'
-    body+='<label class="campaign-field">Evaluator<select name="kind"><option value="local">Original local rules and guardrail</option><option value="haiku">Haiku</option></select></label>'
+    body+='<label class="campaign-field">Evaluator<select name="kind" aria-label="Evaluator"><option value="local">Original local rules and guardrail</option><option value="haiku">Haiku</option></select></label>'
     body+='<label class="campaign-field">Maximum pending answers (0 = all)<input name="limit" type="number" min="0" value="0" required></label>'
     choices=_choices(app)
-    body+='<label class="campaign-field" data-haiku-option>Haiku judge<select name="judge_model">'+''.join('<option>'+html.escape(model)+'</option>' for model in choices)+'</select></label>'
+    body+='<label class="campaign-field" data-haiku-option>Haiku judge<select name="judge_model" aria-label="Haiku judge">'+''.join('<option>'+html.escape(model)+'</option>' for model in choices)+'</select></label>'
     body+='<label class="campaign-field" data-haiku-option>Maximum assessment spending (USD)<input name="cost" type="number" min="0.000001" step="0.000001" placeholder="Choose a spending limit"></label></div>'
     body+='<p>Common-metric evaluable answers only. Images use their saved text proxy, not image pixels. Missing answers, source-specific tasks and missing source context are listed separately. Haiku uses 512 output tokens, no answer retries and three eligible HTTP retries.</p><div class="action-row"><button>Prepare assessment and review</button></div></form></section>'
     body+='''<script>(()=>{const kind=document.querySelector('[name=kind]');const update=()=>{document.querySelectorAll('[data-haiku-option]').forEach(e=>{e.hidden=kind.value!=='haiku';e.querySelector('input,select').disabled=e.hidden;});};kind.addEventListener('change',update);update();})();</script>'''

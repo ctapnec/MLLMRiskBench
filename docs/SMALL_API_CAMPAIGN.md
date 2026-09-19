@@ -37,9 +37,7 @@ Choose one route after section 1:
    API**, and select only `google:gemini-3.8-flash`. Click **Done**. Do not select
    Haiku as a target unless you deliberately want Haiku to answer the questions.
 6. Click **General**, then **Save campaign**. This creates a saved draft and
-   opens the campaign's **Definition** page; it does not start calls.
-7. Click **Configure in Build** on that page, then **General** to continue.
-   Saving does not leave you in Build automatically.
+   keeps Build open; it does not start calls. Continue with route 2a or 2b.
 
 Flash is already configured on this rig for text and images, low thinking and
 4,096 output tokens. For route 2a, the forecast in section 3 shows the actual
@@ -117,11 +115,11 @@ use the same flow, but need their own compatible settings and cost assessment.
    answer retries to **0**; retain **3** eligible HTTP/transport retries in the
    configured API route. Keep Flash's configured **4,096-token** output allowance.
    Uncheck **Exclude tool-conditioned inputs** and full model SHA verification.
-7. Enter provisional target/judge/HTTP call ceilings of **16 / 16 / 64**, and
-   **--deadline-seconds = 3600**. Leave the local process wall-time cap empty.
+7. Enable **Calculate call limits automatically** and leave **Manual call-limit
+   overrides** collapsed. Keep **--deadline-seconds = 3600**. Leave the local process wall-time cap empty.
    Leave **Admission -> Setup -> Automatic (recommended)** selected. A separate
    output directory is supplied automatically for the selected run settings.
-   These are planning bounds, not a USD allowance or permission to spend the
+   Calculated call limits are not a USD allowance or permission to spend the
    remaining Google purse. The exact preflight and monetary review below must
    fit the intended small workload before any paid start.
 
@@ -142,30 +140,28 @@ zero work. This is different from section 3's total hosted request cap of 12.
    transport checks, with a 24-hour maximum age. No paths, hashes or receipt
    rows to copy. Qwen checks are not used as evidence for Flash; the selected
    target, scope, revision, age and exact route must match.
-10. If there is no matching receipt, prepare a small **Attestation probe** first.
-    Keep one target, one corpus, `replay`, one seed, one query and one turn;
-    set limit **1** and keep **Automatic**. The probe's directory and scope are
-    supplied for you; prior transport evidence is omitted in probe mode.
-    Follow the preparation/start sequence below. Its connection check is saved
-    automatically after the probe passes. A live probe spends Google credits;
-    saving its check makes no additional target call. Repeat separately
-    for an image route only when needed, then restore **Measured lane** and
-    limit **2**. Automatic setup finds the saved checks on review.
+10. Keep the measured settings. Missing or expired connection checks are derived
+    automatically and listed in the final review. They run only after its
+    explicit start, before measured collection. A hosted diagnostic spends
+    provider credits; its additional workload and cost estimate are shown
+    separately. You do not configure a probe, copy receipts or restore settings.
 
 ### Prepare, review and start the direct job
 
-11. Click **General -> Save campaign**, then **Configure in Build -> General ->
-    Compose & review**. Check Flash, `xstest_full`, `replay`, sampling and mode.
+11. Click **General -> Save campaign**, then **Compose & review** on the same
+    page. Check Flash, `xstest_full`, `replay`, sampling and mode.
 12. Stay on the automatic progress page while the console
     reuses installed models and performs its no-call checks. Do not coordinate
     separate planning, acquisition or preflight jobs.
-13. On the completed review, check the projected calls and configured bounds.
-    Direct Runner projections count calls, not dollars; they are not the
-    retained-input route's exact monetary forecast. Assess configured prices,
-    token allowances and possible HTTP retries against your spending cap.
-14. Click **Start run** (or **Start probe** for a diagnostic). This is the
-    explicit real-call action. A probe's connection check is saved automatically
-    after successful completion.
+13. On the completed review, check projected calls, calculated limits and
+    **Hosted cost estimate**. Its quarter/full-output scenarios use configured
+    prices and an explicit 4,096-input-token assumption. They are not counted
+    requests or a guaranteed USD ceiling. Images, long inputs, caching and
+    HTTP retries can change the bill; unpriced routes are disclosed. For
+    counted requests and a reviewed monetary bound, use route 2a.
+14. Click **Start run**, or **Start experiment including connection checks**
+    if checks are needed. This is the real-call action. Required checks and
+    measured collection proceed without further preparation forms.
 15. Inspect **Results**, **Judging**, **Costs** and exports in the named campaign.
     Other selected arms can form additional jobs in the same campaign.
 
@@ -176,7 +172,15 @@ cascade and requires its own review and applicable transport evidence. A cascade
 may decide a row before reaching Haiku; it does not establish independent local
 and Haiku verdicts on every output. The paired post-hoc controls in sections 6-7
 require their retained-source and prepared-collection prerequisites; they do
-not automatically appear for an ordinary Runner job.
+not automatically appear for an ordinary Runner job. For that route, open
+**Campaigns -> your campaign -> Evaluate saved answers**. Select the original
+local evaluator or Haiku, choose a pending-answer count (0 = all), and for
+Haiku enter a USD ceiling. Click **Prepare assessment and review**, inspect
+selection, exclusions and costs, then **Start or resume assessment**. The
+system resolves indexed answers without old preparation-job selections and
+skips existing valid verdicts. Return through **Prepared assessments and
+progress** to resume. Source-specific tasks and missing context remain listed
+as exclusions; this action does not regenerate answers.
 
 The result-inspection principles in section 8 still apply. A new direct sample
 is not automatically matched to the historical Local campaign. Equal seed and
@@ -641,8 +645,9 @@ invent teacher labels.
    classifiers. You do not enter file paths or run intermediate jobs.
 3. Follow the Jobs page. **Stop job** stops the process. To return later, open
    **Campaigns -> your campaign -> SVM analysis -> Saved analyses**.
-4. Open the finished job's artifacts. The top-level `result.json` links its
-   dataset, evaluation and fitted-model directories. Inspect the dataset
+4. Return to **SVM analysis -> Saved analyses**. Its summary shows answer/group
+   counts, task status and held-out macro-F1. Named links open full metrics,
+   predictions, baselines and fitted classifiers. Inspect the dataset
    extraction dispositions and the evaluation's class support and group splits
    before interpreting its metrics. Images and unlabeled answers are excluded
    explicitly; usable truncated text remains identified.

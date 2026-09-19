@@ -50,6 +50,27 @@ behavior. A long document is not a substitute for removing operator handoffs.
 
 ## Verified behavior
 
+Saving a campaign keeps Build open. Execution calculates target/judge/HTTP
+limits from its projection by default; technical overrides are collapsed.
+For measured work, missing connection checks are derived without changing the
+draft. The review separates diagnostic and measured workloads; one explicit
+start runs checks, records them and proceeds to the experiment. Preparation
+itself still makes no target or judge calls.
+
+Every saved campaign has **Evaluate saved answers**, including historical and
+direct CLI campaigns without matched-preparation pointers. It selects indexed
+answers, skips existing valid verdicts, exposes exclusions, and resumes local
+or budgeted Haiku assessment. It reuses the original local cascade and existing
+retained Haiku executor. Source-specific metrics are not replaced with common
+safety labels. Image assessment remains a text proxy. SVM studies display a
+summary and named reports under Saved analyses.
+
+Direct hosted review displays priced cost scenarios, not an exact monetary
+ceiling: inputs assume 4,096 tokens, and quarter/full output allowances are
+shown before HTTP retries. Missing prices are explicit. The matched-input
+route retains its counted-request budget review. Do not present these distinct
+estimates as interchangeable guarantees.
+
 The rig checks cover stage progression, frozen configuration, launcher
 integration, restart, stop/resume, reuse and concurrent draft edits. Reversing
 the handoff, snapshot-ticket, launcher, draft-preservation, reuse, probe-record

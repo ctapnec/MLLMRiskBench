@@ -57,6 +57,8 @@ def _guidance(app, params):
     if matched and params.get('retained_programs_job'):
         judging_links += [('Open Haiku saved-output judging', link('general', 'retained-haiku-judging')),
             ('Review same-input output coverage', link('general', 'retained-haiku-judging'))]
+    if owner:
+        judging_links.insert(0,('Evaluate saved campaign answers','/assessment?campaign_id='+owner))
     steps = [
         ('Choose a route', 'Choose what you want to compare',
          'Use local models, hosted APIs, or both in one campaign. For a fresh workload, choose arms, '
@@ -88,7 +90,8 @@ def _guidance(app, params):
         ('Settings', 'Choose evaluation and realistic bounds',
          'Select your judges in Evaluation. Local models use their assessed serving profiles; scoring revision '
          'and placement are automatic. Hosted output allowances come from API target configuration and, for '
-         'matched work, the model forecast. Review target, judge and HTTP ceilings in Execution. '
+         'matched work, the model forecast. Keep Calculate call limits automatically enabled in Execution; '
+         'target, judge and HTTP limits come from the workload projection. Manual overrides and technical recovery settings are collapsed. '
          'The call-start window is not an individual response timeout. Full model checksum scans are optional.',
          [('Choose judges', link('evaluation', 'evaluation-judges')), ('Set execution bounds', link('execution', 'execution-budgets')),
           ('Inspect local serving', link('execution', 'local-serving')), ('Configure hosted targets', '/config?file=api-targets#cfg-editor')]),
@@ -99,14 +102,16 @@ def _guidance(app, params):
           'the provider but does not generate answers. Prepared and active work reopens this progress or review.') if matched else
          ('Use Compose & review. Automatic preparation starts directly. The console handles model planning, installed-model reuse, '
           'the no-call preflight and final execution preparation on one page. Existing exact preparation is reused. '
-          'When ready, review the workload and click Start run (or Start probe for a diagnostic). '
+          'When ready, review the workload and click Start run, or Start experiment including connection checks. '
           'Keep Admission on Automatic: output locations, execution scope, software/source records and saved '
           'transport checks are supplied for campaigns and single runs. Technical text fields are optional '
           'Advanced overrides. Diagnostic probes started here save their connection checks automatically; '
           'the same progress page follows both. For older probes, Tools can select the completed probe by name. No receipt rows or hashes '
           'need copying. No separate plan/acquire/preflight buttons are required. Measured work '
-          'needs valid transport evidence for each selected route/modality. Use a diagnostic probe when that '
-          'evidence is missing, then return to the measured selection. The probe makes real calls; the projection does not.'),
+          'needs valid transport evidence for each selected route/modality. Missing checks are derived and included '
+          'in the reviewed start before measured collection. Your experiment settings stay intact. No separate '
+          'probe setup or return to measured mode is required. Hosted review shows clearly labelled cost scenarios; '
+          'these are not the matched-input route\'s counted monetary bounds.'),
          [('Open the next preparation controls', link('general', prepare_target)),
           ('Check transport evidence', link('admission', 'transport-evidence'))]),
         ('Run', 'Start once and follow the existing job',
@@ -124,8 +129,11 @@ def _guidance(app, params):
           'limit and USD fields; these do not change all-output judging. Image assessments use the retained text proxy.') if matched else
          ('For direct Runner work, the selected judging cascade evaluates collected answers. A cascade may '
           'decide before reaching its model-backed judge; it is not two independent verdicts. Missing text, '
-          'abstentions and invalid assessments must remain visible. Post-hoc Haiku comparison needs a prepared '
-          'saved-output selection and its own budget. A verdict for one model cannot be copied to another answer.'),
+          'abstentions and invalid assessments must remain visible. Open Evaluate saved answers for any campaign, '
+          'including finished or CLI-collected work. Choose the original local evaluator or Haiku, an answer limit '
+          'and, for Haiku, a USD ceiling. Prepare assessment and review resolves saved outputs automatically, then '
+          'Start or resume assessment evaluates them. Valid verdicts are skipped; missing answers and unsupported '
+          'source contexts remain visible. A verdict for one model cannot be copied to another answer.'),
          judging_links + [('Inspect saved verdicts', campaign + '?section=judging' if owner else link('evaluation', 'evaluation-judges'))]),
         ('Results', 'Inspect coverage before comparing rates',
          'Results shows answers, effective generation settings, usage and truncation. Judging shows '
@@ -171,7 +179,8 @@ def _guidance(app, params):
          'define the matched population and a recorded Haiku condition. Include matching local answers if desired, '
          'then click Start classifier study. Input extraction, dataset export, grouped evaluation and reusable '
          'classifier packaging happen automatically as one job. No database, output directory or intermediate '
-         'file needs entering. Saved analyses contains the results and Resume unfinished analysis reuses completed '
+         'file needs entering. Saved analyses shows answer/group counts, task status, held-out macro-F1 and named '
+         'links to complete reports. Resume unfinished analysis reuses completed '
          'stages. The three tasks are harmful compliance, over-refusal and local/Haiku disagreement. '
          'A few demonstration answers are too small for meaningful training and held-out evaluation. '
          'The current study supports static text, not arbitrary image or live-attack data. '

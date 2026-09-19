@@ -77,6 +77,8 @@ a pooled safety ranking. Inspection and exports make no model calls.
    supplies software/source records, an output directory and execution scope.
    Completed transport checks are selected from this campaign's saved jobs (or
    unattached jobs for a single run). No paths, hashes or receipt rows need entry.
+   Missing measured-route checks are derived automatically and included in the
+   reviewed start; no probe-mode switch or restoration of the draft is needed.
    New probes save their connection check automatically. For older probes only,
    **Tools -> Advanced CLI tools and troubleshooting -> live_attestation** can
    select a completed probe by name without repeating generation.
@@ -86,7 +88,8 @@ a pooled safety ranking. Inspection and exports make no model calls.
    can preserve the Runner revision and already completed probes. Changing the
    Runner itself still requires compatible preparation and transport evidence.
 3. Inspect **Current pipeline**, then **Save campaign** if applicable. Saving
-   makes no calls. **Compose & review** shows the actual command and settings;
+   makes no calls and keeps Build open. Keep **Calculate call limits automatically**
+   enabled in Execution. **Compose & review** shows the actual command and settings;
    execution requires the separate start action on the review page.
 4. Follow the job in **Jobs** and its results in **Stats**. Offline runs contain
    mock outputs, not model evidence.
