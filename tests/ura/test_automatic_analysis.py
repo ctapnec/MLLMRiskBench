@@ -132,6 +132,7 @@ def test_analysis_resolves_named_selection_and_bounds_threads(app, monkeypatch):
 def test_analysis_browser_has_choices_not_preparation_paths(app,monkeypatch,browser,width):
     owner,source=setup_choices(app,monkeypatch)
     page=browser.new_page(viewport=dict(width=width,height=1000))
+    page.set_default_timeout(5000)
     held=[];errors=[]
     page.on('pageerror',lambda error:errors.append(str(error)))
     def route(request):
@@ -151,9 +152,11 @@ def test_analysis_browser_has_choices_not_preparation_paths(app,monkeypatch,brow
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
         assert _burst(page,'form[action="/analysis/start"] button')==dict(visible=True,inert=True)
         assert len(held)==1 and not errors
-        held.pop().fulfill(status=400,body='Analysis failed clearly')
-        page.wait_for_load_state()
-    finally:page.close()
+        held.pop().fulfill(status=400,content_type='text/html',body='<p>Analysis failed clearly</p>')
+        page.get_by_text('Analysis failed clearly',exact=True).wait_for()
+    finally:
+        page.unroute_all(behavior='ignoreErrors')
+        page.close()
 
 
 def test_capture_defaults_use_installed_source_and_own_venv_without_installing(app,monkeypatch,tmp_path):
