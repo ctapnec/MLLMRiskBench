@@ -8,7 +8,7 @@ from urllib.parse import urlencode
 
 from .ui import _page
 from .workspace_comparison import coverage_chart
-from .workspace_charts import EXPORT_SCRIPT
+from .workspace_charts import EXPORT_SCRIPT, SERIES
 
 
 def choices(app):
@@ -71,6 +71,30 @@ def overlap(left,right):
     return counts
 
 
+def outcome_chart(row):
+    """Keep each job/model/condition/task separate; unknown outcomes stay explicit."""
+    total=row['outputs']
+    if not total:return ''
+    segments=[];labels=[];offset=0
+    categories=(('usable','Usable'),('missing','Missing'),('policy','Policy refusal'),('other','Other'))
+    for (key,label),color in zip(categories,SERIES):
+        count=row[key];size=100*count/total
+        if count:
+            segments.append(f"<rect x='{offset:.6f}' y='0' width='{size:.6f}' height='8' "
+                f"style='fill:{color}' data-category='{key}' data-count='{count}'>"
+                f"<title>{label}: {count}/{total} ({size:.1f}%)</title></rect>")
+        labels.append(f"<span><span aria-hidden='true' style='display:inline-block;width:.8em;height:.8em;background:{color}'></span> "
+            f"{label}: {count:,} ({size:.1f}%)</span>")
+        offset+=size
+    caption=' / '.join(str(row[k]) for k in ('side','model','condition_id','corpus','framework','modality'))
+    return ("<figure style='margin:1.25rem 0'><figcaption style='overflow-wrap:anywhere'>"+html.escape(caption)+f" - {total:,} saved outcomes</figcaption>"
+        "<svg xmlns='http://www.w3.org/2000/svg' role='img' aria-label='Job outcome composition' "
+        "viewBox='0 0 100 8' preserveAspectRatio='none' style='width:100%;height:1.6rem;margin:.5rem 0'>"
+        '<title>Job outcome composition</title><desc>Saved measured outcomes for this job, model, generation condition and task. '
+        'Truncation overlaps outcomes and is reported separately. This is not complete planned-input coverage or a safety score.</desc>'
+        +''.join(segments)+"</svg><div style='display:flex;flex-wrap:wrap;gap:.4rem 1rem'>"+''.join(labels)+'</div></figure>')
+
+
 def response(app,query):
     roster=choices(app);selected={};data={};reports=[]
     for side in ('left','right'):
@@ -103,6 +127,7 @@ def response(app,query):
         body+='<section class="card"><h2>Input overlap</h2>'+coverage_chart(overlap(data['left'],data['right']))
         body+='<p>Exact indexed inputs, corpus, framework and modality. Repeated inputs across conditions are ambiguous, not arbitrarily paired. These are saved-outcome counts, not full scheduled-input coverage or pooled safety scores.</p></section>'
         body+='<section class="card"><h2>Outcomes by model, condition and task</h2><p>Truncation is independent of output usability. Unknown token usage and unstarted inputs are not zero usage or successful answers.</p>'
+        body+=''.join(outcome_chart(row) for row in reports)
         headers=('Side','Model / condition','Corpus / framework / modality','Saved','Usable','Missing','Policy refusal','Other','Truncated / unknown','Known token usage')
         body+='<div class="scroll"><table><thead><tr>'+''.join('<th>'+h+'</th>' for h in headers)+'</tr></thead><tbody>'
         for row in reports:

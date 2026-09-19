@@ -309,6 +309,7 @@ def render_groups(rows):
         if not paired:
             content += '<p>No unambiguous matched inputs to compare in this source.</p></section>'
             continue
+        content += judgment_matrix(paired)
         content += "<div class='scroll'><table><thead><tr><th>Left outcome</th><th>Right outcome</th><th>Left assessment</th><th>Right assessment</th><th>Inputs</th></tr></thead><tbody>"
         for row in paired:
             cells = []
@@ -320,6 +321,56 @@ def render_groups(rows):
             content += "<tr>" + "".join("<td>" + html.escape(value) + "</td>" for value in cells) + f"<td>{row['count']:,}</td></tr>"
         content += "</tbody></table></div></section>"
     return content
+
+
+def judgment_matrix(rows):
+    """Recorded paired labels, with the same unambiguous input denominator as the table."""
+    from collections import Counter
+    paired = [row for row in rows if row['match_status'] == 'matched']
+    matched = sum(row['count'] for row in paired)
+    cells = Counter()
+    for row in paired:
+        if all(row[side + '_status'] == 'valid' and row[side + '_label'] is not None
+               for side in ('left', 'right')):
+            cells[(str(row['left_label']), str(row['right_label']))] += row['count']
+    valid = sum(cells.values())
+    note = (f'{valid:,} jointly valid judgments out of {matched:,} matched inputs. '
+            f'{matched - valid:,} matched inputs lack two valid, labelled judgments and are not plotted. '
+            'These are recorded judge labels, not independent human truth or a pooled safety score.')
+    if not valid:
+        return '<p class="note">No paired judgment matrix: ' + note + '</p>'
+    left = sorted({labels[0] for labels in cells})
+    right = sorted({labels[1] for labels in cells})
+    size, x0, y0 = 112, 168, 70
+    width, height = x0 + size * len(right) + 20, y0 + size * len(left) + 16
+    marks = [f"<text x='{x0}' y='20'>Right assessment</text>",
+             "<text x='8' y='20'>Left assessment</text>"]
+    def short(label):
+        return html.escape(label if len(label) <= 16 else label[:13] + '...')
+    for column, label in enumerate(right):
+        marks.append(f"<text x='{x0 + size * (column + .5)}' y='52' text-anchor='middle'>"
+                     f"<title>{html.escape(label)}</title>{short(label)}</text>")
+    peak = max(cells.values())
+    for row, label in enumerate(left):
+        y = y0 + row * size
+        marks.append(f"<text x='{x0 - 12}' y='{y + size / 2 + 5}' text-anchor='end'>"
+                     f"<title>{html.escape(label)}</title>{short(label)}</text>")
+        for column, other in enumerate(right):
+            count = cells[(label, other)]
+            x = x0 + column * size
+            desc = f'Left {label}; right {other}: {count} of {valid} jointly valid judgments'
+            marks.append(f"<g data-left-label='{html.escape(label, quote=True)}' "
+                         f"data-right-label='{html.escape(other, quote=True)}' data-count='{count}'>"
+                         f"<title>{html.escape(desc)}</title><rect x='{x}' y='{y}' width='{size - 4}' "
+                         f"height='{size - 4}' rx='6' style='fill:var(--accent);opacity:{.08 + .22 * count / peak:.3f}'/>"
+                         f"<text x='{x + (size - 4) / 2}' y='{y + size / 2 + 5}' text-anchor='middle'>{count:,}</text></g>")
+    return ('<figure style="margin:1.25rem 0"><figcaption><strong>Paired judging outcomes</strong><p class="note">'
+            + note + '</p></figcaption>'
+            f"<svg xmlns='http://www.w3.org/2000/svg' role='img' aria-label='Paired judging outcomes' "
+            f"class='judgment-matrix' viewBox='0 0 {width} {height}' style='width:100%;max-width:{width}px;height:auto;color:var(--ink)'>"
+            '<title>Paired judging outcomes</title><desc>' + note + '</desc>'
+            '<style>.judgment-matrix text{fill:currentColor;font-family:system-ui,sans-serif;font-size:14px}</style>'
+            + ''.join(marks) + '</svg></figure>')
 
 
 def coverage_chart(totals):

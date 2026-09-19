@@ -74,6 +74,10 @@ Both lead to the same review and start actions.
    it is not a guaranteed count of individual answers.
    Leave **Advanced execution and recovery options** collapsed for this example.
 
+   For a hosted target, **target answer retries** is already locked at `0`.
+   Confirm that value; do not try to edit the read-only field. Transport retries
+   are a separate provider setting.
+
 Other installed corpora and supported attackers use this route. A corpus does
 not select its similarly named attacker. Prepared attackers have a panel for
 saved attack material or capture settings; real attack generation is not an
@@ -377,6 +381,15 @@ refresh hides old comparison counts and exports; read the error and retry with
 2. Read **matched**, **left only**, **right only** and **ambiguous shared inputs**.
    In the outcome table, count jointly valid Haiku assessments separately from
    invalid or missing assessments. Export with **Download this page's counts**.
+
+   The donut shows the composition of the input union, not a safety score.
+   **Paired judging outcomes** shows the left/right label matrix for jointly
+   valid judgments only. Its caption reports the excluded matched inputs with
+   invalid, missing or unlabelled judgments. The original outcome table remains
+   below it, including truncation and invalid assessments. With **All generation
+   conditions**, expand a model/condition pair to see its charts. Each pair and
+   each corpus/framework/modality remains separate; do not add repeated inputs
+   across these plots as independent observations.
 3. To switch from text to images, keep the same Flash and Qwen **Model**
    selections. There is no option named "local image Generation condition".
    Use this explicit sequence, waiting for the spinner after every change:
@@ -467,6 +480,10 @@ generation identities. No retained data or original campaign settings change.
 3. Read **Input overlap**, then **Outcomes by model, condition and task**.
    Missing outputs, policy refusals and truncation remain distinct. Token totals
    show how many outputs have recorded usage; unknown usage is not zero.
+   The overlap donut uses the union of indexed inputs. The stacked outcome bars
+   use saved outcomes within each job/model/condition/task, not all planned
+   inputs. Truncation overlaps the outcome categories and remains in the table,
+   rather than becoming an extra segment that double-counts an answer.
 4. Click **Export these job statistics (CSV)** for the displayed breakdown.
 
 This view uses indexed measured outcomes, not every planned request. A recovered
