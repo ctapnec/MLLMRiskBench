@@ -141,6 +141,36 @@ def test_stopped_internal_preparation_resumes_with_parent(app,monkeypatch):
     assert parent['status']==nested['status']=='preparing'
 
 
+@pytest.mark.parametrize('unrelated_change',[False,True])
+def test_finished_connection_rebinds_real_snapshot_but_not_other_experiment_settings(app,monkeypatch,unrelated_change):
+    import hashlib
+    params=app._builder_params(dict(mode='dry_run',corpora='synth',judges='rules',limit='1'))
+    params,original,_=app._capture_execution_config_snapshot(params)
+    params=app._bind_execution_config_bundle_identity(params)
+    old_snapshot=params['_execution_snapshot_sha256'];old_bundle=params['_execution_config_bundle_sha256']
+    receipt=app.results_root/'completed-transport.json';receipt.write_text('{"transport":"completed"}')
+    digest=hashlib.sha256(receipt.read_bytes()).hexdigest()
+    monkeypatch.setattr(app,'_campaign_transport_receipts',lambda p:([dict(path=str(receipt),sha256=digest)],''))
+    monkeypatch.setattr(app,'_operation_snapshot',lambda op:original)
+    if unrelated_change:
+        capture=app._capture_execution_config_snapshot
+        def changed(p):
+            bound,components,identity=capture(p)
+            return bound,dict(components,source_config=b'changed data'),identity
+        monkeypatch.setattr(app,'_capture_execution_config_snapshot',changed)
+    operation=dict(id='f'*32,params=params,connection_operations=[],execution_authorized=True)
+    if unrelated_change:
+        with pytest.raises(ValueError,match='configuration changed during diagnostics'):connection.advance(app,operation)
+        assert not operation.get('connections_complete')
+    else:
+        assert not connection.advance(app,operation)
+        assert operation['params']['_execution_snapshot_sha256']!=old_snapshot
+        assert operation['params']['_execution_config_bundle_sha256']!=old_bundle
+        snapshot={name:(app._operation_root(operation)/('snapshot-'+name+'.bin')).read_bytes() for name in operation['snapshot_manifest']}
+        app._validate_execution_snapshot(operation['params'],snapshot)
+        assert {k:v for k,v in snapshot.items() if not k.startswith('live_attestation_')}==original
+
+
 def test_analysis_summary_readable_and_reports_insufficient_support(app):
     root=app.results_root/'summary';root.mkdir(parents=True)
     evaluation=root/'evaluation';evaluation.mkdir()

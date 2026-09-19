@@ -100,6 +100,11 @@ def advance(app, operation):
     for i, receipt in enumerate(receipts,1):
         params['att_path'+str(i)] = receipt['path']
         params['att_sha'+str(i)] = receipt['sha256']
+    # This reviewed transition adds freshly completed diagnostic evidence.
+    # Rebind the combined identities, retaining every individual configuration
+    # identity and checking all non-attestation bytes below.
+    params.pop('_execution_snapshot_sha256',None)
+    params.pop('_execution_config_bundle_sha256',None)
     rebound, snapshot, _ = app._capture_execution_config_snapshot(params)
     previous = app._operation_snapshot(operation)
     if {k:v for k,v in snapshot.items() if not k.startswith('live_attestation_')} != {k:v for k,v in previous.items() if not k.startswith('live_attestation_')}:
