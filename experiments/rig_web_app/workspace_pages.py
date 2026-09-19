@@ -334,7 +334,8 @@ class WorkspacePagesMixin:
             + (scope_query if tab in {"overview", "results", "judging"} else "") + "'"
             + (" aria-current='page'" if tab == section else "") + ">"
             + tab.title() + "</a>" for tab in sections
-        ) + "<a class='page-tab' href='/human-evaluation?campaign_id=" + campaign_id + "'>Human evaluation</a></nav>"
+        ) + "<a class='page-tab' href='/human-evaluation?campaign_id=" + campaign_id + "'>Human evaluation</a>" \
+            + "<a class='page-tab' href='/analysis?campaign_id=" + campaign_id + "'>SVM analysis</a></nav>"
         if section == "definition":
             definition = self.db.workspace_definition(campaign_id)
             content = "<p>No Build definition has been saved for this retained campaign. Its existing jobs are unchanged.</p>"

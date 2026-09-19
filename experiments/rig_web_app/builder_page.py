@@ -1799,6 +1799,7 @@ class BuilderPageMixin:
                 f"{ideator_available_pairs} verified pairs in manifest order."
             )
             ideator_available_attr = str(ideator_available_pairs)
+        from .prepared_inputs import picker
         prepared_workflow_fields = (
             "<div class='prepared-workflows' id='prepared-workflows'" + workflows_visibility + ">"
             "<p class='note'>Prepared replay and model-backed attack inputs are "
@@ -1808,7 +1809,8 @@ class BuilderPageMixin:
             "<section class='workflow-panel prepared-fields' id='prepared-t3mp3st' "
             "data-prepared='t3mp3st'" + visibility("t3mp3st") + ">"
             "<h3>T3MP3ST <span class='badge blue'>Capture - Replay</span></h3>"
-            "<div class='workflow-step'><h4>1. Capture plan bundle</h4>"
+            + picker(self, 't3mp3st')
+            + "<div class='workflow-step'><h4>Create attack material</h4>"
             "<p class='note'>Calls only the pinned loopback planning service.</p>"
             "<div class='cols'>"
             + text_field(
@@ -1833,15 +1835,8 @@ class BuilderPageMixin:
                 "literal-loopback /api/general/plan route",
                 default="http://127.0.0.1:3333/api/general/plan",
             )
-            + text_field("t3cap_revision", "Upstream revision", "exact 40-hex commit")
             + text_field("t3cap_provider", "Source provider", "Op General provider")
             + text_field("t3cap_model", "Source model", "Op General model")
-            + text_field(
-                "t3cap_out",
-                "Output directory",
-                "retained under results",
-                default="runs/t3mp3st-captures",
-            )
             + text_field(
                 "t3cap_timeout",
                 "Timeout seconds",
@@ -1849,30 +1844,26 @@ class BuilderPageMixin:
                 default="120",
                 kind="number",
             )
-            + "</div><div class='workflow-actions'><button type='submit' class='ghost' "
+            + "</div><details><summary>Advanced capture overrides</summary><div class='cols'>"
+            + text_field("t3cap_revision", "Upstream revision", "automatic from installed runtime")
+            + text_field("t3cap_out", "Output directory", "automatic fresh results directory")
+            + "</div></details><div class='workflow-actions'><button type='submit' class='ghost' "
             "formaction='/build/t3mp3st/capture' formmethod='post'>Review capture"
             "</button></div></div>"
-            "<div class='workflow-step'><h4>2. Measured replay</h4>"
-            "<p class='note'>Use the bundle path and SHA-256 printed by capture.</p>"
+            "<details class='workflow-step'><summary>Advanced import or current saved material</summary>"
+            "<p class='note'>Completed captures attach automatically. A manually imported bundle needs only its location.</p>"
             + err("t3_replay")
             + "<div class='cols'>"
             + text_field("t3_artifact", "Plan bundle", "ura-t3mp3st-plan-bundle/1 path")
             + text_field("t3_artifact_sha", "Bundle SHA-256", "exact capture digest")
-            + "</div></div></section>"
+            + "</div></details></section>"
             "<section class='workflow-panel prepared-fields' id='prepared-harmbench' "
             "data-prepared='harmbench'" + visibility("harmbench") + ">"
             "<h3>HarmBench <span class='badge blue'>Prepare - Replay</span></h3>"
-            "<div class='workflow-step'><h4>1. Prepare generated cases</h4>"
+            + picker(self, 'harmbench')
+            + "<div class='workflow-step'><h4>Create attack material</h4>"
             "<p class='note'>Runs the pinned text-only HarmBench generation scripts.</p>"
             "<div class='cols'>"
-            + text_field(
-                "hcap_repo",
-                "HarmBench checkout",
-                "clean pinned checkout",
-                default="/data/HarmBench",
-            )
-            + text_field("hcap_revision", "Upstream revision", "exact 40-hex commit")
-            + text_field("hcap_source", "Behavior CSV", "official text behaviors")
             + text_field(
                 "hcap_corpus", "Logical corpus arm", "bundle identity", default="harmbench_text"
             )
@@ -1895,33 +1886,26 @@ class BuilderPageMixin:
                 default="1",
                 kind="number",
             )
-            + text_field(
-                "hcap_artifact_out",
-                "Capture artifact",
-                "retained JSON under results",
-                default="runs/harmbench-captures/capture.json",
-            )
-            + text_field(
-                "hcap_config_out",
-                "Attacker config",
-                "generated replay config JSON",
-                default="runs/harmbench-captures/attackers.json",
-            )
-            + "</div><details><summary>Optional runtime settings</summary>"
+            + "</div><details><summary>Advanced capture overrides</summary>"
             "<div class='cols'>"
-            + text_field("hcap_python", "Python executable", "blank uses this environment")
+            + text_field("hcap_repo", "HarmBench checkout", "automatic installed checkout")
+            + text_field("hcap_revision", "Upstream revision", "automatic installed revision")
+            + text_field("hcap_source", "Behavior CSV", "automatic official text behaviors")
+            + text_field("hcap_artifact_out", "Capture artifact", "automatic saved output")
+            + text_field("hcap_config_out", "Attacker config", "automatic saved configuration")
+            + text_field("hcap_python", "Python executable", "automatic isolated framework environment")
             + text_field("hcap_credentials", "Credential env names", "comma-separated names")
             + text_field("hcap_timeout", "Timeout seconds", "positive finite value", kind="number")
             + "</div></details><div class='workflow-actions'>"
             "<button type='submit' class='ghost' "
             "formaction='/build/harmbench/prepare' formmethod='post'>Review prepare"
             "</button></div></div>"
-            "<div class='workflow-step'><h4>2. Measured replay</h4>"
-            "<p class='note'>Use the attacker config path printed by prepare.</p>"
+            "<details class='workflow-step'><summary>Advanced import or current saved material</summary>"
+            "<p class='note'>Completed captures attach automatically. Use this field only to import existing material.</p>"
             + err("harm_replay")
             + "<div class='cols'>"
             + text_field("harm_config", "Capture config", "generated attackers.json path")
-            + "</div></div></section>"
+            + "</div></details></section>"
             "<section class='workflow-panel prepared-fields' id='prepared-nanogcg' "
             "data-prepared='nanogcg'" + visibility("nanogcg") + ">"
             "<h3>NanoGCG <span class='badge blue'>Precomputed replay</span></h3>"
@@ -1946,13 +1930,9 @@ class BuilderPageMixin:
             "data-prepared='ideator'" + visibility("ideator") + ">"
             "<h3>IDEATOR <span class='badge blue'>Verified seed-pair replay"
             "</span></h3>"
-            "<p class='note'>Live IDEATOR generation remains disabled. Prefer an "
-            "exact source-mapped <code>ura-ideator-seed-pairs/2</code> JSON manifest "
-            "under the results root; it binds every pair to one admitted source "
-            "row. Legacy <code>ura-ideator-seed-pairs/1</code> manifests remain "
-            "accepted for previously reviewed pairs. Build verifies the manifest "
-            "and PNG bytes, captures them in the review ticket, and materializes "
-            "private replay copies at launch.</p>"
+            "<p class='note'>IDEATOR uses imported, source-mapped text-image pairs. Select the saved pair file "
+            "and an optional pair limit. Its images and execution configuration are handled automatically. "
+            "Live pair generation is not supported.</p>"
             + err("ideator")
             + "<div class='workflow-step'><h4>Precomputed text-image pairs</h4>"
             "<div class='cols'>"
@@ -1961,11 +1941,9 @@ class BuilderPageMixin:
                 "Seed-pair manifest",
                 "source-mapped v2 path under results (v1 is legacy)",
             )
-            + text_field(
-                "ideator_manifest_sha",
-                "Manifest SHA-256",
-                "exact 64-hex digest of the manifest bytes",
-            )
+            + "<details><summary>Advanced identity override</summary>"
+            + text_field("ideator_manifest_sha", "Manifest identity", "automatic from the selected file")
+            + "</details>"
             + text_field(
                 "ideator_pair_limit",
                 "Replay pair limit",

@@ -4,16 +4,95 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 def write_json(path, value):
     with path.open("x", encoding="utf-8") as stream:
         json.dump(value, stream, ensure_ascii=False, allow_nan=False, indent=2)
         stream.write("\n")
+
+
+def checkpoint(path, value):
+    """Publish controller metadata only after a complete write."""
+    temporary = path.with_suffix('.pending')
+    with temporary.open('w', encoding='utf-8') as stream:
+        json.dump(value, stream, ensure_ascii=False, allow_nan=False)
+        stream.flush()
+        os.fsync(stream.fileno())
+    temporary.replace(path)
+
+
+def study(args):
+    """One user-selected study; preserve completed stages when resuming."""
+    from experiments.hosted_retained_inputs import candidates_from_cells
+    from experiments.retained_local_sources import read_sources
+    root=args.out.resolve()
+    root.mkdir(parents=True,exist_ok=True)
+    configuration={key:str(value) if isinstance(value,Path) else value
+                   for key,value in vars(args).items() if key!='out'}
+    configuration['source_root']=[str(p.resolve()) for p in args.source_root]
+    request=root/'selection.json'
+    if request.exists():
+        if json.loads(request.read_text())!=configuration:
+            raise ValueError('Resume with the original scientific selection; start a new study for changed settings')
+    else:
+        checkpoint(request,configuration)
+    if (root/'result.json').exists():
+        print('This study is already complete; saved results reused.',flush=True)
+        return 0
+    stages={}
+    def stage(name,arguments):
+        marker=root/(name+'-complete.json')
+        if marker.exists():
+            saved=json.loads(marker.read_text())
+            destination=Path(saved['directory']).resolve()
+            if not destination.is_relative_to(root) or not (destination/'result.json').is_file():
+                raise ValueError('A saved analysis stage is unavailable')
+        else:
+            number=1
+            destination=root/(name+'-'+str(number))
+            while destination.exists():
+                if (destination/'result.json').is_file():
+                    # The process may have stopped after the stage finished but
+                    # before its controller checkpoint was published.
+                    break
+                number+=1;destination=root/(name+'-'+str(number))
+            if not (destination/'result.json').is_file():
+                print(json.dumps(dict(stage=name,status='running')),flush=True)
+                code=main([*arguments,'--out',str(destination)])
+                if code:raise ValueError(name+' did not complete')
+            checkpoint(marker,dict(directory=str(destination)))
+        stages[name]=str(destination)
+        return destination
+    candidates=args.candidates or root/'source-candidates.json'
+    if not candidates.exists():
+        if args.candidates:raise ValueError('The selected source candidates are unavailable')
+        print(json.dumps(dict(stage='saved_inputs',status='running')),flush=True)
+        rows=candidates_from_cells(read_sources(args.source_root,args.run_id))
+        checkpoint(candidates,rows)
+    export=['--export','--database',str(args.database),'--candidates',str(candidates),
+        '--matched-campaign',args.matched_campaign,'--judge-condition',args.judge_condition]
+    for owner in args.campaign:export+=['--campaign',owner]
+    for model in args.exclude_model:export+=['--exclude-model',model]
+    dataset=stage('dataset',export)/'dataset.jsonl'
+    evaluate=['--evaluate','--dataset',str(dataset),'--seed',str(args.seed),
+        '--bootstrap',str(args.bootstrap),'--max-feature-characters',str(args.max_feature_characters)]
+    for model in args.holdout_model:evaluate+=['--holdout-model',model]
+    for corpus in args.holdout_corpus:evaluate+=['--holdout-corpus',corpus]
+    analysis=stage('evaluation',evaluate)
+    fitted=stage('classifiers',['--package','--dataset',str(dataset),
+        '--study-result',str(analysis/'result.json'),'--study-predictions',str(analysis/'predictions.json')])
+    checkpoint(root/'result.json',dict(status='study_complete',stages=stages,dataset=str(dataset),
+        models=str(fitted/'models.joblib'),target_calls=0,judge_calls=0,human_validated=False,
+        campaign_judgments_modified=False))
+    print(json.dumps(dict(status='study_complete',stages=stages)),flush=True)
+    return 0
 
 
 def main(argv=None):
@@ -23,8 +102,11 @@ def main(argv=None):
     mode.add_argument("--evaluate", action="store_true")
     mode.add_argument("--package", action="store_true")
     mode.add_argument("--predict", action="store_true")
+    mode.add_argument("--study", action="store_true",help="Automatically export, evaluate and save reusable classifiers")
     parser.add_argument("--database", type=Path)
     parser.add_argument("--candidates", type=Path)
+    parser.add_argument("--source-root", type=Path, action="append",default=[])
+    parser.add_argument("--run-id", action="append",default=[])
     parser.add_argument("--campaign", action="append", default=[])
     parser.add_argument("--matched-campaign")
     parser.add_argument("--judge-condition")
@@ -41,6 +123,10 @@ def main(argv=None):
     parser.add_argument("--holdout-model", action="append", default=[])
     parser.add_argument("--holdout-corpus", action="append", default=[])
     args = parser.parse_args(argv)
+    if args.study:
+        if not all((args.database,args.campaign,args.matched_campaign,args.judge_condition)) or not (args.candidates or args.source_root):
+            parser.error('Study needs selected campaigns, a judge and saved source inputs')
+        return study(args)
     if args.export and not all((args.database, args.candidates, args.campaign,
                                 args.matched_campaign, args.judge_condition)):
         parser.error("Export needs database, candidates, campaign, matched-campaign and judge-condition")

@@ -167,20 +167,16 @@ def _guidance(app, params):
          [('Open human-evaluation wizard', '/human-evaluation?campaign_id=' + owner if owner else link('general')),
           ('Inspect campaign judging coverage', campaign + '?section=judging' if owner else link('evaluation'))]),
         ('SVM analysis', 'Optional: analyze retained responses with SVMs',
-         'The Retained response classifiers tool supports harmful compliance, over-refusal and judge disagreement. '
-         'To fit a study, export a dataset from the saved campaign database and source candidates, choosing the '
-         'matched hosted-input population and one exact Haiku condition; then evaluate that dataset. Preserve '
-         'the distinction between the form controls: Tools -> Analysis and native imports -> response_svm '
-         'has four mode checkboxes, not a dropdown. Check exactly one of --export, --evaluate, --package or --predict. '
-         'Save under campaign groups the job but does not fill the input campaign fields. Enter a fresh --out '
-         'directory, then use Start job within that form. Jobs links to result.json and the produced dataset, '
-         'predictions or fitted models. Preserve '
-         'input-group splits and report class support and exclusions. To reuse completed work, package its fitted '
-         'models once or predict with an existing trusted package. These modes are separate choices, not four '
-         'mandatory reruns. A few demonstration answers are too small for meaningful training and held-out evaluation. '
+         'Open the campaign SVM analysis tab. Choose the saved local input source, the campaign whose inputs '
+         'define the matched population and a recorded Haiku condition. Include matching local answers if desired, '
+         'then click Start classifier study. Input extraction, dataset export, grouped evaluation and reusable '
+         'classifier packaging happen automatically as one job. No database, output directory or intermediate '
+         'file needs entering. Saved analyses contains the results and Resume unfinished analysis reuses completed '
+         'stages. The three tasks are harmful compliance, over-refusal and local/Haiku disagreement. '
+         'A few demonstration answers are too small for meaningful training and held-out evaluation. '
          'The current study supports static text, not arbitrary image or live-attack data. '
          'Prediction scores are uncalibrated margins, not human verdicts or safety probabilities. No target or judge call is made.',
-         [('Open Retained response classifiers', tool('response_svm')),
+         [('Open SVM analysis', '/analysis?campaign_id='+owner if owner else '/campaigns'),
           ('Inspect existing analysis jobs', '/jobs?campaign_id=' + owner if owner else '/jobs')]),
         ('Recovery', 'Recover the unfinished stage without duplicating work',
          'Open the original job and read its error and saved outputs. Continue an interrupted prepared collection '

@@ -16,6 +16,7 @@ from .ui import _page
 
 # These functions already own command construction and artifact semantics.
 _STEPS = {
+    'attack-capture': (('Preparing attack material', 'operations', 'prepare_transport_check'),),
     'transport-check': (
         ('Waiting for your diagnostic probe', 'operations', 'prepare_transport_check'),
         ('Saving the connection check', 'operations', 'prepare_transport_check'),
@@ -40,7 +41,7 @@ _STEPS = {
 }
 _DIRECT = ('Planning installed models', 'Preparing installed models', 'Checking the workload',
            'Preparing execution', 'Finishing model preparation')
-_TITLES = {'direct': 'Prepare run', 'matched': 'Prepare hosted comparison',
+_TITLES = {'direct': 'Prepare run', 'matched': 'Prepare hosted comparison', 'attack-capture':'Prepare attack material',
            'local-judging': 'Prepare local judging', 'haiku-judging': 'Prepare Haiku judging',
            'paired-haiku': 'Prepare sampled Haiku comparison', 'transport-check':'Finish diagnostic probe'}
 
@@ -120,7 +121,7 @@ class OperationsMixin:
         if kind not in _TITLES:
             raise ValueError('Choose a supported operation')
         params = dict(params)
-        if kind not in {'direct', 'transport-check'} and not params.get('campaign_id'):
+        if kind not in {'direct', 'transport-check', 'attack-capture'} and not params.get('campaign_id'):
             raise ValueError('Save the campaign before preparing this operation')
         # Exact frozen selection: a second click/review reopens existing work.
         identity = {key:value for key,value in params.items()
@@ -138,6 +139,9 @@ class OperationsMixin:
             operation['original_params'] = dict(params)
             if kind == 'transport-check':
                 operation['current_job'] = params['probe_job']
+            if kind == 'attack-capture':
+                operation['current_job'] = params['capture_job']
+                operation['original_params'] = {k:v for k,v in params.items() if k!='capture_job'}
             if kind == 'direct':
                 operation['acquisition'] = self._builder_model_acquisition_required(params)
                 self._reuse_direct_preparation(operation)
@@ -246,6 +250,10 @@ class OperationsMixin:
 
     def _publish_operation_selection(self, operation):
         """Update preparation pointers only if the operator has not edited the draft."""
+        if operation['kind']=='attack-capture':
+            from .prepared_inputs import capture_result
+            operation['params'] = {k:v for k,v in operation['original_params'].items()}
+            operation['params'].update(capture_result(self,self.jobs[operation['jobs'][0]]))
         owner = operation['params'].get('campaign_id')
         if owner and operation['kind'] != 'direct':
             saved = self.db.workspace_definition(owner)
@@ -327,7 +335,7 @@ class OperationsMixin:
                     raise ValueError('The interrupted job has saved launch files. Reopen the console to restore its status before continuing.')
                 operation.update(current_job='', launch_pending=False)
             if job is not None and job.state() != 'complete':
-                if operation['kind'] == 'transport-check' and operation['step'] == 0:
+                if operation['kind'] in {'transport-check','attack-capture'} and operation['step'] == 0:
                     raise ValueError('The diagnostic probe did not complete. Open its saved job and recover the probe first; connection checking will not regenerate it.')
                 # This can only re-enable a failed no-call preflight, never a
                 # consumed target-generation workflow.
@@ -347,6 +355,12 @@ class OperationsMixin:
 
     def _operation_review(self, operation):
         params = dict(operation['params'])
+        if operation['kind']=='attack-capture':
+            owner=params.get('campaign_id','')
+            return _page('Attack material ready','<h1>Attack material ready</h1>'+self._campaign_banner(owner)+
+                '<p>Your capture is saved. An unchanged campaign draft is updated automatically; otherwise '
+                'choose this capture by name under Attacks. No file paths or checksums need copying.</p>'+
+                '<p><a href="/build?campaign_id='+html.escape(owner)+'#prepared-workflows">Return to experiment</a></p>',active='Build')
         if operation['kind'] == 'transport-check':
             return _page('Probe finished', '<h1>Probe and connection check complete</h1>'
                 +self._campaign_banner(params.get('campaign_id', ''))
@@ -399,9 +413,10 @@ class OperationsMixin:
         labels = self._operation_labels(operation)
         label = labels[min(operation['step'], len(labels)-1)]
         body = '<h1>'+escape(_TITLES[operation['kind']])+'</h1>'+self._campaign_banner(operation['params'].get('campaign_id', ''))
-        body += '<section class="card"><h2>'+escape(label)+'</h2><p>'
+        body += '<section class="card"><h2>Preparing your selected work</h2><p>'
         body += ('Your explicitly started probe may make real calls. Its connection record is saved automatically afterwards.'
-            if operation['kind'] == 'transport-check' else
+            if operation['kind'] == 'transport-check' else 'Your explicitly started attack capture may invoke its source model. The saved output is attached automatically.'
+            if operation['kind'] == 'attack-capture' else
             'Preparation runs automatically. No target answers or judge decisions are generated.')
         body += ' You can leave this page and return.</p>'
         if operation['status'] == 'preparing':
@@ -411,7 +426,7 @@ class OperationsMixin:
             body += '<p class="notice amber">'+escape(operation['error'] or 'Preparation stopped.')+'</p>'
             body += '<form class="action-row" method="post" action="/operations/'+operation_id+'/retry"><button>Continue preparation</button></form>'
             body += '<p>Completed stages and existing installed models are retained. If settings need changing, return to Build.</p>'
-        body += '</section><details class="card"><summary>Technical job details</summary><ul>'
+        body += '</section><details class="card"><summary>Technical job details</summary><p>'+escape(label)+'</p><ul>'
         for job_id in filter(None, operation.get('failed_jobs', [])+operation['jobs']+([operation['current_job']] if operation['current_job'] else [])):
             body += '<li><a href="/jobs/'+escape(job_id)+'">'+escape(job_id)+'</a></li>'
         return _page('Preparing work', body+'</ul></details>', active='Build')

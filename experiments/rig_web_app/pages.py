@@ -772,6 +772,13 @@ class PagesMixin:
         def card(name: str) -> str:
             if name == "run_matrix":
                 return ""
+            if name == "response_svm":
+                target='/analysis?campaign_id='+campaign_id if campaign_id else '/campaigns'
+                return ('<section class="card"><h2>Response classifier analysis</h2><p>Choose saved campaigns and '
+                    'a teacher condition. Dataset export, evaluation and fitted-model saving run automatically.</p>'
+                    '<a class="button" href="'+target+'">Open SVM analysis</a></section>'
+                    '<details class="card"><summary>Advanced SVM CLI form and imports</summary>'
+                    +self._command_card(name,campaign_id)+'</details>')
             if name not in {"capture_t3mp3st", "harmbench_capture"}:
                 return self._command_card(name, campaign_id)
             label = "T3MP3ST Capture" if name == "capture_t3mp3st" else "HarmBench Prepare"
@@ -806,7 +813,14 @@ class PagesMixin:
                 f"<div class='group-head'>{_icon('file', size=20)}<h2>Other</h2></div>" + leftovers
             )
         body = (
-            "<h1>" + _icon("terminal", size=22) + "Run a command</h1>"
+            "<h1>" + _icon("terminal", size=22) + "Tools</h1>"
+            "<section class='card'><h2>Choose what you want to do</h2>"
+            "<p>Build handles experiment preparation automatically. Human evaluation and classifier analysis "
+            "use saved answers directly. You do not need to run intermediate CLI commands.</p><div class='action-row'>"
+            + "<a class='button' href='/build" + ("?campaign_id="+campaign_id if campaign_id else "") + "'>Configure an experiment</a>"
+            + "<a class='button ghost' href='/human-evaluation" + ("?campaign_id="+campaign_id if campaign_id else "") + "'>Review saved answers</a>"
+            + "<a class='button ghost' href='" + ('/analysis?campaign_id='+campaign_id if campaign_id else '/campaigns') + "'>SVM analysis</a>"
+            + "</div></section><details class='card' id='advanced-cli-tools'><summary>Advanced CLI tools and troubleshooting</summary>"
             "<p class='note'>Typed forms over the allowlisted experiment "
             "CLIs; the argument vector shown on each job page is exactly "
             "what runs. Fields map one-to-one to documented CLI flags; "
@@ -815,7 +829,7 @@ class PagesMixin:
             "placeholder='Type to filter commands...' "
             "aria-label='filter commands'></p>"
             + self._datalists()
-            + "".join(sections)
+            + "".join(sections) + "</details>"
             + "<script>(function(){"
             "var box=document.getElementById('cmdfilter');"
             "if(box){box.addEventListener('input',function(){"
@@ -831,7 +845,7 @@ class PagesMixin:
             "var cmd=params.get('cmd');"
             "if(cmd){var card=document.querySelector("
             '"details.cmd input[name=command][value=\'"+cmd+"\']");'
-            "if(card){var det=card.closest('details.cmd');det.open=true;"
+            "if(card){document.getElementById('advanced-cli-tools').open=true;var det=card.closest('details.cmd');det.open=true;"
             "params.forEach(function(val,key){"
             "if(key==='cmd'){return;}"
             "var field=commandField(det,key);"

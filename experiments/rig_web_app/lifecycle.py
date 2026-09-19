@@ -1994,6 +1994,8 @@ class LifecycleMixin:
         # installation of its Python interpreter. Honor the selected project.
         child["PYTHONPATH"] = os.pathsep.join((str(self.repo_root.resolve()),
                                               str(self.repo_root.resolve() / "src")))
+        if command == "response_svm":
+            child.update(OPENBLAS_NUM_THREADS="2", OMP_NUM_THREADS="2", MKL_NUM_THREADS="2")
         if command == "export_aggregators":
             # The aggregator export is the second acquisition child: the gated
             # DecodingTrust/HoliSafe sources read HF_TOKEN from their own
@@ -3460,6 +3462,10 @@ class LifecycleMixin:
         # allowlist and differ only in content-identity projection.
         try:
             launch_argv = build_argv(command, values, commands=self.commands)
+            if command == "response_svm":
+                # Console-owned analysis does not advance the measured Runner.
+                # Use this release's tool, including its automatic study mode.
+                launch_argv = [launch_argv[0], str(_REPO_ROOT / "experiments" / "response_svm.py"), *launch_argv[3:]]
             (
                 argv,
                 retained_params,
@@ -3589,6 +3595,8 @@ class LifecycleMixin:
                 "argv": argv,
                 "supervised": os.name == "posix",
             }
+            if command == "response_svm":
+                command_document['analysis_code_repository'] = str(_REPO_ROOT)
             if campaign_id:
                 from .workspace_store import activity_role  # noqa: PLC0415
 
@@ -4076,6 +4084,14 @@ class LifecycleMixin:
         path = parsed.path
         query = {key: values[0] for key, values in parse_qs(parsed.query).items() if values}
         try:
+            if path == '/analysis' and method == 'GET':
+                from .response_analysis import page
+                return 200, 'text/html; charset=utf-8', page(self, query.get('campaign_id',''))
+            if method == 'POST' and path in {'/analysis/start','/analysis/resume'}:
+                from .response_analysis import start, resume
+                with self._app_lock:
+                    job=(start if path.endswith('/start') else resume)(self,dict(form or {}))
+                return 303, '/jobs/'+job.job_id, b''
             if method == 'GET' and path.startswith('/operations/'):
                 return 200, 'text/html; charset=utf-8', self._operation_page(path.removeprefix('/operations/'))
             if method == 'POST' and path.startswith('/operations/') and path.endswith('/stop'):
@@ -4664,6 +4680,14 @@ class LifecycleMixin:
                     or (mode == "diagnostic_canary" and params.get("canary_dry") == "on")
                 )
                 if (spends_money or path == "/build/review") and not confirmed:
+                    if spends_money:
+                        try:
+                            params, snapshot, _ = self._capture_execution_config_snapshot(params)
+                            params = self._bind_execution_config_bundle_identity(params)
+                            operation_id = self._start_operation('direct',params,snapshot=snapshot)
+                        finally:
+                            self._discard_unlaunched_local_config(values)
+                        return 303, '/operations/'+operation_id, b''
                     try:
                         page = self._preview_page(
                             command,

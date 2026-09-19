@@ -137,7 +137,8 @@ class BuilderCaptureMixin:
         "hcap_credentials",
         "hcap_timeout",
     })
-    _BUILDER_UI_ONLY_FIELDS = frozenset({"_judge_model_ui", "local_choice", "_refresh_setup"})
+    _BUILDER_UI_ONLY_FIELDS = frozenset({"_judge_model_ui", "local_choice", "_refresh_setup",
+        "prepared_choice_t3mp3st", "prepared_choice_harmbench", "prepared_choice_ideator"})
 
     def _validate_builder_form_keys(self, form: Mapping[str, str]) -> None:
         """Reject unknown or malformed builder keys before any composition."""
@@ -530,6 +531,13 @@ class BuilderCaptureMixin:
                 if key.startswith(prefix) or key == "campaign_id"
             }
             confirmed = False
+            from .prepared_inputs import capture_defaults
+            try:
+                params = capture_defaults(self, kind, params)
+            except (OSError, ValueError, KeyError, StopIteration) as exc:
+                return 200, 'text/html; charset=utf-8', self._build_page(
+                    prefill={**params, 'attackers':kind},
+                    errors={prefix+'revision':'Installed capture settings are unavailable: '+str(exc)})
         command, values, errors = self._capture_values(kind, params)
         if errors:
             return (
@@ -552,12 +560,17 @@ class BuilderCaptureMixin:
                 ),
             )
         job = self.start_job(command, values, campaign_id=params.get("campaign_id", ""))
-        return 303, f"/jobs/{job.job_id}", b""
+        owner=params.get('campaign_id','')
+        saved=self.db.workspace_definition(owner) if owner else {}
+        operation=self._start_operation('attack-capture', dict(saved, campaign_id=owner, capture_job=job.job_id))
+        return 303, '/operations/'+operation, b''
 
     def _builder_params(self, form: Mapping[str, str]) -> dict[str, str]:
         """Normalize builder fields without materializing runtime config."""
 
         self._validate_builder_form_keys(form)
+        from .prepared_inputs import apply_choice
+        form = apply_choice(self, form)
         if form.get("campaign_id"):
             self.db.require_workspace(str(form["campaign_id"]))
 
