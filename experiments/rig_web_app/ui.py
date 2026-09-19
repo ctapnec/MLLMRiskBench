@@ -74,6 +74,7 @@ _STYLE = """
   --chevron:url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%2392a3b4'%20stroke-width='2.2'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M6%209l6%206%206-6'/%3E%3C/svg%3E");
 }
 * { box-sizing: border-box; }
+[hidden] { display:none !important; }
 body { margin:0; font:15px/1.55 system-ui, "Segoe UI", sans-serif;
   background:var(--bg); color:var(--ink); }
 main { max-width:1160px; margin:0 auto; padding:1.4rem 1.2rem 2rem; }

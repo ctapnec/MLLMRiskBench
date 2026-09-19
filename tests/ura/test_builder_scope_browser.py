@@ -32,6 +32,37 @@ def test_scope_is_saved_ui_state_not_execution_identity(app):
 
 
 @pytest.mark.parametrize('width', [1440, 390])
+def test_single_run_hides_campaign_actions_in_every_build_tab(browser, app, width):  # noqa: F811
+    page = browser.new_page(viewport=dict(width=width, height=900))
+    errors = []
+    page.on('pageerror', lambda error: errors.append(str(error)))
+
+    def route(route):
+        assert route.request.method == 'GET', 'Changing work kind must not submit'
+        url = urlsplit(route.request.url)
+        status, mime, body = app.handle('GET', url.path + ('?' + url.query if url.query else ''))
+        assert status == 200
+        route.fulfill(status=status, content_type=mime, body=body)
+
+    page.route('http://build.test/**', route)
+    try:
+        page.goto('http://build.test/build')
+        for kind in ('run', 'campaign', 'run'):
+            page.get_by_role('tab', name='General', exact=True).click()
+            page.locator('[name=work_kind][value=' + kind + ']').check()
+            for tab in ('General', 'Pipeline', 'Evaluation', 'Execution', 'Admission'):
+                page.get_by_role('tab', name=tab, exact=True).click()
+                visible = page.locator('[data-save-campaign]').filter(visible=True)
+                assert visible.count() == (1 if kind == 'campaign' else 0), (kind, tab)
+                assert page.locator('[hidden]').evaluate_all(
+                    "nodes=>nodes.every(n=>getComputedStyle(n).display==='none')"
+                ), (kind, tab)
+        assert not errors and not app.db.load_jobs()
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize('width', [1440, 390])
 @pytest.mark.parametrize('scope', [('text', 'image'), ()])
 def test_save_reopen_and_validation_keep_scope_and_execution_controls(browser, app, width, scope):  # noqa: F811
     page = browser.new_page(viewport=dict(width=width, height=900))
