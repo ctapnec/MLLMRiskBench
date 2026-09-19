@@ -8,7 +8,7 @@ import pytest
 
 from experiments.rig_web_app.operations import _STEPS
 from test_rig_web_model_acquisition import _app
-from test_rig_web_busy_browser import browser  # noqa: F401
+from test_rig_web_busy_browser import browser, _burst  # noqa: F401
 
 
 @pytest.fixture
@@ -226,8 +226,7 @@ def test_progress_stop_busy_guard_and_final_review_in_browser(app, monkeypatch, 
         assert page.get_by_role('button',name='Stop preparation',exact=True).is_visible()
         assert page.locator('body > nav').is_visible()
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
-        page.evaluate("() => {for(let i=0;i<1000;i++) document.querySelector('form[action$=\"/stop\"] button').click();}")
-        page.wait_for_function('window.uraBusy.isBusy()')
+        assert _burst(page, 'form[action$="/stop"] button') == {'visible':True, 'inert':True}
         assert len(held) == 1
         request = held.pop()
         status,location,body = app.handle('POST',urlsplit(request.request.url).path,dict(parse_qsl(request.request.post_data or '')))
