@@ -55,6 +55,17 @@ def prepare_transport_check(app, params):
     return app.start_job('live_attestation', values, campaign_id=owner)
 
 
+def operator_operations(operations, owner):
+    """Show owned workflows, not their internal preparation/check handoffs."""
+    children = {row.get('preparation') for row in operations.values()}
+    for row in operations.values():
+        for connection in row.get('connection_operations', []):
+            children.update((connection.get('preparation'), connection.get('check')))
+    return [row for row in operations.values()
+            if row['params'].get('campaign_id', '') == owner and row['id'] not in children
+            and not row.get('campaign_parent')]
+
+
 class _Context:
     """Existing preparers update this operation, not a concurrently edited draft."""
     def __init__(self, app, operation):
@@ -502,10 +513,8 @@ class OperationsMixin:
         return _page('Preparing work', body+'</ul></details>', active='Build')
 
     def _operation_links(self, owner):
-        children = {row.get('preparation') for row in self._operations.values() if row['kind'] == 'campaign'}
-        selected = sorted((row for row in self._operations.values() if row['params'].get('campaign_id', '') == owner),
+        selected = sorted(operator_operations(self._operations, owner),
             key=lambda row:row.get('created_at', 0))
-        selected = [row for row in selected if row['id'] not in children]
         if not selected:
             return ''
         body = '<section class="card"><h2>Prepared and active work</h2><ul>'

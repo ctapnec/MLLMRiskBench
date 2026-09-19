@@ -259,9 +259,9 @@ def _guidance(app, params):
     elif matched:
         stage = 'Prepare'
     all_operations = getattr(app, '_operations', {})
-    operations = sorted((row for row in all_operations.values()
-        if not row.get('campaign_parent') and row['params'].get('campaign_id') == owner
-        and row['status'] in {'preparing', 'ready', 'failed', 'stopped','complete'}),
+    from .operations import operator_operations
+    operations = sorted((row for row in operator_operations(all_operations, owner)
+        if row['status'] in {'preparing', 'ready', 'failed', 'stopped','complete'}),
         key=lambda row:row.get('created_at', 0))
     if operations and (operations[-1]['status'] == 'preparing' or latest is None
             or operations[-1].get('created_at', 0) >= (dict(latest).get('started_at') or 0)

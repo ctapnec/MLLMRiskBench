@@ -185,6 +185,28 @@ def test_unchecked_assessment_stays_unchecked_after_save(app):
     assert 'name="campaign_local" type="checkbox" checked' not in page
 
 
+def test_internal_diagnostics_never_become_separate_operator_tasks(app,monkeypatch):
+    from experiments.rig_web_app import campaign_guide
+    from experiments.rig_web_app.operations import operator_operations
+    monkeypatch.setattr(app,'_builder_model_acquisition_required',lambda p:False)
+    operation,selection=prepared(app,kind='direct')
+    operation.update(status='complete',step=4,execution_authorized=True)
+    probe=app._operations[app._start_operation('direct',dict(selection['params'],mode='attestation_probe'))]
+    check=app._operations[app._start_operation('transport-check',dict(campaign_id=operation['params']['campaign_id'],probe_job='probe'))]
+    probe['status']=check['status']='ready'
+    selection['connection_operations']=[dict(preparation=probe['id'],check=check['id'])]
+    owner=operation['params']['campaign_id']
+    assert [row['id'] for row in operator_operations(app._operations,owner)]==[operation['id']]
+    links=app._operation_links(owner)
+    assert 'Campaign - complete' in links and 'Review and start' not in links
+    assert probe['id'] not in links and check['id'] not in links
+    steps,stage,notice,_=campaign_guide._guidance(app,dict(operation['params'],work_kind='campaign'))
+    assert steps[stage][0]=='Results' and 'Campaign is complete' in notice
+    standalone=app._operations[app._start_operation('direct',dict(selection['params'],out='standalone'))]
+    standalone['status']='ready'
+    assert standalone in operator_operations(app._operations,owner)
+
+
 def test_direct_resume_keeps_original_acquisition_and_output_settings(app,monkeypatch):
     monkeypatch.setattr(app,'_builder_model_acquisition_required',lambda p:False)
     operation,selection=prepared(app,kind='direct')
