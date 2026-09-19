@@ -156,6 +156,17 @@ def test_unknown_operation_kind_does_not_save_a_draft(app, monkeypatch):
     assert status == 400
 
 
+def test_automatic_preparation_ticket_retains_and_revalidates_execution_snapshot(app):
+    params, snapshot, _ = app._capture_execution_config_snapshot(
+        dict(mode='dry_run', local='', api='', judges='rules', attackers='replay'))
+    assert snapshot, 'Exercise real execution bytes, not an empty mocked ticket'
+    token = app._new_launch_ticket(params, purpose='automatic-preparation', execution_snapshot=snapshot)
+    bound, held = app._consume_launch_ticket(token, purpose='automatic-preparation')
+    assert held == snapshot
+    assert app._validate_execution_snapshot(bound, held) == snapshot
+    assert app._consume_launch_ticket(token, purpose='automatic-preparation') is None
+
+
 def test_corrupt_operation_metadata_cannot_crash_startup(app):
     root = app.state_dir/'.private-operations'/('a'*32)
     root.mkdir(parents=True)

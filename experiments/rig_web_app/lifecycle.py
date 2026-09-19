@@ -1471,7 +1471,7 @@ class LifecycleMixin:
         raw_params = dict(params)
         acquisition_next = raw_params.pop("_model_acquisition_next", "")
         snapshot: dict[str, bytes] = {}
-        if purpose in {"build", "acquisition_plan"}:
+        if purpose in {"build", "acquisition_plan", "automatic-preparation"}:
             if execution_snapshot is None:
                 bound_params, snapshot, _snapshot_sha256 = (
                     self._capture_execution_config_snapshot(raw_params)
@@ -1534,7 +1534,7 @@ class LifecycleMixin:
                 return None
             params = dict(item[2])
             snapshot = dict(item[3])
-        if purpose in {"build", "acquisition_plan"}:
+        if purpose in {"build", "acquisition_plan", "automatic-preparation"}:
             try:
                 rebound, _current, _digest = self._capture_execution_config_snapshot(
                     params
