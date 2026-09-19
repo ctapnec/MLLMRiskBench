@@ -21,11 +21,12 @@ or treated as measured model results. Source availability, conversion fidelity,
 execution and scoring eligibility are also separate: use the current retained
 source review, not a historical acquisition record, to determine admission.
 
-For your first small hosted run, follow the
-[small API campaign instructions](docs/SMALL_API_CAMPAIGN.md). Local and hosted
+For your first small local or hosted campaign, follow the
+[combined campaign instructions](docs/SMALL_CAMPAIGNS.md). Local and hosted
 campaigns share Review campaign, Start campaign and automatic selected assessment.
-The [results and analysis reference](docs/CAMPAIGN_RESULTS_AND_ANALYSIS.md) covers
-optional comparisons, human evaluation and SVM analysis separately.
+The same guide preserves the local reference result and full optional comparison,
+human-evaluation and SVM steps in sections 7-10. The
+[documentation map](docs/README.md) distinguishes operator and technical references.
 Use the [UI campaign walkthrough](docs/UI_CAMPAIGN_WALKTHROUGH.md) for the broader
 workflow and interpretation of retained results.
 The detailed [campaign workspace guide](docs/CAMPAIGN_WORKSPACES.md) records the

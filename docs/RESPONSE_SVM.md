@@ -87,7 +87,7 @@ operator handoffs. Source files are read for selected data; no model-store
 scan or provider calls occur. UI-launched analysis caps numerical-library
 threads at two and records the analysis code checkout separately from Runner.
 
-See [Campaign results and analysis, section 3](CAMPAIGN_RESULTS_AND_ANALYSIS.md#3-optional-response-svm-analysis)
+See [Small campaigns, section 10](SMALL_CAMPAIGNS.md#10-optional-response-svm-analysis)
 for exact clicks. A few demonstration answers do not establish held-out
 accuracy, even when every preparation stage completes.
 

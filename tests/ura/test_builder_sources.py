@@ -95,16 +95,17 @@ def test_prepare_action_preserves_campaign_and_draft_without_generation(study, m
     assert not list(app.results_root.glob('**/inventory.json'))
 
 
-def test_build_renders_indexed_selection_and_distinct_prepare_action(study, monkeypatch):
+def test_build_renders_indexed_selection_with_shared_campaign_review(study, monkeypatch):
     app, local, api = study
     put(app, local, 'saved')
     monkeypatch.setattr(app, 'start_job', lambda *a, **kw: pytest.fail('Opening Build launched a job'))
     params = dict(work_kind='campaign', campaign_id=api, retained_source_campaign=local,
-        retained_source_runs='["saved"]')
+        retained_source_runs='["saved"]',campaign_flow='on',campaign_inputs='saved')
     status, _, body = app.handle('POST', '/build/source-runs', params)
     page = body.decode()
     assert status == 200
-    assert "formaction='/build/prepare-operation/matched'" in page
+    assert 'Review campaign' in page
+    assert "formaction='/build/prepare-operation/matched'" not in page
     assert "formaction='/build/prepare-inputs'" not in page
     assert "data-source-run value='saved' checked" in page
     assert 'Missing and truncated responses are included' in page

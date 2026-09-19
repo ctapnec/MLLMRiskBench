@@ -10,8 +10,8 @@ assessment and applicable spending ceilings, then Review campaign and Start
 campaign. Preparation, diagnostics, collection and selected assessment share
 one durable progress page. Internal jobs are technical details, not operator
 handoffs. Single-run and historical continuation controls remain available.
-See [the small API guide](../docs/SMALL_API_CAMPAIGN.md) and
-[the local guide](../docs/SMALL_LOCAL_CAMPAIGN.md).
+See [the combined local/API guide](../docs/SMALL_CAMPAIGNS.md), including its
+reference outcomes and optional comparison, human-review and SVM procedures.
 
 Direct hosted collection uses the existing Runner through the campaign spending
 controller. Its per-attempt admission covers retries, bridge callback threads
@@ -7432,7 +7432,7 @@ qualifies as independent two-rater evidence or modifies automated judgments.
 Independent two-rater study remains a separate explicit option with its own
 arrangements, qualification, consent, immutable submissions and adjudication.
 Both reuse the existing saved-sample preparation and SQLite review store.
-No target or judge calls are made. SMALL_API_CAMPAIGN section 9 supplies the
+No target or judge calls are made. SMALL_CAMPAIGNS section 9 supplies the
 click-by-click instructions; section 10 describes a single SVM study action
 with automatic input extraction, export, evaluation and classifier packaging.
 
@@ -7440,24 +7440,25 @@ with automatic input extraction, export, evaluation and classifier packaging.
 
 #### Ordinary operator workflow
 
-Build campaigns and single runs use **Compose & review**.
+Named measured campaigns use **Review campaign**, then **Start campaign**.
+Single runs retain **Compose & review** and their own explicit start.
 One durable progress page advances through model planning, reuse/acquisition,
 no-call preflight and final preparation. Save keeps Build open. Call limits
 are calculated from the projection by default; manual overrides are advanced.
 Missing measured-route connection checks are derived without editing the draft.
-**Start experiment including connection checks** runs those reviewed diagnostics,
-saves their records and proceeds to measured execution. Existing valid checks
-are reused. Its final **Start run**, **Start probe**
-or **Start canary** is an explicit execution action. A probe's connection record
+The campaign start runs reviewed diagnostics, saves their records and proceeds
+to measured execution and selected assessment. Existing valid checks are reused.
+Single-run reviews can offer **Start experiment including connection checks**,
+**Start run**, **Start probe** or **Start canary**. A probe's connection record
 is saved automatically after the explicitly started probe finishes. Operators
 do not copy receipts or choose between internal acquisition jobs.
 
 For retained-input hosted comparisons, select saved runs and scientific/budget
-limits, then use **Prepare comparison and review**. Input extraction, forecast,
-replay materialization and provider token counting are internal stages. The
-existing reviewed collection start remains separate from preparation.
+limits in General's Campaign workflow, then use the same **Review campaign**
+and **Start campaign**. Input extraction, forecast, replay materialization and
+provider token counting are internal stages, not separately operated tasks.
 
-**Review local judging** and **Review all-output Haiku judging** similarly
+Legacy **Review local judging** and **Review all-output Haiku judging** actions
 prepare their saved-output selection automatically and open the corresponding
 execution review. Haiku preparation does not buy verdicts. The earlier CLI
 recipes in this runbook remain available as technical reference; their separate
@@ -7474,15 +7475,16 @@ Direct hosted execution reviews display cost scenarios using configured prices,
 retries. They are estimates, not the retained-input route's counted budget bound.
 
 **Prepared and active work** in Build General and campaign Overview/Activity
-reopens progress or the final review. **Stop preparation** prevents subsequent
-handoffs; **Continue preparation** retains completed stages and retries the
-unfinished stage. Frozen settings are preserved across console restarts.
+reopens progress or the final review. **Stop campaign** prevents subsequent
+handoffs; **Resume campaign** retains completed stages and continues unfinished
+work. Single preparations retain **Stop preparation / Continue preparation**.
+Frozen settings are preserved across console restarts.
 Concurrent edits to a saved campaign are not overwritten. Completed compatible
 preparation and installed models are reused. No extra full-checksum validation,
 runtime installation or target/judge generation is implied by opening a page.
 
 See [Operator workflows](../docs/UI_WORKFLOW_SIMPLIFICATION.md) for coverage and
-the two small-campaign guides for exact visible controls.
+the combined [small-campaign guide](../docs/SMALL_CAMPAIGNS.md) for exact controls.
 
 **Campaigns -> campaign -> SVM analysis** replaces the ordinary export/evaluate/
 package handoff. Select named campaigns and the recorded Haiku condition, then

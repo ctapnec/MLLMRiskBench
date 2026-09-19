@@ -36,7 +36,10 @@ dated study records and the thesis experiments chapter.
 
 ## Direct operator flow
 
-The complete run is intentionally linear:
+The graphical workflow is documented in [Small campaigns](SMALL_CAMPAIGNS.md):
+configure, review, then start collection and selected assessment. The console
+automates the technical preparation below. The following sequence describes
+the explicit CLI/reproducibility responsibilities, not ten extra UI tasks:
 
 1. select and detach at one prospectively reviewed full project commit, create
    and digest a `ura-project-revision/1` receipt from the clean checkout, export

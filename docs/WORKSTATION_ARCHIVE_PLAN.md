@@ -67,7 +67,7 @@ comparison. The separate small local-run demonstration is also complete as
 described below. The operator's own walkthrough remains outstanding; archive
 transfer has not started.
 
-The [local Build guide](SMALL_LOCAL_CAMPAIGN.md) records concrete fields and
+The [combined campaign guide](SMALL_CAMPAIGNS.md) records concrete fields and
 buttons accepted on the rig. Text/image probes, saved-answer continuation and
 transport-receipt forms passed, followed by two measured text and two measured
 image answers. All four were usable, untruncated and locally evaluated, with

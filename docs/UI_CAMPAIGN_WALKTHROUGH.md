@@ -1,429 +1,159 @@
 # Running and examining campaigns in the web UI
 
-For the exact rig-specific first campaign, use the
-[click-by-click small Flash guide](SMALL_API_CAMPAIGN.md). It names each tab,
-value, button, preparation wait and paid start action. The overview below is
-not a substitute for that first-time walkthrough.
+For exact models, field values and clicks, use
+[Your first small campaign: local or API](SMALL_CAMPAIGNS.md).
+For comparison, exports, human evaluation and SVM, use
+[Results and optional analysis](SMALL_CAMPAIGNS.md#8-optional-examine-and-compare-your-results).
+This page explains navigation and interpretation, without a second setup recipe.
 
-Build is the experiment editor. Campaigns groups related work; Jobs shows its
-execution; Stats shows retained results. Local and hosted are model choices,
-not separate creation wizards. The retained-input hosted flow has been exercised
-through the browser: source selection, forecasting, prepared replay, collection,
-local judging, Haiku judging and result/cost inspection. This bounded acceptance
-used one diagnostic and one measured Terra input; it is not evidence that every
-model/framework combination has completed a new UI campaign.
+## Create a campaign or a single run
 
-The production text/image example on 14 September also completed the full
-hosted flow. Its reproduction details are below. It is a demonstration, not
-an extension of the thesis study population.
+**Build** is the experiment editor. Choose **Campaign** for coordinated
+collection and assessment, or **Single run** for one independent Runner job.
+Local, API and mixed describe the selected models, not separate creation wizards.
+
+A named measured campaign follows **Save campaign -> Review campaign ->
+Start campaign**. General owns the fresh/saved input choice, assessment options
+and applicable spending ceilings. Pipeline owns models, modalities, corpora and
+attackers; Evaluation owns scoring and defenses; Execution owns sampling and
+resource limits. Admission defaults to automatic technical setup.
+
+Saving keeps Build open. Review prepares the experiment without generating
+answers or verdicts. It can contact a provider to count tokens. One Start then
+executes the reviewed connection diagnostics, collection and selected assessment.
+The progress page owns all handoffs; Technical jobs is for inspection.
+Existing installed runtimes and compatible preparation are reused.
+
+Single runs retain **Compose & review** and their own explicit execution start.
+Offline runs have mock outputs, not measured model evidence. Older saved
+preparations retain their original continuation controls, but their separate
+preparation actions are not the recipe for new campaigns.
+
+Modality scope persists across save/reopen. A selected corpus is required before
+its sample-size controls become active; the exact range slider needs a matching
+no-call projection. A per-arm sample limit, output allowance and wall-time limit
+are distinct controls. Model-weight checksums remain optional and off by default.
+
+## Fresh inputs or saved local inputs
+
+**General -> Campaign workflow -> Input selection** offers installed
+corpora/frameworks or reuse of saved local inputs for hosted comparison.
+For reuse, choose the source campaign, click **Show saved runs**, select measured
+runs and set per-model request caps. No question, image or original answer is
+regenerated during input preparation. Whole source clusters stay together.
+
+Both choices use Review campaign and Start campaign. The saved-input executor
+can collect across providers concurrently, with bounded per-provider workers.
+This does not imply arbitrary direct Runner jobs are parallelized.
+Diagnostics remain separate from measured cases and need enough input capacity.
+
+Equal seeds or equal counts do not establish identical inputs. Match actual
+rendered prompts, media and attack conditions. Different model caps can produce
+overlapping rather than identical subsets. Live adaptive trajectories are not
+transferable unless their actual delivered prompts are replayed.
+
+## Return, stop and resume
+
+Open **Campaigns -> your campaign -> Overview -> Prepared and active work**,
+or return through **Configure in Build -> General**. Follow the parent campaign,
+not its internal preparation or connection-check entries.
+
+**Stop campaign** stops active work and prevents later handoffs.
+**Resume campaign** continues the affected stage using saved checkpoints.
+Completed collection is not repeated because judging needs recovery.
+If assessment exceeds its spending ceiling, use **Evaluate saved answers** to
+choose a smaller pending selection or another allowance.
+
+On Linux, console jobs have a separate process supervisor. Restarting the
+console observes a surviving job instead of launching another copy. Lost work
+without a terminal record is interrupted, not successful. A failed original
+job remains failed even when a later recovery succeeds.
+
+Historical hosted jobs can offer **Review continuation -> Start job**.
+That continuation retains original programs, spending history and software
+conditions. Its new call-start window does not reset consumed calls or charges.
+Imported external workers are read-only unless a real control adapter owns them.
+
+Do not update a checkout while jobs use it. Deployment uses a separate clean
+console checkout or the existing execution lock; this is process coordination,
+not a model checksum scan. A UI-only update need not change the measured Runner.
 
 ## Inspect the retained studies
 
-1. Open **Campaigns -> Local campaign** or **API campaign**. These are separate
-   workspaces, not two names for the same collection.
-2. In **Overview**, select a model and execution condition before interpreting
-   historical failures and later recoveries. All conditions includes both; it
-   does not automatically choose a model's best answer.
-3. In **Results**, expand **Generation settings and usage** for context, output
-   allowance, reported tokens, finish reason and the original artifact. A
-   truncated answer can still contain usable text.
-   **Recovery history** links explicitly recorded original outcomes to saved
-   successor answers and their source artifacts. It preserves both executions
-   and costs; it does not silently select the best output, merge generation
-   conditions or copy a judgment between different answers.
-4. Use **Judging** and **Compare** for output-specific decisions and matching.
-   Missing, invalid and inapplicable decisions remain visible. One model's
-   answer cannot inherit another answer's verdict on the same question.
-   In **Compare**, choose each model's generation and judging condition, then
-   use **Corpus**, **Framework** and **Modality** to narrow both sides. For a
-   static comparison choose `replay`; keep adaptive frameworks separate. The
-   filters remain in subsequent pages and CSV exports. An empty selection is
-   shown as empty, not replaced with a different source.
-   Judging choices name the rules/model cascade and recorded approximate-metrics
-   mode. **Selected judging settings** shows the model and available settings;
-   rules-only judging is explicitly identified as having no model-backed judge.
-   Separate identities remain separate even when their readable names agree.
-5. **Costs** records physical attempts and charges. Unknown is not zero, and a
-   provider purse update is not an invoice breakdown. **Activity** and
-   **Campaign jobs** link to the original executions.
-   **Download full campaign cost table** exports every model/role row, including
-   rows on later table pages. It includes nominal charges, unresolved bounds,
-   settlement coverage and reported token totals with missing-usage counts.
-   Blank amounts mean unknown. The export is campaign-wide, includes historical
-   and diagnostic work, and does not adopt the Results model/condition filters.
-6. **Configure in Build** opens the saved draft. Editing it does not alter past
-   or running jobs; that draft is not every historical recovery configuration.
+Open **Campaigns -> Local campaign** or **API campaign**. These are distinct
+retained study workspaces, not hard-coded creation types.
 
-Overview exports coverage and missing/truncation figures plus their matching
-table. Model/condition filters are preserved. These are descriptive counts, not
-a pooled safety ranking. Inspection and exports make no model calls.
+- **Overview:** choose the evidence population, model and generation condition.
+  All conditions includes historical failures and recoveries; it is not a
+  best-answer selection.
+- **Results:** inspect the saved answer and **Generation settings and usage**.
+  Context, output allowance, reported usage and truncation are separate.
+  Recovery history links explicit predecessors and successors without erasing
+  either execution or copying its verdict.
+- **Judging:** inspect each answer's judging condition and valid coverage.
+  Missing, invalid and inapplicable assessments are not safe labels.
+- **Costs:** physical attempts and available charges are not account balances.
+  Unknown charges are not zero; local computation is not free merely because
+  it has no API invoice. Full cost export is campaign-wide, not a Results filter.
+- **Activity / Campaign jobs:** inspect actual executions, logs and artifacts.
+  The saved Build draft does not describe every historical recovery condition.
 
-## Create local work or a single run
+Charts and CSV/SVG exports preserve their displayed selection. Inspect
+denominators before comparing rates. Diagnoses, preparation and completed jobs
+alone are not measured safety evidence.
 
-1. In **Build**, choose **Campaign** and a name, or **Single run** for an
-   independent Runner job. Select models once in the model picker.
-2. Set sources and attacks in **Pipeline**, judges/defenses in **Evaluation**,
-   source/model requirements in **Admission**, and sampling/resource limits in
-   **Execution**. Reuse installed runtimes and assessed local-model settings.
-   **Pipeline -> Modality scope** is retained by **Save campaign**, subsequent
-   reopening, and the review/edit flow, including an explicitly empty scope.
-   Fresh drafts and older drafts without saved scope start with all modalities
-   enabled. Scope filters available selections; it is not an additional Runner
-   modality flag and does not change a preflight identity by itself.
-   In **Execution -> Sampling & turns -> Per-arm sample size**, the number and
-   policy fields stay visible but disabled until an arm is selected. The exact
-   range slider appears only after a matching no-call preflight supplies sizes.
-   Leave **Admission -> Setup -> Automatic (recommended)** selected. The console
-   supplies software/source records, an output directory and execution scope.
-   Completed transport checks are selected from this campaign's saved jobs (or
-   unattached jobs for a single run). No paths, hashes or receipt rows need entry.
-   Missing measured-route checks are derived automatically and included in the
-   reviewed start; no probe-mode switch or restoration of the draft is needed.
-   New probes save their connection check automatically. For older probes only,
-   **Tools -> Advanced CLI tools and troubleshooting -> live_attestation** can
-   select a completed probe by name without repeating generation.
-   **Advanced overrides** keeps explicit fields available for exceptional work.
-   A fresh review uses the configured Runner records. Previously reviewed jobs,
-   plans and recovery links keep their original settings. A UI-only deployment
-   can preserve the Runner revision and already completed probes. Changing the
-   Runner itself still requires compatible preparation and transport evidence.
-3. Inspect **Current pipeline**, then **Save campaign** if applicable. Saving
-   makes no calls and keeps Build open. Keep **Calculate call limits automatically**
-   enabled in Execution. **Compose & review** shows the actual command and settings;
-   execution requires the separate start action on the review page.
-4. Follow the job in **Jobs** and its results in **Stats**. Offline runs contain
-   mock outputs, not model evidence.
-
-Input-selection limits, generation allowances and time limits are different
-controls. Local answer retries default to one retry; paid campaigns use no
-answer retry and up to three retries for eligible transport errors. Full
-model-weight checksum checks are optional and off by default.
-
-### Console restarts and interrupted jobs
-
-On the Linux rig, a console restart does not relaunch a running job. Its
-separate supervisor retains process identity, exit status and completion time.
-Reopen **Jobs** to monitor it or use **Stop job**. Logs stream while work runs,
-with a short privacy-redaction tail retained until safe to emit. A process
-lost without a completion record is **interrupted**, not successful; an
-explicit early Stop is **stopped**. Neither state invents an exit code or
-automatically repeats model calls. Saved outputs remain available for review.
-Older hosted collections can recover their terminal state from their retained
-collection result, including **failed** collections that need continuation.
-
-To resume a failed hosted collection, open its job and select **Review
-continuation**, then **Start job**. A fresh continuation output directory is
-filled in automatically. Keep the supplied programs, budget and revision.
-Alternatively, reopen the saved campaign in Build, select **Review prepared
-collection**, then **Continue saved collection**. Both routes reuse completed
-responses and spending records; do not repeat input or runtime preparation.
-An explicit continuation starts a fresh time window for each remaining job
-when that job begins. Time spent stopped or waiting in the queue does not use
-that new window. The original window remains in the history; consumed calls,
-saved responses and spending are not reset. Reopening a review alone does not
-renew a window. A fully saved response set can be finalized without new target
-or model-judge calls, even after its original call-start deadline.
-
-If the console was updated since collection began, the continuation automatically
-uses a separate checkout of the original execution revision. The live console
-stays on its current version. Only source files are retained in this checkout;
-models and virtual environments are neither copied nor reinstalled. Existing
-request, checkpoint and transport checks remain active. This preserves the old
-execution conditions; it does not silently apply newer adapter changes.
-
-Deployment must not change a checkout while jobs use it. Linux console jobs
-retain a lightweight shared checkout lock, and `distro/repin.sh` declines an
-in-place deployment while that lock is held. This does not hash models, scan
-corpora or reinstall runtimes. Custom deployment helpers must honor the same
-lock; pre-existing CLI processes also need a live-process check before updating.
-
-## Create a hosted comparison from saved local inputs
-
-Choose the source campaign and named saved runs, target models, request caps and
-token-counting option in Build General. Click **Prepare comparison and review**.
-Input extraction, forecasting, replay materialization and counted execution
-preparation proceed automatically on one progress page. Review the actual
-workload and cost bound, then click **Start prepared collection**.
-
-Reopen progress or the completed review from **Prepared and active work** in
-Build General or campaign Overview. Stop prevents later preparation handoffs;
-continuation resumes the unfinished stage without discarding successful work.
-Internal job links remain available under technical details, but are not
-required operator steps. Existing saved collections keep their review and
-continuation actions.
-
-Whole-cluster selection can leave room unused under a request limit. Different
-model limits produce overlapping subsets, not identical sample sizes. Compare
-actual shared inputs. Providers can collect concurrently; another provider's
-judging need not delay generation. A recorded retry wait is not a model refusal
-or an instruction to submit the same work again.
-
-Matched preparation uses the saved replay inputs, even when the general draft
-is still in offline mode. Its synthetic-only tool-input exclusion does not
-filter or invalidate this retained selection. Keep defense set to **none**;
-select **rules,guardrail** and the installed scoring guardrail in Evaluation.
-In **Execution**, set a positive whole-number **--deadline-seconds** before
-counted preparation. This is the durable window for starting calls, not a
-per-answer timeout. The prepared programs retain this value; later draft edits
-do not change an already prepared collection. If a preparation must be corrected
-before any provider attempt, retain the old jobs and prepare a new version from
-the same saved source, forecast and replay jobs. Do not edit retained programs.
-Collection and output-specific judging remain separate stages.
-For image inputs, launch the console with the same ordered `URA_MEDIA_ROOTS`
-configuration as the CLI. Build preserves it for both cached/offline request
-construction and network token counting. Enabling token counting forwards only
-the selected providers' credentials; it does not grant access to other files.
-The collection review includes the console's configured `URA_MODEL_STORE`
-location when installed-runtime preparation is needed. No installation is
-performed. A failed launch before collection initialization retries the same
-prepared inputs and budget; an initialized collection resumes its saved state.
-
-## Optional step-by-step campaign guidance
-
-In Build, check **Guide me through this campaign** beneath the campaign name.
-The modal opens immediately and covers route choices, runtimes, input selection,
-settings, preparation, execution, judging, results, human review, SVM analysis
-and recovery. It also links costs and exports and explains special attacker
-preparation. Links open the relevant pages or builder tabs. Back, Next and
-**Browse all 11 topics** let you browse without
-altering the pipeline. Close or Escape returns to your work.
-
-The guide and the SMALL_API_CAMPAIGN / SMALL_LOCAL_CAMPAIGN documents follow
-the same workflow at different levels of detail. The guide explains stages
-and links to controls; the documents supply concrete model selections, field
-values, bounds and reference counts. The guide does not prefill that recipe
-or guarantee its reproduction without those choices.
-
-Guide links target the relevant controls within a tab, not just the tab itself.
-They reveal the containing section, scroll below the navigation bar and focus
-the destination heading or control. Clicking the same link again returns to
-that destination. Preparation links open the active progress page or the
-relevant configure/review control, not a sequence of internal job forms.
-
-Save the campaign to retain this preference. **Campaign guide** is available
-again in Build, campaign pages and campaign-owned job/review pages. Automatic
-help appears once per suggested stage in the current browser tab; reopening
-the same page does not repeatedly interrupt you. Guidance follows the saved
-draft and recent indexed console activity, not live model probing. It does
-not certify completion or reinterpret failed jobs. Uncheck the option in Build
-and save to disable it. Single runs do not use campaign guidance.
-
-The guide performs no preparation, inference, judging, recovery or paid action.
-You still use the normal review and explicit start controls. Existing campaigns
-remain unguided unless you enable and save the option.
+## Compare and assess saved answers
 
 Compare loads dependent model, generation and judging choices automatically.
-Generation choices include All generation conditions for one model, as well as
-per-model highest/lowest output allowance, largest/smallest recorded context
-and highest usable-response rate. The same rules are available with All models.
-Rules use the active source filters, preserve every tie and leave unsupported
-token metadata explicitly unranked. A usable-response-rate selection is post-hoc,
-not an attack-success or safety ranking. The UI displays its saved-terminal
-denominator and assigned count; the CSV preserves the selected rule and exact
-generation identities. Full campaign data remains unchanged.
-Each refresh and export uses the shared busy overlay and blocks duplicate
-interactions. Success, HTTP errors, network failures and timeouts release the
-overlay. Failed refreshes hide outdated comparison counts and exports and
-offer manual retry. Empty fields explain missing prerequisites or indexed
-records; they do not instruct you to regenerate answers.
+Wait for the busy indicator. All models and All generation conditions retain
+separate model/condition pairs, never pooled scores. Highest/lowest allowance,
+recorded-context and usable-response-rate rules are optional exploratory
+selections, not universal safety rankings. Missing metadata stays unknown.
 
-Generation-condition lists contain only measured assignments for that exact
-campaign and model. Their scope line names both; options show modality, context,
-output allowance and assignment counts. Expand the selected condition for its
-frameworks and corpora. Identical token allowances do not establish identical
-runtime settings. Selecting the same condition again performs no request.
-Changing conditions preserves the selected judge only when that exact judge
-is indexed for the new condition; otherwise an explanation accompanies its reset.
+Match the judging condition on both sides when comparing judgments. Haiku must
+judge each distinct output; an identical input does not authorize verdict reuse.
+Valid existing decisions can be reused for the same retained answer and condition.
 
-Both Compare Model selectors offer **All models**, supporting one-to-many,
-many-to-one and many-to-many inspection. Every model/generation-setting pair
-remains separate within the selected campaigns. All does not select a newest
-or best answer, pool scores, or start any jobs. The page loads at most twelve pairs, with complete source
-facets inside each expandable result. CSV exports preserve those exact pairs,
-filters and model identities. Missing judgments and models without indexed
-measured conditions remain explicit. Counts across pairs are not independent
-inputs and must not be pooled into a single safety rate.
+Every campaign, including imported historical work, has **Evaluate saved
+answers**. Choose the original local evaluator or Haiku, a pending-answer limit,
+and Haiku's ceiling when applicable. Prepare/review, then start assessment.
+This is for additional or recovered judging; selected assessment in a new
+campaign already runs automatically.
 
-## Judge the actual saved answers
+Human evaluation and SVM are optional analyses. Personal reviews do not constitute
+independent two-rater evidence. SVM predicts recorded teacher labels and requires
+adequate class and input-group support. See the
+[analysis guide](SMALL_CAMPAIGNS.md#8-optional-examine-and-compare-your-results) for exact actions and limits.
 
-1. Under **Judge retained outputs locally**, click **Review local judging**.
-   Preparation runs automatically. Review the saved outputs and scoring
-   condition, then start or resume on the recorded scoring device. After more
-   collection jobs finish, review again to include newly completed sources.
-2. For Haiku, select the judge model, input limit and selection seed. Zero
-   includes all hosted inputs. Click **Review all-output Haiku judging**.
-   The progress page handles output matching, counting and execution
-   preparation without separate inventory or funding jobs to operate.
-3. On the completed review, check matching local/hosted answers, missing text,
-   estimated charges and available funding before **Start or resume all-output
-   Haiku judging**. Preparation does not generate verdicts. An owned slot does
-   not prove a valid verdict.
-4. Inspect output-specific coverage in both campaigns. A finished selected job
-   does not prove all campaign obligations complete. Reuse requires the same
-   saved answer and judging condition, not merely a shared input or funding row.
-   An output without funding in the new plan may already have a suitable verdict
-   in its original campaign. Check **Compare** using the same judging condition
-   and exact saved output before allocating or executing another judgment.
+## Guide and common interface behavior
 
-If the same logical request is independently funded in a different campaign,
-Costs retains both physical executions. Reopening or republishing one execution
-does not charge or count it twice, and a historical unknown charge stays unknown.
-Results and cost publication can be repaired from saved artifacts without
-repeating generation.
+**Guide me through this campaign** enables the contextual modal; save to retain
+that preference. It links to the relevant controls, reveals their section and
+scrolls to them. It does not fill example values, change scientific selections
+or start work. The [small-campaign guide](SMALL_CAMPAIGNS.md) provides the recipe.
 
-### Worked text/image example on the rig
+The busy indicator covers backend requests and blocks duplicate interaction.
+Success, error and timeout release it. A failed comparison refresh hides stale
+counts; retry through **Update choices / compare**. Ordinary page reads use
+indexed data, not repeated reconstruction of the campaign.
 
-Open **Campaigns -> UI demonstration - Flash matched text and images** to
-inspect the completed example. Use **Configure in Build** to inspect its saved
-choices. Do not press a collection or judging start button merely to view data.
-To make another demonstration, save a separately named campaign first.
+Theme offers Slate, Parchment, Midnight, Ash and Harbor. Selection is local to
+the browser. Shared navigation remains present on operator and review pages;
+review links do not grant authority to mutate campaign controls. Wide tables
+scroll within their cards. Action rows and checkbox labels wrap with consistent
+spacing. UI maintenance and regression scope are recorded in
+[Operator workflows](UI_WORKFLOW_SIMPLIFICATION.md) and
+[Operator regression audit](OPERATOR_REGRESSION_AUDIT.md).
 
-1. Choose **Local campaign** as the retained source. Under **Show saved runs**,
-   select the Qwen3-VL-8B-Instruct runs for `xstest_full` and
-   `vlsbench_release`. In this archive they are `run-a66a37fef7443227d3ff1ce0`
-   and `run-549b0f0db2a1cb24bcb80a85`, each containing 100 retained inputs.
-   Keep those runs selected; extraction happens during automatic preparation.
-2. Select `google:gemini-3.8-flash` with text and image support, low thinking,
-   a 4,096-token output allowance, selection seed 0 and a total request cap of
-   12. The historical example's achieved
-   selection contains seven measured inputs and five separately labelled
-   diagnostic inputs, not twelve independent measured cases.
-3. In **Evaluation**, use **rules,guardrail**, no defense, and the installed
-   Llama-Guard-3-8B scoring model. Installed revision and device are automatic.
-   In **Execution**, set the call-start window to 3,600 seconds. Hosted answer
-   retries stay at zero; eligible HTTP errors allow three retries.
-4. Enable provider token counting and use **Prepare comparison and review**.
-   Wait on its progress page; no manual input, forecast or replay handoff is
-   required.
-   Review the actual text/image count results before **Start prepared
-   collection**. This example's maximum was USD 0.189337 for first attempts,
-   or USD 0.757348 including all transport retries, within the USD 1 Google cap.
-   Counts and prices may differ for a later selection; these are not permanent
-   per-campaign prices.
-5. Follow the local and Haiku judging steps above. Here, all 12 saved answers
-   received local evaluation records. All-output coverage found seven measured
-   Flash answers and seven matching local answers. The seven local answers
-   already had Haiku verdicts in **Local campaign**; their lack of new funding
-   was not a missing judgment. Only the seven new Flash answers were charged.
-6. Inspect **Overview**, **Results**, **Judging** and **Costs**. The example
-   retained 12 usable responses without transport retries. Google token usage
-   gives USD 0.027046 of bounded charge exposure, while seven Haiku assessments
-   have USD 0.007470 of recorded cost. One Haiku output used an invalid verdict
-   format; it remains visible and is not silently converted into a safety label.
-7. In **Compare**, choose Flash on the left and **Local campaign / Qwen3-VL**
-   on the right. Choose each saved generation condition and the matching
-   Haiku judging condition, then filter to `replay` and one corpus/modality.
-   The image slice has four matched inputs, three with valid verdicts on both
-   sides. The text slice has three matched inputs, all jointly valid. Export
-   each slice using **Download this page's counts**. Different local generation
-   conditions are selected separately, not combined under a family label.
+## Historical demonstration is evidence, not a new recipe
 
-The example exercised the live browser controls and actual export downloads.
-Its charts and costs are backed by the same saved responses as the comparison.
-No model weights or framework environments were installed for this acceptance.
+The retained **UI demonstration - Flash matched text and images** is inspectable
+without starting anything. Its September 14 selection had seven measured and
+five diagnostic inputs. Seven new Flash answers received Haiku assessment;
+matching local answers already had their own verdicts. One invalid Haiku verdict
+remains explicitly invalid. These dated counts and conditions are not a promise
+for a new selection or evidence for every model/framework combination.
 
-For partial historical runs and advanced imports, use the typed Tools commands
-in [RUN_AND_RETURN](../experiments/RUN_AND_RETURN.md). Preserve original failed
-runs and attach recoveries separately. External campaigns must not be presented
-as fabricated console-created jobs.
-
-## Analyze and export without repeating collection
-
-1. Open the campaign in **Stats**. Choose the measured population, model,
-   generation condition and judging condition before exporting a chart or table.
-   Coverage diagrams describe assignments and outcomes; they are not pooled
-   safety scores. A local evaluation record can contain abstention or a
-   source-specific result rather than a common safety label.
-2. For paired comparisons, open **Compare**, select the two exact conditions
-   and keep corpus, framework and modality aligned. Check shared inputs and
-   jointly valid judgments before interpreting differences. A sparse or empty
-   intersection is reported as such, not filled with unrelated responses.
-3. For source-specific metric tables, open **Tools**, select the owning campaign
-   and `level2_report`, and enter the completed source results directory.
-   Historical results also need the offered historical-code repository path.
-   Set JSON, CSV and Markdown output paths inside the configured results root.
-   Starting this analysis creates a campaign-owned job but makes no model or
-   judge calls. The completed job exposes the resulting download links.
-4. The Local campaign's source-classification example is `job-9238b9c4d1ab`;
-   the static/adaptive comparison is `job-ebb5f0582d4b`. Their saved arguments
-   and outputs provide concrete parameter examples. Do not combine their
-   source-specific and common-response metrics into one score. Detailed
-   analysis commands and denominator conventions are documented in
-   [METRICS](METRICS.md) and
-   [RUN_AND_RETURN](../experiments/RUN_AND_RETURN.md).
-
-Keep a dated observation cutoff for each exported analysis. Later recoveries
-or judge assessments can change available support; export a new analysis with
-the revised selection rather than overwriting the earlier experimental condition.
-Final reporting accounts separately for unissued inputs, missing responses,
-truncation, invalid judgments and inapplicable scoring tasks. Human validity
-requires independent ratings; neither completed jobs nor automated agreement
-supplies them.
-
-## Shared control layout
-
-The header's **Theme** selector offers **Slate**, **Parchment**, **Midnight**,
-**Ash** and **Harbor**. The first four are fixed palettes: Slate and
-Parchment are light; Midnight and Ash are dark. Harbor preserves this console's
-original palette and follows the operating system's light/dark preference.
-The choice applies immediately and is remembered in this browser across pages
-and reloads. It changes presentation only, without a backend request or a saved
-campaign setting. If browser storage is unavailable, it still works on the
-current page. Independent reviewers have the same selector without operator
-navigation or access to campaign controls.
-
-The scoring guardrail model has automatic revision and device configuration.
-No revision or device selector is shown in Build. Preparation reads the installed
-model's completion metadata and records its revision without downloads or weight
-checksums. Existing explicit CLI pins remain supported for historical reproduction.
-At loading time, automatic placement prefers one visible GPU with sufficient free
-memory, or splits across visible GPUs when needed; it does not spill to CPU when
-GPU capacity is insufficient. CPU-only hosts remain supported. Effective device
-placement is retained with guardrail verdicts. The ordinary Runner and matched
-hosted preparation share this revision resolution.
-
-Standalone action rows have space above them and between buttons, and wrap on
-narrow screens. This includes Stop job, prepared collection and judging starts,
-and the saved-input preparation actions. Configuration editor actions also wrap.
-In Collect prepared inputs, Review prepared collection has its own action row
-below Workers per provider; preserve that separation when editing the panel.
-Optional checkbox rows align the checkbox with the first line of their label;
-the full label is clickable and long explanations wrap without overlapping.
-
-For UI maintenance, reuse the shared `action-row` or `review-actions` classes
-for these action groups and `checkrow` with a text `span` for standalone checkbox
-labels. Keep compact model selectors and table actions in their existing layouts.
-The spacing rules do not change defaults, submitted parameters or job actions.
-
-These conventions apply across the console, not only to Build:
-
-- Separate standalone actions from preceding fields by at least 1rem. Use
-  0.75rem gaps between action buttons or button-like links, with wrapping at
-  narrow widths. Paragraph action groups also keep space below them.
-- Use the shared field layout for saved selections. Compare condition groups
-  have padded borders and 1rem between successive selectors. Tools submit
-  actions, repeatable-field controls and configuration actions use the same
-  spacing scale.
-- Provider-key editors use padded, theme-aware password fields. Keep Clear
-  separated from Save, and never populate the field with a saved credential.
-- Preserve action containers when the human-review wizard moves submission
-  and deferral controls between steps. Desktop and mobile footers use the
-  same action gap. Disabled prerequisites remain visibly disabled.
-- Keep dismiss buttons clear of notice titles. Model search fields and
-  funding cards must use the active light/dark palette.
-- Compact navigation, filter chips and model-choice lists have their own
-  deliberate spacing; review them for collisions and wrapping rather than
-  treating them as standalone form actions. Wide result tables scroll inside
-  their cards, not across the entire page.
-
-For a styling acceptance pass, inspect Dashboard, every Build tab and expanded
-framework panel, target and judge dialogs, Campaigns and all campaign sections,
-Tools forms, Jobs and job details, Stats and its detail dialog, configuration
-editors, provider keys, artifacts, and human evaluation. Check phone, tablet
-and desktop widths, plus dark mode. Include ready, pending, failed, empty and
-disabled states. Use isolated fixtures for rating/submission flows; inspecting
-production styling must not create campaign work, paid calls or human ratings.
-The rig-only browser checks in `test_rig_web_action_spacing.py`, the command,
-cost and provider layout checks, `test_human_review_browser.py` and the shared
-backend-wait checks cover these layout and interaction contracts. Verify new
-regressions against the previous implementation as well as the corrected one.
+CLI recipes and advanced historical imports remain in
+[Run and return](../experiments/RUN_AND_RETURN.md). Use explicit retained sources;
+never fabricate console-created jobs for externally executed work.

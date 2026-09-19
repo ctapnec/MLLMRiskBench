@@ -177,5 +177,7 @@ cover spending, callback threads, the explicit start, scorer resolution,
 stop/resume handoffs, completed-work reuse and the final navigation/display
 corrections. Production browser checks are read-only. Acceptance outputs stay
 in their isolated test database, outside the original thesis campaigns. The
-small API guide now describes only the primary workflow; detailed comparison,
-human-review and SVM instructions live in CAMPAIGN_RESULTS_AND_ANALYSIS.md.
+combined SMALL_CAMPAIGNS.md guide contains the common primary workflow, the
+local/API differences, historical reference outcomes and detailed optional
+comparison, human-review and SVM actions. Its short entry pages preserve old
+links without maintaining separate recipes.
