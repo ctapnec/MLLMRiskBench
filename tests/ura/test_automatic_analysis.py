@@ -113,6 +113,14 @@ def setup_choices(app, monkeypatch):
     return owner,source
 
 
+def test_ambiguous_scientific_choice_is_not_silently_set_to_first_campaign():
+    options=[('demo','Small demonstration'),('thesis','Full retained local campaign')]
+    rendered=response_analysis.select('source','Source campaign',options,'unknown')
+    assert '<option value="" selected>' in rendered and 'required' in rendered
+    chosen=response_analysis.select('source','Source campaign',options,'thesis')
+    assert '<option value="thesis" selected>' in chosen and '<option value=""' not in chosen
+
+
 def test_analysis_resolves_named_selection_and_bounds_threads(app, monkeypatch):
     owner,source=setup_choices(app,monkeypatch)
     captured=[]

@@ -23,7 +23,9 @@ def teachers(app, owner):
 
 def select(name,label,options,selected=''):
     escape=lambda v:html.escape(str(v),quote=True)
-    return '<label class="campaign-field">'+escape(label)+'<select aria-label="'+escape(label)+'" name="'+name+'" required>'+''.join(
+    placeholder=('<option value="" selected>Choose '+escape(label.lower())+'</option>'
+                 if len(options)>1 and selected not in {key for key,_ in options} else '')
+    return '<label class="campaign-field">'+escape(label)+'<select aria-label="'+escape(label)+'" name="'+name+'" required>'+placeholder+''.join(
         '<option value="'+escape(key)+'"'+(' selected' if key==selected else '')+'>'+escape(value)+'</option>'
         for key,value in options)+'</select></label>'
 
