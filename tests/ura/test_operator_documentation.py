@@ -73,7 +73,9 @@ def test_combined_guide_preserves_local_actions_and_reference_limits():
         'not independent research ratings', 'at least 16 correct per dimension',
         'recorded teacher labels, not independently established human truth',
         'locked at `0`', 'Paired judging outcomes', 'not all planned inputs',
-        'rather than becoming an extra segment that double-counts an answer']
+        'rather than becoming an extra segment that double-counts an answer',
+        'one measured image answer and three diagnostic answers',
+        'Increasing the cap cannot add source answers that do not exist']
     normalized = re.sub(r'\s+', ' ', text)
     missing = [item for item in required if item not in normalized]
     assert not missing, missing

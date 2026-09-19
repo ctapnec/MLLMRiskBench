@@ -96,8 +96,10 @@ delivered attack prompts. Original local answers remain in the source campaign.
    diagnostic probes as measured source data.
 4. Set each target's **Input request cap**, for example `12`. Whole clusters
    stay together; the cap includes required diagnostic requests.
-5. Include enough source clusters and capacity for a diagnostic cluster and a
-   separate measured cluster. Review supplies the actual counts.
+5. Include enough source clusters and capacity for diagnostic checks and
+   separate measured clusters in each intended modality. Review supplies total,
+   measured and diagnostic counts. Selecting text and image sources does not
+   guarantee that both retain a measured input after diagnostic selection.
 
 Do not reselect fresh corpora to reconstruct this comparison. Saved inputs carry
 their prompts and media. Equal seeds or request counts alone do not establish
@@ -270,6 +272,13 @@ This continuation adds paid hosted generation and optional Haiku judging.
 Equal seeds do not prove identical prompts/images. Each new output needs its
 own verdict. Existing Haiku labels for older local answers do not apply to these
 four newly generated local answers.
+
+With only the four-answer local example as the source, a follow-on can be very
+small: the 19 September Haiku check retained one measured image answer and three
+diagnostic answers from four requests. Increasing the cap cannot add source
+answers that do not exist. For measured text and image comparisons, select a
+larger saved source set and inspect the prepared selection. This small follow-on
+is an interface demonstration, not evidence of broad comparative performance.
 
 ### Hosted text/image reference, not a spending promise
 

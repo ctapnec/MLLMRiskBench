@@ -107,3 +107,54 @@ Audit records remain outside Git under runs/engineering/campaign-reaudit-2026091
 Keep initial failures and corrected results together. Do not add these operational
 records to the thesis narrative or report repeated regression totals as unique
 tests. No original campaign was rerun and no paid calls were made in this re-audit.
+
+## Fresh guide acceptance, 19 September
+
+A new complete offline rig suite passed 5,401 tests with ten platform-specific
+skips at fa22774. This is a new successful run, not a relabelling of the earlier
+failed sweeps. Installed environments and Chromium were reused.
+
+The shared guide was then followed through the production browser, creating
+three clearly named QA campaigns without modifying the thesis populations:
+
+| Route | Measured usable answers | Diagnostics | Local verdicts | Haiku verdicts |
+| --- | ---: | ---: | ---: | ---: |
+| Installed Qwen, fresh text and image corpora | 4 | 2 | 4 | 4 |
+| Hosted Haiku, fresh text corpus | 1 | 1 | 1 | 1 |
+| Hosted Haiku, saved local inputs | 1 image | 3 | 1 | 1 |
+
+All six measured answers are untruncated. The last route shows why the reviewed
+total must distinguish measured and diagnostic requests: four saved source
+answers do not imply four measured follow-on answers, or both measured modalities.
+Local and Haiku judgments remain separate and output-specific. Twelve physical
+Anthropic attempts have USD 0.011471 in monetary ledgers and an additional
+USD 0.002553 token-based estimate for two direct target calls without monetary
+ledgers. The combined USD 0.014024 estimate is not an invoice reconciliation or
+current provider balance. It is within the existing USD 5 total acceptance cap.
+
+This pass adds per-condition paired-judgment matrices and job-outcome bars to the
+existing input-overlap donuts. Their denominators are explicit. Truncation is
+not counted twice, invalid judgments remain excluded from the matrix but visible
+in its coverage and table, and conditions are never pooled. Rig regressions and
+four fix reversals cover these additions. Production desktop/mobile checks
+compare chart counts with CSV exports and exercise existing SVM results without
+training an unsupported classifier on the tiny QA sample.
+
+Actual human-review preparation revealed gaps that synthetic form tests missed:
+internal successful diagnostics appeared as completed review sources; the launch
+used an older Runner reader; finalized checkpoints were incorrectly required
+again while finding sibling media manifests; and configured image-source
+locations were omitted from the review child's environment. The fixes retain
+the measured Runner, dispatch review from the console's analysis release, read
+exact retained output identities, and pass configured media locators without
+provider credentials. Regression now launches a real analysis child against
+an incompatible older Runner fixture and finalized response files. No target
+generation, provider call or human rating is needed for that regression.
+
+Evidence and initial failures remain under
+`runs/engineering/guide-live-regression-20260919`, outside Git. The focused
+follow-ups supplement the complete suite; their overlapping totals are not
+additional unique test counts. These QA outputs are not thesis experimental
+results. Stop/interruption and independent-rater submission are exercised with
+isolated fixtures, not by interrupting paid production calls or fabricating
+research ratings.
