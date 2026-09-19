@@ -175,3 +175,31 @@ additional unique test counts. These QA outputs are not thesis experimental
 results. Stop/interruption and independent-rater submission are exercised with
 isolated fixtures, not by interrupting paid production calls or fabricating
 research ratings.
+
+## Completed-work boundary follow-up
+
+The subsequent actual Build submission exposed a gap that replaying frozen
+operation parameters did not cover. Automatic connection discovery and output
+attempt numbering created another preparation for an unchanged completed
+campaign. Reopening now retains the completed work; explicit choices and
+configured generation settings remain significant. Historical duplicate
+preparations cannot take precedence merely because filesystem restoration
+loads them first. A new forecast date does not repeat completed saved-input
+work, while unstarted work still requires a current forecast.
+
+The existing boundary pass passed 203 tests; the clean-release affected pass
+passed 217. Follow-ups cover actual submission, restore order, changed local
+and hosted output allowances, saved-input settings and date rollover, with
+detecting fix reversals. The final affected/document pass passed 68 tests.
+These overlapping totals are not a count of unique tests.
+
+Actual desktop/mobile submissions reopened all three completed QA campaigns
+without new jobs or calls. All four saved review items and both assigned images
+loaded; no human ratings were submitted. Another 72-page production sweep
+passed, including matched-input charts, per-job outcome bars, scoped CSV
+exports and SVM task filtering. The observed maximum page time was 0.88 seconds,
+not a general latency guarantee. No medium/high issue remains open in these
+exercised scenarios. No new paid call, model generation, runtime installation
+or model-weight scan was required. The initial five technical preparation jobs
+remain separate evidence; original campaign answers and judgments are unchanged.
+Evidence: `runs/engineering/boundary-regression-20260919`, outside Git.
