@@ -45,11 +45,13 @@ def sources(app, campaign):
     if indexed:
         result.insert(0, dict(id='campaign-index', name='All indexed measured campaign outputs',
             source_kind='campaign_index', results=str(app.results_root)))
-    # Terminal result directories only. Do not scan corpora or reopen artifacts
+    # Completed measured results only, not successful internal preparations or
+    # diagnostics. Do not scan corpora or reopen artifacts
     # when displaying a page. Imported historical campaigns use registered scopes.
     runs = app.db._query("SELECT r.job_id,r.out_dir FROM runs r JOIN campaign_members m "
         "ON m.member_kind IN ('job','external') AND m.member_id=r.job_id "
-        "WHERE m.campaign_id=? AND r.command='run_matrix' AND r.exit_code=0 ORDER BY r.created_at DESC", (campaign,))
+        "WHERE m.campaign_id=? AND r.command='run_matrix' AND r.kind='measured' "
+        "AND r.exit_code=0 ORDER BY r.created_at DESC", (campaign,))
     if runs is None: raise ValueError('Campaign result index is unavailable')
     known = {r['results'] for r in result}
     for row in runs:

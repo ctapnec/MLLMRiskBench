@@ -248,17 +248,28 @@ def test_pending_determination_prepares_sample_without_inviting_reviewers(tmp_pa
     finally:app.close()
 
 
-def test_finished_runs_discovered_without_cross_campaign_or_failed_run_sources(tmp_path):
+def test_finished_runs_discovered_without_cross_campaign_or_failed_run_sources(tmp_path, monkeypatch):
     from experiments.rig_web_app.human_review_setup import sources
     app=RigWebApp(results_root=tmp_path/'runs',state_dir=tmp_path/'state',repo_root=tmp_path,gpu_hardware={},system_hardware={})
     try:
         owner=app.db.create_workspace('Finished API','api');other=app.db.create_workspace('Different campaign','local')
         with app.db._conn:
-            for key,exit_code,campaign in [('done',0,owner),('failed',1,owner),('unrelated',0,other)]:
+            for key,exit_code,campaign,kind in [('done',0,owner,'measured'),('failed',1,owner,'measured'),
+                    ('unrelated',0,other,'measured'),('preflight',0,owner,'preflight'),
+                    ('diagnostic',0,owner,'diagnostic'),('synthetic',0,owner,'dry_run')]:
                 app.db._conn.execute('INSERT INTO runs VALUES(?,?,?,?,?,?,?,?)',
-                    (key,'measured','run_matrix',str(tmp_path/'runs'/key),'pin','complete' if exit_code==0 else 'failed',exit_code,1))
+                    (key,kind,'run_matrix',str(tmp_path/'runs'/key),'pin','complete' if exit_code==0 else 'failed',exit_code,1))
                 app.db._conn.execute('INSERT INTO campaign_members VALUES(?,?,?,?,?)',('external',key,campaign,'collection',1))
         assert [r['id'] for r in sources(app,owner)]==['run-done']
+        page=app.handle('GET','/human-evaluation?campaign_id='+owner)[2].decode()
+        assert "value='run-done'" in page
+        monkeypatch.setattr(app,'start_job',lambda *args,**kwargs:pytest.fail('Invalid source started a job'))
+        for key in ('failed','unrelated','preflight','diagnostic','synthetic'):
+            assert "value='run-"+key+"'" not in page
+            for route in ('prepare-personal','prepare-study'):
+                code,_,body=app.handle('POST','/human-evaluation/'+route,dict(campaign_id=owner,
+                    source='run-'+key,name='Invalid source',mode='common',clusters='1',acknowledge='1'))
+                assert code==400 and b'Choose saved results from this campaign' in body
         assert 'Human evaluation' in app.handle('GET','/campaigns/'+owner)[2].decode()
     finally:app.close()
 
