@@ -95,7 +95,7 @@ def test_matched_and_local_suggestions_are_distinct_and_links_do_not_execute(app
     assert 'sampled paired comparison' in hosted and 'text proxy' in hosted
     links = Links()
     links.feed(local + hosted)
-    assert all(urlsplit(href).path in {'/build', '/config', '/config/secrets', '/commands', '/jobs'} for href in links.hrefs)
+    assert all(urlsplit(href).path in {'/build', '/config', '/config/secrets', '/commands', '/jobs', '/campaigns'} for href in links.hrefs)
     assert all(not urlsplit(href).fragment or urlsplit(href).fragment in {
         'build-general','build-evaluation','target-models','input-corpora','retained-inputs',
         'local-hardware','framework-runtimes','attack-frameworks','sample-size-control',
@@ -123,7 +123,7 @@ def test_guide_covers_all_build_sections_and_optional_campaign_analysis(app):
         assert topic in content
     owner = saved['campaign_id']
     for href in ('/human-evaluation?campaign_id='+owner,
-        '/commands?cmd=response_svm&campaign_id='+owner,
+        '/analysis?campaign_id='+owner,
         '/commands?cmd=local_model_readiness&campaign_id='+owner):
         import html
         assert html.escape(href, quote=True) in content
@@ -196,7 +196,7 @@ def test_browser_checkbox_modal_keyboard_steps_links_and_single_run(browser, app
 
 @pytest.mark.parametrize('topic,link,path', [
     ('9. Human review','Open human-evaluation wizard','/human-evaluation'),
-    ('10. SVM analysis','Open Retained response classifiers','/commands')])
+    ('10. SVM analysis','Open SVM analysis','/analysis')])
 def test_guide_backend_links_close_dialog_and_use_shared_wait_guard(browser, app, topic, link, path):  # noqa: F811
     from urllib.parse import urlsplit
     saved = app._save_build_campaign(draft(campaign_guide='on'))

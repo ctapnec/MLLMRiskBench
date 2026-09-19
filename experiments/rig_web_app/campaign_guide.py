@@ -97,7 +97,7 @@ def _guidance(app, params):
           'replay and execution preparation. Do not open or start the child jobs. The completed page shows the '
           'workload and cost bound, then offers the explicit collection start. Token counting can contact '
           'the provider but does not generate answers. Prepared and active work reopens this progress or review.') if matched else
-         ('Use Compose & review, then Prepare and review. The console handles model planning, installed-model reuse, '
+         ('Use Compose & review. Automatic preparation starts directly. The console handles model planning, installed-model reuse, '
           'the no-call preflight and final execution preparation on one page. Existing exact preparation is reused. '
           'When ready, review the workload and click Start run (or Start probe for a diagnostic). '
           'Keep Admission on Automatic: output locations, execution scope, software/source records and saved '

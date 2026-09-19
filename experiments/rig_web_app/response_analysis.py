@@ -56,7 +56,7 @@ def page(app, owner):
         body+='<label class="checkrow"><input type="checkbox" name="include_source" checked><span>Include matching answers from the local source campaign</span></label>'
         body+='<details class="card"><summary>Scientific analysis options</summary><div class="cols">'
         body+='<label>Split seed<input name="seed" type="number" value="0" required></label>'
-        body+='<label>Bootstrap samples<input name="bootstrap" type="number" min="1" max="10000" value="1000" required></label></div></details>'
+        body+='<label>Bootstrap samples<input name="bootstrap" type="number" min="100" max="10000" value="1000" required></label></div></details>'
         body+='<p>No target or judge calls are made. This fits recorded teacher labels, not independently established human truth. '
         'Existing campaign judgments remain unchanged.</p><div class="action-row"><button>Start classifier study</button></div></form>'
     else:
@@ -88,7 +88,7 @@ def start(app, data):
     if data.get('teacher') not in {r['judge_id'] for r in teachers(app,owner)}:
         raise ValueError('Choose a recorded Haiku condition for this campaign')
     seed=int(data.get('seed','0'));bootstrap=int(data.get('bootstrap','1000'))
-    if not 1<=bootstrap<=10000:raise ValueError('Bootstrap samples must be between 1 and 10000')
+    if not 100<=bootstrap<=10000:raise ValueError('Bootstrap samples must be between 100 and 10000')
     for row in history(app,owner):
         live=app.jobs.get(row['job_id'])
         if (live.state() if live else row['state']) in {'running','queued','starting'}:

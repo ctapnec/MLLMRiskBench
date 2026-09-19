@@ -18,7 +18,7 @@ def test_study_runs_real_export_evaluation_package_and_reuses_completed_work(tmp
     out=tmp_path/'study'
     argv=['--study','--database',str(args['database']),'--candidates',str(args['candidates']),
           '--campaign','campaign','--matched-campaign','campaign','--judge-condition','haiku',
-          '--bootstrap','2','--out',str(out)]
+          '--bootstrap','100','--out',str(out)]
     before=args['database'].read_bytes()
     assert response_svm.main(argv)==0
     result=json.loads((out/'result.json').read_text())
@@ -42,7 +42,7 @@ def test_failed_study_resumes_only_unfinished_stages(tmp_path, monkeypatch):
     args=dataset_fixture(tmp_path);out=tmp_path/'study'
     argv=['--study','--database',str(args['database']),'--candidates',str(args['candidates']),
           '--campaign','campaign','--matched-campaign','campaign','--judge-condition','haiku',
-          '--bootstrap','2','--out',str(out)]
+          '--bootstrap','100','--out',str(out)]
     from ura import response_svm as engine
     original=engine.evaluate_study
     monkeypatch.setattr(engine,'evaluate_study',lambda *a,**kw:(_ for _ in ()).throw(RuntimeError('interrupted')))
@@ -57,7 +57,7 @@ def test_failed_study_resumes_only_unfinished_stages(tmp_path, monkeypatch):
 
 
 def setup_choices(app, monkeypatch):
-    owner=app.db.create_workspace('Hosted study','hosted')
+    owner=app.db.create_workspace('Hosted study','api')
     source=app.db.create_workspace('Local source','local')
     directory=app.results_root/'original';directory.mkdir()
     rows=[dict(run_id='real-run',source_ref=str(directory/'responses.jsonl')+':1')]*2
@@ -72,7 +72,7 @@ def test_analysis_resolves_named_selection_and_bounds_threads(app, monkeypatch):
     monkeypatch.setattr(app,'start_job',lambda command,values,**kw:captured.append((command,values,kw)) or SimpleNamespace(job_id='study'))
     token=app._new_launch_ticket(dict(campaign_id=owner),purpose='svm-study')
     result=response_analysis.start(app,dict(launch_ticket=token,source_campaign=source,matched_campaign=owner,
-        teacher='haiku-selected',include_source='on',seed='0',bootstrap='2'))
+        teacher='haiku-selected',include_source='on',seed='0',bootstrap='100'))
     assert result.job_id=='study'
     command,values,kw=captured[0]
     assert command=='response_svm' and values['--study']=='on'
